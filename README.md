@@ -1,45 +1,65 @@
 # hangarfit
 
-Helper tool for arranging the flying club fleet in a stack-style hangar when the standard layout doesn't work. **On-demand exception tool**, not a daily ops system.
+An on-demand exception tool for a flying club's hangar parking.
 
-Given a hand-authored candidate layout (in YAML), `hangarfit`:
+The club parks nine aircraft in a deep, stack-style hangar with a single door at the front. There's a standard layout that works for the standard situation — every plane back from its flight at the expected time, no surprise maintenance, no late returns. When that standard situation breaks (a plane comes back late, a maintenance slot moves, two planes need to swap order), someone has to come up with an alternative parking arrangement on the spot. `hangarfit` is the tool that checks whether a proposed alternative is physically valid: no fuselage, wing, or strut collisions; everything fits inside the hangar; the plane scheduled for maintenance ends up at the back where the maintenance bay is.
 
-1. checks whether the layout is **physically valid** (no fuselage / wing / strut collisions, fits in the hangar, maintenance plane in the right spot), and
-2. **renders** a top-down PNG so a human can eyeball it.
+It also renders a top-down PNG so a human can sanity-check the result by eye.
 
-A planner / search algorithm is **out of scope for Phase 1**. Phase 1 builds the substrate (data model, collision checker, visualizer) that any future planner will sit on top of.
+It is not a planner. It does not search for a layout — you hand it one, it tells you whether it works.
+
+## Scope
+
+**Phase 1 (current focus).** Build the substrate: an aircraft + hangar data model, a parts-based collision checker, a matplotlib top-down visualizer, and a CLI that ties them together. Phase 1 is about getting the geometry right — once the collision rule is trustworthy, anything downstream can be built on top of it.
+
+**Explicitly out of scope for Phase 1:**
+
+- No planner, search, or optimization — you provide the candidate layout.
+- No movement-sequence planning (no "in what order do I roll planes out and back in to reach this layout").
+- No tracking of hangar state across runs.
+- No GUI or web frontend.
+- No handling of late arrivals as a live event stream.
+
+These boundaries are deliberate. The collision model is the load-bearing piece; layering search on top of a wobbly geometry foundation would compound errors.
 
 ## Status
 
-Phase 1 in active development. See [GitHub Issues](https://github.com/DocGerd/hangarfit/issues) and milestones.
+Pre-release. Phase 1 is in active development; the CLI is the last piece before the first tagged cut. All dimensions in `data/` are placeholders pending real measurement and are flagged as such in the YAML; collision-checker output on the current data is illustrative, not authoritative.
 
-## Quickstart
+Follow progress in [GitHub Issues](https://github.com/DocGerd/hangarfit/issues) and milestones.
 
-What works today (after merging the scaffolding PR):
+## Install
+
+Requires Python 3.11 or newer.
 
 ```bash
 pip install -e ".[dev]"
-pytest                              # currently collects 0 tests
 ```
 
-The full end-to-end loop will work once milestone `v0.3.0` ships the CLI:
+This installs the package in editable mode along with the test dependencies (`pytest`).
+
+## Run the tests
 
 ```bash
-hangarfit check layouts/example.yaml --render out.png   # ← lands in #7
+pytest
 ```
 
-## Project layout (target — most files land in later milestones)
+The test suite includes a strut-aware golden set for the collision checker covering the height-layer rule, the strut-blocks-nesting case, the maintenance-bay rule, the cart rule, and an all-nine-planes valid layout. If those pass, the geometry is intact.
+
+The end-to-end CLI (`hangarfit check layouts/example.yaml --render out.png`) is tracked in issue #7 and not yet shipped.
+
+## Project layout
 
 ```
-src/hangarfit/      # Python package (models, loader, geometry, collisions, visualize, cli)
-data/               # fleet.yaml, hangar.yaml — measured-once club data
-layouts/            # hand-authored candidate layouts (one .yaml per scenario)
-tests/              # pytest suite, including the strut-aware collision golden tests
+src/hangarfit/      # models, loader, geometry, collisions, visualize (CLI pending)
+data/               # fleet.yaml, hangar.yaml — placeholder measurements
+layouts/            # hand-authored candidate layouts, one YAML per scenario
+tests/              # pytest suite, including strut-aware collision golden tests
 ```
 
-## Workflow
+## More depth
 
-This repo uses GitFlow with PR-driven review. See [`CLAUDE.md`](CLAUDE.md) for the full workflow and project context.
+[`CLAUDE.md`](CLAUDE.md) is the durable project spec: the fleet (nine aircraft, mostly high-wing, with one low-wing), the parts-based collision rule, the coordinate convention (including the non-obvious heading transform), and the Phase 1 deliverables list. Read it before contributing anything geometric.
 
 ## License
 
