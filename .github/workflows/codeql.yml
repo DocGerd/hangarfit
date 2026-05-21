@@ -27,7 +27,6 @@ jobs:
         uses: github/codeql-action/init@f411752efdf656cb71aa17b755b22c890960da1d  # v3.35.5
         with:
           languages: python
-          queries: default
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@f411752efdf656cb71aa17b755b22c890960da1d  # v3.35.5
