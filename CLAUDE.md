@@ -213,6 +213,26 @@ The `.claude/` directory holds team-shared Claude Code settings (currently: a Po
 
 ---
 
+## MCP servers
+
+`.mcp.json` at the repo root declares two project-scoped MCP servers so every contributor gets them automatically on a fresh clone — no per-user setup step.
+
+| Server | Transport | Purpose |
+|---|---|---|
+| `context7` | stdio (`npx @upstash/context7-mcp@latest`) | Live shapely 2.x and matplotlib API lookups. `shapely>=2.0,<3` is pinned in `pyproject.toml`; training-data docs may be stale. |
+| `github` | HTTP (`https://api.githubcopilot.com/mcp/`) | Issue / PR / release inspection from Claude; complements the existing `gh` CLI. |
+
+### Auth requirements
+
+- **Context7** — API key is optional (public free tier has rate limits). For higher limits, set `CONTEXT7_API_KEY` in your shell environment. Get a free key at https://context7.com/dashboard.
+- **GitHub MCP** — Requires `GITHUB_PERSONAL_ACCESS_TOKEN` in your shell environment. A classic PAT (or fine-grained PAT) with `repo` + `read:org` scopes is sufficient for read operations; add `write` scopes if you want Claude to create issues / PRs via the MCP server rather than `gh`.
+
+### Verifying the servers loaded
+
+After cloning and running `claude`, use the `/mcp` command. Both `context7` and `github` should appear with status **connected**. If a server shows **failed**, check that the relevant env var is set and that `npx` (Node ≥18) is on your PATH.
+
+---
+
 ## Worktrees
 
 Allowed but not the default. Use only when two feature branches need parallel work (e.g., long-running test suite while writing the visualizer). For sequential issue flow, plain branch checkout is simpler.
