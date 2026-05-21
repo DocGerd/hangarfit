@@ -104,8 +104,7 @@ class TestPairwiseOverlap:
             f"expected exactly fuselage_fuselage_overlap, got {result.conflicts!r}"
         )
         assert len(result.conflicts) == 1, (
-            f"expected exactly 1 conflict, got {len(result.conflicts)}: "
-            f"{result.conflicts!r}"
+            f"expected exactly 1 conflict, got {len(result.conflicts)}: {result.conflicts!r}"
         )
 
 
@@ -122,9 +121,7 @@ class TestValidLayouts:
 
     def test_case_1_two_high_wings_well_separated(self) -> None:
         result = check(_load("valid_two_separated"))
-        assert result.valid, (
-            f"two-plane layout must be clean, got conflicts: {result.conflicts!r}"
-        )
+        assert result.valid, f"two-plane layout must be clean, got conflicts: {result.conflicts!r}"
 
     def test_case_12_all_nine_planes_valid(self) -> None:
         """Phase 1 acceptance smoke test: all 9 placeholder aircraft fit.
@@ -136,9 +133,7 @@ class TestValidLayouts:
         full rationale.
         """
         result = check(_load("valid_all_nine_planes"))
-        assert result.valid, (
-            f"9-plane layout must be clean, got conflicts: {result.conflicts!r}"
-        )
+        assert result.valid, f"9-plane layout must be clean, got conflicts: {result.conflicts!r}"
 
 
 class TestCartRule:
@@ -173,8 +168,7 @@ class TestStrutCanary:
         assert not result.valid
         kinds = _conflict_kinds(result)
         assert "strut_wing_overlap" in kinds, (
-            f"strut canary failed: expected strut_wing_overlap, "
-            f"got {result.conflicts!r}"
+            f"strut canary failed: expected strut_wing_overlap, got {result.conflicts!r}"
         )
         assert "wing_strut_overlap" not in kinds, (
             f"non-alphabetical kind leaked into conflicts: {result.conflicts!r}"
@@ -183,15 +177,13 @@ class TestStrutCanary:
     def test_case_7_strut_free_right_side_nesting_valid(self) -> None:
         result = check(_load("valid_right_side_nesting"))
         assert result.valid, (
-            f"right-side nesting must be valid (z-disjoint), "
-            f"got conflicts: {result.conflicts!r}"
+            f"right-side nesting must be valid (z-disjoint), got conflicts: {result.conflicts!r}"
         )
 
     def test_case_8_strut_free_left_side_nesting_valid(self) -> None:
         result = check(_load("valid_left_side_nesting"))
         assert result.valid, (
-            f"left-side nesting must be valid (z-disjoint), "
-            f"got conflicts: {result.conflicts!r}"
+            f"left-side nesting must be valid (z-disjoint), got conflicts: {result.conflicts!r}"
         )
 
 
@@ -213,8 +205,7 @@ class TestMaintenancePosition:
         against a future tightening to ``<=``."""
         result = check(_load("valid_maintenance_at_bay_boundary"))
         assert result.valid, (
-            f"maintenance centroid at bay-start y must pass, "
-            f"got conflicts: {result.conflicts!r}"
+            f"maintenance centroid at bay-start y must pass, got conflicts: {result.conflicts!r}"
         )
 
     def test_maintenance_plane_without_fuselage_emits_conflict(self) -> None:

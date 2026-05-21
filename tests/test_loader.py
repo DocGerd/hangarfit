@@ -130,8 +130,7 @@ class TestRealDataFiles:
         fleet = load_fleet(FLEET_YAML)
         # Wingspan = width_m of the wing part.
         wing_widths = {
-            aid: next(p.width_m for p in a.parts if p.kind == "wing")
-            for aid, a in fleet.items()
+            aid: next(p.width_m for p in a.parts if p.kind == "wing") for aid, a in fleet.items()
         }
         # Loose ballpark check: every wingspan in [4, 20] m (sanity range
         # for the fleet). A decimal-point typo (10.7 → 1.07) is caught.
@@ -771,7 +770,10 @@ placements: []
             load_layout(layout_path)
 
     def test_layout_missing_hangar_ref(self, tmp_path: Path) -> None:
-        _write(tmp_path / "fleet.yaml", _minimal_aircraft_yaml("foo", movement_mode="always_own_gear", turn_radius_m=5.0))
+        _write(
+            tmp_path / "fleet.yaml",
+            _minimal_aircraft_yaml("foo", movement_mode="always_own_gear", turn_radius_m=5.0),
+        )
         layout_path = _write(
             tmp_path / "layout.yaml",
             """
@@ -874,7 +876,9 @@ maintenance:
   comment: forgot the plane key
 """,
         )
-        with pytest.raises(LoaderError, match="'maintenance' block present but lacks required 'plane'"):
+        with pytest.raises(
+            LoaderError, match="'maintenance' block present but lacks required 'plane'"
+        ):
             load_layout(layout_path)
 
     def test_override_and_yaml_ref_conflict_for_fleet(self, tmp_path: Path) -> None:
@@ -902,7 +906,9 @@ hangar: hangar.yaml
 placements: []
 """,
         )
-        with pytest.raises(LoaderError, match="'hangar' field is set in YAML but a hangar override"):
+        with pytest.raises(
+            LoaderError, match="'hangar' field is set in YAML but a hangar override"
+        ):
             load_layout(layout_path, hangar=load_hangar(hangar_path))
 
     def test_helper_composition_yields_two_aircraft(self, tmp_path: Path) -> None:
@@ -970,4 +976,6 @@ def _minimal_aircraft_yaml(
     turn_radius_m: float | None = 5.0,
 ) -> str:
     """Convenience: build a complete single-aircraft fleet YAML."""
-    return _fleet_yaml(_aircraft_entry(plane_id, movement_mode=movement_mode, turn_radius_m=turn_radius_m))
+    return _fleet_yaml(
+        _aircraft_entry(plane_id, movement_mode=movement_mode, turn_radius_m=turn_radius_m)
+    )

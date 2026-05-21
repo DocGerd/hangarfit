@@ -15,7 +15,6 @@ import pytest
 from shapely.geometry import Polygon
 
 from hangarfit.geometry import (
-    WorldPart,
     aircraft_parts_world,
     oriented_rect,
     polygon_overlap,
@@ -48,7 +47,7 @@ def _corners_almost_equal(
         return False
     return all(
         _almost_equal(gx, wx, tol) and _almost_equal(gy, wy, tol)
-        for (gx, gy), (wx, wy) in zip(got, want)
+        for (gx, gy), (wx, wy) in zip(got, want, strict=False)
     )
 
 
@@ -80,7 +79,12 @@ class TestOrientedRect:
         """At 45° CCW, a 2×2 square's corner at local (1, -1) maps to world (√2, 0)."""
         rect = oriented_rect(cx=0, cy=0, length=2, width=2, angle_deg=45)
         # Square is symmetric; corners should be at distance √2 along the axes.
-        expected = [(math.sqrt(2), 0), (0, math.sqrt(2)), (-math.sqrt(2), 0), (0, -math.sqrt(2))]
+        expected = [
+            (math.sqrt(2), 0),
+            (0, math.sqrt(2)),
+            (-math.sqrt(2), 0),
+            (0, -math.sqrt(2)),
+        ]
         assert _corners_almost_equal(rect, expected)
 
     def test_area_preserved_under_rotation(self) -> None:
@@ -319,9 +323,7 @@ class TestAircraftPartsWorld:
         Pins that we don't normalize heading anywhere upstream and that the
         transform stays consistent across the wrap."""
         ac = _aircraft_with_one_part(_point_part(offset_x_m=1.0, offset_y_m=0.0))
-        pl = Placement(
-            plane_id="probe", x_m=0.0, y_m=0.0, heading_deg=heading_deg, on_carts=False
-        )
+        pl = Placement(plane_id="probe", x_m=0.0, y_m=0.0, heading_deg=heading_deg, on_carts=False)
         [world] = aircraft_parts_world(ac, pl)
         cx, cy = world.polygon.centroid.x, world.polygon.centroid.y
         expected_x = math.sin(math.radians(heading_deg))
@@ -344,7 +346,7 @@ class TestAircraftPartsWorld:
         part = Part(
             kind="strut",
             length_m=4.0,  # long
-            width_m=0.1,   # thin
+            width_m=0.1,  # thin
             offset_x_m=0.0,
             offset_y_m=0.0,
             angle_deg=90.0,  # rotate CCW 90° within plane-local
@@ -423,7 +425,7 @@ class TestWorldPartMetadata:
         worlds = aircraft_parts_world(ac, pl)
         assert len(worlds) == 3
         # Order preserved; metadata preserved 1:1 from source parts.
-        for src, dst in zip(parts, worlds):
+        for src, dst in zip(parts, worlds, strict=True):
             assert dst.kind == src.kind
             assert dst.z_bottom_m == src.z_bottom_m
             assert dst.z_top_m == src.z_top_m
@@ -438,9 +440,9 @@ class TestAircraftPartsWorldOnRealAircraft:
     def test_husky_at_origin_heading_zero(self) -> None:
         """A Husky placed at (0, 0) heading 0° should have its fuselage
         roughly along world +y (nose deeper into hangar)."""
-        from hangarfit.loader import load_fleet
-
         from pathlib import Path
+
+        from hangarfit.loader import load_fleet
 
         fleet = load_fleet(Path(__file__).resolve().parent.parent / "data" / "fleet.yaml")
         husky = fleet["aviat_husky"]

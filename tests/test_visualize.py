@@ -197,9 +197,7 @@ class TestRendererValidatesInputs:
     for a malformed input is the precise failure mode this tool exists
     to prevent."""
 
-    def test_check_result_with_unknown_plane_id_rejected(
-        self, tmp_path: Path
-    ) -> None:
+    def test_check_result_with_unknown_plane_id_rejected(self, tmp_path: Path) -> None:
         """If the caller hands the renderer a CheckResult that references
         a plane not in the layout (e.g., a CheckResult from a different
         layout), reject loudly rather than rendering a clean PNG."""
