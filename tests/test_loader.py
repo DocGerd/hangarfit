@@ -37,6 +37,15 @@ def _write(path: Path, text: str) -> Path:
 class TestRealDataFiles:
     """Loading the actual data/ and layouts/ files in the repo."""
 
+    def test_bundled_data_files_exist(self) -> None:
+        """Sentinel: if a bundled data file is renamed/deleted, every other
+        test in this class will produce a confusing 'file not found' error.
+        This test surfaces that scenario with a clearly intent-revealing
+        failure first."""
+        assert FLEET_YAML.exists(), f"bundled fleet file missing: {FLEET_YAML}"
+        assert HANGAR_YAML.exists(), f"bundled hangar file missing: {HANGAR_YAML}"
+        assert EXAMPLE_LAYOUT.exists(), f"bundled example layout missing: {EXAMPLE_LAYOUT}"
+
     def test_load_fleet(self) -> None:
         fleet = load_fleet(FLEET_YAML)
         assert set(fleet) == {
@@ -104,10 +113,33 @@ class TestRealDataFiles:
     def test_all_placeholders_flagged(self) -> None:
         """Every aircraft in the bundled fleet.yaml should be flagged as
         unmeasured — a regression guard so we notice if someone forgets
-        to flip a flag when adding real measurements."""
+        to flip a flag when adding real measurements.
+
+        Tripwire: when the first aircraft actually gets measured, this
+        test should be flipped (assert per-aircraft expected state)
+        rather than deleted."""
         fleet = load_fleet(FLEET_YAML)
         for aid, a in fleet.items():
             assert a.measured is False, f"{aid}: bundled data should be measured: false"
+
+    def test_representative_values_pinned(self) -> None:
+        """One representative dimension per aircraft (pinned). Guards
+        against silent edits to fleet.yaml values that wouldn't fail
+        any other test (count/shape/property tests would all still pass
+        if e.g. the Husky's wingspan were typo'd from 10.7 to 1.07)."""
+        fleet = load_fleet(FLEET_YAML)
+        # Wingspan = width_m of the wing part.
+        wing_widths = {
+            aid: next(p.width_m for p in a.parts if p.kind == "wing")
+            for aid, a in fleet.items()
+        }
+        # Loose ballpark check: every wingspan in [4, 20] m (sanity range
+        # for the fleet). A decimal-point typo (10.7 → 1.07) is caught.
+        for aid, w in wing_widths.items():
+            assert 4.0 < w < 20.0, f"{aid}: wingspan {w} m is outside sanity range"
+        # And pin a couple of specific values so single-plane edits surface.
+        assert wing_widths["scheibe_falke"] == 16.6
+        assert wing_widths["fuji"] == 9.4
 
     def test_load_hangar(self) -> None:
         hangar = load_hangar(HANGAR_YAML)
@@ -212,6 +244,135 @@ aircraft:
         with pytest.raises(LoaderError, match="kind must be one of"):
             load_fleet(path)
 
+    def test_aircraft_entry_not_a_mapping(self, tmp_path: Path) -> None:
+        path = _write(
+            tmp_path / "f.yaml",
+            """
+aircraft:
+  - just_a_string
+""",
+        )
+        with pytest.raises(LoaderError, match="must be a mapping"):
+            load_fleet(path)
+
+    def test_aircraft_missing_top_level_field(self, tmp_path: Path) -> None:
+        """An aircraft entry missing 'name' (or any other top-level required
+        field) should produce a clear 'missing required field' message,
+        not a bare quoted KeyError."""
+        path = _write(
+            tmp_path / "f.yaml",
+            """
+aircraft:
+  - id: foo
+    wing_position: high
+    gear: tailwheel
+    movement_mode: always_own_gear
+    turn_radius_m: 5.0
+    parts:
+      - kind: fuselage
+        length_m: 7.0
+        width_m: 0.8
+        z_bottom_m: 0.0
+        z_top_m: 1.5
+""",
+        )
+        with pytest.raises(LoaderError, match="missing required field 'name'"):
+            load_fleet(path)
+
+    def test_aircraft_missing_id_uses_fallback(self, tmp_path: Path) -> None:
+        """When the aircraft entry has no 'id', the loader uses '#<index>'
+        as the identifier in the wrapped error message."""
+        path = _write(
+            tmp_path / "f.yaml",
+            """
+aircraft:
+  - name: Anonymous
+    wing_position: high
+    gear: tailwheel
+    movement_mode: always_own_gear
+    turn_radius_m: 5.0
+    parts:
+      - kind: fuselage
+        length_m: 7.0
+        width_m: 0.8
+        z_bottom_m: 0.0
+        z_top_m: 1.5
+""",
+        )
+        with pytest.raises(LoaderError, match="aircraft '#0'.*missing required field 'id'"):
+            load_fleet(path)
+
+    def test_null_numeric_field_clear_error(self, tmp_path: Path) -> None:
+        """`length_m:` (YAML null) used to leak as TypeError; now caught."""
+        path = _write(
+            tmp_path / "f.yaml",
+            """
+aircraft:
+  - id: foo
+    name: Foo
+    wing_position: high
+    gear: tailwheel
+    movement_mode: always_own_gear
+    turn_radius_m: 5.0
+    parts:
+      - kind: fuselage
+        length_m:
+        width_m: 0.8
+        z_bottom_m: 0.0
+        z_top_m: 1.5
+""",
+        )
+        with pytest.raises(LoaderError, match="'parts\\[0\\].length_m'.*expected number, got null"):
+            load_fleet(path)
+
+    def test_quoted_bool_for_measured_rejected(self, tmp_path: Path) -> None:
+        """`measured: "false"` (quoted) would silently be True via bool()."""
+        path = _write(
+            tmp_path / "f.yaml",
+            """
+aircraft:
+  - id: foo
+    name: Foo
+    wing_position: high
+    gear: tailwheel
+    movement_mode: always_own_gear
+    turn_radius_m: 5.0
+    measured: "false"
+    parts:
+      - kind: fuselage
+        length_m: 7.0
+        width_m: 0.8
+        z_bottom_m: 0.0
+        z_top_m: 1.5
+""",
+        )
+        with pytest.raises(LoaderError, match="'measured': expected boolean"):
+            load_fleet(path)
+
+    def test_invalid_movement_mode_caught(self, tmp_path: Path) -> None:
+        """Typo in movement_mode used to leak silently past the Layout cart
+        rule (Aircraft.__post_init__ now validates the Literal set)."""
+        path = _write(
+            tmp_path / "f.yaml",
+            """
+aircraft:
+  - id: foo
+    name: Foo
+    wing_position: high
+    gear: tailwheel
+    movement_mode: always_carts
+    turn_radius_m: 5.0
+    parts:
+      - kind: fuselage
+        length_m: 7.0
+        width_m: 0.8
+        z_bottom_m: 0.0
+        z_top_m: 1.5
+""",
+        )
+        with pytest.raises(LoaderError, match="movement_mode must be one of"):
+            load_fleet(path)
+
     def test_model_validation_error_includes_aircraft_id(self, tmp_path: Path) -> None:
         """Aircraft.__post_init__ ValueError should be re-raised as LoaderError
         with the aircraft id prepended for navigation."""
@@ -307,6 +468,50 @@ aircraft:
         with pytest.raises(LoaderError, match="Struts only make sense when the wing is above"):
             load_fleet(path)
 
+    def test_first_wing_part_drives_strut_z_top(self, tmp_path: Path) -> None:
+        """If an aircraft has multiple wing parts (unusual: split-wing, twin
+        booms), the strut z_top is inferred from the FIRST wing part. Pin
+        this behavior so refactoring to last-wins or raising would surface."""
+        path = _write(
+            tmp_path / "f.yaml",
+            """
+aircraft:
+  - id: split_wing
+    name: Split Wing
+    wing_position: high
+    gear: tailwheel
+    movement_mode: always_own_gear
+    turn_radius_m: 5.0
+    parts:
+      - kind: wing
+        length_m: 1.5
+        width_m: 5.0
+        z_bottom_m: 2.0
+        z_top_m: 2.3
+      - kind: wing
+        length_m: 1.5
+        width_m: 5.0
+        z_bottom_m: 2.5
+        z_top_m: 2.8
+      - kind: fuselage
+        length_m: 7.0
+        width_m: 0.8
+        z_bottom_m: 0.0
+        z_top_m: 1.5
+    struts:
+      fuselage_attach_x_m: 0.5
+      fuselage_attach_y_m: 0.4
+      fuselage_attach_z_m: 0.5
+      wing_attach_y_m: 1.8
+      width_m: 0.05
+""",
+        )
+        fleet = load_fleet(path)
+        struts = [p for p in fleet["split_wing"].parts if p.kind == "strut"]
+        assert len(struts) == 2
+        # First wing (z_bottom=2.0) wins, NOT the second wing (z_bottom=2.5).
+        assert all(s.z_top_m == 2.0 for s in struts)
+
     def test_strut_span_must_be_positive(self, tmp_path: Path) -> None:
         """StrutsSpec allows wing_attach_y_m == fuselage_attach_y_m (degenerate
         boundary), but the loader requires strict span > 0 to build a usable Part."""
@@ -397,6 +602,36 @@ maintenance_bay: {depth_m: 9}
 """,
         )
         with pytest.raises(LoaderError, match="doesn't fit in hangar width"):
+            load_hangar(path)
+
+    def test_top_level_not_a_mapping(self, tmp_path: Path) -> None:
+        path = _write(tmp_path / "h.yaml", "- a\n- b\n")
+        with pytest.raises(LoaderError, match="top-level must be a mapping"):
+            load_hangar(path)
+
+    def test_missing_maintenance_bay_block(self, tmp_path: Path) -> None:
+        path = _write(
+            tmp_path / "h.yaml",
+            """
+length_m: 25.0
+width_m: 18.0
+door: {center_x_m: 9, width_m: 12}
+""",
+        )
+        with pytest.raises(LoaderError, match="'maintenance_bay' must be a mapping"):
+            load_hangar(path)
+
+    def test_missing_maintenance_bay_depth(self, tmp_path: Path) -> None:
+        path = _write(
+            tmp_path / "h.yaml",
+            """
+length_m: 25.0
+width_m: 18.0
+door: {center_x_m: 9, width_m: 12}
+maintenance_bay: {}
+""",
+        )
+        with pytest.raises(LoaderError, match="missing required field 'maintenance_bay.depth_m'"):
             load_hangar(path)
 
     def test_clearance_defaults_applied(self, tmp_path: Path) -> None:
@@ -504,14 +739,13 @@ placements:
             load_layout(layout_path)
 
     def test_fleet_and_hangar_overrides(self, tmp_path: Path) -> None:
-        """When fleet/hangar are supplied as args, the YAML's references are ignored."""
+        """When fleet/hangar are supplied as args AND the YAML omits those
+        fields, the overrides are used. (When BOTH are present, the loader
+        refuses to disambiguate — see test_override_and_yaml_ref_conflict_*.)"""
         fleet_path, hangar_path = self._minimal_fleet_and_hangar(tmp_path)
-        # Layout YAML references nonexistent files — they should be ignored.
         layout_path = _write(
             tmp_path / "layout.yaml",
             """
-fleet: does-not-exist.yaml
-hangar: also-does-not-exist.yaml
 placements:
   - {plane: foo, x_m: 5, y_m: 5, heading_deg: 0, on_carts: false}
 """,
@@ -559,6 +793,129 @@ placements:
         )
         with pytest.raises(LoaderError, match="missing required field 'heading_deg'"):
             load_layout(layout_path)
+
+    def test_top_level_not_a_mapping(self, tmp_path: Path) -> None:
+        path = _write(tmp_path / "layout.yaml", "- a\n- b\n")
+        with pytest.raises(LoaderError, match="top-level must be a mapping"):
+            load_layout(path)
+
+    def test_placements_not_a_list(self, tmp_path: Path) -> None:
+        self._minimal_fleet_and_hangar(tmp_path)
+        layout_path = _write(
+            tmp_path / "layout.yaml",
+            """
+fleet: fleet.yaml
+hangar: hangar.yaml
+placements: not_a_list
+""",
+        )
+        with pytest.raises(LoaderError, match="'placements' must be a list"):
+            load_layout(layout_path)
+
+    def test_placement_entry_not_a_mapping(self, tmp_path: Path) -> None:
+        self._minimal_fleet_and_hangar(tmp_path)
+        layout_path = _write(
+            tmp_path / "layout.yaml",
+            """
+fleet: fleet.yaml
+hangar: hangar.yaml
+placements:
+  - just_a_string
+""",
+        )
+        with pytest.raises(LoaderError, match="placement.*must be a mapping"):
+            load_layout(layout_path)
+
+    def test_quoted_bool_for_on_carts_rejected(self, tmp_path: Path) -> None:
+        """The canonical YAML footgun: `on_carts: "false"` (quoted) used to
+        silently become True via bool('false')."""
+        self._minimal_fleet_and_hangar(tmp_path)
+        layout_path = _write(
+            tmp_path / "layout.yaml",
+            """
+fleet: fleet.yaml
+hangar: hangar.yaml
+placements:
+  - {plane: foo, x_m: 5, y_m: 5, heading_deg: 0, on_carts: "false"}
+""",
+        )
+        with pytest.raises(LoaderError, match="'on_carts': expected boolean"):
+            load_layout(layout_path)
+
+    def test_maintenance_shorthand_rejected(self, tmp_path: Path) -> None:
+        """Typo `maintenance: cessna_150` (no nested `plane:` key) used to
+        silently produce maintenance_plane=None."""
+        self._minimal_fleet_and_hangar(tmp_path)
+        layout_path = _write(
+            tmp_path / "layout.yaml",
+            """
+fleet: fleet.yaml
+hangar: hangar.yaml
+placements:
+  - {plane: foo, x_m: 5, y_m: 5, heading_deg: 0, on_carts: false}
+maintenance: foo
+""",
+        )
+        with pytest.raises(LoaderError, match="'maintenance' must be a mapping"):
+            load_layout(layout_path)
+
+    def test_maintenance_block_missing_plane_key(self, tmp_path: Path) -> None:
+        self._minimal_fleet_and_hangar(tmp_path)
+        layout_path = _write(
+            tmp_path / "layout.yaml",
+            """
+fleet: fleet.yaml
+hangar: hangar.yaml
+placements:
+  - {plane: foo, x_m: 5, y_m: 5, heading_deg: 0, on_carts: false}
+maintenance:
+  comment: forgot the plane key
+""",
+        )
+        with pytest.raises(LoaderError, match="'maintenance' block present but lacks required 'plane'"):
+            load_layout(layout_path)
+
+    def test_override_and_yaml_ref_conflict_for_fleet(self, tmp_path: Path) -> None:
+        """If the layout YAML has `fleet:` AND the caller passes a fleet
+        override, the loader refuses to silently shadow one with the other."""
+        fleet_path, hangar_path = self._minimal_fleet_and_hangar(tmp_path)
+        layout_path = _write(
+            tmp_path / "layout.yaml",
+            """
+fleet: fleet.yaml
+hangar: hangar.yaml
+placements: []
+""",
+        )
+        with pytest.raises(LoaderError, match="'fleet' field is set in YAML but a fleet override"):
+            load_layout(layout_path, fleet=load_fleet(fleet_path))
+
+    def test_override_and_yaml_ref_conflict_for_hangar(self, tmp_path: Path) -> None:
+        fleet_path, hangar_path = self._minimal_fleet_and_hangar(tmp_path)
+        layout_path = _write(
+            tmp_path / "layout.yaml",
+            """
+fleet: fleet.yaml
+hangar: hangar.yaml
+placements: []
+""",
+        )
+        with pytest.raises(LoaderError, match="'hangar' field is set in YAML but a hangar override"):
+            load_layout(layout_path, hangar=load_hangar(hangar_path))
+
+    def test_helper_composition_yields_two_aircraft(self, tmp_path: Path) -> None:
+        """Pin the helper composition: `_fleet_yaml(entry_a, entry_b)`
+        produces a fleet with TWO aircraft (PyYAML's last-key-wins
+        regression would have produced one — the original bug)."""
+        path = _write(
+            tmp_path / "f.yaml",
+            _fleet_yaml(
+                _aircraft_entry("a"),
+                _aircraft_entry("b"),
+            ),
+        )
+        fleet = load_fleet(path)
+        assert set(fleet) == {"a", "b"}
 
 
 # ----------------------------------------------------------------------------

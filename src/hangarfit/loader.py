@@ -38,6 +38,33 @@ class LoaderError(Exception):
     """Raised when a YAML file is malformed or fails model validation."""
 
 
+def _to_float(value: Any, field_name: str) -> float:
+    """Coerce a YAML scalar to ``float``, raising ``LoaderError`` with the
+    field name on failure (rather than a bare ``TypeError`` from
+    ``float(None)`` or ``ValueError`` from ``float("abc")``)."""
+    if value is None:
+        raise LoaderError(f"{field_name!r}: expected number, got null")
+    try:
+        return float(value)
+    except (TypeError, ValueError) as e:
+        raise LoaderError(
+            f"{field_name!r}: expected number, got {value!r} "
+            f"({type(value).__name__})"
+        ) from e
+
+
+def _to_bool(value: Any, field_name: str) -> bool:
+    """Coerce a YAML scalar to ``bool`` strictly. Rejects quoted strings
+    (``"true"``, ``"false"``) and any non-bool value — those are the
+    classic YAML silent-flip footgun (``bool("false")`` is ``True``)."""
+    if not isinstance(value, bool):
+        raise LoaderError(
+            f"{field_name!r}: expected boolean (unquoted true/false), "
+            f"got {value!r} ({type(value).__name__})"
+        )
+    return value
+
+
 def load_fleet(path: Path | str) -> dict[str, Aircraft]:
     """Load ``fleet.yaml`` into a dict keyed by :attr:`Aircraft.id`.
 
@@ -59,10 +86,10 @@ def load_fleet(path: Path | str) -> dict[str, Aircraft]:
             raise LoaderError(
                 f"{path}: aircraft entry #{i} must be a mapping, got {type(entry).__name__}"
             )
-        ident = entry.get("id", f"#{i}")
+        ident = entry.get("id", f"#{i}") if isinstance(entry, dict) else f"#{i}"
         try:
             aircraft = _build_aircraft(entry)
-        except (ValueError, KeyError, LoaderError) as e:
+        except (ValueError, KeyError, TypeError, LoaderError) as e:
             raise LoaderError(f"{path}: aircraft {ident!r}: {e}") from e
         if aircraft.id in fleet:
             raise LoaderError(f"{path}: duplicate aircraft id {aircraft.id!r}")
@@ -96,15 +123,19 @@ def load_hangar(path: Path | str) -> Hangar:
 
     try:
         return Hangar(
-            length_m=float(raw["length_m"]),
-            width_m=float(raw["width_m"]),
+            length_m=_to_float(raw["length_m"], "length_m"),
+            width_m=_to_float(raw["width_m"], "width_m"),
             door=Door(
-                center_x_m=float(door_data["center_x_m"]),
-                width_m=float(door_data["width_m"]),
+                center_x_m=_to_float(door_data["center_x_m"], "door.center_x_m"),
+                width_m=_to_float(door_data["width_m"], "door.width_m"),
             ),
-            maintenance_bay=MaintenanceBay(depth_m=float(bay_data["depth_m"])),
-            clearance_m=float(raw.get("clearance_m", 0.3)),
-            wing_layer_clearance_m=float(raw.get("wing_layer_clearance_m", 0.2)),
+            maintenance_bay=MaintenanceBay(
+                depth_m=_to_float(bay_data["depth_m"], "maintenance_bay.depth_m")
+            ),
+            clearance_m=_to_float(raw.get("clearance_m", 0.3), "clearance_m"),
+            wing_layer_clearance_m=_to_float(
+                raw.get("wing_layer_clearance_m", 0.2), "wing_layer_clearance_m"
+            ),
         )
     except (ValueError, TypeError) as e:
         raise LoaderError(f"{path}: {e}") from e
@@ -118,10 +149,17 @@ def load_layout(
 ) -> Layout:
     """Load a layout YAML.
 
-    If ``fleet`` and ``hangar`` are provided, the YAML's ``fleet:`` and
-    ``hangar:`` fields are ignored. Otherwise, those fields are
-    interpreted as paths **relative to the layout YAML's parent
-    directory** and loaded.
+    Path resolution: when the YAML supplies ``fleet:`` / ``hangar:``,
+    those values are joined to the layout YAML's parent directory.
+    Absolute paths in those fields override the join (pathlib's
+    behavior — passing an absolute right-hand side to ``/`` discards
+    the left), which is occasionally useful but also a footgun; prefer
+    repo-relative paths.
+
+    Conflict policy: if ``fleet`` / ``hangar`` overrides are supplied
+    as kwargs **and** the YAML also has those fields, the loader
+    raises :class:`LoaderError`. We refuse to silently let one source
+    of truth shadow the other.
     """
     path = Path(path)
     raw = _read_yaml(path)
@@ -135,6 +173,11 @@ def load_layout(
                 f"{path}: 'fleet' field is required when no fleet override is provided"
             )
         fleet = load_fleet((path.parent / fleet_ref).resolve())
+    elif "fleet" in raw:
+        raise LoaderError(
+            f"{path}: 'fleet' field is set in YAML but a fleet override was also "
+            f"provided programmatically; remove one to disambiguate"
+        )
 
     if hangar is None:
         hangar_ref = raw.get("hangar")
@@ -143,18 +186,21 @@ def load_layout(
                 f"{path}: 'hangar' field is required when no hangar override is provided"
             )
         hangar = load_hangar((path.parent / hangar_ref).resolve())
+    elif "hangar" in raw:
+        raise LoaderError(
+            f"{path}: 'hangar' field is set in YAML but a hangar override was also "
+            f"provided programmatically; remove one to disambiguate"
+        )
 
     placements_data = raw.get("placements", [])
     if not isinstance(placements_data, list):
         raise LoaderError(f"{path}: 'placements' must be a list")
     try:
         placements = tuple(_build_placement(p) for p in placements_data)
-    except (ValueError, KeyError, TypeError) as e:
+    except (ValueError, KeyError, TypeError, LoaderError) as e:
         raise LoaderError(f"{path}: placement: {e}") from e
 
-    maintenance_plane: str | None = None
-    if isinstance(raw.get("maintenance"), dict):
-        maintenance_plane = raw["maintenance"].get("plane")
+    maintenance_plane = _extract_maintenance_plane(raw, path)
 
     try:
         return Layout(
@@ -167,7 +213,35 @@ def load_layout(
         raise LoaderError(f"{path}: {e}") from e
 
 
-def _build_aircraft(entry: dict[str, Any]) -> Aircraft:
+def _extract_maintenance_plane(raw: dict, path: Path) -> str | None:
+    """Pull ``maintenance_plane`` from the layout YAML, rejecting common
+    typos (``maintenance: cessna_150`` with no nested ``plane:`` key)."""
+    if "maintenance" not in raw:
+        return None
+    m = raw["maintenance"]
+    if m is None:
+        return None  # explicit `maintenance: ~` → no maintenance plane
+    if not isinstance(m, dict):
+        raise LoaderError(
+            f"{path}: 'maintenance' must be a mapping with a 'plane' key, "
+            f"got {type(m).__name__}"
+        )
+    if "plane" not in m:
+        raise LoaderError(
+            f"{path}: 'maintenance' block present but lacks required 'plane' key"
+        )
+    return m["plane"]
+
+
+def _build_aircraft(entry: Any) -> Aircraft:
+    if not isinstance(entry, dict):
+        raise LoaderError(f"aircraft entry must be a mapping, got {type(entry).__name__}")
+
+    required = ("id", "name", "wing_position", "gear", "movement_mode")
+    for key in required:
+        if key not in entry:
+            raise LoaderError(f"missing required field {key!r}")
+
     parts_data = entry.get("parts")
     if not isinstance(parts_data, list) or not parts_data:
         raise LoaderError("'parts' must be a non-empty list")
@@ -182,14 +256,17 @@ def _build_aircraft(entry: dict[str, Any]) -> Aircraft:
             raise LoaderError("'struts' block requires a part of kind 'wing'")
         parts.extend(_expand_struts(spec, wing))
 
+    turn_radius_raw = entry.get("turn_radius_m")
+    turn_radius_m = None if turn_radius_raw is None else _to_float(turn_radius_raw, "turn_radius_m")
+
     return Aircraft(
         id=entry["id"],
         name=entry["name"],
         wing_position=entry["wing_position"],
         gear=entry["gear"],
         movement_mode=entry["movement_mode"],
-        turn_radius_m=entry.get("turn_radius_m"),
-        measured=bool(entry.get("measured", False)),
+        turn_radius_m=turn_radius_m,
+        measured=_to_bool(entry.get("measured", False), "measured"),
         parts=tuple(parts),
         notes=entry.get("notes", ""),
     )
@@ -204,13 +281,13 @@ def _build_part(data: Any, index: int) -> Part:
             raise LoaderError(f"parts[{index}] missing required field {key!r}")
     return Part(
         kind=data["kind"],
-        length_m=float(data["length_m"]),
-        width_m=float(data["width_m"]),
-        offset_x_m=float(data.get("offset_x_m", 0.0)),
-        offset_y_m=float(data.get("offset_y_m", 0.0)),
-        angle_deg=float(data.get("angle_deg", 0.0)),
-        z_bottom_m=float(data["z_bottom_m"]),
-        z_top_m=float(data["z_top_m"]),
+        length_m=_to_float(data["length_m"], f"parts[{index}].length_m"),
+        width_m=_to_float(data["width_m"], f"parts[{index}].width_m"),
+        offset_x_m=_to_float(data.get("offset_x_m", 0.0), f"parts[{index}].offset_x_m"),
+        offset_y_m=_to_float(data.get("offset_y_m", 0.0), f"parts[{index}].offset_y_m"),
+        angle_deg=_to_float(data.get("angle_deg", 0.0), f"parts[{index}].angle_deg"),
+        z_bottom_m=_to_float(data["z_bottom_m"], f"parts[{index}].z_bottom_m"),
+        z_top_m=_to_float(data["z_top_m"], f"parts[{index}].z_top_m"),
     )
 
 
@@ -226,11 +303,11 @@ def _build_struts_spec(data: dict[str, Any]) -> StrutsSpec:
         if key not in data:
             raise LoaderError(f"'struts' missing required field {key!r}")
     return StrutsSpec(
-        fuselage_attach_x_m=float(data["fuselage_attach_x_m"]),
-        fuselage_attach_y_m=float(data["fuselage_attach_y_m"]),
-        fuselage_attach_z_m=float(data["fuselage_attach_z_m"]),
-        wing_attach_y_m=float(data["wing_attach_y_m"]),
-        width_m=float(data["width_m"]),
+        fuselage_attach_x_m=_to_float(data["fuselage_attach_x_m"], "struts.fuselage_attach_x_m"),
+        fuselage_attach_y_m=_to_float(data["fuselage_attach_y_m"], "struts.fuselage_attach_y_m"),
+        fuselage_attach_z_m=_to_float(data["fuselage_attach_z_m"], "struts.fuselage_attach_z_m"),
+        wing_attach_y_m=_to_float(data["wing_attach_y_m"], "struts.wing_attach_y_m"),
+        width_m=_to_float(data["width_m"], "struts.width_m"),
     )
 
 
@@ -283,10 +360,10 @@ def _build_placement(data: Any) -> Placement:
             raise LoaderError(f"placement missing required field {key!r}")
     return Placement(
         plane_id=data["plane"],
-        x_m=float(data["x_m"]),
-        y_m=float(data["y_m"]),
-        heading_deg=float(data["heading_deg"]),
-        on_carts=bool(data.get("on_carts", False)),
+        x_m=_to_float(data["x_m"], "x_m"),
+        y_m=_to_float(data["y_m"], "y_m"),
+        heading_deg=_to_float(data["heading_deg"], "heading_deg"),
+        on_carts=_to_bool(data.get("on_carts", False), "on_carts"),
     )
 
 
