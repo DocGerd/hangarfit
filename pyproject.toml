@@ -9,7 +9,10 @@ description = "Helper tool for arranging the flying club fleet in a stack-style 
 readme = "README.md"
 requires-python = ">=3.11"
 authors = [{ name = "Patrick Kuhn" }]
-license = { text = "MIT" }
+license = { text = "Apache-2.0" }
+classifiers = [
+  "License :: OSI Approved :: Apache Software License",
+]
 dependencies = [
   "pyyaml>=6.0",
   "shapely>=2.0,<3",
