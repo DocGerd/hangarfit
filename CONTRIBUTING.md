@@ -9,6 +9,32 @@ review.
 
 ---
 
+## First-time setup
+
+1. Install dev dependencies:
+   ```bash
+   pip install -e ".[dev]"
+   ```
+2. Install the pre-commit hooks:
+   ```bash
+   pre-commit install
+   ```
+
+After this, every `git commit` runs the configured hooks (whitespace, YAML,
+ruff lint, ruff format) automatically. A failing hook blocks the commit — fix
+the issue, then re-commit. If you understand the risk and need to bypass the
+hooks for a single commit, you can use `git commit --no-verify` (the repo's
+`CLAUDE.md` notes that Claude-driven commits never skip hooks; humans have the
+override at their discretion).
+
+To run the hooks across the whole repo manually:
+
+```bash
+pre-commit run --all-files
+```
+
+---
+
 ## Issues first
 
 Every change — bug fix, feature, docs update — starts with a GitHub issue. No
