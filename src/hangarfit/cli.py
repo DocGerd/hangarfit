@@ -36,13 +36,13 @@ def build_parser() -> argparse.ArgumentParser:
         "--fleet",
         metavar="PATH",
         default=None,
-        help="Override the layout's embedded fleet: ref. Cannot be combined with a layout that has an embedded fleet: field.",
+        help="Override the fleet data file. Cannot be combined with a layout that already embeds a fleet path.",
     )
     check.add_argument(
         "--hangar",
         metavar="PATH",
         default=None,
-        help="Override the layout's embedded hangar: ref. Cannot be combined with a layout that has an embedded hangar: field.",
+        help="Override the hangar data file. Cannot be combined with a layout that already embeds a hangar path.",
     )
     check.add_argument(
         "--json",
