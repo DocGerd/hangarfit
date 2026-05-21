@@ -8,22 +8,24 @@
 # hangar. The other fixtures continue to use `data/hangar.yaml` so they
 # still exercise the real-world target dimensions.
 #
-# Layout strategy:
-#   - Three x-columns at px = 5, 10, 15. Strut-braced planes in the
-#     outer columns; cantilever planes (ctsl, scheibe) in the middle.
-#     5 m between columns is well above the ~2.6 m needed to clear a
-#     strut from a neighbor's fuselage in plan view.
-#   - 8 m vertical spacing within each column to keep fuselage y-bands
-#     non-overlapping per column.
+# Layout strategy (post-issue-#51 part offsets — gear-centred origin):
+#   - Three x-columns at px = 5, 12.5, 19.5. The wider column spacing
+#     (vs the historical 5/10/15) is required by the verified wider
+#     wingspans (e.g. scheibe 18.0 m, fk9_mkii 9.85 m, aviat_husky
+#     10.82 m); at 5 m spacing the outer columns' wingtips would clear
+#     by less than 0.3 m.
+#   - Strut-braced planes in the outer columns; cantilevers (ctsl,
+#     scheibe) plus low-wing fuji in the middle column.
+#   - Vertical spacing within each column is tuned to the post-offset
+#     fuselage extents (tailwheels are ~5 m of fuselage AFT of the
+#     gear; nosewheels are ~3 m AFT) plus the 0.3 m clearance.
 #   - Wing y-bands across columns are also staggered so no two high-wings
 #     plan-overlap at the same height.
-#   - Fuji (the only low-wing) at heading 90 on the right edge (px = 20).
-#     Its narrow 1.5 m wing-x at heading 90 threads a clean lane east of
-#     every strut-braced plane's strut zone, while the 9.4 m wing-y runs
-#     through the gap between husky (py = 5) and cessna_140 (py = 13).
-#     This is the placement that's impossible at heading 0, where Fuji's
-#     9.4 m wing-x necessarily overlaps some fuselage at every py.
-#   - Maintenance: scheibe_falke at py = 24 (fuselage centroid in the
+#   - Fuji (the only low-wing) at heading 0 in the middle column threads
+#     under the high wings (z-disjoint nesting allowed by the parts model).
+#     Its 9.42 m wingspan exactly clears the middle column's left/right
+#     neighbours in y at this placement.
+#   - Maintenance: scheibe_falke at py = 25 (fuselage centroid in the
 #     back-most 9 m bay, which starts at y = 21 for this hangar).
 #
 # Cart rule: 3 always_cart planes (scheibe, wild_thing, zlin) carry
@@ -41,52 +43,50 @@ placements:
   # Left column (px = 5) — small strut-braced
   - plane: wild_thing
     x_m: 5.0
-    y_m: 3.0
+    y_m: 4.0
     heading_deg: 0.0
     on_carts: true
   - plane: zlin_savage
     x_m: 5.0
-    y_m: 11.0
+    y_m: 14.0
     heading_deg: 0.0
     on_carts: true
   - plane: fk9_mkii
     x_m: 5.0
-    y_m: 19.0
+    y_m: 21.0
     heading_deg: 0.0
     on_carts: false
 
-  # Right column (px = 15) — larger strut-braced
+  # Right column (px = 19.5) — larger strut-braced
   - plane: aviat_husky
-    x_m: 15.0
-    y_m: 5.0
+    x_m: 19.5
+    y_m: 6.0
     heading_deg: 0.0
     on_carts: false
   - plane: cessna_140
-    x_m: 15.0
-    y_m: 13.0
+    x_m: 19.5
+    y_m: 14.0
     heading_deg: 0.0
     on_carts: true            # the ONE cart_eligible on carts
   - plane: cessna_150
-    x_m: 15.0
-    y_m: 20.5
+    x_m: 19.5
+    y_m: 22.0
     heading_deg: 0.0
     on_carts: false
 
-  # Middle column (px = 10) — cantilevers + maintenance plane
+  # Middle column (px = 12.5) — cantilevers + low-wing fuji + maintenance
   - plane: ctsl
-    x_m: 10.0
-    y_m: 7.0
+    x_m: 12.5
+    y_m: 8.5
+    heading_deg: 0.0
+    on_carts: false
+  - plane: fuji
+    x_m: 12.5
+    y_m: 17.0
     heading_deg: 0.0
     on_carts: false
   - plane: scheibe_falke
-    x_m: 10.0
-    y_m: 24.0
+    x_m: 12.5
+    y_m: 25.0
     heading_deg: 0.0
-    on_carts: true            # always_cart
-
-  # Right edge (px = 20, heading 90) — Fuji's low wing threads a clear lane
-  - plane: fuji
-    x_m: 20.0
-    y_m: 10.0
-    heading_deg: 90.0
-    on_carts: false
+    on_carts: true            # always_cart; maintenance plane in bay

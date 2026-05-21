@@ -454,8 +454,8 @@ class TestAircraftPartsWorldOnRealAircraft:
         # Fuselage at heading 0: long axis (length_m=7.0) runs along world y.
         fuselage = next(w for w in worlds if w.kind == "fuselage")
         minx, miny, maxx, maxy = fuselage.polygon.bounds
-        # length 7.0 → spans ≈ 7m along y; width 0.85 → spans ≈ 0.85m along x.
-        assert _almost_equal(maxy - miny, 7.0, tol=1e-6)
+        # length 6.88 → spans ≈ 6.88m along y; width 0.85 → spans ≈ 0.85m along x.
+        assert _almost_equal(maxy - miny, 6.88, tol=1e-6)
         assert _almost_equal(maxx - minx, 0.85, tol=1e-6)
         # Two struts are mirrored across plane-local +y=0; at heading 0,
         # plane +y maps to world +x, so the struts mirror across world x=0.

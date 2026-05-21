@@ -9,8 +9,12 @@
 # layout. The fixture pins the documented "centroid exactly on the
 # boundary is in the bay" semantic.
 #
-# cessna_150 fuselage at heading 0, py = 16.0 → fuselage offset_y_m = 0,
-# so the fuselage centroid is at (px, py) = (9, 16). y = 16 ≥ 16 ✓.
+# cessna_150 has fuselage.offset_x_m = -0.33 (gear forward of fuselage
+# centroid; the gear-centred plane-local origin convention sits the
+# centroid 0.33 m AFT of the gear for a nosewheel aircraft). At
+# heading 0 the fuselage centroid in world coords is at
+# (px, py + offset_x_m) = (9, py - 0.33). To put the centroid at
+# y = 16 exactly, py = 16.33.
 
 fleet: ../../data/fleet.yaml
 hangar: ../../data/hangar.yaml
@@ -21,6 +25,6 @@ maintenance:
 placements:
   - plane: cessna_150
     x_m: 9.0
-    y_m: 16.0
+    y_m: 16.33
     heading_deg: 0.0
     on_carts: false
