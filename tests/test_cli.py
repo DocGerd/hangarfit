@@ -40,6 +40,30 @@ class TestCheckHappyPath:
         assert captured.out.strip() == "valid"
         assert captured.err == ""
 
+    def test_default_example_layout_is_valid(self, capsys):
+        """The canonical smoke test from CLAUDE.md must produce ``valid``.
+
+        ``hangarfit check layouts/example.yaml`` is the first thing a new
+        contributor runs after cloning. If this regresses, the default
+        user experience is "the algorithm looks broken" — even when the
+        checker itself is fine. Pin it.
+        """
+        exit_code = main(["check", str(REPO_ROOT / "layouts" / "example.yaml")])
+        assert exit_code == 0
+        captured = capsys.readouterr()
+        assert captured.out.strip() == "valid"
+        assert captured.err == ""
+
+    def test_default_example_invalid_layout_lists_conflicts(self, capsys):
+        """The companion ``layouts/example_invalid.yaml`` must exit 1 and
+        produce at least one conflict — it's the demo for the red-overlay
+        rendering and the JSON conflicts list."""
+        exit_code = main(["check", str(REPO_ROOT / "layouts" / "example_invalid.yaml")])
+        assert exit_code == 1
+        captured = capsys.readouterr()
+        assert captured.out.startswith("invalid:")
+        assert captured.err == ""
+
     def test_check_invalid_layout_returns_1(self, capsys):
         exit_code = main(["check", str(FIXTURES_DIR / "invalid_fuselage_wing_overlap.yaml")])
         assert exit_code == 1

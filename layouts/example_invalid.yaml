@@ -1,0 +1,52 @@
+# Deliberately invalid example — drives the conflict-overlay demo.
+#
+# Run:
+#     hangarfit check layouts/example_invalid.yaml --render bad.png
+#
+# Expected: ``invalid: 4 conflicts``, exit 1, and a PNG with each
+# conflicting plane outlined in red. Exercises three different
+# conflict kinds:
+#
+#   - hangar_bounds   — aviat_husky's left wingtip pokes past x=0
+#   - wing_wing_overlap — aviat_husky's wing overlaps cessna_140's wing
+#     in plan view AND at the same height (~2 m)
+#   - strut_wing_overlap — the same wing-wing situation also brings each
+#     plane's wing close to the other's strut
+#
+# Companion to the all-valid ``layouts/example.yaml``. If you only want
+# the demo of a clean PNG, run the default example instead.
+#
+# Hangar: 18 m wide × 25 m deep (data/hangar.yaml). Coordinate
+# convention: (0, 0) front-left, +x right along door, +y deeper.
+
+fleet: ../data/fleet.yaml
+hangar: ../data/hangar.yaml
+
+maintenance:
+  plane: scheibe_falke
+
+placements:
+  # Husky too far left — its 10.82 m wingspan reaches past x=0
+  - plane: aviat_husky
+    x_m: 4.0
+    y_m: 8.0
+    heading_deg: 0.0
+    on_carts: false
+
+  # Cessna 140 placed only 6 m to husky's right — their wings overlap
+  # in plan view and at the same height (~2 m), so the checker fires
+  # both wing_wing_overlap and strut_wing_overlap
+  - plane: cessna_140
+    x_m: 10.0
+    y_m: 8.0
+    heading_deg: 0.0
+    on_carts: true         # the single cart_eligible plane on carts
+
+  # Maintenance plane in the bay — placed correctly (no conflict here);
+  # this is just to satisfy the Layout invariant that the designated
+  # maintenance plane is also placed
+  - plane: scheibe_falke
+    x_m: 9.0
+    y_m: 18.0
+    heading_deg: 0.0
+    on_carts: true
