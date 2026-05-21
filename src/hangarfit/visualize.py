@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+from typing import Any
 
 import matplotlib
 
@@ -32,7 +33,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.patches import Polygon as MplPolygon  # noqa: E402
 
 from .geometry import WorldPart, aircraft_parts_world  # noqa: E402
-from .models import CheckResult, Layout, WingPosition  # noqa: E402
+from .models import CheckResult, Layout, Placement, WingPosition  # noqa: E402
 
 _WING_COLORS: dict[WingPosition, str] = {
     "high": "#3498db",  # blue
@@ -157,7 +158,7 @@ def nose_direction(heading_deg: float) -> tuple[float, float]:
     return (math.sin(h), math.cos(h))
 
 
-def _draw_hangar(ax, layout: Layout) -> None:
+def _draw_hangar(ax: Any, layout: Layout) -> None:
     """Hangar rectangle with a gap in the front wall for the door and a
     shaded back strip for the maintenance bay."""
     hangar = layout.hangar
@@ -191,7 +192,7 @@ def _draw_hangar(ax, layout: Layout) -> None:
     ax.plot([door_left, door_right], [0, 0], color=_DOOR_EDGE, lw=1, linestyle=":")
 
 
-def _draw_aircraft(ax, layout: Layout) -> None:
+def _draw_aircraft(ax: Any, layout: Layout) -> None:
     """Draw each placed plane as its world parts, color-keyed by wing position."""
     for placement in layout.placements:
         aircraft = layout.fleet[placement.plane_id]
@@ -202,7 +203,7 @@ def _draw_aircraft(ax, layout: Layout) -> None:
         _annotate_plane(ax, placement, aircraft.id)
 
 
-def _draw_part(ax, part: WorldPart, color: str) -> None:
+def _draw_part(ax: Any, part: WorldPart, color: str) -> None:
     """Render a single world part. Fuselage is near-opaque (two fuselages
     overlapping is always a conflict; no value in seeing through), wing
     translucent (so stacked wings show their plan-view overlap visually),
@@ -253,7 +254,7 @@ def _draw_part(ax, part: WorldPart, color: str) -> None:
     ax.add_patch(patch)
 
 
-def _annotate_plane(ax, placement, plane_id: str) -> None:
+def _annotate_plane(ax: Any, placement: Placement, plane_id: str) -> None:
     """Plane id label + a short arrow showing the nose direction."""
     dx, dy = nose_direction(placement.heading_deg)
     ax.annotate(
@@ -278,7 +279,7 @@ def _annotate_plane(ax, placement, plane_id: str) -> None:
     )
 
 
-def _draw_conflict_overlay(ax, layout: Layout, check_result: CheckResult) -> None:
+def _draw_conflict_overlay(ax: Any, layout: Layout, check_result: CheckResult) -> None:
     """Redraw every part of every plane named in any conflict, in red,
     with a thicker edge so the conflict reads at a glance."""
     conflicting_planes: set[str] = set()
@@ -301,7 +302,7 @@ def _draw_conflict_overlay(ax, layout: Layout, check_result: CheckResult) -> Non
             ax.add_patch(patch)
 
 
-def _finalize_axes(ax, layout: Layout, title: str | None) -> None:
+def _finalize_axes(ax: Any, layout: Layout, title: str | None) -> None:
     """Equal-aspect axes, hangar-sized view, sensible labels, optional title.
 
     The y-axis is inverted so the door (y = 0) renders at the *top* of

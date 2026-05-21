@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.4", "pytest-cov>=4.0", "ruff>=0.7.0"]
+dev = ["pytest>=7.4", "pytest-cov>=4.0", "ruff>=0.7.0", "mypy>=1.0", "types-PyYAML", "types-shapely"]
 
 [project.scripts]
 hangarfit = "hangarfit.cli:main"
@@ -39,3 +39,24 @@ select = ["E", "F", "I", "B", "UP", "SIM"]
 
 [tool.ruff.format]
 # Defaults are fine — quote-style="double", indent-style="space", line-ending="lf".
+
+[tool.mypy]
+python_version = "3.11"
+strict_optional = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+
+[[tool.mypy.overrides]]
+module = "hangarfit.*"
+disallow_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = "tests.*"
+disallow_untyped_defs = false
+ignore_errors = false
+
+# matplotlib ships no PEP 561 stubs; ignore its imports rather than
+# using an unofficial stub package that may not track the 3.x API.
+[[tool.mypy.overrides]]
+module = "matplotlib.*"
+ignore_missing_imports = true

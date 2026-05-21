@@ -332,18 +332,27 @@ def _expand_struts(spec: StrutsSpec, wing: Part) -> list[Part]:
             f"loader requires a strictly positive span"
         )
     midpoint = (spec.fuselage_attach_y_m + spec.wing_attach_y_m) / 2.0
-    common = {
-        "kind": "strut",
-        "length_m": spec.width_m,
-        "width_m": strut_span,
-        "offset_x_m": spec.fuselage_attach_x_m,
-        "angle_deg": 0.0,
-        "z_bottom_m": spec.fuselage_attach_z_m,
-        "z_top_m": wing.z_bottom_m,
-    }
     return [
-        Part(offset_y_m=midpoint, **common),  # right side
-        Part(offset_y_m=-midpoint, **common),  # left side
+        Part(  # right side
+            kind="strut",
+            length_m=spec.width_m,
+            width_m=strut_span,
+            offset_x_m=spec.fuselage_attach_x_m,
+            offset_y_m=midpoint,
+            angle_deg=0.0,
+            z_bottom_m=spec.fuselage_attach_z_m,
+            z_top_m=wing.z_bottom_m,
+        ),
+        Part(  # left side
+            kind="strut",
+            length_m=spec.width_m,
+            width_m=strut_span,
+            offset_x_m=spec.fuselage_attach_x_m,
+            offset_y_m=-midpoint,
+            angle_deg=0.0,
+            z_bottom_m=spec.fuselage_attach_z_m,
+            z_top_m=wing.z_bottom_m,
+        ),
     ]
 
 
