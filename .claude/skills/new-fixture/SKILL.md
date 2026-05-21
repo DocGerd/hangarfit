@@ -11,7 +11,7 @@ Scaffold a new collision-test fixture file for the hangarfit project.
 
 ## Step 1 — Parse and validate arguments
 
-Parse the following named arguments from `$ARGUMENTS`. Arguments are space-separated `key=value` pairs and may appear in any order. `rationale` must be wrapped in double-quotes (`"..."`) when it contains spaces; single-quote wrapping is NOT supported. A `=` character inside a double-quoted value is fine (e.g. `rationale="z-gap = 0.3 m"`). Unknown keys (any key other than `kind`, `slug`, `rationale`) are an error — stop immediately and name the unrecognised key.
+Parse the following named arguments from `$ARGUMENTS` using shell-style (shlex-like) tokenization: text inside matching double quotes is a single token even if it contains spaces or `=` characters. `rationale` must be wrapped in double-quotes (`"..."`) when it contains spaces; single-quote wrapping is NOT supported. A `=` character inside a double-quoted value is fine (e.g. `rationale="z-gap = 0.3 m"`). Embedded newlines in rationale are NOT supported — `$ARGUMENTS` is a single line; if the rationale needs newlines, the user should write a short single-line value and expand it manually after the fixture is created. Unknown keys (any key other than `kind`, `slug`, `rationale`) are an error — stop immediately and name the unrecognised key.
 
 | Arg | Required | Valid values |
 |-----|----------|--------------|
@@ -71,7 +71,6 @@ The canonical header style is established by the layout fixtures in `tests/fixtu
    - For `kind=invalid`: which conflict kind(s) the checker must emit (e.g. `strut_wing_overlap`, `wing_wing_overlap`, `fuselage_wing_overlap`, `hangar_bounds`, etc.).
    - For `kind=valid`: why the expected result is valid (e.g. polygon distance vs clearance, height disjointness).
 4. Blank `#` line.
-5. The `# TODO:` nudge lines.
 
 A single-paragraph narrative with no coordinate citations is **not** sufficient. The header is the primary documentation; it must let a reader reconstruct the geometry without running the code.
 
@@ -86,10 +85,6 @@ A single-paragraph narrative with no coordinate citations is **not** sufficient.
 #
 # Wing-wing nearest approach: <distance> m → polygon distance ≈ X m,
 # well above the 0.3 m horizontal clearance.
-#
-# TODO: edit placements below. Run:
-#   pytest tests/test_collisions.py -v
-# to verify after filling in real values.
 
 fleet: ../../data/fleet.yaml
 hangar: ../../data/hangar.yaml
@@ -115,10 +110,6 @@ placements:
 # <Plane B> at (<x>, <y>, <heading>, <on_carts>): <relevant part>
 #   x [e, f], y [g, h], z [z_bot2, z_top2].
 #   z-gap = <z_bot2> − <z_top> = <N> m <operator> 0.2 m clearance.
-#
-# TODO: edit placements below. Run:
-#   pytest tests/test_collisions.py -v
-# to verify after filling in real values.
 
 fleet: ../../data/fleet.yaml
 hangar: ../../data/hangar.yaml
@@ -204,3 +195,14 @@ The skill creates the file; adding the test method is a manual step the user mus
 - The `placements:` section must always contain a `# TODO` marker; never fill in real geometry values.
 - If `tests/fixtures/` does not exist, stop and print an error — do NOT create the directory.
 - If the Write tool fails for any reason, stop immediately and print the error verbatim — do NOT print the confirmation message.
+
+## Failure modes
+
+Every abort condition in one place. In all cases, stop immediately and print the described message. **Step 6 (the success confirmation) only runs after every check above has passed — it is never printed following any abort.**
+
+1. **Missing required argument** (`kind`, `slug`, or `rationale` absent): print a clear error naming the missing argument and its expected format.
+2. **Invalid `kind` value** (anything other than `valid` or `invalid`): print a clear error stating `kind` must be exactly `valid` or `invalid`.
+3. **Unknown argument key** (any key other than `kind`, `slug`, `rationale`): print a clear error naming the unrecognised key.
+4. **`tests/fixtures/` directory not found**: print `Error: tests/fixtures/ directory not found. This skill requires the directory to exist before scaffolding a fixture.`
+5. **Output path already exists**: print `Error: tests/fixtures/<kind>_<slug>.yaml already exists. Delete it first or choose a different slug.`
+6. **Write tool returns an error**: print the error text verbatim.
