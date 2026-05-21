@@ -213,6 +213,34 @@ The `.claude/` directory holds team-shared Claude Code settings (currently: a Po
 
 ---
 
+## MCP servers
+
+`.mcp.json` at the repo root declares two project-scoped MCP servers so every contributor gets them automatically on a fresh clone — no per-user setup step. See also [.claude/README.md](.claude/README.md) for the broader Claude Code config ecosystem in this repo.
+
+| Server | Transport | Purpose |
+|---|---|---|
+| `context7` | stdio (`npx @upstash/context7-mcp@2.3.0`) | Live shapely 2.x and matplotlib API lookups. `shapely>=2.0,<3` is pinned in `pyproject.toml`; training-data docs may be stale. |
+| `github` | HTTP (`https://api.githubcopilot.com/mcp/`) | Issue / PR / release inspection from Claude; complements the existing `gh` CLI. |
+
+**Canonical upstream references (verify before editing `.mcp.json`):**
+- Context7: https://context7.com/docs/resources/all-clients
+- GitHub MCP: https://github.com/github/github-mcp-server
+
+If a URL or env-var name in `.mcp.json` ever stops working, check these first.
+
+### Auth requirements
+
+- **Context7** — API key is optional (public free tier has rate limits). For higher limits, set `CONTEXT7_API_KEY` in your shell environment. Get a free key at https://context7.com/dashboard.
+- **GitHub MCP** — Requires `GITHUB_PERSONAL_ACCESS_TOKEN` in your shell environment. Minimum permissions depend on which PAT type you create:
+  - **Classic PAT:** `repo` + `read:org` scopes are sufficient for read operations; add `write:discussion` if you want Claude to create issues or PRs via the MCP server rather than `gh`.
+  - **Fine-grained PAT:** Repository permissions `Contents: Read`, `Issues: Read`, `Pull requests: Read`; plus Organization permissions `Members: Read` for org-level lookups. Add the corresponding `Write` levels for create operations. Fine-grained PATs use different UI checkboxes from classic — the scope names above are classic-only.
+
+### Verifying the servers loaded
+
+After cloning and running `claude`, use the `/mcp` command. Both `context7` and `github` should appear with status **connected**. If a server shows **failed**, check that the relevant env var is set and that `npx` (a recent Node LTS, `node --version` ≥ 18 is safe) is on your PATH.
+
+---
+
 ## Worktrees
 
 Allowed but not the default. Use only when two feature branches need parallel work (e.g., long-running test suite while writing the visualizer). For sequential issue flow, plain branch checkout is simpler.
