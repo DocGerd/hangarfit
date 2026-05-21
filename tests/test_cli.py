@@ -132,3 +132,10 @@ class TestCheckRender:
         assert exit_code == 1
         assert out.exists()
         assert out.stat().st_size > 0
+
+    def test_check_render_skipped_on_structural_error(self, tmp_path, capsys):
+        out = tmp_path / "should_not_exist.png"
+        layout = str(FIXTURES_DIR / "invalid_cart_rule.yaml")
+        exit_code = main(["check", layout, "--render", str(out)])
+        assert exit_code == 2
+        assert not out.exists()
