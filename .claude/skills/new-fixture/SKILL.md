@@ -11,7 +11,7 @@ Scaffold a new collision-test fixture file for the hangarfit project.
 
 ## Step 1 — Parse and validate arguments
 
-Parse the following named arguments from `$ARGUMENTS`. Each is in `key=value` form; `rationale` may be quoted with `"..."` and can span a sentence.
+Parse the following named arguments from `$ARGUMENTS`. Arguments are space-separated `key=value` pairs and may appear in any order. `rationale` must be wrapped in double-quotes (`"..."`) when it contains spaces; single-quote wrapping is NOT supported. A `=` character inside a double-quoted value is fine (e.g. `rationale="z-gap = 0.3 m"`). Unknown keys (any key other than `kind`, `slug`, `rationale`) are an error — stop immediately and name the unrecognised key.
 
 | Arg | Required | Valid values |
 |-----|----------|--------------|
@@ -39,16 +39,53 @@ Error: tests/fixtures/<kind>_<slug>.yaml already exists. Delete it first or choo
 ```
 Do NOT overwrite an existing fixture.
 
-## Step 3 — Choose the template and build the new fixture content
+## Step 3 — Determine the next case number
+
+Before building the file content, compute the next available case number:
+
+```bash
+grep -h '^# Case ' tests/fixtures/*.yaml \
+  | sed -n 's/^# Case \([0-9]*\).*/\1/p' \
+  | sort -n | tail -1
+```
+
+If the command returns a number N, use `N+1`. If it returns nothing (no fixtures yet), use `1`. Call this value `NEXT_CASE`.
+
+If `tests/fixtures/` does not exist, stop immediately and print:
+```
+Error: tests/fixtures/ directory not found. This skill requires the directory to exist before scaffolding a fixture.
+```
+Do NOT create the directory automatically.
+
+## Step 4 — Choose the template and build the new fixture content
+
+The canonical header style is established by the layout fixtures in `tests/fixtures/`. Study `tests/fixtures/valid_two_separated.yaml` (the valid exemplar) and `tests/fixtures/invalid_strut_blocks_nesting.yaml` (the invalid exemplar) to understand the expected structure before writing your output. Key elements:
+
+1. First line: `# Case <NEXT_CASE> — <one-sentence summary>.`
+2. Blank `#` line.
+3. Body paragraphs (one or more), wrapped at ~80 chars, each line beginning with `#`. The body **must** include:
+   - Which planes are placed and at what position/heading.
+   - Bracket-form coordinate citations for relevant parts, e.g. `fuselage x [4.5, 5.5], y [0.35, 6.65]` or `wing x [0.7, 9.3], y [3.8, 5.2], z [1.9, 2.2]`.
+   - Z-band citations for height-sensitive reasoning, e.g. `z [0.5, 2.0]`.
+   - Explicit clearance arithmetic where the pass/fail margin matters, e.g. `z-gap = 1.9 − 1.6 = 0.3 m > 0.2 m clearance`.
+   - For `kind=invalid`: which conflict kind(s) the checker must emit (e.g. `strut_wing_overlap`, `wing_wing_overlap`, `fuselage_wing_overlap`, `hangar_bounds`, etc.).
+   - For `kind=valid`: why the expected result is valid (e.g. polygon distance vs clearance, height disjointness).
+4. Blank `#` line.
+5. The `# TODO:` nudge lines.
+
+A single-paragraph narrative with no coordinate citations is **not** sufficient. The header is the primary documentation; it must let a reader reconstruct the geometry without running the code.
 
 **For `kind=valid`** — base on `tests/fixtures/valid_two_separated.yaml`:
 
 ```yaml
-# <kind>_<slug> — <first line of rationale>. <kind capitalized>.
+# Case <NEXT_CASE> — <one-sentence summary>. Valid.
 #
-# <Full rationale paragraph, wrapped at ~80 chars, explaining the geometric
-# scenario: which planes, which parts, which heights, why the expected
-# result is valid.>
+# <Plane A> at (<x>, <y>, <heading>, <on_carts>): fuselage x [a, b],
+#   y [c, d]; wing x [e, f], y [g, h], z [z_bot, z_top].
+# <Plane B> at (<x>, <y>, <heading>, <on_carts>): ...
+#
+# Wing-wing nearest approach: <distance> m → polygon distance ≈ X m,
+# well above the 0.3 m horizontal clearance.
 #
 # TODO: edit placements below. Run:
 #   pytest tests/test_collisions.py -v
@@ -71,12 +108,13 @@ placements:
 **For `kind=invalid`** — base on `tests/fixtures/invalid_strut_blocks_nesting.yaml`:
 
 ```yaml
-# <kind>_<slug> — <first line of rationale>. <kind capitalized>.
+# Case <NEXT_CASE> — <one-sentence summary> → invalid: `<conflict_kind>`.
 #
-# <Full rationale paragraph, wrapped at ~80 chars, explaining the geometric
-# scenario: which planes, which parts, which heights, and which conflict
-# kind(s) the checker must emit (e.g. strut_wing_overlap,
-# wing_wing_overlap, fuselage_wing_overlap, hangar_bounds, etc.).>
+# <Plane A> at (<x>, <y>, <heading>, <on_carts>): <relevant part>
+#   at x [a, b] / y [c, d], z [z_bot, z_top].
+# <Plane B> at (<x>, <y>, <heading>, <on_carts>): <relevant part>
+#   x [e, f], y [g, h], z [z_bot2, z_top2].
+#   z-gap = <z_bot2> − <z_top> = <N> m <operator> 0.2 m clearance.
 #
 # TODO: edit placements below. Run:
 #   pytest tests/test_collisions.py -v
@@ -96,29 +134,22 @@ placements:
   #     on_carts: false
 ```
 
-Populate the header comment block as follows:
-- First line after `#`: `<kind>_<slug> — <opening clause from rationale>. <Kind capitalized>.`
-- Blank `#` line.
-- Subsequent `#` lines: the full rationale text wrapped at ~80 chars.
-- Blank `#` line.
-- The `# TODO:` nudge lines.
-
 The `fleet:` and `hangar:` keys must remain exactly `../../data/fleet.yaml` and `../../data/hangar.yaml` (relative paths that work from inside `tests/fixtures/`).
 
-If the rationale mentions a non-standard hangar (e.g. needs more space), add a note in the header explaining why `test_hangar_large.yaml` is used and change `hangar:` accordingly — but only do this if the user explicitly specifies it in the rationale; otherwise always use `../../data/hangar.yaml`.
+**Non-standard-hangar override:** If and only if the `rationale` string contains the literal substring `test_hangar_large`, change `hangar:` to `test_hangar_large.yaml` (a sibling file in the same directory — the relative path is just the filename) and insert a comment line directly after the summary line explaining why the larger hangar is needed. In all other cases use `../../data/hangar.yaml` — do NOT infer the override from words like "large" or "space" alone.
 
-## Step 4 — Write the file
+## Step 5 — Write the file
 
-Use the Write tool to write the constructed YAML to `tests/fixtures/<kind>_<slug>.yaml`.
+Use the Write tool to write the constructed YAML to `tests/fixtures/<kind>_<slug>.yaml`. If the Write tool returns an error (permission denied, disk full, or any other failure), stop immediately and print the error text verbatim — do NOT proceed to the confirmation step.
 
 The file must:
-1. Start with the rationale header comment block (as constructed in Step 3).
+1. Start with the rationale header comment block (as constructed in Step 4), beginning with `# Case <NEXT_CASE> — …`.
 2. Have exactly one blank line between the comment block and `fleet:`.
 3. Contain `fleet:` and `hangar:` keys.
 4. Contain a `placements:` key with the `# TODO` comment placeholder.
 5. NOT contain any real placement values (those are for the user to fill in).
 
-## Step 5 — Print confirmation
+## Step 6 — Print confirmation
 
 After writing the file, print exactly:
 
@@ -137,9 +168,16 @@ Do not add anything else — no praise, no summary, no emoji.
 
 ## Rationale-in-header convention
 
-Every fixture file in `tests/fixtures/` follows the convention established in `test_hangar_large.yaml`: the top of the file is a comment block that explains in plain English *why the fixture exists* — what geometric scenario it tests, which parts are involved, and what outcome the checker must produce. This is the single most important convention to enforce.
+Every layout fixture in `tests/fixtures/` follows the convention established by `valid_two_separated.yaml` (valid exemplar) and `invalid_strut_blocks_nesting.yaml` (invalid exemplar). Note: `test_hangar_large.yaml` is a *hangar config* file, not a layout fixture — do not use it as a header convention exemplar.
 
-The rationale lives in the YAML comment header, NOT in a separate README or in the test file. If the header is missing or terse, the fixture is incomplete.
+The header is a YAML comment block at the top of the file. It must:
+1. Begin with `# Case N — <one-sentence summary>.` where N is the sequential case number computed in Step 3.
+2. Cite the relevant part coordinates in bracket form: `x [a, b]`, `y [c, d]`, `z [z_bot, z_top]`.
+3. Show explicit clearance arithmetic where the pass/fail margin matters.
+4. For invalid fixtures: name the expected conflict kind(s).
+5. For valid fixtures: state why no conflict fires (polygon distance, height disjointness, etc.).
+
+The rationale lives in the YAML comment header, NOT in a separate README or in the test file. A single-paragraph narrative with no coordinate citations is incomplete.
 
 ## Fixture discovery
 
@@ -164,3 +202,5 @@ The skill creates the file; adding the test method is a manual step the user mus
 - Never modify Python source under `src/` or `tests/`.
 - Never run `pytest` automatically — only print the nudge to run it.
 - The `placements:` section must always contain a `# TODO` marker; never fill in real geometry values.
+- If `tests/fixtures/` does not exist, stop and print an error — do NOT create the directory.
+- If the Write tool fails for any reason, stop immediately and print the error verbatim — do NOT print the confirmation message.
