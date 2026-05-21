@@ -1,24 +1,30 @@
 """Collision checker for hangarfit.
 
 Single public entry: :func:`check`. Given a fully-validated
-:class:`~hangarfit.models.Layout`, runs three geometric rules and
-returns a :class:`~hangarfit.models.CheckResult`.
+:class:`~hangarfit.models.Layout`, returns a
+:class:`~hangarfit.models.CheckResult`.
 
-The four invariants of a valid layout:
+The full set of layout invariants is four — three checked here, one
+upstream:
 
-1. **Hangar bounds** — every world part vertex lies inside the hangar
-   rectangle ``0 ≤ x ≤ hangar.width_m``, ``0 ≤ y ≤ hangar.length_m``.
-2. **Maintenance bay** — if ``layout.maintenance_plane`` is set, the
-   union of that plane's fuselage parts must have its centroid at
-   ``y ≥ hangar.length_m − hangar.maintenance_bay.depth_m``.
-3. **Pairwise parts overlap** — for every two parts from *different*
-   aircraft, conflict iff both (a) their polygons are within
-   ``hangar.clearance_m`` in plan view AND (b) their z-ranges are
-   within ``hangar.wing_layer_clearance_m`` in height.
-4. **Cart rule** — at most one ``cart_eligible`` plane has
-   ``on_carts=True``. *NOT enforced here* — :class:`Layout.__post_init__`
-   already rejects this at construction, so by the time a Layout
-   reaches the checker the rule has been satisfied.
+1. **Hangar bounds** (checked here) — every world part vertex lies
+   inside the hangar rectangle ``0 ≤ x ≤ hangar.width_m``,
+   ``0 ≤ y ≤ hangar.length_m``.
+2. **Maintenance bay** (checked here) — if ``layout.maintenance_plane``
+   is set, the union of that plane's fuselage parts must have its
+   centroid at ``y ≥ hangar.length_m − hangar.maintenance_bay.depth_m``.
+   If the designated plane has no fuselage parts at all (model permits
+   this; the loader doesn't require a fuselage), an explicit
+   ``maintenance_no_fuselage`` conflict is emitted rather than silently
+   passing — we don't want "rule unevaluatable" to look like "rule satisfied".
+3. **Pairwise parts overlap** (checked here) — for every two parts from
+   *different* aircraft, conflict iff both (a) their polygons are within
+   ``hangar.clearance_m`` in plan view AND (b) their z-ranges are within
+   ``hangar.wing_layer_clearance_m`` in height.
+4. **Cart rule** (upstream, *not here*) — at most one ``cart_eligible``
+   plane has ``on_carts=True``. :class:`Layout.__post_init__` rejects
+   violations at construction, so by the time a Layout reaches the
+   checker this rule has been satisfied.
 
 Conflict ``kind`` taxonomy for pairwise rules is the two part kinds
 sorted alphabetically and joined by ``"_"`` with the ``"_overlap"``
@@ -52,49 +58,48 @@ def check(layout: Layout) -> CheckResult:
 def _hangar_bounds_conflicts(
     world_parts: dict[str, list[WorldPart]], hangar: Hangar
 ) -> list[Conflict]:
-    """Flag any plane whose world parts have a vertex outside the hangar
-    rectangle ``[0, width_m] × [0, length_m]``.
+    """Flag any world part with a vertex outside the hangar rectangle
+    ``[0, width_m] × [0, length_m]``.
 
-    Per the issue's settled design (memory: ``project_phase1_progress``)
-    this uses **per-vertex bounds**, not ``polygon.contains(...)``. The
-    Shapely contains check has touching-vs-overlap subtleties at the
-    boundary that would either over- or under-report walls flush with
-    the hangar edge. Per-vertex bounds give "every corner inside" with
-    no surprise semantics.
+    Uses **per-vertex bounds**, not ``polygon.contains(...)``. The Shapely
+    contains check has touching-vs-overlap subtleties at the boundary that
+    would either over- or under-report walls flush with the hangar edge.
+    Per-vertex bounds give "every corner inside" with no surprise semantics
+    — a vertex exactly at ``x = 0`` or ``x = hangar.width_m`` counts as inside.
 
-    Emits one conflict per plane (the first out-of-bounds vertex
-    encountered) so a plane sticking out at two corners doesn't
-    duplicate-flag the same problem.
+    Emits one conflict per offending **part** (not per plane), with the
+    first out-of-bounds vertex of that part. Reporting per-part means a
+    plane whose wing sticks out the front *and* tail sticks out the back
+    surfaces both, instead of having one masked behind the other.
     """
     out: list[Conflict] = []
     for plane_id, parts in world_parts.items():
-        bad = _first_out_of_bounds(parts, hangar)
-        if bad is None:
-            continue
-        kind, x, y = bad
-        out.append(
-            Conflict.single(
-                kind="hangar_bounds",
-                plane=plane_id,
-                detail=(
-                    f"part {kind!r} vertex ({x:.3f}, {y:.3f}) outside hangar "
-                    f"0..{hangar.width_m:g} x 0..{hangar.length_m:g}"
-                ),
+        for part in parts:
+            bad = _first_out_of_bounds_vertex(part, hangar)
+            if bad is None:
+                continue
+            x, y = bad
+            out.append(
+                Conflict.single(
+                    kind="hangar_bounds",
+                    plane=plane_id,
+                    detail=(
+                        f"part {part.kind!r} vertex ({x:.3f}, {y:.3f}) outside hangar "
+                        f"0..{hangar.width_m:g} x 0..{hangar.length_m:g}"
+                    ),
+                )
             )
-        )
     return out
 
 
-def _first_out_of_bounds(
-    parts: list[WorldPart], hangar: Hangar
-) -> tuple[str, float, float] | None:
-    """Return ``(kind, x, y)`` of the first out-of-hangar vertex, or
-    ``None`` if every vertex is inside the hangar rectangle."""
-    for part in parts:
-        coords = list(part.polygon.exterior.coords)[:-1]
-        for x, y in coords:
-            if not (0.0 <= x <= hangar.width_m and 0.0 <= y <= hangar.length_m):
-                return part.kind, x, y
+def _first_out_of_bounds_vertex(
+    part: WorldPart, hangar: Hangar
+) -> tuple[float, float] | None:
+    """Return ``(x, y)`` of the first vertex of ``part`` outside the
+    hangar rectangle, or ``None`` if every vertex is inside."""
+    for x, y in list(part.polygon.exterior.coords)[:-1]:
+        if not (0.0 <= x <= hangar.width_m and 0.0 <= y <= hangar.length_m):
+            return x, y
     return None
 
 
@@ -122,7 +127,23 @@ def _maintenance_conflicts(
         p for p in world_parts[layout.maintenance_plane] if p.kind == "fuselage"
     ]
     if not fuselage_parts:
-        return []
+        # The :class:`Aircraft` model permits parts of any kind, including
+        # zero fuselages. If the designated maintenance plane has no fuselage,
+        # the maintenance-bay rule has no fuselage centroid to evaluate against —
+        # but silently returning "no conflict" would let the bay invariant
+        # slip through unverified. Emit a distinct conflict so the user sees
+        # "this maintenance plane is structurally unevaluatable" instead.
+        return [
+            Conflict.single(
+                kind="maintenance_no_fuselage",
+                plane=layout.maintenance_plane,
+                detail=(
+                    f"designated maintenance plane {layout.maintenance_plane!r} "
+                    f"has no parts of kind 'fuselage'; maintenance bay rule "
+                    f"cannot be evaluated against a fuselage centroid"
+                ),
+            )
+        ]
     fuselage_union = unary_union([p.polygon for p in fuselage_parts])
     bay_start_y = layout.hangar.length_m - layout.hangar.maintenance_bay.depth_m
     centroid_y = fuselage_union.centroid.y
@@ -161,6 +182,14 @@ def _pairwise_conflicts(
     Plane pairs are iterated as ``(i, j)`` with ``i < j`` on the
     placement order, so the conflict's ``(plane_a, plane_b)`` matches the
     layout's placement order — a small affordance for stable test output.
+
+    When a plane's wing overlaps **multiple** struts of another plane
+    (canonical case: a low wing reaching across both struts of a strut-
+    braced high wing), one conflict is emitted **per part pair**. Two
+    ``strut_wing_overlap`` conflicts with identical ``(plane_a, plane_b)``
+    is the intended shape — these are two distinct geometric collisions
+    (one per physical strut), not a duplicate. The ``detail`` strings
+    differ via their z-ranges and the gap computation.
     """
     out: list[Conflict] = []
     ids = list(world_parts.keys())

@@ -41,6 +41,16 @@ class TestHangarBounds:
             f"expected hangar_bounds conflict, got {result.conflicts!r}"
         )
 
+    def test_vertex_at_hangar_wall_exactly_is_valid(self) -> None:
+        """The bounds check is inclusive (``0 <= x <= width_m``). A vertex
+        landing exactly at the wall must not trip the rule. Guards
+        against a future tightening to strict ``<``."""
+        result = check(_load("valid_wall_vertex"))
+        assert result.valid, (
+            f"vertex at x=0 must pass the inclusive bounds check, "
+            f"got conflicts: {result.conflicts!r}"
+        )
+
 
 class TestPairwiseOverlap:
     """Cases 2-5 — pairwise parts-overlap conflicts.
@@ -81,10 +91,21 @@ class TestPairwiseOverlap:
         )
 
     def test_case_5_fuselage_fuselage_overlap(self) -> None:
+        """Single-conflict fixture: the *only* conflict expected is the
+        fuselage-fuselage overlap. Asserting on the exact conflict count
+        catches future regressions that emit phantom extras (e.g. a
+        same-aircraft pair leak, or double emission from iteration-order
+        confusion). Other invalid fixtures (case 6 especially) emit
+        multiple legitimate conflicts; this case is engineered to
+        exercise the no-extras property."""
         result = check(_load("invalid_fuselage_fuselage"))
         assert not result.valid
-        assert "fuselage_fuselage_overlap" in _conflict_kinds(result), (
-            f"expected fuselage_fuselage_overlap, got {result.conflicts!r}"
+        assert _conflict_kinds(result) == {"fuselage_fuselage_overlap"}, (
+            f"expected exactly fuselage_fuselage_overlap, got {result.conflicts!r}"
+        )
+        assert len(result.conflicts) == 1, (
+            f"expected exactly 1 conflict, got {len(result.conflicts)}: "
+            f"{result.conflicts!r}"
         )
 
 
@@ -150,22 +171,26 @@ class TestStrutCanary:
     def test_case_6_strut_blocks_under_wing_nesting(self) -> None:
         result = check(_load("invalid_strut_blocks_nesting"))
         assert not result.valid
-        assert "strut_wing_overlap" in _conflict_kinds(result), (
+        kinds = _conflict_kinds(result)
+        assert "strut_wing_overlap" in kinds, (
             f"strut canary failed: expected strut_wing_overlap, "
             f"got {result.conflicts!r}"
         )
+        assert "wing_strut_overlap" not in kinds, (
+            f"non-alphabetical kind leaked into conflicts: {result.conflicts!r}"
+        )
 
-    def test_case_7_strut_free_outboard_nesting_valid(self) -> None:
-        result = check(_load("valid_outboard_nesting"))
+    def test_case_7_strut_free_right_side_nesting_valid(self) -> None:
+        result = check(_load("valid_right_side_nesting"))
         assert result.valid, (
-            f"outboard nesting must be valid (z-disjoint), "
+            f"right-side nesting must be valid (z-disjoint), "
             f"got conflicts: {result.conflicts!r}"
         )
 
-    def test_case_8_strut_free_inboard_nesting_valid(self) -> None:
-        result = check(_load("valid_inboard_nesting"))
+    def test_case_8_strut_free_left_side_nesting_valid(self) -> None:
+        result = check(_load("valid_left_side_nesting"))
         assert result.valid, (
-            f"inboard nesting must be valid (z-disjoint), "
+            f"left-side nesting must be valid (z-disjoint), "
             f"got conflicts: {result.conflicts!r}"
         )
 
@@ -179,4 +204,77 @@ class TestMaintenancePosition:
         assert not result.valid
         assert "maintenance_position" in _conflict_kinds(result), (
             f"expected maintenance_position conflict, got {result.conflicts!r}"
+        )
+
+    def test_maintenance_centroid_exactly_at_bay_boundary_is_valid(self) -> None:
+        """The bay-start threshold is strict ``<`` — a centroid exactly
+        on the boundary line counts as parked in the bay (see the
+        ``_maintenance_conflicts`` docstring for rationale). Guards
+        against a future tightening to ``<=``."""
+        result = check(_load("valid_maintenance_at_bay_boundary"))
+        assert result.valid, (
+            f"maintenance centroid at bay-start y must pass, "
+            f"got conflicts: {result.conflicts!r}"
+        )
+
+    def test_maintenance_plane_without_fuselage_emits_conflict(self) -> None:
+        """The :class:`Aircraft` model permits aircraft without fuselages.
+        Designating such a plane as ``maintenance_plane`` must surface a
+        ``maintenance_no_fuselage`` conflict, not silently pass."""
+        from hangarfit.models import (
+            Aircraft,
+            Door,
+            Hangar,
+            Layout,
+            MaintenanceBay,
+            Part,
+            Placement,
+        )
+
+        wing_only = Aircraft(
+            id="probe",
+            name="Probe",
+            wing_position="high",
+            gear="tailwheel",
+            movement_mode="always_own_gear",
+            turn_radius_m=5.0,
+            measured=False,
+            parts=(
+                Part(
+                    kind="wing",
+                    length_m=1.0,
+                    width_m=2.0,
+                    offset_x_m=0.0,
+                    offset_y_m=0.0,
+                    angle_deg=0.0,
+                    z_bottom_m=2.0,
+                    z_top_m=2.3,
+                ),
+            ),
+        )
+        hangar = Hangar(
+            length_m=25.0,
+            width_m=18.0,
+            door=Door(center_x_m=9.0, width_m=10.0),
+            maintenance_bay=MaintenanceBay(depth_m=9.0),
+            clearance_m=0.3,
+            wing_layer_clearance_m=0.2,
+        )
+        layout = Layout(
+            fleet={"probe": wing_only},
+            hangar=hangar,
+            placements=(
+                Placement(
+                    plane_id="probe",
+                    x_m=9.0,
+                    y_m=20.0,
+                    heading_deg=0.0,
+                    on_carts=False,
+                ),
+            ),
+            maintenance_plane="probe",
+        )
+        result = check(layout)
+        assert "maintenance_no_fuselage" in _conflict_kinds(result), (
+            f"expected maintenance_no_fuselage conflict, got {result.conflicts!r}"
         )
