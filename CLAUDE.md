@@ -46,7 +46,12 @@ Stack-like layout: deep, one door at the front. The back-most spot doubles as th
 
 > Each aircraft is a list of **parts**. Every part is an oriented rectangle in plan view with a height range `[z_bottom_m, z_top_m]`. Fuselage, wing, and each strut are all parts.
 >
-> **Collision rule**: two parts from different planes conflict iff their 2D polygons overlap (with horizontal clearance) AND their z-ranges overlap (with vertical clearance).
+> **Collision rule**: two parts from different aircraft conflict iff **both** hold:
+>
+> 1. **In plan view**: `polygon_a.distance(polygon_b) < clearance_m` (the closest distance between the polygons is less than the horizontal clearance).
+> 2. **In height**: the gap between `[z_bottom_a, z_top_a]` and `[z_bottom_b, z_top_b]` is less than `wing_layer_clearance_m` (treating overlap as a gap of 0).
+>
+> Parts of the *same* aircraft are never checked against each other (a Husky's wing and its own strut "overlap" by design).
 
 This is the single most important geometric rule in the project. Every future feature sits on top of it. If the parts model or the collision rule is wrong, every downstream layout will be wrong.
 
@@ -86,7 +91,22 @@ For strut-braced planes, `fleet.yaml` accepts a high-level `struts:` block that 
 - `+x` = forward (toward nose).
 - `+y` = right (toward right wingtip).
 
-**The transform**: at `heading_deg = 0`, plane `+x` should map to world `+y` (nose deeper into hangar). So the plane-local-to-world rotation is `(heading_deg - 90°)`, not `heading_deg`. **This is the off-by-90° trap of the project** — tests must include a non-90°-aligned heading (e.g., 45°) to catch any regression.
+**The transform** (plane-local → world). `heading_deg` is the **compass-style angle of the nose**, measured from world `+y` (the "deeper into hangar" direction), CW positive. Concretely:
+
+- At `heading_deg = 0`, the nose vector in world coords is `(0, 1)`.
+- At `heading_deg = 90°`, the nose vector is `(1, 0)`.
+- At `heading_deg = 45°`, the nose vector is `(√2/2, √2/2)` — pointing into the (+x, +y) quadrant.
+
+A part with plane-local offset `(u, v)` (u forward, v right) at placement `(px, py, heading)` lands at:
+
+```
+world_x = px + u·sin(heading) + v·cos(heading)
+world_y = py + u·cos(heading) − v·sin(heading)
+```
+
+Equivalently, the linear part is `[[sin h, cos h], [cos h, −sin h]]` applied to `(u, v)`. **This matrix has determinant −1** — it is a rotation **composed with a reflection**, not a pure rotation. Two ways to land here: (a) compass headings rotate CW while standard math angles rotate CCW (one sign flip), and (b) the plane-local right-handed-feeling axes (forward, right) end up describing a left-handed mapping when laid against the (right-along-door, deeper-into-hangar) world frame (a second sign flip).
+
+**Do NOT** drop in a textbook CCW rotation matrix `[[cos α, −sin α], [sin α, cos α]]` and call it done — the result will be silently wrong, and worse, will *look* correct in tests at headings 0°, 90°, 180° because those are the symmetric cases. Tests must include at least one **non-axis-aligned heading** (45° is canonical) to catch any regression: at heading 45° the nose vector should be `(√2/2, √2/2)`, and a plane-local part at `(u=0, v=1)` (one meter to the right of plane origin) should land at world `(√2/2, −√2/2)` — right and toward the door, never up and into the hangar.
 
 ### Door model in Phase 1
 
@@ -94,21 +114,25 @@ The door is a **visual marker only**. All aircraft parts must fit fully inside t
 
 ### Default clearances
 
-| Clearance | Default | Configurable in |
+Both clearances will be configurable in `data/hangar.yaml` once that file lands in #3.
+
+| Clearance | Default | Planned key in `hangar.yaml` |
 |---|---|---|
-| Horizontal | 0.30 m | `data/hangar.yaml` → `clearance_m` |
-| Vertical | 0.20 m | `data/hangar.yaml` → `wing_layer_clearance_m` |
+| Horizontal | 0.30 m | `clearance_m` |
+| Vertical | 0.20 m | `wing_layer_clearance_m` |
 
 ---
 
 ## Phase 1 deliverables
 
-1. `data/fleet.yaml` — 9 aircraft, parts model, **placeholder dimensions** flagged with `measured: false`.
-2. `data/hangar.yaml` — hangar dimensions + door + maintenance bay (placeholders).
-3. `src/hangarfit/collisions.py` — the collision checker (the heart of Phase 1).
-4. `src/hangarfit/visualize.py` — matplotlib top-down PNG renderer.
-5. `src/hangarfit/cli.py` — `hangarfit check layouts/example.yaml --render out.png`.
-6. **12 golden tests** in `tests/test_collisions.py` covering all conflict types, including the strut-aware cases (the canary that the parts model is intact).
+The list below is the **target shape** of the Phase 1 cut. Most of these files do not exist yet — each will land in its own PR per the issue plan.
+
+1. `data/fleet.yaml` — 9 aircraft, parts model, **placeholder dimensions** flagged with `measured: false`. (#3)
+2. `data/hangar.yaml` — hangar dimensions + door + maintenance bay (placeholders). (#3)
+3. `src/hangarfit/collisions.py` — the collision checker (the heart of Phase 1). (#5)
+4. `src/hangarfit/visualize.py` — matplotlib top-down PNG renderer. (#6)
+5. `src/hangarfit/cli.py` — `hangarfit check layouts/example.yaml --render out.png`. (#7)
+6. **Strut-aware golden-test suite** in `tests/test_collisions.py` — the canary that the parts model is intact. Cases include same-height wing overlap, high-over-low height-disjoint pass, the strut-blocks-nesting case, inboard / outboard strut-free nesting, the maintenance-bay rule, the cart rule, and the all-9-planes valid layout. (#5)
 
 ### Out of scope for Phase 1
 
@@ -128,7 +152,7 @@ The door is a **visual marker only**. All aircraft parts must fit fully inside t
 
 | Branch | Purpose | Direct push allowed? |
 |---|---|---|
-| `main` | Production / release-tagged. | **No** (single empty bootstrap commit excepted) |
+| `main` | Production / release-tagged. | **No** |
 | `develop` | Integration; default branch on GitHub. | No, only via PR from `feature/*` |
 | `feature/<slug>` | One per issue; off `develop`. | Yes (Claude works here) |
 | `release/<version>` | Cut from `develop`, PR'd into both `main` and `develop`. | No, only via PR |
@@ -154,12 +178,13 @@ The door is a **visual marker only**. All aircraft parts must fit fully inside t
 
 ## Subagents
 
-Use the best-fitted model for the task.
+Use the best-fitted model for the task. The model class to pick is "as much reasoning as the work needs" — heavy for novel design and deep review, lighter for mechanical work.
 
-- **`pr-review-toolkit:code-reviewer`** (Sonnet 4.6) — main PR review pass on every PR.
-- **`pr-review-toolkit:silent-failure-hunter`** (Sonnet) — for PRs touching loader or collision code.
-- **`pr-review-toolkit:type-design-analyzer`** (Sonnet) — when `models.py` changes.
-- **`feature-dev:code-architect`** (Opus 4.7) — only for genuinely novel design decisions, not routine implementation.
+- **`pr-review-toolkit:code-reviewer`** — main PR review pass on every PR.
+- **`pr-review-toolkit:comment-analyzer`** — for PRs that meaningfully change docs (README, CLAUDE.md, docstrings).
+- **`pr-review-toolkit:silent-failure-hunter`** — for PRs touching loader or collision code.
+- **`pr-review-toolkit:type-design-analyzer`** — when `models.py` changes.
+- **`feature-dev:code-architect`** — only for genuinely novel design decisions, not routine implementation.
 
 Most coding goes direct in-session. Subagent dispatch is for review work and isolated heavy lifts.
 

@@ -38,5 +38,5 @@ coverage.xml
 .DS_Store
 
 # Project artifacts
-out.png
-*.local.yaml
+out*.png
+*.local.*

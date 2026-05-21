@@ -13,23 +13,28 @@ A planner / search algorithm is **out of scope for Phase 1**. Phase 1 builds the
 
 Phase 1 in active development. See [GitHub Issues](https://github.com/DocGerd/hangarfit/issues) and milestones.
 
-## Quickstart (Phase 1 placeholder — not all components exist yet)
+## Quickstart
+
+What works today (after merging the scaffolding PR):
 
 ```bash
 pip install -e ".[dev]"
-pytest
-hangarfit check layouts/example.yaml --render out.png
+pytest                              # currently collects 0 tests
 ```
 
-End-to-end usage examples will land with the CLI in milestone `v0.3.0`.
+The full end-to-end loop will work once milestone `v0.3.0` ships the CLI:
 
-## Project layout
+```bash
+hangarfit check layouts/example.yaml --render out.png   # ← lands in #7
+```
+
+## Project layout (target — most files land in later milestones)
 
 ```
 src/hangarfit/      # Python package (models, loader, geometry, collisions, visualize, cli)
 data/               # fleet.yaml, hangar.yaml — measured-once club data
 layouts/            # hand-authored candidate layouts (one .yaml per scenario)
-tests/              # pytest suite, including the 12 collision golden tests
+tests/              # pytest suite, including the strut-aware collision golden tests
 ```
 
 ## Workflow
