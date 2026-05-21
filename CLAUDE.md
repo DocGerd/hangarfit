@@ -201,6 +201,7 @@ Use the best-fitted model for the task. The model class to pick is "as much reas
 - **`pr-review-toolkit:comment-analyzer`** — for PRs that meaningfully change docs (README, CLAUDE.md, docstrings).
 - **`pr-review-toolkit:silent-failure-hunter`** — for PRs touching loader or collision code.
 - **`pr-review-toolkit:type-design-analyzer`** — when `models.py` changes.
+- **`geometry-invariant-guard`** — for any PR touching `src/hangarfit/geometry.py` or `src/hangarfit/collisions.py`; guards the determinant-−1 sign-flip trap in the coordinate transform.
 - **`feature-dev:code-architect`** — only for genuinely novel design decisions, not routine implementation.
 
 Most coding goes direct in-session. Subagent dispatch is for review work and isolated heavy lifts.
