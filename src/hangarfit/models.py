@@ -22,6 +22,9 @@ MovementMode = Literal["always_cart", "always_own_gear", "cart_eligible"]
 PartKind = Literal["fuselage", "wing", "strut", "tail"]
 
 _VALID_PART_KINDS = frozenset(typing.get_args(PartKind))
+_VALID_WING_POSITIONS = frozenset(typing.get_args(WingPosition))
+_VALID_GEARS = frozenset(typing.get_args(Gear))
+_VALID_MOVEMENT_MODES = frozenset(typing.get_args(MovementMode))
 
 
 @dataclass(frozen=True, slots=True)
@@ -155,6 +158,21 @@ class Aircraft:
             raise ValueError(f"Aircraft {self.id!r}: name must be non-empty")
         if not self.parts:
             raise ValueError(f"Aircraft {self.id!r}: parts must be non-empty")
+        if self.wing_position not in _VALID_WING_POSITIONS:
+            raise ValueError(
+                f"Aircraft {self.id!r}: wing_position must be one of "
+                f"{sorted(_VALID_WING_POSITIONS)}, got {self.wing_position!r}"
+            )
+        if self.gear not in _VALID_GEARS:
+            raise ValueError(
+                f"Aircraft {self.id!r}: gear must be one of "
+                f"{sorted(_VALID_GEARS)}, got {self.gear!r}"
+            )
+        if self.movement_mode not in _VALID_MOVEMENT_MODES:
+            raise ValueError(
+                f"Aircraft {self.id!r}: movement_mode must be one of "
+                f"{sorted(_VALID_MOVEMENT_MODES)}, got {self.movement_mode!r}"
+            )
         if self.movement_mode != "always_cart":
             if self.turn_radius_m is None:
                 raise ValueError(

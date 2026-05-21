@@ -269,6 +269,50 @@ class TestAircraft:
         with pytest.raises(AssertionError, match="turn_radius_m is None"):
             a.required_turn_radius_m()
 
+    @pytest.mark.parametrize("wing_position", ["", "middle", "High", "MID", "bottom"])
+    def test_invalid_wing_position_rejected(self, wing_position: str) -> None:
+        with pytest.raises(ValueError, match="wing_position must be one of"):
+            Aircraft(
+                id="x",
+                name="X",
+                wing_position=wing_position,  # type: ignore[arg-type]
+                gear="tailwheel",
+                movement_mode="always_cart",
+                turn_radius_m=None,
+                measured=False,
+                parts=(_ok_part(),),
+            )
+
+    @pytest.mark.parametrize("gear", ["", "skis", "Tailwheel", "floats", "TRICYCLE"])
+    def test_invalid_gear_rejected(self, gear: str) -> None:
+        with pytest.raises(ValueError, match="gear must be one of"):
+            Aircraft(
+                id="x",
+                name="X",
+                wing_position="high",
+                gear=gear,  # type: ignore[arg-type]
+                movement_mode="always_cart",
+                turn_radius_m=None,
+                measured=False,
+                parts=(_ok_part(),),
+            )
+
+    @pytest.mark.parametrize(
+        "movement_mode", ["", "always_carts", "OWN_GEAR", "cart-eligible", "anywhere"]
+    )
+    def test_invalid_movement_mode_rejected(self, movement_mode: str) -> None:
+        with pytest.raises(ValueError, match="movement_mode must be one of"):
+            Aircraft(
+                id="x",
+                name="X",
+                wing_position="high",
+                gear="tailwheel",
+                movement_mode=movement_mode,  # type: ignore[arg-type]
+                turn_radius_m=5.0,
+                measured=False,
+                parts=(_ok_part(),),
+            )
+
 
 class TestDoor:
     def test_valid_construction(self) -> None:
