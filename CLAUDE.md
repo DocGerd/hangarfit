@@ -268,6 +268,14 @@ pip install -e ".[dev]"
 # Run tests
 pytest
 
+# Lint + format check (CI also runs these)
+ruff check src/ tests/
+ruff format --check src/ tests/
+
+# Auto-fix lint findings and format
+ruff check --fix src/ tests/
+ruff format src/ tests/
+
 # CI: GitHub Actions runs `pytest` on Python 3.11 + 3.12 for PRs into
 # develop/main (see .github/workflows/ci.yml). No coverage gate yet.
 

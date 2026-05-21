@@ -103,9 +103,7 @@ class TestPart:
         "z_bottom_m, z_top_m",
         [(1.0, 1.0), (2.0, 1.5)],
     )
-    def test_z_top_must_exceed_z_bottom(
-        self, z_bottom_m: float, z_top_m: float
-    ) -> None:
+    def test_z_top_must_exceed_z_bottom(self, z_bottom_m: float, z_top_m: float) -> None:
         with pytest.raises(ValueError, match="z_top_m must exceed z_bottom_m"):
             _ok_part(z_bottom_m=z_bottom_m, z_top_m=z_top_m)
 
@@ -362,7 +360,9 @@ class TestHangar:
             Hangar(
                 length_m=25.0,
                 width_m=width_m,
-                door=Door(center_x_m=9.0, width_m=12.0) if width_m > 12 else Door(center_x_m=1.0, width_m=0.5),
+                door=Door(center_x_m=9.0, width_m=12.0)
+                if width_m > 12
+                else Door(center_x_m=1.0, width_m=0.5),
                 maintenance_bay=MaintenanceBay(depth_m=9.0),
                 clearance_m=0.3,
                 wing_layer_clearance_m=0.2,
@@ -493,7 +493,13 @@ class TestLayout:
                 fleet=self._fleet_of(a),
                 hangar=_ok_hangar(),
                 placements=(
-                    Placement(plane_id="bar", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False),
+                    Placement(
+                        plane_id="bar",
+                        x_m=0.0,
+                        y_m=0.0,
+                        heading_deg=0.0,
+                        on_carts=False,
+                    ),
                 ),
             )
 
@@ -504,8 +510,20 @@ class TestLayout:
                 fleet=self._fleet_of(a),
                 hangar=_ok_hangar(),
                 placements=(
-                    Placement(plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False),
-                    Placement(plane_id="foo", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False),
+                    Placement(
+                        plane_id="foo",
+                        x_m=0.0,
+                        y_m=0.0,
+                        heading_deg=0.0,
+                        on_carts=False,
+                    ),
+                    Placement(
+                        plane_id="foo",
+                        x_m=5.0,
+                        y_m=5.0,
+                        heading_deg=0.0,
+                        on_carts=False,
+                    ),
                 ),
             )
 
@@ -516,7 +534,13 @@ class TestLayout:
                 fleet=self._fleet_of(a),
                 hangar=_ok_hangar(),
                 placements=(
-                    Placement(plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False),
+                    Placement(
+                        plane_id="foo",
+                        x_m=0.0,
+                        y_m=0.0,
+                        heading_deg=0.0,
+                        on_carts=False,
+                    ),
                 ),
             )
 
@@ -564,7 +588,13 @@ class TestLayout:
                 fleet=self._fleet_of(a),
                 hangar=_ok_hangar(),
                 placements=(
-                    Placement(plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False),
+                    Placement(
+                        plane_id="foo",
+                        x_m=0.0,
+                        y_m=0.0,
+                        heading_deg=0.0,
+                        on_carts=False,
+                    ),
                 ),
                 maintenance_plane="ghost",
             )
@@ -577,7 +607,13 @@ class TestLayout:
                 fleet=self._fleet_of(a, b),
                 hangar=_ok_hangar(),
                 placements=(
-                    Placement(plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False),
+                    Placement(
+                        plane_id="foo",
+                        x_m=0.0,
+                        y_m=0.0,
+                        heading_deg=0.0,
+                        on_carts=False,
+                    ),
                 ),
                 maintenance_plane="bar",
             )

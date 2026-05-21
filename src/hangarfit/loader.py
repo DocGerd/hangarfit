@@ -48,8 +48,7 @@ def _to_float(value: Any, field_name: str) -> float:
         return float(value)
     except (TypeError, ValueError) as e:
         raise LoaderError(
-            f"{field_name!r}: expected number, got {value!r} "
-            f"({type(value).__name__})"
+            f"{field_name!r}: expected number, got {value!r} ({type(value).__name__})"
         ) from e
 
 
@@ -223,13 +222,10 @@ def _extract_maintenance_plane(raw: dict, path: Path) -> str | None:
         return None  # explicit `maintenance: ~` → no maintenance plane
     if not isinstance(m, dict):
         raise LoaderError(
-            f"{path}: 'maintenance' must be a mapping with a 'plane' key, "
-            f"got {type(m).__name__}"
+            f"{path}: 'maintenance' must be a mapping with a 'plane' key, got {type(m).__name__}"
         )
     if "plane" not in m:
-        raise LoaderError(
-            f"{path}: 'maintenance' block present but lacks required 'plane' key"
-        )
+        raise LoaderError(f"{path}: 'maintenance' block present but lacks required 'plane' key")
     return m["plane"]
 
 
@@ -346,7 +342,7 @@ def _expand_struts(spec: StrutsSpec, wing: Part) -> list[Part]:
         "z_top_m": wing.z_bottom_m,
     }
     return [
-        Part(offset_y_m=midpoint, **common),   # right side
+        Part(offset_y_m=midpoint, **common),  # right side
         Part(offset_y_m=-midpoint, **common),  # left side
     ]
 
@@ -375,5 +371,3 @@ def _read_yaml(path: Path) -> Any:
         raise LoaderError(f"file not found: {path}") from e
     except yaml.YAMLError as e:
         raise LoaderError(f"{path}: YAML parse error: {e}") from e
-
-
