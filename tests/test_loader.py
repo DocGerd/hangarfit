@@ -150,8 +150,10 @@ class TestRealDataFiles:
 
     def test_load_example_layout(self) -> None:
         layout = load_layout(EXAMPLE_LAYOUT)
-        assert len(layout.placements) == 9
-        assert layout.maintenance_plane == "cessna_150"
+        # The default example is the Saturday-morning scenario: 6 planes
+        # at home, 3 out flying. See layouts/example.yaml for context.
+        assert len(layout.placements) == 6
+        assert layout.maintenance_plane == "scheibe_falke"
 
 
 # ----------------------------------------------------------------------------

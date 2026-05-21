@@ -1,78 +1,80 @@
-# Example candidate layout for the 9-aircraft fleet.
+# Default example layout for hangarfit.
 #
-# This layout loads cleanly and satisfies all loader-level invariants
-# (cart rule, movement-mode-vs-on_carts consistency, maintenance plane
-# in fleet and placed). It is NOT guaranteed to be collision-free —
-# that's what the collision checker (#5) is for. Edit positions once
-# the checker lands and you can iterate.
+# Scenario: Saturday morning. Three of the club's nine aircraft are out
+# (Cessna 140 and 150 doing training flights, FK9 on a pleasure flight),
+# six are home in non-standard positions. Scheibe Falke is in the back
+# for scheduled maintenance.
 #
-# Hangar: 25 m deep × 18 m wide, door centered at x=9 (width 12),
-# maintenance bay = back 9 m (so y > 16 is the bay).
+# This is the canonical smoke test from CLAUDE.md:
 #
-# Coordinate convention (CLAUDE.md): world (0,0) at front-left, +x right
-# along door wall, +y deeper into hangar. heading 0° = nose into hangar.
+#     hangarfit check layouts/example.yaml --render out.png
+#
+# It must produce ``valid`` (exit 0). A clean PNG is the demo output a
+# first-time user sees. If you want to see the conflict-overlay branch
+# of the visualiser, use ``layouts/example_invalid.yaml`` (a deliberately
+# bad layout shipped alongside this file for that purpose).
+#
+# Hangar: 18 m wide × 25 m deep (data/hangar.yaml). Bay = back 9 m
+# (y >= 16). Coordinate convention (CLAUDE.md): world (0, 0) at front-left,
+# +x right along door wall, +y deeper into hangar. heading 0 = nose
+# into hangar.
+#
+# Cart usage: only the three ``always_cart`` planes (scheibe, zlin,
+# wild_thing) are on carts; CTSL is ``cart_eligible`` but parked on its
+# own gear (the "no cart swapping unless necessary" operational rule).
+#
+# Planes not in this layout (out flying):
+#   - cessna_140  (training flight)
+#   - cessna_150  (training flight)
+#   - fk9_mkii    (pleasure flight)
 
 fleet: ../data/fleet.yaml
 hangar: ../data/hangar.yaml
 
 maintenance:
-  plane: cessna_150          # parked in the back maintenance bay
+  plane: scheibe_falke
 
 placements:
-  # Back / maintenance bay
-  - plane: cessna_150
+  # Front-center: small cantilever at the door, easy to roll out first
+  - plane: ctsl
     x_m: 9.0
-    y_m: 21.0
-    heading_deg: 0
-    on_carts: false          # the cart-eligible plane currently on its own gear
+    y_m: 4.0
+    heading_deg: 0.0
+    on_carts: false        # cart_eligible but on own gear
 
-  # Middle row
-  - plane: scheibe_falke
+  # Front lane (y = 8): one strut-braced on the left, fuji
+  # parked sideways on the right
+  - plane: zlin_savage
+    x_m: 5.0
+    y_m: 8.0
+    heading_deg: 0.0
+    on_carts: true         # always_cart
+  - plane: fuji
+    x_m: 13.0
+    y_m: 8.0
+    heading_deg: 90.0      # nose pointing right; low wing threads under
+                           # neighbouring high wings (z-disjoint nesting)
+    on_carts: false        # always_own_gear
+
+  # Mid-center: wild_thing
+  - plane: wild_thing
     x_m: 9.0
     y_m: 13.0
-    heading_deg: 90          # nose right; the 16.6 m wingspan runs along world y
-    on_carts: true           # always_cart
+    heading_deg: 0.0
+    on_carts: true         # always_cart
 
-  # Front row (deeper end of front area)
+  # Just forward of the maintenance bay: husky tucked against the
+  # left wall (its 10.82 m wingspan reaches across to mid-hangar)
   - plane: aviat_husky
-    x_m: 3.0
-    y_m: 8.0
-    heading_deg: 0
-    on_carts: false          # always_own_gear
+    x_m: 6.0
+    y_m: 16.0
+    heading_deg: 0.0
+    on_carts: false        # always_own_gear
 
-  - plane: fuji
+  # Maintenance bay (back): the motorglider sits along the back wall,
+  # its 18 m wingspan exactly spanning the hangar width
+  - plane: scheibe_falke
     x_m: 9.0
-    y_m: 8.0
-    heading_deg: 0
-    on_carts: false          # always_own_gear
-
-  - plane: wild_thing
-    x_m: 15.0
-    y_m: 8.0
-    heading_deg: 0
-    on_carts: true           # always_cart
-
-  # Front-front row (near door)
-  - plane: zlin_savage
-    x_m: 3.0
-    y_m: 3.0
-    heading_deg: 0
-    on_carts: true           # always_cart
-
-  - plane: cessna_140
-    x_m: 7.0
-    y_m: 3.0
-    heading_deg: 0
-    on_carts: true           # the ONE cart_eligible plane on the spare carts
-
-  - plane: ctsl
-    x_m: 11.0
-    y_m: 3.0
-    heading_deg: 0
-    on_carts: false
-
-  - plane: fk9_mkii
-    x_m: 15.0
-    y_m: 3.0
-    heading_deg: 0
-    on_carts: false
+    y_m: 20.5
+    heading_deg: 0.0
+    on_carts: true         # always_cart
