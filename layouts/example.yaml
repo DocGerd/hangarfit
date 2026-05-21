@@ -1,0 +1,78 @@
+# Example candidate layout for the 9-aircraft fleet.
+#
+# This layout loads cleanly and satisfies all loader-level invariants
+# (cart rule, movement-mode-vs-on_carts consistency, maintenance plane
+# in fleet and placed). It is NOT guaranteed to be collision-free —
+# that's what the collision checker (#5) is for. Edit positions once
+# the checker lands and you can iterate.
+#
+# Hangar: 25 m deep × 18 m wide, door centered at x=9 (width 12),
+# maintenance bay = back 9 m (so y > 16 is the bay).
+#
+# Coordinate convention (CLAUDE.md): world (0,0) at front-left, +x right
+# along door wall, +y deeper into hangar. heading 0° = nose into hangar.
+
+fleet: ../data/fleet.yaml
+hangar: ../data/hangar.yaml
+
+maintenance:
+  plane: cessna_150          # parked in the back maintenance bay
+
+placements:
+  # Back / maintenance bay
+  - plane: cessna_150
+    x_m: 9.0
+    y_m: 21.0
+    heading_deg: 0
+    on_carts: false          # the cart-eligible plane currently on its own gear
+
+  # Middle row
+  - plane: scheibe_falke
+    x_m: 9.0
+    y_m: 13.0
+    heading_deg: 90          # nose right; the 16.6 m wingspan runs along world y
+    on_carts: true           # always_cart
+
+  # Front row (deeper end of front area)
+  - plane: aviat_husky
+    x_m: 3.0
+    y_m: 8.0
+    heading_deg: 0
+    on_carts: false          # always_own_gear
+
+  - plane: fuji
+    x_m: 9.0
+    y_m: 8.0
+    heading_deg: 0
+    on_carts: false          # always_own_gear
+
+  - plane: wild_thing
+    x_m: 15.0
+    y_m: 8.0
+    heading_deg: 0
+    on_carts: true           # always_cart
+
+  # Front-front row (near door)
+  - plane: zlin_savage
+    x_m: 3.0
+    y_m: 3.0
+    heading_deg: 0
+    on_carts: true           # always_cart
+
+  - plane: cessna_140
+    x_m: 7.0
+    y_m: 3.0
+    heading_deg: 0
+    on_carts: true           # the ONE cart_eligible plane on the spare carts
+
+  - plane: ctsl
+    x_m: 11.0
+    y_m: 3.0
+    heading_deg: 0
+    on_carts: false
+
+  - plane: fk9_mkii
+    x_m: 15.0
+    y_m: 3.0
+    heading_deg: 0
+    on_carts: false
