@@ -112,3 +112,23 @@ class TestCheckJsonOutput:
             assert 1 <= len(c["planes"]) <= 2
             assert all(isinstance(p, str) for p in c["planes"])
             assert isinstance(c["detail"], str)
+
+
+class TestCheckRender:
+    """--render writes a PNG; works on both valid and invalid layouts."""
+
+    def test_check_render_writes_png(self, tmp_path, capsys):
+        out = tmp_path / "valid.png"
+        layout = str(FIXTURES_DIR / "valid_two_separated.yaml")
+        exit_code = main(["check", layout, "--render", str(out)])
+        assert exit_code == 0
+        assert out.exists()
+        assert out.stat().st_size > 0
+
+    def test_check_render_on_invalid_writes_png(self, tmp_path, capsys):
+        out = tmp_path / "invalid.png"
+        layout = str(FIXTURES_DIR / "invalid_fuselage_wing_overlap.yaml")
+        exit_code = main(["check", layout, "--render", str(out)])
+        assert exit_code == 1
+        assert out.exists()
+        assert out.stat().st_size > 0

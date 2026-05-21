@@ -17,7 +17,7 @@ import argparse
 import json
 import sys
 
-from hangarfit import collisions
+from hangarfit import collisions, visualize
 from hangarfit.loader import LoaderError, load_fleet, load_hangar, load_layout
 from hangarfit.models import CheckResult, Conflict
 
@@ -106,6 +106,10 @@ def cmd_check(args: argparse.Namespace) -> int:
         _emit_json(args.layout, result)
     else:
         _emit_human(result)
+
+    if args.render is not None:
+        visualize.render_layout(layout, args.render, check_result=result)
+
     return 0 if result.valid else 1
 
 
