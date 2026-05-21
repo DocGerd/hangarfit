@@ -14,6 +14,7 @@ itself grows new fields.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 
 from hangarfit import collisions
@@ -74,6 +75,22 @@ def _format_conflict(c: Conflict) -> str:
     return f"  - {c.kind} [{', '.join(c.planes)}]: {c.detail}"
 
 
+def _conflict_to_dict(c: Conflict) -> dict:
+    """One-to-one dump of Conflict for the v1 JSON schema."""
+    return {"kind": c.kind, "planes": list(c.planes), "detail": c.detail}
+
+
+def _emit_json(layout_path: str, result: CheckResult) -> None:
+    """Write the v1 JSON payload to stdout."""
+    payload = {
+        "schema": "hangarfit.check/v1",
+        "layout": layout_path,
+        "valid": result.valid,
+        "conflicts": [_conflict_to_dict(c) for c in result.conflicts],
+    }
+    print(json.dumps(payload, indent=2))
+
+
 def cmd_check(args: argparse.Namespace) -> int:
     """Run the ``check`` subcommand. See spec §4 for the data flow."""
     try:
@@ -85,7 +102,10 @@ def cmd_check(args: argparse.Namespace) -> int:
         return 2
 
     result = collisions.check(layout)
-    _emit_human(result)
+    if args.json:
+        _emit_json(args.layout, result)
+    else:
+        _emit_human(result)
     return 0 if result.valid else 1
 
 

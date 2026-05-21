@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import pytest
@@ -80,3 +81,34 @@ class TestCheckLoadErrors:
         assert captured.out == ""
         assert "error:" in captured.err
         assert "cart" in captured.err.lower()
+
+
+class TestCheckJsonOutput:
+    """--json emits the hangarfit.check/v1 schema on stdout."""
+
+    def test_check_json_valid_emits_schema_v1(self, capsys):
+        layout = str(FIXTURES_DIR / "valid_two_separated.yaml")
+        exit_code = main(["check", "--json", layout])
+        assert exit_code == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["schema"] == "hangarfit.check/v1"
+        assert payload["valid"] is True
+        assert payload["conflicts"] == []
+        assert payload["layout"] == layout
+
+    def test_check_json_invalid_lists_conflicts(self, capsys):
+        layout = str(FIXTURES_DIR / "invalid_fuselage_wing_overlap.yaml")
+        exit_code = main(["check", "--json", layout])
+        assert exit_code == 1
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["schema"] == "hangarfit.check/v1"
+        assert payload["valid"] is False
+        assert len(payload["conflicts"]) >= 1
+        for c in payload["conflicts"]:
+            # Faithful dump of Conflict — exactly these three keys, nothing else.
+            assert set(c.keys()) == {"kind", "planes", "detail"}
+            assert isinstance(c["kind"], str)
+            assert isinstance(c["planes"], list)
+            assert 1 <= len(c["planes"]) <= 2
+            assert all(isinstance(p, str) for p in c["planes"])
+            assert isinstance(c["detail"], str)
