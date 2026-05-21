@@ -32,7 +32,7 @@ hangarfit check LAYOUT [--render OUT.png] [--fleet PATH] [--hangar PATH] [--json
 ```
 
 - `LAYOUT` — positional, required. Path to the layout YAML to check.
-- `--render OUT.png` — optional. Write a top-down PNG of the layout. Runs even on invalid layouts (conflicts are highlighted in red by `visualize.render(..., result=CheckResult)`).
+- `--render OUT.png` — optional. Write a top-down PNG of the layout. Runs even on invalid layouts (conflicts are highlighted in red by `visualize.render_layout(..., check_result=CheckResult)`).
 - `--fleet PATH` — optional **override**. When absent, the layout's own embedded `fleet:` field is used (loader resolves it relative to the layout YAML's directory). When supplied, the layout YAML *must not* also have an embedded `fleet:` field — the loader rejects double sources of truth (`loader.py:160`). **No default value** — the embedded-vs-override choice is the user's, not implicit.
 - `--hangar PATH` — same semantic as `--fleet`, for `hangar:`.
 - `--json` — switch human-readable stdout to JSON. Errors still go to stderr unchanged.
@@ -94,7 +94,7 @@ def cmd_check(args) -> int:
         _emit_human(result)
 
     if args.render is not None:
-        visualize.render(layout, args.render, result=result)
+        visualize.render_layout(layout, args.render, check_result=result)
 
     return 0 if result.valid else 1
 ```
