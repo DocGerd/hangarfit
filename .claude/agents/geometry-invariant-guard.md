@@ -66,8 +66,51 @@ Any variant that swaps `sin` and `cos` symmetrically across the two rows (both w
    - Check whether at least one heading is NOT a multiple of 90° (i.e., not in {…, −180, −90, 0, 90, 180, 270, 360, …}).
    - If a PR adds new `aircraft_parts_world` tests but all use only axis-aligned headings, that is a FAIL.
    - Non-axis-aligned means any heading where both `sin(h) ≠ 0` and `cos(h) ≠ 0`. Examples: 45°, 135°, 30°, 37°, any non-multiple of 90°.
+   - **Distinguishing probe requirement.** A non-axis-aligned heading is necessary but not sufficient. The probe's plane-local vector must also be *distinguishing* — the correct transform and the textbook CCW wrong transform must produce DIFFERENT world coordinates for that `(u, v)` pair. A probe with `v=0` at any heading is NEVER distinguishing: both transforms yield `(u·sin h, u·cos h)` for the correct formula and `(u·cos h, u·sin h)` for CCW; at 45° these are identical (`sin 45° = cos 45°`), and at other non-axis-aligned angles the two results differ in x/y but a test author who hard-codes the CCW result will still pass. The safe rule: **require at least one probe where `v ≠ 0` at a non-axis-aligned heading, OR a probe at 135° (where the nose vector itself differs between transforms).** For the canonical case: `(u=0, v=1)` at 45° → correct gives `(+√2/2, −√2/2)`; CCW gives `(−√2/2, +√2/2)` — unambiguously different. If the test file lacks such a probe, that is a FAIL even if a non-axis-aligned heading is present.
 
 5. **Check `src/hangarfit/collisions.py`** for any inlined coordinate arithmetic that bypasses `aircraft_parts_world`. If the collision checker computes world positions directly (outside of calling the geometry module), apply the same matrix check.
+
+## Worked examples for distinguishing-probe check
+
+Use these to decide PASS / FAIL for step 4 without re-deriving algebra each time.
+
+### Canonical case: heading 45°, probe `(u=0, v=1)`
+
+`sin(45°) = cos(45°) = √2/2 ≈ 0.7071`. Placement at origin `(px=0, py=0)`.
+
+| Transform | world_x | world_y | Quadrant |
+|---|---|---|---|
+| **Correct** `[[sin h, cos h], [cos h, −sin h]]` | `0·sin h + 1·cos h = +√2/2` | `0·cos h − 1·sin h = −√2/2` | `(+, −)` → right + toward door |
+| **Wrong CCW** `[[cos h, −sin h], [sin h, cos h]]` | `0·cos h − 1·sin h = −√2/2` | `0·sin h + 1·cos h = +√2/2` | `(−, +)` → left + deeper |
+
+A test that asserts `world_x ≈ +0.707` and `world_y ≈ −0.707` for this probe **PASSES only the correct transform** — it is a distinguishing probe. ✓
+
+### Non-distinguishing counter-example: heading 45°, probe `(u=1, v=0)`
+
+| Transform | world_x | world_y |
+|---|---|---|
+| **Correct** | `1·sin h + 0 = +√2/2` | `1·cos h − 0 = +√2/2` |
+| **Wrong CCW** | `1·cos h − 0 = +√2/2` | `1·sin h + 0 = +√2/2` |
+
+Both give `(+√2/2, +√2/2)`. A test using only this probe **cannot detect a sign-flip regression** — it is NOT a distinguishing probe. ✗
+
+### Alternative: heading 135°, probe `(u=1, v=0)` (nose-forward is fine here)
+
+`sin(135°) = +√2/2`, `cos(135°) = −√2/2`.
+
+| Transform | world_x | world_y |
+|---|---|---|
+| **Correct** | `+√2/2` | `−√2/2` |
+| **Wrong CCW** | `−√2/2` | `+√2/2` |
+
+Different quadrants — distinguishing even for a pure nose-forward probe. A test at 135° with `(u=1, v=0)` counts. ✓
+
+### Summary rule (apply in step 4)
+
+A test passes the distinguishing-probe requirement iff at least one assertion uses a `(heading, u, v)` triple where the correct and CCW transforms produce different `(world_x, world_y)`. The quickest safe choices are:
+
+- `(u=0, v=1)` or any `v ≠ 0` at **any** non-axis-aligned heading, OR
+- **Any** `(u, v)` with at least one non-zero component at heading 135° (or 225°, 315°, etc.).
 
 ## Output format
 
@@ -81,8 +124,8 @@ Issue a single report in this format:
 Determinant: [−1 (correct) | +1 (wrong) | unknown]
 
 ### Non-axis-aligned heading coverage
-[List all headings used in aircraft_parts_world tests. State whether at least one is non-axis-aligned.]
-Coverage: [OK | MISSING — no non-axis-aligned heading in new/modified tests]
+[List all headings used in aircraft_parts_world tests. State whether at least one is non-axis-aligned AND uses a distinguishing probe (v≠0 at a non-axis-aligned heading, or any probe at 135°/225°/315°).]
+Coverage: [OK | MISSING — no non-axis-aligned heading in new/modified tests | WEAK — non-axis-aligned heading present but no distinguishing probe (v=0 at 45° etc.)]
 
 ### Findings
 [If PASS: "No issues found. Transform is correct and test coverage includes non-axis-aligned headings."]
