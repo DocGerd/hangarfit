@@ -1,0 +1,33 @@
+# Case 7 — strut-free OUTBOARD nesting is valid.
+#
+# Fuji's low wing tucks under Cessna 150's right wing (the half outboard
+# of Cessna 150's right strut), nested in the z-gap between fuji-wing
+# z [0.8, 1.1] and cessna-wing z [2.0, 2.3] (0.9 m gap > 0.2 m clearance).
+# Crucially no part overlaps a strut in plan view.
+#
+# Positions:
+#   cessna_150 at (9, 5, 0, false): right strut x [9.45, 10.8].
+#   fuji at (12, 10, 90, false): wing x [11.75, 13.25], y [5.3, 14.7].
+#     Fuji's wing is 0.95 m clear of the right strut in x (> 0.3 m
+#     horizontal clearance) and 2.65 m clear of cessna's wing extent
+#     in y for fuselage interactions. The only plan-view overlap is
+#     fuji-wing × cessna-wing — z-disjoint by 0.9 m.
+#
+# This case is the positive half of the strut canary: the parts model
+# must *allow* under-wing nesting where there are no struts. A bug that
+# rejects all plan-view overlaps regardless of z would invert this case.
+
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
+
+placements:
+  - plane: cessna_150
+    x_m: 9.0
+    y_m: 5.0
+    heading_deg: 0.0
+    on_carts: false
+  - plane: fuji
+    x_m: 12.0
+    y_m: 10.0
+    heading_deg: 90.0
+    on_carts: false

@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -n \"$HANGARFIT_SKIP_PYTEST_HOOK\" ]; then cat > /dev/null; exit 0; fi; path=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get(\"tool_input\",{}).get(\"file_path\",\"\"))'); case \"$path\" in */src/hangarfit/*|*/tests/*) echo \"[hangarfit hook] running pytest after edit of $path\"; pytest -q --no-header 2>&1 | tail -30 ;; *) : ;; esac; exit 0",
+            "timeout": 120
+          }
+        ]
+      }
+    ]
+  }
+}

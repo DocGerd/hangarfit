@@ -1,0 +1,39 @@
+# Case 6 — strut blocks under-wing nesting → invalid: `strut_wing_overlap`.
+#
+# The strut canary. Cessna 150's wing struts at z [0.5, 2.0] intrude
+# into Fuji's low-wing height band z [0.8, 1.1] (z-gap = −0.3 m, well
+# below the 0.2 m vertical clearance). So if Fuji's wing has any
+# plan-view overlap with a Cessna 150 strut, the checker must emit
+# `strut_wing_overlap`.
+#
+# Positions:
+#   cessna_150 at (9, 5, 0, false): wing x [3.95, 14.05], left strut
+#     at x [7.2, 8.55] / y [5.475, 5.525], right strut at x [9.45, 10.8]
+#     / y [5.475, 5.525].
+#   fuji at (5, 5, 0, false): wing x [0.3, 9.7], y [4.75, 6.25], z
+#     [0.8, 1.1]. Wing plan-view overlaps BOTH cessna struts.
+#
+# A bbox-style implementation would just emit a generic wing/fuselage
+# conflict; without a strut Part the strut zone would be invisible and
+# this case would (incorrectly) pass. That is exactly what the canary
+# is here to catch.
+#
+# Note: Fuji's wing also overlaps Cessna's fuselage in plan view at
+# colliding z (fuselage_wing_overlap), so multiple conflicts will fire.
+# The case-6 assertion only checks that `strut_wing_overlap` is one of
+# them — that is the strut-specific signal.
+
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
+
+placements:
+  - plane: cessna_150
+    x_m: 9.0
+    y_m: 5.0
+    heading_deg: 0.0
+    on_carts: false
+  - plane: fuji
+    x_m: 5.0
+    y_m: 5.0
+    heading_deg: 0.0
+    on_carts: false

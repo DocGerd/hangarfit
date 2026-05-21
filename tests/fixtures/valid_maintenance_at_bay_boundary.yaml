@@ -1,0 +1,26 @@
+# Boundary case for the maintenance-bay rule.
+#
+# The bay starts at ``y = hangar.length_m − bay.depth_m = 25 − 9 = 16``.
+# The rule is strict ``<`` (a centroid exactly on the boundary counts
+# as parked in the bay) so this fixture places cessna_150's fuselage
+# centroid at world y = 16.0 exactly — the rule must pass.
+#
+# A regression that flips the threshold to ``<=`` would reject this
+# layout. The fixture pins the documented "centroid exactly on the
+# boundary is in the bay" semantic.
+#
+# cessna_150 fuselage at heading 0, py = 16.0 → fuselage offset_y_m = 0,
+# so the fuselage centroid is at (px, py) = (9, 16). y = 16 ≥ 16 ✓.
+
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
+
+maintenance:
+  plane: cessna_150
+
+placements:
+  - plane: cessna_150
+    x_m: 9.0
+    y_m: 16.0
+    heading_deg: 0.0
+    on_carts: false

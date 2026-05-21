@@ -1,0 +1,25 @@
+# Case 10 — cart rule violation: two cart_eligible planes both on_carts.
+#
+# Per CLAUDE.md, only one of the spare carts can be in use at a time.
+# `Layout.__post_init__` enforces this — the YAML loader's call to
+# `Layout(...)` raises `LoaderError` before the collision checker ever
+# sees the layout. So the test for this case verifies *load-time*
+# rejection, not a `CheckResult` conflict.
+#
+# Both `cessna_140` and `ctsl` are cart_eligible. Setting both
+# `on_carts: true` should be rejected at load.
+
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
+
+placements:
+  - plane: cessna_140
+    x_m: 7.0
+    y_m: 5.0
+    heading_deg: 0.0
+    on_carts: true
+  - plane: ctsl
+    x_m: 13.0
+    y_m: 5.0
+    heading_deg: 0.0
+    on_carts: true

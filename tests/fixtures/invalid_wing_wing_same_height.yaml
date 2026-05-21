@@ -1,0 +1,24 @@
+# Case 2 — two high-wings overlap in plan view at the same height.
+#
+# ctsl at (5, 5) — wing x ∈ [0.7, 9.3], y ∈ [5.3, 6.7] at z [1.9, 2.2].
+# scheibe at (9, 5) — wing x ∈ [0.7, 17.3], y ∈ [5.9, 7.1] at z [1.9, 2.1].
+# Plan-view overlap and z-overlap → `wing_wing_overlap`.
+#
+# Fuselages don't overlap (4 m apart along world x), and wing/fuselage
+# pairs are z-disjoint enough not to trip — so the only conflict here
+# is the wing-wing one we're testing.
+
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
+
+placements:
+  - plane: ctsl
+    x_m: 5.0
+    y_m: 5.0
+    heading_deg: 0.0
+    on_carts: false
+  - plane: scheibe_falke
+    x_m: 9.0
+    y_m: 5.0
+    heading_deg: 0.0
+    on_carts: true

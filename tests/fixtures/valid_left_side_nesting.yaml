@@ -1,0 +1,32 @@
+# Case 8 — strut-free INBOARD nesting is valid.
+#
+# Mirror of case 7 on the other side of Cessna 150. Fuji's low wing
+# tucks under Cessna 150's left wing half (outboard of its left strut).
+# Same z-disjoint nesting argument; the "inboard / outboard" distinction
+# in our placeholder geometry is which side of the fuselage the smaller
+# plane approaches from — both must be valid.
+#
+# Positions:
+#   cessna_150 at (9, 5, 0, false): left strut x [7.2, 8.55].
+#   fuji at (5, 10, 90, false): wing x [4.75, 6.25], y [5.3, 14.7].
+#     Fuji's wing is 0.95 m clear of the left strut in x and 2.65 m
+#     clear of cessna's wing y-range for fuselage interactions.
+#
+# Together with case 7, this case shows that the checker is symmetric
+# under reflection — if either case fails, something is wrong with the
+# coordinate convention (e.g., a sign flip in `aircraft_parts_world`).
+
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
+
+placements:
+  - plane: cessna_150
+    x_m: 9.0
+    y_m: 5.0
+    heading_deg: 0.0
+    on_carts: false
+  - plane: fuji
+    x_m: 5.0
+    y_m: 10.0
+    heading_deg: 90.0
+    on_carts: false
