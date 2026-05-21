@@ -19,23 +19,18 @@ This directory holds **team-shared** [Claude Code](https://docs.claude.com/en/do
 
 The hook is **non-blocking**: it always exits `0`, even if `pytest` fails. The failing output is shown to Claude as feedback, but the edit itself is never aborted. Treat it as a fast smoke signal, not a gate.
 
-Path matching is glob-based (`*src/hangarfit/*` / `*tests/*`), so both relative and absolute `file_path` payloads are handled.
+Path matching is glob-based (`*/src/hangarfit/*` / `*/tests/*`), anchored with a leading `/` so that sibling directories like `vendor-src/hangarfit/` or `contests/` do not accidentally trigger the hook.
 
 ## Opting out (per contributor)
 
-If you'd rather not have pytest run on every edit (e.g., you're working on a machine where the suite is slow, or you want to disable the hook while debugging something else), drop a `.claude/settings.local.json` next to `settings.json` with an empty hooks override:
+Set the env var `HANGARFIT_SKIP_PYTEST_HOOK=1` in your shell init (`~/.bashrc`, `~/.zshrc`, etc.). The hook detects this and exits immediately without running pytest. Unset (or restart your shell) to re-enable.
 
-```json
-{
-  "hooks": {
-    "PostToolUse": []
-  }
-}
+```bash
+# ~/.bashrc or ~/.zshrc
+export HANGARFIT_SKIP_PYTEST_HOOK=1
 ```
 
-`settings.local.json` overrides `settings.json` (Claude Code merges/overrides local-over-team), and it is listed in the repo's `.gitignore` so your personal override is never committed.
-
-To **re-enable** the hook later, just delete `.claude/settings.local.json`.
+The old `.claude/settings.local.json` opt-out mentioned in earlier drafts of this README does **not** work — Claude Code merges hook arrays across scopes rather than overriding them, so an empty array in local doesn't subtract the project entry. The env-var pattern moves the opt-out into a layer that actually short-circuits.
 
 ## Adding new automations
 

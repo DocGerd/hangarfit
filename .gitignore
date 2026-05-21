@@ -41,5 +41,6 @@ coverage.xml
 out*.png
 *.local.*
 
-# Per-contributor Claude Code overrides (issue #35)
+# Explicit even though *.local.* already matches — keeps the intent
+# visible to contributors grepping for ".claude" (issue #35).
 .claude/settings.local.json
