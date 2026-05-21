@@ -91,6 +91,8 @@ For strut-braced planes, `fleet.yaml` accepts a high-level `struts:` block that 
 - `+x` = forward (toward nose).
 - `+y` = right (toward right wingtip).
 
+**Implication for fuselage offsets in `data/fleet.yaml`**: because the main gear sits *forward* of the geometric fuselage centroid, every fuselage's `offset_x_m` is **negative** (≈ −0.25 × length for tailwheels, ≈ −0.05 × length for nosewheels; monowheel `scheibe_falke` is 0). Resetting any of these to 0 silently breaks the gear-at-origin contract — see PR #58 for the audit that fixed this. Wing and strut offsets shift in tandem so each airplane's internal geometry stays self-consistent.
+
 **The transform** (plane-local → world). `heading_deg` is the **compass-style angle of the nose**, measured from world `+y` (the "deeper into hangar" direction), CW positive. Concretely:
 
 - At `heading_deg = 0`, the nose vector in world coords is `(0, 1)`.
@@ -148,6 +150,8 @@ The strut-aware golden tests are the canary that the parts model is intact. If t
 | `src/hangarfit/collisions.py` | The `check(layout)` entry point. Enforces hangar bounds, maintenance-bay position (centroid of the designated plane's fuselage parts is in the back strip; if that plane has no fuselage parts, an explicit `maintenance_no_fuselage` conflict is emitted rather than silently passing), and pairwise parts overlap. **Not here:** the cart rule (already enforced upstream in `Layout`). |
 | `src/hangarfit/visualize.py` | Top-down PNG renderer. Forces a headless matplotlib backend at import time so it runs in CI / pytest without a display server. When a `CheckResult` is passed, validates that its conflicts reference only planes from the layout, then overdraws the conflicting parts in red. |
 | `src/hangarfit/cli.py` | **Not yet shipped — issue #7.** |
+| `layouts/example.yaml` | Default valid layout for the canonical smoke test — a 6-plane "Saturday morning, 3 out flying" exception scenario (PR #69). Pinned valid by `tests/test_cli.py::test_default_example_layout_is_valid`. |
+| `layouts/example_invalid.yaml` | Companion bad layout for the red-overlay rendering demo. Exercises three conflict kinds (`hangar_bounds`, `wing_wing_overlap`, `strut_wing_overlap`). Pinned invalid by `tests/test_cli.py::test_default_example_invalid_layout_lists_conflicts`. |
 | `tests/fixtures/*.yaml` | One YAML per scenario, `valid_*` / `invalid_*` naming. Add new collision regressions by dropping in a fixture, not by writing geometry literals in Python. New fixtures should be scaffolded with `/new-fixture kind=… slug=… rationale="…"` (see `.claude/skills/new-fixture/SKILL.md`). |
 | `tests/fixtures/test_hangar_large.yaml` | Test-only larger hangar (30 × 25 m, length × width). Used by `valid_all_nine_planes.yaml` because the placeholder fleet's strut bracing forces ~2.6 m of x-clearance between strut-braced planes whose fuselage y-bands overlap — which doesn't fit in the placeholder 25 × 18 m hangar (see `data/hangar.yaml`). This is a placeholder-dimension artifact, not a checker bug. Will go away once real measurements arrive. See the fixture header for full reasoning. |
 
@@ -249,6 +253,7 @@ Allowed but not the default. Use only when two feature branches need parallel wo
 
 - **Real measurements** for every aircraft (`measured: false` in `fleet.yaml`). All current dimensions are eyeballed placeholders.
 - **Real hangar measurements** (`data/hangar.yaml`) — length, width, door position and width, maintenance bay depth.
+- **Placeholder hangar can't fit the full fleet.** The 25 × 18 m placeholder hangar (length × width) cannot fit all 9 aircraft at once, regardless of heading combinations — verified wingspans (scheibe 18 m wing, husky 10.82 m wing, etc.) plus the clearance budget exceed the available door width. The default `layouts/example.yaml` is a deliberate 6-plane subset; test fixtures that need all 9 use `tests/fixtures/test_hangar_large.yaml` (30 × 25 m). Real hangar measurements will reset this.
 
 The collision checker will run on placeholder data, but until the measurements are real, the output is illustrative only.
 
