@@ -22,3 +22,14 @@ class TestArgparseUsageErrors:
         with pytest.raises(SystemExit) as exc_info:
             main(["nope"])
         assert exc_info.value.code == 2
+
+
+class TestCheckHappyPath:
+    """Valid layouts exit 0 with a 'valid' line on stdout."""
+
+    def test_check_valid_layout_returns_0(self, capsys):
+        exit_code = main(["check", "tests/fixtures/valid_two_separated.yaml"])
+        assert exit_code == 0
+        captured = capsys.readouterr()
+        assert captured.out.strip() == "valid"
+        assert captured.err == ""
