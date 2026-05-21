@@ -45,7 +45,6 @@ def _ok_aircraft(
     *,
     movement_mode: str = "always_own_gear",
     turn_radius_m: float | None = 5.0,
-    struts: StrutsSpec | None = None,
 ) -> Aircraft:
     return Aircraft(
         id=plane_id,
@@ -56,7 +55,6 @@ def _ok_aircraft(
         turn_radius_m=turn_radius_m,
         measured=False,
         parts=(_ok_part(),),
-        struts=struts,
     )
 
 
@@ -77,9 +75,15 @@ class TestPart:
         assert p.kind == "fuselage"
         assert p.z_top_m > p.z_bottom_m
 
-    def test_empty_kind_rejected(self) -> None:
-        with pytest.raises(ValueError, match="kind must be non-empty"):
-            _ok_part(kind="")
+    @pytest.mark.parametrize("kind", ["", "fueslage", "Wing", "engine", "rotor"])
+    def test_invalid_kind_rejected(self, kind: str) -> None:
+        with pytest.raises(ValueError, match="Part.kind must be one of"):
+            _ok_part(kind=kind)  # type: ignore[arg-type]
+
+    @pytest.mark.parametrize("kind", ["fuselage", "wing", "strut", "tail"])
+    def test_all_valid_kinds_accepted(self, kind: str) -> None:
+        p = _ok_part(kind=kind)  # type: ignore[arg-type]
+        assert p.kind == kind
 
     @pytest.mark.parametrize("length_m", [0.0, -1.0])
     def test_non_positive_length_rejected(self, length_m: float) -> None:
@@ -157,6 +161,28 @@ class TestStrutsSpec:
                 width_m=0.05,
             )
 
+    def test_wing_attach_inboard_of_fuselage_rejected(self) -> None:
+        """A strut must run outward; wing attach inside the fuselage attach is impossible."""
+        with pytest.raises(ValueError, match="must be >="):
+            StrutsSpec(
+                fuselage_attach_x_m=0.0,
+                fuselage_attach_y_m=0.8,
+                fuselage_attach_z_m=0.5,
+                wing_attach_y_m=0.4,  # inboard of fuselage attach — impossible
+                width_m=0.05,
+            )
+
+    def test_wing_attach_equal_to_fuselage_attach_allowed(self) -> None:
+        """Degenerate but legal: strut runs vertically (no outward component)."""
+        s = StrutsSpec(
+            fuselage_attach_x_m=0.0,
+            fuselage_attach_y_m=0.8,
+            fuselage_attach_z_m=0.5,
+            wing_attach_y_m=0.8,
+            width_m=0.05,
+        )
+        assert s.wing_attach_y_m == s.fuselage_attach_y_m
+
 
 class TestAircraft:
     def test_valid_own_gear_construction(self) -> None:
@@ -211,10 +237,37 @@ class TestAircraft:
         with pytest.raises(ValueError, match="turn_radius_m is required"):
             _ok_aircraft(movement_mode="cart_eligible", turn_radius_m=None)
 
-    @pytest.mark.parametrize("turn_radius_m", [0.0, -1.0])
-    def test_non_positive_turn_radius_rejected(self, turn_radius_m: float) -> None:
+    @pytest.mark.parametrize(
+        "movement_mode, turn_radius_m",
+        [
+            ("always_own_gear", 0.0),
+            ("always_own_gear", -1.0),
+            ("cart_eligible", 0.0),
+            ("cart_eligible", -2.0),
+        ],
+    )
+    def test_non_positive_turn_radius_rejected(
+        self, movement_mode: str, turn_radius_m: float
+    ) -> None:
         with pytest.raises(ValueError, match="turn_radius_m must be positive"):
-            _ok_aircraft(movement_mode="always_own_gear", turn_radius_m=turn_radius_m)
+            _ok_aircraft(movement_mode=movement_mode, turn_radius_m=turn_radius_m)
+
+    def test_always_cart_ignores_turn_radius_value(self) -> None:
+        """always_cart short-circuits turn_radius validation; even a nonsensical
+        value is accepted because turn_radius is meaningless for cart-only planes.
+        Pinning this asymmetry intentionally so a refactor of the conditional
+        doesn't silently change behavior."""
+        a = _ok_aircraft(movement_mode="always_cart", turn_radius_m=-5.0)
+        assert a.turn_radius_m == -5.0
+
+    def test_required_turn_radius_m_returns_float(self) -> None:
+        a = _ok_aircraft(movement_mode="always_own_gear", turn_radius_m=5.5)
+        assert a.required_turn_radius_m() == 5.5
+
+    def test_required_turn_radius_m_raises_when_none(self) -> None:
+        a = _ok_aircraft(movement_mode="always_cart", turn_radius_m=None)
+        with pytest.raises(AssertionError, match="turn_radius_m is None"):
+            a.required_turn_radius_m()
 
 
 class TestDoor:
@@ -254,6 +307,18 @@ class TestHangar:
                 length_m=length_m,
                 width_m=18.0,
                 door=Door(center_x_m=9.0, width_m=12.0),
+                maintenance_bay=MaintenanceBay(depth_m=9.0),
+                clearance_m=0.3,
+                wing_layer_clearance_m=0.2,
+            )
+
+    @pytest.mark.parametrize("width_m", [0.0, -3.0])
+    def test_non_positive_width_rejected(self, width_m: float) -> None:
+        with pytest.raises(ValueError, match="width_m must be positive"):
+            Hangar(
+                length_m=25.0,
+                width_m=width_m,
+                door=Door(center_x_m=9.0, width_m=12.0) if width_m > 12 else Door(center_x_m=1.0, width_m=0.5),
                 maintenance_bay=MaintenanceBay(depth_m=9.0),
                 clearance_m=0.3,
                 wing_layer_clearance_m=0.2,
@@ -304,7 +369,7 @@ class TestHangar:
             )
 
     def test_maintenance_bay_too_deep(self) -> None:
-        with pytest.raises(ValueError, match="exceeds Hangar.length_m"):
+        with pytest.raises(ValueError, match="must be strictly less than"):
             Hangar(
                 length_m=25.0,
                 width_m=18.0,
@@ -313,6 +378,42 @@ class TestHangar:
                 clearance_m=0.3,
                 wing_layer_clearance_m=0.2,
             )
+
+    def test_maintenance_bay_equal_to_length_rejected(self) -> None:
+        """Bay-depth == hangar-length leaves zero parking area; rejected."""
+        with pytest.raises(ValueError, match="must be strictly less than"):
+            Hangar(
+                length_m=25.0,
+                width_m=18.0,
+                door=Door(center_x_m=9.0, width_m=12.0),
+                maintenance_bay=MaintenanceBay(depth_m=25.0),
+                clearance_m=0.3,
+                wing_layer_clearance_m=0.2,
+            )
+
+    def test_door_flush_with_left_wall_allowed(self) -> None:
+        """Door's left edge exactly at x=0 is a legal boundary."""
+        h = Hangar(
+            length_m=25.0,
+            width_m=18.0,
+            door=Door(center_x_m=6.0, width_m=12.0),
+            maintenance_bay=MaintenanceBay(depth_m=9.0),
+            clearance_m=0.3,
+            wing_layer_clearance_m=0.2,
+        )
+        assert h.door.center_x_m == 6.0
+
+    def test_door_flush_with_right_wall_allowed(self) -> None:
+        """Door's right edge exactly at x=width_m is a legal boundary."""
+        h = Hangar(
+            length_m=25.0,
+            width_m=18.0,
+            door=Door(center_x_m=12.0, width_m=12.0),
+            maintenance_bay=MaintenanceBay(depth_m=9.0),
+            clearance_m=0.3,
+            wing_layer_clearance_m=0.2,
+        )
+        assert h.door.center_x_m == 12.0
 
 
 class TestPlacement:
@@ -437,6 +538,95 @@ class TestLayout:
                 maintenance_plane="bar",
             )
 
+    def test_maintenance_plane_happy_path(self) -> None:
+        a = _ok_aircraft("foo", movement_mode="always_own_gear", turn_radius_m=5.0)
+        layout = Layout(
+            fleet=self._fleet_of(a),
+            hangar=_ok_hangar(),
+            placements=(
+                Placement(plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False),
+            ),
+            maintenance_plane="foo",
+        )
+        assert layout.maintenance_plane == "foo"
+
+    def test_fleet_key_must_match_aircraft_id(self) -> None:
+        a = _ok_aircraft("real_id", movement_mode="always_own_gear", turn_radius_m=5.0)
+        with pytest.raises(ValueError, match="does not match its Aircraft.id"):
+            Layout(
+                fleet={"wrong_key": a},
+                hangar=_ok_hangar(),
+                placements=(),
+            )
+
+    def test_fleet_is_read_only_after_construction(self) -> None:
+        """Layout.__post_init__ wraps fleet in MappingProxyType so that
+        cross-reference invariants stay valid for the object's lifetime."""
+        a = _ok_aircraft("foo", movement_mode="always_own_gear", turn_radius_m=5.0)
+        layout = Layout(
+            fleet=self._fleet_of(a),
+            hangar=_ok_hangar(),
+            placements=(
+                Placement(plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False),
+            ),
+        )
+        with pytest.raises(TypeError):
+            layout.fleet["foo"] = a  # type: ignore[index]
+        with pytest.raises(TypeError):
+            del layout.fleet["foo"]  # type: ignore[attr-defined]
+
+    def test_fleet_caller_mutation_does_not_leak(self) -> None:
+        """The dict the caller passes in is copied before being wrapped, so
+        post-construction mutations to the caller's dict don't leak."""
+        a = _ok_aircraft("foo", movement_mode="always_own_gear", turn_radius_m=5.0)
+        caller_dict = self._fleet_of(a)
+        layout = Layout(
+            fleet=caller_dict,
+            hangar=_ok_hangar(),
+            placements=(
+                Placement(plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False),
+            ),
+        )
+        del caller_dict["foo"]
+        assert "foo" in layout.fleet
+
+    def test_always_cart_planes_do_not_count_against_cart_limit(self) -> None:
+        """Two always_cart + one cart_eligible on carts must be allowed:
+        the limit is 'at most one cart_eligible on carts', not 'at most
+        one anything on carts'."""
+        a = _ok_aircraft("a", movement_mode="always_cart", turn_radius_m=None)
+        b = _ok_aircraft("b", movement_mode="always_cart", turn_radius_m=None)
+        c = _ok_aircraft("c", movement_mode="cart_eligible", turn_radius_m=4.0)
+        layout = Layout(
+            fleet=self._fleet_of(a, b, c),
+            hangar=_ok_hangar(),
+            placements=(
+                Placement(plane_id="a", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=True),
+                Placement(plane_id="b", x_m=2.0, y_m=0.0, heading_deg=0.0, on_carts=True),
+                Placement(plane_id="c", x_m=4.0, y_m=0.0, heading_deg=0.0, on_carts=True),
+            ),
+        )
+        assert len(layout.placements) == 3
+
+    def test_cart_rule_allows_zero_cart_eligible_on_carts(self) -> None:
+        a = _ok_aircraft("foo", movement_mode="cart_eligible", turn_radius_m=4.0)
+        b = _ok_aircraft("bar", movement_mode="cart_eligible", turn_radius_m=4.0)
+        layout = Layout(
+            fleet=self._fleet_of(a, b),
+            hangar=_ok_hangar(),
+            placements=(
+                Placement(plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False),
+                Placement(plane_id="bar", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False),
+            ),
+        )
+        assert len(layout.placements) == 2
+
+    def test_empty_layout_valid(self) -> None:
+        """A Layout with an empty fleet and no placements is legal (degenerate)."""
+        layout = Layout(fleet={}, hangar=_ok_hangar(), placements=())
+        assert layout.placements == ()
+        assert len(layout.fleet) == 0
+
 
 class TestConflict:
     def test_one_plane_conflict(self) -> None:
@@ -463,6 +653,34 @@ class TestConflict:
         with pytest.raises(ValueError, match="must have 1 or 2 entries"):
             Conflict(kind="x", planes=("a", "b", "c"), detail="x")
 
+    def test_empty_plane_id_in_planes_rejected(self) -> None:
+        with pytest.raises(ValueError, match="entries must be non-empty"):
+            Conflict(kind="x", planes=("foo", ""), detail="x")
+
+    def test_duplicate_planes_rejected(self) -> None:
+        """A pairwise conflict can't list the same plane on both sides."""
+        with pytest.raises(ValueError, match="must be distinct"):
+            Conflict(kind="x", planes=("foo", "foo"), detail="x")
+
+    def test_single_factory(self) -> None:
+        c = Conflict.single(kind="maintenance_position", plane="foo", detail="x")
+        assert c.kind == "maintenance_position"
+        assert c.planes == ("foo",)
+
+    def test_pair_factory(self) -> None:
+        c = Conflict.pair(
+            kind="wing_strut_overlap",
+            plane_a="foo",
+            plane_b="bar",
+            detail="x",
+        )
+        assert c.planes == ("foo", "bar")
+
+    def test_pair_factory_rejects_self_pair(self) -> None:
+        """Factory still goes through __post_init__, so the distinct check fires."""
+        with pytest.raises(ValueError, match="must be distinct"):
+            Conflict.pair(kind="x", plane_a="foo", plane_b="foo", detail="x")
+
 
 class TestCheckResult:
     def test_empty_is_valid(self) -> None:
@@ -475,15 +693,6 @@ class TestCheckResult:
         r = CheckResult(conflicts=(c,))
         assert r.valid is False
         assert len(r.conflicts) == 1
-
-    def test_valid_tracks_conflicts_addition(self) -> None:
-        c1 = Conflict(kind="x", planes=("foo",), detail="x")
-        c2 = Conflict(kind="y", planes=("bar", "baz"), detail="y")
-        r0 = CheckResult()
-        r1 = CheckResult(conflicts=(c1,))
-        r2 = CheckResult(conflicts=(c1, c2))
-        assert (r0.valid, r1.valid, r2.valid) == (True, False, False)
-        assert (len(r0.conflicts), len(r1.conflicts), len(r2.conflicts)) == (0, 1, 2)
 
 
 class TestFrozenBehavior:

@@ -11,12 +11,17 @@ The full coordinate convention and parts-model collision rule live in
 
 from __future__ import annotations
 
+import typing
 from dataclasses import dataclass
-from typing import Literal
+from types import MappingProxyType
+from typing import Literal, Mapping
 
 WingPosition = Literal["high", "mid", "low"]
 Gear = Literal["tailwheel", "nosewheel", "monowheel"]
 MovementMode = Literal["always_cart", "always_own_gear", "cart_eligible"]
+PartKind = Literal["fuselage", "wing", "strut", "tail"]
+
+_VALID_PART_KINDS = frozenset(typing.get_args(PartKind))
 
 
 @dataclass(frozen=True, slots=True)
@@ -26,9 +31,13 @@ class Part:
     The universal collision unit. Fuselage, wing, and each strut are all
     represented as ``Part`` instances. See ``CLAUDE.md`` for the
     plane-local coordinate convention (``+x`` forward, ``+y`` right).
+
+    ``kind`` is closed: ``"fuselage" | "wing" | "strut" | "tail"``. New
+    kinds must be added to ``PartKind`` and the matching ``_VALID_PART_KINDS``
+    set above; the collision checker and visualizer key off these values.
     """
 
-    kind: str
+    kind: PartKind
     length_m: float
     width_m: float
     offset_x_m: float
@@ -38,8 +47,11 @@ class Part:
     z_top_m: float
 
     def __post_init__(self) -> None:
-        if not self.kind:
-            raise ValueError("Part.kind must be non-empty")
+        if self.kind not in _VALID_PART_KINDS:
+            raise ValueError(
+                f"Part.kind must be one of {sorted(_VALID_PART_KINDS)}, "
+                f"got {self.kind!r}"
+            )
         if self.length_m <= 0:
             raise ValueError(
                 f"Part {self.kind!r}: length_m must be positive, got {self.length_m}"
@@ -100,20 +112,30 @@ class StrutsSpec:
                 f"StrutsSpec: wing_attach_y_m must be positive "
                 f"(outboard distance on the wing), got {self.wing_attach_y_m}"
             )
+        if self.wing_attach_y_m < self.fuselage_attach_y_m:
+            raise ValueError(
+                f"StrutsSpec: wing_attach_y_m ({self.wing_attach_y_m}) must be "
+                f">= fuselage_attach_y_m ({self.fuselage_attach_y_m}); a strut "
+                f"must run outward, not inward through the fuselage"
+            )
 
 
 @dataclass(frozen=True, slots=True)
 class Aircraft:
     """One plane in the fleet.
 
-    ``parts`` is the primary geometric data — the collision checker
-    sees nothing else. ``struts`` is a convenience that gets expanded
-    into mirrored strut ``Part`` instances by the loader; if present,
-    the resulting strut parts are also included in ``parts`` after
-    expansion.
+    ``parts`` is the single source of truth for geometry — the collision
+    checker and visualizer key off it directly. There is **no** ``struts``
+    field on the constructed ``Aircraft``: ``StrutsSpec`` is a transient
+    YAML-schema-only type that the loader (#3) expands into mirrored
+    strut ``Part`` instances and folds into ``parts`` before constructing
+    the ``Aircraft``. This keeps the parts model the unambiguous canonical
+    geometric representation (no risk of strut volume being double-counted
+    once from ``struts`` and again from a strut ``Part``).
 
     ``turn_radius_m`` is required for any non-``always_cart`` aircraft
-    (the future planner needs it for Dubins-style motion).
+    (the future Dubins-path planner needs it for own-gear motion).
+    For ``always_cart`` it may be ``None`` (or any value — it is ignored).
     """
 
     id: str
@@ -124,7 +146,6 @@ class Aircraft:
     turn_radius_m: float | None
     measured: bool
     parts: tuple[Part, ...]
-    struts: StrutsSpec | None = None
     notes: str = ""
 
     def __post_init__(self) -> None:
@@ -149,6 +170,22 @@ class Aircraft:
     @property
     def is_cart_eligible(self) -> bool:
         return self.movement_mode == "cart_eligible"
+
+    def required_turn_radius_m(self) -> float:
+        """Return ``turn_radius_m`` narrowed to ``float`` (never ``None``).
+
+        Use when calling code statically knows the aircraft is not
+        ``always_cart`` and therefore must have a turn radius (Dubins
+        planner, etc.). Raises ``AssertionError`` if the invariant has
+        been broken (which ``__post_init__`` should prevent).
+        """
+        if self.turn_radius_m is None:
+            raise AssertionError(
+                f"Aircraft {self.id!r}: turn_radius_m is None "
+                f"(movement_mode={self.movement_mode!r}); caller assumed "
+                f"a turn radius was available."
+            )
+        return self.turn_radius_m
 
 
 @dataclass(frozen=True, slots=True)
@@ -214,10 +251,11 @@ class Hangar:
                 f"Door (center={self.door.center_x_m}, width={self.door.width_m}) "
                 f"doesn't fit in hangar width {self.width_m}"
             )
-        if self.maintenance_bay.depth_m > self.length_m:
+        if self.maintenance_bay.depth_m >= self.length_m:
             raise ValueError(
                 f"MaintenanceBay.depth_m={self.maintenance_bay.depth_m} "
-                f"exceeds Hangar.length_m={self.length_m}"
+                f"must be strictly less than Hangar.length_m={self.length_m} "
+                f"(otherwise no non-bay parking area remains)"
             )
 
 
@@ -240,17 +278,42 @@ class Placement:
 class Layout:
     """A complete candidate layout: hangar + fleet + placements.
 
-    Validates cross-reference invariants between placements and the
-    fleet (unknown IDs, duplicates, cart rule, movement-mode
-    consistency, maintenance plane placement).
+    Validates **cross-reference invariants** between placements and the
+    fleet:
+
+    - every placement's ``plane_id`` exists in ``fleet``,
+    - the fleet dict's keys equal their ``Aircraft.id`` (no key/id drift),
+    - no duplicate placements,
+    - the cart rule (at most one ``cart_eligible`` plane on carts),
+    - ``always_cart`` ↔ ``on_carts=True`` consistency,
+    - ``always_own_gear`` ↔ ``on_carts=False`` consistency,
+    - the maintenance plane (if set) is in the fleet and is placed.
+
+    The maintenance plane's **position** rule ("must be parked in the
+    back-most strip of the hangar") is *not* enforced here — it depends
+    on placement geometry and the hangar's maintenance-bay depth, so it
+    lives in the collision checker (#5) alongside the other geometric
+    rules.
+
+    On construction, ``fleet`` is wrapped in ``MappingProxyType`` so
+    that the cross-reference invariants stay valid for the lifetime of
+    the ``Layout`` (a plain ``dict`` field, even on a frozen dataclass,
+    can be mutated through ``layout.fleet["x"] = …``).
     """
 
-    fleet: dict[str, Aircraft]
+    fleet: Mapping[str, Aircraft]
     hangar: Hangar
     placements: tuple[Placement, ...]
     maintenance_plane: str | None = None
 
     def __post_init__(self) -> None:
+        for k, a in self.fleet.items():
+            if a.id != k:
+                raise ValueError(
+                    f"fleet key {k!r} does not match its Aircraft.id "
+                    f"({a.id!r}); fleet keys must equal their aircraft id"
+                )
+
         seen: set[str] = set()
         for p in self.placements:
             if p.plane_id not in self.fleet:
@@ -295,14 +358,18 @@ class Layout:
                     f"maintenance_plane {self.maintenance_plane!r} is not placed"
                 )
 
+        object.__setattr__(self, "fleet", MappingProxyType(dict(self.fleet)))
+
 
 @dataclass(frozen=True, slots=True)
 class Conflict:
     """One reason a layout is invalid.
 
-    ``planes`` carries 1 or 2 aircraft IDs depending on the rule that
-    fired (layout-wide rules like ``maintenance_position`` cite one
-    plane; pairwise rules like ``wing_strut_overlap`` cite two).
+    ``planes`` carries 1 or 2 *distinct, non-empty* aircraft IDs
+    depending on the rule that fired (layout-wide rules like
+    ``maintenance_position`` cite one plane; pairwise rules like
+    ``wing_strut_overlap`` cite two). Use ``Conflict.single()`` /
+    ``Conflict.pair()`` at call sites to make the arity explicit.
     """
 
     kind: str
@@ -318,6 +385,24 @@ class Conflict:
             raise ValueError(
                 f"Conflict.planes must have 1 or 2 entries, got {len(self.planes)}"
             )
+        if any(not pid for pid in self.planes):
+            raise ValueError(
+                f"Conflict.planes entries must be non-empty, got {self.planes}"
+            )
+        if len(set(self.planes)) != len(self.planes):
+            raise ValueError(
+                f"Conflict.planes entries must be distinct, got {self.planes}"
+            )
+
+    @classmethod
+    def single(cls, kind: str, plane: str, detail: str) -> "Conflict":
+        """Factory for a single-aircraft conflict (e.g. ``maintenance_position``)."""
+        return cls(kind=kind, planes=(plane,), detail=detail)
+
+    @classmethod
+    def pair(cls, kind: str, plane_a: str, plane_b: str, detail: str) -> "Conflict":
+        """Factory for a pairwise conflict (e.g. ``wing_strut_overlap``)."""
+        return cls(kind=kind, planes=(plane_a, plane_b), detail=detail)
 
 
 @dataclass(frozen=True, slots=True)
