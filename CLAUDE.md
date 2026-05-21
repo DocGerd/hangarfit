@@ -276,6 +276,9 @@ ruff format --check src/ tests/
 ruff check --fix src/ tests/
 ruff format src/ tests/
 
+# Type check
+mypy src/hangarfit/
+
 # CI: GitHub Actions runs `pytest` on Python 3.11 + 3.12 for PRs into
 # develop/main (see .github/workflows/ci.yml). No coverage gate yet.
 

@@ -41,6 +41,9 @@ jobs:
       - name: Check formatting with ruff
         run: ruff format --check src/ tests/
 
+      - name: Type-check with mypy
+        run: mypy src/hangarfit
+
       - name: Run tests
         run: pytest --cov=hangarfit --cov-report=xml --cov-report=term-missing
 
