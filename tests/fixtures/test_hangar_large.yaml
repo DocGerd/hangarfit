@@ -1,0 +1,33 @@
+# Test-only hangar — larger than the placeholder in data/hangar.yaml.
+#
+# Reason for existence: the placeholder fleet in data/fleet.yaml has
+# generous strut-bracing on most aircraft, which forces ~2.6 m of x
+# clearance between any two strut-braced planes whose fuselage y-bands
+# overlap. In the 18 × 25 placeholder hangar, fitting all 9 aircraft
+# at once is forced to crowd the x-axis past what those strut constraints
+# allow. This isn't a bug in the checker — it's a (likely) artifact of
+# placeholder dimensions; real measurements will probably tell a
+# different story (see "Open questions / TBD" in CLAUDE.md).
+#
+# Until real measurements arrive, case 12 ("all 9 planes plausibly
+# placed") uses this larger test hangar so the test can actually exercise
+# the checker on a 9-plane layout. The other invalid-* and 2-plane valid-*
+# fixtures continue to use the placeholder hangar so they catch any
+# regression against the real-world target dimensions.
+#
+# Once measurements land, replace this file's use in
+# valid_all_nine_planes.yaml with data/hangar.yaml and re-tune the layout
+# if needed.
+
+length_m: 30.0
+width_m: 25.0
+
+door:
+  center_x_m: 12.5
+  width_m: 16.0
+
+maintenance_bay:
+  depth_m: 9.0
+
+clearance_m: 0.3
+wing_layer_clearance_m: 0.2

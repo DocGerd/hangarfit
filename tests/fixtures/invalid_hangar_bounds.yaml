@@ -1,0 +1,19 @@
+# Case 11 — hangar_bounds violation.
+#
+# Scheibe Falke (16.6 m wingspan) placed at world (x=1, y=5) heading 0.
+# At heading 0 the wing's width axis maps to world +x, so the wing
+# spans world x ∈ [1 − 8.3, 1 + 8.3] = [−7.3, 9.3] — well past the
+# left wall (x = 0). The checker must flag a `hangar_bounds` conflict.
+#
+# scheibe_falke is always_cart, so on_carts=true (the loader/Layout
+# would reject false there).
+
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
+
+placements:
+  - plane: scheibe_falke
+    x_m: 1.0
+    y_m: 5.0
+    heading_deg: 0.0
+    on_carts: true

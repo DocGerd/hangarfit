@@ -1,0 +1,34 @@
+# Case 5 — two fuselages overlap (single isolated conflict).
+#
+# ctsl at (9, 5, 0, false) — fuselage x [8.5, 9.5], y [1.85, 8.15], z [0, 1.4];
+#                            wing x [4.7, 13.3], y [5.3, 6.7], z [1.9, 2.2].
+# fuji at (9, 9, 0, false)  — fuselage x [8.5, 9.5], y [5, 13],   z [0, 1.6];
+#                            wing x [4.3, 13.7], y [8.75, 10.25], z [0.8, 1.1].
+#
+# Fuselages share x [8.5, 9.5] and overlap y [5, 8.15] → fuselage_fuselage_overlap.
+#
+# Crucially, no other pair conflicts:
+#   - ctsl wing y [5.3, 6.7] vs fuji fuselage y [5, 13]: plan overlap, but
+#     z-gap = 1.9 − 1.6 = 0.3 m > 0.2 m clearance.
+#   - fuji wing y [8.75, 10.25] vs ctsl fuselage y [1.85, 8.15]: y-gap 0.6 m
+#     (no plan overlap at all).
+#   - ctsl wing y [5.3, 6.7] vs fuji wing y [8.75, 10.25]: y-gap 2.05 m.
+#
+# This makes case 5 a *single-conflict* fixture suitable for asserting
+# the conflict list has exactly one entry — guarding against future
+# regressions that might emit phantom extra conflicts.
+
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
+
+placements:
+  - plane: ctsl
+    x_m: 9.0
+    y_m: 5.0
+    heading_deg: 0.0
+    on_carts: false
+  - plane: fuji
+    x_m: 9.0
+    y_m: 9.0
+    heading_deg: 0.0
+    on_carts: false

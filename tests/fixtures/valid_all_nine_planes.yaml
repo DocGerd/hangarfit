@@ -1,0 +1,92 @@
+# Case 12 — all 9 placeholder aircraft placed plausibly. Valid.
+#
+# Uses the test-only hangar (`test_hangar_large.yaml`, 25 m × 30 m)
+# rather than `data/hangar.yaml` (18 m × 25 m). See the top of
+# `test_hangar_large.yaml` for the full rationale; in short: the
+# placeholder fleet's generous strut-bracing dimensions force more
+# x-clearance between strut-braced neighbors than fits in the placeholder
+# hangar. The other fixtures continue to use `data/hangar.yaml` so they
+# still exercise the real-world target dimensions.
+#
+# Layout strategy:
+#   - Three x-columns at px = 5, 10, 15. Strut-braced planes in the
+#     outer columns; cantilever planes (ctsl, scheibe) in the middle.
+#     5 m between columns is well above the ~2.6 m needed to clear a
+#     strut from a neighbor's fuselage in plan view.
+#   - 8 m vertical spacing within each column to keep fuselage y-bands
+#     non-overlapping per column.
+#   - Wing y-bands across columns are also staggered so no two high-wings
+#     plan-overlap at the same height.
+#   - Fuji (the only low-wing) at heading 90 on the right edge (px = 20).
+#     Its narrow 1.5 m wing-x at heading 90 threads a clean lane east of
+#     every strut-braced plane's strut zone, while the 9.4 m wing-y runs
+#     through the gap between husky (py = 5) and cessna_140 (py = 13).
+#     This is the placement that's impossible at heading 0, where Fuji's
+#     9.4 m wing-x necessarily overlaps some fuselage at every py.
+#   - Maintenance: scheibe_falke at py = 24 (fuselage centroid in the
+#     back-most 9 m bay, which starts at y = 21 for this hangar).
+#
+# Cart rule: 3 always_cart planes (scheibe, wild_thing, zlin) carry
+# on_carts=true mandatorily. Of the 4 cart_eligible planes, only
+# cessna_140 has on_carts=true (the one spare-cart slot); cessna_150,
+# ctsl, fk9_mkii are on their own gear.
+
+fleet: ../../data/fleet.yaml
+hangar: test_hangar_large.yaml
+
+maintenance:
+  plane: scheibe_falke
+
+placements:
+  # Left column (px = 5) — small strut-braced
+  - plane: wild_thing
+    x_m: 5.0
+    y_m: 3.0
+    heading_deg: 0.0
+    on_carts: true
+  - plane: zlin_savage
+    x_m: 5.0
+    y_m: 11.0
+    heading_deg: 0.0
+    on_carts: true
+  - plane: fk9_mkii
+    x_m: 5.0
+    y_m: 19.0
+    heading_deg: 0.0
+    on_carts: false
+
+  # Right column (px = 15) — larger strut-braced
+  - plane: aviat_husky
+    x_m: 15.0
+    y_m: 5.0
+    heading_deg: 0.0
+    on_carts: false
+  - plane: cessna_140
+    x_m: 15.0
+    y_m: 13.0
+    heading_deg: 0.0
+    on_carts: true            # the ONE cart_eligible on carts
+  - plane: cessna_150
+    x_m: 15.0
+    y_m: 20.5
+    heading_deg: 0.0
+    on_carts: false
+
+  # Middle column (px = 10) — cantilevers + maintenance plane
+  - plane: ctsl
+    x_m: 10.0
+    y_m: 7.0
+    heading_deg: 0.0
+    on_carts: false
+  - plane: scheibe_falke
+    x_m: 10.0
+    y_m: 24.0
+    heading_deg: 0.0
+    on_carts: true            # always_cart
+
+  # Right edge (px = 20, heading 90) — Fuji's low wing threads a clear lane
+  - plane: fuji
+    x_m: 20.0
+    y_m: 10.0
+    heading_deg: 90.0
+    on_carts: false
