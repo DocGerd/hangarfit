@@ -1,0 +1,19 @@
+name: Question
+description: Ask a question about hangarfit
+title: "[question] "
+labels: ["question"]
+
+body:
+  - type: textarea
+    id: trying_to_do
+    attributes:
+      label: What are you trying to do?
+    validations:
+      required: true
+
+  - type: textarea
+    id: tried_so_far
+    attributes:
+      label: What have you tried?
+    validations:
+      required: true
