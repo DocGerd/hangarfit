@@ -1,6 +1,7 @@
 name: CI
 
 on:
+  # Only run CI on PRs into integration/release branches — not cross-feature PRs.
   pull_request:
     branches: [develop, main]
   push:
