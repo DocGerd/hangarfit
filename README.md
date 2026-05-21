@@ -48,6 +48,11 @@ pip install -e .
 
 # Check a hand-authored layout
 hangarfit check layouts/example.yaml
+```
+
+> Note: against the current placeholder fleet/hangar measurements (see Status), the example layout fails validation. That's expected — Phase 1 ships the substrate; real measurements are tracked separately.
+
+```bash
 
 # Render the layout (works on invalid layouts too — conflicts highlighted in red)
 hangarfit check layouts/example.yaml --render out.png

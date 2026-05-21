@@ -10,6 +10,7 @@ import pytest
 from hangarfit.cli import main
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 class TestArgparseUsageErrors:
@@ -30,7 +31,7 @@ class TestArgparseUsageErrors:
 
 
 class TestCheckHappyPath:
-    """Valid layouts exit 0 with a 'valid' line on stdout."""
+    """Valid layouts exit 0; invalid layouts exit 1 with conflict lines on stdout."""
 
     def test_check_valid_layout_returns_0(self, capsys):
         exit_code = main(["check", str(FIXTURES_DIR / "valid_two_separated.yaml")])
@@ -115,7 +116,8 @@ class TestCheckJsonOutput:
 
 
 class TestCheckRender:
-    """--render writes a PNG; works on both valid and invalid layouts."""
+    """--render writes a PNG on valid and invalid layouts, exits 2 on render failure,
+    and is skipped entirely when there is a structural load error."""
 
     def test_check_render_writes_png(self, tmp_path, capsys):
         out = tmp_path / "valid.png"
@@ -139,6 +141,15 @@ class TestCheckRender:
         exit_code = main(["check", layout, "--render", str(out)])
         assert exit_code == 2
         assert not out.exists()
+
+    def test_check_render_failure_returns_2(self, tmp_path, capsys):
+        # Unwritable path: the intermediate directory does not exist.
+        out = tmp_path / "no_such_dir" / "out.png"
+        layout = str(FIXTURES_DIR / "valid_two_separated.yaml")
+        exit_code = main(["check", layout, "--render", str(out)])
+        assert exit_code == 2
+        captured = capsys.readouterr()
+        assert "error:" in captured.err
 
 
 class TestFleetHangarOverrides:
@@ -165,8 +176,8 @@ class TestFleetHangarOverrides:
 
         exit_code = main([
             "check", str(clean),
-            "--fleet", "data/fleet.yaml",
-            "--hangar", "data/hangar.yaml",
+            "--fleet", str(REPO_ROOT / "data" / "fleet.yaml"),
+            "--hangar", str(REPO_ROOT / "data" / "hangar.yaml"),
         ])
         assert exit_code == 0
         assert capsys.readouterr().out.strip() == "valid"
@@ -175,7 +186,7 @@ class TestFleetHangarOverrides:
         # Both kwarg and embedded are present — loader rejects this.
         exit_code = main([
             "check", str(FIXTURES_DIR / "valid_two_separated.yaml"),
-            "--fleet", "data/fleet.yaml",
+            "--fleet", str(REPO_ROOT / "data" / "fleet.yaml"),
         ])
         assert exit_code == 2
         captured = capsys.readouterr()

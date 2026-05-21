@@ -5,8 +5,8 @@ Implements:
 
 See ``docs/superpowers/specs/2026-05-21-cli-design.md`` for the design.
 
-JSON output schema: ``hangarfit.check/v1`` — a faithful dump of the
-:class:`hangarfit.models.Conflict` dataclass (``kind`` / ``planes`` /
+JSON output schema: ``hangarfit.check/v1`` — the ``conflicts`` array carries
+one object per :class:`hangarfit.models.Conflict` (``kind`` / ``planes`` /
 ``detail``). Bump the schema version if and only if ``Conflict``
 itself grows new fields.
 """
@@ -20,6 +20,8 @@ import sys
 from hangarfit import collisions, visualize
 from hangarfit.loader import LoaderError, load_fleet, load_hangar, load_layout
 from hangarfit.models import CheckResult, Conflict
+
+_JSON_SCHEMA = "hangarfit.check/v1"
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -53,7 +55,7 @@ def build_parser() -> argparse.ArgumentParser:
     check.add_argument(
         "--json",
         action="store_true",
-        help="Emit JSON on stdout (schema: hangarfit.check/v1).",
+        help=f"Emit JSON on stdout (schema: {_JSON_SCHEMA}).",
     )
 
     return parser
@@ -71,7 +73,7 @@ def _emit_human(result: CheckResult) -> None:
 
 
 def _format_conflict(c: Conflict) -> str:
-    """One-line human render of a Conflict. No destructuring of ``detail``."""
+    """One-line human render of a Conflict. No re-parsing of ``detail``."""
     return f"  - {c.kind} [{', '.join(c.planes)}]: {c.detail}"
 
 
@@ -83,7 +85,7 @@ def _conflict_to_dict(c: Conflict) -> dict:
 def _emit_json(layout_path: str, result: CheckResult) -> None:
     """Write the v1 JSON payload to stdout."""
     payload = {
-        "schema": "hangarfit.check/v1",
+        "schema": _JSON_SCHEMA,
         "layout": layout_path,
         "valid": result.valid,
         "conflicts": [_conflict_to_dict(c) for c in result.conflicts],
@@ -94,8 +96,8 @@ def _emit_json(layout_path: str, result: CheckResult) -> None:
 def cmd_check(args: argparse.Namespace) -> int:
     """Run the ``check`` subcommand. See spec §4 for the data flow."""
     try:
-        fleet_override = load_fleet(args.fleet) if args.fleet else None
-        hangar_override = load_hangar(args.hangar) if args.hangar else None
+        fleet_override = load_fleet(args.fleet) if args.fleet is not None else None
+        hangar_override = load_hangar(args.hangar) if args.hangar is not None else None
         layout = load_layout(args.layout, fleet=fleet_override, hangar=hangar_override)
     except LoaderError as e:
         print(f"error: {e}", file=sys.stderr)
@@ -108,7 +110,11 @@ def cmd_check(args: argparse.Namespace) -> int:
         _emit_human(result)
 
     if args.render is not None:
-        visualize.render_layout(layout, args.render, check_result=result)
+        try:
+            visualize.render_layout(layout, args.render, check_result=result)
+        except OSError as e:
+            print(f"error: render failed: {e}", file=sys.stderr)
+            return 2
 
     return 0 if result.valid else 1
 
