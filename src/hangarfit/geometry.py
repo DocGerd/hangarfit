@@ -24,7 +24,6 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-import shapely
 from shapely.geometry import Polygon
 
 from .models import Aircraft, PartKind, Placement
@@ -91,7 +90,17 @@ def polygon_overlap(p1: Polygon, p2: Polygon, clearance: float = 0.0) -> bool:
     - ``clearance == 0``: conflict only on **actual area overlap**.
       Polygons that touch at the boundary (Shapely's ``touches``) are
       NOT a conflict — distance is 0 but no interior is shared.
+
+    Raises ``ValueError`` for negative ``clearance`` — there is no
+    sensible "negative clearance" semantic and the upstream
+    :class:`Hangar` already constrains the configured value to
+    non-negative, so a negative value here indicates a programming
+    error rather than a misconfigured layout.
     """
+    if clearance < 0:
+        raise ValueError(
+            f"polygon_overlap: clearance must be non-negative, got {clearance}"
+        )
     if clearance > 0:
         return p1.distance(p2) < clearance
     return p1.intersects(p2) and not p1.touches(p2)
@@ -151,11 +160,13 @@ def aircraft_parts_world(
             angle_deg=part.angle_deg,
         )
         # Apply the plane-local-to-world transform to each vertex.
+        # local_poly.exterior.coords includes the closing-point duplicate;
+        # slice it off so Polygon() doesn't have to de-dup.
         world_coords = [
             (px + u * sin_h + v * cos_h, py + u * cos_h - v * sin_h)
-            for u, v in local_poly.exterior.coords
+            for u, v in list(local_poly.exterior.coords)[:-1]
         ]
-        world_poly = shapely.geometry.Polygon(world_coords)
+        world_poly = Polygon(world_coords)
         world_parts.append(
             WorldPart(
                 polygon=world_poly,

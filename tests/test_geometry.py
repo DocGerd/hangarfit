@@ -136,6 +136,14 @@ class TestPolygonOverlap:
         assert polygon_overlap(p1, p2, clearance=0.3) is False
         assert polygon_overlap(p1, p2, clearance=0.6) is True
 
+    def test_negative_clearance_rejected(self) -> None:
+        """No sensible 'negative clearance' semantic — raise instead of
+        silently falling through to the clearance=0 branch."""
+        p1 = oriented_rect(0, 0, 2, 2, 0)
+        p2 = oriented_rect(5, 0, 2, 2, 0)
+        with pytest.raises(ValueError, match="clearance must be non-negative"):
+            polygon_overlap(p1, p2, clearance=-0.1)
+
 
 class TestPolygonOverlapArea:
     def test_disjoint(self) -> None:
@@ -285,6 +293,73 @@ class TestAircraftPartsWorld:
         cx, cy = world.polygon.centroid.x, world.polygon.centroid.y
         assert _almost_equal(cx, 10.0, tol=1e-6)
         assert _almost_equal(cy, 21.0, tol=1e-6)  # 20 + 1 (nose forward)
+
+    def test_heading_135_nose_distinguishes_correct_from_ccw(self) -> None:
+        """🔬 Bonus regression: at heading 135°, the NOSE itself
+        distinguishes the correct transform from a textbook CCW rotation
+        — unlike at heading 45° where sin(45°) == cos(45°) makes the two
+        formulations coincide on the nose vector. At 135°:
+
+          correct: nose → (sin 135°, cos 135°) = (+√2/2, -√2/2)
+          CCW:     nose → (cos 135°, sin 135°) = (-√2/2, +√2/2)
+
+        Different in BOTH coordinates — the cleanest single test for the
+        wrong-handedness bug."""
+        ac = _aircraft_with_one_part(_point_part(offset_x_m=1.0, offset_y_m=0.0))
+        pl = Placement(plane_id="probe", x_m=0.0, y_m=0.0, heading_deg=135.0, on_carts=False)
+        [world] = aircraft_parts_world(ac, pl)
+        cx, cy = world.polygon.centroid.x, world.polygon.centroid.y
+        assert _almost_equal(cx, SQRT2_2, tol=1e-6), f"x expected {SQRT2_2}, got {cx}"
+        assert _almost_equal(cy, -SQRT2_2, tol=1e-6), f"y expected {-SQRT2_2}, got {cy}"
+
+    @pytest.mark.parametrize("heading_deg", [180.0, 360.0, 720.0, -360.0])
+    def test_heading_wraparound_works(self, heading_deg: float) -> None:
+        """Heading values outside [-180, 180] or multiples of 360° should
+        produce the expected forward direction (sin/cos handle wrap natively).
+        Pins that we don't normalize heading anywhere upstream and that the
+        transform stays consistent across the wrap."""
+        ac = _aircraft_with_one_part(_point_part(offset_x_m=1.0, offset_y_m=0.0))
+        pl = Placement(
+            plane_id="probe", x_m=0.0, y_m=0.0, heading_deg=heading_deg, on_carts=False
+        )
+        [world] = aircraft_parts_world(ac, pl)
+        cx, cy = world.polygon.centroid.x, world.polygon.centroid.y
+        expected_x = math.sin(math.radians(heading_deg))
+        expected_y = math.cos(math.radians(heading_deg))
+        assert _almost_equal(cx, expected_x, tol=1e-6)
+        assert _almost_equal(cy, expected_y, tol=1e-6)
+
+    def test_part_angle_deg_composed_with_world_transform(self) -> None:
+        """🔬 Coverage gap caught in PR #11 review: every other test uses
+        ``angle_deg=0``. This test exercises the composition of
+        (in-plane-local rotation) ∘ (world transform).
+
+        Setup: a thin rectangle at plane-local origin with ``angle_deg=90``
+        (rotated CCW 90° within plane-local) — so its long axis now runs
+        along plane-local +y instead of +x. At placement heading 0°, the
+        plane-local axes map as plane +x → world +y, plane +y → world +x.
+        So the rectangle's long axis (now along plane +y) should run
+        along world +x.
+        """
+        part = Part(
+            kind="strut",
+            length_m=4.0,  # long
+            width_m=0.1,   # thin
+            offset_x_m=0.0,
+            offset_y_m=0.0,
+            angle_deg=90.0,  # rotate CCW 90° within plane-local
+            z_bottom_m=0.5,
+            z_top_m=2.0,
+        )
+        ac = _aircraft_with_one_part(part)
+        pl = Placement(plane_id="probe", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False)
+        [world] = aircraft_parts_world(ac, pl)
+        # Plane-local: 0.1 wide along +x, 4.0 long along +y (after the 90° rot).
+        # World mapping at heading 0°: plane +x → world +y, plane +y → world +x.
+        # So in world: long axis (4.0) runs along +x, narrow (0.1) along +y.
+        minx, miny, maxx, maxy = world.polygon.bounds
+        assert _almost_equal(maxx - minx, 4.0, tol=1e-6), f"world x-extent: {maxx - minx}"
+        assert _almost_equal(maxy - miny, 0.1, tol=1e-6), f"world y-extent: {maxy - miny}"
 
     def test_heading_minus_90(self) -> None:
         """At heading -90° (nose toward world -x, i.e. left wall), right-wingtip
