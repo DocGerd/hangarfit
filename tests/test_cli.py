@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from hangarfit.cli import main
+
+FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 
 
 class TestArgparseUsageErrors:
@@ -28,7 +32,7 @@ class TestCheckHappyPath:
     """Valid layouts exit 0 with a 'valid' line on stdout."""
 
     def test_check_valid_layout_returns_0(self, capsys):
-        exit_code = main(["check", "tests/fixtures/valid_two_separated.yaml"])
+        exit_code = main(["check", str(FIXTURES_DIR / "valid_two_separated.yaml")])
         assert exit_code == 0
         captured = capsys.readouterr()
         assert captured.out.strip() == "valid"
