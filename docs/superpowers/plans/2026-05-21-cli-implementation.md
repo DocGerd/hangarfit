@@ -6,7 +6,7 @@
 
 **Architecture:** One new module `src/hangarfit/cli.py` (~120 lines: argparse subparser, dispatch, output formatters). One new test module `tests/test_cli.py` (15 tests, all in-process via `main(argv=...)` and `capsys`). One console-script entry in `pyproject.toml`. One Usage section in `README.md`. No changes to `models.py` / `loader.py` / `geometry.py` / `collisions.py` / `visualize.py`.
 
-**Tech Stack:** Python 3.11+, argparse (stdlib), pytest, `capsys` for stream capture, `tmp_path` for ephemeral fixtures. The CLI relies on the existing `loader.py` (kwarg-only `load_layout(path, *, fleet=None, hangar=None)`), `collisions.check(layout) -> CheckResult`, and `visualize.render(layout, path, result=...)`.
+**Tech Stack:** Python 3.11+, argparse (stdlib), pytest, `capsys` for stream capture, `tmp_path` for ephemeral fixtures. The CLI relies on the existing `loader.py` (kwarg-only `load_layout(path, *, fleet=None, hangar=None)`), `collisions.check(layout) -> CheckResult`, and `visualize.render_layout(layout, output_path, *, check_result=...)`.
 
 **Working directory:** All commands assume cwd = `/home/pkuhn/hangarfit-feature-7-cli` (the `feature/7-cli` worktree off `develop`). If a subagent is dispatched here, its cwd IS this worktree; use bare `pytest` / `git` per the project's worktree conventions.
 
@@ -639,7 +639,7 @@ Refs #7"
 
 **Files:**
 - Modify: `tests/test_cli.py`
-- Modify: `src/hangarfit/cli.py` (wire `visualize.render` call)
+- Modify: `src/hangarfit/cli.py` (wire `visualize.render_layout` call)
 
 - [ ] **Step 1: Add the failing tests**
 
@@ -669,7 +669,7 @@ class TestCheckRender:
 Run: `pytest tests/test_cli.py::TestCheckRender -v`
 Expected: both FAIL — `out.exists()` is False.
 
-- [ ] **Step 3: Wire `visualize.render` into `cmd_check`**
+- [ ] **Step 3: Wire `visualize.render_layout` into `cmd_check`**
 
 Add to the imports at the top of `src/hangarfit/cli.py`:
 
@@ -700,18 +700,18 @@ Replace with:
         _emit_human(result)
 
     if args.render is not None:
-        visualize.render(layout, args.render, result=result)
+        visualize.render_layout(layout, args.render, check_result=result)
 
     return 0 if result.valid else 1
 ```
 
-**Sanity-check the `visualize.render` signature.** Before this step, run:
+**Sanity-check the `visualize.render_layout` signature.** Before this step, run:
 
 ```bash
-grep -n "^def render" src/hangarfit/visualize.py
+grep -n "^def render_layout" src/hangarfit/visualize.py
 ```
 
-The result tells you the parameter names. If `render` takes `result=` as a keyword (per CLAUDE.md / spec §2), the call above is right. If the parameter is named differently (e.g., `check_result=`), update the call to match — and add a note to the spec's open-questions section after the task.
+The result tells you the parameter names. The function is `render_layout(layout, output_path, *, check_result=None, title=None, dpi=100)` — the call above is correct.
 
 - [ ] **Step 4: Run — expect PASS**
 
@@ -727,7 +727,7 @@ Expected: all green. (Matplotlib's headless backend is already forced at import 
 git add src/hangarfit/cli.py tests/test_cli.py
 git commit -m "feat(cli): wire --render (works on invalid layouts too)
 
-Tests 8 and 9. Passing result=CheckResult lets visualize.render
+Tests 8 and 9. Passing check_result=CheckResult lets visualize.render_layout
 overdraw the conflicting parts in red — that's exactly when the
 picture is most useful, so we render even after exit 1.
 
@@ -952,7 +952,7 @@ Expected: file exists, size > 0.
 - [ ] **Step 5: Verify the commit history is clean**
 
 Run: `git log --oneline origin/develop..HEAD`
-Expected: 10 commits (one per Tasks 1–10), each with a `feat(cli):` / `test(cli):` / `docs(readme):` / `docs(spec):` prefix and `Refs #7` in the body.
+Expected: one commit per task; total varies with review feedback. Each commit has a `feat(cli):` / `test(cli):` / `docs(readme):` / `docs(spec):` prefix and `Refs #7` in the body.
 
 - [ ] **Step 6: Push the branch**
 

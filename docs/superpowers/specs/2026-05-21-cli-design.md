@@ -131,8 +131,8 @@ valid
 Invalid:
 ```
 invalid: 2 conflicts
-  - fuselage_wing_overlap [cessna_140, cessna_150]: part 'fuselage' (z=0..1.5) and part 'wing' (z=2.1..2.3) within horizontal clearance 0.3 m and z-gap 0.6 m (< 0.2 m)
-  - hangar_bounds [husky]: part 'tail' vertex (12.5, -0.3) outside hangar 0..18 x 0..25
+  - fuselage_wing_overlap [cessna_140, cessna_150]: part 'fuselage' (z=0..1.5) and part 'wing' (z=2.1..2.3) within horizontal clearance 0.3 m and z-gap 0.1 m (< 0.2 m)
+  - hangar_bounds [husky]: part 'tail' vertex (12.500, -0.300) outside hangar 0..18 x 0..25
 ```
 
 The conflict-line renderer is a private `_format_conflict(c: Conflict) -> str` inside `cli.py` of shape:
@@ -166,12 +166,12 @@ Invalid:
     {
       "kind": "fuselage_wing_overlap",
       "planes": ["cessna_140", "cessna_150"],
-      "detail": "part 'fuselage' (z=0..1.5) and part 'wing' (z=2.1..2.3) within horizontal clearance 0.3 m and z-gap 0.6 m (< 0.2 m)"
+      "detail": "part 'fuselage' (z=0..1.5) and part 'wing' (z=2.1..2.3) within horizontal clearance 0.3 m and z-gap 0.1 m (< 0.2 m)"
     },
     {
       "kind": "hangar_bounds",
       "planes": ["husky"],
-      "detail": "part 'tail' vertex (12.5, -0.3) outside hangar 0..18 x 0..25"
+      "detail": "part 'tail' vertex (12.500, -0.300) outside hangar 0..18 x 0..25"
     }
   ]
 }
@@ -212,7 +212,7 @@ The `--json` path also goes to stdout (not a separate stream). Errors remain on 
 | 14 | `test_fleet_override_with_embedded_fleet_errors` | tmp layout with embedded `fleet:` + `--fleet PATH` → exit 2 (loader's double-source-of-truth rule) |
 | 15 | `test_no_override_uses_embedded` | existing fixture with embedded `fleet:` and no `--fleet` flag → load succeeds (regression guard for the override-vs-embedded contract) |
 
-Tests 1, 2, 5, 15 reuse existing fixtures. Tests 4, 13, 14 create their own tmp files via `tmp_path`. No new permanent fixtures are required.
+Tests 1, 2, 5, 15 reuse existing fixtures. Tests 4, 13 create their own tmp files via `tmp_path`. Test 14 reuses an existing fixture (it passes `--fleet` alongside a layout that embeds `fleet:`, triggering the loader's double-source-of-truth rejection). No new permanent fixtures are required.
 
 ---
 
