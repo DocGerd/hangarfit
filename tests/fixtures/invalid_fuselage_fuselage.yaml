@@ -1,0 +1,24 @@
+# Case 5 — two fuselages overlap.
+#
+# Two cantilever planes stacked at the same world position. Fuselages
+# overlap in plan view and z-ranges overlap (both touch ground), so a
+# `fuselage_fuselage_overlap` conflict is expected.
+#
+# Note: the wings also overlap at the same height so the layout will
+# additionally emit `wing_wing_overlap`. The case-5 assertion only
+# checks that the fuselage_fuselage_overlap is present.
+
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
+
+placements:
+  - plane: ctsl
+    x_m: 9.0
+    y_m: 5.0
+    heading_deg: 0.0
+    on_carts: false
+  - plane: scheibe_falke
+    x_m: 9.0
+    y_m: 5.0
+    heading_deg: 0.0
+    on_carts: true

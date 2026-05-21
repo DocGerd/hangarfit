@@ -1,0 +1,35 @@
+# Case 4 — wing overlaps another plane's fuselage AT a colliding height.
+#
+# In our placeholder fleet, no *high* wing's z-bottom is within the
+# 0.2 m vertical clearance of any fuselage's z-top (high wings sit at
+# ~1.9 m; tallest fuselage is 1.6 m). So we exercise the same conflict
+# kind with the LOW-wing Fuji over scheibe's fuselage — wing z [0.8, 1.1]
+# overlaps fuselage z [0, 1.5] in height, and the kind is determined by
+# alphabetical sort of the two part kinds: `fuselage_wing_overlap`.
+#
+# The case-4 scenario in the issue body says "high-wing wingtip directly
+# above another high-wing's fuselage". The Fuji substitution covers the
+# same code path (heterogeneous-kind alphabetical sort + z-overlap) with
+# the data we actually have.
+#
+# Positions:
+#   fuji (low wing) at (5, 5, 0, false) → wing x ∈ [0.3, 9.7],
+#                                          y ∈ [4.75, 6.25], z [0.8, 1.1]
+#   scheibe at (9, 5, 0, true)          → fuselage x ∈ [8.65, 9.35],
+#                                          y ∈ [1.15, 8.85], z [0, 1.5]
+# plan-view overlap ≈ 0.7 × 1.5 m, z-gap = −0.3 m → conflict.
+
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
+
+placements:
+  - plane: fuji
+    x_m: 5.0
+    y_m: 5.0
+    heading_deg: 0.0
+    on_carts: false
+  - plane: scheibe_falke
+    x_m: 9.0
+    y_m: 5.0
+    heading_deg: 0.0
+    on_carts: true
