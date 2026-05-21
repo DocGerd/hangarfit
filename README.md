@@ -43,4 +43,4 @@ This repo uses GitFlow with PR-driven review. See [`CLAUDE.md`](CLAUDE.md) for t
 
 ## License
 
-MIT
+Licensed under the [Apache License 2.0](LICENSE).
