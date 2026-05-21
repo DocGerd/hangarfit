@@ -139,3 +139,45 @@ class TestCheckRender:
         exit_code = main(["check", layout, "--render", str(out)])
         assert exit_code == 2
         assert not out.exists()
+
+
+class TestFleetHangarOverrides:
+    """--fleet / --hangar work only when the layout has no embedded ref."""
+
+    def test_no_override_uses_embedded(self, capsys):
+        # Existing fixtures all embed fleet:/hangar: — no override given,
+        # the loader resolves from the YAML. This is the regression guard.
+        exit_code = main(["check", str(FIXTURES_DIR / "valid_two_separated.yaml")])
+        assert exit_code == 0
+        assert capsys.readouterr().out.strip() == "valid"
+
+    def test_fleet_override_with_clean_layout(self, tmp_path, capsys):
+        # A layout that does NOT embed fleet:/hangar: — both must come from --fleet/--hangar.
+        # We copy an existing fixture but strip the embedded refs.
+        src = FIXTURES_DIR / "valid_two_separated.yaml"
+        clean = tmp_path / "clean_layout.yaml"
+        original = src.read_text(encoding="utf-8")
+        stripped = "\n".join(
+            line for line in original.splitlines()
+            if not (line.startswith("fleet:") or line.startswith("hangar:"))
+        )
+        clean.write_text(stripped + "\n", encoding="utf-8")
+
+        exit_code = main([
+            "check", str(clean),
+            "--fleet", "data/fleet.yaml",
+            "--hangar", "data/hangar.yaml",
+        ])
+        assert exit_code == 0
+        assert capsys.readouterr().out.strip() == "valid"
+
+    def test_fleet_override_with_embedded_fleet_errors(self, capsys):
+        # Both kwarg and embedded are present — loader rejects this.
+        exit_code = main([
+            "check", str(FIXTURES_DIR / "valid_two_separated.yaml"),
+            "--fleet", "data/fleet.yaml",
+        ])
+        assert exit_code == 2
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "error:" in captured.err
