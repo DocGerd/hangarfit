@@ -40,6 +40,33 @@ pip install -e ".[dev]"
 
 This installs the package in editable mode along with the test dependencies (`pytest`).
 
+## Usage
+
+```bash
+# Install from a checkout
+pip install -e .
+
+# Check a hand-authored layout
+hangarfit check layouts/example.yaml
+
+# Render the layout (works on invalid layouts too — conflicts highlighted in red)
+hangarfit check layouts/example.yaml --render out.png
+
+# Machine-readable output
+hangarfit check layouts/example.yaml --json
+
+# Override the fleet/hangar (advanced — for layouts without embedded fleet:/hangar: refs)
+hangarfit check my_portable_layout.yaml --fleet path/to/fleet.yaml --hangar path/to/hangar.yaml
+```
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Valid layout |
+| 1 | Invalid layout (conflicts found) |
+| 2 | Could not check (file not found, bad YAML, invariant violation, bad usage) |
+
 ## Run the tests
 
 ```bash
