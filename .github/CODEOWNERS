@@ -1,0 +1,3 @@
+# Catch-all: every PR auto-requests @DocGerd as reviewer.
+# Per the GitFlow rule in CLAUDE.md, @DocGerd is the only approver and merger.
+* @DocGerd

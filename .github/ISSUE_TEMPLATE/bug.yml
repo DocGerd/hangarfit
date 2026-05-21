@@ -1,0 +1,74 @@
+name: Bug report
+description: Something is broken or behaves unexpectedly
+title: "[bug] "
+labels: ["bug"]
+
+body:
+  - type: textarea
+    id: steps_to_reproduce
+    attributes:
+      label: What you did
+      description: Steps to reproduce the issue
+      placeholder: |
+        1. ...
+        2. ...
+        3. ...
+    validations:
+      required: true
+
+  - type: textarea
+    id: expected
+    attributes:
+      label: What you expected
+      description: What should have happened?
+    validations:
+      required: true
+
+  - type: textarea
+    id: actual
+    attributes:
+      label: What actually happened
+      description: What did happen instead?
+    validations:
+      required: true
+
+  - type: input
+    id: python_version
+    attributes:
+      label: Python version
+      description: Output of `python --version`
+      placeholder: "Python 3.11.2"
+    validations:
+      required: true
+
+  - type: input
+    id: os
+    attributes:
+      label: Operating system
+      placeholder: "Ubuntu 22.04 / macOS 13.2 / Windows 11"
+    validations:
+      required: true
+
+  - type: input
+    id: hangarfit_version
+    attributes:
+      label: hangarfit version or commit SHA
+      placeholder: "0.1.0 or abc1234"
+    validations:
+      required: true
+
+  - type: textarea
+    id: minimal_reproducer
+    attributes:
+      label: Minimal reproducer (layout YAML, command)
+      description: Optional — a minimal layout YAML or `hangarfit` command that triggers the issue
+      placeholder: |
+        ```yaml
+        # layout.yaml
+        ```
+
+        ```bash
+        hangarfit check layout.yaml --render out.png
+        ```
+    validations:
+      required: false
