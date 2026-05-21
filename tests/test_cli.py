@@ -1,0 +1,194 @@
+"""Tests for the hangarfit CLI."""
+
+from __future__ import annotations
+
+import json
+from pathlib import Path
+
+import pytest
+
+from hangarfit.cli import main
+
+FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
+REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+class TestArgparseUsageErrors:
+    """Bare / unknown commands fall through to argparse's own SystemExit(2)."""
+
+    def test_subparser_no_command_shows_help(self, capsys):
+        with pytest.raises(SystemExit) as exc_info:
+            main([])
+        assert exc_info.value.code == 2
+        # argparse writes its usage error to stderr
+        captured = capsys.readouterr()
+        assert "usage:" in captured.err.lower()
+
+    def test_unknown_subcommand_returns_2(self, capsys):
+        with pytest.raises(SystemExit) as exc_info:
+            main(["nope"])
+        assert exc_info.value.code == 2
+
+
+class TestCheckHappyPath:
+    """Valid layouts exit 0; invalid layouts exit 1 with conflict lines on stdout."""
+
+    def test_check_valid_layout_returns_0(self, capsys):
+        exit_code = main(["check", str(FIXTURES_DIR / "valid_two_separated.yaml")])
+        assert exit_code == 0
+        captured = capsys.readouterr()
+        assert captured.out.strip() == "valid"
+        assert captured.err == ""
+
+    def test_check_invalid_layout_returns_1(self, capsys):
+        exit_code = main(["check", str(FIXTURES_DIR / "invalid_fuselage_wing_overlap.yaml")])
+        assert exit_code == 1
+        captured = capsys.readouterr()
+        assert captured.out.startswith("invalid:")
+        # Conflict line uses the spec's format: "  - <kind> [<plane>[, <plane>]]: <detail>"
+        assert "fuselage_wing_overlap" in captured.out
+        # Every conflict line starts with the two-space-dash prefix
+        for line in captured.out.strip().split("\n")[1:]:
+            assert line.startswith("  - ")
+        assert captured.err == ""
+
+
+class TestCheckLoadErrors:
+    """LoaderError (file not found, bad YAML, invariant violation) → exit 2 on stderr."""
+
+    def test_check_missing_file_returns_2(self, capsys):
+        exit_code = main(["check", "definitely/does/not/exist.yaml"])
+        assert exit_code == 2
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "error:" in captured.err
+        assert "not found" in captured.err
+
+    def test_check_malformed_yaml_returns_2(self, tmp_path, capsys):
+        bad = tmp_path / "bad.yaml"
+        bad.write_text(":::not valid yaml:::\n", encoding="utf-8")
+        exit_code = main(["check", str(bad)])
+        assert exit_code == 2
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "error:" in captured.err
+
+    def test_check_invariant_violation_returns_2(self, capsys):
+        # invalid_cart_rule.yaml puts two cart_eligible planes on_carts.
+        # Layout.__post_init__ raises ValueError; loader wraps it in LoaderError.
+        exit_code = main(["check", str(FIXTURES_DIR / "invalid_cart_rule.yaml")])
+        assert exit_code == 2
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "error:" in captured.err
+        assert "cart" in captured.err.lower()
+
+
+class TestCheckJsonOutput:
+    """--json emits the hangarfit.check/v1 schema on stdout."""
+
+    def test_check_json_valid_emits_schema_v1(self, capsys):
+        layout = str(FIXTURES_DIR / "valid_two_separated.yaml")
+        exit_code = main(["check", "--json", layout])
+        assert exit_code == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["schema"] == "hangarfit.check/v1"
+        assert payload["valid"] is True
+        assert payload["conflicts"] == []
+        assert payload["layout"] == layout
+
+    def test_check_json_invalid_lists_conflicts(self, capsys):
+        layout = str(FIXTURES_DIR / "invalid_fuselage_wing_overlap.yaml")
+        exit_code = main(["check", "--json", layout])
+        assert exit_code == 1
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["schema"] == "hangarfit.check/v1"
+        assert payload["valid"] is False
+        assert len(payload["conflicts"]) >= 1
+        for c in payload["conflicts"]:
+            # Faithful dump of Conflict — exactly these three keys, nothing else.
+            assert set(c.keys()) == {"kind", "planes", "detail"}
+            assert isinstance(c["kind"], str)
+            assert isinstance(c["planes"], list)
+            assert 1 <= len(c["planes"]) <= 2
+            assert all(isinstance(p, str) for p in c["planes"])
+            assert isinstance(c["detail"], str)
+
+
+class TestCheckRender:
+    """--render writes a PNG on valid and invalid layouts, exits 2 on render failure,
+    and is skipped entirely when there is a structural load error."""
+
+    def test_check_render_writes_png(self, tmp_path, capsys):
+        out = tmp_path / "valid.png"
+        layout = str(FIXTURES_DIR / "valid_two_separated.yaml")
+        exit_code = main(["check", layout, "--render", str(out)])
+        assert exit_code == 0
+        assert out.exists()
+        assert out.stat().st_size > 0
+
+    def test_check_render_on_invalid_writes_png(self, tmp_path, capsys):
+        out = tmp_path / "invalid.png"
+        layout = str(FIXTURES_DIR / "invalid_fuselage_wing_overlap.yaml")
+        exit_code = main(["check", layout, "--render", str(out)])
+        assert exit_code == 1
+        assert out.exists()
+        assert out.stat().st_size > 0
+
+    def test_check_render_skipped_on_structural_error(self, tmp_path, capsys):
+        out = tmp_path / "should_not_exist.png"
+        layout = str(FIXTURES_DIR / "invalid_cart_rule.yaml")
+        exit_code = main(["check", layout, "--render", str(out)])
+        assert exit_code == 2
+        assert not out.exists()
+
+    def test_check_render_failure_returns_2(self, tmp_path, capsys):
+        # Unwritable path: the intermediate directory does not exist.
+        out = tmp_path / "no_such_dir" / "out.png"
+        layout = str(FIXTURES_DIR / "valid_two_separated.yaml")
+        exit_code = main(["check", layout, "--render", str(out)])
+        assert exit_code == 2
+        captured = capsys.readouterr()
+        assert "error:" in captured.err
+
+
+class TestFleetHangarOverrides:
+    """--fleet / --hangar work only when the layout has no embedded ref."""
+
+    def test_no_override_uses_embedded(self, capsys):
+        # Existing fixtures all embed fleet:/hangar: — no override given,
+        # the loader resolves from the YAML. This is the regression guard.
+        exit_code = main(["check", str(FIXTURES_DIR / "valid_two_separated.yaml")])
+        assert exit_code == 0
+        assert capsys.readouterr().out.strip() == "valid"
+
+    def test_fleet_override_with_clean_layout(self, tmp_path, capsys):
+        # A layout that does NOT embed fleet:/hangar: — both must come from --fleet/--hangar.
+        # We copy an existing fixture but strip the embedded refs.
+        src = FIXTURES_DIR / "valid_two_separated.yaml"
+        clean = tmp_path / "clean_layout.yaml"
+        original = src.read_text(encoding="utf-8")
+        stripped = "\n".join(
+            line for line in original.splitlines()
+            if not (line.startswith("fleet:") or line.startswith("hangar:"))
+        )
+        clean.write_text(stripped + "\n", encoding="utf-8")
+
+        exit_code = main([
+            "check", str(clean),
+            "--fleet", str(REPO_ROOT / "data" / "fleet.yaml"),
+            "--hangar", str(REPO_ROOT / "data" / "hangar.yaml"),
+        ])
+        assert exit_code == 0
+        assert capsys.readouterr().out.strip() == "valid"
+
+    def test_fleet_override_with_embedded_fleet_errors(self, capsys):
+        # Both kwarg and embedded are present — loader rejects this.
+        exit_code = main([
+            "check", str(FIXTURES_DIR / "valid_two_separated.yaml"),
+            "--fleet", str(REPO_ROOT / "data" / "fleet.yaml"),
+        ])
+        assert exit_code == 2
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "error:" in captured.err

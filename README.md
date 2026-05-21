@@ -26,7 +26,7 @@ These boundaries are deliberate. The collision model is the load-bearing piece; 
 
 ## Status
 
-Pre-release. Phase 1 is in active development; the CLI is the last piece before the first tagged cut. All dimensions in `data/` are placeholders pending real measurement and are flagged as such in the YAML; collision-checker output on the current data is illustrative, not authoritative.
+Pre-release. Phase 1 is feature-complete (the CLI shipped in v0.3.0). All dimensions in `data/` are placeholders pending real measurement and are flagged as such in the YAML; collision-checker output on the current data is illustrative, not authoritative.
 
 Follow progress in [GitHub Issues](https://github.com/DocGerd/hangarfit/issues) and milestones.
 
@@ -40,20 +40,49 @@ pip install -e ".[dev]"
 
 This installs the package in editable mode along with the test dependencies (`pytest`).
 
+## Usage
+
+```bash
+# Install from a checkout (add "[dev]" if you will run the tests)
+pip install -e .
+
+# Check a hand-authored layout
+hangarfit check layouts/example.yaml
+```
+
+> Note: against the current placeholder fleet/hangar measurements (see Status), the example layout fails validation. That's expected — Phase 1 ships the substrate; real measurements are tracked separately.
+
+```bash
+# Render the layout (works on invalid layouts too — conflicts highlighted in red)
+hangarfit check layouts/example.yaml --render out.png
+
+# Machine-readable output
+hangarfit check layouts/example.yaml --json
+
+# Override the fleet/hangar (advanced — for layouts without embedded fleet:/hangar: refs)
+hangarfit check my_portable_layout.yaml --fleet path/to/fleet.yaml --hangar path/to/hangar.yaml
+```
+
+### Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | Valid layout |
+| 1 | Invalid layout (conflicts found) |
+| 2 | Could not check (file not found, bad YAML, invariant violation, bad usage) |
+
 ## Run the tests
 
 ```bash
 pytest
 ```
 
-The test suite includes a strut-aware golden set for the collision checker covering the height-layer rule, the strut-blocks-nesting case, the maintenance-bay rule, the cart rule, and an all-nine-planes valid layout. If those pass, the geometry is intact.
-
-The end-to-end CLI (`hangarfit check layouts/example.yaml --render out.png`) is tracked in issue #7 and not yet shipped.
+The test suite includes a strut-aware golden set for the collision checker covering the height-layer rule, the strut-blocks-nesting case, the maintenance-bay rule, the cart rule, and an all-nine-planes valid layout, plus the CLI's argparse dispatch, exit codes, JSON/render output, and override semantics. If those pass, the geometry and the CLI surface are intact.
 
 ## Project layout
 
 ```
-src/hangarfit/      # models, loader, geometry, collisions, visualize (CLI pending)
+src/hangarfit/      # models, loader, geometry, collisions, visualize, cli
 data/               # fleet.yaml, hangar.yaml — placeholder measurements
 layouts/            # hand-authored candidate layouts, one YAML per scenario
 tests/              # pytest suite, including strut-aware collision golden tests
