@@ -253,7 +253,7 @@ Allowed but not the default. Use only when two feature branches need parallel wo
 
 - **Real measurements** for every aircraft (`measured: false` in `fleet.yaml`). All current dimensions are eyeballed placeholders.
 - **Real hangar measurements** (`data/hangar.yaml`) — length, width, door position and width, maintenance bay depth.
-- **Placeholder hangar can't fit the full fleet.** The 18 × 25 m placeholder hangar cannot fit all 9 aircraft at once, regardless of heading combinations — verified wingspans (scheibe 18 m, husky 10.82 m, etc.) plus the clearance budget exceed the available door width. The default `layouts/example.yaml` is a deliberate 6-plane subset; test fixtures that need all 9 use `tests/fixtures/test_hangar_large.yaml` (25 × 30 m). Real hangar measurements will reset this.
+- **Placeholder hangar can't fit the full fleet.** The 25 × 18 m placeholder hangar (length × width) cannot fit all 9 aircraft at once, regardless of heading combinations — verified wingspans (scheibe 18 m wing, husky 10.82 m wing, etc.) plus the clearance budget exceed the available door width. The default `layouts/example.yaml` is a deliberate 6-plane subset; test fixtures that need all 9 use `tests/fixtures/test_hangar_large.yaml` (30 × 25 m). Real hangar measurements will reset this.
 
 The collision checker will run on placeholder data, but until the measurements are real, the output is illustrative only.
 
