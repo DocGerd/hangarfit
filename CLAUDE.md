@@ -172,7 +172,7 @@ The strut-aware golden tests are the canary that the parts model is intact. If t
 | `main` | Production / release-tagged. | **No** |
 | `develop` | Integration; default branch on GitHub. | No, only via PR from `feature/*` |
 | `feature/<slug>` | One per issue; off `develop`. | Yes (Claude works here) |
-| `release/<version>` | Cut from `develop`, PR'd into both `main` and `develop`. | No, only via PR |
+| `release/<version>` | Cut from `develop`, PR'd into both `main` and `develop`. Use `/release-cut version=X.Y.Z` to automate this. | No, only via PR |
 | `hotfix/<slug>` | Only if needed; off `main`. | No, only via PR |
 
 ### Per-PR process

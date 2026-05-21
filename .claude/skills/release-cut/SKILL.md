@@ -11,7 +11,7 @@ Walk through the GitFlow release process for the hangarfit project.
 
 ## Step 1 — Parse and validate arguments
 
-Parse the following named argument from `$ARGUMENTS`:
+Parse the following named argument from `$ARGUMENTS` using shell-style (shlex-like) tokenization. Each argument takes the form `key=value`. Values that contain spaces must be wrapped in double quotes (e.g. `key="hello world"`). Single quotes are **not** supported. Embedded newlines inside a quoted value are not supported. The `version` value contains no spaces and does not require quoting in normal use.
 
 | Arg | Required | Valid values |
 |-----|----------|--------------|
@@ -23,6 +23,8 @@ If `version` is missing or does not match `^[0-9]+\.[0-9]+\.[0-9]+$`, stop immed
 ```
 Error: version is required and must match X.Y.Z (digits only, e.g. 0.1.0).
 ```
+
+**Prerelease and build-metadata suffixes** (e.g. `0.1.0-rc1`, `0.1.0-alpha.2`, `0.1.0+build.5`, `0.1.0.dev1`) do **not** match this regex and are intentionally rejected. Phase 1 does not support prerelease or build-metadata suffixes. If you need one, edit `pyproject.toml` and create the branch/tag by hand.
 
 Do NOT proceed to any further step.
 
@@ -83,9 +85,21 @@ If the output is non-empty, stop:
 Error: branch 'release/<version>' already exists on origin. Push to an existing branch is not allowed here.
 ```
 
-## Step 3 — Produce the dry-run plan and wait for confirmation
+## Step 3 — Determine milestone number
 
-Print the following checklist verbatim (substituting `<version>` throughout):
+Before printing the plan, look up the correct milestone number via the GitHub API so it can be substituted into the plan shown to the user:
+
+```bash
+gh api repos/DocGerd/hangarfit/milestones?state=all
+```
+
+Parse the JSON to find the milestone whose `title` contains `"v<version>"` (e.g. `v0.1.0`). If no title matches exactly, look for a milestone whose title most likely corresponds to the release (e.g. a title containing `<version>` as a substring). Store the numeric `number` field as `MILESTONE_NUMBER`.
+
+**If no milestone matches:** do not abort — set `MILESTONE_NUMBER` to the string `<unresolved>` and note in the plan (and later in the PR body) that the milestone could not be resolved automatically and must be set by hand after PR creation.
+
+## Step 4 — Produce the dry-run plan and wait for confirmation
+
+Print the following checklist verbatim (substituting `<version>` and the actual resolved `MILESTONE_NUMBER` throughout — never print a literal `<milestone_number>` placeholder here):
 
 ```
 Release plan for v<version>
@@ -94,7 +108,7 @@ Release plan for v<version>
 The following steps will be executed in order. No changes have been made yet.
 
 [ ] 1. Create branch: git switch -c release/<version>
-[ ] 2. Bump version in pyproject.toml: "0.0.1" → "<version>"
+[ ] 2. Bump version in pyproject.toml: "<current_version>" → "<version>"
 [ ] 3. Commit: chore(release): bump version to <version>
 [ ] 4. Push: git push -u origin release/<version>
 [ ] 5. Open PR into main:
@@ -105,7 +119,7 @@ The following steps will be executed in order. No changes have been made yet.
            --body "..." \
            --assignee DocGerd \
            --label enhancement \
-           --milestone <milestone_number>
+           --milestone <MILESTONE_NUMBER>
 [ ] 6. Open back-merge PR into develop:
          gh pr create \
            --base develop \
@@ -114,7 +128,7 @@ The following steps will be executed in order. No changes have been made yet.
            --body "..." \
            --assignee DocGerd \
            --label enhancement \
-           --milestone <milestone_number>
+           --milestone <MILESTONE_NUMBER>
 [ ] 7. Print both PR URLs.
 [ ] 8. Remind you to tag v<version> AFTER the main PR merges.
 
@@ -122,6 +136,8 @@ NOTE: 'main' is protected — the skill never pushes to main directly.
 NOTE: No 'release' label exists in this repo. Using 'enhancement' for both PRs.
       TODO: create a dedicated 'release' label in a future PR.
 ```
+
+Where `<current_version>` is the version currently in `pyproject.toml` (read it now if not already known), and `<MILESTONE_NUMBER>` is the resolved integer from Step 3 (or the warning text if unresolved).
 
 Then stop and print:
 ```
@@ -132,18 +148,6 @@ Confirm? Type YES to execute all steps, or anything else to abort.
 ```
 Aborted. No changes were made.
 ```
-
-## Step 4 — Determine milestone number
-
-Before executing the plan, look up the correct milestone number via the GitHub API so it can be passed to `gh pr create --milestone`:
-
-```bash
-gh api repos/DocGerd/hangarfit/milestones?state=all
-```
-
-Parse the JSON to find the milestone whose `title` contains `"v<version>"` or, if that does not match, the milestone most likely to be the release cut target (e.g. `v0.1.0` when cutting `0.1.0`). If no milestone title matches, use the milestone named `v<version>` literally. If still nothing, leave milestone unset and note it in the PR body.
-
-Store the numeric `number` field as `MILESTONE_NUMBER`.
 
 ## Step 5 — Execute each step in order
 
@@ -159,14 +163,14 @@ On failure (branch already exists, unexpected error), stop and print the raw err
 
 ### Step 5.2 — Bump version in pyproject.toml
 
-Read the file `/home/pkuhn/hangarfit/pyproject.toml` (or the `pyproject.toml` in the current working directory, i.e. the repo root). Find the line matching:
+Read `pyproject.toml` in the current working directory (the repo root). Find the line matching:
 ```
 version = "<anything>"
 ```
-under the `[project]` section. Replace the version value with `<version>`.
+under the `[project]` section. The exact current version string was already read in Step 4 as `<current_version>`. Replace that version value with `<version>`.
 
-Use the Edit tool with the exact old string, e.g.:
-- `old_string`: `version = "0.0.1"`
+Use the Edit tool with the exact old string captured from the file:
+- `old_string`: `version = "<current_version>"` (where `<current_version>` is the actual version read from the file, e.g. `version = "0.1.0"`)
 - `new_string`: `version = "<version>"`
 
 After editing, verify the change is minimal: re-read `pyproject.toml` and confirm exactly one line changed and the new value is `version = "<version>"`. If the Edit tool does not find a unique match (file was already at the new version, or multiple version lines exist), stop and print a clear error describing what was found.
@@ -183,7 +187,6 @@ Commit with a conventional-commit message:
 git commit -m "$(cat <<'EOF'
 chore(release): bump version to <version>
 
-Refs #38
 Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
 EOF
 )"
@@ -205,21 +208,6 @@ The commit was created locally. To retry the push manually:
 
 ### Step 5.5 — Open PR into main (release PR)
 
-Construct the PR body:
-
-```
-## Release v<version>
-
-This PR merges the `release/<version>` branch into `main`, tagging the
-v<version> release of hangarfit (Phase 1).
-
-Milestone: v<version>
-
-Closes #<release-issue-number-if-known>
-```
-
-If no release tracking issue is known, omit the `Closes` line.
-
 Create the PR:
 ```bash
 gh pr create \
@@ -235,7 +223,8 @@ v<version> release of hangarfit.
 **Do not merge until all checks pass and the release is confirmed ready.**
 
 After merging, tag the release:
-  git tag v<version> <merge-commit-sha>
+  git fetch origin main
+  git tag -a v<version> -m "Release v<version>" <merge-commit-sha-on-main>
   git push origin v<version>
 PREOF
 )" \
@@ -253,8 +242,8 @@ If `gh pr create` fails, stop and print the raw error. Do not proceed to Step 5.
 **Post-creation metadata update (fallback only)**: if metadata needs to change after PR creation, use the GitHub Issues API endpoint (PRs share the issue number on GitHub):
 ```bash
 gh api -X PATCH repos/DocGerd/hangarfit/issues/<PR_NUMBER> \
-  -f milestone=<MILESTONE_NUMBER> \
-  -f assignees='["DocGerd"]'
+  -F milestone=<MILESTONE_NUMBER> \
+  -f 'assignees[]=DocGerd'
 ```
 Do NOT use `gh pr edit --milestone` or `gh pr edit --assignee` — those flags are broken in this repo.
 
@@ -299,7 +288,7 @@ Next steps (in order):
 2. Have the release PR reviewed and merged by the assignee (DocGerd).
 3. After the main PR merges, tag the release:
      git fetch origin main
-     git tag v<version> <merge-commit-sha-on-main>
+     git tag -a v<version> -m "Release v<version>" <merge-commit-sha-on-main>
      git push origin v<version>
 4. Then merge the back-merge PR into develop.
 
@@ -320,12 +309,13 @@ Every abort condition in one place. In all cases, stop immediately and print the
 6. **Behind `origin/develop`**: print `Error: local 'develop' is behind 'origin/develop' by N commit(s).`
 7. **Release branch already exists locally**: print `Error: branch 'release/<version>' already exists locally.`
 8. **Release branch already exists on remote**: print `Error: branch 'release/<version>' already exists on origin.`
-9. **User does not confirm (any response other than `YES`)**: print `Aborted. No changes were made.`
-10. **`git switch -c` fails**: print the raw git error.
-11. **`pyproject.toml` version line not found or not unique**: print a clear error describing what was found and halt before any write.
-12. **`pyproject.toml` already at target version**: print `Error: pyproject.toml already has version = "<version>". Nothing to bump.`
-13. **`git commit` fails**: print the raw git error. The branch has been created and pyproject.toml edited — inform the user of the partial state.
-14. **`git push` fails**: print the raw git error plus the retry command.
-15. **Release PR (`gh pr create --base main`) fails**: print the raw error. The branch has been pushed — inform the user the branch is on remote but no PRs were opened.
-16. **Back-merge PR (`gh pr create --base develop`) fails**: print the raw error. The release PR URL has been printed — inform the user so they can open the back-merge PR manually.
-17. **`main` branch is protected**: this is expected behaviour. The skill never pushes to `main` directly. If a push to `main` is accidentally attempted and rejected, that is a skill-implementation error — do not retry.
+9. **Milestone not found**: set `MILESTONE_NUMBER` to `<unresolved>` and continue; note in the plan and PR body that milestone must be set by hand.
+10. **User does not confirm (any response other than `YES`)**: print `Aborted. No changes were made.`
+11. **`git switch -c` fails**: print the raw git error.
+12. **`pyproject.toml` version line not found or not unique**: print a clear error describing what was found and halt before any write.
+13. **`pyproject.toml` already at target version**: print `Error: pyproject.toml already has version = "<version>". Nothing to bump.`
+14. **`git commit` fails**: print the raw git error. The branch has been created and pyproject.toml edited — inform the user of the partial state.
+15. **`git push` fails**: print the raw git error plus the retry command.
+16. **Release PR (`gh pr create --base main`) fails**: print the raw error. The branch has been pushed — inform the user the branch is on remote but no PRs were opened.
+17. **Back-merge PR (`gh pr create --base develop`) fails**: print the raw error. The release PR URL has been printed — inform the user so they can open the back-merge PR manually.
+18. **`main` branch is protected**: this is expected behaviour. The skill never pushes to `main` directly. If a push to `main` is accidentally attempted and rejected, that is a skill-implementation error — do not retry.
