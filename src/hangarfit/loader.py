@@ -105,9 +105,7 @@ def load_hangar(path: Path | str) -> Hangar:
 
     door_data = raw.get("door")
     if not isinstance(door_data, dict):
-        raise LoaderError(
-            f"{path}: 'door' must be a mapping with 'center_x_m' and 'width_m'"
-        )
+        raise LoaderError(f"{path}: 'door' must be a mapping with 'center_x_m' and 'width_m'")
 
     bay_data = raw.get("maintenance_bay")
     if not isinstance(bay_data, dict):
@@ -224,21 +222,16 @@ def _extract_maintenance_plane(raw: dict, path: Path) -> str | None:
         return None  # explicit `maintenance: ~` → no maintenance plane
     if not isinstance(m, dict):
         raise LoaderError(
-            f"{path}: 'maintenance' must be a mapping with a 'plane' key, "
-            f"got {type(m).__name__}"
+            f"{path}: 'maintenance' must be a mapping with a 'plane' key, got {type(m).__name__}"
         )
     if "plane" not in m:
-        raise LoaderError(
-            f"{path}: 'maintenance' block present but lacks required 'plane' key"
-        )
+        raise LoaderError(f"{path}: 'maintenance' block present but lacks required 'plane' key")
     return m["plane"]
 
 
 def _build_aircraft(entry: Any) -> Aircraft:
     if not isinstance(entry, dict):
-        raise LoaderError(
-            f"aircraft entry must be a mapping, got {type(entry).__name__}"
-        )
+        raise LoaderError(f"aircraft entry must be a mapping, got {type(entry).__name__}")
 
     required = ("id", "name", "wing_position", "gear", "movement_mode")
     for key in required:
@@ -260,9 +253,7 @@ def _build_aircraft(entry: Any) -> Aircraft:
         parts.extend(_expand_struts(spec, wing))
 
     turn_radius_raw = entry.get("turn_radius_m")
-    turn_radius_m = (
-        None if turn_radius_raw is None else _to_float(turn_radius_raw, "turn_radius_m")
-    )
+    turn_radius_m = None if turn_radius_raw is None else _to_float(turn_radius_raw, "turn_radius_m")
 
     return Aircraft(
         id=entry["id"],
@@ -308,15 +299,9 @@ def _build_struts_spec(data: dict[str, Any]) -> StrutsSpec:
         if key not in data:
             raise LoaderError(f"'struts' missing required field {key!r}")
     return StrutsSpec(
-        fuselage_attach_x_m=_to_float(
-            data["fuselage_attach_x_m"], "struts.fuselage_attach_x_m"
-        ),
-        fuselage_attach_y_m=_to_float(
-            data["fuselage_attach_y_m"], "struts.fuselage_attach_y_m"
-        ),
-        fuselage_attach_z_m=_to_float(
-            data["fuselage_attach_z_m"], "struts.fuselage_attach_z_m"
-        ),
+        fuselage_attach_x_m=_to_float(data["fuselage_attach_x_m"], "struts.fuselage_attach_x_m"),
+        fuselage_attach_y_m=_to_float(data["fuselage_attach_y_m"], "struts.fuselage_attach_y_m"),
+        fuselage_attach_z_m=_to_float(data["fuselage_attach_z_m"], "struts.fuselage_attach_z_m"),
         wing_attach_y_m=_to_float(data["wing_attach_y_m"], "struts.wing_attach_y_m"),
         width_m=_to_float(data["width_m"], "struts.width_m"),
     )

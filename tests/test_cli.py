@@ -65,9 +65,7 @@ class TestCheckHappyPath:
         assert captured.err == ""
 
     def test_check_invalid_layout_returns_1(self, capsys):
-        exit_code = main(
-            ["check", str(FIXTURES_DIR / "invalid_fuselage_wing_overlap.yaml")]
-        )
+        exit_code = main(["check", str(FIXTURES_DIR / "invalid_fuselage_wing_overlap.yaml")])
         assert exit_code == 1
         captured = capsys.readouterr()
         assert captured.out.startswith("invalid:")

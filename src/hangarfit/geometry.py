@@ -72,8 +72,7 @@ def oriented_rect(
     # Corners in local frame (CCW from front-right): +x is "forward", +y is "left side"
     corners_local = [(hl, -hw), (hl, hw), (-hl, hw), (-hl, -hw)]
     corners_world = [
-        (cx + x * cos_h - y * sin_h, cy + x * sin_h + y * cos_h)
-        for x, y in corners_local
+        (cx + x * cos_h - y * sin_h, cy + x * sin_h + y * cos_h) for x, y in corners_local
     ]
     return Polygon(corners_world)
 
@@ -98,9 +97,7 @@ def polygon_overlap(p1: Polygon, p2: Polygon, clearance: float = 0.0) -> bool:
     error rather than a misconfigured layout.
     """
     if clearance < 0:
-        raise ValueError(
-            f"polygon_overlap: clearance must be non-negative, got {clearance}"
-        )
+        raise ValueError(f"polygon_overlap: clearance must be non-negative, got {clearance}")
     if clearance > 0:
         return p1.distance(p2) < clearance
     return p1.intersects(p2) and not p1.touches(p2)

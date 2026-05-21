@@ -45,8 +45,7 @@ from .models import CheckResult, Conflict, Hangar, Layout
 def check(layout: Layout) -> CheckResult:
     """Run all geometric checks and return a :class:`CheckResult`."""
     world_parts: dict[str, list[WorldPart]] = {
-        p.plane_id: aircraft_parts_world(layout.fleet[p.plane_id], p)
-        for p in layout.placements
+        p.plane_id: aircraft_parts_world(layout.fleet[p.plane_id], p) for p in layout.placements
     }
     conflicts: list[Conflict] = []
     conflicts.extend(_hangar_bounds_conflicts(world_parts, layout.hangar))
@@ -92,9 +91,7 @@ def _hangar_bounds_conflicts(
     return out
 
 
-def _first_out_of_bounds_vertex(
-    part: WorldPart, hangar: Hangar
-) -> tuple[float, float] | None:
+def _first_out_of_bounds_vertex(part: WorldPart, hangar: Hangar) -> tuple[float, float] | None:
     """Return ``(x, y)`` of the first vertex of ``part`` outside the
     hangar rectangle, or ``None`` if every vertex is inside."""
     for x, y in list(part.polygon.exterior.coords)[:-1]:
@@ -123,9 +120,7 @@ def _maintenance_conflicts(
     """
     if layout.maintenance_plane is None:
         return []
-    fuselage_parts = [
-        p for p in world_parts[layout.maintenance_plane] if p.kind == "fuselage"
-    ]
+    fuselage_parts = [p for p in world_parts[layout.maintenance_plane] if p.kind == "fuselage"]
     if not fuselage_parts:
         # The :class:`Aircraft` model permits parts of any kind, including
         # zero fuselages. If the designated maintenance plane has no fuselage,
@@ -161,9 +156,7 @@ def _maintenance_conflicts(
     return []
 
 
-def _pairwise_conflicts(
-    world_parts: dict[str, list[WorldPart]], hangar: Hangar
-) -> list[Conflict]:
+def _pairwise_conflicts(world_parts: dict[str, list[WorldPart]], hangar: Hangar) -> list[Conflict]:
     """For every pair of parts from *different* aircraft, emit a conflict
     iff both the plan-view-overlap rule and the z-overlap rule fire.
 

@@ -12,9 +12,10 @@ The full coordinate convention and parts-model collision rule live in
 from __future__ import annotations
 
 import typing
+from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Literal, Mapping
+from typing import Literal
 
 WingPosition = Literal["high", "mid", "low"]
 Gear = Literal["tailwheel", "nosewheel", "monowheel"]
@@ -52,17 +53,12 @@ class Part:
     def __post_init__(self) -> None:
         if self.kind not in _VALID_PART_KINDS:
             raise ValueError(
-                f"Part.kind must be one of {sorted(_VALID_PART_KINDS)}, "
-                f"got {self.kind!r}"
+                f"Part.kind must be one of {sorted(_VALID_PART_KINDS)}, got {self.kind!r}"
             )
         if self.length_m <= 0:
-            raise ValueError(
-                f"Part {self.kind!r}: length_m must be positive, got {self.length_m}"
-            )
+            raise ValueError(f"Part {self.kind!r}: length_m must be positive, got {self.length_m}")
         if self.width_m <= 0:
-            raise ValueError(
-                f"Part {self.kind!r}: width_m must be positive, got {self.width_m}"
-            )
+            raise ValueError(f"Part {self.kind!r}: width_m must be positive, got {self.width_m}")
         if self.z_bottom_m < 0:
             raise ValueError(
                 f"Part {self.kind!r}: z_bottom_m must be non-negative, got {self.z_bottom_m}"
@@ -97,9 +93,7 @@ class StrutsSpec:
 
     def __post_init__(self) -> None:
         if self.width_m <= 0:
-            raise ValueError(
-                f"StrutsSpec: width_m must be positive, got {self.width_m}"
-            )
+            raise ValueError(f"StrutsSpec: width_m must be positive, got {self.width_m}")
         if self.fuselage_attach_y_m < 0:
             raise ValueError(
                 f"StrutsSpec: fuselage_attach_y_m must be non-negative "
@@ -215,9 +209,7 @@ class Door:
         if self.width_m <= 0:
             raise ValueError(f"Door.width_m must be positive, got {self.width_m}")
         if self.center_x_m < 0:
-            raise ValueError(
-                f"Door.center_x_m must be non-negative, got {self.center_x_m}"
-            )
+            raise ValueError(f"Door.center_x_m must be non-negative, got {self.center_x_m}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,9 +220,7 @@ class MaintenanceBay:
 
     def __post_init__(self) -> None:
         if self.depth_m <= 0:
-            raise ValueError(
-                f"MaintenanceBay.depth_m must be positive, got {self.depth_m}"
-            )
+            raise ValueError(f"MaintenanceBay.depth_m must be positive, got {self.depth_m}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,9 +244,7 @@ class Hangar:
         if self.width_m <= 0:
             raise ValueError(f"Hangar.width_m must be positive, got {self.width_m}")
         if self.clearance_m < 0:
-            raise ValueError(
-                f"Hangar.clearance_m must be non-negative, got {self.clearance_m}"
-            )
+            raise ValueError(f"Hangar.clearance_m must be non-negative, got {self.clearance_m}")
         if self.wing_layer_clearance_m < 0:
             raise ValueError(
                 f"Hangar.wing_layer_clearance_m must be non-negative, "
@@ -362,19 +350,14 @@ class Layout:
         )
         if cart_count > 1:
             raise ValueError(
-                f"At most one cart_eligible plane may have on_carts=True "
-                f"(got {cart_count})"
+                f"At most one cart_eligible plane may have on_carts=True (got {cart_count})"
             )
 
         if self.maintenance_plane is not None:
             if self.maintenance_plane not in self.fleet:
-                raise ValueError(
-                    f"maintenance_plane {self.maintenance_plane!r} not in fleet"
-                )
+                raise ValueError(f"maintenance_plane {self.maintenance_plane!r} not in fleet")
             if self.maintenance_plane not in seen:
-                raise ValueError(
-                    f"maintenance_plane {self.maintenance_plane!r} is not placed"
-                )
+                raise ValueError(f"maintenance_plane {self.maintenance_plane!r} is not placed")
 
         object.__setattr__(self, "fleet", MappingProxyType(dict(self.fleet)))
 
@@ -400,25 +383,19 @@ class Conflict:
         if not self.planes:
             raise ValueError("Conflict.planes must have at least one plane id")
         if len(self.planes) > 2:
-            raise ValueError(
-                f"Conflict.planes must have 1 or 2 entries, got {len(self.planes)}"
-            )
+            raise ValueError(f"Conflict.planes must have 1 or 2 entries, got {len(self.planes)}")
         if any(not pid for pid in self.planes):
-            raise ValueError(
-                f"Conflict.planes entries must be non-empty, got {self.planes}"
-            )
+            raise ValueError(f"Conflict.planes entries must be non-empty, got {self.planes}")
         if len(set(self.planes)) != len(self.planes):
-            raise ValueError(
-                f"Conflict.planes entries must be distinct, got {self.planes}"
-            )
+            raise ValueError(f"Conflict.planes entries must be distinct, got {self.planes}")
 
     @classmethod
-    def single(cls, kind: str, plane: str, detail: str) -> "Conflict":
+    def single(cls, kind: str, plane: str, detail: str) -> Conflict:
         """Factory for a single-aircraft conflict (e.g. ``maintenance_position``)."""
         return cls(kind=kind, planes=(plane,), detail=detail)
 
     @classmethod
-    def pair(cls, kind: str, plane_a: str, plane_b: str, detail: str) -> "Conflict":
+    def pair(cls, kind: str, plane_a: str, plane_b: str, detail: str) -> Conflict:
         """Factory for a pairwise conflict (e.g. ``wing_strut_overlap``)."""
         return cls(kind=kind, planes=(plane_a, plane_b), detail=detail)
 

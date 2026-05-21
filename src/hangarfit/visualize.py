@@ -182,9 +182,7 @@ def _draw_hangar(ax, layout: Layout) -> None:
         lw=2,
     )
     ax.plot([0, 0], [0, hangar.length_m], color=_HANGAR_EDGE, lw=2)
-    ax.plot(
-        [hangar.width_m, hangar.width_m], [0, hangar.length_m], color=_HANGAR_EDGE, lw=2
-    )
+    ax.plot([hangar.width_m, hangar.width_m], [0, hangar.length_m], color=_HANGAR_EDGE, lw=2)
 
     # Front wall split around the door — door rendered as a light/dashed
     # gap so it reads as "opening" not "wall I forgot to draw".
