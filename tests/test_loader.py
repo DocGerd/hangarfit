@@ -44,7 +44,9 @@ class TestRealDataFiles:
         failure first."""
         assert FLEET_YAML.exists(), f"bundled fleet file missing: {FLEET_YAML}"
         assert HANGAR_YAML.exists(), f"bundled hangar file missing: {HANGAR_YAML}"
-        assert EXAMPLE_LAYOUT.exists(), f"bundled example layout missing: {EXAMPLE_LAYOUT}"
+        assert EXAMPLE_LAYOUT.exists(), (
+            f"bundled example layout missing: {EXAMPLE_LAYOUT}"
+        )
 
     def test_load_fleet(self) -> None:
         fleet = load_fleet(FLEET_YAML)
@@ -75,7 +77,9 @@ class TestRealDataFiles:
         }
         for aid in strut_braced:
             struts = [p for p in fleet[aid].parts if p.kind == "strut"]
-            assert len(struts) == 2, f"{aid} should have 2 strut parts, got {len(struts)}"
+            assert len(struts) == 2, (
+                f"{aid} should have 2 strut parts, got {len(struts)}"
+            )
 
     def test_cantilever_planes_have_no_strut_parts(self) -> None:
         fleet = load_fleet(FLEET_YAML)
@@ -202,7 +206,9 @@ aircraft:
     turn_radius_m: 5.0
 """,
         )
-        with pytest.raises(LoaderError, match="aircraft 'foo': 'parts' must be a non-empty list"):
+        with pytest.raises(
+            LoaderError, match="aircraft 'foo': 'parts' must be a non-empty list"
+        ):
             load_fleet(path)
 
     def test_part_missing_required_field(self, tmp_path: Path) -> None:
@@ -301,7 +307,9 @@ aircraft:
         z_top_m: 1.5
 """,
         )
-        with pytest.raises(LoaderError, match="aircraft '#0'.*missing required field 'id'"):
+        with pytest.raises(
+            LoaderError, match="aircraft '#0'.*missing required field 'id'"
+        ):
             load_fleet(path)
 
     def test_null_numeric_field_clear_error(self, tmp_path: Path) -> None:
@@ -324,7 +332,9 @@ aircraft:
         z_top_m: 1.5
 """,
         )
-        with pytest.raises(LoaderError, match="'parts\\[0\\].length_m'.*expected number, got null"):
+        with pytest.raises(
+            LoaderError, match="'parts\\[0\\].length_m'.*expected number, got null"
+        ):
             load_fleet(path)
 
     def test_quoted_bool_for_measured_rejected(self, tmp_path: Path) -> None:
@@ -396,7 +406,9 @@ aircraft:
         z_top_m: 1.5
 """,
         )
-        with pytest.raises(LoaderError, match="aircraft 'bad_husky'.*turn_radius_m is required"):
+        with pytest.raises(
+            LoaderError, match="aircraft 'bad_husky'.*turn_radius_m is required"
+        ):
             load_fleet(path)
 
 
@@ -467,7 +479,9 @@ aircraft:
       width_m: 0.05
 """,
         )
-        with pytest.raises(LoaderError, match="Struts only make sense when the wing is above"):
+        with pytest.raises(
+            LoaderError, match="Struts only make sense when the wing is above"
+        ):
             load_fleet(path)
 
     def test_first_wing_part_drives_strut_z_top(self, tmp_path: Path) -> None:
@@ -590,7 +604,9 @@ door: {width_m: 12}
 maintenance_bay: {depth_m: 9}
 """,
         )
-        with pytest.raises(LoaderError, match="missing required field 'door.center_x_m'"):
+        with pytest.raises(
+            LoaderError, match="missing required field 'door.center_x_m'"
+        ):
             load_hangar(path)
 
     def test_door_does_not_fit_propagates_from_model(self, tmp_path: Path) -> None:
@@ -633,7 +649,9 @@ door: {center_x_m: 9, width_m: 12}
 maintenance_bay: {}
 """,
         )
-        with pytest.raises(LoaderError, match="missing required field 'maintenance_bay.depth_m'"):
+        with pytest.raises(
+            LoaderError, match="missing required field 'maintenance_bay.depth_m'"
+        ):
             load_hangar(path)
 
     def test_clearance_defaults_applied(self, tmp_path: Path) -> None:
@@ -660,7 +678,9 @@ class TestLayoutLoader:
     def _minimal_fleet_and_hangar(self, dir_: Path) -> tuple[Path, Path]:
         fleet = _write(
             dir_ / "fleet.yaml",
-            _minimal_aircraft_yaml("foo", movement_mode="always_own_gear", turn_radius_m=5.0),
+            _minimal_aircraft_yaml(
+                "foo", movement_mode="always_own_gear", turn_radius_m=5.0
+            ),
         )
         hangar = _write(
             dir_ / "hangar.yaml",
@@ -771,7 +791,12 @@ placements: []
             load_layout(layout_path)
 
     def test_layout_missing_hangar_ref(self, tmp_path: Path) -> None:
-        _write(tmp_path / "fleet.yaml", _minimal_aircraft_yaml("foo", movement_mode="always_own_gear", turn_radius_m=5.0))
+        _write(
+            tmp_path / "fleet.yaml",
+            _minimal_aircraft_yaml(
+                "foo", movement_mode="always_own_gear", turn_radius_m=5.0
+            ),
+        )
         layout_path = _write(
             tmp_path / "layout.yaml",
             """
@@ -874,7 +899,9 @@ maintenance:
   comment: forgot the plane key
 """,
         )
-        with pytest.raises(LoaderError, match="'maintenance' block present but lacks required 'plane'"):
+        with pytest.raises(
+            LoaderError, match="'maintenance' block present but lacks required 'plane'"
+        ):
             load_layout(layout_path)
 
     def test_override_and_yaml_ref_conflict_for_fleet(self, tmp_path: Path) -> None:
@@ -889,7 +916,9 @@ hangar: hangar.yaml
 placements: []
 """,
         )
-        with pytest.raises(LoaderError, match="'fleet' field is set in YAML but a fleet override"):
+        with pytest.raises(
+            LoaderError, match="'fleet' field is set in YAML but a fleet override"
+        ):
             load_layout(layout_path, fleet=load_fleet(fleet_path))
 
     def test_override_and_yaml_ref_conflict_for_hangar(self, tmp_path: Path) -> None:
@@ -902,7 +931,9 @@ hangar: hangar.yaml
 placements: []
 """,
         )
-        with pytest.raises(LoaderError, match="'hangar' field is set in YAML but a hangar override"):
+        with pytest.raises(
+            LoaderError, match="'hangar' field is set in YAML but a hangar override"
+        ):
             load_layout(layout_path, hangar=load_hangar(hangar_path))
 
     def test_helper_composition_yields_two_aircraft(self, tmp_path: Path) -> None:
@@ -934,7 +965,9 @@ def _aircraft_entry(
     """One aircraft entry for a fleet YAML (no top-level 'aircraft:' key).
     Compose multiple entries via :func:`_fleet_yaml`."""
     radius_yaml = (
-        f"turn_radius_m: {turn_radius_m}" if turn_radius_m is not None else "turn_radius_m: null"
+        f"turn_radius_m: {turn_radius_m}"
+        if turn_radius_m is not None
+        else "turn_radius_m: null"
     )
     return f"""\
   - id: {plane_id}
@@ -970,4 +1003,8 @@ def _minimal_aircraft_yaml(
     turn_radius_m: float | None = 5.0,
 ) -> str:
     """Convenience: build a complete single-aircraft fleet YAML."""
-    return _fleet_yaml(_aircraft_entry(plane_id, movement_mode=movement_mode, turn_radius_m=turn_radius_m))
+    return _fleet_yaml(
+        _aircraft_entry(
+            plane_id, movement_mode=movement_mode, turn_radius_m=turn_radius_m
+        )
+    )

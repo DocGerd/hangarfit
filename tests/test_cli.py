@@ -65,7 +65,9 @@ class TestCheckHappyPath:
         assert captured.err == ""
 
     def test_check_invalid_layout_returns_1(self, capsys):
-        exit_code = main(["check", str(FIXTURES_DIR / "invalid_fuselage_wing_overlap.yaml")])
+        exit_code = main(
+            ["check", str(FIXTURES_DIR / "invalid_fuselage_wing_overlap.yaml")]
+        )
         assert exit_code == 1
         captured = capsys.readouterr()
         assert captured.out.startswith("invalid:")
@@ -193,25 +195,35 @@ class TestFleetHangarOverrides:
         clean = tmp_path / "clean_layout.yaml"
         original = src.read_text(encoding="utf-8")
         stripped = "\n".join(
-            line for line in original.splitlines()
+            line
+            for line in original.splitlines()
             if not (line.startswith("fleet:") or line.startswith("hangar:"))
         )
         clean.write_text(stripped + "\n", encoding="utf-8")
 
-        exit_code = main([
-            "check", str(clean),
-            "--fleet", str(REPO_ROOT / "data" / "fleet.yaml"),
-            "--hangar", str(REPO_ROOT / "data" / "hangar.yaml"),
-        ])
+        exit_code = main(
+            [
+                "check",
+                str(clean),
+                "--fleet",
+                str(REPO_ROOT / "data" / "fleet.yaml"),
+                "--hangar",
+                str(REPO_ROOT / "data" / "hangar.yaml"),
+            ]
+        )
         assert exit_code == 0
         assert capsys.readouterr().out.strip() == "valid"
 
     def test_fleet_override_with_embedded_fleet_errors(self, capsys):
         # Both kwarg and embedded are present — loader rejects this.
-        exit_code = main([
-            "check", str(FIXTURES_DIR / "valid_two_separated.yaml"),
-            "--fleet", str(REPO_ROOT / "data" / "fleet.yaml"),
-        ])
+        exit_code = main(
+            [
+                "check",
+                str(FIXTURES_DIR / "valid_two_separated.yaml"),
+                "--fleet",
+                str(REPO_ROOT / "data" / "fleet.yaml"),
+            ]
+        )
         assert exit_code == 2
         captured = capsys.readouterr()
         assert captured.out == ""

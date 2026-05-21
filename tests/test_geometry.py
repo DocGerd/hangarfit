@@ -80,7 +80,12 @@ class TestOrientedRect:
         """At 45° CCW, a 2×2 square's corner at local (1, -1) maps to world (√2, 0)."""
         rect = oriented_rect(cx=0, cy=0, length=2, width=2, angle_deg=45)
         # Square is symmetric; corners should be at distance √2 along the axes.
-        expected = [(math.sqrt(2), 0), (0, math.sqrt(2)), (-math.sqrt(2), 0), (0, -math.sqrt(2))]
+        expected = [
+            (math.sqrt(2), 0),
+            (0, math.sqrt(2)),
+            (-math.sqrt(2), 0),
+            (0, -math.sqrt(2)),
+        ]
         assert _corners_almost_equal(rect, expected)
 
     def test_area_preserved_under_rotation(self) -> None:
@@ -219,7 +224,9 @@ class TestAircraftPartsWorld:
     def test_heading_zero_nose_maps_to_world_plus_y(self) -> None:
         """At heading 0°, a part at plane-local (u=1, v=0) lands at world (px, py+1)."""
         ac = _aircraft_with_one_part(_point_part(offset_x_m=1.0, offset_y_m=0.0))
-        pl = Placement(plane_id="probe", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False)
+        pl = Placement(
+            plane_id="probe", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False
+        )
         [world] = aircraft_parts_world(ac, pl)
         cx, cy = world.polygon.centroid.x, world.polygon.centroid.y
         assert _almost_equal(cx, 0.0, tol=1e-6)
@@ -228,7 +235,9 @@ class TestAircraftPartsWorld:
     def test_heading_zero_right_wingtip_maps_to_world_plus_x(self) -> None:
         """At heading 0°, a part at plane-local (u=0, v=1) lands at world (px+1, py)."""
         ac = _aircraft_with_one_part(_point_part(offset_x_m=0.0, offset_y_m=1.0))
-        pl = Placement(plane_id="probe", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False)
+        pl = Placement(
+            plane_id="probe", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False
+        )
         [world] = aircraft_parts_world(ac, pl)
         cx, cy = world.polygon.centroid.x, world.polygon.centroid.y
         assert _almost_equal(cx, 1.0, tol=1e-6)
@@ -237,7 +246,9 @@ class TestAircraftPartsWorld:
     def test_heading_90_nose_maps_to_world_plus_x(self) -> None:
         """At heading 90°, nose (plane +x) points to world +x."""
         ac = _aircraft_with_one_part(_point_part(offset_x_m=1.0, offset_y_m=0.0))
-        pl = Placement(plane_id="probe", x_m=0.0, y_m=0.0, heading_deg=90.0, on_carts=False)
+        pl = Placement(
+            plane_id="probe", x_m=0.0, y_m=0.0, heading_deg=90.0, on_carts=False
+        )
         [world] = aircraft_parts_world(ac, pl)
         cx, cy = world.polygon.centroid.x, world.polygon.centroid.y
         assert _almost_equal(cx, 1.0, tol=1e-6)
@@ -246,7 +257,9 @@ class TestAircraftPartsWorld:
     def test_heading_90_right_wingtip_maps_to_world_minus_y(self) -> None:
         """At heading 90° (nose right), right-wingtip points toward door (world -y)."""
         ac = _aircraft_with_one_part(_point_part(offset_x_m=0.0, offset_y_m=1.0))
-        pl = Placement(plane_id="probe", x_m=0.0, y_m=0.0, heading_deg=90.0, on_carts=False)
+        pl = Placement(
+            plane_id="probe", x_m=0.0, y_m=0.0, heading_deg=90.0, on_carts=False
+        )
         [world] = aircraft_parts_world(ac, pl)
         cx, cy = world.polygon.centroid.x, world.polygon.centroid.y
         assert _almost_equal(cx, 0.0, tol=1e-6)
@@ -261,7 +274,9 @@ class TestAircraftPartsWorld:
         right-wingtip case below distinguishes the two.
         """
         ac = _aircraft_with_one_part(_point_part(offset_x_m=1.0, offset_y_m=0.0))
-        pl = Placement(plane_id="probe", x_m=0.0, y_m=0.0, heading_deg=45.0, on_carts=False)
+        pl = Placement(
+            plane_id="probe", x_m=0.0, y_m=0.0, heading_deg=45.0, on_carts=False
+        )
         [world] = aircraft_parts_world(ac, pl)
         cx, cy = world.polygon.centroid.x, world.polygon.centroid.y
         assert _almost_equal(cx, SQRT2_2, tol=1e-6)
@@ -279,7 +294,9 @@ class TestAircraftPartsWorld:
         somewhere and the parts model will be silently wrong.
         """
         ac = _aircraft_with_one_part(_point_part(offset_x_m=0.0, offset_y_m=1.0))
-        pl = Placement(plane_id="probe", x_m=0.0, y_m=0.0, heading_deg=45.0, on_carts=False)
+        pl = Placement(
+            plane_id="probe", x_m=0.0, y_m=0.0, heading_deg=45.0, on_carts=False
+        )
         [world] = aircraft_parts_world(ac, pl)
         cx, cy = world.polygon.centroid.x, world.polygon.centroid.y
         assert _almost_equal(cx, SQRT2_2, tol=1e-6), f"x expected {SQRT2_2}, got {cx}"
@@ -288,7 +305,9 @@ class TestAircraftPartsWorld:
     def test_placement_offset_applied(self) -> None:
         """Placement translation is applied AFTER the rotation/reflection."""
         ac = _aircraft_with_one_part(_point_part(offset_x_m=1.0, offset_y_m=0.0))
-        pl = Placement(plane_id="probe", x_m=10.0, y_m=20.0, heading_deg=0.0, on_carts=False)
+        pl = Placement(
+            plane_id="probe", x_m=10.0, y_m=20.0, heading_deg=0.0, on_carts=False
+        )
         [world] = aircraft_parts_world(ac, pl)
         cx, cy = world.polygon.centroid.x, world.polygon.centroid.y
         assert _almost_equal(cx, 10.0, tol=1e-6)
@@ -306,7 +325,9 @@ class TestAircraftPartsWorld:
         Different in BOTH coordinates — the cleanest single test for the
         wrong-handedness bug."""
         ac = _aircraft_with_one_part(_point_part(offset_x_m=1.0, offset_y_m=0.0))
-        pl = Placement(plane_id="probe", x_m=0.0, y_m=0.0, heading_deg=135.0, on_carts=False)
+        pl = Placement(
+            plane_id="probe", x_m=0.0, y_m=0.0, heading_deg=135.0, on_carts=False
+        )
         [world] = aircraft_parts_world(ac, pl)
         cx, cy = world.polygon.centroid.x, world.polygon.centroid.y
         assert _almost_equal(cx, SQRT2_2, tol=1e-6), f"x expected {SQRT2_2}, got {cx}"
@@ -344,7 +365,7 @@ class TestAircraftPartsWorld:
         part = Part(
             kind="strut",
             length_m=4.0,  # long
-            width_m=0.1,   # thin
+            width_m=0.1,  # thin
             offset_x_m=0.0,
             offset_y_m=0.0,
             angle_deg=90.0,  # rotate CCW 90° within plane-local
@@ -352,20 +373,28 @@ class TestAircraftPartsWorld:
             z_top_m=2.0,
         )
         ac = _aircraft_with_one_part(part)
-        pl = Placement(plane_id="probe", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False)
+        pl = Placement(
+            plane_id="probe", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False
+        )
         [world] = aircraft_parts_world(ac, pl)
         # Plane-local: 0.1 wide along +x, 4.0 long along +y (after the 90° rot).
         # World mapping at heading 0°: plane +x → world +y, plane +y → world +x.
         # So in world: long axis (4.0) runs along +x, narrow (0.1) along +y.
         minx, miny, maxx, maxy = world.polygon.bounds
-        assert _almost_equal(maxx - minx, 4.0, tol=1e-6), f"world x-extent: {maxx - minx}"
-        assert _almost_equal(maxy - miny, 0.1, tol=1e-6), f"world y-extent: {maxy - miny}"
+        assert _almost_equal(maxx - minx, 4.0, tol=1e-6), (
+            f"world x-extent: {maxx - minx}"
+        )
+        assert _almost_equal(maxy - miny, 0.1, tol=1e-6), (
+            f"world y-extent: {maxy - miny}"
+        )
 
     def test_heading_minus_90(self) -> None:
         """At heading -90° (nose toward world -x, i.e. left wall), right-wingtip
         points toward world +y (deeper into hangar)."""
         ac = _aircraft_with_one_part(_point_part(offset_x_m=0.0, offset_y_m=1.0))
-        pl = Placement(plane_id="probe", x_m=0.0, y_m=0.0, heading_deg=-90.0, on_carts=False)
+        pl = Placement(
+            plane_id="probe", x_m=0.0, y_m=0.0, heading_deg=-90.0, on_carts=False
+        )
         [world] = aircraft_parts_world(ac, pl)
         cx, cy = world.polygon.centroid.x, world.polygon.centroid.y
         assert _almost_equal(cx, 0.0, tol=1e-6)
@@ -419,7 +448,9 @@ class TestWorldPartMetadata:
             measured=False,
             parts=parts,
         )
-        pl = Placement(plane_id="multipart", x_m=5.0, y_m=10.0, heading_deg=37.0, on_carts=False)
+        pl = Placement(
+            plane_id="multipart", x_m=5.0, y_m=10.0, heading_deg=37.0, on_carts=False
+        )
         worlds = aircraft_parts_world(ac, pl)
         assert len(worlds) == 3
         # Order preserved; metadata preserved 1:1 from source parts.
@@ -442,9 +473,13 @@ class TestAircraftPartsWorldOnRealAircraft:
 
         from pathlib import Path
 
-        fleet = load_fleet(Path(__file__).resolve().parent.parent / "data" / "fleet.yaml")
+        fleet = load_fleet(
+            Path(__file__).resolve().parent.parent / "data" / "fleet.yaml"
+        )
         husky = fleet["aviat_husky"]
-        pl = Placement(plane_id="aviat_husky", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False)
+        pl = Placement(
+            plane_id="aviat_husky", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False
+        )
         worlds = aircraft_parts_world(husky, pl)
         # 4 parts: fuselage + wing + 2 struts
         kinds = [w.kind for w in worlds]

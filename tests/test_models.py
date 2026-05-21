@@ -142,7 +142,9 @@ class TestStrutsSpec:
             )
 
     def test_negative_fuselage_attach_y_rejected(self) -> None:
-        with pytest.raises(ValueError, match="fuselage_attach_y_m must be non-negative"):
+        with pytest.raises(
+            ValueError, match="fuselage_attach_y_m must be non-negative"
+        ):
             StrutsSpec(
                 fuselage_attach_x_m=0.0,
                 fuselage_attach_y_m=-0.1,
@@ -152,7 +154,9 @@ class TestStrutsSpec:
             )
 
     def test_negative_fuselage_attach_z_rejected(self) -> None:
-        with pytest.raises(ValueError, match="fuselage_attach_z_m must be non-negative"):
+        with pytest.raises(
+            ValueError, match="fuselage_attach_z_m must be non-negative"
+        ):
             StrutsSpec(
                 fuselage_attach_x_m=0.0,
                 fuselage_attach_y_m=0.4,
@@ -362,7 +366,9 @@ class TestHangar:
             Hangar(
                 length_m=25.0,
                 width_m=width_m,
-                door=Door(center_x_m=9.0, width_m=12.0) if width_m > 12 else Door(center_x_m=1.0, width_m=0.5),
+                door=Door(center_x_m=9.0, width_m=12.0)
+                if width_m > 12
+                else Door(center_x_m=1.0, width_m=0.5),
                 maintenance_bay=MaintenanceBay(depth_m=9.0),
                 clearance_m=0.3,
                 wing_layer_clearance_m=0.2,
@@ -480,7 +486,9 @@ class TestLayout:
             fleet=self._fleet_of(a),
             hangar=_ok_hangar(),
             placements=(
-                Placement(plane_id="foo", x_m=5.0, y_m=10.0, heading_deg=0.0, on_carts=False),
+                Placement(
+                    plane_id="foo", x_m=5.0, y_m=10.0, heading_deg=0.0, on_carts=False
+                ),
             ),
         )
         assert layout.maintenance_plane is None
@@ -493,7 +501,13 @@ class TestLayout:
                 fleet=self._fleet_of(a),
                 hangar=_ok_hangar(),
                 placements=(
-                    Placement(plane_id="bar", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False),
+                    Placement(
+                        plane_id="bar",
+                        x_m=0.0,
+                        y_m=0.0,
+                        heading_deg=0.0,
+                        on_carts=False,
+                    ),
                 ),
             )
 
@@ -504,8 +518,20 @@ class TestLayout:
                 fleet=self._fleet_of(a),
                 hangar=_ok_hangar(),
                 placements=(
-                    Placement(plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False),
-                    Placement(plane_id="foo", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False),
+                    Placement(
+                        plane_id="foo",
+                        x_m=0.0,
+                        y_m=0.0,
+                        heading_deg=0.0,
+                        on_carts=False,
+                    ),
+                    Placement(
+                        plane_id="foo",
+                        x_m=5.0,
+                        y_m=5.0,
+                        heading_deg=0.0,
+                        on_carts=False,
+                    ),
                 ),
             )
 
@@ -516,7 +542,13 @@ class TestLayout:
                 fleet=self._fleet_of(a),
                 hangar=_ok_hangar(),
                 placements=(
-                    Placement(plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False),
+                    Placement(
+                        plane_id="foo",
+                        x_m=0.0,
+                        y_m=0.0,
+                        heading_deg=0.0,
+                        on_carts=False,
+                    ),
                 ),
             )
 
@@ -527,7 +559,9 @@ class TestLayout:
                 fleet=self._fleet_of(a),
                 hangar=_ok_hangar(),
                 placements=(
-                    Placement(plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=True),
+                    Placement(
+                        plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=True
+                    ),
                 ),
             )
 
@@ -538,8 +572,12 @@ class TestLayout:
             fleet=self._fleet_of(a, b),
             hangar=_ok_hangar(),
             placements=(
-                Placement(plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=True),
-                Placement(plane_id="bar", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False),
+                Placement(
+                    plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=True
+                ),
+                Placement(
+                    plane_id="bar", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False
+                ),
             ),
         )
         assert len(layout.placements) == 2
@@ -552,8 +590,12 @@ class TestLayout:
                 fleet=self._fleet_of(a, b),
                 hangar=_ok_hangar(),
                 placements=(
-                    Placement(plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=True),
-                    Placement(plane_id="bar", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=True),
+                    Placement(
+                        plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=True
+                    ),
+                    Placement(
+                        plane_id="bar", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=True
+                    ),
                 ),
             )
 
@@ -564,7 +606,13 @@ class TestLayout:
                 fleet=self._fleet_of(a),
                 hangar=_ok_hangar(),
                 placements=(
-                    Placement(plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False),
+                    Placement(
+                        plane_id="foo",
+                        x_m=0.0,
+                        y_m=0.0,
+                        heading_deg=0.0,
+                        on_carts=False,
+                    ),
                 ),
                 maintenance_plane="ghost",
             )
@@ -577,7 +625,13 @@ class TestLayout:
                 fleet=self._fleet_of(a, b),
                 hangar=_ok_hangar(),
                 placements=(
-                    Placement(plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False),
+                    Placement(
+                        plane_id="foo",
+                        x_m=0.0,
+                        y_m=0.0,
+                        heading_deg=0.0,
+                        on_carts=False,
+                    ),
                 ),
                 maintenance_plane="bar",
             )
@@ -588,7 +642,9 @@ class TestLayout:
             fleet=self._fleet_of(a),
             hangar=_ok_hangar(),
             placements=(
-                Placement(plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False),
+                Placement(
+                    plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False
+                ),
             ),
             maintenance_plane="foo",
         )
@@ -611,7 +667,9 @@ class TestLayout:
             fleet=self._fleet_of(a),
             hangar=_ok_hangar(),
             placements=(
-                Placement(plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False),
+                Placement(
+                    plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False
+                ),
             ),
         )
         with pytest.raises(TypeError):
@@ -628,7 +686,9 @@ class TestLayout:
             fleet=caller_dict,
             hangar=_ok_hangar(),
             placements=(
-                Placement(plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False),
+                Placement(
+                    plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False
+                ),
             ),
         )
         del caller_dict["foo"]
@@ -645,9 +705,15 @@ class TestLayout:
             fleet=self._fleet_of(a, b, c),
             hangar=_ok_hangar(),
             placements=(
-                Placement(plane_id="a", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=True),
-                Placement(plane_id="b", x_m=2.0, y_m=0.0, heading_deg=0.0, on_carts=True),
-                Placement(plane_id="c", x_m=4.0, y_m=0.0, heading_deg=0.0, on_carts=True),
+                Placement(
+                    plane_id="a", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=True
+                ),
+                Placement(
+                    plane_id="b", x_m=2.0, y_m=0.0, heading_deg=0.0, on_carts=True
+                ),
+                Placement(
+                    plane_id="c", x_m=4.0, y_m=0.0, heading_deg=0.0, on_carts=True
+                ),
             ),
         )
         assert len(layout.placements) == 3
@@ -659,8 +725,12 @@ class TestLayout:
             fleet=self._fleet_of(a, b),
             hangar=_ok_hangar(),
             placements=(
-                Placement(plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False),
-                Placement(plane_id="bar", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False),
+                Placement(
+                    plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False
+                ),
+                Placement(
+                    plane_id="bar", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False
+                ),
             ),
         )
         assert len(layout.placements) == 2
@@ -674,7 +744,9 @@ class TestLayout:
 
 class TestConflict:
     def test_one_plane_conflict(self) -> None:
-        c = Conflict(kind="maintenance_position", planes=("foo",), detail="not in back zone")
+        c = Conflict(
+            kind="maintenance_position", planes=("foo",), detail="not in back zone"
+        )
         assert len(c.planes) == 1
 
     def test_two_plane_conflict(self) -> None:
@@ -763,7 +835,9 @@ class TestFrozenBehavior:
             fleet={a.id: a},
             hangar=_ok_hangar(),
             placements=(
-                Placement(plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False),
+                Placement(
+                    plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False
+                ),
             ),
         )
         with pytest.raises(dataclasses.FrozenInstanceError):
