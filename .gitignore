@@ -40,3 +40,6 @@ coverage.xml
 # Project artifacts
 out*.png
 *.local.*
+
+# Per-contributor Claude Code overrides (issue #35)
+.claude/settings.local.json

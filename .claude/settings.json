@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "input=$(cat); path=$(printf '%s' \"$input\" | jq -r '.tool_input.file_path // \"\"'); case \"$path\" in *src/hangarfit/*|*tests/*) echo \"[hangarfit hook] running pytest after edit of $path\"; pytest -q --no-header 2>&1 | tail -30 ;; *) : ;; esac; exit 0",
+            "timeout": 120
+          }
+        ]
+      }
+    ]
+  }
+}
