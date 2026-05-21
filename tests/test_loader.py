@@ -138,8 +138,8 @@ class TestRealDataFiles:
         for aid, w in wing_widths.items():
             assert 4.0 < w < 20.0, f"{aid}: wingspan {w} m is outside sanity range"
         # And pin a couple of specific values so single-plane edits surface.
-        assert wing_widths["scheibe_falke"] == 16.6
-        assert wing_widths["fuji"] == 9.4
+        assert wing_widths["scheibe_falke"] == 18.0
+        assert wing_widths["fuji"] == 9.42
 
     def test_load_hangar(self) -> None:
         hangar = load_hangar(HANGAR_YAML)

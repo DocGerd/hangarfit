@@ -2,23 +2,21 @@
 #
 # The check is inclusive: ``0.0 <= x <= hangar.width_m``. A vertex
 # exactly at ``x = 0`` (or ``x = width_m``) counts as inside.
-# Scheibe Falke at px = 8.3, heading 0 puts its left wingtip at
-# world x = 8.3 - 16.6/2 = 0.0 exactly. Must pass.
+# Scheibe Falke at px = 9.0, heading 0 puts its left wingtip at
+# world x = 9.0 - 18.0/2 = 0.0 exactly AND its right wingtip at
+# x = 18.0 exactly. Must pass.
 #
 # A regression that tightens the check to strict ``<`` would reject
-# this layout. This fixture pins the documented inclusive semantic.
-#
-# Plus a small companion at the other end: the right wingtip lands at
-# x = 16.6, well inside the 18 m hangar — so this fixture only exercises
-# the LEFT-wall boundary. The right-wall boundary is symmetric and
-# would behave the same.
+# this layout. This fixture pins the documented inclusive semantic
+# and exercises BOTH wall boundaries simultaneously (left at x=0,
+# right at x=18).
 
 fleet: ../../data/fleet.yaml
 hangar: ../../data/hangar.yaml
 
 placements:
   - plane: scheibe_falke
-    x_m: 8.3
+    x_m: 9.0
     y_m: 5.0
     heading_deg: 0.0
     on_carts: true
