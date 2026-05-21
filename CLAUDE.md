@@ -207,6 +207,12 @@ Most coding goes direct in-session. Subagent dispatch is for review work and iso
 
 ---
 
+## Project-local Claude Code config
+
+The `.claude/` directory holds team-shared Claude Code settings (currently: a PostToolUse pytest hook that auto-runs tests after edits under `src/hangarfit/` or `tests/`). See [.claude/README.md](.claude/README.md) for what's there and how to disable per-contributor via a gitignored `.claude/settings.local.json`.
+
+---
+
 ## Worktrees
 
 Allowed but not the default. Use only when two feature branches need parallel work (e.g., long-running test suite while writing the visualizer). For sequential issue flow, plain branch checkout is simpler.

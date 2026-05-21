@@ -40,3 +40,7 @@ coverage.xml
 # Project artifacts
 out*.png
 *.local.*
+
+# Explicit even though *.local.* already matches — keeps the intent
+# visible to contributors grepping for ".claude" (issue #35).
+.claude/settings.local.json
