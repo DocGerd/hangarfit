@@ -114,9 +114,9 @@ The door is a **visual marker only**. All aircraft parts must fit fully inside t
 
 ### Default clearances
 
-Both clearances will be configurable in `data/hangar.yaml` once that file lands in #3.
+Both clearances are configurable in `data/hangar.yaml` (`Hangar.clearance_m`, `Hangar.wing_layer_clearance_m`).
 
-| Clearance | Default | Planned key in `hangar.yaml` |
+| Clearance | Default | Key in `hangar.yaml` |
 |---|---|---|
 | Horizontal | 0.30 m | `clearance_m` |
 | Vertical | 0.20 m | `wing_layer_clearance_m` |
@@ -125,14 +125,31 @@ Both clearances will be configurable in `data/hangar.yaml` once that file lands 
 
 ## Phase 1 deliverables
 
-The list below is the **target shape** of the Phase 1 cut. Most of these files do not exist yet — each will land in its own PR per the issue plan.
+Current status of the Phase 1 cut. Only the CLI remains before the first tagged release (`release/0.1.0`).
 
-1. `data/fleet.yaml` — 9 aircraft, parts model, **placeholder dimensions** flagged with `measured: false`. (#3)
-2. `data/hangar.yaml` — hangar dimensions + door + maintenance bay (placeholders). (#3)
-3. `src/hangarfit/collisions.py` — the collision checker (the heart of Phase 1). (#5)
-4. `src/hangarfit/visualize.py` — matplotlib top-down PNG renderer. (#6)
-5. `src/hangarfit/cli.py` — `hangarfit check layouts/example.yaml --render out.png`. (#7)
-6. **Strut-aware golden-test suite** in `tests/test_collisions.py` — the canary that the parts model is intact. Cases include same-height wing overlap, high-over-low height-disjoint pass, the strut-blocks-nesting case, inboard / outboard strut-free nesting, the maintenance-bay rule, the cart rule, and the all-9-planes valid layout. (#5)
+| # | Deliverable | Issue | Status |
+|---|---|---|---|
+| 1 | `data/fleet.yaml` — 9 aircraft, parts model, **placeholder dimensions** flagged with `measured: false` | #3 | ✅ shipped |
+| 2 | `data/hangar.yaml` — hangar dimensions + door + maintenance bay (placeholders) | #3 | ✅ shipped |
+| 3 | `src/hangarfit/collisions.py` — the collision checker (the heart of Phase 1) | #5 | ✅ shipped (PR #28) |
+| 4 | `src/hangarfit/visualize.py` — matplotlib top-down PNG renderer | #6 | ✅ shipped (PR #29) |
+| 5 | `src/hangarfit/cli.py` — `hangarfit check layouts/example.yaml --render out.png` | #7 | ⏳ **next** |
+| 6 | Strut-aware golden-test suite in `tests/test_collisions.py` — same-height wing overlap, high-over-low height-disjoint pass, strut-blocks-nesting, inboard / outboard strut-free nesting, maintenance-bay rule, cart rule, all-9-planes valid layout | #5 | ✅ shipped |
+
+The strut-aware golden tests are the canary that the parts model is intact. If they pass, the geometry is trustworthy on the current (placeholder) data.
+
+## Where things live (module map)
+
+| File | Responsibility |
+|---|---|
+| `src/hangarfit/models.py` | Frozen dataclasses + invariants (`Aircraft`, `Hangar`, `Layout`, `Conflict`, `CheckResult`). Cross-reference rules (cart rule, `movement_mode` ↔ `on_carts`, maintenance plane in fleet & placed) are enforced in `Layout.__post_init__`. |
+| `src/hangarfit/loader.py` | YAML → models. Expands the high-level `struts:` block into two mirrored strut `Part`s before constructing `Aircraft`. |
+| `src/hangarfit/geometry.py` | Plane-local → world transform (the determinant‑−1 trap lives here) and `aircraft_parts_world()`. |
+| `src/hangarfit/collisions.py` | The `check(layout)` entry point. Enforces hangar bounds, maintenance-bay position (centroid of designated plane's fuselage parts is in the back strip), and pairwise parts overlap. **Not here:** the cart rule (already enforced upstream in `Layout`). |
+| `src/hangarfit/visualize.py` | Top-down PNG renderer. Calls `matplotlib.use("Agg", force=True)` so it runs headless in CI / pytest. Conflict parts are overdrawn in red when a `CheckResult` is passed. |
+| `src/hangarfit/cli.py` | **Not yet shipped — issue #7.** |
+| `tests/fixtures/*.yaml` | One YAML per scenario, `valid_*` / `invalid_*` naming. Add new collision regressions by dropping in a fixture, not by writing geometry literals in Python. |
+| `tests/fixtures/test_hangar_large.yaml` | Test-only larger hangar (30 × 25 m). Used by `valid_all_nine_planes.yaml` because the placeholder fleet's strut bracing forces ~2.6 m of x-clearance between strut-braced planes whose fuselage y-bands overlap — which doesn't fit in the placeholder 18 × 25 hangar. This is a placeholder-dimension artifact, not a checker bug. Will go away once real measurements arrive. See the file header for full reasoning. |
 
 ### Out of scope for Phase 1
 
@@ -213,6 +230,9 @@ pip install -e ".[dev]"
 
 # Run tests
 pytest
+
+# CI: GitHub Actions runs `pytest` on Python 3.11 + 3.12 for PRs into
+# develop/main (see .github/workflows/ci.yml). No coverage gate yet.
 
 # Phase 1 acceptance smoke test (once CLI lands)
 hangarfit check layouts/example.yaml --render out.png
