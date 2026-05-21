@@ -17,7 +17,7 @@ import argparse
 import sys
 
 from hangarfit import collisions
-from hangarfit.loader import load_fleet, load_hangar, load_layout
+from hangarfit.loader import LoaderError, load_fleet, load_hangar, load_layout
 from hangarfit.models import CheckResult, Conflict
 
 
@@ -76,9 +76,13 @@ def _format_conflict(c: Conflict) -> str:
 
 def cmd_check(args: argparse.Namespace) -> int:
     """Run the ``check`` subcommand. See spec §4 for the data flow."""
-    fleet_override = load_fleet(args.fleet) if args.fleet else None
-    hangar_override = load_hangar(args.hangar) if args.hangar else None
-    layout = load_layout(args.layout, fleet=fleet_override, hangar=hangar_override)
+    try:
+        fleet_override = load_fleet(args.fleet) if args.fleet else None
+        hangar_override = load_hangar(args.hangar) if args.hangar else None
+        layout = load_layout(args.layout, fleet=fleet_override, hangar=hangar_override)
+    except LoaderError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
 
     result = collisions.check(layout)
     _emit_human(result)

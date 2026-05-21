@@ -49,3 +49,34 @@ class TestCheckHappyPath:
         for line in captured.out.strip().split("\n")[1:]:
             assert line.startswith("  - ")
         assert captured.err == ""
+
+
+class TestCheckLoadErrors:
+    """LoaderError (file not found, bad YAML, invariant violation) → exit 2 on stderr."""
+
+    def test_check_missing_file_returns_2(self, capsys):
+        exit_code = main(["check", "definitely/does/not/exist.yaml"])
+        assert exit_code == 2
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "error:" in captured.err
+        assert "not found" in captured.err
+
+    def test_check_malformed_yaml_returns_2(self, tmp_path, capsys):
+        bad = tmp_path / "bad.yaml"
+        bad.write_text(":::not valid yaml:::\n", encoding="utf-8")
+        exit_code = main(["check", str(bad)])
+        assert exit_code == 2
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "error:" in captured.err
+
+    def test_check_invariant_violation_returns_2(self, capsys):
+        # invalid_cart_rule.yaml puts two cart_eligible planes on_carts.
+        # Layout.__post_init__ raises ValueError; loader wraps it in LoaderError.
+        exit_code = main(["check", str(FIXTURES_DIR / "invalid_cart_rule.yaml")])
+        assert exit_code == 2
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "error:" in captured.err
+        assert "cart" in captured.err.lower()
