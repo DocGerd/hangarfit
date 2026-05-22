@@ -1971,7 +1971,7 @@ EOF
 
 ### Task C.4: Pre-search infeasibility check 3 — pin self-collision
 
-- [ ] **Step 1: Create the fixture**
+- [x] **Step 1: Create the fixture**
 
 `tests/fixtures/solve_infeasible_pins_clash.yaml`:
 
@@ -1986,7 +1986,7 @@ constraints:
     pin: { x_m: 5.0, y_m: 5.0, heading_deg: 0.0, on_carts: false }   # exact same spot
 ```
 
-- [ ] **Step 2: Write failing test**
+- [x] **Step 2: Write failing test**
 
 Append:
 
@@ -2011,13 +2011,13 @@ def test_solve_trivially_infeasible_when_pins_clash():
     )
 ```
 
-- [ ] **Step 3: Run, expect failure**
+- [x] **Step 3: Run, expect failure**
 
 Run: `pytest tests/test_solver_infeasibility.py::test_solve_trivially_infeasible_when_pins_clash -v`
 
 Expected: FAIL.
 
-- [ ] **Step 4: Implement check #3**
+- [x] **Step 4: Implement check #3**
 
 In `_check_trivially_infeasible`, after check #2:
 
@@ -2062,13 +2062,13 @@ In `_check_trivially_infeasible`, after check #2:
             return pin_check
 ```
 
-- [ ] **Step 5: Run, expect pass**
+- [x] **Step 5: Run, expect pass**
 
 Run: `pytest tests/test_solver_infeasibility.py -v`
 
 Expected: all PASS.
 
-- [ ] **Step 6: Run full suite + lint + type check**
+- [x] **Step 6: Run full suite + lint + type check**
 
 ```bash
 pytest -q && ruff check src/ tests/ && ruff format --check src/ tests/ && mypy src/hangarfit/
@@ -2076,7 +2076,7 @@ pytest -q && ruff check src/ tests/ && ruff format --check src/ tests/ && mypy s
 
 Expected: green.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/hangarfit/solver.py tests/test_solver_infeasibility.py tests/fixtures/solve_infeasible_pins_clash.yaml

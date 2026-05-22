@@ -1,0 +1,8 @@
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
+fleet_in: [aviat_husky, ctsl]
+constraints:
+  aviat_husky:
+    pin: { x_m: 5.0, y_m: 5.0, heading_deg: 0.0, on_carts: false }
+  ctsl:
+    pin: { x_m: 5.0, y_m: 5.0, heading_deg: 0.0, on_carts: false }   # exact same spot

@@ -62,3 +62,23 @@ def test_solve_trivially_infeasible_when_sum_areas_exceeds_hangar():
     bp = r.diagnostics.best_partial
     assert bp is not None
     assert any("area" in c.detail.lower() or "footprint" in c.detail.lower() for c in bp.conflicts)
+
+
+def test_solve_trivially_infeasible_when_pins_clash():
+    """Two pins overlapping at the same coordinates → trivially_infeasible."""
+    from hangarfit.loader import load_scenario
+    from hangarfit.solver import solve
+
+    s = load_scenario("tests/fixtures/solve_infeasible_pins_clash.yaml")
+    r = solve(s, budget_s=5.0, seed=42)
+
+    assert r.status == "trivially_infeasible"
+    assert r.diagnostics.wall_time_s < 5.0  # well below the 30 s default budget
+    # The best_partial's conflicts should include the pin pair
+    bp = r.diagnostics.best_partial
+    assert bp is not None
+    # At least one conflict must reference both pinned planes
+    refs = [set(c.planes) for c in bp.conflicts if len(c.planes) == 2]
+    assert any({"aviat_husky", "ctsl"} == r for r in refs), (
+        f"Expected a pairwise conflict between aviat_husky and ctsl, got {refs}"
+    )

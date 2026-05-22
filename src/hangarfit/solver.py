@@ -15,6 +15,7 @@ import random as _random_module
 import secrets
 import time
 
+from hangarfit.collisions import check as check_layout
 from hangarfit.models import (
     Aircraft,
     CheckResult,
@@ -151,7 +152,49 @@ def _check_trivially_infeasible(
         )
         return check, _empty_layout(scenario)
 
-    # Check 3 lands in Task C.4.
+    # Check 3: pin self-collision (build a pin-only Layout and run check())
+    pinned_placements = []
+    for pid in scenario.fleet_in:
+        constraint = scenario.constraints.get(pid)
+        if constraint is not None and constraint.pin is not None:
+            pinned_placements.append(constraint.pin)
+
+    if pinned_placements:
+        # Build a Layout containing ONLY the pinned planes.
+        # maintenance_plane=None to bypass Layout's "maintenance must be placed"
+        # invariant; we're only checking pin-vs-pin and pin-vs-hangar here.
+        # (Spec §4.1 step 3 spells this out explicitly: the pre-search check is
+        # only about pin-vs-pin self-collision and pin-vs-hangar bounds; the
+        # maintenance-position rule is not in scope at this stage because no
+        # maintenance plane is set.)
+        try:
+            pin_only_layout = Layout(
+                fleet=scenario.fleet,
+                hangar=scenario.hangar,
+                placements=tuple(pinned_placements),
+                maintenance_plane=None,
+            )
+        except ValueError as e:
+            # This means the pins themselves violated a Layout invariant
+            # (cart rule, movement_mode mismatch, etc.) — should have been
+            # caught by Scenario.__post_init__, but defend anyway. There is
+            # no Layout to attach, so we fall back to the empty Layout.
+            check = CheckResult(
+                conflicts=(
+                    Conflict.single(
+                        kind="trivially_infeasible_pin_invariant",
+                        plane=pinned_placements[0].plane_id,
+                        detail=f"pin set violates Layout invariant: {e}",
+                    ),
+                ),
+                total_penetration_m2=0.0,
+            )
+            return check, _empty_layout(scenario)
+
+        pin_check = check_layout(pin_only_layout)
+        if not pin_check.valid:
+            return pin_check, pin_only_layout
+
     return None
 
 
