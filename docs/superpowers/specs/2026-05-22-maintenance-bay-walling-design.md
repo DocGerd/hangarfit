@@ -42,7 +42,7 @@ Additionally, the current `MaintenanceBay` model implicitly assumes the bay is t
 | How is the occupant represented? | Removed from `Layout.placements`; only `maintenance_plane: str` tracks them. | Cleanest "is away" semantics; the placement field stops carrying two meanings. |
 | Bay-perimeter strictness? | Hard wall, zero tolerance; tangent vertex is OK (strict `>`). | Mirrors existing `_hangar_bounds_conflicts` convention; one less knob. |
 | Closure trigger? | `maintenance_plane is not None` is the sole trigger. No separate `bay_closed` flag. | Smallest model change; matches user's framing ("aircraft in maintenance bay"). |
-| Solver behavior? | Skip occupant entirely; solve N−1 around walled bay. | Matches "is away" semantics; keeps search space small. |
+| Solver behavior? | Skip occupant entirely; solve N−1 around walled bay. | Skipping is the natural consequence of the "is away" semantics — the occupant has no placement to sample, no geometry to collide, no cart slot to consume. |
 | Visualizer? | Walled rect + label `IN MAINTENANCE: <plane_id>`; no aircraft shape drawn. | Reads at a glance as "blocked"; still traceable to who's in there. |
 | Implementation approach? | **A** — inverted-rectangle keep-out (dual of `_hangar_bounds_conflicts`). | Tiny diff; reuses an idiom we already trust; deterministic; no Shapely edge cases. |
 | Bay horizontal parametrization? | `center_x_m` + `width_m`, anchored to back wall. | Matches `Door` model in same file; one consistent idiom for sub-rectangles of the hangar. |
@@ -67,7 +67,7 @@ A non-occupant part vertex `(vx, vy)` is **inside** the closed bay iff:
 x_min < vx < x_max  AND  vy > y_min
 ```
 
-Strict inequalities throughout: a vertex sitting exactly on any bay edge counts as outside (OK), matching the existing hangar-bounds convention where a vertex at `x == 0` or `x == width_m` is inside the hangar.
+Strict inequalities on the three "interior" edges (left, right, front of the bay): a vertex sitting on any of these counts as outside. The bay's back edge coincides with the hangar's back wall, which is why there is no separate `vy < y_max` test — a vertex with `vy = hangar.length_m` sits on the hangar's outer wall (still inside the hangar per `_hangar_bounds_conflicts`) and is correctly treated as inside the closed bay. The convention matches the existing hangar-bounds convention where a vertex at `x == 0` or `x == width_m` is inside the hangar.
 
 ### 4.2 Two-state semantics
 
@@ -78,7 +78,7 @@ Strict inequalities throughout: a vertex sitting exactly on any bay edge counts 
 
 ### 4.3 Invariant flip in `Layout.__post_init__`
 
-Today (`models.py:357-361`):
+Today (the `if self.maintenance_plane is not None` block at the end of `Layout.__post_init__`):
 
 ```python
 if self.maintenance_plane is not None:
@@ -121,7 +121,7 @@ The `∈ fleet` invariant survives unchanged — we need the Aircraft record to 
 ### 5.1 `src/hangarfit/models.py`
 
 - Expand `MaintenanceBay` to `(center_x_m, width_m, depth_m)`. All three positive; `width_m` must fit within hangar (`center_x_m ± width_m/2 ∈ [0, hangar.width_m]`), `depth_m < length_m`. New `width_m` validation lives in `Hangar.__post_init__` (it needs hangar width, same shape as the existing door check).
-- Flip `Layout.__post_init__` invariant per §4.3. Update class docstring (lines 297-303) to describe the new "occupant is absent" semantics.
+- Flip `Layout.__post_init__` invariant per §4.3. Update the `Layout` class docstring paragraph that describes the maintenance-plane position rule to describe the new "occupant is absent" semantics.
 
 ### 5.2 `src/hangarfit/collisions.py`
 
@@ -143,7 +143,7 @@ The `∈ fleet` invariant survives unchanged — we need the Aircraft record to 
 - When `scenario.maintenance_plane` is set:
   - Drop it from the placeable set (the solver only iterates over the other N−1 fleet members).
   - Remove `bias_to_maintenance_bay` and the `bias` branch in the per-plane sampler — there's no longer a plane to bias.
-  - Remove the `maint_for_check` / `maintenance_pinned` machinery (lines 350-380): the pin-only Layout no longer needs to carry the maintenance plane through, because the maintenance plane has no placement to pin.
+  - Remove the `maintenance_pinned` / `maint_for_check` block at the end of `_check_trivially_infeasible`: the pin-only Layout no longer needs to carry the maintenance plane through, because the maintenance plane has no placement to pin.
 - The bay rectangle automatically becomes an obstacle through the new `bay_intrusion` conflict in the checker — the solver's existing "minimize conflict count" loop discovers it without further changes.
 
 ### 5.5 `src/hangarfit/visualize.py`
@@ -151,6 +151,7 @@ The `∈ fleet` invariant survives unchanged — we need the Aircraft record to 
 - Bay rendering becomes conditional:
   - **Open** (`layout.maintenance_plane is None`): don't shade the bay at all (drop the existing `_BAY_COLOR` overlay). The bay is invisible — it's just normal floor.
   - **Closed**: fill the bay rect with a saturated wall color (darker red, optionally hatched), overlay a centered label `IN MAINTENANCE: <plane_id>` in a sans-serif weight that reads against the fill.
+- The existing `_BAY_COLOR` constant (and its companion `_BAY_ALPHA`) becomes unused — delete both. The closed-state wall fill uses a new constant (suggested name `_BAY_WALL_COLOR`).
 - Skip drawing the occupant aircraft entirely (it isn't in `placements` so the existing draw loop already skips it — no code change there, just docstring note).
 
 ### 5.6 `src/hangarfit/cli.py`
@@ -196,7 +197,7 @@ maintenance_bay:
 
 ## 7. Docs
 
-- **`CLAUDE.md` "The hangar" section** (line 41): replace the current sentence with a description of the two-state model.
+- **`CLAUDE.md` "The hangar" section**, the prose paragraph beneath the heading: replace the current sentence with a description of the two-state model.
 - **`CLAUDE.md` module map** rows for `models.py` (MaintenanceBay fields), `collisions.py` (new `bay_intrusion` rule, retired kinds), `visualize.py` (conditional bay rendering).
 - **`CLAUDE.md` "Open questions / TBD"** updated: bay measurements are now three numbers, not one.
 
@@ -228,7 +229,7 @@ Issue summaries:
 - **#A (epic)** — Maintenance Bay Walling. Two-state bay semantics + partial-width geometry. Tracks B–H.
 - **#B (model)** — Expand `MaintenanceBay` with `center_x_m` and `width_m`; add `Hangar.__post_init__` validation; flip `Layout.__post_init__` so `maintenance_plane` must NOT appear in `placements`. Update model docstrings.
 - **#C (collision)** — Add `_bay_intrusion_conflicts` (per-vertex inverted-rect, strict inequalities). Delete `_maintenance_conflicts` and the `maintenance_position` / `maintenance_no_fuselage` Conflict kinds. Update module docstring's invariant list.
-- **#D (fixtures + tests)** — Retire 4 fixtures, add 6 new goldens (intrusion, edge-tangent, partial-width side-aisle, closed-bay happy path, open-bay back-strip-usable, solver infeasibility). Rewrite the corresponding `test_collisions.py`, `test_models.py`, `test_loader.py` cases.
+- **#D (fixtures + tests)** — Delete 3 fixtures, migrate 1 in place (rewrite contents under the existing filename), add 6 new goldens (intrusion, edge-tangent, partial-width side-aisle, closed-bay happy path, open-bay back-strip-usable, solver infeasibility) — net: +3 fixtures. Rewrite the corresponding `test_collisions.py`, `test_models.py`, `test_loader.py` cases.
 - **#E (loader)** — Parse the new `MaintenanceBay` YAML schema. Reject layouts where `maintenance_plane` is named *and* appears in `placements`, with a clear error pointing at the new semantics.
 - **#F (visualizer)** — Conditional bay rendering: open = invisible, closed = walled rect + `IN MAINTENANCE: <id>` label. No aircraft shape for the occupant.
 - **#G (solver)** — Drop the maintenance plane from the placeable set; remove `bias_to_maintenance_bay` and the `maint_for_check` / `maintenance_pinned` branches. Verify infeasibility reporting via the new fixture in #D.
@@ -238,7 +239,7 @@ Issue summaries:
 
 | Risk | Mitigation |
 |---|---|
-| Fixture migration is large and easy to half-finish | Bundle all fixture work in #D; tag with `tests` label; reviewer must verify the *count* of maintenance-related fixtures matches the migration plan. |
+| Fixture migration is large and easy to half-finish | Bundle all fixture work in #D; tag with `tests` label; reviewer must verify the migration plan's counts hold (3 deletions, 1 migrate-in-place, 6 new goldens — net: +3 fixtures). |
 | Partial-width bay introduces a new fixture-geometry trap (placements that *just* fit when the bay is open but not when closed) | New `valid_partial_width_bay_plane_in_side_aisle.yaml` exercises the open part of the back strip explicitly; pairs with the infeasibility fixture in #D. |
 | Visualizer regression — wall fill obscures the door or hangar outline | Visual review of PRs touching `visualize.py` is already standard practice; render the canonical example layout (both `example.yaml` and a new closed-bay variant) as part of #F. |
 | Solver removes `bias_to_maintenance_bay` but a residual test asserts the bias still exists | #G must scan `tests/` for `bias_to_maintenance_bay` references and clean them in the same PR. |
