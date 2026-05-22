@@ -30,6 +30,8 @@ from .models import (
     MaintenanceBay,
     Part,
     Placement,
+    PlaneConstraint,
+    Scenario,
     StrutsSpec,
 )
 
@@ -210,6 +212,114 @@ def load_layout(
         )
     except ValueError as e:
         raise LoaderError(f"{path}: {e}") from e
+
+
+def load_scenario(
+    path: Path | str,
+    *,
+    fleet: dict[str, Aircraft] | None = None,
+    hangar: Hangar | None = None,
+) -> Scenario:
+    """Load a scenario YAML into a validated :class:`Scenario`.
+
+    Path resolution and override-conflict policy mirror :func:`load_layout`.
+    """
+    path = Path(path)
+    raw = _read_yaml(path)
+    if not isinstance(raw, dict):
+        raise LoaderError(f"{path}: top-level must be a mapping")
+
+    # fleet_in (required) — checked before fleet/hangar are loaded so that
+    # a missing required field is reported as such, rather than as a
+    # downstream "file not found" when the fleet path is bogus.
+    if "fleet_in" not in raw:
+        raise LoaderError(f"{path}: missing required field 'fleet_in'")
+    fleet_in_raw = raw["fleet_in"]
+    if not isinstance(fleet_in_raw, list):
+        raise LoaderError(f"{path}: 'fleet_in' must be a list")
+    fleet_in = tuple(str(x) for x in fleet_in_raw)
+
+    # fleet / hangar — same pattern as load_layout
+    if fleet is None:
+        fleet_ref = raw.get("fleet")
+        if fleet_ref is None:
+            raise LoaderError(
+                f"{path}: 'fleet' field is required when no fleet override is provided"
+            )
+        fleet = load_fleet((path.parent / fleet_ref).resolve())
+    elif "fleet" in raw:
+        raise LoaderError(
+            f"{path}: 'fleet' field is set in YAML but a fleet override was also "
+            f"provided programmatically; remove one to disambiguate"
+        )
+
+    if hangar is None:
+        hangar_ref = raw.get("hangar")
+        if hangar_ref is None:
+            raise LoaderError(
+                f"{path}: 'hangar' field is required when no hangar override is provided"
+            )
+        hangar = load_hangar((path.parent / hangar_ref).resolve())
+    elif "hangar" in raw:
+        raise LoaderError(
+            f"{path}: 'hangar' field is set in YAML but a hangar override was also "
+            f"provided programmatically; remove one to disambiguate"
+        )
+
+    # maintenance (optional, same shape as load_layout)
+    maintenance_plane = _extract_maintenance_plane(raw, path)
+
+    # constraints (optional)
+    constraints_raw = raw.get("constraints") or {}
+    if not isinstance(constraints_raw, dict):
+        raise LoaderError(f"{path}: 'constraints' must be a mapping")
+    constraints: dict[str, PlaneConstraint] = {}
+    for plane_id, cdata in constraints_raw.items():
+        try:
+            constraints[plane_id] = _build_plane_constraint(plane_id, cdata)
+        except (ValueError, KeyError, TypeError, LoaderError) as e:
+            raise LoaderError(f"{path}: constraint {plane_id!r}: {e}") from e
+
+    try:
+        return Scenario(
+            fleet=fleet,
+            hangar=hangar,
+            fleet_in=fleet_in,
+            maintenance_plane=maintenance_plane,
+            constraints=constraints,
+        )
+    except ValueError as e:
+        raise LoaderError(f"{path}: {e}") from e
+
+
+def _build_plane_constraint(plane_id: str, data: Any) -> PlaneConstraint:
+    if not isinstance(data, dict):
+        raise LoaderError(f"must be a mapping, got {type(data).__name__}")
+
+    pin_data = data.get("pin")
+    pin: Placement | None = None
+    if pin_data is not None:
+        if not isinstance(pin_data, dict):
+            raise LoaderError(f"'pin' must be a mapping, got {type(pin_data).__name__}")
+        # pin's plane_id is filled in from the constraint key (the YAML schema
+        # doesn't repeat it — the user already keys it under the plane).
+        required = ("x_m", "y_m", "heading_deg")
+        for key in required:
+            if key not in pin_data:
+                raise LoaderError(f"'pin' missing required field {key!r}")
+        pin = Placement(
+            plane_id=plane_id,
+            x_m=_to_float(pin_data["x_m"], "pin.x_m"),
+            y_m=_to_float(pin_data["y_m"], "pin.y_m"),
+            heading_deg=_to_float(pin_data["heading_deg"], "pin.heading_deg"),
+            on_carts=_to_bool(pin_data.get("on_carts", False), "pin.on_carts"),
+        )
+
+    force_on_carts = data.get("force_on_carts")
+    if force_on_carts is not None:
+        force_on_carts = _to_bool(force_on_carts, "force_on_carts")
+
+    return PlaneConstraint(pin=pin, force_on_carts=force_on_carts)
 
 
 def _extract_maintenance_plane(raw: dict, path: Path) -> str | None:
