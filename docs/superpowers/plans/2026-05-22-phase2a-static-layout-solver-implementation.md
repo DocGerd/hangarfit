@@ -418,13 +418,13 @@ gh api -X PATCH "repos/DocGerd/hangarfit/issues/$PR_NUMBER" -f '{"labels":["enha
 
 (Milestone assignment optional — leave blank unless a Phase 2 milestone exists.)
 
-- [ ] **Step 4: Run the PR review skill**
+- [x] **Step 4: Run the PR review skill**
 
 In your Claude Code session, invoke: `/pr-review` (or the `pr-review-toolkit:review-pr` skill).
 
 Convert each finding into a review thread on the diff via `gh api .../pulls/<n>/comments`. Resolve each thread by fixing the code (preferred) or replying with rationale. If the changes were non-trivial, re-run `/pr-review`.
 
-- [ ] **Step 5: Hand off to user for approval and merge**
+- [x] **Step 5: Hand off to user for approval and merge**
 
 Tell the user the PR is clean and ready for final review. Do NOT `gh pr merge` from Claude.
 
