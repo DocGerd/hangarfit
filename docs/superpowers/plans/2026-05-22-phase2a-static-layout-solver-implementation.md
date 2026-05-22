@@ -1404,13 +1404,13 @@ EOF
 
 ### Task B.5: Chunk B wrap-up
 
-- [ ] **Step 1: Push the branch**
+- [x] **Step 1: Push the branch**
 
 ```bash
 git push -u origin feature/phase2a-scenario-types
 ```
 
-- [ ] **Step 2: Open PR (base develop)**
+- [x] **Step 2: Open PR (base develop)**
 
 ```bash
 gh pr create --base develop \
@@ -1439,7 +1439,7 @@ EOF
 )"
 ```
 
-- [ ] **Step 3: Set PR labels via gh api**
+- [x] **Step 3: Set PR labels via gh api**
 
 ```bash
 PR_NUMBER=<from Step 2>
