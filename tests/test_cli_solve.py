@@ -262,6 +262,57 @@ class TestSolveRender:
         check_out = capsys.readouterr().out
         assert "valid" in check_out
 
+    def test_strict_k_flips_found_partial_to_1(self, tmp_path, capsys):
+        # diversity_impossible fixture: K=3 requested but only 1 free
+        # plane → found_partial with 1 layout. Default exit code is 0;
+        # --strict-k flips it to 1.
+        fixture = str(FIXTURES_DIR / "solve_diversity_impossible_warn.yaml")
+        rc = main(
+            [
+                "solve",
+                fixture,
+                "--alternatives",
+                "3",
+                "--budget",
+                "2.0",
+                "--seed",
+                "42",
+            ]
+        )
+        assert rc == 0
+        capsys.readouterr()
+
+        rc_strict = main(
+            [
+                "solve",
+                fixture,
+                "--alternatives",
+                "3",
+                "--budget",
+                "2.0",
+                "--seed",
+                "42",
+                "--strict-k",
+            ]
+        )
+        assert rc_strict == 1
+
+    def test_strict_k_leaves_found_at_0(self, tmp_path, capsys):
+        # `found` (full K) stays exit 0 even with --strict-k — only
+        # found_partial flips.
+        rc = main(
+            [
+                "solve",
+                SMOKE_FIXTURE,
+                "--budget",
+                "2.0",
+                "--seed",
+                "42",
+                "--strict-k",
+            ]
+        )
+        assert rc == 0
+
     def test_write_yaml_k_gt_1_without_braces_returns_2(self, tmp_path, capsys):
         out = tmp_path / "noplaceholder.yaml"
         rc = main(
