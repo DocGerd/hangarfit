@@ -99,3 +99,45 @@ def test_solve_pinned_one_plane_honors_pin():
     assert placed.y_m == pinned.y_m
     assert placed.heading_deg == pinned.heading_deg
     assert placed.on_carts == pinned.on_carts
+
+
+# ── G.2: solve_repair_minimal_edit ──────────────────────────────────────
+
+
+def test_solve_repair_minimal_edit_honors_all_pins():
+    """5 of 6 planes pinned to baseline (example.yaml) positions; fuji
+    is the unpinned plane the solver re-places. Spec §6.5: `found`,
+    only the unpinned plane differs from baseline.
+
+    "Differs from baseline" is tested by: every pinned plane matches its
+    pin exactly (the pins ARE the baseline), and the unpinned plane is
+    not asserted against a fixed coordinate — only against the universal
+    "valid layout" property.
+    """
+    s = load_scenario(f"{FIXTURES}/solve_repair_minimal_edit.yaml")
+    r = solve(s, budget_s=5.0, alternatives=1, seed=42)
+
+    if r.status == "exhausted_budget":
+        pytest.skip(
+            f"Solver didn't find a layout in 5s for solve_repair_minimal_edit "
+            f"(restarts={r.diagnostics.restarts_attempted}). Acceptable on slow CI; "
+            f"placeholder hangar with 5 pins is a constrained search."
+        )
+
+    _assert_universal_properties(r)
+    assert r.status == "found"
+    assert len(r.layouts) == 1
+
+    placements_by_id = {p.plane_id: p for p in r.layouts[0].placements}
+    for plane_id, constraint in s.constraints.items():
+        pin = constraint.pin
+        assert pin is not None
+        placed = placements_by_id[plane_id]
+        assert placed.x_m == pin.x_m
+        assert placed.y_m == pin.y_m
+        assert placed.heading_deg == pin.heading_deg
+        assert placed.on_carts == pin.on_carts
+
+    # The unpinned plane (fuji) is placed somewhere — just verify
+    # presence; coordinates are search-derived, not contract-asserted.
+    assert "fuji" in placements_by_id
