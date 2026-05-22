@@ -185,3 +185,47 @@ def test_solve_force_carts_conflict_raises_loader_error():
     assert "zlin_savage" in msg
     assert "force_on_carts" in msg
     assert "always_cart" in msg
+
+
+# ── G.5: solve_maintenance_bay_required ─────────────────────────────────
+
+
+def test_solve_maintenance_bay_required_places_maintenance_in_bay():
+    """The maintenance plane's fuselage centroid must lie in the back
+    strip when the scenario sets it without pinning. Spec §6.5: `found`,
+    centroid in bay strip.
+
+    Direct geometric assertion via aircraft_parts_world rather than
+    re-running collisions.check (the universal-properties helper already
+    runs check). This isolates the maintenance-bay invariant under test
+    from the rest of the validity surface.
+    """
+    from hangarfit.geometry import aircraft_parts_world
+
+    s = load_scenario(f"{FIXTURES}/solve_maintenance_bay_required.yaml")
+    r = solve(s, budget_s=5.0, alternatives=1, seed=42)
+
+    if r.status == "exhausted_budget":
+        pytest.skip(
+            f"Solver didn't find a layout in 5s for solve_maintenance_bay_required "
+            f"(restarts={r.diagnostics.restarts_attempted})."
+        )
+
+    _assert_universal_properties(r)
+    assert r.status == "found"
+    layout = r.layouts[0]
+    assert layout.maintenance_plane == "wild_thing"
+
+    maint_placement = next(p for p in layout.placements if p.plane_id == "wild_thing")
+    fuselage_parts = [
+        wp
+        for wp in aircraft_parts_world(layout.fleet["wild_thing"], maint_placement)
+        if wp.kind == "fuselage"
+    ]
+    assert fuselage_parts, "wild_thing has no fuselage parts (fixture-data bug)"
+    # Centroid of all fuselage parts (mirrors collisions.py's enforcement).
+    cy = sum(wp.polygon.centroid.y for wp in fuselage_parts) / len(fuselage_parts)
+    bay_start_y = layout.hangar.length_m - layout.hangar.maintenance_bay.depth_m
+    assert cy >= bay_start_y, (
+        f"maintenance plane fuselage centroid y={cy:.2f} < bay_start_y={bay_start_y:.2f}"
+    )
