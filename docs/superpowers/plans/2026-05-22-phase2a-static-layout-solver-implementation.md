@@ -2152,7 +2152,7 @@ Run `/pr-review`, resolve threads, hand off.
 
 ### Task D.0: Branch + issue
 
-- [ ] **Step 1: Branch + issue**
+- [x] **Step 1: Branch + issue**
 
 ```bash
 git switch develop
@@ -2174,7 +2174,7 @@ Note as `#D`.
 
 **Goal:** Helper functions to sample initial `Placement`s for each plane.
 
-- [ ] **Step 1: Write failing test for `_initial_placement_for_plane`**
+- [x] **Step 1: Write failing test for `_initial_placement_for_plane`**
 
 Add `tests/test_solver_search.py`:
 
@@ -2237,13 +2237,13 @@ def test_initial_placement_for_maintenance_biases_to_back_strip():
     assert bay_y_start <= p.y_m <= s.hangar.length_m
 ```
 
-- [ ] **Step 2: Run, expect failure**
+- [x] **Step 2: Run, expect failure**
 
 Run: `pytest tests/test_solver_search.py::test_initial_placement_for_pinned_plane_returns_the_pin tests/test_solver_search.py::test_initial_placement_for_free_plane_is_within_hangar tests/test_solver_search.py::test_initial_placement_for_maintenance_biases_to_back_strip -v`
 
 Expected: all FAIL — `_initial_placement_for_plane` doesn't exist.
 
-- [ ] **Step 3: Implement `_initial_placement_for_plane`**
+- [x] **Step 3: Implement `_initial_placement_for_plane`**
 
 Add to `src/hangarfit/solver.py`:
 
@@ -2311,13 +2311,13 @@ def _initial_placement_for_plane(
 
 Add `Placement` to the imports (top of `solver.py`).
 
-- [ ] **Step 4: Run, expect pass**
+- [x] **Step 4: Run, expect pass**
 
 Run: `pytest tests/test_solver_search.py -v -k 'initial_placement'`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/hangarfit/solver.py tests/test_solver_search.py
@@ -2333,7 +2333,7 @@ Refs #D"
 
 ### Task D.2: Implement cart-assignment round-robin
 
-- [ ] **Step 1: Write failing test**
+- [x] **Step 1: Write failing test**
 
 Append:
 
@@ -2387,11 +2387,11 @@ def test_cart_bucket_for_restart_is_deterministic_round_robin():
             assert chosen == buckets[i % len(buckets)]
 ```
 
-- [ ] **Step 2: Run, expect failure**
+- [x] **Step 2: Run, expect failure**
 
 Expected: ImportError.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `solver.py`:
 
@@ -2462,13 +2462,13 @@ def _cart_bucket_for_restart(
     return buckets[restart_index % len(buckets)]
 ```
 
-- [ ] **Step 4: Run, expect pass**
+- [x] **Step 4: Run, expect pass**
 
 Run: `pytest tests/test_solver_search.py -v -k 'cart'`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/hangarfit/solver.py tests/test_solver_search.py
@@ -2487,7 +2487,7 @@ Refs #D"
 
 ### Task D.3: Implement scoring `_score()`
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 Append:
 
@@ -2513,11 +2513,11 @@ def test_score_invalid_layout_is_positive():
     assert penetration >= 0.0  # could be 0 if all conflicts are single-plane
 ```
 
-- [ ] **Step 2: Run, expect failure**
+- [x] **Step 2: Run, expect failure**
 
 Expected: ImportError on `_score`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```python
 def _score(layout: Layout) -> tuple[int, float]:
@@ -2527,13 +2527,13 @@ def _score(layout: Layout) -> tuple[int, float]:
     return (len(result.conflicts), result.total_penetration_m2)
 ```
 
-- [ ] **Step 4: Run, expect pass**
+- [x] **Step 4: Run, expect pass**
 
 ```bash
 pytest tests/test_solver_search.py::test_score_valid_layout_is_zero_zero tests/test_solver_search.py::test_score_invalid_layout_is_positive -v
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/hangarfit/solver.py tests/test_solver_search.py
@@ -2547,7 +2547,7 @@ Refs #D"
 
 ### Task D.4: Implement perturbation + descent step
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 This is harder to TDD finely; the best functional test is "descent from a perturbation should not increase score." Append:
 
@@ -2574,11 +2574,11 @@ def test_perturb_plane_returns_valid_placement_within_hangar():
         assert 0.0 <= cand.heading_deg < 360.0
 ```
 
-- [ ] **Step 2: Run, expect failure**
+- [x] **Step 2: Run, expect failure**
 
 Expected: ImportError.
 
-- [ ] **Step 3: Implement perturbation**
+- [x] **Step 3: Implement perturbation**
 
 ```python
 def _perturb_plane(
@@ -2631,13 +2631,13 @@ def _perturb_plane(
     )
 ```
 
-- [ ] **Step 4: Run, expect pass**
+- [x] **Step 4: Run, expect pass**
 
 ```bash
 pytest tests/test_solver_search.py::test_perturb_plane_returns_valid_placement_within_hangar -v
 ```
 
-- [ ] **Step 5: Implement `_descent_step`**
+- [x] **Step 5: Implement `_descent_step`**
 
 This is the orchestrator that runs one min-conflicts iteration. Add:
 
@@ -2737,7 +2737,7 @@ def _descent_step(
     return best_placements, best_score, True
 ```
 
-- [ ] **Step 6: Commit (partial; integration test in next task)**
+- [x] **Step 6: Commit (partial; integration test in next task)**
 
 ```bash
 git add src/hangarfit/solver.py tests/test_solver_search.py
@@ -2753,7 +2753,7 @@ Refs #D"
 
 ### Task D.5: Implement the restart loop + `_run_trajectory`
 
-- [ ] **Step 1: Write the integration test (solve a trivial single-plane scenario)**
+- [x] **Step 1: Write the integration test (solve a trivial single-plane scenario)**
 
 Append:
 
@@ -2782,11 +2782,11 @@ fleet_in: [aviat_husky]
 
 (Confirm `test_hangar_large.yaml` exists in `tests/fixtures/` per CLAUDE.md module map. It does.)
 
-- [ ] **Step 2: Run, expect failure**
+- [x] **Step 2: Run, expect failure**
 
 Expected: solver still returns `exhausted_budget` (no search loop yet).
 
-- [ ] **Step 3: Implement the trajectory + restart loop**
+- [x] **Step 3: Implement the trajectory + restart loop**
 
 Replace the Chunk C placeholder in `solve()` (the line that returns `exhausted_budget` for feasible scenarios) with the actual search:
 
@@ -2943,7 +2943,7 @@ def _initial_placements(
     return placements
 ```
 
-- [ ] **Step 4: Run, expect pass**
+- [x] **Step 4: Run, expect pass**
 
 ```bash
 pytest tests/test_solver_search.py::test_solve_finds_layout_for_trivial_single_plane -v
@@ -2951,7 +2951,7 @@ pytest tests/test_solver_search.py::test_solve_finds_layout_for_trivial_single_p
 
 Expected: PASS (one plane in 30×25 m hangar is trivially solvable in << 5s).
 
-- [ ] **Step 5: Delete the Chunk C placeholder smoke test**
+- [x] **Step 5: Delete the Chunk C placeholder smoke test**
 
 In Chunk C (Task C.1), we wrote `test_solve_feasible_smoke_returns_exhausted_budget_placeholder` to verify the solver's Chunk-C-era short-circuit behavior. That short-circuit no longer exists after Step 3 of this task — feasible scenarios now actually run the search and (for the smoke fixture: a single plane in a large hangar) succeed with `status="found"`. The placeholder assertion `assert r.status == "exhausted_budget"` is wrong from this commit onwards.
 
@@ -2960,7 +2960,7 @@ Open `tests/test_solver_infeasibility.py` and **delete** the function `test_solv
 Run: `pytest tests/test_solver_infeasibility.py -v`
 Expected: only `test_solve_resolves_none_seed_to_entropy` and the three `trivially_infeasible_*` tests run; all PASS.
 
-- [ ] **Step 6: Add the six-plane fresh fixture + test**
+- [x] **Step 6: Add the six-plane fresh fixture + test**
 
 `tests/fixtures/solve_fresh_six_planes.yaml`:
 
@@ -2999,7 +2999,7 @@ def test_solve_finds_layout_for_fresh_six_planes():
 
 (`pytest.skip` is intentional: if the placeholder hangar is too tight for 5s to find a solution at seed=42, that's a property of the data, not a bug. Real measurements will likely fix this.)
 
-- [ ] **Step 7: Run + lint + type check**
+- [x] **Step 7: Run + lint + type check**
 
 ```bash
 pytest -q && ruff check src/ tests/ && ruff format --check src/ tests/ && mypy src/hangarfit/
@@ -3007,7 +3007,7 @@ pytest -q && ruff check src/ tests/ && ruff format --check src/ tests/ && mypy s
 
 Expected: green.
 
-- [ ] **Step 8: Commit + push + PR**
+- [x] **Step 8: Commit + push + PR**
 
 ```bash
 git add src/hangarfit/solver.py tests/test_solver_infeasibility.py tests/test_solver_search.py tests/fixtures/solve_trivial_single_plane.yaml tests/fixtures/solve_fresh_six_planes.yaml
