@@ -293,7 +293,10 @@ def cmd_solve(args: argparse.Namespace) -> int:
         seed=args.seed,
     )
 
-    _emit_solve_human(result, alternatives=args.alternatives)
+    if args.json:
+        _emit_solve_json(args.scenario, result)
+    else:
+        _emit_solve_human(result, alternatives=args.alternatives)
 
     # Exit code (spec §5.2). --strict-k flips 0 -> 1 only for found_partial.
     if not result.layouts:
@@ -301,6 +304,56 @@ def cmd_solve(args: argparse.Namespace) -> int:
     if result.status == "found_partial" and args.strict_k:
         return 1
     return 0
+
+
+def _layout_to_dict(layout: Layout) -> dict:
+    """Dump a Layout to the hangarfit.solve/v1 schema shape."""
+    return {
+        "placements": [
+            {
+                "plane": p.plane_id,
+                "x_m": p.x_m,
+                "y_m": p.y_m,
+                "heading_deg": p.heading_deg,
+                "on_carts": p.on_carts,
+            }
+            for p in layout.placements
+        ],
+        "maintenance_plane": layout.maintenance_plane,
+    }
+
+
+def _check_result_to_dict(result: CheckResult) -> dict:
+    """Dump a CheckResult to the hangarfit.check/v1 conflicts shape."""
+    return {
+        "valid": result.valid,
+        "conflicts": [_conflict_to_dict(c) for c in result.conflicts],
+    }
+
+
+def _emit_solve_json(scenario_path: str, result: SolveResult) -> None:
+    """Write the hangarfit.solve/v1 payload to stdout. See spec §5.4."""
+    d = result.diagnostics
+    payload = {
+        "schema": _SOLVE_JSON_SCHEMA,
+        "scenario": scenario_path,
+        "status": result.status,
+        "layouts": [_layout_to_dict(layout) for layout in result.layouts],
+        "diagnostics": {
+            "restarts_attempted": d.restarts_attempted,
+            "wall_time_s": d.wall_time_s,
+            "seed": d.seed,
+            "best_partial": (
+                _check_result_to_dict(d.best_partial) if d.best_partial is not None else None
+            ),
+            "best_partial_layout": (
+                _layout_to_dict(d.best_partial_layout)
+                if d.best_partial_layout is not None
+                else None
+            ),
+        },
+    }
+    print(json.dumps(payload, indent=2))
 
 
 def main(argv: list[str] | None = None) -> int:

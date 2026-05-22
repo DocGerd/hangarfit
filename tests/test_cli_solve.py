@@ -6,6 +6,7 @@ function from Chunks A-E; the tests here are scoped to IO + argparse.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 from hangarfit.cli import build_parser, main
@@ -128,3 +129,57 @@ class TestSolveHumanOutput:
         # plane_too_big hits the per-plane infeasibility check (#1), so
         # it surfaces as trivially_infeasible too.
         assert "Trivially infeasible" in out
+
+
+class TestSolveJsonOutput:
+    """Spec §5.4 — hangarfit.solve/v1 schema."""
+
+    def test_json_schema_and_top_level_keys(self, capsys):
+        rc = main(["solve", SMOKE_FIXTURE, "--budget", "2.0", "--seed", "42", "--json"])
+        assert rc == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["schema"] == "hangarfit.solve/v1"
+        assert payload["scenario"] == SMOKE_FIXTURE
+        assert payload["status"] == "found"
+        assert isinstance(payload["layouts"], list)
+        assert len(payload["layouts"]) == 1
+        assert "diagnostics" in payload
+
+    def test_json_layout_placements_shape(self, capsys):
+        rc = main(["solve", SMOKE_FIXTURE, "--budget", "2.0", "--seed", "42", "--json"])
+        assert rc == 0
+        payload = json.loads(capsys.readouterr().out)
+        layout = payload["layouts"][0]
+        assert "placements" in layout
+        assert "maintenance_plane" in layout
+        placement = layout["placements"][0]
+        assert set(placement) == {"plane", "x_m", "y_m", "heading_deg", "on_carts"}
+        assert placement["plane"] == "aviat_husky"
+        assert isinstance(placement["on_carts"], bool)
+
+    def test_json_diagnostics_shape(self, capsys):
+        rc = main(["solve", SMOKE_FIXTURE, "--budget", "2.0", "--seed", "42", "--json"])
+        assert rc == 0
+        payload = json.loads(capsys.readouterr().out)
+        d = payload["diagnostics"]
+        assert d["seed"] == 42
+        assert d["restarts_attempted"] >= 1
+        assert isinstance(d["wall_time_s"], float)
+        # best_partial / best_partial_layout: spec §5.4 says null for `found`.
+        assert d["best_partial"] is None
+        assert d["best_partial_layout"] is None
+
+    def test_json_trivially_infeasible_carries_best_partial(self, capsys):
+        fixture = str(FIXTURES_DIR / "solve_infeasible_plane_too_big.yaml")
+        rc = main(["solve", fixture, "--budget", "1.0", "--seed", "42", "--json"])
+        assert rc == 1
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["status"] == "trivially_infeasible"
+        assert payload["layouts"] == []
+        d = payload["diagnostics"]
+        assert d["best_partial"] is not None
+        # best_partial mirrors hangarfit.check/v1 conflicts structure.
+        assert "conflicts" in d["best_partial"]
+        assert len(d["best_partial"]["conflicts"]) >= 1
+        first = d["best_partial"]["conflicts"][0]
+        assert set(first) == {"kind", "planes", "detail"}
