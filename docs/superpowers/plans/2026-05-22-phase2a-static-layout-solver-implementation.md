@@ -367,13 +367,13 @@ EOF
 
 ### Task A.3: Chunk A wrap-up — push, PR, review
 
-- [ ] **Step 1: Push the branch**
+- [x] **Step 1: Push the branch**
 
 Run: `git push -u origin feature/phase2a-checkresult-penetration`
 
 Expected: branch pushed, tracking set up.
 
-- [ ] **Step 2: Open the PR**
+- [x] **Step 2: Open the PR**
 
 ```bash
 gh pr create --base develop \
@@ -407,7 +407,7 @@ EOF
 
 Expected: prints the PR URL.
 
-- [ ] **Step 3: Set PR metadata via gh api (label + milestone)**
+- [x] **Step 3: Set PR metadata via gh api (label + milestone)**
 
 Per memory `feedback_pr_metadata.md`, `gh pr edit` is broken in this repo. Use `gh api -X PATCH` to set labels and (optionally) milestone:
 
