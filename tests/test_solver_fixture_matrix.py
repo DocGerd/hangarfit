@@ -13,7 +13,7 @@ from __future__ import annotations
 import pytest
 
 from hangarfit.collisions import check
-from hangarfit.loader import load_scenario
+from hangarfit.loader import LoaderError, load_scenario
 from hangarfit.models import DiversityConfig, SolveResult
 from hangarfit.solver import _heading_delta_short_arc, solve
 
@@ -164,3 +164,24 @@ def test_solve_force_carts_lock_respects_lock():
     assert r.status == "found"
     placed = next(p for p in r.layouts[0].placements if p.plane_id == "cessna_140")
     assert placed.on_carts is True
+
+
+# ── G.4: solve_force_carts_conflict ─────────────────────────────────────
+
+
+def test_solve_force_carts_conflict_raises_loader_error():
+    """An `always_cart` plane forced `on_carts=False` is a contradiction
+    detected at scenario load. Spec §6.5: expected LoaderError.
+
+    The check lives in `Scenario.__post_init__`; the loader wraps the
+    ValueError into a LoaderError with the scenario path attached.
+    """
+    with pytest.raises(LoaderError) as exc:
+        load_scenario(f"{FIXTURES}/solve_force_carts_conflict.yaml")
+    msg = str(exc.value)
+    # Sharp error — names the plane, the conflicting flag, and the
+    # movement mode that disagrees. Surface-level assertion only; the
+    # exact wording belongs to Scenario.__post_init__'s contract test.
+    assert "zlin_savage" in msg
+    assert "force_on_carts" in msg
+    assert "always_cart" in msg
