@@ -3,7 +3,8 @@
 > **T5 = #54** (OpenSSF Scorecard), **T6 = #52** (repo topics).
 > All six issues filed; both `addBlockedBy` edges on #27 encoded; milestone description PATCH'd; underlying PRs all merged; milestone "Going public" (#5) is closed.
 > Placeholders `$Tx` (bash variables) and `#Tx` (issue cross-refs) below are intentionally left intact — the plan documents the substitution itself, so erasing the placeholders would make the plan incoherent. Use the legend above to resolve them.
-> Companion spec: `docs/superpowers/specs/2026-05-21-repo-setup-gaps-design.md`. Archive PR-tracked by #77.
+> Companion spec: `docs/superpowers/specs/2026-05-21-repo-setup-gaps-design.md`.
+> Archive tracked by issue #77 / PR #78.
 
 # Repo-setup gaps (T1–T6) — filing plan
 

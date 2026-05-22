@@ -3,7 +3,8 @@
 > **T5 = #54** (OpenSSF Scorecard), **T6 = #52** (repo topics).
 > All six CLOSED; underlying PRs all merged. Milestone "Going public" (#5) is closed.
 > Placeholders `#T1..#T6` below are intentionally left intact — use the legend above to resolve them.
-> Archive PR-tracked by #77.
+> Companion plan: `docs/superpowers/plans/2026-05-21-repo-setup-gaps-filing.md`.
+> Archive tracked by issue #77 / PR #78.
 
 # Repo-setup gaps — filing plan (T1–T6)
 
