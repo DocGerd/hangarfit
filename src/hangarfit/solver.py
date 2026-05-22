@@ -388,6 +388,189 @@ def _cart_bucket_for_restart(
     return buckets[restart_index % len(buckets)]
 
 
+def _perturb_plane(
+    *,
+    current: Placement,
+    scenario: Scenario,
+    rng: _random_module.Random,
+    search: SearchConfig,
+    large_jump: bool,
+) -> Placement:
+    """One candidate perturbation for the named plane (spec §4.3).
+
+    - ``large_jump=True`` re-samples ``(x, y)`` and ``heading_deg``
+      globally (uniform inside hangar with bbox margin; heading uniform
+      on ``[0, 360°)``).
+    - ``large_jump=False`` does a small Gaussian nudge: ``(dx, dy)`` ~
+      ``N(0, pos_sigma_m)`` and ``dh`` ~ ``N(0, heading_sigma_deg)``,
+      clamped to hangar bounds (margin-protected).
+
+    The 180° heading-flip variant is handled by the caller
+    (:func:`_descent_step`) as a third variant.
+
+    ``on_carts`` is preserved from ``current`` — the cart assignment is
+    fixed at restart time (spec §4.2) and never perturbed within a
+    trajectory.
+    """
+    hangar = scenario.hangar
+    plane = scenario.fleet[current.plane_id]
+    max_length, max_width = _plane_max_extent(plane)
+    margin = max(max_length, max_width) / 2
+
+    if large_jump:
+        x_lo, x_hi = margin, hangar.width_m - margin
+        y_lo, y_hi = margin, hangar.length_m - margin
+        x = hangar.width_m / 2 if x_hi <= x_lo else rng.uniform(x_lo, x_hi)
+        y = hangar.length_m / 2 if y_hi <= y_lo else rng.uniform(y_lo, y_hi)
+        # Exclusive upper bound — see _initial_placement_for_plane note.
+        heading = rng.random() * 360.0
+    else:
+        dx = rng.gauss(0.0, search.pos_sigma_m)
+        dy = rng.gauss(0.0, search.pos_sigma_m)
+        dh = rng.gauss(0.0, search.heading_sigma_deg)
+        # Clamp to hangar bounds (margin-protected)
+        x = max(margin, min(hangar.width_m - margin, current.x_m + dx))
+        y = max(margin, min(hangar.length_m - margin, current.y_m + dy))
+        heading = (current.heading_deg + dh) % 360.0
+
+    return Placement(
+        plane_id=current.plane_id,
+        x_m=x,
+        y_m=y,
+        heading_deg=heading,
+        on_carts=current.on_carts,
+    )
+
+
+def _descent_step(
+    *,
+    placements: dict[str, Placement],
+    scenario: Scenario,
+    rng: _random_module.Random,
+    search: SearchConfig,
+    current_score: tuple[int, float],
+    pinned_planes: frozenset[str],
+) -> tuple[dict[str, Placement], tuple[int, float], bool] | None:
+    """Run one min-conflicts iteration (spec §4.3).
+
+    Returns ``(new_placements, new_score, accepted)`` where ``accepted``
+    is ``True`` iff the new score was strictly better OR equal (greedy
+    ``≤`` allows plateau traversal). Returns ``None`` if the trajectory
+    should restart (all conflicts involve only pinned planes — locally
+    unsolvable).
+
+    Algorithm per spec §4.3:
+
+    1. Build a Layout from ``placements`` and score it (free invariant
+       check — ``Layout.__post_init__`` rejects cart-rule violations,
+       so this also screens for those).
+    2. Take the conflicting-plane set ``S = (⋃ c.planes) − pinned``. If
+       empty → return ``None`` (trajectory stuck).
+    3. Pick one plane from ``S`` uniformly at random.
+    4. Generate ``N = candidates_per_iter`` candidates for that plane:
+       ``N - 2`` small Gaussian nudges, 1 large jump, 1 180° flip.
+    5. Score each candidate's tentative Layout; pick the best (lowest)
+       score. Ties broken by smallest displacement from the current
+       state (smooth trajectory).
+    6. Return the winning placements (greedy ≤; updates whenever the
+       loop body sets ``best_cand``).
+
+    Candidates whose tentative Layout violates a ``Layout`` invariant
+    (e.g. cart rule) raise ``ValueError`` from
+    ``Layout.__post_init__`` and are skipped.
+    """
+    # Build current Layout from placements (uses Layout invariants — free check)
+    current_layout = Layout(
+        fleet=scenario.fleet,
+        hangar=scenario.hangar,
+        placements=tuple(placements[pid] for pid in scenario.fleet_in),
+        maintenance_plane=scenario.maintenance_plane,
+    )
+
+    current_result = check_layout(current_layout)
+
+    # Build conflicting-plane set (excluding pinned). `sorted()` later
+    # ensures `rng.choice` sees a deterministic ordering — set iteration
+    # order would otherwise leak into RNG state.
+    conflicting: set[str] = set()
+    for c in current_result.conflicts:
+        for pid in c.planes:
+            if pid not in pinned_planes:
+                conflicting.add(pid)
+    if not conflicting:
+        return None  # restart — all conflicts are on pinned planes
+
+    target = rng.choice(sorted(conflicting))
+
+    # Generate N candidate perturbations: (N-2) small + 1 large + 1 flip
+    candidates: list[Placement] = []
+    n_small = max(0, search.candidates_per_iter - 2)
+    for _ in range(n_small):
+        candidates.append(
+            _perturb_plane(
+                current=placements[target],
+                scenario=scenario,
+                rng=rng,
+                search=search,
+                large_jump=False,
+            )
+        )
+    candidates.append(
+        _perturb_plane(
+            current=placements[target],
+            scenario=scenario,
+            rng=rng,
+            search=search,
+            large_jump=True,
+        )
+    )
+    flipped = Placement(
+        plane_id=target,
+        x_m=placements[target].x_m,
+        y_m=placements[target].y_m,
+        heading_deg=(placements[target].heading_deg + 180.0) % 360.0,
+        on_carts=placements[target].on_carts,
+    )
+    candidates.append(flipped)
+
+    # Score each candidate. Tie-break by displacement from the current
+    # state (encourages smooth trajectories — spec §4.3 step 4).
+    best_score = current_score
+    best_placements = placements
+    best_cand: Placement | None = None
+    best_disp = float("inf")
+    for cand in candidates:
+        trial = dict(placements)
+        trial[target] = cand
+        try:
+            trial_layout = Layout(
+                fleet=scenario.fleet,
+                hangar=scenario.hangar,
+                placements=tuple(trial[pid] for pid in scenario.fleet_in),
+                maintenance_plane=scenario.maintenance_plane,
+            )
+        except ValueError:
+            # Layout invariant violated (cart rule, etc.) — skip this candidate
+            continue
+        s = _score(trial_layout)
+        disp = (
+            (cand.x_m - placements[target].x_m) ** 2 + (cand.y_m - placements[target].y_m) ** 2
+        ) ** 0.5
+        if (s < best_score) or (s == best_score and disp < best_disp):
+            best_score = s
+            best_placements = trial
+            best_cand = cand
+            best_disp = disp
+
+    # By construction the loop only updates best_score when the new
+    # candidate's score is ≤ best_score (which starts at current_score),
+    # so best_score ≤ current_score whenever best_cand is not None. No
+    # need to re-test that — just dispatch on whether anything improved.
+    if best_cand is None:
+        return placements, current_score, False
+    return best_placements, best_score, True
+
+
 def _empty_layout(scenario: Scenario) -> Layout:
     """Build a placement-less Layout for pairing with a synthetic CheckResult.
 

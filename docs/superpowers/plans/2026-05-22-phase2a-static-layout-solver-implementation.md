@@ -2547,7 +2547,7 @@ Refs #D"
 
 ### Task D.4: Implement perturbation + descent step
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 This is harder to TDD finely; the best functional test is "descent from a perturbation should not increase score." Append:
 
@@ -2574,11 +2574,11 @@ def test_perturb_plane_returns_valid_placement_within_hangar():
         assert 0.0 <= cand.heading_deg < 360.0
 ```
 
-- [ ] **Step 2: Run, expect failure**
+- [x] **Step 2: Run, expect failure**
 
 Expected: ImportError.
 
-- [ ] **Step 3: Implement perturbation**
+- [x] **Step 3: Implement perturbation**
 
 ```python
 def _perturb_plane(
@@ -2631,13 +2631,13 @@ def _perturb_plane(
     )
 ```
 
-- [ ] **Step 4: Run, expect pass**
+- [x] **Step 4: Run, expect pass**
 
 ```bash
 pytest tests/test_solver_search.py::test_perturb_plane_returns_valid_placement_within_hangar -v
 ```
 
-- [ ] **Step 5: Implement `_descent_step`**
+- [x] **Step 5: Implement `_descent_step`**
 
 This is the orchestrator that runs one min-conflicts iteration. Add:
 
@@ -2737,7 +2737,7 @@ def _descent_step(
     return best_placements, best_score, True
 ```
 
-- [ ] **Step 6: Commit (partial; integration test in next task)**
+- [x] **Step 6: Commit (partial; integration test in next task)**
 
 ```bash
 git add src/hangarfit/solver.py tests/test_solver_search.py

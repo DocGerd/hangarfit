@@ -129,3 +129,29 @@ def test_score_invalid_layout_is_positive():
     count, penetration = s
     assert count > 0
     assert penetration >= 0.0  # could be 0 if all conflicts are single-plane
+
+
+def test_perturb_plane_returns_valid_placement_within_hangar():
+    """Perturbation outputs are within hangar bounds and on [0, 360°)."""
+    from hangarfit.loader import load_scenario
+    from hangarfit.models import Placement
+    from hangarfit.solver import SearchConfig, _perturb_plane
+
+    s = load_scenario("tests/fixtures/solve_feasible_smoke.yaml")
+    rng = random.Random(42)
+    current = Placement(plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
+    config = SearchConfig()  # defaults
+
+    # Generate many perturbations; all must be inside hangar bounds.
+    for _ in range(50):
+        cand = _perturb_plane(
+            current=current,
+            scenario=s,
+            rng=rng,
+            search=config,
+            large_jump=False,
+        )
+        assert cand.plane_id == "aviat_husky"
+        assert 0.0 <= cand.x_m <= s.hangar.width_m
+        assert 0.0 <= cand.y_m <= s.hangar.length_m
+        assert 0.0 <= cand.heading_deg < 360.0
