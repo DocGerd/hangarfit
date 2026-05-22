@@ -22,10 +22,11 @@ from hangarfit.loader import LoaderError, load_fleet, load_hangar, load_layout
 from hangarfit.models import CheckResult, Conflict
 
 _JSON_SCHEMA = "hangarfit.check/v1"
+_SOLVE_JSON_SCHEMA = "hangarfit.solve/v1"
 
 
 def build_parser() -> argparse.ArgumentParser:
-    """Build the argparse parser with the ``check`` subcommand."""
+    """Build the argparse parser with the ``check`` and ``solve`` subcommands."""
     parser = argparse.ArgumentParser(
         prog="hangarfit",
         description="Check a hand-authored hangar layout for validity.",
@@ -56,6 +57,67 @@ def build_parser() -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help=f"Emit JSON on stdout (schema: {_JSON_SCHEMA}).",
+    )
+
+    solve = sub.add_parser("solve", help="Solve a scenario to a valid layout.")
+    solve.add_argument("scenario", help="Path to the scenario YAML.")
+    solve.add_argument(
+        "--budget",
+        type=float,
+        default=30.0,
+        metavar="SEC",
+        help="Wall-clock budget in seconds (default: 30.0).",
+    )
+    solve.add_argument(
+        "--alternatives",
+        type=int,
+        default=1,
+        metavar="N",
+        help="Number of diverse alternative layouts (default: 1).",
+    )
+    solve.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        metavar="S",
+        help="RNG seed (default: None -> resolved from system entropy).",
+    )
+    solve.add_argument(
+        "--render",
+        default=None,
+        metavar="PATTERN",
+        help="Write top-down PNG(s). Must contain '{i}' if --alternatives > 1.",
+    )
+    solve.add_argument(
+        "--write-yaml",
+        default=None,
+        metavar="PATTERN",
+        dest="write_yaml",
+        help="Write layout YAML(s). Must contain '{i}' if --alternatives > 1.",
+    )
+    solve.add_argument(
+        "--strict-k",
+        action="store_true",
+        dest="strict_k",
+        help="Exit 1 if status=found_partial (default: exit 0 unless 0 valid).",
+    )
+    solve.add_argument(
+        "--json",
+        action="store_true",
+        dest="json",
+        help=f"Emit JSON on stdout (schema: {_SOLVE_JSON_SCHEMA}).",
+    )
+    solve.add_argument(
+        "--fleet",
+        default=None,
+        metavar="PATH",
+        help="Override the fleet data file (refused if scenario YAML also sets 'fleet').",
+    )
+    solve.add_argument(
+        "--hangar",
+        default=None,
+        metavar="PATH",
+        help="Override the hangar data file (refused if scenario YAML also sets 'hangar').",
     )
 
     return parser
@@ -119,11 +181,18 @@ def cmd_check(args: argparse.Namespace) -> int:
     return 0 if result.valid else 1
 
 
+def cmd_solve(args: argparse.Namespace) -> int:
+    """Run the ``solve`` subcommand. See spec §5 for the data flow."""
+    raise NotImplementedError("F.2 wires this up.")
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point. Returns an exit code; does not call ``sys.exit``."""
     parser = build_parser()
     args = parser.parse_args(argv)
     if args.cmd == "check":
         return cmd_check(args)
+    if args.cmd == "solve":
+        return cmd_solve(args)
     # argparse with required=True should make this unreachable.
     parser.error(f"unknown command: {args.cmd!r}")
