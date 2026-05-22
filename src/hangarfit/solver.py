@@ -311,6 +311,20 @@ def _initial_placement_for_plane(
     )
 
 
+def _score(layout: Layout) -> tuple[int, float]:
+    """Hierarchical scoring (spec §4.4): ``(conflict_count, total_penetration_m2)``.
+
+    Lower wins. Tuples compare lexicographically: a lower conflict count
+    beats any penetration; ties on count are broken by lower penetration.
+    ``(0, 0.0)`` means the layout is valid.
+
+    Uses the module-level :func:`check_layout` import (no per-call import
+    indirection inside the descent loop).
+    """
+    result = check_layout(layout)
+    return (len(result.conflicts), result.total_penetration_m2)
+
+
 def _enumerate_cart_buckets(scenario: Scenario) -> list[frozenset[str]]:
     """Enumerate the cart-assignment buckets to round-robin over (spec §4.2).
 

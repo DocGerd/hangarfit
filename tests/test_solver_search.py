@@ -108,3 +108,24 @@ def test_cart_bucket_for_restart_is_deterministic_round_robin():
         for i in range(2 * len(buckets)):
             chosen = _cart_bucket_for_restart(buckets, restart_index=i)
             assert chosen == buckets[i % len(buckets)]
+
+
+def test_score_valid_layout_is_zero_zero():
+    from hangarfit.loader import load_layout
+    from hangarfit.solver import _score
+
+    layout = load_layout("layouts/example.yaml")
+    s = _score(layout)
+    assert s == (0, 0.0)
+
+
+def test_score_invalid_layout_is_positive():
+    from hangarfit.loader import load_layout
+    from hangarfit.solver import _score
+
+    # Use an existing invalid-overlap fixture; substitute filename if needed.
+    layout = load_layout("layouts/example_invalid.yaml")
+    s = _score(layout)
+    count, penetration = s
+    assert count > 0
+    assert penetration >= 0.0  # could be 0 if all conflicts are single-plane

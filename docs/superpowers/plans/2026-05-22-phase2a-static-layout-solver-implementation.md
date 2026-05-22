@@ -2487,7 +2487,7 @@ Refs #D"
 
 ### Task D.3: Implement scoring `_score()`
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 Append:
 
@@ -2513,11 +2513,11 @@ def test_score_invalid_layout_is_positive():
     assert penetration >= 0.0  # could be 0 if all conflicts are single-plane
 ```
 
-- [ ] **Step 2: Run, expect failure**
+- [x] **Step 2: Run, expect failure**
 
 Expected: ImportError on `_score`.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```python
 def _score(layout: Layout) -> tuple[int, float]:
@@ -2527,13 +2527,13 @@ def _score(layout: Layout) -> tuple[int, float]:
     return (len(result.conflicts), result.total_penetration_m2)
 ```
 
-- [ ] **Step 4: Run, expect pass**
+- [x] **Step 4: Run, expect pass**
 
 ```bash
 pytest tests/test_solver_search.py::test_score_valid_layout_is_zero_zero tests/test_solver_search.py::test_score_invalid_layout_is_positive -v
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/hangarfit/solver.py tests/test_solver_search.py
