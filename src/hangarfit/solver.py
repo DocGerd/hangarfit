@@ -22,6 +22,7 @@ from hangarfit.models import (
     Conflict,
     DiversityConfig,
     Layout,
+    Placement,
     Scenario,
     SearchConfig,
     SolverDiagnostics,
@@ -245,6 +246,69 @@ def _plane_max_extent(plane: Aircraft) -> tuple[float, float]:
     max_length = max(p.length_m for p in plane.parts)
     max_width = max(p.width_m for p in plane.parts)
     return max_length, max_width
+
+
+def _initial_placement_for_plane(
+    *,
+    plane_id: str,
+    scenario: Scenario,
+    rng: _random_module.Random,
+    on_carts: bool,
+    bias_to_maintenance_bay: bool = False,
+) -> Placement:
+    """Sample an initial :class:`Placement` for one plane (spec §4.2).
+
+    - If pinned → return the pin verbatim.
+    - If ``bias_to_maintenance_bay`` → ``(x, y)`` uniform in the back bay strip.
+    - Otherwise → ``(x, y)`` uniform inside hangar (with bbox-derived margin),
+      ``heading_deg`` uniform on ``[0, 360°)``.
+
+    The margin equals ``max(max_length, max_width) / 2`` so the placement
+    bounding box is unlikely to immediately violate the hangar bounds at any
+    heading. ``rng.random() * 360.0`` (NOT ``rng.uniform(0, 360)``) is used
+    so the upper bound stays exclusive — required by the
+    ``heading_deg < 360.0`` test assertion and matching the spec's
+    ``[0°, 360°)`` interval.
+    """
+    constraint = scenario.constraints.get(plane_id)
+    if constraint is not None and constraint.pin is not None:
+        return constraint.pin
+
+    hangar = scenario.hangar
+    plane = scenario.fleet[plane_id]
+    max_length, max_width = _plane_max_extent(plane)
+    margin_x = max(max_length, max_width) / 2
+    margin_y = margin_x
+
+    if bias_to_maintenance_bay:
+        bay_depth = hangar.maintenance_bay.depth_m
+        y_lo = max(margin_y, hangar.length_m - bay_depth)
+        y_hi = hangar.length_m - margin_y
+    else:
+        y_lo = margin_y
+        y_hi = hangar.length_m - margin_y
+
+    x_lo = margin_x
+    x_hi = hangar.width_m - margin_x
+
+    # If margins eat the entire hangar (very tiny hangar / very big plane),
+    # fall back to placing at the centre — the infeasibility checks should
+    # have rejected this case, but defend in code.
+    x = hangar.width_m / 2 if x_hi <= x_lo else rng.uniform(x_lo, x_hi)
+    y = hangar.length_m / 2 if y_hi <= y_lo else rng.uniform(y_lo, y_hi)
+
+    # rng.random() returns [0.0, 1.0); multiplying by 360 keeps the
+    # exclusive upper bound (avoids the rng.uniform(0, 360) inclusive-
+    # endpoint pitfall — see test assertion `heading_deg < 360.0`).
+    heading = rng.random() * 360.0
+
+    return Placement(
+        plane_id=plane_id,
+        x_m=x,
+        y_m=y,
+        heading_deg=heading,
+        on_carts=on_carts,
+    )
 
 
 def _empty_layout(scenario: Scenario) -> Layout:

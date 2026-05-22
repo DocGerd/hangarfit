@@ -2152,7 +2152,7 @@ Run `/pr-review`, resolve threads, hand off.
 
 ### Task D.0: Branch + issue
 
-- [ ] **Step 1: Branch + issue**
+- [x] **Step 1: Branch + issue**
 
 ```bash
 git switch develop
@@ -2174,7 +2174,7 @@ Note as `#D`.
 
 **Goal:** Helper functions to sample initial `Placement`s for each plane.
 
-- [ ] **Step 1: Write failing test for `_initial_placement_for_plane`**
+- [x] **Step 1: Write failing test for `_initial_placement_for_plane`**
 
 Add `tests/test_solver_search.py`:
 
@@ -2237,13 +2237,13 @@ def test_initial_placement_for_maintenance_biases_to_back_strip():
     assert bay_y_start <= p.y_m <= s.hangar.length_m
 ```
 
-- [ ] **Step 2: Run, expect failure**
+- [x] **Step 2: Run, expect failure**
 
 Run: `pytest tests/test_solver_search.py::test_initial_placement_for_pinned_plane_returns_the_pin tests/test_solver_search.py::test_initial_placement_for_free_plane_is_within_hangar tests/test_solver_search.py::test_initial_placement_for_maintenance_biases_to_back_strip -v`
 
 Expected: all FAIL — `_initial_placement_for_plane` doesn't exist.
 
-- [ ] **Step 3: Implement `_initial_placement_for_plane`**
+- [x] **Step 3: Implement `_initial_placement_for_plane`**
 
 Add to `src/hangarfit/solver.py`:
 
@@ -2311,13 +2311,13 @@ def _initial_placement_for_plane(
 
 Add `Placement` to the imports (top of `solver.py`).
 
-- [ ] **Step 4: Run, expect pass**
+- [x] **Step 4: Run, expect pass**
 
 Run: `pytest tests/test_solver_search.py -v -k 'initial_placement'`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/hangarfit/solver.py tests/test_solver_search.py
