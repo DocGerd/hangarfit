@@ -216,13 +216,13 @@ EOF
 - Modify: `src/hangarfit/collisions.py` (compute + accumulate at the conflict site)
 - Modify: `tests/test_collisions.py` (assertion on populated value)
 
-- [ ] **Step 1: Read the existing `check()` implementation**
+- [x] **Step 1: Read the existing `check()` implementation**
 
 Run: `head -100 src/hangarfit/collisions.py`
 
 Then read the full file to locate the pairwise sweep where conflicts are emitted. Identify the line where the conflict's two `Part` polygons are in scope (likely just before the `Conflict.pair(...)` factory call). The penetration accumulation goes at that same site so we don't need to recompute the polygons.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 Add to `tests/test_collisions.py`:
 
@@ -278,13 +278,13 @@ def test_check_total_penetration_excludes_single_plane_conflicts(tmp_path):
 
 **Note on fixture names:** `invalid_two_planes_wing_overlap.yaml` and `invalid_plane_out_of_bounds.yaml` are illustrative — substitute the exact fixture filenames present in `tests/fixtures/`. Verify with `ls tests/fixtures/invalid_*` and pick fixtures whose names match these semantics. If none match exactly, pick the closest and adjust the test names accordingly. Do NOT add new fixtures in this chunk — that's Chunk G's job.
 
-- [ ] **Step 3: Run the new tests, expect failure**
+- [x] **Step 3: Run the new tests, expect failure**
 
 Run: `pytest tests/test_collisions.py::test_check_populates_total_penetration_for_overlapping_wings tests/test_collisions.py::test_check_total_penetration_is_zero_for_valid_layout tests/test_collisions.py::test_check_total_penetration_excludes_single_plane_conflicts -v`
 
 Expected: the populated-penetration test FAILs with `Expected non-zero penetration ... got 0.0`. The other two PASS (default 0.0 already satisfies them).
 
-- [ ] **Step 4: Implement the penetration accumulator in `collisions.check()`**
+- [x] **Step 4: Implement the penetration accumulator in `collisions.check()`**
 
 In `src/hangarfit/collisions.py`:
 
@@ -319,19 +319,19 @@ In `src/hangarfit/collisions.py`:
 1. **DRY** — the helper exists and is already used elsewhere in the codebase.
 2. **Consistency** — its return value (0.0 when the polygons don't intersect) matches our semantic ("penetration depth" means actual overlap, not clearance violation) without needing inline `if intersects` guards.
 
-- [ ] **Step 5: Run the new tests, expect pass**
+- [x] **Step 5: Run the new tests, expect pass**
 
 Run: `pytest tests/test_collisions.py::test_check_populates_total_penetration_for_overlapping_wings tests/test_collisions.py::test_check_total_penetration_is_zero_for_valid_layout tests/test_collisions.py::test_check_total_penetration_excludes_single_plane_conflicts -v`
 
 Expected: all three PASS.
 
-- [ ] **Step 6: Run the full test suite to confirm no regressions**
+- [x] **Step 6: Run the full test suite to confirm no regressions**
 
 Run: `pytest -q`
 
 Expected: all existing tests still pass.
 
-- [ ] **Step 7: Run lint + format + type check**
+- [x] **Step 7: Run lint + format + type check**
 
 ```bash
 ruff check src/ tests/
@@ -341,7 +341,7 @@ mypy src/hangarfit/
 
 Expected: all three pass with no errors. If `ruff format --check` reports differences, run `ruff format src/ tests/` and re-stage. If `mypy` complains about `intersection().area` typing, add a `# type: ignore[union-attr]` only if shapely's stubs are the issue — but first try just running it; recent shapely usually types correctly.
 
-- [ ] **Step 8: Commit the check() implementation**
+- [x] **Step 8: Commit the check() implementation**
 
 ```bash
 git add src/hangarfit/collisions.py tests/test_collisions.py

@@ -269,3 +269,35 @@ class TestMaintenancePosition:
         assert "maintenance_no_fuselage" in _conflict_kinds(result), (
             f"expected maintenance_no_fuselage conflict, got {result.conflicts!r}"
         )
+
+
+def test_check_populates_total_penetration_for_overlapping_wings():
+    """Two planes whose wings overlap in plan view should produce a
+    non-zero total_penetration_m2 equal to the sum of intersection areas."""
+    layout = _load("invalid_wing_wing_same_height")
+    result = check(layout)
+
+    assert not result.valid
+    assert result.total_penetration_m2 > 0.0, (
+        f"Expected non-zero penetration for overlapping wings; got {result.total_penetration_m2}"
+    )
+
+
+def test_check_total_penetration_is_zero_for_valid_layout():
+    """Valid layouts have total_penetration_m2 == 0.0 by construction."""
+    layout = load_layout(Path(__file__).resolve().parent.parent / "layouts" / "example.yaml")
+    result = check(layout)
+
+    assert result.valid
+    assert result.total_penetration_m2 == 0.0
+
+
+def test_check_total_penetration_excludes_single_plane_conflicts():
+    """Single-plane conflicts (hangar_bounds, maintenance_position) contribute 0."""
+    layout = _load("invalid_hangar_bounds")
+    result = check(layout)
+
+    assert not result.valid
+    # Every conflict here is single-plane (hangar_bounds).
+    assert all(len(c.planes) == 1 for c in result.conflicts)
+    assert result.total_penetration_m2 == 0.0
