@@ -1446,7 +1446,7 @@ PR_NUMBER=<from Step 2>
 gh api -X PATCH "repos/DocGerd/hangarfit/issues/$PR_NUMBER" -f '{"labels":["enhancement"]}'
 ```
 
-- [ ] **Step 4: Run `/pr-review`, resolve threads, hand off**
+- [x] **Step 4: Run `/pr-review`, resolve threads, hand off**
 
 Same flow as Chunk A. Don't merge.
 
