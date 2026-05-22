@@ -316,8 +316,11 @@ def cmd_solve(args: argparse.Namespace) -> int:
         try:
             if args.render is not None:
                 _write_renders(result.layouts, args.render)
+            if args.write_yaml is not None:
+                fleet_ref, hangar_ref = _resolve_fleet_hangar_refs(args)
+                _write_yamls(result.layouts, args.write_yaml, fleet_ref, hangar_ref)
         except OSError as e:
-            print(f"error: render failed: {e}", file=sys.stderr)
+            print(f"error: write failed: {e}", file=sys.stderr)
             return 2
 
     # Exit code (spec §5.2). --strict-k flips 0 -> 1 only for found_partial.
@@ -346,6 +349,97 @@ def _write_renders(layouts: tuple[Layout, ...], pattern: str) -> None:
     """
     for i, layout in enumerate(layouts, start=1):
         visualize.render_layout(layout, _expand_pattern(pattern, i))
+
+
+def _resolve_fleet_hangar_refs(args: argparse.Namespace) -> tuple[str, str]:
+    """Resolve fleet/hangar refs to absolute paths for layout-YAML output.
+
+    Preference order per source:
+    1. ``--fleet`` / ``--hangar`` CLI override (rare; load_scenario
+       refuses to mix override and embedded ref).
+    2. ``fleet:`` / ``hangar:`` field inside the scenario YAML, joined
+       to the scenario's parent directory.
+
+    Returning absolute paths means the written layout YAML is
+    location-independent — a user can stash it anywhere and still
+    ``hangarfit check`` it without rewiring relative paths.
+    """
+    from pathlib import Path
+
+    import yaml
+
+    scenario_path = Path(args.scenario)
+    # load_scenario already opened and parsed this YAML successfully, so
+    # the file exists and is well-formed; re-reading here just to pluck
+    # the two ref fields. Cheap second pass; avoids holding the parsed
+    # scenario in cmd_solve's frame solely for this.
+    with open(scenario_path, encoding="utf-8") as f:
+        raw = yaml.safe_load(f)
+    if not isinstance(raw, dict):
+        # load_scenario already rejected this — defensive guard so type
+        # checkers don't see Any. Should be unreachable in practice.
+        raise OSError(f"scenario YAML is not a mapping: {scenario_path}")
+
+    if args.fleet is not None:
+        fleet_abs = Path(args.fleet).resolve()
+    else:
+        fleet_rel = raw.get("fleet")
+        if not isinstance(fleet_rel, str):
+            raise OSError(
+                f"cannot write layout YAML: scenario {scenario_path} has no "
+                f"'fleet' field and no --fleet override"
+            )
+        fleet_abs = (scenario_path.parent / fleet_rel).resolve()
+
+    if args.hangar is not None:
+        hangar_abs = Path(args.hangar).resolve()
+    else:
+        hangar_rel = raw.get("hangar")
+        if not isinstance(hangar_rel, str):
+            raise OSError(
+                f"cannot write layout YAML: scenario {scenario_path} has no "
+                f"'hangar' field and no --hangar override"
+            )
+        hangar_abs = (scenario_path.parent / hangar_rel).resolve()
+
+    return str(fleet_abs), str(hangar_abs)
+
+
+def _write_yamls(
+    layouts: tuple[Layout, ...],
+    pattern: str,
+    fleet_ref: str,
+    hangar_ref: str,
+) -> None:
+    """Write each layout to PATTERN with ``{i}`` substituted.
+
+    Output format matches ``layouts/example.yaml`` so the file
+    round-trips through ``hangarfit check``. Fleet/hangar refs are
+    embedded as absolute paths so the written file is location-
+    independent.
+    """
+    import yaml
+
+    for i, layout in enumerate(layouts, start=1):
+        payload: dict = {
+            "fleet": fleet_ref,
+            "hangar": hangar_ref,
+        }
+        if layout.maintenance_plane is not None:
+            payload["maintenance"] = {"plane": layout.maintenance_plane}
+        payload["placements"] = [
+            {
+                "plane": p.plane_id,
+                "x_m": p.x_m,
+                "y_m": p.y_m,
+                "heading_deg": p.heading_deg,
+                "on_carts": p.on_carts,
+            }
+            for p in layout.placements
+        ]
+        path = _expand_pattern(pattern, i)
+        with open(path, "w") as f:
+            yaml.safe_dump(payload, f, sort_keys=False)
 
 
 def _layout_to_dict(layout: Layout) -> dict:

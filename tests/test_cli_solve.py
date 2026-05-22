@@ -223,6 +223,66 @@ class TestSolveRender:
         assert rc == 0
         assert (tmp_path / "layout_1.png").exists()
 
+    def test_write_yaml_k1_no_braces_creates_file(self, tmp_path, capsys):
+        out = tmp_path / "single.yaml"
+        rc = main(
+            [
+                "solve",
+                SMOKE_FIXTURE,
+                "--budget",
+                "2.0",
+                "--seed",
+                "42",
+                "--write-yaml",
+                str(out),
+            ]
+        )
+        assert rc == 0
+        assert out.exists()
+
+    def test_write_yaml_roundtrips_via_check(self, tmp_path, capsys):
+        out = tmp_path / "out.yaml"
+        rc = main(
+            [
+                "solve",
+                SMOKE_FIXTURE,
+                "--budget",
+                "2.0",
+                "--seed",
+                "42",
+                "--write-yaml",
+                str(out),
+            ]
+        )
+        assert rc == 0
+        # The written layout YAML must be loadable + valid via hangarfit check.
+        capsys.readouterr()  # drain solve output
+        rc2 = main(["check", str(out)])
+        assert rc2 == 0
+        check_out = capsys.readouterr().out
+        assert "valid" in check_out
+
+    def test_write_yaml_k_gt_1_without_braces_returns_2(self, tmp_path, capsys):
+        out = tmp_path / "noplaceholder.yaml"
+        rc = main(
+            [
+                "solve",
+                SMOKE_FIXTURE,
+                "--alternatives",
+                "3",
+                "--budget",
+                "2.0",
+                "--seed",
+                "42",
+                "--write-yaml",
+                str(out),
+            ]
+        )
+        assert rc == 2
+        captured = capsys.readouterr()
+        assert "--write-yaml" in captured.err
+        assert "{i}" in captured.err
+
     def test_render_k_gt_1_without_braces_returns_2(self, tmp_path, capsys):
         # Validation fires BEFORE solve() — no PNG written, no solve cost.
         out = tmp_path / "noplaceholder.png"
