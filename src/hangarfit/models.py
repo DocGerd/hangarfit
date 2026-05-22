@@ -586,6 +586,19 @@ class SolverDiagnostics:
     ``seed`` is the *actually-used* seed — ``None`` resolved to entropy
     on entry to :func:`hangarfit.solver.solve` is recorded here so a run
     can be replayed exactly.
+
+    ``diversity_impossible`` is ``True`` iff the static
+    ``K > 1 ∧ free_planes < min_planes_moved`` precondition fires on
+    :func:`hangarfit.solver.solve` entry (spec §4.1 of the v0.6.0
+    solver-polish release design). It mirrors the existing logger
+    warning as a structured, machine-readable signal so callers don't
+    have to scrape log records.
+
+    ``diversity_rejected_count`` is the number of valid layouts the
+    diversity filter rejected during the run. ``0`` is the healthy
+    default; a non-zero value means search produced more valid layouts
+    than the K-diversity gate accepted (informative when K>1 returns
+    ``found_partial``).
     """
 
     restarts_attempted: int
@@ -593,6 +606,8 @@ class SolverDiagnostics:
     best_partial: CheckResult | None
     best_partial_layout: Layout | None
     seed: int
+    diversity_impossible: bool = False
+    diversity_rejected_count: int = 0
 
     def __post_init__(self) -> None:
         if (self.best_partial is None) != (self.best_partial_layout is None):
@@ -607,6 +622,11 @@ class SolverDiagnostics:
         if not math.isfinite(self.wall_time_s) or self.wall_time_s < 0.0:
             raise ValueError(
                 f"SolverDiagnostics.wall_time_s must be finite and >= 0, got {self.wall_time_s!r}"
+            )
+        if self.diversity_rejected_count < 0:
+            raise ValueError(
+                f"SolverDiagnostics.diversity_rejected_count must be >= 0, "
+                f"got {self.diversity_rejected_count}"
             )
 
 
