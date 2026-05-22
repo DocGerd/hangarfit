@@ -422,3 +422,125 @@ def test_descent_step_returns_none_when_all_conflicts_are_pinned():
         pinned_planes=pinned,
     )
     assert result is None, "all-pinned-conflicts must return None for restart"
+
+
+# ── Chunk E: K-diverse alternatives + termination + diagnostics ─────────
+
+
+def test_diversity_filter_rejects_near_duplicate():
+    """Two layouts with no planes moved enough should fail diversity."""
+    from hangarfit.loader import load_fleet, load_hangar
+    from hangarfit.models import DiversityConfig, Layout, Placement
+    from hangarfit.solver import _is_diverse_enough
+
+    fleet = load_fleet("data/fleet.yaml")
+    hangar = load_hangar("data/hangar.yaml")
+    p1 = Placement(plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
+    p2 = Placement(plane_id="ctsl", x_m=10.0, y_m=10.0, heading_deg=0.0, on_carts=False)
+    L1 = Layout(fleet=fleet, hangar=hangar, placements=(p1, p2))
+    L2 = Layout(fleet=fleet, hangar=hangar, placements=(p1, p2))  # identical
+
+    diversity = DiversityConfig()  # defaults: M=2, 0.5m, 30°
+    assert not _is_diverse_enough(L2, [L1], diversity)
+
+
+def test_diversity_filter_accepts_meaningfully_different():
+    from hangarfit.loader import load_fleet, load_hangar
+    from hangarfit.models import DiversityConfig, Layout, Placement
+    from hangarfit.solver import _is_diverse_enough
+
+    fleet = load_fleet("data/fleet.yaml")
+    hangar = load_hangar("data/hangar.yaml")
+    p1 = Placement(plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
+    p2 = Placement(plane_id="ctsl", x_m=10.0, y_m=10.0, heading_deg=0.0, on_carts=False)
+    L1 = Layout(fleet=fleet, hangar=hangar, placements=(p1, p2))
+
+    # L2: both planes moved by > 0.5 m
+    p1b = Placement(plane_id="aviat_husky", x_m=8.0, y_m=5.0, heading_deg=0.0, on_carts=False)
+    p2b = Placement(plane_id="ctsl", x_m=13.0, y_m=10.0, heading_deg=0.0, on_carts=False)
+    L2 = Layout(fleet=fleet, hangar=hangar, placements=(p1b, p2b))
+
+    diversity = DiversityConfig()
+    assert _is_diverse_enough(L2, [L1], diversity)
+
+
+def test_diversity_heading_uses_short_arc():
+    """0° and 359° should be 1° apart, not 359°."""
+    from hangarfit.loader import load_fleet, load_hangar
+    from hangarfit.models import DiversityConfig, Layout, Placement
+    from hangarfit.solver import _is_diverse_enough
+
+    fleet = load_fleet("data/fleet.yaml")
+    hangar = load_hangar("data/hangar.yaml")
+    p1 = Placement(plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
+    p2 = Placement(plane_id="ctsl", x_m=10.0, y_m=10.0, heading_deg=0.0, on_carts=False)
+    L1 = Layout(fleet=fleet, hangar=hangar, placements=(p1, p2))
+
+    p1b = Placement(plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=359.0, on_carts=False)
+    p2b = Placement(plane_id="ctsl", x_m=10.0, y_m=10.0, heading_deg=0.0, on_carts=False)
+    L2 = Layout(fleet=fleet, hangar=hangar, placements=(p1b, p2b))
+
+    diversity = DiversityConfig()
+    # heading_threshold_deg=30 — 1° gap is less than 30°, so this is NOT diverse.
+    assert not _is_diverse_enough(L2, [L1], diversity)
+
+
+def test_diversity_filter_m_equals_one_boundary():
+    """With min_planes_moved=1, moving exactly one plane suffices."""
+    from hangarfit.loader import load_fleet, load_hangar
+    from hangarfit.models import DiversityConfig, Layout, Placement
+    from hangarfit.solver import _is_diverse_enough
+
+    fleet = load_fleet("data/fleet.yaml")
+    hangar = load_hangar("data/hangar.yaml")
+    p1 = Placement(plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
+    p2 = Placement(plane_id="ctsl", x_m=10.0, y_m=10.0, heading_deg=0.0, on_carts=False)
+    L1 = Layout(fleet=fleet, hangar=hangar, placements=(p1, p2))
+
+    # L2: only aviat_husky moved (by > 0.5 m)
+    p1b = Placement(plane_id="aviat_husky", x_m=8.0, y_m=5.0, heading_deg=0.0, on_carts=False)
+    L2 = Layout(fleet=fleet, hangar=hangar, placements=(p1b, p2))
+
+    # Default M=2: rejected (only 1 moved).
+    assert not _is_diverse_enough(L2, [L1], DiversityConfig())
+    # M=1: accepted.
+    assert _is_diverse_enough(L2, [L1], DiversityConfig(min_planes_moved=1))
+
+
+def test_diversity_filter_threshold_exact_boundary():
+    """Per spec §4.6: a plane is "moved" iff pos_delta >= threshold OR
+    head_delta >= threshold. The comparison is >=, not >.
+
+    Construct a case where exactly two planes are moved by exactly the
+    position threshold — they should count as moved (>= passes), so the
+    candidate is accepted under M=2.
+    """
+    from hangarfit.loader import load_fleet, load_hangar
+    from hangarfit.models import DiversityConfig, Layout, Placement
+    from hangarfit.solver import _is_diverse_enough
+
+    fleet = load_fleet("data/fleet.yaml")
+    hangar = load_hangar("data/hangar.yaml")
+    p1 = Placement(plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
+    p2 = Placement(plane_id="ctsl", x_m=10.0, y_m=10.0, heading_deg=0.0, on_carts=False)
+    L1 = Layout(fleet=fleet, hangar=hangar, placements=(p1, p2))
+
+    div = DiversityConfig()  # position_threshold_m=0.5
+    # Move both planes by exactly 0.5 m on the x-axis.
+    p1b = Placement(
+        plane_id="aviat_husky",
+        x_m=5.0 + div.position_threshold_m,
+        y_m=5.0,
+        heading_deg=0.0,
+        on_carts=False,
+    )
+    p2b = Placement(
+        plane_id="ctsl",
+        x_m=10.0 + div.position_threshold_m,
+        y_m=10.0,
+        heading_deg=0.0,
+        on_carts=False,
+    )
+    L2 = Layout(fleet=fleet, hangar=hangar, placements=(p1b, p2b))
+    # Exact-threshold delta → counted as moved (>= comparison).
+    assert _is_diverse_enough(L2, [L1], div)

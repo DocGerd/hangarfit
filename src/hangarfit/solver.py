@@ -780,6 +780,63 @@ def _descent_step(
     return best_placements, best_score, True
 
 
+def _heading_delta_short_arc(a: float, b: float) -> float:
+    """Shortest angular distance on the circle, in degrees.
+
+    Returns the shorter of the two arcs between ``a`` and ``b`` measured
+    on the unit circle, in ``[0.0, 180.0]``. Equivalent to
+    ``min(|a-b| mod 360, 360 - |a-b| mod 360)``. So 0° vs 359° → 1°,
+    not 359°. Spec §4.6 requires this short-arc distance for the
+    diversity-filter heading test; using raw ``|a - b|`` would make the
+    filter mis-classify near-identical headings across the wrap as
+    "moved" and silently degrade diversity.
+    """
+    d = abs(a - b) % 360.0
+    return min(d, 360.0 - d)
+
+
+def _is_diverse_enough(
+    candidate: Layout,
+    accepted: list[Layout],
+    diversity: DiversityConfig,
+) -> bool:
+    """Return True iff candidate differs from every accepted layout (spec §4.6).
+
+    For each already-accepted layout, count the number of planes in the
+    candidate whose placement differs by at least ``position_threshold_m``
+    of Euclidean distance OR at least ``heading_threshold_deg`` of
+    short-arc heading (a plane absent from the reference counts as moved).
+    The candidate is "diverse enough" iff that count meets
+    ``min_planes_moved`` against EVERY accepted layout — pairwise diversity,
+    not aggregate.
+
+    Iterates ``candidate.placements`` (a tuple, deterministic) and
+    ``accepted`` (a list, deterministic). The intermediate ``cand_by_id``
+    and ``L_by_id`` dicts are only used for O(1) plane-id lookups; no
+    iteration order leaks out.
+    """
+    cand_by_id = {p.plane_id: p for p in candidate.placements}
+    for L in accepted:
+        L_by_id = {p.plane_id: p for p in L.placements}
+        n_moved = 0
+        for pid, cand_p in cand_by_id.items():
+            ref = L_by_id.get(pid)
+            if ref is None:
+                # Plane not in the reference layout — count as moved
+                n_moved += 1
+                continue
+            pos_delta = ((cand_p.x_m - ref.x_m) ** 2 + (cand_p.y_m - ref.y_m) ** 2) ** 0.5
+            head_delta = _heading_delta_short_arc(cand_p.heading_deg, ref.heading_deg)
+            if (
+                pos_delta >= diversity.position_threshold_m
+                or head_delta >= diversity.heading_threshold_deg
+            ):
+                n_moved += 1
+        if n_moved < diversity.min_planes_moved:
+            return False  # too similar to this accepted layout
+    return True
+
+
 def _empty_layout(scenario: Scenario) -> Layout:
     """Build a placement-less Layout for pairing with a synthetic CheckResult.
 
