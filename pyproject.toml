@@ -29,6 +29,9 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-ra"
+markers = [
+    "slow: tests that may exceed the default 5 s per-fixture solve budget (excluded from CI default; run on demand via `pytest -m slow`)",
+]
 
 [tool.ruff]
 line-length = 100

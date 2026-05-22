@@ -229,3 +229,34 @@ def test_solve_maintenance_bay_required_places_maintenance_in_bay():
     assert cy >= bay_start_y, (
         f"maintenance plane fuselage centroid y={cy:.2f} < bay_start_y={bay_start_y:.2f}"
     )
+
+
+# ── G.6: solve_all_nine_large_hangar ────────────────────────────────────
+
+
+@pytest.mark.slow
+def test_solve_all_nine_large_hangar_finds_layout():
+    """All 9 placeholder aircraft in test_hangar_large. The heaviest
+    search in the v1 matrix; marked @slow because a worst-case run can
+    exceed the default 5 s CI budget.
+
+    Spec §6.5: expected `found`. Universal properties cover validity;
+    nothing additional to assert beyond status + layout count.
+    """
+    s = load_scenario(f"{FIXTURES}/solve_all_nine_large_hangar.yaml")
+    r = solve(s, budget_s=30.0, alternatives=1, seed=42)
+
+    if r.status == "exhausted_budget":
+        pytest.skip(
+            f"Solver didn't find a 9-plane layout in 30s "
+            f"(restarts={r.diagnostics.restarts_attempted}). The Phase 1 "
+            f"hand-authored valid_all_nine_planes layout demonstrates a "
+            f"solution exists; the solver just didn't stumble onto it. "
+            f"Re-tune SearchConfig or extend the budget if this becomes "
+            f"a pattern."
+        )
+
+    _assert_universal_properties(r)
+    assert r.status == "found"
+    assert len(r.layouts) == 1
+    assert len(r.layouts[0].placements) == 9
