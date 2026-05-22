@@ -14,7 +14,7 @@ from __future__ import annotations
 import math
 import typing
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Literal
 
@@ -446,3 +446,111 @@ class PlaneConstraint:
 
     pin: Placement | None = None
     force_on_carts: bool | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Scenario:
+    """Solver input for Phase 2a.
+
+    Cross-reference invariants validated in __post_init__:
+
+    - every fleet_in id exists in fleet
+    - maintenance_plane (if set) is in fleet_in
+    - constraints.keys() ⊆ set(fleet_in)
+    - for each (plane_id, constraint): constraint.pin.plane_id == plane_id (if pin set)
+    - force_on_carts is consistent with movement_mode:
+        force_on_carts=True  → plane must NOT be always_own_gear
+        force_on_carts=False → plane must NOT be always_cart
+    - pin.on_carts is consistent with movement_mode (same rules)
+    - if both a pin and force_on_carts are set, their on_carts must agree
+    - fleet dict is wrapped in MappingProxyType (same pattern as Layout)
+
+    See spec §3.2 for the rationale.
+    """
+
+    fleet: Mapping[str, Aircraft]
+    hangar: Hangar
+    fleet_in: tuple[str, ...]
+    maintenance_plane: str | None = None
+    constraints: Mapping[str, PlaneConstraint] = field(default_factory=lambda: MappingProxyType({}))
+
+    def __post_init__(self) -> None:
+        # fleet_in must be non-empty (otherwise there's nothing to solve;
+        # downstream helpers like the sum-of-areas infeasibility check
+        # also do `fleet_in[0]` which would IndexError on empty input).
+        if not self.fleet_in:
+            raise ValueError("Scenario.fleet_in must be non-empty")
+
+        # fleet_in references real planes
+        for pid in self.fleet_in:
+            if pid not in self.fleet:
+                raise ValueError(
+                    f"Scenario.fleet_in references unknown plane {pid!r}; "
+                    f"fleet has: {sorted(self.fleet)}"
+                )
+
+        fleet_in_set = set(self.fleet_in)
+
+        # maintenance_plane in fleet_in
+        if self.maintenance_plane is not None and self.maintenance_plane not in fleet_in_set:
+            raise ValueError(
+                f"Scenario.maintenance_plane {self.maintenance_plane!r} must be in fleet_in"
+            )
+
+        # constraint keys ⊆ fleet_in
+        for key in self.constraints:
+            if key not in fleet_in_set:
+                raise ValueError(f"Scenario.constraints has key {key!r} not in fleet_in")
+
+        # per-constraint validation
+        for plane_id, constraint in self.constraints.items():
+            plane = self.fleet[plane_id]
+
+            if constraint.pin is not None:
+                if constraint.pin.plane_id != plane_id:
+                    raise ValueError(
+                        f"Scenario.constraints[{plane_id!r}].pin.plane_id is "
+                        f"{constraint.pin.plane_id!r}; must equal the constraint key"
+                    )
+
+                # pin.on_carts consistency with movement_mode
+                if plane.movement_mode == "always_cart" and not constraint.pin.on_carts:
+                    raise ValueError(
+                        f"Scenario.constraints[{plane_id!r}].pin.on_carts=False "
+                        f"contradicts movement_mode={plane.movement_mode!r}"
+                    )
+                if plane.movement_mode == "always_own_gear" and constraint.pin.on_carts:
+                    raise ValueError(
+                        f"Scenario.constraints[{plane_id!r}].pin.on_carts=True "
+                        f"contradicts movement_mode={plane.movement_mode!r}"
+                    )
+
+            if constraint.force_on_carts is not None:
+                # force_on_carts consistency with movement_mode
+                if constraint.force_on_carts is True and plane.movement_mode == "always_own_gear":
+                    raise ValueError(
+                        f"Scenario.constraints[{plane_id!r}].force_on_carts=True "
+                        f"contradicts movement_mode={plane.movement_mode!r}"
+                    )
+                if constraint.force_on_carts is False and plane.movement_mode == "always_cart":
+                    raise ValueError(
+                        f"Scenario.constraints[{plane_id!r}].force_on_carts=False "
+                        f"contradicts movement_mode={plane.movement_mode!r}"
+                    )
+
+            # pin and force_on_carts must agree if both set
+            if (
+                constraint.pin is not None
+                and constraint.force_on_carts is not None
+                and constraint.pin.on_carts != constraint.force_on_carts
+            ):
+                raise ValueError(
+                    f"Scenario.constraints[{plane_id!r}]: pin.on_carts="
+                    f"{constraint.pin.on_carts} and force_on_carts="
+                    f"{constraint.force_on_carts} disagree (contradictory)"
+                )
+
+        object.__setattr__(self, "fleet", MappingProxyType(dict(self.fleet)))
+        # constraints is also frozen-ish via MappingProxyType, ensure it is
+        if not isinstance(self.constraints, MappingProxyType):
+            object.__setattr__(self, "constraints", MappingProxyType(dict(self.constraints)))
