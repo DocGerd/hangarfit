@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import random as _random_module
 import secrets
+import sys
 import time
 
 from hangarfit.collisions import check as check_layout
@@ -89,7 +90,11 @@ def solve(
     )
     cart_buckets = _enumerate_cart_buckets(scenario)
 
-    best_partial_score: tuple[float, float] = (float("inf"), float("inf"))
+    # Type matches `_score`'s return (`tuple[int, float]`). `sys.maxsize`
+    # is the sentinel int that compares strictly greater than any plausible
+    # `len(conflicts)`; pairing with `inf` for the float keeps Python's
+    # natural tuple lex-compare unambiguous.
+    best_partial_score: tuple[int, float] = (sys.maxsize, float("inf"))
     best_partial_layout: Layout | None = None
     accepted_layouts: list[Layout] = []
     restart_index = 0
@@ -102,18 +107,22 @@ def solve(
             restart_index += 1
             continue
 
-        # Initial Layout build — catches cart-rule violations and any
-        # other cross-reference invariant from Layout.__post_init__.
-        try:
-            initial_layout = Layout(
-                fleet=scenario.fleet,
-                hangar=scenario.hangar,
-                placements=tuple(placements[pid] for pid in scenario.fleet_in),
-                maintenance_plane=scenario.maintenance_plane,
-            )
-        except ValueError:
-            restart_index += 1
-            continue
+        # Initial Layout build.
+        #
+        # No try/except: under current invariants, NO Layout.__post_init__
+        # ValueError is reachable here. `_enumerate_cart_buckets` already
+        # filters bucket assignments that would violate the cart rule;
+        # Scenario invariants enforce pin/on_carts/movement_mode consistency;
+        # placements are over `scenario.fleet_in` (no duplicates, all in
+        # fleet); the maintenance plane is in placements by construction.
+        # Any ValueError here would mean a real bug — let it propagate as
+        # one rather than burn the budget on silent restart absorption.
+        initial_layout = Layout(
+            fleet=scenario.fleet,
+            hangar=scenario.hangar,
+            placements=tuple(placements[pid] for pid in scenario.fleet_in),
+            maintenance_plane=scenario.maintenance_plane,
+        )
         current_score = _score(initial_layout)
         # Track the initial layout as a best-partial candidate too — it
         # may be the lowest-score thing we see in this trajectory.
@@ -305,23 +314,37 @@ def _check_trivially_infeasible(
             return check, _empty_layout(scenario)
 
         # Build a Layout containing ONLY the pinned planes.
-        # maintenance_plane=None to bypass Layout's "maintenance must be placed"
-        # invariant; we're only checking pin-vs-pin and pin-vs-hangar here.
-        # (Spec §4.1 step 3 spells this out explicitly: the pre-search check is
-        # only about pin-vs-pin self-collision and pin-vs-hangar bounds; the
-        # maintenance-position rule is not in scope at this stage because no
-        # maintenance plane is set.)
+        #
+        # ``maintenance_plane`` is set on the pin-only Layout iff the
+        # maintenance plane is itself pinned. This lets `collisions.check()`
+        # fire the maintenance_position rule on a pinned-out-of-bay
+        # maintenance plane — without it, that case would silently slip
+        # past pre-search and burn the entire solve() budget in the
+        # trajectory loop (every restart would hit the same conflict on
+        # the pinned plane, `_descent_step` would return None, restart
+        # again, ad infinitum until budget).
+        #
+        # If the maintenance plane is NOT pinned, we leave maintenance
+        # off the pin-only Layout — its position will be sampled freely
+        # during search, so pre-search has nothing to check.
+        #
         # No try/except: every remaining Layout invariant that could fire
         # here is either structurally impossible given pin-only construction
         # or already caught by Scenario.__post_init__ (pin.plane_id mismatch,
         # pin.on_carts vs movement_mode). A genuinely unexpected ValueError
         # should propagate as a bug, not get silently re-wrapped as a pin
         # infeasibility.
+        maintenance_pinned = (
+            scenario.maintenance_plane is not None
+            and scenario.maintenance_plane in scenario.constraints
+            and scenario.constraints[scenario.maintenance_plane].pin is not None
+        )
+        maint_for_check = scenario.maintenance_plane if maintenance_pinned else None
         pin_only_layout = Layout(
             fleet=scenario.fleet,
             hangar=scenario.hangar,
             placements=tuple(pinned_placements),
-            maintenance_plane=None,
+            maintenance_plane=maint_for_check,
         )
 
         pin_check = check_layout(pin_only_layout)
@@ -628,8 +651,12 @@ def _descent_step(
     """Run one min-conflicts iteration (spec §4.3).
 
     Returns ``(new_placements, new_score, accepted)`` where ``accepted``
-    is ``True`` iff the new score was strictly better OR equal (greedy
-    ``≤`` allows plateau traversal). Returns ``None`` if the trajectory
+    is ``True`` whenever any candidate beat the (score, displacement)
+    tracker — *including* the pure-displacement tiebreaker case where
+    score didn't change but a closer move was preferred. Caller's
+    "score improved" check at ``solve()``'s descent loop reads the
+    score directly (``new_score < current_score``) and does not depend
+    on this flag's exact semantic. Returns ``None`` if the trajectory
     should restart (all conflicts involve only pinned planes — locally
     unsolvable).
 
@@ -709,6 +736,14 @@ def _descent_step(
 
     # Score each candidate. Tie-break by displacement from the current
     # state (encourages smooth trajectories — spec §4.3 step 4).
+    #
+    # Implicit policy note: the 180°-flip candidate has displacement
+    # exactly 0 (it doesn't move position), which beats any Gaussian
+    # nudge's strictly-positive displacement when scores tie. Effect:
+    # heading-only changes are preferred over position+heading changes
+    # on tie. This matches "smallest motion wins" and is desirable for
+    # local optima escape, but it's an implicit choice — don't
+    # accidentally invert it.
     best_score = current_score
     best_placements = placements
     best_cand: Placement | None = None

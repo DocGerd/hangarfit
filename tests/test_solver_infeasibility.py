@@ -115,3 +115,38 @@ def test_solve_trivially_infeasible_when_two_cart_eligible_pins_on_carts():
     bp = r.diagnostics.best_partial
     assert bp is not None
     assert bp.conflicts[0].kind == "trivially_infeasible_pin_cart_rule"
+
+
+def test_solve_trivially_infeasible_when_maintenance_pin_outside_bay():
+    """Maintenance plane pinned outside the back maintenance bay.
+
+    Regression test for the silent-failure path identified in PR #89:
+    pre-search check #3 now includes the maintenance_position rule when
+    the maintenance plane is itself pinned. Without the fix, this case
+    would slip past pre-search and burn the entire solve() budget on
+    infinite restarts.
+    """
+    from hangarfit.loader import load_scenario
+    from hangarfit.solver import solve
+
+    s = load_scenario("tests/fixtures/solve_infeasible_maint_pin_outside_bay.yaml")
+    r = solve(s, budget_s=5.0, seed=42)
+
+    # Must fire trivially_infeasible (pre-search), NOT exhausted_budget.
+    assert r.status == "trivially_infeasible", (
+        f"Expected pre-search rejection; got {r.status} after "
+        f"{r.diagnostics.restarts_attempted} restarts (silent-failure regression?)"
+    )
+    # Wall time should be ~zero — no real search ran.
+    assert r.diagnostics.wall_time_s < 0.5
+    assert r.diagnostics.restarts_attempted == 0
+    bp = r.diagnostics.best_partial
+    assert bp is not None
+    # The fired conflict is maintenance_position (one of collisions.py's
+    # standard kinds), not one of the solver's synthetic
+    # "trivially_infeasible_*" kinds. That's fine — what matters is that
+    # the user gets a SHARP signal pre-search rather than a generic
+    # exhausted_budget.
+    assert any("maintenance" in c.kind for c in bp.conflicts), (
+        f"Expected a maintenance-related conflict, got {[c.kind for c in bp.conflicts]}"
+    )

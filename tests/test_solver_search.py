@@ -125,12 +125,40 @@ def test_score_invalid_layout_is_positive():
     from hangarfit.loader import load_layout
     from hangarfit.solver import _score
 
-    # Use an existing invalid-overlap fixture; substitute filename if needed.
+    # layouts/example_invalid.yaml is documented in CLAUDE.md as
+    # exercising 3 conflict kinds (hangar_bounds + wing_wing_overlap +
+    # strut_wing_overlap). At least the wing/wing and strut/wing
+    # conflicts produce real overlap area, so penetration is strictly
+    # positive — vacuous `>= 0.0` would mask a regression that
+    # accidentally returned 0.0 for every conflict.
     layout = load_layout("layouts/example_invalid.yaml")
     s = _score(layout)
     count, penetration = s
-    assert count > 0
-    assert penetration >= 0.0  # could be 0 if all conflicts are single-plane
+    assert count >= 3, f"expected ≥3 conflicts in example_invalid; got {count}"
+    assert penetration > 0.0, f"expected positive penetration area; got {penetration}"
+
+
+def test_score_lex_ordering_matches_spec():
+    """Hierarchical scoring: lower conflict-count wins over lower penetration.
+
+    `(2, 999.0) < (3, 0.0)` because 2 < 3. The descent loop's progress
+    depends on this lex compare; a subtle inversion would silently
+    degrade search quality.
+    """
+    from hangarfit.solver import _score  # noqa: F401  (imported for namespace)
+
+    # Build scores directly — no need to load fixtures here.
+    assert (2, 999.0) < (3, 0.0)
+    assert (2, 0.5) > (2, 0.4)
+    assert (0, 0.0) < (1, 0.0)
+    # Sanity: _score returns exactly tuple[int, float]
+    from hangarfit.loader import load_layout
+    from hangarfit.solver import _score as score_fn
+
+    score = score_fn(load_layout("layouts/example.yaml"))
+    assert isinstance(score, tuple)
+    assert isinstance(score[0], int)
+    assert isinstance(score[1], float)
 
 
 def test_perturb_plane_returns_valid_placement_within_hangar():
@@ -157,6 +185,69 @@ def test_perturb_plane_returns_valid_placement_within_hangar():
         assert 0.0 <= cand.x_m <= s.hangar.width_m
         assert 0.0 <= cand.y_m <= s.hangar.length_m
         assert 0.0 <= cand.heading_deg < 360.0
+
+
+def test_perturb_plane_preserves_on_carts():
+    """`_perturb_plane` must keep `on_carts` from the current placement.
+
+    The docstring claims this; without a test, a regression flipping
+    `on_carts` mid-trajectory would silently violate the cart-bucket
+    round-robin's premise.
+    """
+    from hangarfit.loader import load_scenario
+    from hangarfit.models import Placement
+    from hangarfit.solver import SearchConfig, _perturb_plane
+
+    s = load_scenario("tests/fixtures/solve_feasible_smoke.yaml")
+    rng = random.Random(42)
+    current_off = Placement(
+        plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False
+    )
+    current_on = Placement(plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=True)
+    cfg = SearchConfig()
+    for _ in range(20):
+        assert (
+            _perturb_plane(
+                current=current_off, scenario=s, rng=rng, search=cfg, large_jump=False
+            ).on_carts
+            is False
+        )
+        assert (
+            _perturb_plane(
+                current=current_on, scenario=s, rng=rng, search=cfg, large_jump=True
+            ).on_carts
+            is True
+        )
+
+
+def test_perturb_plane_heading_wraps_modulo_360():
+    """Perturbing a heading near 0° (or 360°) should wrap, not clamp.
+
+    A regression that clamped heading to [0, 360) instead of wrapping
+    would cause the search to never visit headings near the wrap-around
+    region from one side, biasing solutions.
+    """
+    from hangarfit.loader import load_scenario
+    from hangarfit.models import Placement
+    from hangarfit.solver import SearchConfig, _perturb_plane
+
+    s = load_scenario("tests/fixtures/solve_feasible_smoke.yaml")
+    rng = random.Random(42)
+    current = Placement(plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=359.0, on_carts=False)
+    cfg = SearchConfig()  # heading_sigma_deg=10.0
+    # Across many perturbations, at least some must land below 180° —
+    # proves wrap (358° + 10° = 368° → 8°), not clamp (would stay at
+    # 359° forever).
+    headings = [
+        _perturb_plane(
+            current=current, scenario=s, rng=rng, search=cfg, large_jump=False
+        ).heading_deg
+        for _ in range(100)
+    ]
+    assert any(h < 180.0 for h in headings), (
+        f"Heading wrap appears broken; all 100 samples stayed in upper half: "
+        f"{sorted(set(int(h) for h in headings))[:10]} (showing first 10 unique)"
+    )
 
 
 def test_solve_finds_layout_for_trivial_single_plane():
@@ -225,3 +316,109 @@ def test_solve_is_deterministic_for_same_seed():
     for la, lb in zip(r1.layouts, r2.layouts, strict=True):
         assert la.placements == lb.placements
         assert la.maintenance_plane == lb.maintenance_plane
+
+
+def test_solve_is_deterministic_for_exhausted_budget_branch():
+    """Multi-plane scenario + tight budget → exercises full descent loop
+    (perturbation, candidate selection, conflict-plane pick) under the
+    same-seed-same-answer canary.
+
+    The found-branch test above only covers initial placement. This test
+    covers the descent loop where determinism is most likely to silently
+    break — specifically the `sorted(conflicting)` at solver.py:700 that
+    cancels set-iteration nondeterminism.
+    """
+    from hangarfit.loader import load_scenario
+    from hangarfit.solver import solve
+
+    s = load_scenario("tests/fixtures/solve_fresh_six_planes.yaml")
+    r1 = solve(s, budget_s=0.05, alternatives=1, seed=42)
+    r2 = solve(s, budget_s=0.05, alternatives=1, seed=42)
+
+    # Determinism: status, seed, restarts must match.
+    assert r1.status == r2.status
+    assert r1.diagnostics.seed == r2.diagnostics.seed == 42
+    assert r1.diagnostics.restarts_attempted == r2.diagnostics.restarts_attempted
+    # If found: layouts match.
+    assert len(r1.layouts) == len(r2.layouts)
+    for la, lb in zip(r1.layouts, r2.layouts, strict=True):
+        assert la.placements == lb.placements
+    # If exhausted: best_partial_layout placements match.
+    if r1.diagnostics.best_partial_layout is not None:
+        assert r2.diagnostics.best_partial_layout is not None
+        assert (
+            r1.diagnostics.best_partial_layout.placements
+            == r2.diagnostics.best_partial_layout.placements
+        )
+
+
+def test_solve_exhausted_budget_reports_best_partial_pair():
+    """When budget runs out without finding a valid layout, the diagnostics
+    must report `best_partial` and `best_partial_layout` as a paired Some.
+
+    Pins the SolverDiagnostics fused-pair invariant on the
+    exhausted_budget branch (the found branch is covered by the trivial
+    test). Without this, a regression that cleared the layout reference
+    while keeping the score (or vice versa) would only be caught by
+    SolverDiagnostics.__post_init__ — which would crash inside solve(),
+    not surface as a clear test failure.
+    """
+    import pytest
+
+    from hangarfit.loader import load_scenario
+    from hangarfit.solver import solve
+
+    s = load_scenario("tests/fixtures/solve_fresh_six_planes.yaml")
+    r = solve(s, budget_s=0.05, alternatives=1, seed=42)
+    if r.status == "found":
+        pytest.skip("seed=42 + 0.05s got lucky; tighten budget if this skips often")
+
+    assert r.status == "exhausted_budget"
+    assert r.layouts == ()
+    assert r.diagnostics.restarts_attempted >= 1, "search must have tried at least once"
+
+    bp = r.diagnostics.best_partial
+    bpl = r.diagnostics.best_partial_layout
+    # Fused-pair contract (Chunk B's SolverDiagnostics.__post_init__).
+    assert (bp is None) == (bpl is None), (
+        f"best_partial/best_partial_layout must be both-None or both-Some; "
+        f"got bp={'None' if bp is None else 'Some'}, "
+        f"bpl={'None' if bpl is None else 'Some'}"
+    )
+    if bp is not None:
+        # If we have a best_partial, it MUST have conflicts (else the layout
+        # would be valid and status would be "found").
+        assert len(bp.conflicts) >= 1
+
+
+def test_descent_step_returns_none_when_all_conflicts_are_pinned():
+    """Unit test for the `_descent_step → None` restart contract.
+
+    When every conflict-causing plane is in `pinned_planes`, the helper
+    must return None (signalling the trajectory to restart). A refactor
+    that swapped `c.planes` → `[c.plane]` or otherwise broke the filter
+    would silently hang within range(10000) instead of restarting.
+
+    Build the smallest scenario that hits this: two planes pinned at
+    overlapping coordinates. The conflict would normally drive descent,
+    but both planes are pinned → conflicting set is empty.
+    """
+    from hangarfit.loader import load_scenario
+    from hangarfit.solver import SearchConfig, _descent_step
+
+    # solve_infeasible_pins_clash.yaml has two pins at identical coords.
+    # Loading and stepping it manually (bypassing solve()'s pre-search)
+    # to exercise _descent_step directly.
+    s = load_scenario("tests/fixtures/solve_infeasible_pins_clash.yaml")
+    placements = {pid: s.constraints[pid].pin for pid in s.fleet_in}
+    pinned = frozenset(s.fleet_in)  # both planes pinned
+
+    result = _descent_step(
+        placements=placements,
+        scenario=s,
+        rng=random.Random(42),
+        search=SearchConfig(),
+        current_score=(2, 0.0),
+        pinned_planes=pinned,
+    )
+    assert result is None, "all-pinned-conflicts must return None for restart"
