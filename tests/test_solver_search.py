@@ -318,38 +318,43 @@ def test_solve_is_deterministic_for_same_seed():
         assert la.maintenance_plane == lb.maintenance_plane
 
 
-def test_solve_is_deterministic_for_exhausted_budget_branch():
-    """Multi-plane scenario + tight budget → exercises full descent loop
-    (perturbation, candidate selection, conflict-plane pick) under the
-    same-seed-same-answer canary.
+def test_solve_is_deterministic_through_descent_loop():
+    """Multi-plane scenario — seeded RNG must produce identical layouts
+    across two calls of ``solve()``, even through the descent loop.
 
-    The found-branch test above only covers initial placement. This test
-    covers the descent loop where determinism is most likely to silently
-    break — specifically the `sorted(conflicting)` at solver.py:700 that
-    cancels set-iteration nondeterminism.
+    Exercises the full descent path (perturbation, candidate selection,
+    conflict-plane pick) where determinism is most likely to silently
+    break — specifically the ``sorted(conflicting)`` in ``_descent_step``
+    that cancels set-iteration nondeterminism.
+
+    Budget choice: 5 s (against ~1.4 s typical search time for this
+    fixture at seed=42, leaving ~3× headroom for slow CI runners). An
+    earlier version used 0.05 s to also exercise the ``exhausted_budget``
+    branch, but that made the test wall-clock-flaky — machine-load
+    variance between the two consecutive ``solve()`` calls could leave
+    each call at a different restart count when the budget expired,
+    producing different ``best_partial_layout``s. The exhausted-budget
+    determinism branch is genuinely wall-clock-dependent and cannot be
+    asserted via a same-seed-same-answer canary; see issue #101.
     """
     from hangarfit.loader import load_scenario
     from hangarfit.solver import solve
 
     s = load_scenario("tests/fixtures/solve_fresh_six_planes.yaml")
-    r1 = solve(s, budget_s=0.05, alternatives=1, seed=42)
-    r2 = solve(s, budget_s=0.05, alternatives=1, seed=42)
+    r1 = solve(s, budget_s=5.0, alternatives=1, seed=42)
+    r2 = solve(s, budget_s=5.0, alternatives=1, seed=42)
 
-    # Determinism: status, seed, restarts must match.
-    assert r1.status == r2.status
+    # Adequate budget: both calls must reach `found` deterministically.
+    assert r1.status == r2.status == "found"
     assert r1.diagnostics.seed == r2.diagnostics.seed == 42
+    # When status=found, restart count is determined by the seed (not
+    # wall-clock); the run terminates at the restart that succeeds.
     assert r1.diagnostics.restarts_attempted == r2.diagnostics.restarts_attempted
-    # If found: layouts match.
-    assert len(r1.layouts) == len(r2.layouts)
+
+    # Layouts must match element-wise.
+    assert len(r1.layouts) == len(r2.layouts) == 1
     for la, lb in zip(r1.layouts, r2.layouts, strict=True):
         assert la.placements == lb.placements
-    # If exhausted: best_partial_layout placements match.
-    if r1.diagnostics.best_partial_layout is not None:
-        assert r2.diagnostics.best_partial_layout is not None
-        assert (
-            r1.diagnostics.best_partial_layout.placements
-            == r2.diagnostics.best_partial_layout.placements
-        )
 
 
 def test_solve_exhausted_budget_reports_best_partial_pair():
