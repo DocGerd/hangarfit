@@ -3644,7 +3644,7 @@ For each, write the fixture, then a test that asserts the expected outcome, then
 
 ### Task G.7: Determinism canary tests
 
-- [ ] **Step 1: Add canary tests**
+- [x] **Step 1: Add canary tests**
 
 Create `tests/test_solver_canaries.py`:
 
@@ -3691,7 +3691,7 @@ def test_solve_deterministic_given_seed(fixture):
     # different RNG state → different layouts.
 ```
 
-- [ ] **Step 2: Run, expect pass**
+- [x] **Step 2: Run, expect pass**
 
 ```bash
 pytest tests/test_solver_canaries.py -v
@@ -3699,7 +3699,7 @@ pytest tests/test_solver_canaries.py -v
 
 If any canary test fails, it means there's a non-determinism source in the solver (likely set / dict iteration order, or an unseeded `random` call). Find and fix it — common culprits: `set()` ordering, `dict.items()` ordering (Python 3.7+ guarantees insertion order, but not "deterministic across processes"), `os.urandom()` used directly instead of via the seeded `rng`.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add tests/test_solver_canaries.py
@@ -3715,7 +3715,7 @@ Refs #G"
 
 ### Task G.8: Final wrap
 
-- [ ] **Step 1: Full test suite + lint + type check + PR**
+- [x] **Step 1: Full test suite + lint + type check + PR**
 
 ```bash
 pytest -q && ruff check src/ tests/ && ruff format --check src/ tests/ && mypy src/hangarfit/
