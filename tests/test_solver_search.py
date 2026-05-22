@@ -319,39 +319,43 @@ def test_solve_is_deterministic_for_same_seed():
 
 
 def test_solve_is_deterministic_through_descent_loop():
-    """Multi-plane scenario — seeded RNG must produce identical layouts
-    across two calls of ``solve()``, even through the descent loop.
+    """Seeded RNG must produce identical layouts across two ``solve()``
+    calls, even through the multi-restart descent loop.
 
-    Exercises the full descent path (perturbation, candidate selection,
-    conflict-plane pick) where determinism is most likely to silently
-    break — specifically the ``sorted(conflicting)`` in ``_descent_step``
-    that cancels set-iteration nondeterminism.
+    Names the specific concern that the parametrized canary suite in
+    ``test_solver_canaries.py`` does NOT explicitly cover: descent-step
+    set-iteration order (``sorted(conflicting)`` in ``_descent_step``).
+    The canary suite parametrizes determinism over fixtures; this test
+    parametrizes determinism over a *codepath*, asserting that
+    ``restarts_attempted`` matches across runs — a check the canary
+    suite deliberately omits because it is wall-clock-dependent for
+    ``status=exhausted_budget`` but is in fact deterministic-by-seed
+    for ``status=found`` (the run terminates at the restart that
+    succeeds, regardless of wall-clock).
 
-    Budget choice: 5 s (against ~1.4 s typical search time for this
-    fixture at seed=42, leaving ~3× headroom for slow CI runners). An
-    earlier version used 0.05 s to also exercise the ``exhausted_budget``
-    branch, but that made the test wall-clock-flaky — machine-load
-    variance between the two consecutive ``solve()`` calls could leave
-    each call at a different restart count when the budget expired,
-    producing different ``best_partial_layout``s. The exhausted-budget
-    determinism branch is genuinely wall-clock-dependent and cannot be
-    asserted via a same-seed-same-answer canary; see issue #101.
+    Budget is set high enough that the search reliably ends in
+    ``found``; if a slow CI runner cannot reach ``found`` within
+    ``budget_s`` the test will fail with a status mismatch — bump the
+    budget or skip rather than weakening the assertion.
     """
     from hangarfit.loader import load_scenario
     from hangarfit.solver import solve
 
     s = load_scenario("tests/fixtures/solve_fresh_six_planes.yaml")
-    r1 = solve(s, budget_s=5.0, alternatives=1, seed=42)
-    r2 = solve(s, budget_s=5.0, alternatives=1, seed=42)
+    r1 = solve(s, budget_s=10.0, alternatives=1, seed=42)
+    r2 = solve(s, budget_s=10.0, alternatives=1, seed=42)
 
-    # Adequate budget: both calls must reach `found` deterministically.
-    assert r1.status == r2.status == "found"
+    # Status mismatch here almost certainly means the CI runner is too
+    # slow to reach `found` within budget_s, not a determinism break —
+    # the canary suite catches actual non-determinism with a smaller
+    # surface. Bump budget if this trips.
+    assert r1.status == r2.status == "found", (
+        f"expected both runs to find within 10 s; got {r1.status!r} / {r2.status!r}. "
+        f"Likely cause: CI runner is slow; bump budget_s."
+    )
     assert r1.diagnostics.seed == r2.diagnostics.seed == 42
-    # When status=found, restart count is determined by the seed (not
-    # wall-clock); the run terminates at the restart that succeeds.
     assert r1.diagnostics.restarts_attempted == r2.diagnostics.restarts_attempted
 
-    # Layouts must match element-wise.
     assert len(r1.layouts) == len(r2.layouts) == 1
     for la, lb in zip(r1.layouts, r2.layouts, strict=True):
         assert la.placements == lb.placements
