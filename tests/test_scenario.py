@@ -202,3 +202,73 @@ def test_scenario_rejects_pin_and_force_on_carts_disagreement(fleet, hangar):
                 )
             },
         )
+
+
+# ── SolveStatus / SolverDiagnostics / SolveResult ───────────────────────
+
+
+def test_solve_status_literal_values():
+    """SolveStatus must be exactly these four strings."""
+    import typing
+
+    from hangarfit.models import SolveStatus
+
+    values = set(typing.get_args(SolveStatus))
+    assert values == {"found", "found_partial", "exhausted_budget", "trivially_infeasible"}
+
+
+def test_solver_diagnostics_construct():
+    from hangarfit.models import SolverDiagnostics
+
+    d = SolverDiagnostics(
+        restarts_attempted=47,
+        wall_time_s=4.2,
+        best_partial=None,
+        best_partial_layout=None,
+        seed=42,
+    )
+    assert d.seed == 42
+    assert d.restarts_attempted == 47
+
+
+def test_solve_result_construct():
+    from hangarfit.models import (
+        SolverDiagnostics,
+        SolveResult,
+    )
+
+    r = SolveResult(
+        status="found",
+        layouts=(),
+        diagnostics=SolverDiagnostics(
+            restarts_attempted=0,
+            wall_time_s=0.0,
+            best_partial=None,
+            best_partial_layout=None,
+            seed=42,
+        ),
+    )
+    assert r.status == "found"
+    assert r.layouts == ()
+
+
+# ── DiversityConfig / SearchConfig ──────────────────────────────────────
+
+
+def test_diversity_config_defaults():
+    from hangarfit.models import DiversityConfig
+
+    d = DiversityConfig()
+    assert d.min_planes_moved == 2
+    assert d.position_threshold_m == 0.5
+    assert d.heading_threshold_deg == 30.0
+
+
+def test_search_config_defaults():
+    from hangarfit.models import SearchConfig
+
+    s = SearchConfig()
+    assert s.candidates_per_iter == 8
+    assert s.k_stall == 50
+    assert s.pos_sigma_m == 0.5
+    assert s.heading_sigma_deg == 10.0

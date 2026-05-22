@@ -554,3 +554,50 @@ class Scenario:
         # constraints is also frozen-ish via MappingProxyType, ensure it is
         if not isinstance(self.constraints, MappingProxyType):
             object.__setattr__(self, "constraints", MappingProxyType(dict(self.constraints)))
+
+
+SolveStatus = Literal[
+    "found",
+    "found_partial",
+    "exhausted_budget",
+    "trivially_infeasible",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class SolverDiagnostics:
+    """Per-solve diagnostic information."""
+
+    restarts_attempted: int
+    wall_time_s: float
+    best_partial: CheckResult | None
+    best_partial_layout: Layout | None
+    seed: int
+
+
+@dataclass(frozen=True, slots=True)
+class SolveResult:
+    """Public output of solver.solve()."""
+
+    status: SolveStatus
+    layouts: tuple[Layout, ...]
+    diagnostics: SolverDiagnostics
+
+
+@dataclass(frozen=True, slots=True)
+class DiversityConfig:
+    """Diversity-filter thresholds (see spec §4.6)."""
+
+    min_planes_moved: int = 2
+    position_threshold_m: float = 0.5
+    heading_threshold_deg: float = 30.0
+
+
+@dataclass(frozen=True, slots=True)
+class SearchConfig:
+    """Solver hyperparameters (see spec §4.3, §4.5). v1 defaults are guesses."""
+
+    candidates_per_iter: int = 8
+    k_stall: int = 50
+    pos_sigma_m: float = 0.5
+    heading_sigma_deg: float = 10.0
