@@ -1675,7 +1675,7 @@ EOF
 
 **Note:** "plane bbox > hangar" requires a fixture where some plane's max-extent bbox literally exceeds the hangar's larger dimension. Since the real `data/fleet.yaml` planes all fit in `data/hangar.yaml`, we'll synthesize a tiny test-only hangar. (Actually, the Falke's 18 m wing fits in `data/hangar.yaml`'s 25 m length already. Use a 10×10 m fixture hangar so the Falke clearly doesn't fit.)
 
-- [ ] **Step 1: Create the test-only hangar and scenario fixtures**
+- [x] **Step 1: Create the test-only hangar and scenario fixtures**
 
 `tests/fixtures/test_hangar_tiny.yaml` (only if it doesn't exist; check first with `ls tests/fixtures/test_hangar*`):
 
@@ -1699,7 +1699,7 @@ hangar: ./test_hangar_tiny.yaml
 fleet_in: [scheibe_falke]   # 18 m wingspan, won't fit in 10x8 m
 ```
 
-- [ ] **Step 2: Write failing test**
+- [x] **Step 2: Write failing test**
 
 Append to `tests/test_solver_infeasibility.py`:
 
@@ -1719,13 +1719,23 @@ def test_solve_trivially_infeasible_when_plane_too_big_for_hangar():
     assert r.diagnostics.restarts_attempted == 0
 ```
 
-- [ ] **Step 3: Run, expect failure**
+- [x] **Step 3: Run, expect failure**
 
 Run: `pytest tests/test_solver_infeasibility.py::test_solve_trivially_infeasible_when_plane_too_big_for_hangar -v`
 
 Expected: FAIL — status is `exhausted_budget` instead of `trivially_infeasible`.
 
-- [ ] **Step 4: Implement check #1 in `solver.py`**
+- [x] **Step 4: Implement check #1 in `solver.py`**
+
+**Deviation note (Chunk B re-baseline):** Chunk B added a fused-pair
+invariant to `SolverDiagnostics` requiring `best_partial` and
+`best_partial_layout` to both be set or both be None. The plan's
+literal "`best_partial_layout=None`" alongside `best_partial=<CheckResult>`
+violates this. Resolution: `_check_trivially_infeasible` now returns
+`tuple[CheckResult, Layout] | None`; checks #1 and #2 pair the synthetic
+CheckResult with a placement-less Layout via a new `_empty_layout`
+helper, check #3 pairs the CheckResult with the pin-only Layout that
+detected the conflict.
 
 In `src/hangarfit/solver.py`, insert a helper function and a check call inside `solve()` before the short-circuit return. After the `del rng` line, before `start = time.monotonic()`:
 
@@ -1829,13 +1839,13 @@ def _plane_max_extent(plane) -> tuple[float, float]:
 
 Note: also add `field`, `Layout`, `CheckResult`, `Conflict` to the imports of `solver.py` if not already present.
 
-- [ ] **Step 5: Run, expect pass**
+- [x] **Step 5: Run, expect pass**
 
 Run: `pytest tests/test_solver_infeasibility.py -v`
 
 Expected: all PASS, including the new plane-too-big test.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/hangarfit/solver.py tests/test_solver_infeasibility.py tests/fixtures/test_hangar_tiny.yaml tests/fixtures/solve_infeasible_plane_too_big.yaml

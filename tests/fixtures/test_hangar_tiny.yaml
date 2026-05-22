@@ -1,0 +1,9 @@
+length_m: 10.0
+width_m: 8.0
+door:
+  center_x_m: 4.0
+  width_m: 5.0
+maintenance_bay:
+  depth_m: 1.0
+clearance_m: 0.3
+wing_layer_clearance_m: 0.2

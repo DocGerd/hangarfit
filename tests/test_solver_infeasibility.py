@@ -30,3 +30,18 @@ def test_solve_resolves_none_seed_to_entropy():
     r = solve(s, budget_s=0.1, seed=None)
     assert isinstance(r.diagnostics.seed, int)
     assert r.diagnostics.seed != 0  # entropy is essentially always nonzero
+
+
+def test_solve_trivially_infeasible_when_plane_too_big_for_hangar():
+    """A plane whose bbox exceeds hangar dims → trivially_infeasible."""
+    from hangarfit.loader import load_scenario
+    from hangarfit.solver import solve
+
+    s = load_scenario("tests/fixtures/solve_infeasible_plane_too_big.yaml")
+    r = solve(s, budget_s=5.0, seed=42)
+
+    assert r.status == "trivially_infeasible"
+    assert r.layouts == ()
+    # Pre-search check must short-circuit fast (no actual search).
+    assert r.diagnostics.wall_time_s < 5.0  # well below the 30 s default budget
+    assert r.diagnostics.restarts_attempted == 0

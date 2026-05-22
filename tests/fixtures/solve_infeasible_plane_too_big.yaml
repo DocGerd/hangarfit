@@ -1,0 +1,3 @@
+fleet: ../../data/fleet.yaml
+hangar: ./test_hangar_tiny.yaml
+fleet_in: [scheibe_falke]   # 18 m wingspan, won't fit in 10x8 m
