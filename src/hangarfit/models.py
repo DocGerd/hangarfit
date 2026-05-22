@@ -433,3 +433,16 @@ class CheckResult:
     @property
     def valid(self) -> bool:
         return len(self.conflicts) == 0
+
+
+@dataclass(frozen=True, slots=True)
+class PlaneConstraint:
+    """Per-plane HARD constraints for a Scenario.
+
+    All fields optional — a constraint with everything None means 'free'
+    (the solver may place the plane anywhere within physical / cart-rule
+    limits). See spec §3.2 for the rationale.
+    """
+
+    pin: Placement | None = None
+    force_on_carts: bool | None = None
