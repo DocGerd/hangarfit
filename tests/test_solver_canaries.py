@@ -107,6 +107,21 @@ def test_solve_deterministic_best_partial_under_max_restarts() -> None:
         restart 0), this canary needs re-calibration on
         ``solve_diversity_impossible_warn.yaml`` per the plan's
         fallback procedure.
+
+    Fallback fixture calibration (recorded 2026-05-23):
+        Ran ``solve(scenario, budget_s=10.0, seed=42)`` on
+        ``solve_diversity_impossible_warn.yaml`` to pre-pin the
+        fallback. Observed ``status=found, restarts_attempted=1,
+        wall_time≈0.009 s``. With observed=1, the standard
+        ``max_restarts = observed // 2`` recipe would yield 0, which
+        :class:`SearchConfig.__post_init__` rejects. If a future
+        switch to this fallback fixture is needed, pick a different
+        seed whose natural restart count is ≥ 2 (so ``observed // 2
+        >= 1``) or use a different fixture — do NOT clamp to
+        ``max_restarts=1``, which would NOT trip before natural
+        success on this fixture (the cap would equal the natural
+        success count and the predicate is strictly ``<``, not
+        ``<=``).
     """
     fixture = "tests/fixtures/solve_fresh_six_planes.yaml"
     max_restarts = 1
@@ -152,3 +167,40 @@ def test_solve_deterministic_best_partial_under_max_restarts() -> None:
     # reproducible, not just the accepted layouts.
     assert bpl1.placements == bpl2.placements
     assert bpl1.maintenance_plane == bpl2.maintenance_plane
+
+
+def test_solve_budget_trips_before_max_restarts() -> None:
+    """When ``budget_s`` would cut the loop short of ``max_restarts``,
+    the budget gate wins — exercises the compound termination
+    condition's other branch.
+
+    Pair with ``test_solve_deterministic_best_partial_under_max_restarts``
+    above which pins the inverse case (max_restarts trips first). The two
+    canaries together pin both branches of the
+    ``time.monotonic() - start < budget_s and (… or restart_index <
+    search.max_restarts)`` compound predicate in ``solver.solve``'s outer
+    loop. If a future refactor flips the short-circuit order, drops a
+    clause, or accidentally turns ``and`` into ``or``, one or the other
+    canary will go red.
+    """
+    fixture = "tests/fixtures/solve_fresh_six_planes.yaml"
+
+    s = load_scenario(fixture)
+    r = solve(
+        s,
+        budget_s=0.001,  # tiny budget — trips first
+        alternatives=1,
+        seed=42,
+        search=SearchConfig(max_restarts=1000),  # cap that won't be reached
+    )
+
+    # The budget — not the restart cap — must be the gate that trips.
+    # ``restarts_attempted`` may be 0 or a small handful depending on
+    # machine speed and per-restart cost, but it is bounded by what the
+    # tiny 1 ms budget allows, well below the 1000-restart cap. If this
+    # tripped at the cap, ``restarts_attempted`` would equal 1000 and
+    # the assertion would fire loud.
+    assert r.diagnostics.restarts_attempted < 100, (
+        f"expected budget-first termination (a few restarts at most), "
+        f"got restarts_attempted={r.diagnostics.restarts_attempted}"
+    )
