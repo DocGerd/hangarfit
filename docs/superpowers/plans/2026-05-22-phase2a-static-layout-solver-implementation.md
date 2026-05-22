@@ -520,7 +520,7 @@ def test_plane_constraint_default_is_free():
 
 
 def test_plane_constraint_can_carry_pin():
-    p = Placement(plane_id="husky", x_m=2.1, y_m=14.3, heading_deg=0.0, on_carts=False)
+    p = Placement(plane_id="aviat_husky", x_m=2.1, y_m=14.3, heading_deg=0.0, on_carts=False)
     c = PlaneConstraint(pin=p)
     assert c.pin == p
 
@@ -613,10 +613,10 @@ def test_scenario_smoke_construct_minimal(fleet, hangar):
     s = Scenario(
         fleet=fleet,
         hangar=hangar,
-        fleet_in=("husky", "ctsl"),
+        fleet_in=("aviat_husky", "ctsl"),
         maintenance_plane=None,
     )
-    assert s.fleet_in == ("husky", "ctsl")
+    assert s.fleet_in == ("aviat_husky", "ctsl")
     assert s.maintenance_plane is None
     assert s.constraints == {}  # MappingProxyType, but == {} works
 
@@ -637,7 +637,7 @@ def test_scenario_rejects_maintenance_plane_not_in_fleet_in(fleet, hangar):
     with pytest.raises(ValueError, match="maintenance_plane"):
         Scenario(
             fleet=fleet, hangar=hangar,
-            fleet_in=("husky",),
+            fleet_in=("aviat_husky",),
             maintenance_plane="ctsl",  # not in fleet_in
         )
 
@@ -648,7 +648,7 @@ def test_scenario_rejects_constraint_key_not_in_fleet_in(fleet, hangar):
     with pytest.raises(ValueError, match="constraint"):
         Scenario(
             fleet=fleet, hangar=hangar,
-            fleet_in=("husky",),
+            fleet_in=("aviat_husky",),
             constraints={"ctsl": PlaneConstraint(force_on_carts=True)},
         )
 
@@ -659,11 +659,11 @@ def test_scenario_rejects_pin_plane_id_mismatch(fleet, hangar):
     with pytest.raises(ValueError, match="plane_id"):
         Scenario(
             fleet=fleet, hangar=hangar,
-            fleet_in=("husky", "ctsl"),
+            fleet_in=("aviat_husky", "ctsl"),
             constraints={
-                "husky": PlaneConstraint(
+                "aviat_husky": PlaneConstraint(
                     pin=Placement(
-                        plane_id="ctsl",  # mismatch — should be "husky"
+                        plane_id="ctsl",  # mismatch — should be "aviat_husky"
                         x_m=2.0, y_m=2.0, heading_deg=0.0, on_carts=False,
                     )
                 )
@@ -678,8 +678,8 @@ def test_scenario_rejects_force_on_carts_true_for_always_own_gear(fleet, hangar)
     with pytest.raises(ValueError, match="movement_mode"):
         Scenario(
             fleet=fleet, hangar=hangar,
-            fleet_in=("husky",),
-            constraints={"husky": PlaneConstraint(force_on_carts=True)},
+            fleet_in=("aviat_husky",),
+            constraints={"aviat_husky": PlaneConstraint(force_on_carts=True)},
         )
 
 
@@ -1080,7 +1080,7 @@ EOF
 ```yaml
 fleet: ../../data/fleet.yaml
 hangar: ../../data/hangar.yaml
-fleet_in: [husky, ctsl]
+fleet_in: [aviat_husky, ctsl]
 ```
 
 `tests/fixtures/scenario_with_pin.yaml`:
@@ -1088,11 +1088,11 @@ fleet_in: [husky, ctsl]
 ```yaml
 fleet: ../../data/fleet.yaml
 hangar: ../../data/hangar.yaml
-fleet_in: [husky, ctsl, fuji]
+fleet_in: [aviat_husky, ctsl, fuji]
 maintenance:
   plane: fuji
 constraints:
-  husky:
+  aviat_husky:
     pin: { x_m: 2.1, y_m: 14.3, heading_deg: 0.0, on_carts: false }
 ```
 
@@ -1112,7 +1112,7 @@ constraints:
 ```yaml
 fleet: ../../data/fleet.yaml
 hangar: ../../data/hangar.yaml
-fleet_in: [husky, not_a_real_plane]
+fleet_in: [aviat_husky, not_a_real_plane]
 ```
 
 `tests/fixtures/scenario_bad_force_carts_conflict.yaml`:
@@ -1120,10 +1120,10 @@ fleet_in: [husky, not_a_real_plane]
 ```yaml
 fleet: ../../data/fleet.yaml
 hangar: ../../data/hangar.yaml
-fleet_in: [husky]
+fleet_in: [aviat_husky]
 constraints:
-  husky:
-    force_on_carts: true   # husky is always_own_gear → contradiction
+  aviat_husky:
+    force_on_carts: true   # aviat_husky is always_own_gear → contradiction
 ```
 
 - [ ] **Step 2: Write failing tests for `load_scenario`**
@@ -1144,7 +1144,7 @@ def test_load_scenario_minimal():
     from hangarfit.loader import load_scenario
 
     s = load_scenario("tests/fixtures/scenario_minimal.yaml")
-    assert s.fleet_in == ("husky", "ctsl")
+    assert s.fleet_in == ("aviat_husky", "ctsl")
     assert s.maintenance_plane is None
     assert s.constraints == {}
 
@@ -1154,10 +1154,10 @@ def test_load_scenario_with_pin():
 
     s = load_scenario("tests/fixtures/scenario_with_pin.yaml")
     assert s.maintenance_plane == "fuji"
-    assert "husky" in s.constraints
-    pin = s.constraints["husky"].pin
+    assert "aviat_husky" in s.constraints
+    pin = s.constraints["aviat_husky"].pin
     assert pin is not None
-    assert pin.plane_id == "husky"  # filled in by loader
+    assert pin.plane_id == "aviat_husky"  # filled in by loader
     assert pin.x_m == 2.1
     assert pin.heading_deg == 0.0
     assert pin.on_carts is False
@@ -1497,7 +1497,7 @@ Note issue number as `#C`.
 ```yaml
 fleet: ../../data/fleet.yaml
 hangar: ../../data/hangar.yaml
-fleet_in: [husky]
+fleet_in: [aviat_husky]
 ```
 
 (Single plane, small footprint, large hangar — definitely feasible.)
@@ -1785,14 +1785,25 @@ def _check_trivially_infeasible(scenario: Scenario) -> CheckResult | None:
 def _plane_max_extent(plane) -> tuple[float, float]:
     """Return (max_length_m, max_width_m) over all of the plane's Parts.
 
-    Computes a coarse plane-local bounding box: takes the maximum of
-    (length_m, width_m) across all Parts. This is an over-approximation
-    (a plane's outline is not necessarily the union of its part bboxes
-    rotated together) but is correct for the literal-infeasibility check:
-    if even one part exceeds the hangar, the plane cannot fit.
+    Takes the maximum `length_m` and maximum `width_m` across all
+    parts. This is a **lower bound** on the plane's true plane-local
+    outline — it IGNORES per-part offsets (`Part.offset_x_m`,
+    `Part.offset_y_m`), so a plane whose individual parts each fit
+    but whose offsets push the combined outline outside will pass
+    this check (false negative).
 
-    Returns the max length and max width separately so the caller can
-    compare each to the relevant hangar dimension.
+    That's an acceptable trade-off for the literal-infeasibility gate
+    (Chunk C check #1): false negatives don't cause incorrect
+    rejection — they just defer to the actual search, which detects
+    the failure via `collisions.check()`. What this function CANNOT
+    produce is a false positive: if even one part's bbox dimension
+    exceeds `max(hangar.length_m, hangar.width_m)`, the plane
+    provably cannot fit at any heading, regardless of offsets.
+
+    Returns max length and max width as separate values; the caller
+    compares both against `max(hangar.length_m, hangar.width_m)` to
+    catch rotation-aware infeasibility (either bbox dim can become
+    the deep one).
     """
     max_length = max(p.length_m for p in plane.parts)
     max_width = max(p.width_m for p in plane.parts)
@@ -1938,9 +1949,9 @@ EOF
 ```yaml
 fleet: ../../data/fleet.yaml
 hangar: ../../data/hangar.yaml
-fleet_in: [husky, ctsl]
+fleet_in: [aviat_husky, ctsl]
 constraints:
-  husky:
+  aviat_husky:
     pin: { x_m: 5.0, y_m: 5.0, heading_deg: 0.0, on_carts: false }
   ctsl:
     pin: { x_m: 5.0, y_m: 5.0, heading_deg: 0.0, on_carts: false }   # exact same spot
@@ -1966,8 +1977,8 @@ def test_solve_trivially_infeasible_when_pins_clash():
     assert bp is not None
     # At least one conflict must reference both pinned planes
     refs = [set(c.planes) for c in bp.conflicts if len(c.planes) == 2]
-    assert any({"husky", "ctsl"} == r for r in refs), (
-        f"Expected a pairwise conflict between husky and ctsl, got {refs}"
+    assert any({"aviat_husky", "ctsl"} == r for r in refs), (
+        f"Expected a pairwise conflict between aviat_husky and ctsl, got {refs}"
     )
 ```
 
@@ -2156,11 +2167,11 @@ def test_initial_placement_for_pinned_plane_returns_the_pin():
 
     s = load_scenario("tests/fixtures/scenario_with_pin.yaml")
     rng = random.Random(42)
-    pin = s.constraints["husky"].pin
+    pin = s.constraints["aviat_husky"].pin
     assert pin is not None
 
     result = _initial_placement_for_plane(
-        plane_id="husky", scenario=s, rng=rng, on_carts=pin.on_carts,
+        plane_id="aviat_husky", scenario=s, rng=rng, on_carts=pin.on_carts,
     )
     assert result == pin
 
@@ -2173,9 +2184,9 @@ def test_initial_placement_for_free_plane_is_within_hangar():
     s = load_scenario("tests/fixtures/solve_feasible_smoke.yaml")
     rng = random.Random(42)
     p = _initial_placement_for_plane(
-        plane_id="husky", scenario=s, rng=rng, on_carts=False,
+        plane_id="aviat_husky", scenario=s, rng=rng, on_carts=False,
     )
-    assert p.plane_id == "husky"
+    assert p.plane_id == "aviat_husky"
     assert 0.0 <= p.x_m <= s.hangar.width_m
     assert 0.0 <= p.y_m <= s.hangar.length_m
     assert 0.0 <= p.heading_deg < 360.0
@@ -2255,7 +2266,10 @@ def _initial_placement_for_plane(
     else:
         y = rng.uniform(y_lo, y_hi)
 
-    heading = rng.uniform(0.0, 360.0)
+    # rng.random() returns [0.0, 1.0); multiplying by 360 keeps the
+    # exclusive upper bound (avoids the rng.uniform(0, 360) inclusive-
+    # endpoint pitfall — see test assertion `heading_deg < 360.0`).
+    heading = rng.random() * 360.0
 
     return Placement(
         plane_id=plane_id,
@@ -2295,20 +2309,39 @@ Refs #D"
 Append:
 
 ```python
-def test_cart_buckets_enumerates_unlocked_cart_eligibles_plus_none():
-    """With C unlocked cart_eligible planes, there should be C+1 buckets."""
+def test_cart_buckets_collapses_when_another_cart_eligible_is_force_locked_on():
+    """When another cart_eligible is force_on_carts=True, the at-most-one
+    cart-rule slot is taken — singletons for others would be infeasible."""
     from hangarfit.loader import load_scenario
     from hangarfit.solver import _enumerate_cart_buckets
 
-    # Use a scenario with 2 cart_eligible planes, neither locked.
+    # scenario_with_force_carts.yaml locks cessna_140 on_carts=True.
+    # ctsl is also cart_eligible and unlocked.
+    # Naive enumeration would emit [frozenset(), frozenset({"ctsl"})], but
+    # the singleton bucket pairs ctsl-on-carts WITH cessna_140-already-on-carts,
+    # which violates Layout's at-most-one-cart_eligible-on-carts rule.
+    # Correct behavior: only the empty bucket is feasible.
     s = load_scenario("tests/fixtures/scenario_with_force_carts.yaml")
-    # cessna_140 is cart_eligible but locked on_carts=True
-    # ctsl is cart_eligible and unlocked
-    # → buckets = [{}, {"ctsl"}]  (cessna_140 is forced — it's separate from the round-robin)
     buckets = _enumerate_cart_buckets(s)
-    assert len(buckets) == 2
-    assert set() in buckets  # the "no-one" bucket
-    assert {"ctsl"} in buckets
+    assert buckets == [frozenset()]
+
+
+def test_cart_buckets_enumerates_unlocked_cart_eligibles_plus_none():
+    """With C unlocked cart_eligible planes AND none pre-committed-on-carts,
+    there should be C+1 buckets."""
+    from hangarfit.loader import load_scenario
+    from hangarfit.solver import _enumerate_cart_buckets
+
+    # solve_fresh_six_planes scenario includes ctsl, cessna_140, fk9_mkii
+    # (3 cart_eligibles, none locked). Expected: 4 buckets.
+    s = load_scenario("tests/fixtures/solve_fresh_six_planes.yaml")
+    buckets = _enumerate_cart_buckets(s)
+    assert len(buckets) == 4
+    assert frozenset() in buckets
+    cart_eligibles = {pid for pid in s.fleet_in
+                      if s.fleet[pid].is_cart_eligible}
+    for pid in cart_eligibles:
+        assert frozenset({pid}) in buckets
 
 
 def test_cart_bucket_for_restart_is_deterministic_round_robin():
@@ -2338,30 +2371,56 @@ def _enumerate_cart_buckets(scenario: Scenario) -> list[frozenset[str]]:
     """Enumerate the cart-assignment buckets to round-robin over.
 
     Per spec §4.2: cart_eligible planes that are NOT locked by
-    force_on_carts/pin can be on or off carts. With C such planes,
-    the buckets are: the empty set + {plane_i} for each — totaling C+1.
+    force_on_carts/pin can be on or off carts. With C such planes
+    and NO pre-committed cart_eligible-on-carts plane, the buckets
+    are: the empty set + {plane_i} for each — totaling C+1.
 
-    Locked cart_eligible planes (force_on_carts=True or a pin with
-    on_carts=True) bypass round-robin — their on_carts state is fixed.
-    The cart-rule (at-most-one cart_eligible on_carts) is enforced
-    holistically by Layout.__post_init__ later.
+    Locked cart_eligible planes (force_on_carts=True, or any pin —
+    which sets on_carts as part of the placement) bypass round-robin;
+    their on_carts state is fixed. The cart-rule (at-most-one
+    cart_eligible on_carts) is enforced holistically by
+    Layout.__post_init__ later.
+
+    **IMPORTANT — pre-committed cart-on-carts case:** if any
+    cart_eligible plane is committed to `on_carts=True` by a
+    constraint (force_on_carts=True OR pin.on_carts=True), then the
+    "at most one cart_eligible on carts" slot is already taken. In
+    that case the ONLY valid bucket is the empty set — singleton
+    buckets for OTHER unlocked cart_eligibles would put a second
+    plane on carts and violate the rule, wasting restart budget on
+    guaranteed-infeasible configurations. We exclude singletons in
+    that case.
+
+    Note: a pin with `on_carts=False` also locks the plane (it can't
+    appear in any bucket), but doesn't consume the on-carts slot —
+    so other unlocked cart_eligibles can still be enumerated as
+    singletons.
     """
     free_cart_eligibles: list[str] = []
+    has_committed_cart_eligible_on_carts = False
     for pid in scenario.fleet_in:
         plane = scenario.fleet[pid]
         if not plane.is_cart_eligible:
             continue
         constraint = scenario.constraints.get(pid)
         if constraint is not None:
+            if constraint.pin is not None:
+                # Any pin locks the plane out of round-robin. If the pin
+                # puts it on carts, the on-carts slot is consumed.
+                if constraint.pin.on_carts:
+                    has_committed_cart_eligible_on_carts = True
+                continue
             if constraint.force_on_carts is not None:
-                continue  # locked
-            if constraint.pin is not None and constraint.pin.on_carts:
-                continue  # pinned on carts
+                # force_on_carts=True consumes the on-carts slot.
+                if constraint.force_on_carts:
+                    has_committed_cart_eligible_on_carts = True
+                continue
         free_cart_eligibles.append(pid)
 
     buckets: list[frozenset[str]] = [frozenset()]
-    for pid in free_cart_eligibles:
-        buckets.append(frozenset({pid}))
+    if not has_committed_cart_eligible_on_carts:
+        for pid in free_cart_eligibles:
+            buckets.append(frozenset({pid}))
     return buckets
 
 
@@ -2387,9 +2446,12 @@ git add src/hangarfit/solver.py tests/test_solver_search.py
 git commit -m "solver: implement cart-assignment round-robin enumeration
 
 _enumerate_cart_buckets returns C+1 buckets (empty + each unlocked
-cart_eligible singleton); _cart_bucket_for_restart selects bucket
-restart_index % len(buckets). Round-robin guarantees every cart
-configuration is sampled within a small restart budget.
+cart_eligible singleton) when no cart_eligible is pre-committed on
+carts; collapses to [frozenset()] when one IS pre-committed (so the
+at-most-one cart-rule slot stays satisfied). _cart_bucket_for_restart
+selects bucket restart_index % len(buckets). Round-robin guarantees
+every feasible cart configuration is sampled within a small restart
+budget without wasting restarts on guaranteed-infeasible pairings.
 
 Refs #D"
 ```
@@ -2469,7 +2531,7 @@ def test_perturb_plane_returns_valid_placement_within_hangar():
 
     s = load_scenario("tests/fixtures/solve_feasible_smoke.yaml")
     rng = random.Random(42)
-    current = Placement(plane_id="husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
+    current = Placement(plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
     config = SearchConfig()  # defaults
 
     # Generate many perturbations; all must be inside hangar bounds.
@@ -2477,7 +2539,7 @@ def test_perturb_plane_returns_valid_placement_within_hangar():
         cand = _perturb_plane(
             current=current, scenario=s, rng=rng, search=config, large_jump=False,
         )
-        assert cand.plane_id == "husky"
+        assert cand.plane_id == "aviat_husky"
         assert 0.0 <= cand.x_m <= s.hangar.width_m
         assert 0.0 <= cand.y_m <= s.hangar.length_m
         assert 0.0 <= cand.heading_deg < 360.0
@@ -2520,7 +2582,8 @@ def _perturb_plane(
             y = hangar.length_m / 2
         else:
             y = rng.uniform(y_lo, y_hi)
-        heading = rng.uniform(0.0, 360.0)
+        # Exclusive upper bound — see _initial_placement_for_plane note.
+        heading = rng.random() * 360.0
     else:
         dx = rng.gauss(0.0, search.pos_sigma_m)
         dy = rng.gauss(0.0, search.pos_sigma_m)
@@ -2684,7 +2747,7 @@ You'll need `tests/fixtures/solve_trivial_single_plane.yaml`:
 ```yaml
 fleet: ../../data/fleet.yaml
 hangar: ./test_hangar_large.yaml  # the existing 30×25 fixture
-fleet_in: [husky]
+fleet_in: [aviat_husky]
 ```
 
 (Confirm `test_hangar_large.yaml` exists in `tests/fixtures/` per CLAUDE.md module map. It does.)
@@ -2858,14 +2921,23 @@ pytest tests/test_solver_search.py::test_solve_finds_layout_for_trivial_single_p
 
 Expected: PASS (one plane in 30×25 m hangar is trivially solvable in << 5s).
 
-- [ ] **Step 5: Add the six-plane fresh fixture + test**
+- [ ] **Step 5: Delete the Chunk C placeholder smoke test**
+
+In Chunk C (Task C.1), we wrote `test_solve_feasible_smoke_returns_exhausted_budget_placeholder` to verify the solver's Chunk-C-era short-circuit behavior. That short-circuit no longer exists after Step 3 of this task — feasible scenarios now actually run the search and (for the smoke fixture: a single plane in a large hangar) succeed with `status="found"`. The placeholder assertion `assert r.status == "exhausted_budget"` is wrong from this commit onwards.
+
+Open `tests/test_solver_infeasibility.py` and **delete** the function `test_solve_feasible_smoke_returns_exhausted_budget_placeholder` entirely. The companion `test_solve_resolves_none_seed_to_entropy` stays — it only checks seed handling, not status, and remains valid.
+
+Run: `pytest tests/test_solver_infeasibility.py -v`
+Expected: only `test_solve_resolves_none_seed_to_entropy` and the three `trivially_infeasible_*` tests run; all PASS.
+
+- [ ] **Step 6: Add the six-plane fresh fixture + test**
 
 `tests/fixtures/solve_fresh_six_planes.yaml`:
 
 ```yaml
 fleet: ../../data/fleet.yaml
 hangar: ../../data/hangar.yaml
-fleet_in: [husky, fuji, ctsl, scheibe_falke, fk9_mkii, cessna_140]
+fleet_in: [aviat_husky, fuji, ctsl, scheibe_falke, fk9_mkii, cessna_140]
 maintenance:
   plane: scheibe_falke
 ```
@@ -2897,7 +2969,7 @@ def test_solve_finds_layout_for_fresh_six_planes():
 
 (`pytest.skip` is intentional: if the placeholder hangar is too tight for 5s to find a solution at seed=42, that's a property of the data, not a bug. Real measurements will likely fix this.)
 
-- [ ] **Step 6: Run + lint + type check**
+- [ ] **Step 7: Run + lint + type check**
 
 ```bash
 pytest -q && ruff check src/ tests/ && ruff format --check src/ tests/ && mypy src/hangarfit/
@@ -2905,10 +2977,10 @@ pytest -q && ruff check src/ tests/ && ruff format --check src/ tests/ && mypy s
 
 Expected: green.
 
-- [ ] **Step 7: Commit + push + PR**
+- [ ] **Step 8: Commit + push + PR**
 
 ```bash
-git add src/hangarfit/solver.py tests/test_solver_search.py tests/fixtures/solve_trivial_single_plane.yaml tests/fixtures/solve_fresh_six_planes.yaml
+git add src/hangarfit/solver.py tests/test_solver_infeasibility.py tests/test_solver_search.py tests/fixtures/solve_trivial_single_plane.yaml tests/fixtures/solve_fresh_six_planes.yaml
 git commit -m "$(cat <<'EOF'
 solver: implement RR-MC search engine (alternatives=1)
 
@@ -2998,7 +3070,7 @@ def test_diversity_filter_rejects_near_duplicate():
 
     fleet = load_fleet("data/fleet.yaml")
     hangar = load_hangar("data/hangar.yaml")
-    p1 = Placement(plane_id="husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
+    p1 = Placement(plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
     p2 = Placement(plane_id="ctsl", x_m=10.0, y_m=10.0, heading_deg=0.0, on_carts=False)
     L1 = Layout(fleet=fleet, hangar=hangar, placements=(p1, p2))
     L2 = Layout(fleet=fleet, hangar=hangar, placements=(p1, p2))  # identical
@@ -3014,12 +3086,12 @@ def test_diversity_filter_accepts_meaningfully_different():
 
     fleet = load_fleet("data/fleet.yaml")
     hangar = load_hangar("data/hangar.yaml")
-    p1 = Placement(plane_id="husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
+    p1 = Placement(plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
     p2 = Placement(plane_id="ctsl", x_m=10.0, y_m=10.0, heading_deg=0.0, on_carts=False)
     L1 = Layout(fleet=fleet, hangar=hangar, placements=(p1, p2))
 
     # L2: both planes moved by > 0.5 m
-    p1b = Placement(plane_id="husky", x_m=8.0, y_m=5.0, heading_deg=0.0, on_carts=False)
+    p1b = Placement(plane_id="aviat_husky", x_m=8.0, y_m=5.0, heading_deg=0.0, on_carts=False)
     p2b = Placement(plane_id="ctsl", x_m=13.0, y_m=10.0, heading_deg=0.0, on_carts=False)
     L2 = Layout(fleet=fleet, hangar=hangar, placements=(p1b, p2b))
 
@@ -3035,11 +3107,11 @@ def test_diversity_heading_uses_short_arc():
 
     fleet = load_fleet("data/fleet.yaml")
     hangar = load_hangar("data/hangar.yaml")
-    p1 = Placement(plane_id="husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
+    p1 = Placement(plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
     p2 = Placement(plane_id="ctsl", x_m=10.0, y_m=10.0, heading_deg=0.0, on_carts=False)
     L1 = Layout(fleet=fleet, hangar=hangar, placements=(p1, p2))
 
-    p1b = Placement(plane_id="husky", x_m=5.0, y_m=5.0, heading_deg=359.0, on_carts=False)
+    p1b = Placement(plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=359.0, on_carts=False)
     p2b = Placement(plane_id="ctsl", x_m=10.0, y_m=10.0, heading_deg=0.0, on_carts=False)
     L2 = Layout(fleet=fleet, hangar=hangar, placements=(p1b, p2b))
 
@@ -3110,7 +3182,7 @@ Refs #E"
 ```yaml
 fleet: ../../data/fleet.yaml
 hangar: ./test_hangar_large.yaml
-fleet_in: [husky, fuji, ctsl]
+fleet_in: [aviat_husky, fuji, ctsl]
 ```
 
 Append test:
@@ -3196,9 +3268,9 @@ Refs #E"
 ```yaml
 fleet: ../../data/fleet.yaml
 hangar: ./test_hangar_large.yaml
-fleet_in: [husky, ctsl, fuji]
+fleet_in: [aviat_husky, ctsl, fuji]
 constraints:
-  husky:
+  aviat_husky:
     pin: { x_m: 5.0, y_m: 5.0, heading_deg: 0.0, on_carts: false }
   ctsl:
     pin: { x_m: 15.0, y_m: 10.0, heading_deg: 0.0, on_carts: false }
@@ -3531,7 +3603,7 @@ For each of these, follow the same TDD discipline:
 
 | Fixture YAML | Test | Expected outcome |
 |---|---|---|
-| `solve_pinned_one_plane.yaml` | 6 planes, husky pinned | `found`, pinned plane unchanged |
+| `solve_pinned_one_plane.yaml` | 6 planes, aviat_husky pinned | `found`, pinned plane unchanged |
 | `solve_repair_minimal_edit.yaml` | 6 planes, 5 pinned to baseline | `found`, only unpinned plane differs from baseline |
 | `solve_force_carts_lock.yaml` | cessna_140 forced on_carts=True | `found`, returned layout respects lock |
 | `solve_force_carts_conflict.yaml` | always_cart plane forced on_carts=False | `LoaderError` |

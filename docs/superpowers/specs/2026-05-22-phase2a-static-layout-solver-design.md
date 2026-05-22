@@ -176,11 +176,11 @@ Scenario YAML schema:
 ```yaml
 fleet: ../data/fleet.yaml
 hangar: ../data/hangar.yaml
-fleet_in: [husky, fuji, ctsl, falke, fk9_mkii, cessna_140]
+fleet_in: [aviat_husky, fuji, ctsl, scheibe_falke, fk9_mkii, cessna_140]
 maintenance:
-  plane: falke
+  plane: scheibe_falke
 constraints:
-  husky:
+  aviat_husky:
     pin: { x_m: 2.1, y_m: 14.3, heading_deg: 0, on_carts: false }
   cessna_140:
     force_on_carts: true
@@ -200,7 +200,7 @@ The algorithm family is **RR-MC**: many independent random-initialized trajector
 
 Before the first restart, run three literal-impossibility tests in order. If any fires, return `SolveResult(status="trivially_infeasible", layouts=(), diagnostics=...)`.
 
-1. **Per-plane bounding box vs. hangar.** For each plane in `fleet_in`, compute its axis-aligned plane-local bbox (max extent over all `Parts`); reject if `bbox.length > hangar.length_m` *or* `bbox.width > hangar.length_m` (using `length_m` for both because the plane can be rotated). Catches typos like a 200 m wingspan.
+1. **Per-plane bounding box vs. hangar.** For each plane in `fleet_in`, compute a coarse plane-local bbox by taking the maximum `length_m` and maximum `width_m` over all of the plane's `Parts` (ignoring per-part offsets — see §7.1 / §10.3 for why this is a *lower bound* on the true outline, which is safe as a literal-infeasibility gate but not as a tight feasibility check). Then reject if `bbox_length > max(hangar.length_m, hangar.width_m)` *or* `bbox_width > max(hangar.length_m, hangar.width_m)` — using `max(...)` for both because the plane can be rotated into either orientation. Catches typos like a 200 m wingspan.
 2. **Σ areas vs. hangar floor area.** Sum each plane's bbox area; reject if `> hangar.length_m × hangar.width_m`. (No margin — only flag *literal* infeasibility.)
 3. **Pin self-collision.** Build a `Layout` containing only the pinned planes (skipping all unpinned ones); call `collisions.check()`. Any conflict → infeasible, return the conflict list as `diagnostics.best_partial` so the user sees which two pins clash, or which pin lies outside the hangar (caught as a `hangar_bounds` conflict).
 
@@ -344,8 +344,8 @@ For `exhausted_budget`:
 $ hangarfit solve scenario.yaml --budget 5
 No valid layout found in 5.0s (seed=2731415, 12 restarts).
 Best partial had 2 conflicts:
-  - wing_wing_overlap [husky, ctsl]: closest distance 0.04 m (threshold 0.30 m)
-  - hangar_bounds [falke]: extends 1.20 m past back wall
+  - wing_wing_overlap [aviat_husky, ctsl]: closest distance 0.04 m (threshold 0.30 m)
+  - hangar_bounds [scheibe_falke]: extends 1.20 m past back wall
 Hint: increase --budget, or relax pins.
 ```
 
@@ -369,10 +369,10 @@ Trivially infeasible: fleet footprint exceeds hangar floor area.
   "layouts": [
     {
       "placements": [
-        { "plane": "husky", "x_m": 2.1, "y_m": 14.3, "heading_deg": 0.0, "on_carts": false },
+        { "plane": "aviat_husky", "x_m": 2.1, "y_m": 14.3, "heading_deg": 0.0, "on_carts": false },
         ...
       ],
-      "maintenance_plane": "falke"
+      "maintenance_plane": "scheibe_falke"
     },
     ...
   ],
