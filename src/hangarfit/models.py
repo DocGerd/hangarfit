@@ -599,6 +599,13 @@ class SolverDiagnostics:
     default; a non-zero value means search produced more valid layouts
     than the K-diversity gate accepted (informative when K>1 returns
     ``found_partial``).
+
+    ``diversity_impossible`` and ``diversity_rejected_count`` are
+    **advisory**: structured mirrors of log warnings / search
+    instrumentation. Callers must not gate on them for status-level
+    decisions; that's ``status``'s job. They exist so dashboards and
+    tests can read the same signals as the logger without scraping log
+    records.
     """
 
     restarts_attempted: int
