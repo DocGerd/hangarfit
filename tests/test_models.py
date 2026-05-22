@@ -16,6 +16,7 @@ from hangarfit.models import (
     MaintenanceBay,
     Part,
     Placement,
+    SearchConfig,
     StrutsSpec,
 )
 
@@ -826,3 +827,27 @@ class TestFrozenBehavior:
         )
         with pytest.raises(dataclasses.FrozenInstanceError):
             layout.maintenance_plane = "foo"  # type: ignore[misc]
+
+
+class TestSearchConfig:
+    """Construction + post_init invariants for ``SearchConfig`` (spec §4.2 of
+    the v0.6.0 solver-polish release adds ``max_restarts``)."""
+
+    def test_max_restarts_default_is_none(self) -> None:
+        """``None`` preserves the pre-v0.6.0 wall-clock-only termination."""
+        sc = SearchConfig()
+        assert sc.max_restarts is None
+
+    def test_max_restarts_positive_accepted(self) -> None:
+        sc = SearchConfig(max_restarts=1)
+        assert sc.max_restarts == 1
+        sc = SearchConfig(max_restarts=42)
+        assert sc.max_restarts == 42
+
+    def test_max_restarts_zero_rejected(self) -> None:
+        with pytest.raises(ValueError, match="max_restarts"):
+            SearchConfig(max_restarts=0)
+
+    def test_max_restarts_negative_rejected(self) -> None:
+        with pytest.raises(ValueError, match="max_restarts"):
+            SearchConfig(max_restarts=-1)
