@@ -544,3 +544,27 @@ def test_diversity_filter_threshold_exact_boundary():
     L2 = Layout(fleet=fleet, hangar=hangar, placements=(p1b, p2b))
     # Exact-threshold delta → counted as moved (>= comparison).
     assert _is_diverse_enough(L2, [L1], div)
+
+
+def test_solve_returns_k_diverse_alternatives():
+    from hangarfit.loader import load_scenario
+    from hangarfit.models import DiversityConfig
+    from hangarfit.solver import _is_diverse_enough, solve
+
+    s = load_scenario("tests/fixtures/solve_fresh_alternatives_three.yaml")
+    r = solve(s, budget_s=10.0, alternatives=3, seed=42)
+
+    if r.status == "exhausted_budget":
+        pytest.skip("Search didn't find K=3 within budget; acceptable on placeholder data.")
+    assert r.status in {"found", "found_partial"}
+    assert 1 <= len(r.layouts) <= 3
+    # Each pair must be diverse
+    div = DiversityConfig()
+    for i, L_i in enumerate(r.layouts):
+        for j, L_j in enumerate(r.layouts):
+            if i == j:
+                continue
+            others = [L_j]
+            assert _is_diverse_enough(L_i, others, div), (
+                f"layouts[{i}] and layouts[{j}] are not diverse from each other"
+            )

@@ -49,11 +49,6 @@ def solve(
         diversity = DiversityConfig()
     if search is None:
         search = SearchConfig()
-    # `diversity` is accepted in the signature for forward compatibility
-    # with Chunk E (K-diversity filter); the alternatives=1 path in this
-    # chunk never consults it. Reference it once so static analysis
-    # doesn't flag it as unused without obscuring intent.
-    _ = diversity
 
     # Resolve seed. Validate eagerly — a bad seed would raise here, at
     # solve() entry, instead of 30 s into the search loop. ONE
@@ -135,16 +130,24 @@ def solve(
             if time.monotonic() - start >= budget_s:
                 break
             if current_score == (0, 0.0):
-                # Valid! Accept (no diversity filter yet in Chunk D — just take it)
-                accepted_layouts.append(
-                    Layout(
-                        fleet=scenario.fleet,
-                        hangar=scenario.hangar,
-                        placements=tuple(placements[pid] for pid in scenario.fleet_in),
-                        maintenance_plane=scenario.maintenance_plane,
-                    )
+                # Valid! Apply the K-diversity filter (spec §4.6). When
+                # accepted_layouts is empty, _is_diverse_enough is vacuously
+                # True — the first valid layout is always accepted (and the
+                # alternatives=1 path never re-enters this branch). For K>1
+                # subsequent valid layouts are gated on pairwise diversity vs
+                # everything already accepted.
+                candidate_layout = Layout(
+                    fleet=scenario.fleet,
+                    hangar=scenario.hangar,
+                    placements=tuple(placements[pid] for pid in scenario.fleet_in),
+                    maintenance_plane=scenario.maintenance_plane,
                 )
-                break  # found one; outer loop terminates because alternatives=1
+                if _is_diverse_enough(candidate_layout, accepted_layouts, diversity):
+                    accepted_layouts.append(candidate_layout)
+                # Whether accepted or not, restart to try for a different
+                # basin. Continuing to descend from a valid state would just
+                # walk in place (already at score (0, 0.0)).
+                break
 
             step_result = _descent_step(
                 placements=placements,
