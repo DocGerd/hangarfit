@@ -278,6 +278,18 @@ def cmd_solve(args: argparse.Namespace) -> int:
     from hangarfit.loader import load_scenario
     from hangarfit.solver import solve
 
+    # Validate output PATTERNs BEFORE solving — a user who typoed
+    # --render shouldn't burn the full --budget only to crash on write.
+    if args.alternatives > 1:
+        for flag, pattern in (("--render", args.render), ("--write-yaml", args.write_yaml)):
+            if pattern is not None and "{i}" not in pattern:
+                print(
+                    f"error: {flag} PATTERN must contain '{{i}}' "
+                    f"when --alternatives > 1 (got: {pattern!r})",
+                    file=sys.stderr,
+                )
+                return 2
+
     try:
         fleet_override = load_fleet(args.fleet) if args.fleet is not None else None
         hangar_override = load_hangar(args.hangar) if args.hangar is not None else None
@@ -298,12 +310,42 @@ def cmd_solve(args: argparse.Namespace) -> int:
     else:
         _emit_solve_human(result, alternatives=args.alternatives)
 
+    # Renders / YAML writes. Only run if we have layouts to write —
+    # exhausted_budget / trivially_infeasible carry empty `layouts`.
+    if result.layouts:
+        try:
+            if args.render is not None:
+                _write_renders(result.layouts, args.render)
+        except OSError as e:
+            print(f"error: render failed: {e}", file=sys.stderr)
+            return 2
+
     # Exit code (spec §5.2). --strict-k flips 0 -> 1 only for found_partial.
     if not result.layouts:
         return 1
     if result.status == "found_partial" and args.strict_k:
         return 1
     return 0
+
+
+def _expand_pattern(pattern: str, i: int) -> str:
+    """Substitute ``{i}`` in ``pattern`` with 1-indexed ``i``.
+
+    Patterns without ``{i}`` (only valid when K=1, enforced earlier)
+    are returned unchanged.
+    """
+    return pattern.replace("{i}", str(i))
+
+
+def _write_renders(layouts: tuple[Layout, ...], pattern: str) -> None:
+    """Render each layout to PATTERN with ``{i}`` substituted.
+
+    Single-pass loop — any OSError bubbles to the caller; we don't
+    swallow partial-write state because a half-written render set is
+    worse than a clean failure that the user can re-run.
+    """
+    for i, layout in enumerate(layouts, start=1):
+        visualize.render_layout(layout, _expand_pattern(pattern, i))
 
 
 def _layout_to_dict(layout: Layout) -> dict:

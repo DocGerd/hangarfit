@@ -183,3 +183,65 @@ class TestSolveJsonOutput:
         assert len(d["best_partial"]["conflicts"]) >= 1
         first = d["best_partial"]["conflicts"][0]
         assert set(first) == {"kind", "planes", "detail"}
+
+
+class TestSolveRender:
+    """--render PATTERN flag — {i} substitution + early validation."""
+
+    def test_render_k1_no_braces_ok(self, tmp_path, capsys):
+        out = tmp_path / "single.png"
+        rc = main(
+            [
+                "solve",
+                SMOKE_FIXTURE,
+                "--budget",
+                "2.0",
+                "--seed",
+                "42",
+                "--render",
+                str(out),
+            ]
+        )
+        assert rc == 0
+        assert out.exists()
+        assert out.stat().st_size > 0
+
+    def test_render_k1_with_braces_substitutes_1(self, tmp_path, capsys):
+        pattern = str(tmp_path / "layout_{i}.png")
+        rc = main(
+            [
+                "solve",
+                SMOKE_FIXTURE,
+                "--budget",
+                "2.0",
+                "--seed",
+                "42",
+                "--render",
+                pattern,
+            ]
+        )
+        assert rc == 0
+        assert (tmp_path / "layout_1.png").exists()
+
+    def test_render_k_gt_1_without_braces_returns_2(self, tmp_path, capsys):
+        # Validation fires BEFORE solve() — no PNG written, no solve cost.
+        out = tmp_path / "noplaceholder.png"
+        rc = main(
+            [
+                "solve",
+                SMOKE_FIXTURE,
+                "--alternatives",
+                "3",
+                "--budget",
+                "2.0",
+                "--seed",
+                "42",
+                "--render",
+                str(out),
+            ]
+        )
+        assert rc == 2
+        captured = capsys.readouterr()
+        assert "{i}" in captured.err
+        assert "--render" in captured.err
+        assert not out.exists()
