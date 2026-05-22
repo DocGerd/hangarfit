@@ -45,3 +45,20 @@ def test_solve_trivially_infeasible_when_plane_too_big_for_hangar():
     # Pre-search check must short-circuit fast (no actual search).
     assert r.diagnostics.wall_time_s < 5.0  # well below the 30 s default budget
     assert r.diagnostics.restarts_attempted == 0
+
+
+def test_solve_trivially_infeasible_when_sum_areas_exceeds_hangar():
+    """All 9 planes in the placeholder hangar → sum of bbox areas > hangar floor."""
+    from hangarfit.loader import load_scenario
+    from hangarfit.solver import solve
+
+    s = load_scenario("tests/fixtures/solve_infeasible_too_big.yaml")
+    r = solve(s, budget_s=5.0, seed=42)
+
+    assert r.status == "trivially_infeasible"
+    assert r.diagnostics.wall_time_s < 5.0  # well below the 30 s default budget
+    # The diagnostic should mention "sum" or "area" so the user can tell
+    # WHICH infeasibility check fired.
+    bp = r.diagnostics.best_partial
+    assert bp is not None
+    assert any("area" in c.detail.lower() or "footprint" in c.detail.lower() for c in bp.conflicts)

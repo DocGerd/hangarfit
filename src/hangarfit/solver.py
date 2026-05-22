@@ -124,7 +124,34 @@ def _check_trivially_infeasible(
             )
             return check, _empty_layout(scenario)
 
-    # Checks 2 and 3 land in Tasks C.3 and C.4.
+    # Check 2: Σ bbox areas vs hangar floor area
+    total_area = 0.0
+    for pid in scenario.fleet_in:
+        plane = scenario.fleet[pid]
+        length, width = _plane_max_extent(plane)
+        total_area += length * width
+    hangar_area = scenario.hangar.length_m * scenario.hangar.width_m
+    if total_area > hangar_area:
+        check = CheckResult(
+            conflicts=(
+                Conflict.single(
+                    kind="trivially_infeasible_sum_areas",
+                    # The conflict's `planes` field is cosmetic here — single-plane
+                    # arity is required by Conflict.__post_init__ but the real
+                    # information is in `detail`. Pick the first plane in
+                    # fleet_in deterministically.
+                    plane=scenario.fleet_in[0],
+                    detail=(
+                        f"fleet footprint Σ areas {total_area:.1f} m² exceeds "
+                        f"hangar floor area {hangar_area:.1f} m²"
+                    ),
+                ),
+            ),
+            total_penetration_m2=0.0,
+        )
+        return check, _empty_layout(scenario)
+
+    # Check 3 lands in Task C.4.
     return None
 
 

@@ -1,0 +1,3 @@
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
+fleet_in: [scheibe_falke, aviat_husky, fuji, wild_thing, zlin_savage, cessna_140, cessna_150, ctsl, fk9_mkii]

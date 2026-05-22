@@ -1870,7 +1870,7 @@ EOF
 
 ### Task C.3: Pre-search infeasibility check 2 — Σ areas > hangar
 
-- [ ] **Step 1: Create the fixture**
+- [x] **Step 1: Create the fixture**
 
 `tests/fixtures/solve_infeasible_too_big.yaml`:
 
@@ -1882,7 +1882,7 @@ fleet_in: [scheibe_falke, aviat_husky, fuji, wild_thing, zlin_savage, cessna_140
 
 (All 9 planes in the placeholder hangar — known too small per memory `project_case12_hangar_workaround`.)
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 Append:
 
@@ -1905,13 +1905,15 @@ def test_solve_trivially_infeasible_when_sum_areas_exceeds_hangar():
                for c in bp.conflicts)
 ```
 
-- [ ] **Step 3: Run, expect failure**
+- [x] **Step 3: Run, expect failure**
 
 Run: `pytest tests/test_solver_infeasibility.py::test_solve_trivially_infeasible_when_sum_areas_exceeds_hangar -v`
 
 Expected: FAIL. The placeholder hangar (25 × 18 = 450 m²) may or may not actually exceed Σ areas of all 9 planes — verify first by hand-summing from `data/fleet.yaml`. If sum < 450 m², adjust the fixture (use `test_hangar_tiny.yaml` as the hangar instead) so the assertion holds.
 
-- [ ] **Step 4: Implement check #2**
+(Verified: 9-plane Σ ≈ 653.8 m² > 450 m². Placeholder hangar is fine.)
+
+- [x] **Step 4: Implement check #2**
 
 In `_check_trivially_infeasible`, after check #1:
 
@@ -1942,13 +1944,13 @@ In `_check_trivially_infeasible`, after check #1:
 
 (Note: the synthetic Conflict picks an arbitrary plane for `planes`; the real information is in `detail`. The spec acknowledges that single-plane vs sum-aggregate conflicts use the same `Conflict` shape.)
 
-- [ ] **Step 5: Run, expect pass**
+- [x] **Step 5: Run, expect pass**
 
 Run: `pytest tests/test_solver_infeasibility.py -v`
 
 Expected: green.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/hangarfit/solver.py tests/test_solver_infeasibility.py tests/fixtures/solve_infeasible_too_big.yaml
