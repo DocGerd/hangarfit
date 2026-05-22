@@ -60,3 +60,51 @@ def test_initial_placement_for_maintenance_biases_to_back_strip():
     )
     bay_y_start = s.hangar.length_m - s.hangar.maintenance_bay.depth_m
     assert bay_y_start <= p.y_m <= s.hangar.length_m
+
+
+def test_cart_buckets_collapses_when_another_cart_eligible_is_force_locked_on():
+    """When another cart_eligible is force_on_carts=True, the at-most-one
+    cart-rule slot is taken — singletons for others would be infeasible."""
+    from hangarfit.loader import load_scenario
+    from hangarfit.solver import _enumerate_cart_buckets
+
+    # scenario_with_force_carts.yaml locks cessna_140 on_carts=True.
+    # ctsl is also cart_eligible and unlocked.
+    # Naive enumeration would emit [frozenset(), frozenset({"ctsl"})], but
+    # the singleton bucket pairs ctsl-on-carts WITH cessna_140-already-on-carts,
+    # which violates Layout's at-most-one-cart_eligible-on-carts rule.
+    # Correct behavior: only the empty bucket is feasible.
+    s = load_scenario("tests/fixtures/scenario_with_force_carts.yaml")
+    buckets = _enumerate_cart_buckets(s)
+    assert buckets == [frozenset()]
+
+
+def test_cart_buckets_enumerates_unlocked_cart_eligibles_plus_none():
+    """With C unlocked cart_eligible planes AND none pre-committed-on-carts,
+    there should be C+1 buckets."""
+    from hangarfit.loader import load_scenario
+    from hangarfit.solver import _enumerate_cart_buckets
+
+    # solve_fresh_six_planes scenario includes ctsl, cessna_140, fk9_mkii
+    # (3 cart_eligibles, none locked). Expected: 4 buckets.
+    s = load_scenario("tests/fixtures/solve_fresh_six_planes.yaml")
+    buckets = _enumerate_cart_buckets(s)
+    assert len(buckets) == 4
+    assert frozenset() in buckets
+    cart_eligibles = {pid for pid in s.fleet_in if s.fleet[pid].is_cart_eligible}
+    for pid in cart_eligibles:
+        assert frozenset({pid}) in buckets
+
+
+def test_cart_bucket_for_restart_is_deterministic_round_robin():
+    """Restart index R selects bucket R % len(buckets)."""
+    from hangarfit.loader import load_scenario
+    from hangarfit.solver import _cart_bucket_for_restart, _enumerate_cart_buckets
+
+    s = load_scenario("tests/fixtures/solve_feasible_smoke.yaml")
+    buckets = _enumerate_cart_buckets(s)
+    if len(buckets) > 0:
+        # First few restarts should cycle through buckets
+        for i in range(2 * len(buckets)):
+            chosen = _cart_bucket_for_restart(buckets, restart_index=i)
+            assert chosen == buckets[i % len(buckets)]

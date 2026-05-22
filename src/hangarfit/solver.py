@@ -311,6 +311,69 @@ def _initial_placement_for_plane(
     )
 
 
+def _enumerate_cart_buckets(scenario: Scenario) -> list[frozenset[str]]:
+    """Enumerate the cart-assignment buckets to round-robin over (spec §4.2).
+
+    Returns ``C + 1`` buckets — the empty set plus a singleton for each
+    unlocked ``cart_eligible`` plane — when no cart_eligible plane is
+    pre-committed to ``on_carts=True``. If one IS pre-committed (by
+    ``force_on_carts=True`` or a pin with ``on_carts=True``), the
+    at-most-one cart-rule slot is already taken; the only feasible
+    bucket is ``[frozenset()]``, because any singleton would put a
+    second cart_eligible plane on carts and violate the rule.
+
+    Locked cart_eligible planes (any pin, or ``force_on_carts`` set)
+    bypass round-robin: their ``on_carts`` state is fixed by the
+    constraint. The cart rule is enforced holistically by
+    ``Layout.__post_init__`` later — this enumeration just avoids
+    wasting restart budget on guaranteed-infeasible configurations.
+
+    Note: a pin with ``on_carts=False`` also locks the plane (so it
+    can't appear in any bucket) but does NOT consume the on-carts slot
+    — other unlocked cart_eligibles can still be enumerated as
+    singletons.
+
+    Iteration is over ``scenario.fleet_in`` (a tuple), not
+    ``scenario.fleet`` (a ``MappingProxyType``-wrapped dict view) — so
+    bucket ordering is deterministic by construction.
+    """
+    free_cart_eligibles: list[str] = []
+    has_committed_cart_eligible_on_carts = False
+    for pid in scenario.fleet_in:
+        plane = scenario.fleet[pid]
+        if not plane.is_cart_eligible:
+            continue
+        constraint = scenario.constraints.get(pid)
+        if constraint is not None:
+            if constraint.pin is not None:
+                # Any pin locks the plane out of round-robin. If the pin
+                # puts it on carts, the on-carts slot is consumed.
+                if constraint.pin.on_carts:
+                    has_committed_cart_eligible_on_carts = True
+                continue
+            if constraint.force_on_carts is not None:
+                # force_on_carts=True consumes the on-carts slot.
+                if constraint.force_on_carts:
+                    has_committed_cart_eligible_on_carts = True
+                continue
+        free_cart_eligibles.append(pid)
+
+    buckets: list[frozenset[str]] = [frozenset()]
+    if not has_committed_cart_eligible_on_carts:
+        for pid in free_cart_eligibles:
+            buckets.append(frozenset({pid}))
+    return buckets
+
+
+def _cart_bucket_for_restart(
+    buckets: list[frozenset[str]], *, restart_index: int
+) -> frozenset[str]:
+    """Pick the cart-assignment bucket for the given restart (round-robin)."""
+    if not buckets:
+        return frozenset()
+    return buckets[restart_index % len(buckets)]
+
+
 def _empty_layout(scenario: Scenario) -> Layout:
     """Build a placement-less Layout for pairing with a synthetic CheckResult.
 

@@ -2333,7 +2333,7 @@ Refs #D"
 
 ### Task D.2: Implement cart-assignment round-robin
 
-- [ ] **Step 1: Write failing test**
+- [x] **Step 1: Write failing test**
 
 Append:
 
@@ -2387,11 +2387,11 @@ def test_cart_bucket_for_restart_is_deterministic_round_robin():
             assert chosen == buckets[i % len(buckets)]
 ```
 
-- [ ] **Step 2: Run, expect failure**
+- [x] **Step 2: Run, expect failure**
 
 Expected: ImportError.
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 In `solver.py`:
 
@@ -2462,13 +2462,13 @@ def _cart_bucket_for_restart(
     return buckets[restart_index % len(buckets)]
 ```
 
-- [ ] **Step 4: Run, expect pass**
+- [x] **Step 4: Run, expect pass**
 
 Run: `pytest tests/test_solver_search.py -v -k 'cart'`
 
 Expected: PASS.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/hangarfit/solver.py tests/test_solver_search.py
