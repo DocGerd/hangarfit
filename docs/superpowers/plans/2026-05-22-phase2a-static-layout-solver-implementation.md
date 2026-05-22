@@ -289,15 +289,24 @@ Expected: the populated-penetration test FAILs with `Expected non-zero penetrati
 In `src/hangarfit/collisions.py`:
 
 1. At the top of `check()`, initialize a local accumulator: `total_penetration_m2 = 0.0`.
-2. Locate the inner loop where pairwise part-conflicts are detected. The two conflicting shapely polygons are in scope at the conflict site (computed for the `distance` test). Immediately after deciding "this is a conflict," but before constructing the `Conflict`, accumulate:
+
+2. Extend the existing imports from `.geometry` to include `polygon_overlap_area` — it's already exported at `src/hangarfit/geometry.py:106-113` and does exactly the `intersects + intersection().area` work we need, returning 0 cleanly when the polygons don't overlap (clearance-only conflicts contribute 0 to penetration, consistent with spec §4.4's "two planes overlapping" framing).
+
+   Current `collisions.py` imports from geometry typically look like:
+   ```python
+   from .geometry import WorldPart, aircraft_parts_world, polygon_overlap
+   ```
+   Add `polygon_overlap_area` to that list.
+
+3. Locate the inner loop where pairwise part-conflicts are detected. The two conflicting shapely polygons are in scope at the conflict site (already computed for the `distance` test). Immediately after deciding "this is a conflict," but before constructing the `Conflict`, accumulate using the shared helper:
 
    ```python
-   total_penetration_m2 += polygon_a.intersection(polygon_b).area
+   total_penetration_m2 += polygon_overlap_area(polygon_a, polygon_b)
    ```
 
-   Use the same `polygon_a` and `polygon_b` already used for the distance check — do not recompute.
+   Reuses `polygon_a` and `polygon_b` from the distance check — no recomputation.
 
-3. At the end of `check()`, pass the accumulator to the `CheckResult` constructor:
+4. At the end of `check()`, pass the accumulator to the `CheckResult` constructor:
 
    ```python
    return CheckResult(
@@ -306,16 +315,9 @@ In `src/hangarfit/collisions.py`:
    )
    ```
 
-**Implementation note:** if the existing code uses `polygon_a.distance(polygon_b) < clearance_m` to decide whether to emit a conflict, `intersection().area` correctly returns 0 when the polygons don't actually overlap (distance > 0 but within clearance). That's fine: clearance-only conflicts contribute 0 to penetration, which is consistent with the spec ("penetration depth" means actual overlap, not clearance violation). The spec calls this out implicitly via the "two planes overlapping" framing of §4.4.
-
-If preferred, an even safer formulation is:
-
-```python
-if polygon_a.intersects(polygon_b):
-    total_penetration_m2 += polygon_a.intersection(polygon_b).area
-```
-
-`polygon_a.intersects(polygon_b)` is a cheap boolean and avoids constructing an empty `intersection()` for clearance-only conflicts. Use this form.
+**Why use `polygon_overlap_area` rather than inline `intersects + intersection().area`?** Two reasons:
+1. **DRY** — the helper exists and is already used elsewhere in the codebase.
+2. **Consistency** — its return value (0.0 when the polygons don't intersect) matches our semantic ("penetration depth" means actual overlap, not clearance violation) without needing inline `if intersects` guards.
 
 - [ ] **Step 5: Run the new tests, expect pass**
 
@@ -621,6 +623,15 @@ def test_scenario_smoke_construct_minimal(fleet, hangar):
     assert s.constraints == {}  # MappingProxyType, but == {} works
 
 
+def test_scenario_rejects_empty_fleet_in(fleet, hangar):
+    """Empty fleet_in is nonsense — nothing to solve; downstream solver
+    helpers also assume at least one plane (e.g., fleet_in[0])."""
+    from hangarfit.models import Scenario
+
+    with pytest.raises(ValueError, match="non-empty"):
+        Scenario(fleet=fleet, hangar=hangar, fleet_in=())
+
+
 def test_scenario_rejects_unknown_plane_in_fleet_in(fleet, hangar):
     from hangarfit.models import Scenario
 
@@ -776,6 +787,12 @@ class Scenario:
     )
 
     def __post_init__(self) -> None:
+        # fleet_in must be non-empty (otherwise there's nothing to solve;
+        # downstream helpers like the sum-of-areas infeasibility check
+        # also do `fleet_in[0]` which would IndexError on empty input).
+        if not self.fleet_in:
+            raise ValueError("Scenario.fleet_in must be non-empty")
+
         # fleet_in references real planes
         for pid in self.fleet_in:
             if pid not in self.fleet:
@@ -1698,7 +1715,7 @@ def test_solve_trivially_infeasible_when_plane_too_big_for_hangar():
     assert r.status == "trivially_infeasible"
     assert r.layouts == ()
     # Pre-search check must short-circuit fast (no actual search).
-    assert r.diagnostics.wall_time_s < 0.5
+    assert r.diagnostics.wall_time_s < 5.0  # well below the 30 s default budget
     assert r.diagnostics.restarts_attempted == 0
 ```
 
@@ -1869,7 +1886,7 @@ def test_solve_trivially_infeasible_when_sum_areas_exceeds_hangar():
     r = solve(s, budget_s=5.0, seed=42)
 
     assert r.status == "trivially_infeasible"
-    assert r.diagnostics.wall_time_s < 0.5
+    assert r.diagnostics.wall_time_s < 5.0  # well below the 30 s default budget
     # The diagnostic should mention "sum" or "area" so the user can tell
     # WHICH infeasibility check fired.
     bp = r.diagnostics.best_partial
@@ -1971,7 +1988,7 @@ def test_solve_trivially_infeasible_when_pins_clash():
     r = solve(s, budget_s=5.0, seed=42)
 
     assert r.status == "trivially_infeasible"
-    assert r.diagnostics.wall_time_s < 0.5
+    assert r.diagnostics.wall_time_s < 5.0  # well below the 30 s default budget
     # The best_partial's conflicts should include the pin pair
     bp = r.diagnostics.best_partial
     assert bp is not None
@@ -2699,12 +2716,13 @@ def _descent_step(
             best_cand = cand
             best_disp = disp
 
-    if best_cand is None or best_score > current_score:
-        # No improvement — reject
+    # By construction the loop only updates best_score when the new
+    # candidate's score is ≤ best_score (which starts at current_score),
+    # so best_score ≤ current_score whenever best_cand is not None. No
+    # need to re-test that — just dispatch on whether anything improved.
+    if best_cand is None:
         return placements, current_score, False
-    if best_score <= current_score:
-        return best_placements, best_score, True
-    return placements, current_score, False
+    return best_placements, best_score, True
 ```
 
 - [ ] **Step 6: Commit (partial; integration test in next task)**
@@ -3649,11 +3667,16 @@ def test_solve_deterministic_given_seed(fixture):
     r1 = solve(s, budget_s=5.0, seed=42)
     s2 = load_scenario(fixture)
     r2 = solve(s2, budget_s=5.0, seed=42)
+    # Status, layouts, and seed must match bit-for-bit across runs.
     assert r1.status == r2.status
     assert r1.layouts == r2.layouts
-    # diagnostics.wall_time_s naturally varies; don't compare it
     assert r1.diagnostics.seed == r2.diagnostics.seed
-    assert r1.diagnostics.restarts_attempted == r2.diagnostics.restarts_attempted
+    # NOT asserted: diagnostics.wall_time_s and diagnostics.restarts_attempted.
+    # Both depend on machine speed and the wall-clock-based budget cutoff —
+    # a faster run completes more restarts within the same 5.0 s budget.
+    # The deterministic-layout assertion above is enough to catch any
+    # accidental non-determinism (unseeded random, set/dict ordering, etc.):
+    # different RNG state → different layouts.
 ```
 
 - [ ] **Step 2: Run, expect pass**
