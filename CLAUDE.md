@@ -148,10 +148,10 @@ Static layout solver — given a `Scenario` (fleet, hangar, constraints, optiona
 |---|---|---|---|
 | 1 | Spec + plan docs (`docs/superpowers/specs/`, `docs/superpowers/plans/`) | #80 / #81 | ✅ shipped |
 | 2 | `CheckResult.total_penetration_m2` + collisions.py penetration accounting (Chunk A) | #82 / #83 | ✅ shipped |
-| 3 | 7 new Scenario dataclasses + `load_scenario()` (Chunk B) | #84 / #85 | ✅ shipped |
+| 3 | New solver dataclasses (`Scenario`, `PlaneConstraint`, `SolveResult`, `SolverDiagnostics`, `DiversityConfig`, `SearchConfig`) + `SolveStatus` literal + `load_scenario()` (Chunk B) | #84 / #85 | ✅ shipped |
 | 4 | `src/hangarfit/solver.py` skeleton + pre-search infeasibility checks (Chunk C) | #86 / #87 | ✅ shipped |
 | 5 | RR-MC search loop, `solve(alternatives=1)` (Chunk D) | #88 / #89 | ✅ shipped |
-| 6 | K-diverse alternatives + 3-way termination (Chunk E) | #90 / #91 | ✅ shipped |
+| 6 | K-diverse alternatives + termination (Chunk E) | #90 / #91 | ✅ shipped |
 | 7 | `hangarfit solve` CLI subcommand (Chunk F) | #93 / #94 | ✅ shipped |
 | 8 | v1 fixture matrix + determinism canaries (Chunk G) | #96 / #97 | ✅ shipped |
 

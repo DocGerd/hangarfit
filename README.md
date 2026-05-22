@@ -10,13 +10,13 @@ The club parks nine aircraft in a deep, stack-style hangar with a single door at
 
 It also renders a top-down PNG so a human can sanity-check the result by eye.
 
-`hangarfit` can also *find* a layout for you: given a scenario (the fleet to park, optional pins, the maintenance plane), `hangarfit solve` searches for a valid arrangement under hard constraints. The checker remains the source of truth — every layout the solver returns is independently re-validated against the same geometry rule that backs `hangarfit check`.
+`hangarfit` can also *find* a layout for you: given a scenario (the fleet to park, optional pins, the maintenance plane), `hangarfit solve` searches for a valid arrangement under hard constraints. The checker remains the source of truth — every accepted layout was validated by `collisions.check()` as its acceptance gate, so the solver cannot invent a layout the checker would reject.
 
 ## Scope
 
 **Phase 1 — shipped.** Built the substrate: aircraft + hangar data model, parts-based collision checker, matplotlib top-down visualizer, and the `hangarfit check` CLI. Phase 1 was about getting the geometry right — once the collision rule was trustworthy, the downstream solver could be built on top of it.
 
-**Phase 2a — shipped.** Added the static layout solver: `hangarfit solve` takes a scenario YAML (fleet, hangar, constraints, optional pins) and searches for up to K diverse valid layouts using random-restart hill climbing with min-conflicts descent. Every returned layout is re-validated through the Phase 1 checker — the solver does not bypass the collision rule.
+**Phase 2a — shipped.** Added the static layout solver: `hangarfit solve` takes a scenario YAML (fleet, hangar, constraints, optional pins) and searches for up to K diverse valid layouts using random-restart hill climbing with min-conflicts descent. Acceptance runs through `collisions.check()` as its gate — the solver does not bypass the collision rule.
 
 **Still explicitly out of scope:**
 
