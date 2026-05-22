@@ -716,6 +716,9 @@ def test_solve_emits_diversity_impossible_warning(caplog):
     # layout lives in result.layouts, not in best_partial).
     assert r.diagnostics.best_partial is None
     assert r.diagnostics.best_partial_layout is None
+    # Spec §4.1 (v0.6.0 release): the structured flag mirrors the
+    # logger warning so callers don't have to scrape log records.
+    assert r.diagnostics.diversity_impossible is True
 
 
 def test_solve_does_not_warn_when_diversity_is_achievable(caplog):
@@ -735,7 +738,7 @@ def test_solve_does_not_warn_when_diversity_is_achievable(caplog):
     # Fresh-six-planes fixture: 6 planes, none pinned → free_planes=6 >= M=2.
     s = load_scenario("tests/fixtures/solve_fresh_alternatives_three.yaml")
     with caplog.at_level(logging.WARNING):
-        solve(s, alternatives=3, seed=42, diversity=DiversityConfig(min_planes_moved=1))
+        r = solve(s, alternatives=3, seed=42, diversity=DiversityConfig(min_planes_moved=1))
 
     # The diversity-impossible warning text contains "achievable" — assert
     # no such warning fired. (Other unrelated warnings are fine.)
@@ -744,6 +747,9 @@ def test_solve_does_not_warn_when_diversity_is_achievable(caplog):
         f"Expected NO diversity-impossible warning when free_planes >= M; "
         f"got {[r.message for r in diversity_warnings]}"
     )
+    # Spec §4.1 (v0.6.0 release): structured flag must agree with the
+    # absent log warning.
+    assert r.diagnostics.diversity_impossible is False
 
 
 def test_solve_returns_k_diverse_alternatives():
