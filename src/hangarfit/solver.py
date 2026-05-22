@@ -27,6 +27,7 @@ from hangarfit.models import (
     SearchConfig,
     SolverDiagnostics,
     SolveResult,
+    SolveStatus,
 )
 
 
@@ -47,14 +48,20 @@ def solve(
         diversity = DiversityConfig()
     if search is None:
         search = SearchConfig()
+    # `diversity` is accepted in the signature for forward compatibility
+    # with Chunk E (K-diversity filter); the alternatives=1 path in this
+    # chunk never consults it. Reference it once so static analysis
+    # doesn't flag it as unused without obscuring intent.
+    _ = diversity
 
     # Resolve seed. Validate eagerly — a bad seed would raise here, at
-    # solve() entry, instead of 30 s into Chunk D's search loop. The rng
-    # itself will be re-created when search lands; the construction here
-    # is deliberately preserved (don't "clean it up" as dead code).
+    # solve() entry, instead of 30 s into the search loop. ONE
+    # random.Random instance drives every sampling decision (spec §4.8):
+    # initial placement, perturbation, candidate selection, conflict-
+    # plane pick. Cart-bucket round-robin uses the non-random restart
+    # index, so it's deterministic by construction.
     resolved_seed = seed if seed is not None else secrets.randbits(32)
     rng = _random_module.Random(resolved_seed)
-    del rng
 
     # ── Pre-search infeasibility checks (§4.1) ──────────────────────────
     start = time.monotonic()
@@ -74,18 +81,122 @@ def solve(
             ),
         )
 
+    # ── Real search (RR-MC, spec §4.2-§4.5) ─────────────────────────────
+    pinned_planes = frozenset(
+        pid
+        for pid in scenario.fleet_in
+        if pid in scenario.constraints and scenario.constraints[pid].pin is not None
+    )
+    cart_buckets = _enumerate_cart_buckets(scenario)
+
+    best_partial_score: tuple[float, float] = (float("inf"), float("inf"))
+    best_partial_layout: Layout | None = None
+    accepted_layouts: list[Layout] = []
+    restart_index = 0
+
+    while time.monotonic() - start < budget_s:
+        cart_bucket = _cart_bucket_for_restart(cart_buckets, restart_index=restart_index)
+        try:
+            placements = _initial_placements(scenario=scenario, rng=rng, cart_bucket=cart_bucket)
+        except _LayoutBuildFailure:
+            restart_index += 1
+            continue
+
+        # Initial Layout build — catches cart-rule violations and any
+        # other cross-reference invariant from Layout.__post_init__.
+        try:
+            initial_layout = Layout(
+                fleet=scenario.fleet,
+                hangar=scenario.hangar,
+                placements=tuple(placements[pid] for pid in scenario.fleet_in),
+                maintenance_plane=scenario.maintenance_plane,
+            )
+        except ValueError:
+            restart_index += 1
+            continue
+        current_score = _score(initial_layout)
+        # Track the initial layout as a best-partial candidate too — it
+        # may be the lowest-score thing we see in this trajectory.
+        if current_score < best_partial_score:
+            best_partial_score = current_score
+            best_partial_layout = initial_layout
+        last_improved = 0
+
+        for iter_count in range(10000):  # large outer cap; real exit via stall/success
+            if time.monotonic() - start >= budget_s:
+                break
+            if current_score == (0, 0.0):
+                # Valid! Accept (no diversity filter yet in Chunk D — just take it)
+                accepted_layouts.append(
+                    Layout(
+                        fleet=scenario.fleet,
+                        hangar=scenario.hangar,
+                        placements=tuple(placements[pid] for pid in scenario.fleet_in),
+                        maintenance_plane=scenario.maintenance_plane,
+                    )
+                )
+                break  # found one; outer loop terminates because alternatives=1
+
+            step_result = _descent_step(
+                placements=placements,
+                scenario=scenario,
+                rng=rng,
+                search=search,
+                current_score=current_score,
+                pinned_planes=pinned_planes,
+            )
+            if step_result is None:
+                break  # restart (all conflicts on pinned planes)
+            placements, new_score, _accepted = step_result
+            if new_score < current_score:
+                last_improved = iter_count
+            current_score = new_score
+
+            # Track best partial AFTER the move (lowest-score Layout ever seen)
+            if current_score < best_partial_score:
+                best_partial_score = current_score
+                best_partial_layout = Layout(
+                    fleet=scenario.fleet,
+                    hangar=scenario.hangar,
+                    placements=tuple(placements[pid] for pid in scenario.fleet_in),
+                    maintenance_plane=scenario.maintenance_plane,
+                )
+
+            if iter_count - last_improved >= search.k_stall:
+                break  # stall — restart
+
+        restart_index += 1
+        if len(accepted_layouts) >= alternatives:
+            break
+
     elapsed = time.monotonic() - start
 
-    # Chunk C: actual search not yet implemented — short-circuit to
-    # exhausted_budget for any feasible scenario.
+    if accepted_layouts:
+        # alternatives=1 in Chunk D — found_partial cannot fire (we break
+        # the outer loop as soon as len(accepted) >= alternatives), but
+        # keep the branch shape so Chunk E's K-diversity addition is a
+        # one-liner.
+        status: SolveStatus = "found" if len(accepted_layouts) >= alternatives else "found_partial"
+        return SolveResult(
+            status=status,
+            layouts=tuple(accepted_layouts),
+            diagnostics=SolverDiagnostics(
+                restarts_attempted=restart_index,
+                wall_time_s=elapsed,
+                best_partial=None,
+                best_partial_layout=None,
+                seed=resolved_seed,
+            ),
+        )
+    bp = check_layout(best_partial_layout) if best_partial_layout is not None else None
     return SolveResult(
         status="exhausted_budget",
         layouts=(),
         diagnostics=SolverDiagnostics(
-            restarts_attempted=0,
+            restarts_attempted=restart_index,
             wall_time_s=elapsed,
-            best_partial=None,
-            best_partial_layout=None,
+            best_partial=bp,
+            best_partial_layout=best_partial_layout,
             seed=resolved_seed,
         ),
     )
@@ -248,6 +359,17 @@ def _plane_max_extent(plane: Aircraft) -> tuple[float, float]:
     return max_length, max_width
 
 
+class _LayoutBuildFailure(Exception):
+    """Raised when initial placement can't satisfy basic invariants.
+
+    Used by :func:`_initial_placements` to signal a sample-error that
+    should trigger a restart (vs. crashing the solver). Currently the
+    helper never raises — every constraint case is handled inline — but
+    the type is retained so future invariant-aware sampling can fail
+    sharply without leaking ``ValueError`` from the search loop.
+    """
+
+
 def _initial_placement_for_plane(
     *,
     plane_id: str,
@@ -323,6 +445,58 @@ def _score(layout: Layout) -> tuple[int, float]:
     """
     result = check_layout(layout)
     return (len(result.conflicts), result.total_penetration_m2)
+
+
+def _initial_placements(
+    *,
+    scenario: Scenario,
+    rng: _random_module.Random,
+    cart_bucket: frozenset[str],
+) -> dict[str, Placement]:
+    """Sample initial placements for every plane in ``fleet_in``.
+
+    ``cart_bucket`` is the set of cart_eligible planes that should be
+    ``on_carts=True`` for this restart (at most one element per the
+    enumeration in :func:`_enumerate_cart_buckets`). Per-plane
+    ``on_carts`` resolution:
+
+    1. ``constraint.force_on_carts`` (if set) — highest priority.
+    2. ``constraint.pin.on_carts`` (if pinned).
+    3. Plane's ``movement_mode`` for always_cart / always_own_gear.
+    4. Membership in ``cart_bucket`` for cart_eligible planes.
+
+    The maintenance plane gets the bay-bias unless it's pinned (a pin
+    already fixes its position; biasing would be a no-op since the pin
+    is returned verbatim).
+    """
+    placements: dict[str, Placement] = {}
+    for pid in scenario.fleet_in:
+        plane = scenario.fleet[pid]
+        constraint = scenario.constraints.get(pid)
+
+        # Decide on_carts (priority order: force_on_carts > pin > movement_mode > bucket)
+        if constraint is not None and constraint.force_on_carts is not None:
+            on_carts = constraint.force_on_carts
+        elif constraint is not None and constraint.pin is not None:
+            on_carts = constraint.pin.on_carts
+        elif plane.movement_mode == "always_cart":
+            on_carts = True
+        elif plane.movement_mode == "always_own_gear":
+            on_carts = False
+        else:  # cart_eligible
+            on_carts = pid in cart_bucket
+
+        bias = scenario.maintenance_plane == pid and (constraint is None or constraint.pin is None)
+
+        placements[pid] = _initial_placement_for_plane(
+            plane_id=pid,
+            scenario=scenario,
+            rng=rng,
+            on_carts=on_carts,
+            bias_to_maintenance_bay=bias,
+        )
+
+    return placements
 
 
 def _enumerate_cart_buckets(scenario: Scenario) -> list[frozenset[str]]:

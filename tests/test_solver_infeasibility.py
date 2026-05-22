@@ -3,29 +3,6 @@
 from __future__ import annotations
 
 
-def test_solve_feasible_smoke_returns_exhausted_budget_placeholder():
-    """Until Chunk D lands, any feasible scenario returns exhausted_budget."""
-    from hangarfit.loader import load_scenario
-    from hangarfit.solver import solve
-
-    s = load_scenario("tests/fixtures/solve_feasible_smoke.yaml")
-    r = solve(s, budget_s=0.1, seed=42)
-
-    # Chunk C placeholder: no search yet, so feasible inputs return
-    # exhausted_budget immediately.
-    assert r.status == "exhausted_budget"
-    assert r.layouts == ()
-    assert r.diagnostics.seed == 42
-    # Placeholder path: O(parts) infeasibility scan only. Should be
-    # microseconds, not seconds. Tight bound catches accidental
-    # invocation of real search work.
-    assert 0.0 <= r.diagnostics.wall_time_s < 0.1
-    assert r.diagnostics.restarts_attempted == 0
-    # best_partial pair: both must be None for exhausted_budget placeholder.
-    assert r.diagnostics.best_partial is None
-    assert r.diagnostics.best_partial_layout is None
-
-
 def test_solve_resolves_none_seed_to_entropy():
     """seed=None resolves to a random int and is recorded in diagnostics."""
     from hangarfit.loader import load_scenario

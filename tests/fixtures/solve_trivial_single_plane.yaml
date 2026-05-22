@@ -1,0 +1,11 @@
+# Trivial solver smoke: one plane in the 30×25 m test hangar.
+#
+# This is the smallest possible "search actually does something" scenario.
+# A single Husky in a hangar that's significantly larger than its bbox
+# must be findable in < 1 s on any halfway-functional implementation.
+# Used by tests/test_solver_search.py::test_solve_finds_layout_for_trivial_single_plane
+# as the canary for Chunk D's end-to-end search.
+
+fleet: ../../data/fleet.yaml
+hangar: ./test_hangar_large.yaml
+fleet_in: [aviat_husky]

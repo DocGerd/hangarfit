@@ -2,8 +2,16 @@
 #
 # Includes 3 cart_eligible planes (ctsl, cessna_140, fk9_mkii) so the
 # cart-assignment round-robin has C+1 = 4 buckets to cycle through.
-# Maintenance plane is scheibe_falke (its monowheel + outriggers footprint
-# is the smallest, easiest to fit in the back bay).
+# Maintenance plane is wild_thing — its bbox is small enough to leave
+# headroom for the rest of the fleet.
+#
+# Aircraft choice tuned for the placeholder hangar's tight Σ-area
+# budget: the 25 × 18 m floor is 450 m², so the fleet bbox sum has to
+# stay under that. scheibe_falke's 18 m wing alone burns 137 m² and was
+# rejected by the trivially_infeasible Σ-areas check (#2). The six
+# below sum to ~391 m², leaving ~59 m² of headroom — feasible but
+# nontrivial, which is exactly the regime the search-engine end-to-end
+# test wants to exercise.
 #
 # Used by tests/test_solver_search.py for two purposes:
 #   - cart-bucket enumeration count (must yield exactly 4 buckets)
@@ -12,6 +20,6 @@
 
 fleet: ../../data/fleet.yaml
 hangar: ../../data/hangar.yaml
-fleet_in: [aviat_husky, fuji, ctsl, scheibe_falke, fk9_mkii, cessna_140]
+fleet_in: [aviat_husky, fuji, ctsl, wild_thing, fk9_mkii, cessna_140]
 maintenance:
-  plane: scheibe_falke
+  plane: wild_thing

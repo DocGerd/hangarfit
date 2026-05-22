@@ -2753,7 +2753,7 @@ Refs #D"
 
 ### Task D.5: Implement the restart loop + `_run_trajectory`
 
-- [ ] **Step 1: Write the integration test (solve a trivial single-plane scenario)**
+- [x] **Step 1: Write the integration test (solve a trivial single-plane scenario)**
 
 Append:
 
@@ -2782,11 +2782,11 @@ fleet_in: [aviat_husky]
 
 (Confirm `test_hangar_large.yaml` exists in `tests/fixtures/` per CLAUDE.md module map. It does.)
 
-- [ ] **Step 2: Run, expect failure**
+- [x] **Step 2: Run, expect failure**
 
 Expected: solver still returns `exhausted_budget` (no search loop yet).
 
-- [ ] **Step 3: Implement the trajectory + restart loop**
+- [x] **Step 3: Implement the trajectory + restart loop**
 
 Replace the Chunk C placeholder in `solve()` (the line that returns `exhausted_budget` for feasible scenarios) with the actual search:
 
@@ -2943,7 +2943,7 @@ def _initial_placements(
     return placements
 ```
 
-- [ ] **Step 4: Run, expect pass**
+- [x] **Step 4: Run, expect pass**
 
 ```bash
 pytest tests/test_solver_search.py::test_solve_finds_layout_for_trivial_single_plane -v
@@ -2951,7 +2951,7 @@ pytest tests/test_solver_search.py::test_solve_finds_layout_for_trivial_single_p
 
 Expected: PASS (one plane in 30×25 m hangar is trivially solvable in << 5s).
 
-- [ ] **Step 5: Delete the Chunk C placeholder smoke test**
+- [x] **Step 5: Delete the Chunk C placeholder smoke test**
 
 In Chunk C (Task C.1), we wrote `test_solve_feasible_smoke_returns_exhausted_budget_placeholder` to verify the solver's Chunk-C-era short-circuit behavior. That short-circuit no longer exists after Step 3 of this task — feasible scenarios now actually run the search and (for the smoke fixture: a single plane in a large hangar) succeed with `status="found"`. The placeholder assertion `assert r.status == "exhausted_budget"` is wrong from this commit onwards.
 
@@ -2960,7 +2960,7 @@ Open `tests/test_solver_infeasibility.py` and **delete** the function `test_solv
 Run: `pytest tests/test_solver_infeasibility.py -v`
 Expected: only `test_solve_resolves_none_seed_to_entropy` and the three `trivially_infeasible_*` tests run; all PASS.
 
-- [ ] **Step 6: Add the six-plane fresh fixture + test**
+- [x] **Step 6: Add the six-plane fresh fixture + test**
 
 `tests/fixtures/solve_fresh_six_planes.yaml`:
 
@@ -2999,7 +2999,7 @@ def test_solve_finds_layout_for_fresh_six_planes():
 
 (`pytest.skip` is intentional: if the placeholder hangar is too tight for 5s to find a solution at seed=42, that's a property of the data, not a bug. Real measurements will likely fix this.)
 
-- [ ] **Step 7: Run + lint + type check**
+- [x] **Step 7: Run + lint + type check**
 
 ```bash
 pytest -q && ruff check src/ tests/ && ruff format --check src/ tests/ && mypy src/hangarfit/
@@ -3007,7 +3007,7 @@ pytest -q && ruff check src/ tests/ && ruff format --check src/ tests/ && mypy s
 
 Expected: green.
 
-- [ ] **Step 8: Commit + push + PR**
+- [x] **Step 8: Commit + push + PR**
 
 ```bash
 git add src/hangarfit/solver.py tests/test_solver_infeasibility.py tests/test_solver_search.py tests/fixtures/solve_trivial_single_plane.yaml tests/fixtures/solve_fresh_six_planes.yaml
