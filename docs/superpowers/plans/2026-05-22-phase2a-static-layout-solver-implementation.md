@@ -50,7 +50,7 @@ The work splits into **7 sequential chunks**, each landing as one PR into `devel
 
 ### Task A.0: Branch + issue setup
 
-- [ ] **Step 1: Create the GitHub issue**
+- [x] **Step 1: Create the GitHub issue**
 
 Run:
 
@@ -82,7 +82,7 @@ EOF
 
 Expected: prints the issue URL. Note the issue number (call it \`#A\` below) for the PR body.
 
-- [ ] **Step 2: Create the branch off the latest `develop`**
+- [x] **Step 2: Create the branch off the latest `develop`**
 
 ```bash
 git switch develop
@@ -98,7 +98,7 @@ Expected: confirms switch + reports "Switched to a new branch ..."
 - Modify: `src/hangarfit/models.py:404-415` (the `CheckResult` definition)
 - Modify: `tests/test_models.py` (add default-value test)
 
-- [ ] **Step 1: Write the failing test for the new field default**
+- [x] **Step 1: Write the failing test for the new field default**
 
 Add to `tests/test_models.py`:
 
@@ -121,13 +121,13 @@ def test_check_result_total_penetration_field_is_kept():
     assert result.valid is True  # still derived from conflicts, not from penetration
 ```
 
-- [ ] **Step 2: Run the new tests, expect failure**
+- [x] **Step 2: Run the new tests, expect failure**
 
 Run: `pytest tests/test_models.py::test_check_result_default_total_penetration_is_zero tests/test_models.py::test_check_result_total_penetration_field_is_kept -v`
 
 Expected: both FAIL with `TypeError: ... got an unexpected keyword argument 'total_penetration_m2'` (or similar — the field doesn't exist yet).
 
-- [ ] **Step 3: Add the field to `CheckResult`**
+- [x] **Step 3: Add the field to `CheckResult`**
 
 In `src/hangarfit/models.py`, find the `CheckResult` dataclass (around line 404). Modify it from:
 
@@ -174,19 +174,19 @@ class CheckResult:
         return len(self.conflicts) == 0
 ```
 
-- [ ] **Step 4: Run the same tests, expect pass**
+- [x] **Step 4: Run the same tests, expect pass**
 
 Run: `pytest tests/test_models.py::test_check_result_default_total_penetration_is_zero tests/test_models.py::test_check_result_total_penetration_field_is_kept -v`
 
 Expected: both PASS.
 
-- [ ] **Step 5: Run the full test suite to confirm no regressions**
+- [x] **Step 5: Run the full test suite to confirm no regressions**
 
 Run: `pytest -q`
 
 Expected: all existing tests still pass. (The default value ensures literal `CheckResult()` constructors elsewhere still work; the new field is invisible to consumers that don't ask for it.)
 
-- [ ] **Step 6: Commit the field extension**
+- [x] **Step 6: Commit the field extension**
 
 ```bash
 git add src/hangarfit/models.py tests/test_models.py
@@ -216,13 +216,13 @@ EOF
 - Modify: `src/hangarfit/collisions.py` (compute + accumulate at the conflict site)
 - Modify: `tests/test_collisions.py` (assertion on populated value)
 
-- [ ] **Step 1: Read the existing `check()` implementation**
+- [x] **Step 1: Read the existing `check()` implementation**
 
 Run: `head -100 src/hangarfit/collisions.py`
 
 Then read the full file to locate the pairwise sweep where conflicts are emitted. Identify the line where the conflict's two `Part` polygons are in scope (likely just before the `Conflict.pair(...)` factory call). The penetration accumulation goes at that same site so we don't need to recompute the polygons.
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 Add to `tests/test_collisions.py`:
 
@@ -278,13 +278,13 @@ def test_check_total_penetration_excludes_single_plane_conflicts(tmp_path):
 
 **Note on fixture names:** `invalid_two_planes_wing_overlap.yaml` and `invalid_plane_out_of_bounds.yaml` are illustrative — substitute the exact fixture filenames present in `tests/fixtures/`. Verify with `ls tests/fixtures/invalid_*` and pick fixtures whose names match these semantics. If none match exactly, pick the closest and adjust the test names accordingly. Do NOT add new fixtures in this chunk — that's Chunk G's job.
 
-- [ ] **Step 3: Run the new tests, expect failure**
+- [x] **Step 3: Run the new tests, expect failure**
 
 Run: `pytest tests/test_collisions.py::test_check_populates_total_penetration_for_overlapping_wings tests/test_collisions.py::test_check_total_penetration_is_zero_for_valid_layout tests/test_collisions.py::test_check_total_penetration_excludes_single_plane_conflicts -v`
 
 Expected: the populated-penetration test FAILs with `Expected non-zero penetration ... got 0.0`. The other two PASS (default 0.0 already satisfies them).
 
-- [ ] **Step 4: Implement the penetration accumulator in `collisions.check()`**
+- [x] **Step 4: Implement the penetration accumulator in `collisions.check()`**
 
 In `src/hangarfit/collisions.py`:
 
@@ -319,19 +319,19 @@ In `src/hangarfit/collisions.py`:
 1. **DRY** — the helper exists and is already used elsewhere in the codebase.
 2. **Consistency** — its return value (0.0 when the polygons don't intersect) matches our semantic ("penetration depth" means actual overlap, not clearance violation) without needing inline `if intersects` guards.
 
-- [ ] **Step 5: Run the new tests, expect pass**
+- [x] **Step 5: Run the new tests, expect pass**
 
 Run: `pytest tests/test_collisions.py::test_check_populates_total_penetration_for_overlapping_wings tests/test_collisions.py::test_check_total_penetration_is_zero_for_valid_layout tests/test_collisions.py::test_check_total_penetration_excludes_single_plane_conflicts -v`
 
 Expected: all three PASS.
 
-- [ ] **Step 6: Run the full test suite to confirm no regressions**
+- [x] **Step 6: Run the full test suite to confirm no regressions**
 
 Run: `pytest -q`
 
 Expected: all existing tests still pass.
 
-- [ ] **Step 7: Run lint + format + type check**
+- [x] **Step 7: Run lint + format + type check**
 
 ```bash
 ruff check src/ tests/
@@ -341,7 +341,7 @@ mypy src/hangarfit/
 
 Expected: all three pass with no errors. If `ruff format --check` reports differences, run `ruff format src/ tests/` and re-stage. If `mypy` complains about `intersection().area` typing, add a `# type: ignore[union-attr]` only if shapely's stubs are the issue — but first try just running it; recent shapely usually types correctly.
 
-- [ ] **Step 8: Commit the check() implementation**
+- [x] **Step 8: Commit the check() implementation**
 
 ```bash
 git add src/hangarfit/collisions.py tests/test_collisions.py
@@ -367,13 +367,13 @@ EOF
 
 ### Task A.3: Chunk A wrap-up — push, PR, review
 
-- [ ] **Step 1: Push the branch**
+- [x] **Step 1: Push the branch**
 
 Run: `git push -u origin feature/phase2a-checkresult-penetration`
 
 Expected: branch pushed, tracking set up.
 
-- [ ] **Step 2: Open the PR**
+- [x] **Step 2: Open the PR**
 
 ```bash
 gh pr create --base develop \
@@ -407,7 +407,7 @@ EOF
 
 Expected: prints the PR URL.
 
-- [ ] **Step 3: Set PR metadata via gh api (label + milestone)**
+- [x] **Step 3: Set PR metadata via gh api (label + milestone)**
 
 Per memory `feedback_pr_metadata.md`, `gh pr edit` is broken in this repo. Use `gh api -X PATCH` to set labels and (optionally) milestone:
 
@@ -418,13 +418,13 @@ gh api -X PATCH "repos/DocGerd/hangarfit/issues/$PR_NUMBER" -f '{"labels":["enha
 
 (Milestone assignment optional — leave blank unless a Phase 2 milestone exists.)
 
-- [ ] **Step 4: Run the PR review skill**
+- [x] **Step 4: Run the PR review skill**
 
 In your Claude Code session, invoke: `/pr-review` (or the `pr-review-toolkit:review-pr` skill).
 
 Convert each finding into a review thread on the diff via `gh api .../pulls/<n>/comments`. Resolve each thread by fixing the code (preferred) or replying with rationale. If the changes were non-trivial, re-run `/pr-review`.
 
-- [ ] **Step 5: Hand off to user for approval and merge**
+- [x] **Step 5: Hand off to user for approval and merge**
 
 Tell the user the PR is clean and ready for final review. Do NOT `gh pr merge` from Claude.
 

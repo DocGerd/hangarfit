@@ -106,7 +106,10 @@ def polygon_overlap(p1: Polygon, p2: Polygon, clearance: float = 0.0) -> bool:
 def polygon_overlap_area(p1: Polygon, p2: Polygon) -> float:
     """Area of the intersection of two polygons (``0.0`` if disjoint).
 
-    Useful for the ``Conflict.detail`` message ("overlap by 0.18 m²").
+    Used by :func:`hangarfit.collisions._pairwise_conflicts` to accumulate
+    :attr:`hangarfit.models.CheckResult.total_penetration_m2` (Phase 2a's
+    secondary scoring key) — and historically to format the
+    ``Conflict.detail`` "overlap by 0.18 m²" message.
     """
     if not p1.intersects(p2):
         return 0.0

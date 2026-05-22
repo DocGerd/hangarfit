@@ -774,6 +774,28 @@ class TestCheckResult:
         assert r.valid is False
         assert len(r.conflicts) == 1
 
+    def test_default_total_penetration_is_zero(self) -> None:
+        """Default-constructed CheckResult has total_penetration_m2 == 0.0."""
+        result = CheckResult()
+        assert result.total_penetration_m2 == 0.0
+        assert result.valid is True
+
+    def test_total_penetration_field_is_independent_of_validity(self) -> None:
+        """Explicit penetration is preserved; validity is conflict-derived only."""
+        result = CheckResult(total_penetration_m2=2.5)
+        assert result.total_penetration_m2 == 2.5
+        assert result.valid is True  # derived from conflicts, not penetration
+
+    def test_total_penetration_rejects_nan(self) -> None:
+        """NaN would silently corrupt Phase 2a's lexicographic sort key."""
+        with pytest.raises(ValueError, match="must be finite"):
+            CheckResult(total_penetration_m2=float("nan"))
+
+    def test_total_penetration_rejects_negative(self) -> None:
+        """A summed area is non-negative by construction; reject anything else."""
+        with pytest.raises(ValueError, match="must be >= 0.0"):
+            CheckResult(total_penetration_m2=-0.1)
+
 
 class TestFrozenBehavior:
     """Cross-cutting: every public dataclass should be frozen."""
