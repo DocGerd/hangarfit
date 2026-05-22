@@ -2101,7 +2101,7 @@ EOF
 
 ### Task C.5: Chunk C wrap-up
 
-- [ ] **Step 1: Push, open PR, set metadata, run review, hand off**
+- [x] **Step 1: Push, open PR, set metadata, run review, hand off** (PR #87, label set via `gh api -X PATCH` with `--input -` JSON body. The plan's `-f '{...}'` form is malformed — `-f` takes one `key=value` per flag, not a JSON object. Used `echo '{"labels":["enhancement"]}' | gh api -X PATCH ".../issues/87" --input -` instead.)
 
 ```bash
 git push -u origin feature/phase2a-solver-skeleton
