@@ -25,6 +25,7 @@ from __future__ import annotations
 import pytest
 
 from hangarfit.loader import load_scenario
+from hangarfit.models import SearchConfig
 from hangarfit.solver import solve
 
 # Three canary fixtures chosen for coverage breadth:
@@ -79,3 +80,75 @@ def test_solve_deterministic_given_seed(fixture):
     # The deterministic-layout assertion above is enough to catch any
     # accidental non-determinism (unseeded random, set/dict ordering, etc.):
     # different RNG state -> different layouts.
+
+
+def test_solve_deterministic_best_partial_under_max_restarts() -> None:
+    """``solve(..., search=SearchConfig(max_restarts=K))`` exhausts
+    deterministically across machines.
+
+    The existing wall-clock canaries above don't assert on
+    ``best_partial_layout`` when ``status == "exhausted_budget"`` because
+    a fast machine may flip to ``found`` within the 5 s budget. With
+    ``max_restarts=K`` capping the outer loop, exhaustion is the
+    inevitable outcome regardless of machine speed, and the
+    ``best_partial_layout`` becomes machine-independent.
+
+    Calibration (recorded 2026-05-22 for traceability):
+        Ran ``solve(scenario, budget_s=10.0, seed=42)`` once on
+        ``solve_fresh_six_planes.yaml`` to record the natural restart
+        count to first success. Observed ``restarts_attempted=2``
+        (status=found, wall_time≈1.3 s on the calibration machine).
+        Per the v0.6.0 plan Task 2 brief, the canary's ``max_restarts``
+        is set deliberately small (``observed // 2 = 1``) so the cap
+        trips before the natural success, forcing exhaustion. The
+        ``budget_s=30.0`` here is generous; ``max_restarts`` is the
+        gate that trips first. If a future algorithm change pushes
+        natural success below 2 restarts at seed=42 (i.e., succeeds on
+        restart 0), this canary needs re-calibration on
+        ``solve_diversity_impossible_warn.yaml`` per the plan's
+        fallback procedure.
+    """
+    fixture = "tests/fixtures/solve_fresh_six_planes.yaml"
+    max_restarts = 1
+
+    s1 = load_scenario(fixture)
+    r1 = solve(
+        s1,
+        budget_s=30.0,
+        alternatives=1,
+        seed=42,
+        search=SearchConfig(max_restarts=max_restarts),
+    )
+
+    s2 = load_scenario(fixture)
+    r2 = solve(
+        s2,
+        budget_s=30.0,
+        alternatives=1,
+        seed=42,
+        search=SearchConfig(max_restarts=max_restarts),
+    )
+
+    # The max_restarts cap (not wall-clock) must be the gate that trips —
+    # otherwise the canary's purpose (cross-machine determinism of the
+    # exhausted-budget branch) is lost.
+    assert r1.status == "exhausted_budget", (
+        f"expected exhausted_budget under max_restarts={max_restarts}; "
+        f"got {r1.status} (calibration drift — see test docstring)"
+    )
+    assert r2.status == r1.status
+    assert r1.diagnostics.restarts_attempted == max_restarts
+    assert r2.diagnostics.restarts_attempted == max_restarts
+
+    # The fused-pair contract — both Some when exhausted_budget.
+    bpl1 = r1.diagnostics.best_partial_layout
+    bpl2 = r2.diagnostics.best_partial_layout
+    assert bpl1 is not None, "exhausted_budget must populate best_partial_layout"
+    assert bpl2 is not None
+
+    # The headline assertion: bit-for-bit identical best_partial_layout
+    # across the two runs. This is what the canary buys over the existing
+    # wall-clock canaries — under max_restarts the outcome is fully
+    # reproducible, not just the accepted layouts.
+    assert bpl1.placements == bpl2.placements
+    assert bpl1.maintenance_plane == bpl2.maintenance_plane
