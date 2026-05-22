@@ -752,6 +752,36 @@ def test_solve_does_not_warn_when_diversity_is_achievable(caplog):
     assert r.diagnostics.diversity_impossible is False
 
 
+def test_solve_diversity_rejected_count_increments_on_reject():
+    """Diversity filter rejects raise `diagnostics.diversity_rejected_count`.
+
+    Uses the diversity-impossible fixture (2 of 3 planes pinned, M=2):
+    every trajectory after the first finds the same valid layout-shape
+    (one degree of freedom), so subsequent valid candidates are rejected
+    by `_is_diverse_enough`. Over a 5 s budget the count is reliably >0.
+
+    Spec §4.1 (v0.6.0 release) — the counter is informative when K>1
+    returns `found_partial` despite the trajectory loop producing more
+    than one valid layout.
+    """
+    from hangarfit.loader import load_scenario
+    from hangarfit.solver import solve
+
+    s = load_scenario("tests/fixtures/solve_diversity_impossible_warn.yaml")
+    r = solve(s, budget_s=5.0, alternatives=3, seed=42)
+
+    # The fixture forces found_partial (see test_solve_emits_diversity_impossible_warning).
+    assert r.status == "found_partial"
+    assert len(r.layouts) == 1
+    # And — the heart of this test — at least one valid candidate was
+    # produced by search and rejected by the diversity filter.
+    assert r.diagnostics.diversity_rejected_count > 0, (
+        f"Expected diversity_rejected_count > 0 on diversity-impossible fixture; "
+        f"got {r.diagnostics.diversity_rejected_count}. "
+        f"restarts_attempted={r.diagnostics.restarts_attempted}"
+    )
+
+
 def test_solve_returns_k_diverse_alternatives():
     from hangarfit.loader import load_scenario
     from hangarfit.models import DiversityConfig
