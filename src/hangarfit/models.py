@@ -682,6 +682,18 @@ class SearchConfig:
     pos_sigma_m: float = 0.5
     heading_sigma_deg: float = 10.0
     max_restarts: int | None = None
+    """Hard cap on the outer restart loop. ``None`` (default) preserves
+    the pre-v0.6.0 wall-clock-only termination behavior. When set, must
+    be ``>= 1``; serves as an upper-bound counter in addition to
+    ``solve(..., budget_s=...)`` — whichever gate trips first wins.
+    Useful for cross-machine-deterministic exhaustion canaries that
+    can't rely on wall-clock budget cutoffs.
+
+    ``None`` is the only "opt out" sentinel in :class:`SearchConfig` /
+    :class:`DiversityConfig` / :class:`SolverDiagnostics`; all other
+    numeric fields require a concrete positive value. Pass ``None``
+    explicitly to disable the cap; passing ``0`` is rejected (it would
+    skip the search loop entirely)."""
 
     def __post_init__(self) -> None:
         if self.candidates_per_iter < 1:
@@ -706,6 +718,6 @@ class SearchConfig:
         if self.max_restarts is not None and self.max_restarts < 1:
             raise ValueError(
                 f"SearchConfig.max_restarts must be >= 1 when set "
-                f"(zero would skip the search loop entirely; use None to "
-                f"opt out of the restart cap), got {self.max_restarts}"
+                f"(pass ``None`` to disable the restart cap; ``0`` would "
+                f"skip the search loop entirely), got {self.max_restarts}"
             )
