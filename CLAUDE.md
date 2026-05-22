@@ -127,7 +127,7 @@ Both clearances are configurable in `data/hangar.yaml` (`Hangar.clearance_m`, `H
 
 ## Phase 1 deliverables
 
-Current status of the Phase 1 cut. Only the CLI remains before the first tagged release (`release/0.1.0`).
+All shipped. Tagged as `v0.1.0` (`20cf741` on `main`). Phase 2a (static layout solver) shipped subsequently — see "Phase 2a deliverables" below.
 
 | # | Deliverable | Issue | Status |
 |---|---|---|---|
@@ -135,10 +135,27 @@ Current status of the Phase 1 cut. Only the CLI remains before the first tagged 
 | 2 | `data/hangar.yaml` — hangar dimensions + door + maintenance bay (placeholders) | #3 | ✅ shipped |
 | 3 | `src/hangarfit/collisions.py` — the collision checker (the heart of Phase 1) | #5 | ✅ shipped |
 | 4 | `src/hangarfit/visualize.py` — matplotlib top-down PNG renderer | #6 | ✅ shipped |
-| 5 | `src/hangarfit/cli.py` — `hangarfit check layouts/example.yaml --render out.png` | #7 | ⏳ **next** |
+| 5 | `src/hangarfit/cli.py` — `hangarfit check layouts/example.yaml --render out.png` | #7 | ✅ shipped |
 | 6 | Strut-aware golden-test suite in `tests/test_collisions.py` — same-height wing overlap, high-over-low height-disjoint pass, strut-blocks-nesting, inboard / outboard strut-free nesting, maintenance-bay rule, all-9-planes valid layout (the cart rule is exercised separately at `Layout` construction; see module map) | #5 | ✅ shipped |
 
 The strut-aware golden tests are the canary that the parts model is intact. If they pass, the geometry is trustworthy on the current (placeholder) data.
+
+## Phase 2a deliverables
+
+Static layout solver — given a `Scenario` (fleet, hangar, constraints, optional pins), find up to K diverse valid `Layout`s. All shipped 2026-05-22.
+
+| # | Deliverable | Issue / PR | Status |
+|---|---|---|---|
+| 1 | Spec + plan docs (`docs/superpowers/specs/`, `docs/superpowers/plans/`) | #80 / #81 | ✅ shipped |
+| 2 | `CheckResult.total_penetration_m2` + collisions.py penetration accounting (Chunk A) | #82 / #83 | ✅ shipped |
+| 3 | New solver dataclasses (`Scenario`, `PlaneConstraint`, `SolveResult`, `SolverDiagnostics`, `DiversityConfig`, `SearchConfig`) + `SolveStatus` literal + `load_scenario()` (Chunk B) | #84 / #85 | ✅ shipped |
+| 4 | `src/hangarfit/solver.py` skeleton + pre-search infeasibility checks (Chunk C) | #86 / #87 | ✅ shipped |
+| 5 | RR-MC search loop, `solve(alternatives=1)` (Chunk D) | #88 / #89 | ✅ shipped |
+| 6 | K-diverse alternatives + termination (Chunk E) | #90 / #91 | ✅ shipped |
+| 7 | `hangarfit solve` CLI subcommand (Chunk F) | #93 / #94 | ✅ shipped |
+| 8 | v1 fixture matrix + determinism canaries (Chunk G) | #96 / #97 | ✅ shipped |
+
+Algorithm: random-restart hill climbing with min-conflicts descent (RR-MC). Continuous `(x_m, y_m, heading_deg)`. Constraints in v1: maintenance plane, per-plane `pin` (full `Placement`), per-plane `force_on_carts`. Diversity filter uses edit-count metric (M=2 planes moved, 0.5 m position threshold, 30° heading threshold). See `docs/superpowers/specs/2026-05-22-phase2a-static-layout-solver-design.md` for the full design rationale.
 
 ## Where things live (module map)
 
@@ -149,19 +166,24 @@ The strut-aware golden tests are the canary that the parts model is intact. If t
 | `src/hangarfit/geometry.py` | Plane-local → world transform (the determinant −1 trap lives here) and `aircraft_parts_world()`. |
 | `src/hangarfit/collisions.py` | The `check(layout)` entry point. Enforces hangar bounds, maintenance-bay position (centroid of the designated plane's fuselage parts is in the back strip; if that plane has no fuselage parts, an explicit `maintenance_no_fuselage` conflict is emitted rather than silently passing), and pairwise parts overlap. **Not here:** the cart rule (already enforced upstream in `Layout`). |
 | `src/hangarfit/visualize.py` | Top-down PNG renderer. Forces a headless matplotlib backend at import time so it runs in CI / pytest without a display server. When a `CheckResult` is passed, validates that its conflicts reference only planes from the layout, then overdraws the conflicting parts in red. |
-| `src/hangarfit/cli.py` | **Not yet shipped — issue #7.** |
+| `src/hangarfit/solver.py` | RR-MC layout search. `solve(scenario, budget_s, alternatives, seed)` is the public entry; internals handle pre-search infeasibility checks, initial placement, descent step (min-conflicts perturbation), restart cycle, diversity filter, and three-way termination. RNG is single-threaded and seeded for full reproducibility. |
+| `src/hangarfit/cli.py` | Argparse dispatch for both `hangarfit check` (Phase 1) and `hangarfit solve` (Phase 2a). Owns IO + arg-parsing only; both subcommands are thin wrappers around library entry points. JSON schemas: `hangarfit.check/v1`, `hangarfit.solve/v1`. |
 | `layouts/example.yaml` | Default valid layout for the canonical smoke test — a 6-plane "Saturday morning, 3 out flying" exception scenario (PR #69). Pinned valid by `tests/test_cli.py::test_default_example_layout_is_valid`. |
 | `layouts/example_invalid.yaml` | Companion bad layout for the red-overlay rendering demo. Exercises three conflict kinds (`hangar_bounds`, `wing_wing_overlap`, `strut_wing_overlap`). Pinned invalid by `tests/test_cli.py::test_default_example_invalid_layout_lists_conflicts`. |
-| `tests/fixtures/*.yaml` | One YAML per scenario, `valid_*` / `invalid_*` naming. Add new collision regressions by dropping in a fixture, not by writing geometry literals in Python. New fixtures should be scaffolded with `/new-fixture kind=… slug=… rationale="…"` (see `.claude/skills/new-fixture/SKILL.md`). |
+| `tests/fixtures/*.yaml` | One YAML per scenario. Phase 1: `valid_*` / `invalid_*` for layout-validity regressions. Phase 2a: `solve_*` for solver-contract fixtures (see `tests/test_solver_fixture_matrix.py` for the v1 matrix). Add new regressions by dropping in a fixture, not by writing geometry literals in Python. New fixtures should be scaffolded with `/new-fixture kind=… slug=… rationale="…"` (see `.claude/skills/new-fixture/SKILL.md`). |
+| `tests/test_solver_fixture_matrix.py` | Per-fixture matrix tests for `solve_*.yaml`. Shared `_assert_universal_properties` helper enforces all six spec §6.2 universal property assertions (status enum, every layout valid, seed populated, best_partial fused with infeasible statuses, pairwise diversity, pre-search wall-time guard). Per-test functions add fixture-specific invariants on top. |
+| `tests/test_solver_canaries.py` | Determinism canaries — parametrized over 3 fixtures asserting `solve(seed=42)` returns bit-for-bit identical SolveResult across runs. Intentionally fragile; deliberate algorithm changes require updating expected outputs. |
 | `tests/fixtures/test_hangar_large.yaml` | Test-only larger hangar (30 × 25 m, length × width). Used by `valid_all_nine_planes.yaml` because the placeholder fleet's strut bracing forces ~2.6 m of x-clearance between strut-braced planes whose fuselage y-bands overlap — which doesn't fit in the placeholder 25 × 18 m hangar (see `data/hangar.yaml`). This is a placeholder-dimension artifact, not a checker bug. Will go away once real measurements arrive. See the fixture header for full reasoning. |
 
-### Out of scope for Phase 1
+### Still out of scope (post Phase 2a)
 
-- No planner / search / optimization.
-- No movement-sequence planning (no "Tower of Hanoi" reshuffling).
-- No tracking of current hangar state across runs.
-- No GUI / web frontend.
-- No handling of late arrivals.
+Phase 2a shipped the static layout solver — what was previously "no planner / search" is now `hangarfit solve`. What remains explicitly out of scope:
+
+- **No movement-sequence planning** — "Tower of Hanoi" reshuffling between current state and target layout. The solver finds *a* valid target; it does not plan the moves to get there.
+- **No tracking of current hangar state across runs.** Each invocation is stateless; the scenario YAML carries everything.
+- **No GUI / web frontend.** CLI + PNG only.
+- **No handling of late arrivals** as a live event stream. The tool is invoked on demand against a hand-authored scenario.
+- **No soft constraints / preferences.** Constraints in v1 are HARD: pin, force_on_carts, maintenance plane. No "prefer this region" / "minimise total movement vs baseline" objectives.
 
 ---
 
