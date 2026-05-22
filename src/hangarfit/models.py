@@ -406,9 +406,18 @@ class CheckResult:
 
     ``valid`` is a derived property — there is no way to construct a
     ``CheckResult`` that claims to be valid while carrying conflicts.
+
+    ``total_penetration_m2`` is the summed shapely-``intersection().area``
+    across pairwise conflicts (length-2 ``Conflict.planes``) — used by
+    the Phase 2a solver as a smooth secondary scoring key to break
+    plateaus in the integer ``len(conflicts)`` metric. Single-plane
+    conflicts (``maintenance_position``, ``maintenance_no_fuselage``,
+    ``hangar_bounds``) contribute 0. The validity contract is unchanged:
+    ``valid`` is still derived from ``conflicts`` only.
     """
 
     conflicts: tuple[Conflict, ...] = ()
+    total_penetration_m2: float = 0.0
 
     @property
     def valid(self) -> bool:

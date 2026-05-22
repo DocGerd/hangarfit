@@ -50,7 +50,7 @@ The work splits into **7 sequential chunks**, each landing as one PR into `devel
 
 ### Task A.0: Branch + issue setup
 
-- [ ] **Step 1: Create the GitHub issue**
+- [x] **Step 1: Create the GitHub issue**
 
 Run:
 
@@ -82,7 +82,7 @@ EOF
 
 Expected: prints the issue URL. Note the issue number (call it \`#A\` below) for the PR body.
 
-- [ ] **Step 2: Create the branch off the latest `develop`**
+- [x] **Step 2: Create the branch off the latest `develop`**
 
 ```bash
 git switch develop
@@ -98,7 +98,7 @@ Expected: confirms switch + reports "Switched to a new branch ..."
 - Modify: `src/hangarfit/models.py:404-415` (the `CheckResult` definition)
 - Modify: `tests/test_models.py` (add default-value test)
 
-- [ ] **Step 1: Write the failing test for the new field default**
+- [x] **Step 1: Write the failing test for the new field default**
 
 Add to `tests/test_models.py`:
 
@@ -121,13 +121,13 @@ def test_check_result_total_penetration_field_is_kept():
     assert result.valid is True  # still derived from conflicts, not from penetration
 ```
 
-- [ ] **Step 2: Run the new tests, expect failure**
+- [x] **Step 2: Run the new tests, expect failure**
 
 Run: `pytest tests/test_models.py::test_check_result_default_total_penetration_is_zero tests/test_models.py::test_check_result_total_penetration_field_is_kept -v`
 
 Expected: both FAIL with `TypeError: ... got an unexpected keyword argument 'total_penetration_m2'` (or similar — the field doesn't exist yet).
 
-- [ ] **Step 3: Add the field to `CheckResult`**
+- [x] **Step 3: Add the field to `CheckResult`**
 
 In `src/hangarfit/models.py`, find the `CheckResult` dataclass (around line 404). Modify it from:
 
@@ -174,19 +174,19 @@ class CheckResult:
         return len(self.conflicts) == 0
 ```
 
-- [ ] **Step 4: Run the same tests, expect pass**
+- [x] **Step 4: Run the same tests, expect pass**
 
 Run: `pytest tests/test_models.py::test_check_result_default_total_penetration_is_zero tests/test_models.py::test_check_result_total_penetration_field_is_kept -v`
 
 Expected: both PASS.
 
-- [ ] **Step 5: Run the full test suite to confirm no regressions**
+- [x] **Step 5: Run the full test suite to confirm no regressions**
 
 Run: `pytest -q`
 
 Expected: all existing tests still pass. (The default value ensures literal `CheckResult()` constructors elsewhere still work; the new field is invisible to consumers that don't ask for it.)
 
-- [ ] **Step 6: Commit the field extension**
+- [x] **Step 6: Commit the field extension**
 
 ```bash
 git add src/hangarfit/models.py tests/test_models.py
