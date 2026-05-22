@@ -3087,7 +3087,7 @@ Note issue as `#E`.
 
 ### Task E.1: Implement the diversity filter (`_is_diverse_enough`)
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 Append to `tests/test_solver_search.py`:
 
@@ -3150,9 +3150,9 @@ def test_diversity_heading_uses_short_arc():
     assert not _is_diverse_enough(L2, [L1], diversity)
 ```
 
-- [ ] **Step 2: Run, expect failure**
+- [x] **Step 2: Run, expect failure**
 
-- [ ] **Step 3: Implement**
+- [x] **Step 3: Implement**
 
 ```python
 def _heading_delta_short_arc(a: float, b: float) -> float:
@@ -3189,9 +3189,9 @@ def _is_diverse_enough(
     return True
 ```
 
-- [ ] **Step 4: Run, expect pass**
+- [x] **Step 4: Run, expect pass**
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/hangarfit/solver.py tests/test_solver_search.py
@@ -3205,7 +3205,7 @@ Refs #E"
 
 ### Task E.2: Wire the diversity filter into the search loop
 
-- [ ] **Step 1: Add failing test for K=3 alternatives**
+- [x] **Step 1: Add failing test for K=3 alternatives**
 
 `tests/fixtures/solve_fresh_alternatives_three.yaml`:
 
@@ -3242,7 +3242,7 @@ def test_solve_returns_k_diverse_alternatives():
             )
 ```
 
-- [ ] **Step 2: Update `solve()` to use the diversity filter on accept**
+- [x] **Step 2: Update `solve()` to use the diversity filter on accept**
 
 In the inner loop of `solve()`, replace:
 
@@ -3268,7 +3268,7 @@ With:
                 break
 ```
 
-- [ ] **Step 3: Run, expect pass**
+- [x] **Step 3: Run, expect pass**
 
 ```bash
 pytest tests/test_solver_search.py::test_solve_returns_k_diverse_alternatives -v
@@ -3276,7 +3276,7 @@ pytest tests/test_solver_search.py::test_solve_returns_k_diverse_alternatives -v
 
 (May skip on placeholder data; that's fine.)
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add src/hangarfit/solver.py tests/test_solver_search.py tests/fixtures/solve_fresh_alternatives_three.yaml
@@ -3291,7 +3291,7 @@ Refs #E"
 
 ### Task E.3: Implement diversity-impossible warning
 
-- [ ] **Step 1: Failing test**
+- [x] **Step 1: Failing test**
 
 `tests/fixtures/solve_diversity_impossible_warn.yaml`:
 
@@ -3331,7 +3331,7 @@ def test_solve_emits_diversity_impossible_warning(caplog):
     assert len(r.layouts) <= 1
 ```
 
-- [ ] **Step 2: Implement the check at solve() entry**
+- [x] **Step 2: Implement the check at solve() entry**
 
 Near the top of `solve()` (after seed resolution, before pre-search infeasibility):
 
@@ -3356,13 +3356,13 @@ Near the top of `solve()` (after seed resolution, before pre-search infeasibilit
 
 (Move the `import logging` and logger setup to module top in clean form.)
 
-- [ ] **Step 3: Run, expect pass**
+- [x] **Step 3: Run, expect pass**
 
 ```bash
 pytest tests/test_solver_search.py::test_solve_emits_diversity_impossible_warning -v
 ```
 
-- [ ] **Step 4: Commit, push, PR**
+- [x] **Step 4: Commit, push, PR**
 
 ```bash
 git add src/hangarfit/solver.py tests/test_solver_search.py tests/fixtures/solve_diversity_impossible_warn.yaml

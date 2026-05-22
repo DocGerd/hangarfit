@@ -422,3 +422,340 @@ def test_descent_step_returns_none_when_all_conflicts_are_pinned():
         pinned_planes=pinned,
     )
     assert result is None, "all-pinned-conflicts must return None for restart"
+
+
+# ── Chunk E: K-diverse alternatives + termination + diagnostics ─────────
+
+
+def test_diversity_filter_rejects_near_duplicate():
+    """Two layouts with no planes moved enough should fail diversity."""
+    from hangarfit.loader import load_fleet, load_hangar
+    from hangarfit.models import DiversityConfig, Layout, Placement
+    from hangarfit.solver import _is_diverse_enough
+
+    fleet = load_fleet("data/fleet.yaml")
+    hangar = load_hangar("data/hangar.yaml")
+    p1 = Placement(plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
+    p2 = Placement(plane_id="ctsl", x_m=10.0, y_m=10.0, heading_deg=0.0, on_carts=False)
+    L1 = Layout(fleet=fleet, hangar=hangar, placements=(p1, p2))
+    L2 = Layout(fleet=fleet, hangar=hangar, placements=(p1, p2))  # identical
+
+    diversity = DiversityConfig()  # defaults: M=2, 0.5m, 30°
+    assert not _is_diverse_enough(L2, [L1], diversity)
+
+
+def test_diversity_filter_empty_accepted_vacuously_passes():
+    """`_is_diverse_enough(L, [], div) is True` — the contract that backward-
+    compatibility with `alternatives=1` depends on (first valid layout is
+    always accepted because there's nothing to be diverse against).
+    Previously covered transitively via Chunk D smoke tests; pinning it
+    directly catches a regression that broke the empty-accepted short-
+    circuit explicitly."""
+    from hangarfit.loader import load_fleet, load_hangar
+    from hangarfit.models import DiversityConfig, Layout, Placement
+    from hangarfit.solver import _is_diverse_enough
+
+    fleet = load_fleet("data/fleet.yaml")
+    hangar = load_hangar("data/hangar.yaml")
+    p = Placement(plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
+    L = Layout(fleet=fleet, hangar=hangar, placements=(p,))
+
+    assert _is_diverse_enough(L, [], DiversityConfig()) is True
+
+
+def test_diversity_filter_accepts_meaningfully_different():
+    from hangarfit.loader import load_fleet, load_hangar
+    from hangarfit.models import DiversityConfig, Layout, Placement
+    from hangarfit.solver import _is_diverse_enough
+
+    fleet = load_fleet("data/fleet.yaml")
+    hangar = load_hangar("data/hangar.yaml")
+    p1 = Placement(plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
+    p2 = Placement(plane_id="ctsl", x_m=10.0, y_m=10.0, heading_deg=0.0, on_carts=False)
+    L1 = Layout(fleet=fleet, hangar=hangar, placements=(p1, p2))
+
+    # L2: both planes moved by > 0.5 m
+    p1b = Placement(plane_id="aviat_husky", x_m=8.0, y_m=5.0, heading_deg=0.0, on_carts=False)
+    p2b = Placement(plane_id="ctsl", x_m=13.0, y_m=10.0, heading_deg=0.0, on_carts=False)
+    L2 = Layout(fleet=fleet, hangar=hangar, placements=(p1b, p2b))
+
+    diversity = DiversityConfig()
+    assert _is_diverse_enough(L2, [L1], diversity)
+
+
+def test_diversity_filter_pairwise_not_aggregate():
+    """The filter is pairwise against EVERY accepted layout, not aggregate.
+
+    Candidate is diverse from L1 (moved 2+ planes) but identical to L2.
+    Pairwise → False (fails vs L2). A buggy aggregate impl that summed
+    moves across all accepted layouts (or accepted on "any" pass)
+    would return True. Catches that refactor.
+    """
+    from hangarfit.loader import load_fleet, load_hangar
+    from hangarfit.models import DiversityConfig, Layout, Placement
+    from hangarfit.solver import _is_diverse_enough
+
+    fleet = load_fleet("data/fleet.yaml")
+    hangar = load_hangar("data/hangar.yaml")
+
+    # L1: husky at (5,5), ctsl at (10,10).
+    p1_L1 = Placement(plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
+    p2_L1 = Placement(plane_id="ctsl", x_m=10.0, y_m=10.0, heading_deg=0.0, on_carts=False)
+    L1 = Layout(fleet=fleet, hangar=hangar, placements=(p1_L1, p2_L1))
+
+    # Candidate: both planes moved by > 0.5 m from L1.
+    p1_cand = Placement(plane_id="aviat_husky", x_m=8.0, y_m=5.0, heading_deg=0.0, on_carts=False)
+    p2_cand = Placement(plane_id="ctsl", x_m=13.0, y_m=10.0, heading_deg=0.0, on_carts=False)
+    candidate = Layout(fleet=fleet, hangar=hangar, placements=(p1_cand, p2_cand))
+
+    # L2: identical to candidate.
+    L2 = Layout(fleet=fleet, hangar=hangar, placements=(p1_cand, p2_cand))
+
+    div = DiversityConfig()  # M=2
+    # vs L1 alone: diverse (2 planes moved).
+    assert _is_diverse_enough(candidate, [L1], div)
+    # vs L2 alone: not diverse (identical).
+    assert not _is_diverse_enough(candidate, [L2], div)
+    # Pairwise vs [L1, L2]: must FAIL (the L2 check rejects).
+    assert not _is_diverse_enough(candidate, [L1, L2], div)
+
+
+def test_diversity_heading_uses_short_arc():
+    """0° and 359° should be 1° apart, not 359°."""
+    from hangarfit.loader import load_fleet, load_hangar
+    from hangarfit.models import DiversityConfig, Layout, Placement
+    from hangarfit.solver import _is_diverse_enough
+
+    fleet = load_fleet("data/fleet.yaml")
+    hangar = load_hangar("data/hangar.yaml")
+    p1 = Placement(plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
+    p2 = Placement(plane_id="ctsl", x_m=10.0, y_m=10.0, heading_deg=0.0, on_carts=False)
+    L1 = Layout(fleet=fleet, hangar=hangar, placements=(p1, p2))
+
+    p1b = Placement(plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=359.0, on_carts=False)
+    p2b = Placement(plane_id="ctsl", x_m=10.0, y_m=10.0, heading_deg=0.0, on_carts=False)
+    L2 = Layout(fleet=fleet, hangar=hangar, placements=(p1b, p2b))
+
+    diversity = DiversityConfig()
+    # heading_threshold_deg=30 — 1° gap is less than 30°, so this is NOT diverse.
+    assert not _is_diverse_enough(L2, [L1], diversity)
+
+
+def test_diversity_filter_m_equals_one_boundary():
+    """With min_planes_moved=1, moving exactly one plane suffices."""
+    from hangarfit.loader import load_fleet, load_hangar
+    from hangarfit.models import DiversityConfig, Layout, Placement
+    from hangarfit.solver import _is_diverse_enough
+
+    fleet = load_fleet("data/fleet.yaml")
+    hangar = load_hangar("data/hangar.yaml")
+    p1 = Placement(plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
+    p2 = Placement(plane_id="ctsl", x_m=10.0, y_m=10.0, heading_deg=0.0, on_carts=False)
+    L1 = Layout(fleet=fleet, hangar=hangar, placements=(p1, p2))
+
+    # L2: only aviat_husky moved (by > 0.5 m)
+    p1b = Placement(plane_id="aviat_husky", x_m=8.0, y_m=5.0, heading_deg=0.0, on_carts=False)
+    L2 = Layout(fleet=fleet, hangar=hangar, placements=(p1b, p2))
+
+    # Default M=2: rejected (only 1 moved).
+    assert not _is_diverse_enough(L2, [L1], DiversityConfig())
+    # M=1: accepted.
+    assert _is_diverse_enough(L2, [L1], DiversityConfig(min_planes_moved=1))
+
+
+def test_diversity_filter_threshold_exact_boundary():
+    """Per spec §4.6: a plane is "moved" iff pos_delta >= threshold OR
+    head_delta >= threshold. The comparison is >=, not >.
+
+    Construct a case where exactly two planes are moved by exactly the
+    position threshold — they should count as moved (>= passes), so the
+    candidate is accepted under M=2.
+    """
+    from hangarfit.loader import load_fleet, load_hangar
+    from hangarfit.models import DiversityConfig, Layout, Placement
+    from hangarfit.solver import _is_diverse_enough
+
+    fleet = load_fleet("data/fleet.yaml")
+    hangar = load_hangar("data/hangar.yaml")
+    p1 = Placement(plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
+    p2 = Placement(plane_id="ctsl", x_m=10.0, y_m=10.0, heading_deg=0.0, on_carts=False)
+    L1 = Layout(fleet=fleet, hangar=hangar, placements=(p1, p2))
+
+    div = DiversityConfig()  # position_threshold_m=0.5
+    # Move both planes by exactly 0.5 m on the x-axis.
+    p1b = Placement(
+        plane_id="aviat_husky",
+        x_m=5.0 + div.position_threshold_m,
+        y_m=5.0,
+        heading_deg=0.0,
+        on_carts=False,
+    )
+    p2b = Placement(
+        plane_id="ctsl",
+        x_m=10.0 + div.position_threshold_m,
+        y_m=10.0,
+        heading_deg=0.0,
+        on_carts=False,
+    )
+    L2 = Layout(fleet=fleet, hangar=hangar, placements=(p1b, p2b))
+    # Exact-threshold delta → counted as moved (>= comparison).
+    assert _is_diverse_enough(L2, [L1], div)
+
+
+def test_diversity_filter_heading_threshold_exact_boundary():
+    """Parallel to the position-threshold boundary test: rotating by
+    exactly `heading_threshold_deg` counts as moved (>= comparison).
+
+    A refactor that flipped the heading comparison to strict `>` would
+    pass the position-boundary test (still `>=`) but fail this one.
+    """
+    from hangarfit.loader import load_fleet, load_hangar
+    from hangarfit.models import DiversityConfig, Layout, Placement
+    from hangarfit.solver import _is_diverse_enough
+
+    fleet = load_fleet("data/fleet.yaml")
+    hangar = load_hangar("data/hangar.yaml")
+    p1 = Placement(plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
+    p2 = Placement(plane_id="ctsl", x_m=10.0, y_m=10.0, heading_deg=0.0, on_carts=False)
+    L1 = Layout(fleet=fleet, hangar=hangar, placements=(p1, p2))
+
+    div = DiversityConfig()  # heading_threshold_deg=30.0
+    # Rotate both planes by exactly 30°, no position change.
+    p1b = Placement(
+        plane_id="aviat_husky",
+        x_m=5.0,
+        y_m=5.0,
+        heading_deg=div.heading_threshold_deg,
+        on_carts=False,
+    )
+    p2b = Placement(
+        plane_id="ctsl",
+        x_m=10.0,
+        y_m=10.0,
+        heading_deg=div.heading_threshold_deg,
+        on_carts=False,
+    )
+    L2 = Layout(fleet=fleet, hangar=hangar, placements=(p1b, p2b))
+    assert _is_diverse_enough(L2, [L1], div)
+
+
+def test_solve_status_found_when_k_equals_two_both_satisfied():
+    """K=2, single plane in a large hangar — both alternatives findable.
+
+    Pins the `found` status branch on the K>1 path: with one plane free
+    in a roomy hangar, the search has plenty of distinct basins. After
+    two diverse layouts are accepted, the outer loop exits via
+    `len(accepted_layouts) >= alternatives` and status='found'.
+
+    Uses ``min_planes_moved=1`` because the fixture has a single plane —
+    the default M=2 would make diversity mathematically impossible (and
+    trigger the diversity-impossible warning on entry, which is covered
+    by a separate test).
+    """
+    from hangarfit.collisions import check
+    from hangarfit.loader import load_scenario
+    from hangarfit.models import DiversityConfig
+    from hangarfit.solver import _is_diverse_enough, solve
+
+    s = load_scenario("tests/fixtures/solve_trivial_single_plane.yaml")
+    div = DiversityConfig(min_planes_moved=1)
+    r = solve(s, budget_s=10.0, alternatives=2, seed=42, diversity=div)
+
+    # Empirically deterministic across many seeds on this fixture
+    # (single plane, roomy hangar) — pin `found` directly. Earlier
+    # versions wrapped this in `pytest.skip` branches that were
+    # unreachable on the current implementation and would have masked a
+    # real regression (a future bug producing `found_partial` here).
+    assert r.status == "found"
+    assert len(r.layouts) == 2
+    for L in r.layouts:
+        assert check(L).valid
+    # The two layouts must be pairwise diverse under the configured policy.
+    assert _is_diverse_enough(r.layouts[0], [r.layouts[1]], div)
+
+
+def test_solve_emits_diversity_impossible_warning(caplog):
+    """Diversity-impossible static check fires when free_planes < M and K > 1.
+
+    Empirically deterministic across many seeds on this fixture (2 of 3
+    planes pinned, 1 free): the result is always `found_partial` with
+    exactly 1 layout. Pinning the exact shape catches:
+    - The warning-fire path leaving diagnostics inconsistent (e.g.,
+      best_partial leaking through).
+    - A refactor that silently mutates `alternatives` (spec forbids).
+    - A future where `found_partial` accidentally retains a best_partial
+      from mid-search instead of None.
+    """
+    import logging
+
+    from hangarfit.loader import load_scenario
+    from hangarfit.solver import solve
+
+    s = load_scenario("tests/fixtures/solve_diversity_impossible_warn.yaml")
+    with caplog.at_level(logging.WARNING):
+        r = solve(s, budget_s=5.0, alternatives=3, seed=42)
+
+    # At least one warning about diversity impossibility.
+    assert any(
+        "achievable" in rec.message.lower() or "diversity" in rec.message.lower()
+        for rec in caplog.records
+    ), f"Expected diversity-impossible warning; got messages: {[r.message for r in caplog.records]}"
+    # Exact-shape pin (was previously loose `in {...}` + `<= 1`).
+    assert r.status == "found_partial"
+    assert len(r.layouts) == 1
+    # Found_partial path: best_partial pair must be None (the accepted
+    # layout lives in result.layouts, not in best_partial).
+    assert r.diagnostics.best_partial is None
+    assert r.diagnostics.best_partial_layout is None
+
+
+def test_solve_does_not_warn_when_diversity_is_achievable(caplog):
+    """Negative companion to the diversity-impossible warning test.
+
+    When `free_planes >= min_planes_moved` (so diversity is statically
+    possible), the warning MUST NOT fire. A regression that fires the
+    warning unconditionally — e.g., inverted predicate, off-by-one on
+    the comparison — would not be caught by the positive test alone.
+    """
+    import logging
+
+    from hangarfit.loader import load_scenario
+    from hangarfit.models import DiversityConfig
+    from hangarfit.solver import solve
+
+    # Fresh-six-planes fixture: 6 planes, none pinned → free_planes=6 >= M=2.
+    s = load_scenario("tests/fixtures/solve_fresh_alternatives_three.yaml")
+    with caplog.at_level(logging.WARNING):
+        solve(s, alternatives=3, seed=42, diversity=DiversityConfig(min_planes_moved=1))
+
+    # The diversity-impossible warning text contains "achievable" — assert
+    # no such warning fired. (Other unrelated warnings are fine.)
+    diversity_warnings = [rec for rec in caplog.records if "achievable" in rec.message.lower()]
+    assert not diversity_warnings, (
+        f"Expected NO diversity-impossible warning when free_planes >= M; "
+        f"got {[r.message for r in diversity_warnings]}"
+    )
+
+
+def test_solve_returns_k_diverse_alternatives():
+    from hangarfit.loader import load_scenario
+    from hangarfit.models import DiversityConfig
+    from hangarfit.solver import _is_diverse_enough, solve
+
+    s = load_scenario("tests/fixtures/solve_fresh_alternatives_three.yaml")
+    r = solve(s, budget_s=10.0, alternatives=3, seed=42)
+
+    if r.status == "exhausted_budget":
+        pytest.skip("Search didn't find K=3 within budget; acceptable on placeholder data.")
+    assert r.status in {"found", "found_partial"}
+    assert 1 <= len(r.layouts) <= 3
+    # Each pair must be diverse
+    div = DiversityConfig()
+    for i, L_i in enumerate(r.layouts):
+        for j, L_j in enumerate(r.layouts):
+            if i == j:
+                continue
+            others = [L_j]
+            assert _is_diverse_enough(L_i, others, div), (
+                f"layouts[{i}] and layouts[{j}] are not diverse from each other"
+            )

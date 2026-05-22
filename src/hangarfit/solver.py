@@ -11,6 +11,7 @@ the current implementation supports:
 
 from __future__ import annotations
 
+import logging
 import random as _random_module
 import secrets
 import sys
@@ -31,6 +32,8 @@ from hangarfit.models import (
     SolveStatus,
 )
 
+_logger = logging.getLogger(__name__)
+
 
 def solve(
     scenario: Scenario,
@@ -49,11 +52,6 @@ def solve(
         diversity = DiversityConfig()
     if search is None:
         search = SearchConfig()
-    # `diversity` is accepted in the signature for forward compatibility
-    # with Chunk E (K-diversity filter); the alternatives=1 path in this
-    # chunk never consults it. Reference it once so static analysis
-    # doesn't flag it as unused without obscuring intent.
-    _ = diversity
 
     # Resolve seed. Validate eagerly — a bad seed would raise here, at
     # solve() entry, instead of 30 s into the search loop. ONE
@@ -63,6 +61,30 @@ def solve(
     # index, so it's deterministic by construction.
     resolved_seed = seed if seed is not None else secrets.randbits(32)
     rng = _random_module.Random(resolved_seed)
+
+    # ── Diversity-impossible heuristic (spec §4.6) ──────────────────────
+    # When the number of free (non-pinned) planes is strictly less than
+    # diversity.min_planes_moved AND the caller asked for >1 alternative,
+    # they cannot mathematically get more than one accepted layout: every
+    # candidate L' after the first will share too many pinned planes with
+    # L to ever pass `n_moved ≥ min_planes_moved`. Logged as a warning
+    # so CLI / library users see it; we do NOT mutate `alternatives` —
+    # search runs normally and the natural outcome is found_partial with
+    # one accepted layout (spec deliberately avoids downgrading the API
+    # contract). Pin-detection mirrors `_check_trivially_infeasible`.
+    free_planes = sum(
+        1
+        for pid in scenario.fleet_in
+        if scenario.constraints.get(pid) is None or scenario.constraints[pid].pin is None
+    )
+    if alternatives > 1 and free_planes < diversity.min_planes_moved:
+        _logger.warning(
+            "requested %d alternatives but only 1 is achievable "
+            "(%d of %d planes are pinned). Expect status=found_partial.",
+            alternatives,
+            len(scenario.fleet_in) - free_planes,
+            len(scenario.fleet_in),
+        )
 
     # ── Pre-search infeasibility checks (§4.1) ──────────────────────────
     start = time.monotonic()
@@ -135,16 +157,24 @@ def solve(
             if time.monotonic() - start >= budget_s:
                 break
             if current_score == (0, 0.0):
-                # Valid! Accept (no diversity filter yet in Chunk D — just take it)
-                accepted_layouts.append(
-                    Layout(
-                        fleet=scenario.fleet,
-                        hangar=scenario.hangar,
-                        placements=tuple(placements[pid] for pid in scenario.fleet_in),
-                        maintenance_plane=scenario.maintenance_plane,
-                    )
+                # Valid! Apply the K-diversity filter (spec §4.6). When
+                # accepted_layouts is empty, _is_diverse_enough is vacuously
+                # True — the first valid layout is always accepted (and the
+                # alternatives=1 path never re-enters this branch). For K>1
+                # subsequent valid layouts are gated on pairwise diversity vs
+                # everything already accepted.
+                candidate_layout = Layout(
+                    fleet=scenario.fleet,
+                    hangar=scenario.hangar,
+                    placements=tuple(placements[pid] for pid in scenario.fleet_in),
+                    maintenance_plane=scenario.maintenance_plane,
                 )
-                break  # found one; outer loop terminates because alternatives=1
+                if _is_diverse_enough(candidate_layout, accepted_layouts, diversity):
+                    accepted_layouts.append(candidate_layout)
+                # Whether accepted or not, restart to try for a different
+                # basin. Continuing to descend from a valid state would just
+                # walk in place (already at score (0, 0.0)).
+                break
 
             step_result = _descent_step(
                 placements=placements,
@@ -181,10 +211,13 @@ def solve(
     elapsed = time.monotonic() - start
 
     if accepted_layouts:
-        # alternatives=1 in Chunk D — found_partial cannot fire (we break
-        # the outer loop as soon as len(accepted) >= alternatives), but
-        # keep the branch shape so Chunk E's K-diversity addition is a
-        # one-liner.
+        # `found` fires when the outer loop broke via the
+        # `len(accepted_layouts) >= alternatives` check above (so the count
+        # is exactly `alternatives` — Chunk D path and Chunk E happy path).
+        # `found_partial` fires when budget exhausted with `0 < n < K`
+        # — reachable in Chunk E for K>1 (the diversity-impossible scenario
+        # is one driver, but any K>1 run that runs out of budget mid-fill
+        # also lands here).
         status: SolveStatus = "found" if len(accepted_layouts) >= alternatives else "found_partial"
         return SolveResult(
             status=status,
@@ -778,6 +811,77 @@ def _descent_step(
     if best_cand is None:
         return placements, current_score, False
     return best_placements, best_score, True
+
+
+def _heading_delta_short_arc(a: float, b: float) -> float:
+    """Shortest angular distance on the circle, in degrees.
+
+    Returns the shorter of the two arcs between ``a`` and ``b`` measured
+    on the unit circle, in ``[0.0, 180.0]``. Equivalent to
+    ``min(|a-b| mod 360, 360 - |a-b| mod 360)``. So 0° vs 359° → 1°,
+    not 359°. Spec §4.6 requires this short-arc distance for the
+    diversity-filter heading test; using raw ``|a - b|`` would make the
+    filter mis-classify near-identical headings across the wrap as
+    "moved" and silently degrade diversity.
+
+    The ``% 360.0`` is defensive against headings outside ``[0, 360)`` —
+    ``Placement.__post_init__`` currently doesn't validate the range
+    (filed as follow-up after PR #89). Once that lands and Placement
+    headings are guaranteed canonical, the modulo becomes a no-op (still
+    correct, just unnecessary).
+    """
+    d = abs(a - b) % 360.0
+    return min(d, 360.0 - d)
+
+
+def _is_diverse_enough(
+    candidate: Layout,
+    accepted: list[Layout],
+    diversity: DiversityConfig,
+) -> bool:
+    """Return True iff candidate differs from every accepted layout (spec §4.6).
+
+    For each already-accepted layout, count the number of planes in the
+    candidate whose placement differs by at least ``position_threshold_m``
+    of Euclidean distance OR at least ``heading_threshold_deg`` of
+    short-arc heading (a plane absent from the reference counts as moved).
+    The candidate is "diverse enough" iff that count meets
+    ``min_planes_moved`` against EVERY accepted layout — pairwise diversity,
+    not aggregate.
+
+    Iterates ``candidate.placements`` (a tuple, deterministic) and
+    ``accepted`` (a list, deterministic). The intermediate ``cand_by_id``
+    and ``L_by_id`` dicts are only used for O(1) plane-id lookups; no
+    iteration order leaks out.
+    """
+    cand_by_id = {p.plane_id: p for p in candidate.placements}
+    for L in accepted:
+        L_by_id = {p.plane_id: p for p in L.placements}
+        n_moved = 0
+        for pid, cand_p in cand_by_id.items():
+            ref = L_by_id.get(pid)
+            # Under `solve()` invariants, both `candidate` and every L in
+            # `accepted` are built from `scenario.fleet_in` — so plane sets
+            # always match and `ref` is never None. Make that invariant
+            # load-bearing with an assertion: if a future caller passes
+            # mismatched layouts (e.g., an external/test invocation), we
+            # want a sharp AssertionError, not the silent "absent ≡ moved"
+            # semantic the previous defensive branch implemented.
+            assert ref is not None, (
+                f"diversity: candidate has plane {pid!r} not present in an "
+                f"accepted layout (fleet mismatch; only the in-solver flow "
+                f"is supported)"
+            )
+            pos_delta = ((cand_p.x_m - ref.x_m) ** 2 + (cand_p.y_m - ref.y_m) ** 2) ** 0.5
+            head_delta = _heading_delta_short_arc(cand_p.heading_deg, ref.heading_deg)
+            if (
+                pos_delta >= diversity.position_threshold_m
+                or head_delta >= diversity.heading_threshold_deg
+            ):
+                n_moved += 1
+        if n_moved < diversity.min_planes_moved:
+            return False  # too similar to this accepted layout
+    return True
 
 
 def _empty_layout(scenario: Scenario) -> Layout:

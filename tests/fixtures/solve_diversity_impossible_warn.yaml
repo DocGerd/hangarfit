@@ -1,0 +1,28 @@
+# Diversity-impossible warning fixture: 2 of 3 planes pinned, K=3 requested.
+#
+# Spec §4.6: when (|fleet_in| − |pinned_planes|) < min_planes_moved AND
+# alternatives > 1, the user cannot mathematically get more than one
+# accepted layout — every second candidate would share too many planes
+# with the first to pass `n_moved ≥ min_planes_moved`. The solver logs a
+# warning at `solve()` entry but doesn't mutate K; the natural outcome is
+# status=found_partial with one accepted layout.
+#
+# Here aviat_husky and ctsl are pinned; only fuji is free. With default
+# min_planes_moved=2, that's 1 free < 2 required → warning fires.
+#
+# Pin positions chosen to NOT trip the pre-search pin self-collision
+# check (#3) in the 25×30 test hangar (width × length):
+#  - aviat_husky: 10.82 m wingspan → x ≥ 5.41 m to fit; fuselage offset
+#    pushes ~5 m into −y, so y ≥ 5 m. (10, 10) leaves headroom on both
+#    axes.
+#  - ctsl: small cantilever (~10 m wing, ~7 m fuse), placed deeper than
+#    husky so the two wing y-bands don't overlap.
+
+fleet: ../../data/fleet.yaml
+hangar: ./test_hangar_large.yaml
+fleet_in: [aviat_husky, ctsl, fuji]
+constraints:
+  aviat_husky:
+    pin: { x_m: 10.0, y_m: 10.0, heading_deg: 0.0, on_carts: false }
+  ctsl:
+    pin: { x_m: 15.0, y_m: 18.0, heading_deg: 0.0, on_carts: false }
