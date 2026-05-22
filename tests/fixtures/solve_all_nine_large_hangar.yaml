@@ -1,0 +1,23 @@
+# All-nine-planes scenario in the test-only larger hangar — the canonical
+# "full fleet" stress case for the solver, mirroring the Phase 1 valid_
+# all_nine_planes layout but with no pins (everything search-derived).
+#
+# Spec §6.5: expected `found`. The 9-plane search is the heaviest in the
+# v1 matrix; if the solver succeeds here, it has demonstrably solved a
+# realistic exception scenario.
+#
+# Hangar: tests/fixtures/test_hangar_large.yaml (25 m width × 30 m
+# length, 750 m² floor). The placeholder data/hangar.yaml is too tight
+# for 9 planes (per CLAUDE.md's "Placeholder hangar can't fit the full
+# fleet" note and tests/fixtures/test_hangar_large.yaml's header). Real
+# measurements (issue #79) will collapse this distinction.
+#
+# Maintenance plane: scheibe_falke (its 18 m wingspan exactly fits the
+# 25 m hangar width with clearance, and its bbox is small enough in the
+# y-direction to anchor the back wall).
+
+fleet: ../../data/fleet.yaml
+hangar: ./test_hangar_large.yaml
+fleet_in: [aviat_husky, fuji, wild_thing, zlin_savage, cessna_140, cessna_150, ctsl, fk9_mkii, scheibe_falke]
+maintenance:
+  plane: scheibe_falke

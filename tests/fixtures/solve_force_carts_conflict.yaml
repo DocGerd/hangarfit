@@ -1,0 +1,24 @@
+# Force-carts-conflict fixture: an `always_cart` plane is forced
+# `on_carts=False`. This is a contradiction — `always_cart` is the
+# fleet-data declaration that the plane can ONLY move on carts; setting
+# `force_on_carts=False` overrides that with an impossible operational
+# constraint.
+#
+# Spec §6.5: expected `LoaderError` at scenario load time. The check
+# fires in `Scenario.__post_init__` (see `force_on_carts is False and
+# movement_mode == "always_cart"` branch); the loader wraps the
+# ValueError into a LoaderError.
+#
+# Choice of plane: zlin_savage. It's `always_cart` (per data/fleet.yaml)
+# and unrelated to any other constraint in this fixture, so the contract
+# under test stays unambiguous.
+#
+# Hangar/fleet_in kept minimal — this fixture never reaches the solver;
+# the loader rejects it.
+
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
+fleet_in: [zlin_savage, fuji]
+constraints:
+  zlin_savage:
+    force_on_carts: false

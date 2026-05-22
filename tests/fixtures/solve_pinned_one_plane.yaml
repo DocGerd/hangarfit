@@ -1,0 +1,36 @@
+# Pinned-one-plane scenario: 6 planes in the test_hangar_large, with
+# aviat_husky pinned at the front-left. Exercises the pin-honoring code
+# path: every accepted layout must place aviat_husky at the pin's exact
+# (x, y, heading, on_carts).
+#
+# Spec §6.5 fixture matrix → expected `found`, K=1, pinned plane unchanged.
+#
+# Hangar choice: the larger 30 × 25 m test hangar (vs the 25 × 18 m
+# placeholder) — the placeholder is known-tight for any 6-plane scenario
+# (see solve_fresh_six_planes' skip-on-exhausted guard); pinning one of
+# the planes makes the remaining search even more constrained, so we
+# trade hangar realism for solver headroom.
+#
+# Pin (6.0, 8.0, heading 0°, on_carts=false):
+#  - heading 0° = nose toward +y (deeper into hangar; see CLAUDE.md).
+#  - aviat_husky is `always_own_gear`, so on_carts MUST be false (the
+#    Scenario invariant rejects mismatch).
+#  - y=8 places the husky's fuselage fully inside the hangar despite
+#    the tailwheel-offset trap: fuselage_offset_x = −1.72 m (≈ −0.25 ×
+#    6.88 m length per data/fleet.yaml) means the fuselage extends from
+#    plane-local u = −1.72 − 3.44 = −5.16 m (tail tip) to u = +1.72 m
+#    (nose tip). At heading 0° plane-local +u maps to world +y, so the
+#    tail tip lands at world_y = py − 5.16. The gear must sit at y ≥ 5.16
+#    to keep the tail inside; y=8 gives a ~3 m margin for clearance.
+#  - x=6 leaves the 10.82 m wing fully inside the 25 m width.
+#  - The fuselage stays forward of the 9 m maintenance bay strip (bay
+#    starts at y=21 in this hangar: length_m=30, depth_m=9 → bay y ≥ 21).
+
+fleet: ../../data/fleet.yaml
+hangar: ./test_hangar_large.yaml
+fleet_in: [aviat_husky, fuji, ctsl, wild_thing, fk9_mkii, cessna_140]
+maintenance:
+  plane: wild_thing
+constraints:
+  aviat_husky:
+    pin: { x_m: 6.0, y_m: 8.0, heading_deg: 0.0, on_carts: false }

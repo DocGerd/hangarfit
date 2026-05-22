@@ -28,7 +28,13 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
+# Default to skipping @slow-marked tests so local `pytest` matches CI.
+# Run the slow set on demand with `pytest -m slow`, or run everything
+# with `pytest -m ""`.
+addopts = "-ra -m 'not slow'"
+markers = [
+    "slow: tests that may exceed the default 5 s per-fixture solve budget (excluded by default via addopts; run on demand via `pytest -m slow`)",
+]
 
 [tool.ruff]
 line-length = 100
