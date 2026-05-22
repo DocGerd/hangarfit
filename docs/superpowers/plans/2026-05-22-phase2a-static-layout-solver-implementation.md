@@ -1468,7 +1468,7 @@ Same flow as Chunk A. Don't merge.
 
 ### Task C.0: Branch + issue setup
 
-- [ ] **Step 1: Update develop, create branch**
+- [x] **Step 1: Update develop, create branch**
 
 ```bash
 git switch develop
@@ -1476,7 +1476,7 @@ git pull --ff-only
 git switch -c feature/phase2a-solver-skeleton
 ```
 
-- [ ] **Step 2: Create the issue**
+- [x] **Step 2: Create the issue** (issue #86)
 
 ```bash
 gh issue create \
@@ -1507,7 +1507,7 @@ Note issue number as `#C`.
 - Create: `tests/test_solver_infeasibility.py`
 - Create: `tests/fixtures/solve_feasible_smoke.yaml`
 
-- [ ] **Step 1: Create the feasible smoke fixture**
+- [x] **Step 1: Create the feasible smoke fixture**
 
 `tests/fixtures/solve_feasible_smoke.yaml`:
 
@@ -1519,7 +1519,7 @@ fleet_in: [aviat_husky]
 
 (Single plane, small footprint, large hangar — definitely feasible.)
 
-- [ ] **Step 2: Write the failing smoke test**
+- [x] **Step 2: Write the failing smoke test**
 
 Create `tests/test_solver_infeasibility.py`:
 
@@ -1560,13 +1560,13 @@ def test_solve_resolves_none_seed_to_entropy():
     assert r.diagnostics.seed != 0  # entropy is essentially always nonzero
 ```
 
-- [ ] **Step 3: Run, expect failure**
+- [x] **Step 3: Run, expect failure**
 
 Run: `pytest tests/test_solver_infeasibility.py -v`
 
 Expected: FAIL with `ModuleNotFoundError: No module named 'hangarfit.solver'`.
 
-- [ ] **Step 4: Create the minimal `solver.py`**
+- [x] **Step 4: Create the minimal `solver.py`**
 
 Create `src/hangarfit/solver.py`:
 
@@ -1640,13 +1640,13 @@ def solve(
     )
 ```
 
-- [ ] **Step 5: Run, expect pass**
+- [x] **Step 5: Run, expect pass**
 
 Run: `pytest tests/test_solver_infeasibility.py -v`
 
 Expected: both PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/hangarfit/solver.py tests/test_solver_infeasibility.py tests/fixtures/solve_feasible_smoke.yaml
