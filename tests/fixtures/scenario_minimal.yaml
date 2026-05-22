@@ -1,0 +1,6 @@
+# Minimal valid scenario: two planes, no constraints, no maintenance.
+# Used to exercise the load_scenario happy path.
+
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
+fleet_in: [aviat_husky, ctsl]

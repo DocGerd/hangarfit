@@ -445,7 +445,7 @@ Tell the user the PR is clean and ready for final review. Do NOT `gh pr merge` f
 
 ### Task B.0: Branch + issue setup
 
-- [ ] **Step 1: Update local develop**
+- [x] **Step 1: Update local develop**
 
 ```bash
 git switch develop
@@ -454,7 +454,7 @@ git pull --ff-only
 
 Expected: `develop` is up to date with Chunk A merged in.
 
-- [ ] **Step 2: Create the issue**
+- [x] **Step 2: Create the issue**
 
 ```bash
 gh issue create \
@@ -482,7 +482,7 @@ EOF
 
 Note the issue number as `#B`.
 
-- [ ] **Step 3: Create the branch**
+- [x] **Step 3: Create the branch**
 
 ```bash
 git switch -c feature/phase2a-scenario-types
@@ -494,7 +494,7 @@ git switch -c feature/phase2a-scenario-types
 - Modify: `src/hangarfit/models.py`
 - Modify: `tests/test_models.py` (or create `tests/test_scenario.py`; both fine — put PlaneConstraint tests with whichever feels right; this plan uses `tests/test_scenario.py`)
 
-- [ ] **Step 1: Write failing tests for `PlaneConstraint`**
+- [x] **Step 1: Write failing tests for `PlaneConstraint`**
 
 Create `tests/test_scenario.py`:
 
@@ -533,13 +533,13 @@ def test_plane_constraint_can_carry_force_on_carts():
     assert c.pin is None
 ```
 
-- [ ] **Step 2: Run, expect failure**
+- [x] **Step 2: Run, expect failure**
 
 Run: `pytest tests/test_scenario.py -v`
 
 Expected: FAIL — `ImportError: cannot import name 'PlaneConstraint'`.
 
-- [ ] **Step 3: Add `PlaneConstraint` to `models.py`**
+- [x] **Step 3: Add `PlaneConstraint` to `models.py`**
 
 Insert the following at the end of `src/hangarfit/models.py` (after `CheckResult`, keeping imports sorted at the top):
 
@@ -557,13 +557,13 @@ class PlaneConstraint:
     force_on_carts: bool | None = None
 ```
 
-- [ ] **Step 4: Run, expect pass**
+- [x] **Step 4: Run, expect pass**
 
 Run: `pytest tests/test_scenario.py -v`
 
 Expected: PASS for all three.
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/hangarfit/models.py tests/test_scenario.py
@@ -584,7 +584,7 @@ Co-Authored-By: Claude Opus 4.7 (1M context) <noreply@anthropic.com>"
 - Modify: `src/hangarfit/models.py`
 - Modify: `tests/test_scenario.py`
 
-- [ ] **Step 1: Write failing tests for `Scenario` invariants**
+- [x] **Step 1: Write failing tests for `Scenario` invariants**
 
 Append to `tests/test_scenario.py`:
 
@@ -747,13 +747,13 @@ def test_scenario_rejects_pin_and_force_on_carts_disagreement(fleet, hangar):
         )
 ```
 
-- [ ] **Step 2: Run, expect failure**
+- [x] **Step 2: Run, expect failure**
 
 Run: `pytest tests/test_scenario.py -v`
 
 Expected: all new Scenario tests FAIL — `ImportError: cannot import name 'Scenario'`.
 
-- [ ] **Step 3: Implement `Scenario` with all invariant checks**
+- [x] **Step 3: Implement `Scenario` with all invariant checks**
 
 Append to `src/hangarfit/models.py` (after `PlaneConstraint`):
 
@@ -880,19 +880,19 @@ You'll need to add `field` to the imports near the top of `models.py`:
 from dataclasses import dataclass, field
 ```
 
-- [ ] **Step 4: Run, expect pass**
+- [x] **Step 4: Run, expect pass**
 
 Run: `pytest tests/test_scenario.py -v`
 
 Expected: all 9 Scenario tests PASS.
 
-- [ ] **Step 5: Run full suite — no regressions**
+- [x] **Step 5: Run full suite — no regressions**
 
 Run: `pytest -q`
 
 Expected: green.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/hangarfit/models.py tests/test_scenario.py
@@ -918,7 +918,7 @@ EOF
 - Modify: `src/hangarfit/models.py`
 - Modify: `tests/test_scenario.py` (or new file — keep in test_scenario.py for cohesion)
 
-- [ ] **Step 1: Write failing tests for the output types and configs**
+- [x] **Step 1: Write failing tests for the output types and configs**
 
 Append to `tests/test_scenario.py`:
 
@@ -986,13 +986,13 @@ def test_search_config_defaults():
     assert s.heading_sigma_deg == 10.0
 ```
 
-- [ ] **Step 2: Run, expect failure**
+- [x] **Step 2: Run, expect failure**
 
 Run: `pytest tests/test_scenario.py -v -k 'SolveStatus or diagnostics or solve_result or diversity_config or search_config'`
 
 (Mix of test names; substitute as appropriate.) Expected: FAIL with ImportError.
 
-- [ ] **Step 3: Add the remaining types**
+- [x] **Step 3: Add the remaining types**
 
 Append to `src/hangarfit/models.py`:
 
@@ -1044,13 +1044,13 @@ class SearchConfig:
     heading_sigma_deg: float = 10.0
 ```
 
-- [ ] **Step 4: Run, expect pass**
+- [x] **Step 4: Run, expect pass**
 
 Run: `pytest tests/test_scenario.py -v`
 
 Expected: all tests PASS.
 
-- [ ] **Step 5: Run full suite + lint + type check**
+- [x] **Step 5: Run full suite + lint + type check**
 
 ```bash
 pytest -q && ruff check src/ tests/ && ruff format --check src/ tests/ && mypy src/hangarfit/
@@ -1058,7 +1058,7 @@ pytest -q && ruff check src/ tests/ && ruff format --check src/ tests/ && mypy s
 
 Expected: all green.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/hangarfit/models.py tests/test_scenario.py
@@ -1090,7 +1090,7 @@ EOF
 - Create: `tests/fixtures/scenario_bad_unknown_plane.yaml`
 - Create: `tests/fixtures/scenario_bad_force_carts_conflict.yaml`
 
-- [ ] **Step 1: Create the fixtures**
+- [x] **Step 1: Create the fixtures**
 
 `tests/fixtures/scenario_minimal.yaml`:
 
@@ -1143,7 +1143,7 @@ constraints:
     force_on_carts: true   # aviat_husky is always_own_gear → contradiction
 ```
 
-- [ ] **Step 2: Write failing tests for `load_scenario`**
+- [x] **Step 2: Write failing tests for `load_scenario`**
 
 Create `tests/test_loader_scenario.py`:
 
@@ -1231,13 +1231,13 @@ def test_load_scenario_missing_fleet_in(tmp_path):
         load_scenario(missing)
 ```
 
-- [ ] **Step 3: Run, expect failure**
+- [x] **Step 3: Run, expect failure**
 
 Run: `pytest tests/test_loader_scenario.py -v`
 
 Expected: all FAIL with `ImportError: cannot import name 'load_scenario'`.
 
-- [ ] **Step 4: Implement `load_scenario`**
+- [x] **Step 4: Implement `load_scenario`**
 
 Add to `src/hangarfit/loader.py`:
 
@@ -1365,13 +1365,13 @@ from .models import (
 )
 ```
 
-- [ ] **Step 5: Run, expect pass**
+- [x] **Step 5: Run, expect pass**
 
 Run: `pytest tests/test_loader_scenario.py -v`
 
 Expected: all 8 tests PASS.
 
-- [ ] **Step 6: Run full suite + lint + type check**
+- [x] **Step 6: Run full suite + lint + type check**
 
 ```bash
 pytest -q && ruff check src/ tests/ && ruff format --check src/ tests/ && mypy src/hangarfit/
@@ -1379,7 +1379,7 @@ pytest -q && ruff check src/ tests/ && ruff format --check src/ tests/ && mypy s
 
 Expected: green.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/hangarfit/loader.py tests/test_loader_scenario.py tests/fixtures/scenario_*.yaml
@@ -1404,13 +1404,13 @@ EOF
 
 ### Task B.5: Chunk B wrap-up
 
-- [ ] **Step 1: Push the branch**
+- [x] **Step 1: Push the branch**
 
 ```bash
 git push -u origin feature/phase2a-scenario-types
 ```
 
-- [ ] **Step 2: Open PR (base develop)**
+- [x] **Step 2: Open PR (base develop)**
 
 ```bash
 gh pr create --base develop \
@@ -1439,14 +1439,14 @@ EOF
 )"
 ```
 
-- [ ] **Step 3: Set PR labels via gh api**
+- [x] **Step 3: Set PR labels via gh api**
 
 ```bash
 PR_NUMBER=<from Step 2>
 gh api -X PATCH "repos/DocGerd/hangarfit/issues/$PR_NUMBER" -f '{"labels":["enhancement"]}'
 ```
 
-- [ ] **Step 4: Run `/pr-review`, resolve threads, hand off**
+- [x] **Step 4: Run `/pr-review`, resolve threads, hand off**
 
 Same flow as Chunk A. Don't merge.
 
