@@ -105,14 +105,13 @@ def test_solve_pinned_one_plane_honors_pin():
 
 
 def test_solve_repair_minimal_edit_honors_all_pins():
-    """5 of 6 planes pinned to baseline (example.yaml) positions; fuji
-    is the unpinned plane the solver re-places. Spec §6.5: `found`,
-    only the unpinned plane differs from baseline.
+    """5 of 6 planes pinned at fixed positions; fuji is the unpinned plane
+    the solver re-places.
 
-    "Differs from baseline" is tested by: every pinned plane matches its
-    pin exactly (the pins ARE the baseline), and the unpinned plane is
-    not asserted against a fixed coordinate — only against the universal
-    "valid layout" property.
+    Scope: this test only enforces pin-honoring + universal validity. The
+    spec §6.5 "only the unpinned plane differs from baseline" property
+    requires a baseline-layout reference that the v1 fixture format does
+    not yet carry, so it is NOT asserted here — tracked as follow-up.
     """
     s = load_scenario(f"{FIXTURES}/solve_repair_minimal_edit.yaml")
     r = solve(s, budget_s=5.0, alternatives=1, seed=42)
@@ -187,6 +186,20 @@ def test_solve_force_carts_conflict_raises_loader_error():
     assert "always_cart" in msg
 
 
+def test_solve_force_no_carts_conflict_raises_loader_error():
+    """Symmetric counterpart: an `always_own_gear` plane forced
+    `on_carts=True` is the other half of the §6.5 force-carts contradiction
+    surface. Covers Scenario.__post_init__'s True/always_own_gear branch
+    that solve_force_carts_conflict alone does not exercise.
+    """
+    with pytest.raises(LoaderError) as exc:
+        load_scenario(f"{FIXTURES}/solve_force_no_carts_conflict.yaml")
+    msg = str(exc.value)
+    assert "aviat_husky" in msg
+    assert "force_on_carts" in msg
+    assert "always_own_gear" in msg
+
+
 # ── G.5: solve_maintenance_bay_required ─────────────────────────────────
 
 
@@ -223,8 +236,12 @@ def test_solve_maintenance_bay_required_places_maintenance_in_bay():
         if wp.kind == "fuselage"
     ]
     assert fuselage_parts, "wild_thing has no fuselage parts (fixture-data bug)"
-    # Centroid of all fuselage parts (mirrors collisions.py's enforcement).
-    cy = sum(wp.polygon.centroid.y for wp in fuselage_parts) / len(fuselage_parts)
+    # Mirror collisions.py:147-148's area-weighted union centroid; a
+    # plain mean of part centroids would silently diverge from production
+    # the moment any aircraft gained a second fuselage part.
+    from shapely.ops import unary_union
+
+    cy = unary_union([wp.polygon for wp in fuselage_parts]).centroid.y
     bay_start_y = layout.hangar.length_m - layout.hangar.maintenance_bay.depth_m
     assert cy >= bay_start_y, (
         f"maintenance plane fuselage centroid y={cy:.2f} < bay_start_y={bay_start_y:.2f}"
@@ -260,3 +277,7 @@ def test_solve_all_nine_large_hangar_finds_layout():
     assert r.status == "found"
     assert len(r.layouts) == 1
     assert len(r.layouts[0].placements) == 9
+    # Maintenance plane survival: a regression where the solver dropped
+    # `maintenance_plane=None` would still produce a valid 9-plane layout
+    # because the bay rule no-ops when no maintenance plane is set.
+    assert r.layouts[0].maintenance_plane == "scheibe_falke"

@@ -45,9 +45,10 @@ jobs:
         run: mypy src/hangarfit
 
       - name: Run tests
-        # Skip @slow-marked tests in CI — they're solver searches whose
-        # worst case can exceed 30 s. Run locally via `pytest -m slow`.
-        run: pytest -m "not slow" --cov=hangarfit --cov-report=xml --cov-report=term-missing
+        # `-m "not slow"` lives in pyproject.toml's addopts so local
+        # `pytest` and CI behave identically. Override with `pytest -m slow`
+        # to run the solver-search stress fixtures.
+        run: pytest --cov=hangarfit --cov-report=xml --cov-report=term-missing
 
       - name: Upload coverage to Codecov
         if: always()

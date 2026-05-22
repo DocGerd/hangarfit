@@ -16,10 +16,12 @@
 #  - aviat_husky is `always_own_gear`, so on_carts MUST be false (the
 #    Scenario invariant rejects mismatch).
 #  - y=8 places the husky's fuselage fully inside the hangar despite
-#    the tailwheel-offset trap (fuselage centroid is offset −0.25 × length
-#    behind the gear-at-origin; with length ≈ 6.7 m that's ~1.7 m of
-#    overhang into −y, so the gear must sit at y ≥ ~3.5 to keep the
-#    fuselage inside; a wider margin guards against rounding + clearance).
+#    the tailwheel-offset trap: fuselage_offset_x = −1.72 m (≈ −0.25 ×
+#    6.88 m length per data/fleet.yaml) means the fuselage extends from
+#    plane-local u = −1.72 − 3.44 = −5.16 m (tail tip) to u = +1.72 m
+#    (nose tip). At heading 0° plane-local +u maps to world +y, so the
+#    tail tip lands at world_y = py − 5.16. The gear must sit at y ≥ 5.16
+#    to keep the tail inside; y=8 gives a ~3 m margin for clearance.
 #  - x=6 leaves the 10.82 m wing fully inside the 25 m width.
 #  - The fuselage stays forward of the 9 m maintenance bay strip (bay
 #    starts at y=21 in this hangar: length_m=30, depth_m=9 → bay y ≥ 21).
