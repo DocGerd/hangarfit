@@ -3406,7 +3406,7 @@ Note as `#F`.
 
 ### Task F.1: Add the `solve` subparser
 
-- [ ] **Step 1: Test that `hangarfit solve --help` works**
+- [x] **Step 1: Test that `hangarfit solve --help` works**
 
 Add `tests/test_cli_solve.py`:
 
@@ -3441,7 +3441,7 @@ def test_solve_subcommand_default_flags():
     assert args.json is False
 ```
 
-- [ ] **Step 2: Extend `cli.py`'s `build_parser`**
+- [x] **Step 2: Extend `cli.py`'s `build_parser`**
 
 In `src/hangarfit/cli.py`, inside `build_parser()`, after the `check` subparser block, add:
 
@@ -3489,7 +3489,7 @@ Also extend `main()` to dispatch:
         return cmd_solve(args)
 ```
 
-- [ ] **Step 3: Stub `cmd_solve`**
+- [x] **Step 3: Stub `cmd_solve`**
 
 ```python
 def cmd_solve(args: argparse.Namespace) -> int:
@@ -3497,13 +3497,13 @@ def cmd_solve(args: argparse.Namespace) -> int:
     raise NotImplementedError("Task F.2 wires this up.")
 ```
 
-- [ ] **Step 4: Run, expect pass on parser tests**
+- [x] **Step 4: Run, expect pass on parser tests**
 
 ```bash
 pytest tests/test_cli_solve.py -v
 ```
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add src/hangarfit/cli.py tests/test_cli_solve.py
@@ -3580,7 +3580,7 @@ Plus the helpers `_emit_solve_human`, `_emit_solve_json`, `_write_renders`, `_wr
 
 For each helper, follow the same TDD discipline.
 
-- [ ] **Step 1 (consolidated): TDD each cmd_solve helper, commit each**
+- [x] **Step 1 (consolidated): TDD each cmd_solve helper, commit each**
 
 Recommended commit cadence:
 - `cli: implement cmd_solve dispatch + LoaderError handling`
@@ -3592,7 +3592,7 @@ Recommended commit cadence:
 
 (The exact split is up to the implementer; this many commits keeps each diff small and reviewable.)
 
-- [ ] **Step 2: Final wrap — full test suite + lint + PR**
+- [x] **Step 2: Final wrap — full test suite + lint + PR**
 
 ```bash
 pytest -q && ruff check src/ tests/ && ruff format --check src/ tests/ && mypy src/hangarfit/
