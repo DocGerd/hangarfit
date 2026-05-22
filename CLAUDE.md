@@ -10,7 +10,7 @@ This file is the durable context for the project. Read it first in any new sessi
 
 The tool checks whether a hand-authored candidate layout is physically valid (no fuselage / wing / strut collisions, fits in the hangar, maintenance plane in the right spot) and renders a top-down PNG so a human can eyeball it.
 
-**Phase 1 scope** (the current focus): build the substrate — aircraft data model, hangar model, collision checker, visualizer, CLI. **No planner / search / optimization** in Phase 1.
+**Status:** Phase 1 (substrate: data model, collision checker, visualizer, CLI) and Phase 2a (static layout solver, `hangarfit solve`) have both shipped. Current active work and milestone status live in auto-memory and GitHub milestones, not here.
 
 ---
 
@@ -242,7 +242,7 @@ The `.claude/` directory holds team-shared Claude Code settings (currently: a Po
 
 ## MCP servers
 
-`.mcp.json` at the repo root declares two project-scoped MCP servers so every contributor gets them automatically on a fresh clone — no per-user setup step. See also [.claude/README.md](.claude/README.md) for the broader Claude Code config ecosystem in this repo.
+`.mcp.json` at the repo root declares the project-scoped GitHub MCP server so every contributor gets it automatically on a fresh clone — no per-user setup step. See also [.claude/README.md](.claude/README.md) for the broader Claude Code config ecosystem in this repo.
 
 | Server | Transport | Purpose |
 |---|---|---|
@@ -290,6 +290,11 @@ pip install -e ".[dev]"
 # Run tests
 pytest
 
+# Run only the slow set (excluded by default; see pyproject.toml addopts)
+pytest -m slow
+# Or run everything regardless of marker
+pytest -m ""
+
 # Lint + format check (CI also runs these)
 ruff check src/ tests/
 ruff format --check src/ tests/
@@ -304,7 +309,7 @@ mypy src/hangarfit/
 # CI: GitHub Actions runs `pytest` on Python 3.11 + 3.12 for PRs into
 # develop/main (see .github/workflows/ci.yml). No coverage gate yet.
 
-# Phase 1 acceptance smoke test (once CLI lands)
+# Phase 1 acceptance smoke test
 hangarfit check layouts/example.yaml --render out.png
 
 # GitFlow loops
