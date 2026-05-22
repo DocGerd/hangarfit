@@ -823,6 +823,12 @@ def _heading_delta_short_arc(a: float, b: float) -> float:
     diversity-filter heading test; using raw ``|a - b|`` would make the
     filter mis-classify near-identical headings across the wrap as
     "moved" and silently degrade diversity.
+
+    The ``% 360.0`` is defensive against headings outside ``[0, 360)`` —
+    ``Placement.__post_init__`` currently doesn't validate the range
+    (filed as follow-up after PR #89). Once that lands and Placement
+    headings are guaranteed canonical, the modulo becomes a no-op (still
+    correct, just unnecessary).
     """
     d = abs(a - b) % 360.0
     return min(d, 360.0 - d)
@@ -854,10 +860,18 @@ def _is_diverse_enough(
         n_moved = 0
         for pid, cand_p in cand_by_id.items():
             ref = L_by_id.get(pid)
-            if ref is None:
-                # Plane not in the reference layout — count as moved
-                n_moved += 1
-                continue
+            # Under `solve()` invariants, both `candidate` and every L in
+            # `accepted` are built from `scenario.fleet_in` — so plane sets
+            # always match and `ref` is never None. Make that invariant
+            # load-bearing with an assertion: if a future caller passes
+            # mismatched layouts (e.g., an external/test invocation), we
+            # want a sharp AssertionError, not the silent "absent ≡ moved"
+            # semantic the previous defensive branch implemented.
+            assert ref is not None, (
+                f"diversity: candidate has plane {pid!r} not present in an "
+                f"accepted layout (fleet mismatch; only the in-solver flow "
+                f"is supported)"
+            )
             pos_delta = ((cand_p.x_m - ref.x_m) ** 2 + (cand_p.y_m - ref.y_m) ** 2) ** 0.5
             head_delta = _heading_delta_short_arc(cand_p.heading_deg, ref.heading_deg)
             if (
