@@ -413,7 +413,7 @@ Per memory `feedback_pr_metadata.md`, `gh pr edit` is broken in this repo. Use `
 
 ```bash
 PR_NUMBER=<the PR number from Step 2>
-gh api -X PATCH "repos/DocGerd/hangarfit/issues/$PR_NUMBER" -f '{"labels":["enhancement"]}'
+echo '{"labels":["enhancement"]}' | gh api -X PATCH "repos/DocGerd/hangarfit/issues/$PR_NUMBER" --input -
 ```
 
 (Milestone assignment optional — leave blank unless a Phase 2 milestone exists.)
@@ -1443,7 +1443,7 @@ EOF
 
 ```bash
 PR_NUMBER=<from Step 2>
-gh api -X PATCH "repos/DocGerd/hangarfit/issues/$PR_NUMBER" -f '{"labels":["enhancement"]}'
+echo '{"labels":["enhancement"]}' | gh api -X PATCH "repos/DocGerd/hangarfit/issues/$PR_NUMBER" --input -
 ```
 
 - [x] **Step 4: Run `/pr-review`, resolve threads, hand off**
@@ -2131,7 +2131,7 @@ Closes #C
 EOF
 )"
 PR_NUMBER=<from above>
-gh api -X PATCH "repos/DocGerd/hangarfit/issues/$PR_NUMBER" -f '{"labels":["enhancement"]}'
+echo '{"labels":["enhancement"]}' | gh api -X PATCH "repos/DocGerd/hangarfit/issues/$PR_NUMBER" --input -
 ```
 
 Run `/pr-review`, resolve threads, hand off.
@@ -3056,7 +3056,7 @@ EOF
 )"
 
 PR_NUMBER=<from above>
-gh api -X PATCH "repos/DocGerd/hangarfit/issues/$PR_NUMBER" -f '{"labels":["enhancement"]}'
+echo '{"labels":["enhancement"]}' | gh api -X PATCH "repos/DocGerd/hangarfit/issues/$PR_NUMBER" --input -
 ```
 
 Run `/pr-review`, resolve, hand off.

@@ -47,10 +47,13 @@ def solve(
     if search is None:
         search = SearchConfig()
 
-    # Resolve seed
+    # Resolve seed. Validate eagerly — a bad seed would raise here, at
+    # solve() entry, instead of 30 s into Chunk D's search loop. The rng
+    # itself will be re-created when search lands; the construction here
+    # is deliberately preserved (don't "clean it up" as dead code).
     resolved_seed = seed if seed is not None else secrets.randbits(32)
     rng = _random_module.Random(resolved_seed)
-    del rng  # not used in Chunk C — placeholder
+    del rng
 
     # ── Pre-search infeasibility checks (§4.1) ──────────────────────────
     start = time.monotonic()
@@ -160,6 +163,35 @@ def _check_trivially_infeasible(
             pinned_placements.append(constraint.pin)
 
     if pinned_placements:
+        # The cart rule (at most one cart_eligible plane on carts at a
+        # time) is enforced by Layout.__post_init__ but NOT by
+        # Scenario.__post_init__ — that's a cross-pin invariant Scenario
+        # currently doesn't check. Guard explicitly here so we can return
+        # a sharp `pin_cart_rule` conflict instead of silently absorbing
+        # a generic Layout `ValueError`. Morally this check belongs in
+        # Scenario; a follow-up could migrate it to Scenario.__post_init__
+        # so every caller (not just solve()) benefits.
+        cart_eligible_on_carts = sum(
+            1
+            for p in pinned_placements
+            if p.on_carts and scenario.fleet[p.plane_id].movement_mode == "cart_eligible"
+        )
+        if cart_eligible_on_carts > 1:
+            check = CheckResult(
+                conflicts=(
+                    Conflict.single(
+                        kind="trivially_infeasible_pin_cart_rule",
+                        plane=pinned_placements[0].plane_id,
+                        detail=(
+                            f"{cart_eligible_on_carts} cart_eligible pins on "
+                            f"carts (cart rule allows at most 1)"
+                        ),
+                    ),
+                ),
+                total_penetration_m2=0.0,
+            )
+            return check, _empty_layout(scenario)
+
         # Build a Layout containing ONLY the pinned planes.
         # maintenance_plane=None to bypass Layout's "maintenance must be placed"
         # invariant; we're only checking pin-vs-pin and pin-vs-hangar here.
@@ -167,29 +199,18 @@ def _check_trivially_infeasible(
         # only about pin-vs-pin self-collision and pin-vs-hangar bounds; the
         # maintenance-position rule is not in scope at this stage because no
         # maintenance plane is set.)
-        try:
-            pin_only_layout = Layout(
-                fleet=scenario.fleet,
-                hangar=scenario.hangar,
-                placements=tuple(pinned_placements),
-                maintenance_plane=None,
-            )
-        except ValueError as e:
-            # This means the pins themselves violated a Layout invariant
-            # (cart rule, movement_mode mismatch, etc.) — should have been
-            # caught by Scenario.__post_init__, but defend anyway. There is
-            # no Layout to attach, so we fall back to the empty Layout.
-            check = CheckResult(
-                conflicts=(
-                    Conflict.single(
-                        kind="trivially_infeasible_pin_invariant",
-                        plane=pinned_placements[0].plane_id,
-                        detail=f"pin set violates Layout invariant: {e}",
-                    ),
-                ),
-                total_penetration_m2=0.0,
-            )
-            return check, _empty_layout(scenario)
+        # No try/except: every remaining Layout invariant that could fire
+        # here is either structurally impossible given pin-only construction
+        # or already caught by Scenario.__post_init__ (pin.plane_id mismatch,
+        # pin.on_carts vs movement_mode). A genuinely unexpected ValueError
+        # should propagate as a bug, not get silently re-wrapped as a pin
+        # infeasibility.
+        pin_only_layout = Layout(
+            fleet=scenario.fleet,
+            hangar=scenario.hangar,
+            placements=tuple(pinned_placements),
+            maintenance_plane=None,
+        )
 
         pin_check = check_layout(pin_only_layout)
         if not pin_check.valid:

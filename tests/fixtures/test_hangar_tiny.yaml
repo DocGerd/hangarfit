@@ -1,3 +1,17 @@
+# Test-only hangar — much smaller than the placeholder in data/hangar.yaml.
+#
+# Used by solve_infeasible_plane_too_big.yaml to force the solver's check #1
+# (per-plane bbox > hangar dims, spec §4.1.1) to fire on scheibe_falke
+# (18 m wingspan). The placeholder 25×18 hangar can't trigger check #1
+# because no plane in the fleet has any individual part dimension
+# exceeding 25 m, so a smaller hangar is necessary.
+#
+# Dimensions chosen so that max(length, width) = 10 m is well below the
+# 18 m wingspan of the Scheibe Falke, while still satisfying the
+# door / maintenance_bay invariants. Do NOT use this fixture for any test
+# that needs a feasible layout — by design, no plane in the fleet can
+# meaningfully fit here.
+
 length_m: 10.0
 width_m: 8.0
 door:
