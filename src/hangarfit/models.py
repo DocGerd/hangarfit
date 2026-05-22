@@ -628,6 +628,19 @@ class SolverDiagnostics:
                 f"SolverDiagnostics.diversity_rejected_count must be >= 0, "
                 f"got {self.diversity_rejected_count}"
             )
+        # Cross-field invariant: the static K>1 ∧ free_planes<min_planes_moved
+        # precondition (spec §4.1) fires on solve() entry, *before* the search
+        # loop runs. If `diversity_impossible` is True, the run exited
+        # pre-search and the diversity filter never executed — so a non-zero
+        # rejected count is impossible-by-construction. Guarding here turns a
+        # silent inconsistency into a loud failure.
+        if self.diversity_impossible and self.diversity_rejected_count > 0:
+            raise ValueError(
+                "SolverDiagnostics: diversity_impossible=True implies the "
+                "static precondition tripped before the search loop ran, so "
+                "diversity_rejected_count must be 0; "
+                f"got {self.diversity_rejected_count}"
+            )
 
 
 @dataclass(frozen=True, slots=True)

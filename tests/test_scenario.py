@@ -394,6 +394,31 @@ def test_solver_diagnostics_rejects_negative_diversity_rejected_count():
         )
 
 
+def test_solver_diagnostics_rejects_impossible_with_nonzero_rejected_count():
+    """diversity_impossible=True ∧ diversity_rejected_count>0 is impossible-by-construction.
+
+    The static ``K > 1 ∧ free_planes < min_planes_moved`` precondition (spec
+    §4.1) fires on solve() entry, *before* the search loop runs. If
+    ``diversity_impossible`` is True, the run exited pre-search and the
+    diversity filter never executed — so ``diversity_rejected_count`` must
+    be 0. A non-zero value would mean either the precondition fired wrongly
+    or counts leaked from a previous run; either way the SolverDiagnostics
+    is self-inconsistent. Guard the impossible state at construction.
+    """
+    from hangarfit.models import SolverDiagnostics
+
+    with pytest.raises(ValueError, match="diversity_impossible"):
+        SolverDiagnostics(
+            restarts_attempted=0,
+            wall_time_s=0.0,
+            best_partial=None,
+            best_partial_layout=None,
+            seed=42,
+            diversity_impossible=True,
+            diversity_rejected_count=1,
+        )
+
+
 def test_solve_result_construct_empty_for_infeasible():
     """Status=trivially_infeasible MUST have empty layouts."""
     from hangarfit.models import (
