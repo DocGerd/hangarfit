@@ -19,7 +19,7 @@ import sys
 
 from hangarfit import collisions, visualize
 from hangarfit.loader import LoaderError, load_fleet, load_hangar, load_layout
-from hangarfit.models import CheckResult, Conflict
+from hangarfit.models import CheckResult, Conflict, SolveResult
 
 _JSON_SCHEMA = "hangarfit.check/v1"
 _SOLVE_JSON_SCHEMA = "hangarfit.solve/v1"
@@ -181,9 +181,43 @@ def cmd_check(args: argparse.Namespace) -> int:
     return 0 if result.valid else 1
 
 
+def _emit_solve_human(result: SolveResult, *, alternatives: int) -> None:
+    """Stub — F.3 fills this in."""
+    n = len(result.layouts)
+    print(f"status={result.status}, layouts={n}")
+
+
 def cmd_solve(args: argparse.Namespace) -> int:
     """Run the ``solve`` subcommand. See spec §5 for the data flow."""
-    raise NotImplementedError("F.2 wires this up.")
+    # Imports are local so that `hangarfit check` users don't pay the
+    # solver / matplotlib import cost — matplotlib is the slow one and
+    # only `--render` needs it.
+    from hangarfit.loader import load_scenario
+    from hangarfit.solver import solve
+
+    try:
+        fleet_override = load_fleet(args.fleet) if args.fleet is not None else None
+        hangar_override = load_hangar(args.hangar) if args.hangar is not None else None
+        scenario = load_scenario(args.scenario, fleet=fleet_override, hangar=hangar_override)
+    except LoaderError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+
+    result = solve(
+        scenario,
+        budget_s=args.budget,
+        alternatives=args.alternatives,
+        seed=args.seed,
+    )
+
+    _emit_solve_human(result, alternatives=args.alternatives)
+
+    # Exit code (spec §5.2). --strict-k flips 0 -> 1 only for found_partial.
+    if not result.layouts:
+        return 1
+    if result.status == "found_partial" and args.strict_k:
+        return 1
+    return 0
 
 
 def main(argv: list[str] | None = None) -> int:
