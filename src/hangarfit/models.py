@@ -454,6 +454,8 @@ class Scenario:
 
     Cross-reference invariants validated in __post_init__:
 
+    - fleet_in is non-empty
+    - fleet_in has no duplicate entries
     - every fleet_in id exists in fleet
     - maintenance_plane (if set) is in fleet_in
     - constraints.keys() ⊆ set(fleet_in)
@@ -463,7 +465,7 @@ class Scenario:
         force_on_carts=False → plane must NOT be always_cart
     - pin.on_carts is consistent with movement_mode (same rules)
     - if both a pin and force_on_carts are set, their on_carts must agree
-    - fleet dict is wrapped in MappingProxyType (same pattern as Layout)
+    - fleet and constraints are wrapped in MappingProxyType (same pattern as Layout)
 
     See spec §3.2 for the rationale.
     """
@@ -480,6 +482,11 @@ class Scenario:
         # also do `fleet_in[0]` which would IndexError on empty input).
         if not self.fleet_in:
             raise ValueError("Scenario.fleet_in must be non-empty")
+
+        # fleet_in has no duplicates (one Husky can't park in two places).
+        # Mirror of the placements seen-set check in Layout.__post_init__.
+        if len(set(self.fleet_in)) != len(self.fleet_in):
+            raise ValueError(f"Scenario.fleet_in has duplicate entries: {self.fleet_in}")
 
         # fleet_in references real planes
         for pid in self.fleet_in:
@@ -551,9 +558,11 @@ class Scenario:
                 )
 
         object.__setattr__(self, "fleet", MappingProxyType(dict(self.fleet)))
-        # constraints is also frozen-ish via MappingProxyType, ensure it is
-        if not isinstance(self.constraints, MappingProxyType):
-            object.__setattr__(self, "constraints", MappingProxyType(dict(self.constraints)))
+        # Always copy+wrap constraints — mirrors the unconditional pattern on
+        # fleet above (and on Layout.fleet). Skipping the copy when the caller
+        # passes a pre-wrapped MappingProxyType would let the caller leak
+        # mutations through their retained reference to the underlying dict.
+        object.__setattr__(self, "constraints", MappingProxyType(dict(self.constraints)))
 
 
 SolveStatus = Literal[
@@ -566,7 +575,18 @@ SolveStatus = Literal[
 
 @dataclass(frozen=True, slots=True)
 class SolverDiagnostics:
-    """Per-solve diagnostic information."""
+    """Per-solve diagnostic information.
+
+    ``best_partial`` and ``best_partial_layout`` are a fused pair — the
+    lowest-conflict :class:`CheckResult` seen and the matching
+    :class:`Layout` so it can be rendered. They MUST both be set or both
+    be ``None``; carrying one without the other is a self-inconsistent
+    state that would crash downstream rendering (Chunk F's CLI).
+
+    ``seed`` is the *actually-used* seed — ``None`` resolved to entropy
+    on entry to :func:`hangarfit.solver.solve` is recorded here so a run
+    can be replayed exactly.
+    """
 
     restarts_attempted: int
     wall_time_s: float
@@ -574,14 +594,46 @@ class SolverDiagnostics:
     best_partial_layout: Layout | None
     seed: int
 
+    def __post_init__(self) -> None:
+        if (self.best_partial is None) != (self.best_partial_layout is None):
+            raise ValueError(
+                "SolverDiagnostics.best_partial and best_partial_layout must "
+                "both be set or both be None"
+            )
+        if self.restarts_attempted < 0:
+            raise ValueError(
+                f"SolverDiagnostics.restarts_attempted must be >= 0, got {self.restarts_attempted}"
+            )
+        if not math.isfinite(self.wall_time_s) or self.wall_time_s < 0.0:
+            raise ValueError(
+                f"SolverDiagnostics.wall_time_s must be finite and >= 0, got {self.wall_time_s!r}"
+            )
+
 
 @dataclass(frozen=True, slots=True)
 class SolveResult:
-    """Public output of solver.solve()."""
+    """Public output of :func:`hangarfit.solver.solve`.
+
+    ``layouts`` is 0..K valid Layouts, with K matching the caller's
+    ``alternatives`` request. The ``status`` field disambiguates partial
+    runs (see spec §4.7); status and ``layouts`` emptiness must agree:
+
+    - ``"found"`` / ``"found_partial"`` → at least one layout
+    - ``"exhausted_budget"`` / ``"trivially_infeasible"`` → zero layouts
+    """
 
     status: SolveStatus
     layouts: tuple[Layout, ...]
     diagnostics: SolverDiagnostics
+
+    def __post_init__(self) -> None:
+        if self.status in ("found", "found_partial") and not self.layouts:
+            raise ValueError(f"SolveResult.status={self.status!r} requires at least one layout")
+        if self.status in ("exhausted_budget", "trivially_infeasible") and self.layouts:
+            raise ValueError(
+                f"SolveResult.status={self.status!r} must have empty layouts, "
+                f"got {len(self.layouts)}"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -592,12 +644,53 @@ class DiversityConfig:
     position_threshold_m: float = 0.5
     heading_threshold_deg: float = 30.0
 
+    def __post_init__(self) -> None:
+        if self.min_planes_moved < 1:
+            raise ValueError(
+                f"DiversityConfig.min_planes_moved must be >= 1 "
+                f"(zero makes diversity vacuous), got {self.min_planes_moved}"
+            )
+        if self.position_threshold_m <= 0.0:
+            raise ValueError(
+                f"DiversityConfig.position_threshold_m must be positive, "
+                f"got {self.position_threshold_m}"
+            )
+        if not (0.0 <= self.heading_threshold_deg <= 180.0):
+            raise ValueError(
+                f"DiversityConfig.heading_threshold_deg must be in [0, 180] "
+                f"(shorter arc), got {self.heading_threshold_deg}"
+            )
+
 
 @dataclass(frozen=True, slots=True)
 class SearchConfig:
-    """Solver hyperparameters (see spec §4.3, §4.5). v1 defaults are guesses."""
+    """Solver hyperparameters (see spec §4.3, §4.5).
+
+    v1 defaults are guesses; tune with real data.
+    """
 
     candidates_per_iter: int = 8
     k_stall: int = 50
     pos_sigma_m: float = 0.5
     heading_sigma_deg: float = 10.0
+
+    def __post_init__(self) -> None:
+        if self.candidates_per_iter < 1:
+            raise ValueError(
+                f"SearchConfig.candidates_per_iter must be >= 1 "
+                f"(descent picks one per iter), got {self.candidates_per_iter}"
+            )
+        if self.k_stall < 1:
+            raise ValueError(
+                f"SearchConfig.k_stall must be >= 1 "
+                f"(zero would restart on every iter), got {self.k_stall}"
+            )
+        if self.pos_sigma_m <= 0.0:
+            raise ValueError(
+                f"SearchConfig.pos_sigma_m must be positive "
+                f"(zero freezes the trajectory), got {self.pos_sigma_m}"
+            )
+        if self.heading_sigma_deg <= 0.0:
+            raise ValueError(
+                f"SearchConfig.heading_sigma_deg must be positive, got {self.heading_sigma_deg}"
+            )

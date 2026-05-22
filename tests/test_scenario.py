@@ -2,12 +2,15 @@
 
 from __future__ import annotations
 
+from types import MappingProxyType
+
 import pytest
 
 from hangarfit.loader import load_fleet, load_hangar
 from hangarfit.models import (
     Placement,
     PlaneConstraint,
+    Scenario,
 )
 
 # ── PlaneConstraint ─────────────────────────────────────────────────────
@@ -156,10 +159,8 @@ def test_scenario_rejects_force_on_carts_false_for_always_cart(fleet, hangar):
         )
 
 
-def test_scenario_rejects_pin_on_carts_inconsistent_with_movement_mode(fleet, hangar):
+def test_scenario_rejects_pin_on_carts_false_for_always_cart(fleet, hangar):
     """A pin whose on_carts violates the plane's movement_mode is invalid."""
-    from hangarfit.models import Placement, PlaneConstraint, Scenario
-
     # Falke is always_cart — a pin with on_carts=False is illegal.
     with pytest.raises(ValueError, match="movement_mode"):
         Scenario(
@@ -177,6 +178,91 @@ def test_scenario_rejects_pin_on_carts_inconsistent_with_movement_mode(fleet, ha
                     )
                 )
             },
+        )
+
+
+def test_scenario_rejects_pin_on_carts_true_for_always_own_gear(fleet, hangar):
+    """The symmetric half of the always_cart case: on_carts=True on a Husky
+    (always_own_gear) is illegal. Pinned as a separate test so a refactor
+    consolidating the two pin checks can't silently delete one half."""
+    with pytest.raises(ValueError, match="movement_mode"):
+        Scenario(
+            fleet=fleet,
+            hangar=hangar,
+            fleet_in=("aviat_husky",),  # always_own_gear
+            constraints={
+                "aviat_husky": PlaneConstraint(
+                    pin=Placement(
+                        plane_id="aviat_husky",
+                        x_m=2.0,
+                        y_m=2.0,
+                        heading_deg=0.0,
+                        on_carts=True,  # illegal for always_own_gear
+                    )
+                )
+            },
+        )
+
+
+def test_scenario_accepts_pin_and_force_on_carts_agreeing(fleet, hangar):
+    """Positive counterpart to the disagreement test: pin.on_carts and
+    force_on_carts both set to the same value should construct cleanly.
+
+    Pins the agreement-is-fine contract — a refactor that made the
+    disagreement check fire unconditionally (whenever both are set) would
+    silently break a legitimate use case, but the disagreement-only test
+    above would still pass. This test catches it."""
+    s = Scenario(
+        fleet=fleet,
+        hangar=hangar,
+        fleet_in=("cessna_140",),
+        constraints={
+            "cessna_140": PlaneConstraint(
+                pin=Placement(
+                    plane_id="cessna_140",
+                    x_m=2.0,
+                    y_m=2.0,
+                    heading_deg=0.0,
+                    on_carts=True,
+                ),
+                force_on_carts=True,
+            )
+        },
+    )
+    assert s.constraints["cessna_140"].force_on_carts is True
+
+
+def test_scenario_fleet_is_mapping_proxy(fleet, hangar):
+    """Pin the immutability wrap on Scenario.fleet — a refactor that
+    drops the object.__setattr__ in __post_init__ would silently regress
+    the docstring-promised immutability."""
+    s = Scenario(fleet=fleet, hangar=hangar, fleet_in=("aviat_husky",))
+    assert isinstance(s.fleet, MappingProxyType)
+    with pytest.raises(TypeError):
+        s.fleet["x"] = None  # type: ignore[index]
+
+
+def test_scenario_constraints_is_mapping_proxy(fleet, hangar):
+    """Pin the immutability wrap on Scenario.constraints — same risk as
+    test_scenario_fleet_is_mapping_proxy."""
+    s = Scenario(
+        fleet=fleet,
+        hangar=hangar,
+        fleet_in=("aviat_husky",),
+        constraints={"aviat_husky": PlaneConstraint()},
+    )
+    assert isinstance(s.constraints, MappingProxyType)
+    with pytest.raises(TypeError):
+        s.constraints["x"] = PlaneConstraint()  # type: ignore[index]
+
+
+def test_scenario_rejects_duplicate_fleet_in(fleet, hangar):
+    """One plane can't park in two places — fleet_in must have no duplicates."""
+    with pytest.raises(ValueError, match="duplicate"):
+        Scenario(
+            fleet=fleet,
+            hangar=hangar,
+            fleet_in=("aviat_husky", "aviat_husky"),
         )
 
 
@@ -231,25 +317,101 @@ def test_solver_diagnostics_construct():
     assert d.restarts_attempted == 47
 
 
-def test_solve_result_construct():
+def test_solver_diagnostics_rejects_partial_pairing():
+    """best_partial and best_partial_layout are a fused pair — both-or-neither."""
+    from hangarfit.models import CheckResult, SolverDiagnostics
+
+    with pytest.raises(ValueError, match="best_partial"):
+        SolverDiagnostics(
+            restarts_attempted=0,
+            wall_time_s=0.0,
+            best_partial=CheckResult(),  # Some
+            best_partial_layout=None,  # None — mismatched
+            seed=42,
+        )
+
+
+def test_solver_diagnostics_rejects_negative_restarts():
+    from hangarfit.models import SolverDiagnostics
+
+    with pytest.raises(ValueError, match=">= 0"):
+        SolverDiagnostics(
+            restarts_attempted=-1,
+            wall_time_s=0.0,
+            best_partial=None,
+            best_partial_layout=None,
+            seed=42,
+        )
+
+
+def test_solver_diagnostics_rejects_negative_wall_time():
+    from hangarfit.models import SolverDiagnostics
+
+    with pytest.raises(ValueError, match="wall_time_s"):
+        SolverDiagnostics(
+            restarts_attempted=0,
+            wall_time_s=-0.1,
+            best_partial=None,
+            best_partial_layout=None,
+            seed=42,
+        )
+
+
+def test_solve_result_construct_empty_for_infeasible():
+    """Status=trivially_infeasible MUST have empty layouts."""
     from hangarfit.models import (
         SolverDiagnostics,
         SolveResult,
     )
 
-    r = SolveResult(
-        status="found",
-        layouts=(),
-        diagnostics=SolverDiagnostics(
-            restarts_attempted=0,
-            wall_time_s=0.0,
-            best_partial=None,
-            best_partial_layout=None,
-            seed=42,
-        ),
+    diag = SolverDiagnostics(
+        restarts_attempted=0,
+        wall_time_s=0.0,
+        best_partial=None,
+        best_partial_layout=None,
+        seed=42,
     )
-    assert r.status == "found"
+    r = SolveResult(status="trivially_infeasible", layouts=(), diagnostics=diag)
+    assert r.status == "trivially_infeasible"
     assert r.layouts == ()
+
+
+def test_solve_result_rejects_found_with_empty_layouts():
+    """Status=found with empty layouts is self-inconsistent."""
+    from hangarfit.models import (
+        SolverDiagnostics,
+        SolveResult,
+    )
+
+    diag = SolverDiagnostics(
+        restarts_attempted=0,
+        wall_time_s=0.0,
+        best_partial=None,
+        best_partial_layout=None,
+        seed=42,
+    )
+    with pytest.raises(ValueError, match="requires at least one layout"):
+        SolveResult(status="found", layouts=(), diagnostics=diag)
+
+
+def test_solve_result_rejects_infeasible_with_layouts(fleet, hangar):
+    """Status=trivially_infeasible with non-empty layouts is self-inconsistent."""
+    from hangarfit.models import (
+        Layout,
+        SolverDiagnostics,
+        SolveResult,
+    )
+
+    diag = SolverDiagnostics(
+        restarts_attempted=0,
+        wall_time_s=0.0,
+        best_partial=None,
+        best_partial_layout=None,
+        seed=42,
+    )
+    empty_layout = Layout(fleet=fleet, hangar=hangar, placements=())
+    with pytest.raises(ValueError, match="must have empty layouts"):
+        SolveResult(status="trivially_infeasible", layouts=(empty_layout,), diagnostics=diag)
 
 
 # ── DiversityConfig / SearchConfig ──────────────────────────────────────
