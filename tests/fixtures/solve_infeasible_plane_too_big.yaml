@@ -1,0 +1,14 @@
+# Single Scheibe Falke (18 m wingspan) in the test-only tiny hangar
+# (10×8 m). Pins solver check #1 (per-plane bbox > max hangar dim,
+# spec §4.1.1).
+#
+# Note: this fixture ALSO satisfies check #2 (Σ areas: a single Falke's
+# bbox area exceeds the tiny hangar's 80 m² floor). Because the solver
+# evaluates the three checks in order, check #1 fires first — the
+# test_solve_trivially_infeasible_when_plane_too_big_for_hangar test
+# asserts the resulting conflict.kind == "trivially_infeasible_plane_too_big"
+# explicitly, which also pins first-match-wins ordering.
+
+fleet: ../../data/fleet.yaml
+hangar: ./test_hangar_tiny.yaml
+fleet_in: [scheibe_falke]

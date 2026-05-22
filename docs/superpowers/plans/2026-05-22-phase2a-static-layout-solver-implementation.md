@@ -413,7 +413,7 @@ Per memory `feedback_pr_metadata.md`, `gh pr edit` is broken in this repo. Use `
 
 ```bash
 PR_NUMBER=<the PR number from Step 2>
-gh api -X PATCH "repos/DocGerd/hangarfit/issues/$PR_NUMBER" -f '{"labels":["enhancement"]}'
+echo '{"labels":["enhancement"]}' | gh api -X PATCH "repos/DocGerd/hangarfit/issues/$PR_NUMBER" --input -
 ```
 
 (Milestone assignment optional — leave blank unless a Phase 2 milestone exists.)
@@ -1443,7 +1443,7 @@ EOF
 
 ```bash
 PR_NUMBER=<from Step 2>
-gh api -X PATCH "repos/DocGerd/hangarfit/issues/$PR_NUMBER" -f '{"labels":["enhancement"]}'
+echo '{"labels":["enhancement"]}' | gh api -X PATCH "repos/DocGerd/hangarfit/issues/$PR_NUMBER" --input -
 ```
 
 - [x] **Step 4: Run `/pr-review`, resolve threads, hand off**
@@ -1468,7 +1468,7 @@ Same flow as Chunk A. Don't merge.
 
 ### Task C.0: Branch + issue setup
 
-- [ ] **Step 1: Update develop, create branch**
+- [x] **Step 1: Update develop, create branch**
 
 ```bash
 git switch develop
@@ -1476,7 +1476,7 @@ git pull --ff-only
 git switch -c feature/phase2a-solver-skeleton
 ```
 
-- [ ] **Step 2: Create the issue**
+- [x] **Step 2: Create the issue** (issue #86)
 
 ```bash
 gh issue create \
@@ -1507,7 +1507,7 @@ Note issue number as `#C`.
 - Create: `tests/test_solver_infeasibility.py`
 - Create: `tests/fixtures/solve_feasible_smoke.yaml`
 
-- [ ] **Step 1: Create the feasible smoke fixture**
+- [x] **Step 1: Create the feasible smoke fixture**
 
 `tests/fixtures/solve_feasible_smoke.yaml`:
 
@@ -1519,7 +1519,7 @@ fleet_in: [aviat_husky]
 
 (Single plane, small footprint, large hangar — definitely feasible.)
 
-- [ ] **Step 2: Write the failing smoke test**
+- [x] **Step 2: Write the failing smoke test**
 
 Create `tests/test_solver_infeasibility.py`:
 
@@ -1560,13 +1560,13 @@ def test_solve_resolves_none_seed_to_entropy():
     assert r.diagnostics.seed != 0  # entropy is essentially always nonzero
 ```
 
-- [ ] **Step 3: Run, expect failure**
+- [x] **Step 3: Run, expect failure**
 
 Run: `pytest tests/test_solver_infeasibility.py -v`
 
 Expected: FAIL with `ModuleNotFoundError: No module named 'hangarfit.solver'`.
 
-- [ ] **Step 4: Create the minimal `solver.py`**
+- [x] **Step 4: Create the minimal `solver.py`**
 
 Create `src/hangarfit/solver.py`:
 
@@ -1640,13 +1640,13 @@ def solve(
     )
 ```
 
-- [ ] **Step 5: Run, expect pass**
+- [x] **Step 5: Run, expect pass**
 
 Run: `pytest tests/test_solver_infeasibility.py -v`
 
 Expected: both PASS.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/hangarfit/solver.py tests/test_solver_infeasibility.py tests/fixtures/solve_feasible_smoke.yaml
@@ -1675,7 +1675,7 @@ EOF
 
 **Note:** "plane bbox > hangar" requires a fixture where some plane's max-extent bbox literally exceeds the hangar's larger dimension. Since the real `data/fleet.yaml` planes all fit in `data/hangar.yaml`, we'll synthesize a tiny test-only hangar. (Actually, the Falke's 18 m wing fits in `data/hangar.yaml`'s 25 m length already. Use a 10×10 m fixture hangar so the Falke clearly doesn't fit.)
 
-- [ ] **Step 1: Create the test-only hangar and scenario fixtures**
+- [x] **Step 1: Create the test-only hangar and scenario fixtures**
 
 `tests/fixtures/test_hangar_tiny.yaml` (only if it doesn't exist; check first with `ls tests/fixtures/test_hangar*`):
 
@@ -1699,7 +1699,7 @@ hangar: ./test_hangar_tiny.yaml
 fleet_in: [scheibe_falke]   # 18 m wingspan, won't fit in 10x8 m
 ```
 
-- [ ] **Step 2: Write failing test**
+- [x] **Step 2: Write failing test**
 
 Append to `tests/test_solver_infeasibility.py`:
 
@@ -1719,13 +1719,23 @@ def test_solve_trivially_infeasible_when_plane_too_big_for_hangar():
     assert r.diagnostics.restarts_attempted == 0
 ```
 
-- [ ] **Step 3: Run, expect failure**
+- [x] **Step 3: Run, expect failure**
 
 Run: `pytest tests/test_solver_infeasibility.py::test_solve_trivially_infeasible_when_plane_too_big_for_hangar -v`
 
 Expected: FAIL — status is `exhausted_budget` instead of `trivially_infeasible`.
 
-- [ ] **Step 4: Implement check #1 in `solver.py`**
+- [x] **Step 4: Implement check #1 in `solver.py`**
+
+**Deviation note (Chunk B re-baseline):** Chunk B added a fused-pair
+invariant to `SolverDiagnostics` requiring `best_partial` and
+`best_partial_layout` to both be set or both be None. The plan's
+literal "`best_partial_layout=None`" alongside `best_partial=<CheckResult>`
+violates this. Resolution: `_check_trivially_infeasible` now returns
+`tuple[CheckResult, Layout] | None`; checks #1 and #2 pair the synthetic
+CheckResult with a placement-less Layout via a new `_empty_layout`
+helper, check #3 pairs the CheckResult with the pin-only Layout that
+detected the conflict.
 
 In `src/hangarfit/solver.py`, insert a helper function and a check call inside `solve()` before the short-circuit return. After the `del rng` line, before `start = time.monotonic()`:
 
@@ -1829,13 +1839,13 @@ def _plane_max_extent(plane) -> tuple[float, float]:
 
 Note: also add `field`, `Layout`, `CheckResult`, `Conflict` to the imports of `solver.py` if not already present.
 
-- [ ] **Step 5: Run, expect pass**
+- [x] **Step 5: Run, expect pass**
 
 Run: `pytest tests/test_solver_infeasibility.py -v`
 
 Expected: all PASS, including the new plane-too-big test.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/hangarfit/solver.py tests/test_solver_infeasibility.py tests/fixtures/test_hangar_tiny.yaml tests/fixtures/solve_infeasible_plane_too_big.yaml
@@ -1860,7 +1870,7 @@ EOF
 
 ### Task C.3: Pre-search infeasibility check 2 — Σ areas > hangar
 
-- [ ] **Step 1: Create the fixture**
+- [x] **Step 1: Create the fixture**
 
 `tests/fixtures/solve_infeasible_too_big.yaml`:
 
@@ -1872,7 +1882,7 @@ fleet_in: [scheibe_falke, aviat_husky, fuji, wild_thing, zlin_savage, cessna_140
 
 (All 9 planes in the placeholder hangar — known too small per memory `project_case12_hangar_workaround`.)
 
-- [ ] **Step 2: Write the failing test**
+- [x] **Step 2: Write the failing test**
 
 Append:
 
@@ -1895,13 +1905,15 @@ def test_solve_trivially_infeasible_when_sum_areas_exceeds_hangar():
                for c in bp.conflicts)
 ```
 
-- [ ] **Step 3: Run, expect failure**
+- [x] **Step 3: Run, expect failure**
 
 Run: `pytest tests/test_solver_infeasibility.py::test_solve_trivially_infeasible_when_sum_areas_exceeds_hangar -v`
 
 Expected: FAIL. The placeholder hangar (25 × 18 = 450 m²) may or may not actually exceed Σ areas of all 9 planes — verify first by hand-summing from `data/fleet.yaml`. If sum < 450 m², adjust the fixture (use `test_hangar_tiny.yaml` as the hangar instead) so the assertion holds.
 
-- [ ] **Step 4: Implement check #2**
+(Verified: 9-plane Σ ≈ 653.8 m² > 450 m². Placeholder hangar is fine.)
+
+- [x] **Step 4: Implement check #2**
 
 In `_check_trivially_infeasible`, after check #1:
 
@@ -1932,13 +1944,13 @@ In `_check_trivially_infeasible`, after check #1:
 
 (Note: the synthetic Conflict picks an arbitrary plane for `planes`; the real information is in `detail`. The spec acknowledges that single-plane vs sum-aggregate conflicts use the same `Conflict` shape.)
 
-- [ ] **Step 5: Run, expect pass**
+- [x] **Step 5: Run, expect pass**
 
 Run: `pytest tests/test_solver_infeasibility.py -v`
 
 Expected: green.
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add src/hangarfit/solver.py tests/test_solver_infeasibility.py tests/fixtures/solve_infeasible_too_big.yaml
@@ -1959,7 +1971,7 @@ EOF
 
 ### Task C.4: Pre-search infeasibility check 3 — pin self-collision
 
-- [ ] **Step 1: Create the fixture**
+- [x] **Step 1: Create the fixture**
 
 `tests/fixtures/solve_infeasible_pins_clash.yaml`:
 
@@ -1974,7 +1986,7 @@ constraints:
     pin: { x_m: 5.0, y_m: 5.0, heading_deg: 0.0, on_carts: false }   # exact same spot
 ```
 
-- [ ] **Step 2: Write failing test**
+- [x] **Step 2: Write failing test**
 
 Append:
 
@@ -1999,13 +2011,13 @@ def test_solve_trivially_infeasible_when_pins_clash():
     )
 ```
 
-- [ ] **Step 3: Run, expect failure**
+- [x] **Step 3: Run, expect failure**
 
 Run: `pytest tests/test_solver_infeasibility.py::test_solve_trivially_infeasible_when_pins_clash -v`
 
 Expected: FAIL.
 
-- [ ] **Step 4: Implement check #3**
+- [x] **Step 4: Implement check #3**
 
 In `_check_trivially_infeasible`, after check #2:
 
@@ -2050,13 +2062,13 @@ In `_check_trivially_infeasible`, after check #2:
             return pin_check
 ```
 
-- [ ] **Step 5: Run, expect pass**
+- [x] **Step 5: Run, expect pass**
 
 Run: `pytest tests/test_solver_infeasibility.py -v`
 
 Expected: all PASS.
 
-- [ ] **Step 6: Run full suite + lint + type check**
+- [x] **Step 6: Run full suite + lint + type check**
 
 ```bash
 pytest -q && ruff check src/ tests/ && ruff format --check src/ tests/ && mypy src/hangarfit/
@@ -2064,7 +2076,7 @@ pytest -q && ruff check src/ tests/ && ruff format --check src/ tests/ && mypy s
 
 Expected: green.
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add src/hangarfit/solver.py tests/test_solver_infeasibility.py tests/fixtures/solve_infeasible_pins_clash.yaml
@@ -2089,7 +2101,7 @@ EOF
 
 ### Task C.5: Chunk C wrap-up
 
-- [ ] **Step 1: Push, open PR, set metadata, run review, hand off**
+- [x] **Step 1: Push, open PR, set metadata, run review, hand off** (PR #87, label set via `gh api -X PATCH` with `--input -` JSON body. The plan's `-f '{...}'` form is malformed — `-f` takes one `key=value` per flag, not a JSON object. Used `echo '{"labels":["enhancement"]}' | gh api -X PATCH ".../issues/87" --input -` instead.)
 
 ```bash
 git push -u origin feature/phase2a-solver-skeleton
@@ -2119,7 +2131,7 @@ Closes #C
 EOF
 )"
 PR_NUMBER=<from above>
-gh api -X PATCH "repos/DocGerd/hangarfit/issues/$PR_NUMBER" -f '{"labels":["enhancement"]}'
+echo '{"labels":["enhancement"]}' | gh api -X PATCH "repos/DocGerd/hangarfit/issues/$PR_NUMBER" --input -
 ```
 
 Run `/pr-review`, resolve threads, hand off.
@@ -3044,7 +3056,7 @@ EOF
 )"
 
 PR_NUMBER=<from above>
-gh api -X PATCH "repos/DocGerd/hangarfit/issues/$PR_NUMBER" -f '{"labels":["enhancement"]}'
+echo '{"labels":["enhancement"]}' | gh api -X PATCH "repos/DocGerd/hangarfit/issues/$PR_NUMBER" --input -
 ```
 
 Run `/pr-review`, resolve, hand off.

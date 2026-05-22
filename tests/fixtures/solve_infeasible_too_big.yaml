@@ -1,0 +1,13 @@
+# All 9 planes in the placeholder hangar. The placeholder 25×18 hangar
+# is known too-tight to fit the full fleet (see CLAUDE.md's
+# "Placeholder hangar can't fit the full fleet" note + the Σ-areas
+# arithmetic). Used to pin solver check #2 (Σ bbox areas > hangar
+# floor, spec §4.1.2).
+#
+# Will start passing once real hangar measurements land (issue #79) —
+# at which point a different fixture will be needed to keep check #2's
+# regression test exercised.
+
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
+fleet_in: [scheibe_falke, aviat_husky, fuji, wild_thing, zlin_savage, cessna_140, cessna_150, ctsl, fk9_mkii]
