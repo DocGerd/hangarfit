@@ -262,6 +262,11 @@ def test_solve_finds_layout_for_trivial_single_plane():
     assert r.status == "found"
     assert len(r.layouts) == 1
     assert check(r.layouts[0]).valid
+    # K=1 happy path: the diversity filter is vacuously True with no
+    # accepted layouts, so the reject branch is unreachable when
+    # alternatives=1. A regression that moved the rejected_count
+    # increment outside the `else:` arm in solver.py would surface here.
+    assert r.diagnostics.diversity_rejected_count == 0
 
 
 def test_solve_finds_layout_for_fresh_six_planes():
