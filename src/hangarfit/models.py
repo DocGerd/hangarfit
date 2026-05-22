@@ -11,6 +11,7 @@ The full coordinate convention and parts-model collision rule live in
 
 from __future__ import annotations
 
+import math
 import typing
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -418,6 +419,16 @@ class CheckResult:
 
     conflicts: tuple[Conflict, ...] = ()
     total_penetration_m2: float = 0.0
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.total_penetration_m2):
+            raise ValueError(
+                f"total_penetration_m2 must be finite, got {self.total_penetration_m2!r}"
+            )
+        if self.total_penetration_m2 < 0.0:
+            raise ValueError(
+                f"total_penetration_m2 must be >= 0.0, got {self.total_penetration_m2}"
+            )
 
     @property
     def valid(self) -> bool:

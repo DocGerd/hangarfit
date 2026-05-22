@@ -774,23 +774,27 @@ class TestCheckResult:
         assert r.valid is False
         assert len(r.conflicts) == 1
 
+    def test_default_total_penetration_is_zero(self) -> None:
+        """Default-constructed CheckResult has total_penetration_m2 == 0.0."""
+        result = CheckResult()
+        assert result.total_penetration_m2 == 0.0
+        assert result.valid is True
 
-def test_check_result_default_total_penetration_is_zero():
-    """Default-constructed CheckResult has total_penetration_m2 == 0.0."""
-    from hangarfit.models import CheckResult
+    def test_total_penetration_field_is_independent_of_validity(self) -> None:
+        """Explicit penetration is preserved; validity is conflict-derived only."""
+        result = CheckResult(total_penetration_m2=2.5)
+        assert result.total_penetration_m2 == 2.5
+        assert result.valid is True  # derived from conflicts, not penetration
 
-    result = CheckResult()
-    assert result.total_penetration_m2 == 0.0
-    assert result.valid is True
+    def test_total_penetration_rejects_nan(self) -> None:
+        """NaN would silently corrupt Phase 2a's lexicographic sort key."""
+        with pytest.raises(ValueError, match="must be finite"):
+            CheckResult(total_penetration_m2=float("nan"))
 
-
-def test_check_result_total_penetration_field_is_kept():
-    """Explicit penetration value is preserved."""
-    from hangarfit.models import CheckResult
-
-    result = CheckResult(total_penetration_m2=2.5)
-    assert result.total_penetration_m2 == 2.5
-    assert result.valid is True  # still derived from conflicts, not from penetration
+    def test_total_penetration_rejects_negative(self) -> None:
+        """A summed area is non-negative by construction; reject anything else."""
+        with pytest.raises(ValueError, match="must be >= 0.0"):
+            CheckResult(total_penetration_m2=-0.1)
 
 
 class TestFrozenBehavior:

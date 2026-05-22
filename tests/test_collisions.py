@@ -271,33 +271,50 @@ class TestMaintenancePosition:
         )
 
 
-def test_check_populates_total_penetration_for_overlapping_wings():
-    """Two planes whose wings overlap in plan view should produce a
-    non-zero total_penetration_m2 equal to the sum of intersection areas."""
-    layout = _load("invalid_wing_wing_same_height")
-    result = check(layout)
+class TestTotalPenetration:
+    """Behavioral tests for ``CheckResult.total_penetration_m2``.
 
-    assert not result.valid
-    assert result.total_penetration_m2 > 0.0, (
-        f"Expected non-zero penetration for overlapping wings; got {result.total_penetration_m2}"
-    )
+    Penetration is the summed shapely ``intersection().area`` across pairwise
+    conflicts, used by the Phase 2a solver as a smooth tie-breaker on top of
+    the integer conflict count. These tests pin:
 
+    1. the exact value for a single-pair overlap (axis-aligned, deterministic),
+    2. the sum semantic across multiple pair-collisions in one layout,
+    3. the zero-on-valid-layout contract,
+    4. the "single-plane conflicts contribute 0" rule from
+       :func:`hangarfit.collisions._pairwise_conflicts`'s docstring.
+    """
 
-def test_check_total_penetration_is_zero_for_valid_layout():
-    """Valid layouts have total_penetration_m2 == 0.0 by construction."""
-    layout = load_layout(Path(__file__).resolve().parent.parent / "layouts" / "example.yaml")
-    result = check(layout)
+    def test_exact_value_for_single_wing_wing_overlap(self) -> None:
+        layout = _load("invalid_wing_wing_same_height")
+        result = check(layout)
 
-    assert result.valid
-    assert result.total_penetration_m2 == 0.0
+        assert not result.valid
+        assert result.total_penetration_m2 == pytest.approx(4.0373, abs=1e-4)
 
+    def test_sums_across_multiple_pair_conflicts(self) -> None:
+        """3 pairwise conflicts in ``invalid_strut_blocks_nesting`` should
+        sum to the deterministic 1.4305 m² total — pins the ``+=``
+        accumulator semantic against future refactors to ``=``, ``max``,
+        or ``mean``."""
+        layout = _load("invalid_strut_blocks_nesting")
+        result = check(layout)
 
-def test_check_total_penetration_excludes_single_plane_conflicts():
-    """Single-plane conflicts (hangar_bounds, maintenance_position) contribute 0."""
-    layout = _load("invalid_hangar_bounds")
-    result = check(layout)
+        assert len(result.conflicts) == 3
+        assert result.total_penetration_m2 == pytest.approx(1.4305, abs=1e-4)
 
-    assert not result.valid
-    # Every conflict here is single-plane (hangar_bounds).
-    assert all(len(c.planes) == 1 for c in result.conflicts)
-    assert result.total_penetration_m2 == 0.0
+    def test_zero_for_valid_layout(self) -> None:
+        layout = _load("valid_two_separated")
+        result = check(layout)
+
+        assert result.valid
+        assert result.total_penetration_m2 == 0.0
+
+    def test_single_plane_conflicts_contribute_zero(self) -> None:
+        layout = _load("invalid_hangar_bounds")
+        result = check(layout)
+
+        assert not result.valid
+        # Every conflict here is single-plane (hangar_bounds).
+        assert all(len(c.planes) == 1 for c in result.conflicts)
+        assert result.total_penetration_m2 == 0.0
