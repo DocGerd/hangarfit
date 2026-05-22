@@ -1,0 +1,30 @@
+# Force-carts lock scenario: cessna_140 (cart_eligible) is force-locked
+# `on_carts=True`. Exercises the constraint-respecting code path for
+# force_on_carts.
+#
+# Spec §6.5: expected `found`, returned layout respects the lock. The
+# test asserts the cessna_140 placement has on_carts=True regardless of
+# where the solver places it.
+#
+# Cart rule reminder (CLAUDE.md): of the four `cart_eligible` planes
+# (cessna_140, cessna_150, ctsl, fk9_mkii), at most ONE may be on carts
+# at a time. The fixture's fleet_in includes two cart_eligibles
+# (cessna_140 locked-on + ctsl, which the solver may freely place on
+# its own gear). The solver's `_enumerate_cart_buckets` must respect
+# the lock by collapsing the bucket choice to just `{cessna_140}`
+# (skipping the empty and ctsl-only buckets the lock disqualifies).
+#
+# Hangar: test_hangar_large. Fleet kept to 4 planes — the force-lock
+# collapses the cart-bucket enumeration, which makes diverse restart
+# starts harder; the smaller fleet keeps the solver's search robust
+# across seeds rather than relying on a seed cherry-pick.
+# Maintenance plane omitted: not required for this contract's surface,
+# and omitting it leaves the maintenance-bay rule from the test's
+# concerns.
+
+fleet: ../../data/fleet.yaml
+hangar: ./test_hangar_large.yaml
+fleet_in: [aviat_husky, fuji, ctsl, cessna_140]
+constraints:
+  cessna_140:
+    force_on_carts: true

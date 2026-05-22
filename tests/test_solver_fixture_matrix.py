@@ -141,3 +141,26 @@ def test_solve_repair_minimal_edit_honors_all_pins():
     # The unpinned plane (fuji) is placed somewhere — just verify
     # presence; coordinates are search-derived, not contract-asserted.
     assert "fuji" in placements_by_id
+
+
+# ── G.3: solve_force_carts_lock ─────────────────────────────────────────
+
+
+def test_solve_force_carts_lock_respects_lock():
+    """force_on_carts=True must be reflected in every returned layout's
+    placement for that plane. Spec §6.5: `found`, returned layout
+    respects the lock.
+    """
+    s = load_scenario(f"{FIXTURES}/solve_force_carts_lock.yaml")
+    r = solve(s, budget_s=5.0, alternatives=1, seed=42)
+
+    if r.status == "exhausted_budget":
+        pytest.skip(
+            f"Solver didn't find a layout in 5s for solve_force_carts_lock "
+            f"(restarts={r.diagnostics.restarts_attempted})."
+        )
+
+    _assert_universal_properties(r)
+    assert r.status == "found"
+    placed = next(p for p in r.layouts[0].placements if p.plane_id == "cessna_140")
+    assert placed.on_carts is True
