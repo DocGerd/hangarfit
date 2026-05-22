@@ -19,7 +19,7 @@ import sys
 
 from hangarfit import collisions, visualize
 from hangarfit.loader import LoaderError, load_fleet, load_hangar, load_layout
-from hangarfit.models import CheckResult, Conflict, SolveResult
+from hangarfit.models import CheckResult, Conflict, Layout, SolveResult
 
 _JSON_SCHEMA = "hangarfit.check/v1"
 _SOLVE_JSON_SCHEMA = "hangarfit.solve/v1"
@@ -182,9 +182,92 @@ def cmd_check(args: argparse.Namespace) -> int:
 
 
 def _emit_solve_human(result: SolveResult, *, alternatives: int) -> None:
-    """Stub — F.3 fills this in."""
+    """Write the human-readable summary to stdout. See spec §5.3."""
+    d = result.diagnostics
+    if result.status == "trivially_infeasible":
+        # `best_partial` is fused with the explanatory conflict by the
+        # solver (spec §4.1) — the first Conflict's detail is the
+        # canonical human reason.
+        print("Trivially infeasible:")
+        if d.best_partial is not None:
+            for c in d.best_partial.conflicts:
+                print(f"  - {c.kind} [{', '.join(c.planes)}]: {c.detail}")
+        return
+
+    if result.status == "exhausted_budget":
+        print(
+            f"No valid layout found in {d.wall_time_s:.1f}s "
+            f"(seed={d.seed}, {d.restarts_attempted} restarts)."
+        )
+        if d.best_partial is not None and d.best_partial.conflicts:
+            n = len(d.best_partial.conflicts)
+            print(f"Best partial had {n} conflict{'s' if n != 1 else ''}:")
+            for c in d.best_partial.conflicts:
+                print(f"  - {c.kind} [{', '.join(c.planes)}]: {c.detail}")
+        print("Hint: increase --budget, or relax pins.")
+        return
+
+    # found or found_partial: at least one layout.
     n = len(result.layouts)
-    print(f"status={result.status}, layouts={n}")
+    if result.status == "found_partial":
+        print(
+            f"Found {n} of {alternatives} requested layouts in "
+            f"{d.wall_time_s:.1f}s (seed={d.seed}, {d.restarts_attempted} restarts)."
+        )
+    else:
+        print(
+            f"Found {n} layout{'s' if n != 1 else ''} in "
+            f"{d.wall_time_s:.1f}s (seed={d.seed}, {d.restarts_attempted} restarts)."
+        )
+    for i, layout in enumerate(result.layouts, start=1):
+        line = f"  #{i}: {len(layout.placements)} planes placed; 0 conflicts; score=(0, 0.0)"
+        if i > 1:
+            parts = []
+            for j in range(i - 1):
+                moved, avg_shift = _placement_delta(result.layouts[j], layout)
+                total = len(layout.placements)
+                parts.append(
+                    f"{moved} of {total} planes shifted vs #{j + 1} (avg shift {avg_shift:.1f} m)"
+                )
+            line = f"  #{i}: {'; '.join(parts)}"
+        print(line)
+
+
+# Position threshold (m) used purely for the human-output "shifted vs"
+# count. Mirrors DiversityConfig.position_threshold_m's default so the
+# narration agrees with the filter that gated acceptance — not imported
+# from DiversityConfig because the CLI doesn't (yet) expose the threshold
+# as a flag; if it ever does, swap the constant for the configured value.
+_HUMAN_SHIFT_THRESHOLD_M = 0.5
+
+
+def _placement_delta(a: Layout, b: Layout) -> tuple[int, float]:
+    """Return (planes_moved, mean_xy_shift_m) between two layouts.
+
+    Planes-moved counts placements whose Euclidean (x, y) shift exceeds
+    ``_HUMAN_SHIFT_THRESHOLD_M`` — same metric the solver's diversity
+    filter uses. Heading-only shifts are intentionally ignored for the
+    narration: the audience is reading "how different does this layout
+    LOOK"; a pure rotation reads as the same layout to the eye even
+    though the solver considers it diverse.
+    """
+    import math
+
+    by_id_a = {p.plane_id: p for p in a.placements}
+    by_id_b = {p.plane_id: p for p in b.placements}
+    shared = sorted(set(by_id_a) & set(by_id_b))
+    moved = 0
+    total_shift = 0.0
+    for pid in shared:
+        pa, pb = by_id_a[pid], by_id_b[pid]
+        dx = pa.x_m - pb.x_m
+        dy = pa.y_m - pb.y_m
+        shift = math.hypot(dx, dy)
+        total_shift += shift
+        if shift > _HUMAN_SHIFT_THRESHOLD_M:
+            moved += 1
+    mean = total_shift / len(shared) if shared else 0.0
+    return moved, mean
 
 
 def cmd_solve(args: argparse.Namespace) -> int:

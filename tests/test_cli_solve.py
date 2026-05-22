@@ -93,3 +93,38 @@ class TestSolveSmoke:
         captured = capsys.readouterr()
         assert captured.out != ""
         assert "error:" not in captured.err
+
+
+class TestSolveHumanOutput:
+    """Spec §5.3 — human stdout for each status."""
+
+    def test_human_output_found(self, capsys):
+        rc = main(["solve", SMOKE_FIXTURE, "--budget", "2.0", "--seed", "42"])
+        assert rc == 0
+        out = capsys.readouterr().out
+        # First line: status summary with count, time, seed, restarts.
+        assert "Found 1 layout" in out
+        assert "seed=42" in out
+        assert "restart" in out
+        # Per-layout line includes plane count + conflict count + score.
+        assert "#1:" in out
+        assert "0 conflicts" in out
+        assert "score=" in out
+
+    def test_human_output_trivially_infeasible(self, capsys, tmp_path):
+        # Pin two carted planes to the same spot -> trivially infeasible.
+        fixture = str(FIXTURES_DIR / "solve_infeasible_pins_clash.yaml")
+        rc = main(["solve", fixture, "--budget", "1.0", "--seed", "42"])
+        assert rc == 1
+        out = capsys.readouterr().out
+        assert "Trivially infeasible" in out
+
+    def test_human_output_exhausted_budget(self, capsys):
+        # Plane bigger than hangar -> trivially infeasible via check #1.
+        fixture = str(FIXTURES_DIR / "solve_infeasible_plane_too_big.yaml")
+        rc = main(["solve", fixture, "--budget", "1.0", "--seed", "42"])
+        assert rc == 1
+        out = capsys.readouterr().out
+        # plane_too_big hits the per-plane infeasibility check (#1), so
+        # it surfaces as trivially_infeasible too.
+        assert "Trivially infeasible" in out
