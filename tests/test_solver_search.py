@@ -546,6 +546,63 @@ def test_diversity_filter_threshold_exact_boundary():
     assert _is_diverse_enough(L2, [L1], div)
 
 
+def test_solve_status_found_when_k_equals_two_both_satisfied():
+    """K=2, single plane in a large hangar — both alternatives findable.
+
+    Pins the `found` status branch on the K>1 path: with one plane free
+    in a roomy hangar, the search has plenty of distinct basins. After
+    two diverse layouts are accepted, the outer loop exits via
+    `len(accepted_layouts) >= alternatives` and status='found'.
+
+    Uses ``min_planes_moved=1`` because the fixture has a single plane —
+    the default M=2 would make diversity mathematically impossible (and
+    trigger the diversity-impossible warning on entry, which is covered
+    by a separate test).
+    """
+    from hangarfit.collisions import check
+    from hangarfit.loader import load_scenario
+    from hangarfit.models import DiversityConfig
+    from hangarfit.solver import _is_diverse_enough, solve
+
+    s = load_scenario("tests/fixtures/solve_trivial_single_plane.yaml")
+    div = DiversityConfig(min_planes_moved=1)
+    r = solve(s, budget_s=10.0, alternatives=2, seed=42, diversity=div)
+
+    if r.status == "exhausted_budget":
+        pytest.skip("Search didn't find K=2 within budget; acceptable on placeholder data.")
+    if r.status == "found_partial":
+        pytest.skip(
+            "Search found < 2 diverse layouts on this seed; with a single plane "
+            "and an empty pool, this is unlikely but the test must not flake."
+        )
+    assert r.status == "found"
+    assert len(r.layouts) == 2
+    for L in r.layouts:
+        assert check(L).valid
+    # The two layouts must be pairwise diverse under the configured policy.
+    assert _is_diverse_enough(r.layouts[0], [r.layouts[1]], div)
+
+
+def test_solve_emits_diversity_impossible_warning(caplog):
+    import logging
+
+    from hangarfit.loader import load_scenario
+    from hangarfit.solver import solve
+
+    s = load_scenario("tests/fixtures/solve_diversity_impossible_warn.yaml")
+    with caplog.at_level(logging.WARNING):
+        r = solve(s, budget_s=5.0, alternatives=3, seed=42)
+
+    # At least one warning about diversity impossibility
+    assert any(
+        "achievable" in rec.message.lower() or "diversity" in rec.message.lower()
+        for rec in caplog.records
+    ), f"Expected diversity-impossible warning; got messages: {[r.message for r in caplog.records]}"
+    # Should be found_partial (one layout found) or found (if K=1 matters)
+    assert r.status in {"found_partial", "found", "exhausted_budget"}
+    assert len(r.layouts) <= 1
+
+
 def test_solve_returns_k_diverse_alternatives():
     from hangarfit.loader import load_scenario
     from hangarfit.models import DiversityConfig

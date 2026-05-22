@@ -11,6 +11,7 @@ the current implementation supports:
 
 from __future__ import annotations
 
+import logging
 import random as _random_module
 import secrets
 import sys
@@ -30,6 +31,8 @@ from hangarfit.models import (
     SolveResult,
     SolveStatus,
 )
+
+_logger = logging.getLogger(__name__)
 
 
 def solve(
@@ -58,6 +61,30 @@ def solve(
     # index, so it's deterministic by construction.
     resolved_seed = seed if seed is not None else secrets.randbits(32)
     rng = _random_module.Random(resolved_seed)
+
+    # ── Diversity-impossible heuristic (spec §4.6) ──────────────────────
+    # When the number of free (non-pinned) planes is strictly less than
+    # diversity.min_planes_moved AND the caller asked for >1 alternative,
+    # they cannot mathematically get more than one accepted layout: every
+    # candidate L' after the first will share too many pinned planes with
+    # L to ever pass `n_moved ≥ min_planes_moved`. Logged as a warning
+    # so CLI / library users see it; we do NOT mutate `alternatives` —
+    # search runs normally and the natural outcome is found_partial with
+    # one accepted layout (spec deliberately avoids downgrading the API
+    # contract). Pin-detection mirrors `_check_trivially_infeasible`.
+    free_planes = sum(
+        1
+        for pid in scenario.fleet_in
+        if scenario.constraints.get(pid) is None or scenario.constraints[pid].pin is None
+    )
+    if alternatives > 1 and free_planes < diversity.min_planes_moved:
+        _logger.warning(
+            "requested %d alternatives but only 1 is achievable "
+            "(%d of %d planes are pinned). Expect status=found_partial.",
+            alternatives,
+            len(scenario.fleet_in) - free_planes,
+            len(scenario.fleet_in),
+        )
 
     # ── Pre-search infeasibility checks (§4.1) ──────────────────────────
     start = time.monotonic()
@@ -184,10 +211,13 @@ def solve(
     elapsed = time.monotonic() - start
 
     if accepted_layouts:
-        # alternatives=1 in Chunk D — found_partial cannot fire (we break
-        # the outer loop as soon as len(accepted) >= alternatives), but
-        # keep the branch shape so Chunk E's K-diversity addition is a
-        # one-liner.
+        # `found` fires when the outer loop broke via the
+        # `len(accepted_layouts) >= alternatives` check above (so the count
+        # is exactly `alternatives` — Chunk D path and Chunk E happy path).
+        # `found_partial` fires when budget exhausted with `0 < n < K`
+        # — reachable in Chunk E for K>1 (the diversity-impossible scenario
+        # is one driver, but any K>1 run that runs out of budget mid-fill
+        # also lands here).
         status: SolveStatus = "found" if len(accepted_layouts) >= alternatives else "found_partial"
         return SolveResult(
             status=status,
