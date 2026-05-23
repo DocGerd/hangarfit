@@ -167,18 +167,28 @@ def test_solve_force_carts_lock_respects_lock():
     """force_on_carts=True must be reflected in every returned layout's
     placement for that plane. Spec §6.5: `found`, returned layout
     respects the lock.
+
+    Calibration (spec §4.3, ``K = max(observed × 2, 5)`` under ``seed=42``):
+    observed restarts_attempted = 1 (deterministic across 3 trials); K = 5.
+    A regression that pushes this beyond 5 restarts trips the assert below
+    instead of silently skipping.
     """
     s = load_scenario(f"{FIXTURES}/solve_force_carts_lock.yaml")
-    r = solve(s, budget_s=5.0, alternatives=1, seed=42)
+    r = solve(
+        s,
+        budget_s=5.0,
+        alternatives=1,
+        seed=42,
+        search=SearchConfig(max_restarts=5),
+    )
 
-    if r.status == "exhausted_budget":
-        pytest.skip(
-            f"Solver didn't find a layout in 5s for solve_force_carts_lock "
-            f"(restarts={r.diagnostics.restarts_attempted})."
-        )
+    assert r.status == "found", (
+        f"Fixture 'solve_force_carts_lock.yaml' exhausted within max_restarts=5 "
+        f"(restarts_attempted={r.diagnostics.restarts_attempted}); a regression "
+        f"is likely (was previously found within 1 restart under seed=42)."
+    )
 
     _assert_universal_properties(r)
-    assert r.status == "found"
     placed = next(p for p in r.layouts[0].placements if p.plane_id == "cessna_140")
     assert placed.on_carts is True
 
