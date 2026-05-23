@@ -2,11 +2,24 @@
 
 Renders a :class:`Layout` to a PNG: hangar outline, door as a gap in the
 front wall (at the *top* of the rendered image, matching the coordinate
-diagram in ``CLAUDE.md``), maintenance bay shaded, each placed aircraft
-drawn as its world :class:`Part` polygons (fuselage opaque, wing
-translucent so overlapping wings show their stack, struts as thin lines).
-Aircraft are color-keyed by ``wing_position``. If a :class:`CheckResult`
-is supplied, the parts of conflicting planes are overdrawn in red.
+diagram in ``docs/architecture/08-crosscutting-concepts.md``), the
+maintenance bay rendered conditionally, each placed aircraft drawn as
+its world :class:`Part` polygons (fuselage opaque, wing translucent so
+overlapping wings show their stack, struts as thin lines). Aircraft are
+color-keyed by ``wing_position``. If a :class:`CheckResult` is supplied,
+the parts of conflicting planes are overdrawn in red.
+
+Maintenance bay rendering (two-state):
+
+- ``layout.maintenance_plane is None`` — bay area is rendered as normal
+  hangar floor (no shading). The bay only exists in the model as
+  geometry; with no occupant, it imposes no constraint.
+- ``layout.maintenance_plane is not None`` — bay rect is filled with a
+  hatched red "wall" pattern using the partial-width geometry
+  (``center_x_m``, ``width_m``, ``depth_m``), and an
+  ``IN MAINTENANCE: <plane_id>`` label is centered inside. The occupant
+  itself is not drawn — by Layout invariant it is absent from
+  ``placements`` and the draw loop skips it without special-casing.
 
 The renderer's job is to give a human something to eyeball — visual
 quality is intentionally not asserted in tests. The smoke tests verify
@@ -67,8 +80,15 @@ _NOSE_ARROW_LENGTH_M = 0.8
 # visible rather than clipped flush against the figure edge.
 _VIEW_PADDING_M = 1.0
 
-_BAY_COLOR = "#fadbd8"  # very pale red — "this strip is reserved"
-_BAY_ALPHA = 0.35
+# Closed-bay "wall" style: saturated dark red filled under a slashed
+# hatch pattern reads as a physical keep-out from a distance and is
+# distinct from ``_CONFLICT_COLOR`` (lighter red, no hatch) so the two
+# semantics don't blur together when both appear in one image.
+_BAY_WALL_FACE = "#922b21"
+_BAY_WALL_EDGE = "#641e16"
+_BAY_WALL_ALPHA = 0.55
+_BAY_WALL_HATCH = "///"
+_BAY_LABEL_COLOR = "#ffffff"
 _HANGAR_EDGE = "#2c3e50"  # near-black
 _DOOR_EDGE = "#bdc3c7"  # light gray — visually "open"
 
@@ -160,20 +180,14 @@ def nose_direction(heading_deg: float) -> tuple[float, float]:
 
 def _draw_hangar(ax: Any, layout: Layout) -> None:
     """Hangar rectangle with a gap in the front wall for the door and a
-    shaded back strip for the maintenance bay."""
+    conditional maintenance-bay overlay (closed-bay only)."""
     hangar = layout.hangar
     door_left = hangar.door.center_x_m - hangar.door.width_m / 2
     door_right = hangar.door.center_x_m + hangar.door.width_m / 2
 
-    # Maintenance bay first so it's underneath everything else.
-    bay_start_y = hangar.length_m - hangar.maintenance_bay.depth_m
-    ax.fill(
-        [0, hangar.width_m, hangar.width_m, 0],
-        [bay_start_y, bay_start_y, hangar.length_m, hangar.length_m],
-        color=_BAY_COLOR,
-        alpha=_BAY_ALPHA,
-        zorder=0,
-    )
+    # Closed-bay overlay is drawn first so the walls and aircraft sit on
+    # top of it.
+    _draw_maintenance_bay(ax, layout)
 
     # Back, left, right walls — solid.
     ax.plot(
@@ -190,6 +204,58 @@ def _draw_hangar(ax: Any, layout: Layout) -> None:
     ax.plot([0, door_left], [0, 0], color=_HANGAR_EDGE, lw=2)
     ax.plot([door_right, hangar.width_m], [0, 0], color=_HANGAR_EDGE, lw=2)
     ax.plot([door_left, door_right], [0, 0], color=_DOOR_EDGE, lw=1, linestyle=":")
+
+
+def _draw_maintenance_bay(ax: Any, layout: Layout) -> None:
+    """Render the maintenance bay if (and only if) it is closed.
+
+    ``layout.maintenance_plane is None`` is the open-bay case — the bay
+    rectangle imposes no constraint and is rendered as normal floor (no
+    overlay). When closed, the bay is drawn as a hatched red wall covering
+    the partial-width rectangle defined by
+    ``MaintenanceBay.center_x_m`` / ``width_m`` / ``depth_m``, with the
+    label ``IN MAINTENANCE: <plane_id>`` centered inside so the human
+    eyeballing the PNG sees both the keep-out region and which plane is
+    in it.
+    """
+    if layout.maintenance_plane is None:
+        return
+
+    hangar = layout.hangar
+    bay = hangar.maintenance_bay
+    bay_x_lo = bay.center_x_m - bay.width_m / 2
+    bay_x_hi = bay.center_x_m + bay.width_m / 2
+    bay_y_lo = hangar.length_m - bay.depth_m
+    bay_y_hi = hangar.length_m
+
+    patch = MplPolygon(
+        [
+            (bay_x_lo, bay_y_lo),
+            (bay_x_hi, bay_y_lo),
+            (bay_x_hi, bay_y_hi),
+            (bay_x_lo, bay_y_hi),
+        ],
+        closed=True,
+        facecolor=_BAY_WALL_FACE,
+        edgecolor=_BAY_WALL_EDGE,
+        alpha=_BAY_WALL_ALPHA,
+        hatch=_BAY_WALL_HATCH,
+        lw=1.5,
+        zorder=0,
+    )
+    ax.add_patch(patch)
+
+    ax.text(
+        (bay_x_lo + bay_x_hi) / 2,
+        (bay_y_lo + bay_y_hi) / 2,
+        f"IN MAINTENANCE: {layout.maintenance_plane}",
+        ha="center",
+        va="center",
+        fontsize=9,
+        fontweight="bold",
+        color=_BAY_LABEL_COLOR,
+        zorder=4,
+    )
 
 
 def _draw_aircraft(ax: Any, layout: Layout) -> None:
