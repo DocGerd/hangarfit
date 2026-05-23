@@ -14,7 +14,7 @@ import pytest
 
 from hangarfit.collisions import check
 from hangarfit.loader import LoaderError, load_scenario
-from hangarfit.models import DiversityConfig, SolveResult
+from hangarfit.models import DiversityConfig, SearchConfig, SolveResult
 from hangarfit.solver import _heading_delta_short_arc, solve
 
 FIXTURES = "tests/fixtures"
@@ -77,19 +77,28 @@ def _count_planes_moved(la, lb, cfg: DiversityConfig) -> int:
 def test_solve_pinned_one_plane_honors_pin():
     """Pinned plane's placement must match the pin exactly in the
     returned layout. Spec §6.5: `found`, pinned unchanged.
+
+    Calibration (spec §4.3, ``K = max(observed × 2, 5)`` under ``seed=42``):
+    observed restarts_attempted = 1 (deterministic across 3 trials); K = 5.
+    A regression that pushes this beyond 5 restarts trips the assert below
+    instead of silently skipping.
     """
     s = load_scenario(f"{FIXTURES}/solve_pinned_one_plane.yaml")
-    r = solve(s, budget_s=5.0, alternatives=1, seed=42)
+    r = solve(
+        s,
+        budget_s=5.0,
+        alternatives=1,
+        seed=42,
+        search=SearchConfig(max_restarts=5),
+    )
 
-    if r.status == "exhausted_budget":
-        pytest.skip(
-            f"Solver didn't find a layout in 5s for solve_pinned_one_plane "
-            f"(restarts={r.diagnostics.restarts_attempted}). Acceptable on "
-            f"slow CI; the test_hangar_large geometry should usually succeed."
-        )
+    assert r.status == "found", (
+        f"Fixture 'solve_pinned_one_plane.yaml' exhausted within max_restarts=5 "
+        f"(restarts_attempted={r.diagnostics.restarts_attempted}); a regression "
+        f"is likely (was previously found within 1 restart under seed=42)."
+    )
 
     _assert_universal_properties(r)
-    assert r.status == "found"
     assert len(r.layouts) == 1
 
     pinned = s.constraints["aviat_husky"].pin
