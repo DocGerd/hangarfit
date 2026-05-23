@@ -375,11 +375,15 @@ def _check_trivially_infeasible(
 
         # Build a Layout containing ONLY the pinned planes.
         #
-        # The maintenance plane (if any) is excluded from placements by
-        # Layout invariant — it is treated as "away". Pinning the
-        # maintenance plane is incoherent under that semantics and is
-        # filtered here defensively (Scenario validation could also
-        # reject it; for now we just ignore the pin).
+        # ``maintenance_plane`` is forwarded to the pin-only Layout so that
+        # ``collisions.check()`` can fire the maintenance_position rule if the
+        # pins collectively leave the maintenance area occupied by another plane
+        # or violated (detected early, before burning the full solve() budget
+        # on a restart loop that can never escape a pinned conflict).
+        #
+        # Scenario.__post_init__ guarantees that the maintenance_plane cannot
+        # carry a pin (raises ValueError if it does), so ``pinned_placements``
+        # is provably free of the maintenance occupant — no filter is needed.
         #
         # No try/except: every remaining Layout invariant that could fire
         # here is either structurally impossible given pin-only construction
@@ -390,9 +394,7 @@ def _check_trivially_infeasible(
         pin_only_layout = Layout(
             fleet=scenario.fleet,
             hangar=scenario.hangar,
-            placements=tuple(
-                p for p in pinned_placements if p.plane_id != scenario.maintenance_plane
-            ),
+            placements=tuple(pinned_placements),
             maintenance_plane=scenario.maintenance_plane,
         )
 
