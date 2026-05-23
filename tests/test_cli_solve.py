@@ -461,6 +461,31 @@ class TestSolveRender:
         assert "--render" in captured.err
         assert not out.exists()
 
+    def test_render_to_nonexistent_dir_returns_2(self, tmp_path, capsys):
+        """OSError during write → rc=2 with `error:` in stderr.
+
+        Covers the ``except OSError`` arm at cli.py wrapping
+        ``_write_renders`` / ``_write_yamls`` — currently unexercised
+        because every other render/write test routes to a tmp_path
+        directory that already exists.
+        """
+        target = tmp_path / "no_such_dir" / "out.png"
+        rc = main(
+            [
+                "solve",
+                SMOKE_FIXTURE,
+                "--budget",
+                "2.0",
+                "--seed",
+                "42",
+                "--render",
+                str(target),
+            ]
+        )
+        assert rc == 2
+        captured = capsys.readouterr()
+        assert "error:" in captured.err
+
     def test_k_gt_1_substitutes_i_for_each_alternative(self, tmp_path, capsys):
         """K>1 happy path: ``{i}`` substitutes at every i in 1..K.
 
