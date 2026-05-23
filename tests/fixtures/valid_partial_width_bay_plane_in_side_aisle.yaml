@@ -1,0 +1,28 @@
+# Partial-width bay semantics — a plane parked in the back strip but
+# beside the bay (in the unused x-aisle of the back strip) is valid.
+#
+# Bay (data/hangar.yaml placeholder): x ∈ (9, 18), y > 16. The
+# back strip is x ∈ [0, 18], y ∈ [16, 25]. The "side aisle" is the
+# part of the back strip the bay does NOT cover: x ∈ [0, 9].
+#
+# ctsl at (4.5, 20, 0) parks in the side aisle. Wing world x =
+# [0.205, 8.795]: max x = 8.795 < 9, so the wing is fully outside
+# the bay x range even though its y range [19.97, 21.37] is squarely
+# in the bay y range. Fuselage x range [4.0, 5.0] also outside bay x
+# range. → no intrusion, valid layout.
+#
+# Pins down the partial-width contract: the side aisle remains usable
+# even when the bay is closed.
+
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
+
+maintenance:
+  plane: scheibe_falke
+
+placements:
+  - plane: ctsl
+    x_m: 4.5
+    y_m: 20.0
+    heading_deg: 0.0
+    on_carts: false

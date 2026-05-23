@@ -385,6 +385,53 @@ class TestBayIntrusion:
         assert "maintenance_position" not in kinds
         assert "maintenance_no_fuselage" not in kinds
 
+    # ── End-to-end fixture goldens (loader → checker contract) ──────────
+
+    def test_fixture_bay_closed_no_intruder_valid(self) -> None:
+        """Closed bay, all placed planes well clear of the bay rectangle."""
+        result = check(_load("valid_bay_closed_no_intruder"))
+        assert result.valid, f"clear layout must pass with closed bay, got {result.conflicts!r}"
+
+    def test_fixture_bay_open_planes_in_back_strip_valid(self) -> None:
+        """Open bay (maintenance_plane=None) — a plane parked inside the
+        area that WOULD be the bay must still pass; the rule is a no-op."""
+        layout = _load("valid_bay_open_planes_in_back_strip")
+        assert layout.maintenance_plane is None
+        result = check(layout)
+        assert result.valid, (
+            f"open bay must not fire bay_intrusion against a plane in "
+            f"the back strip, got {result.conflicts!r}"
+        )
+
+    def test_fixture_partial_width_bay_plane_in_side_aisle_valid(self) -> None:
+        """Closed bay, plane parked in the side aisle (back strip, but
+        outside the bay x range). Asserts partial-width semantics — the
+        side aisle remains usable even when the bay is closed."""
+        result = check(_load("valid_partial_width_bay_plane_in_side_aisle"))
+        assert result.valid, (
+            f"side-aisle layout must pass with closed partial-width bay, got {result.conflicts!r}"
+        )
+
+    def test_fixture_bay_intrusion_wingtip_invalid(self) -> None:
+        """A wingtip vertex strictly inside the closed bay must trip
+        exactly one ``bay_intrusion`` conflict."""
+        result = check(_load("invalid_bay_intrusion_wingtip"))
+        assert not result.valid
+        assert _conflict_kinds(result) == {"bay_intrusion"}, (
+            f"expected exactly bay_intrusion, got {result.conflicts!r}"
+        )
+        assert len(result.conflicts) == 1, (
+            f"expected exactly one offending part, got {result.conflicts!r}"
+        )
+
+    def test_fixture_part_vertex_on_bay_edge_valid(self) -> None:
+        """A vertex landing exactly on a bay edge (``x == x_min``) must
+        NOT trip the rule. Guards the strict-inequality semantics at
+        the fixture level (the synthetic unit tests do the same at the
+        function level)."""
+        result = check(_load("valid_part_vertex_on_bay_edge"))
+        assert result.valid, f"vertex on bay edge must count as outside; got {result.conflicts!r}"
+
     def test_defensive_skip_protects_against_occupant_leak(self) -> None:
         """If the maintenance occupant ever leaks into ``world_parts``
         (would require a Layout-invariant bypass), the rule must skip

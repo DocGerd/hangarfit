@@ -1,0 +1,26 @@
+# Open-bay semantics — bay rectangle is just floor when no plane is
+# in maintenance.
+#
+# Bay area would be (9, 18) × (16, 25] for the placeholder hangar,
+# but with `maintenance_plane: null` the bay is open and the
+# `bay_intrusion` rule never fires.
+#
+# aviat_husky at (8, 19, 0) parks squarely inside what WOULD be the
+# bay if it were closed: wing world x = [2.59, 13.41], y = [17.78,
+# 19.18] — the right wing reaches into x > 9 AND y > 16, which would
+# be a bay_intrusion under a closed bay. With the bay open, the rule
+# is a no-op and the layout is valid.
+#
+# Pins down the open-bay = normal floor contract.
+
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
+
+# No `maintenance:` block — bay is open.
+
+placements:
+  - plane: aviat_husky
+    x_m: 8.0
+    y_m: 19.0
+    heading_deg: 0.0
+    on_carts: false

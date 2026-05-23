@@ -176,6 +176,38 @@ def test_solve_trivially_infeasible_alternatives_1_clears_diversity_impossible()
 # along with the ``maintenance_position`` collision rule. Pinning the
 # maintenance plane is incoherent under the new "occupant is away"
 # semantics — the bay-closure rule operates on the perimeter, not on the
-# occupant's geometry, so there is nothing to pin against. The bay
-# perimeter rule itself (``bay_intrusion``) gets its own goldens once it
-# ships.
+# occupant's geometry, so there is nothing to pin against.
+
+
+def test_solve_trivially_infeasible_when_pinned_plane_intrudes_into_closed_bay():
+    """Pinning a non-maintenance plane such that its geometry intrudes
+    into the closed bay must be caught pre-search.
+
+    Pre-search check #3 builds a pin-only Layout from the pinned
+    placements (with the maintenance occupant filtered out per the
+    invariant) and runs ``collisions.check()`` on it. A pinned wingtip
+    strictly inside the closed bay triggers ``bay_intrusion`` on that
+    Layout — and the solver short-circuits to trivially_infeasible
+    instead of burning the budget on restarts where every iteration
+    hits the same conflict on a pinned plane.
+    """
+    from hangarfit.loader import load_scenario
+    from hangarfit.solver import solve
+
+    s = load_scenario("tests/fixtures/solve_infeasible_bay_closes_floor.yaml")
+    r = solve(s, budget_s=5.0, seed=42)
+
+    # Must fire trivially_infeasible (pre-search), NOT exhausted_budget.
+    assert r.status == "trivially_infeasible", (
+        f"expected pre-search rejection; got {r.status} after "
+        f"{r.diagnostics.restarts_attempted} restarts (silent-failure regression?)"
+    )
+    # Wall time should be ~zero — no real search ran.
+    assert r.diagnostics.wall_time_s < 0.5
+    assert r.diagnostics.restarts_attempted == 0
+    bp = r.diagnostics.best_partial
+    assert bp is not None
+    assert any(c.kind == "bay_intrusion" for c in bp.conflicts), (
+        f"expected a bay_intrusion conflict on the pin-only Layout, "
+        f"got {[c.kind for c in bp.conflicts]}"
+    )
