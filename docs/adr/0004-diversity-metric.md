@@ -217,7 +217,7 @@ coexist as alternative filter strategies.
 
 - The pairwise-diversity universal property assertion lives in
   [`tests/test_solver_fixture_matrix.py::_assert_universal_properties`](../../tests/test_solver_fixture_matrix.py)
-  (the `if len(r.layouts) > 1:` block at lines 67–76). It mirrors the
+  — specifically the `if len(r.layouts) > 1:` block, which mirrors the
   solver's edit-count metric via the local `_count_planes_moved`
   helper, then asserts `n_moved >= cfg.min_planes_moved` for every pair
   of accepted layouts. Every fixture in the v1 matrix runs this

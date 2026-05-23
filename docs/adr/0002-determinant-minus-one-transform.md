@@ -194,10 +194,10 @@ distinguishing** — the correct and the would-be-fixed transforms
 disagree on it.
 
 This is exactly why
-[`tests/test_geometry.py::TestAircraftPartsWorld::test_heading_45_right_wingtip_in_plus_x_minus_y_quadrant`](../../tests/test_geometry.py)
-(line 274) is the load-bearing test for this ADR: it pins probe B at
-heading 45°, and any "fix" to a CCW matrix flips both signs in the
-expected output, failing the assertion loudly.
+`tests/test_geometry.py::TestAircraftPartsWorld::test_heading_45_right_wingtip_in_plus_x_minus_y_quadrant`
+is the load-bearing test for this ADR: it pins probe B at heading 45°,
+and any "fix" to a CCW matrix flips both signs in the expected output,
+failing the assertion loudly.
 
 ### Why not Option 2 — replace with a standard CCW rotation matrix?
 
@@ -306,13 +306,12 @@ ongoing cost is worse. Rejected.
 ## Compliance
 
 - **The canary regression test:**
-  [`tests/test_geometry.py::TestAircraftPartsWorld::test_heading_45_right_wingtip_in_plus_x_minus_y_quadrant`](../../tests/test_geometry.py)
-  (line 274). At heading 45°, plane-local `(u=0, v=1)` must land at
-  world `(+√2/2, −√2/2)`. Any regression to a det = +1 matrix sends
-  the probe to `(−√2/2, +√2/2)` and fails the assertion. This test
-  also has a companion at line 301
-  (`test_heading_135_nose_distinguishes_correct_from_ccw`) that uses
-  the nose vector at 135° as a redundant guard.
+  `tests/test_geometry.py::TestAircraftPartsWorld::test_heading_45_right_wingtip_in_plus_x_minus_y_quadrant`.
+  At heading 45°, plane-local `(u=0, v=1)` must land at world
+  `(+√2/2, −√2/2)`. Any regression to a det = +1 matrix sends the probe
+  to `(−√2/2, +√2/2)` and fails the assertion. The companion test
+  `test_heading_135_nose_distinguishes_correct_from_ccw` uses the nose
+  vector at 135° as a redundant guard.
 - **The `geometry-invariant-guard` subagent**
   ([`.claude/agents/geometry-invariant-guard.md`](../../.claude/agents/geometry-invariant-guard.md))
   is invoked on every PR touching `src/hangarfit/geometry.py` or
@@ -344,8 +343,10 @@ to land.
 - **Implementation:** [`src/hangarfit/geometry.py`](../../src/hangarfit/geometry.py),
   specifically `aircraft_parts_world` (the world-coordinate list
   comprehension is the load-bearing line).
-- **Canary test:** [`tests/test_geometry.py`](../../tests/test_geometry.py),
-  line 274 (right-wingtip at 45°) and line 301 (nose at 135°).
+- **Canary tests:** [`tests/test_geometry.py`](../../tests/test_geometry.py)
+  — `test_heading_45_right_wingtip_in_plus_x_minus_y_quadrant`
+  (right-wingtip at 45°) and `test_heading_135_nose_distinguishes_correct_from_ccw`
+  (nose at 135°).
 - **Review-time guard:** [`.claude/agents/geometry-invariant-guard.md`](../../.claude/agents/geometry-invariant-guard.md).
 - **Related ADRs:** [ADR-0001 — Parts-based collision model](0001-aircraft-parts-model.md)
   (defines what is being transformed); [ADR-0000 — Record

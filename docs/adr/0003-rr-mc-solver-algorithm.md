@@ -133,8 +133,10 @@ The state space is continuous, and constraint solvers want it discrete
 or interval. Quantising to a grid fine enough to preserve the
 operational resolution (centimetres for position, degrees for heading)
 explodes the per-plane variable domain into the tens of millions, and
-the combinatorial product over 6–9 planes makes the problem intractable
-at exactly the scenarios that matter (full fleet, tight clearance).
+the combinatorial product over 6–9 planes was judged intractable for
+the scenarios that matter (full fleet, tight clearance). This is an
+engineering judgement, not a benchmarked claim — no CP-SAT prototype
+was built; a future ADR could revisit this with measured data.
 Reproducibility would be easier (constraint solvers are deterministic
 modulo solver-version pinning), but that gain doesn't buy back the
 fidelity loss. The K-diverse-alternatives contract also fits awkwardly
@@ -244,7 +246,8 @@ silently rejected at scoring time). Rejected.
   `k_stall = 50`, `pos_sigma_m = 0.5`, `heading_sigma_deg = 10.0` are
   guesses calibrated on the placeholder fleet; the spec explicitly
   flags them as "tune with real data." A `SearchConfig` kwarg exposes
-  them programmatically, but the CLI does not (deferred to v1.1).
+  them programmatically, but the CLI does not (deferred to a future
+  release).
 
 ### Neutral
 

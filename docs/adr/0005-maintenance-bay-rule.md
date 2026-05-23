@@ -19,8 +19,8 @@ This ADR records the rule as it stands today
 (`src/hangarfit/collisions.py`). Milestone #9 ("Maintenance bay
 walling") is in flight and is layering a richer model on top —
 notably the bay as a physical obstacle (`bay_intrusion_rule`, #104) and
-partial-width bays (shipped via #103 / PR #150). If that work extends or
-replaces this rule, a follow-up ADR will record the supersession.
+partial-width bays (#103). If that work extends or replaces this rule,
+a follow-up ADR will record the supersession.
 
 ## Decision Drivers
 
@@ -65,11 +65,12 @@ Concretely, in
 world-coordinate parts of `layout.maintenance_plane` to those with
 `kind == "fuselage"`, computes the area-weighted centroid, and tests
 whether its `y` coordinate satisfies
-`y ≥ hangar.length_m − hangar.maintenance_bay.depth_m`. If yes, no
-conflict; if no, emit a `maintenance_position` conflict. If the
-designated plane has zero fuselage parts, emit a
-`maintenance_no_fuselage` conflict (line 143) instead of silently
-passing.
+`y ≥ hangar.length_m − hangar.maintenance_bay.depth_m` — equivalently,
+the code emits a `maintenance_position` conflict iff
+`centroid_y < bay_start_y` (strict `<`; a fuselage centroid that lands
+*exactly* on the bay boundary counts as parked in the bay, not as
+violating). If the designated plane has zero fuselage parts, emit a
+`maintenance_no_fuselage` conflict instead of silently passing.
 
 ### Why not "any fuselage part touches the back strip"?
 
@@ -199,16 +200,18 @@ silently bypass the rule.
   — the transform that maps the plane-local fuselage parts into hangar
   coordinates for the back-strip test.
 - [`src/hangarfit/collisions.py`](../../src/hangarfit/collisions.py)
-  — `_maintenance_conflicts` is the implementation (line 107); the
-  `maintenance_no_fuselage` emission is at line 143; the
-  `maintenance_position` emission is at line 158.
+  — `_maintenance_conflicts` is the implementation; the
+  `maintenance_no_fuselage` and `maintenance_position` conflict
+  emissions are both inside that function.
 - [`src/hangarfit/models.py`](../../src/hangarfit/models.py)
   — `Hangar.maintenance_bay`, `Conflict.kind` taxonomy,
   `Layout.__post_init__` cross-reference checks.
 - [`CLAUDE.md` — "The hangar" + "Phase 1 deliverables" + Module map](../../CLAUDE.md)
   — operational statement of the rule.
 - **Open follow-up:** [Milestone #9 — Maintenance bay walling](https://github.com/DocGerd/hangarfit/milestone/9).
-  Issues #103 (partial-width bay, shipped via PR #150), #104
+  Issues [#103](https://github.com/DocGerd/hangarfit/issues/103)
+  (partial-width bay),
+  [#104](https://github.com/DocGerd/hangarfit/issues/104)
   (`bay_intrusion_rule`), and the milestone epic
   [#110](https://github.com/DocGerd/hangarfit/issues/110) are layering
   a richer bay model on top. If that work redefines "in the bay" or

@@ -25,7 +25,7 @@ wrong would have made every downstream layout wrong.
   low-wing in the fleet (`fuji`) sits well below every high-wing's
   wing layer; a representation that cannot reason about height-disjoint
   parts cannot model this case at all.
-- **Strut volume must be representable as occupied.** Five of the nine
+- **Strut volume must be representable as occupied.** Six of the nine
   aircraft (`aviat_husky`, `wild_thing`, `zlin_savage`, `cessna_140`,
   `cessna_150`, `fk9_mkii`) are strut-braced. The strut is what
   prevents another plane's wing from nesting through the gap between
