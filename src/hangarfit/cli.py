@@ -272,9 +272,11 @@ def _placement_delta(a: Layout, b: Layout) -> tuple[int, float]:
 
 def cmd_solve(args: argparse.Namespace) -> int:
     """Run the ``solve`` subcommand. See spec §5 for the data flow."""
-    # Imports are local so that `hangarfit check` users don't pay the
-    # solver / matplotlib import cost — matplotlib is the slow one and
-    # only `--render` needs it.
+    # Defer the solver import only: ``hangarfit check`` invocations should
+    # not pay the solver's import cost. Matplotlib is NOT deferred here —
+    # ``from hangarfit import visualize`` at module top (cli.py:20) already
+    # eagerly imports matplotlib and pins the Agg backend, so both `check`
+    # and `solve` callers pay that cost regardless.
     from hangarfit.loader import load_scenario
     from hangarfit.solver import solve
 
