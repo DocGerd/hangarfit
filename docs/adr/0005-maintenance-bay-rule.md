@@ -206,8 +206,10 @@ silently bypass the rule.
 - [`src/hangarfit/models.py`](../../src/hangarfit/models.py)
   — `Hangar.maintenance_bay`, `Conflict.kind` taxonomy,
   `Layout.__post_init__` cross-reference checks.
-- [`CLAUDE.md` — "The hangar" + "Phase 1 deliverables" + Module map](../../CLAUDE.md)
-  — operational statement of the rule.
+- [§8 Crosscutting Concepts — "The maintenance bay rule"](../architecture/08-crosscutting-concepts.md#the-maintenance-bay-rule)
+  — operational statement of the current `bay_intrusion` rule (which
+  supersedes this ADR's centroid-in-back-strip rule); §5 Building
+  Block View describes `collisions.py`'s role in enforcing it.
 - **Open follow-up:** [Milestone #9 — Maintenance bay walling](https://github.com/DocGerd/hangarfit/milestone/9).
   Issues [#103](https://github.com/DocGerd/hangarfit/issues/103)
   (partial-width bay),

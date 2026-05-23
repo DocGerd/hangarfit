@@ -210,7 +210,7 @@ predicate; the upgrade path is additive.
   the hangar frame. The parts model and the transform are
   co-dependent: parts authored in plane-local coordinates only become
   collidable once placed.
-- [`CLAUDE.md` — "The parts model (the most important rule)"](../../CLAUDE.md)
+- [§8 Crosscutting Concepts — "The parts model"](../architecture/08-crosscutting-concepts.md#the-parts-model)
   is the operational statement of this decision (the rule itself,
   with the two-clause collision predicate); this ADR records *why*
   the rule has the shape it does.
