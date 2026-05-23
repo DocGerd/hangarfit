@@ -27,6 +27,10 @@ If you are new to the project, read in this order:
 
 ## Section index
 
+Issue [#133](https://github.com/DocGerd/hangarfit/issues/133) is one PR
+that ships §4, §5, and §6 jointly (solution strategy + building blocks +
+runtime view belong together). The other TBD rows are each one issue.
+
 | §  | Section                  | File                                                                   | Status |
 |----|--------------------------|------------------------------------------------------------------------|--------|
 | 1  | Introduction & Goals     | [`01-introduction-and-goals.md`](01-introduction-and-goals.md)         | ✅ shipped |

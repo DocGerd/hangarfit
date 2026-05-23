@@ -8,7 +8,7 @@ its own right.
 
 | Constraint | Rationale |
 |------------|-----------|
-| **Python 3.11 or newer.** | Matches the Python version available in the maintainer's environment and on common Linux distributions. The lower bound is also what CI tests (3.11 + 3.12 in `.github/workflows/ci.yml`). |
+| **Python 3.11 or newer.** | CI runs the test suite against Python 3.11 + 3.12 (see `.github/workflows/ci.yml`); 3.11 is the durable lower bound. Older interpreters are not tested and not supported. |
 | **Single-binary CLI** — one entry point (`hangarfit`), one process per invocation. | The tool is invoked interactively; there is no daemon, no service, and no IPC. Keeps the install/run loop trivial. |
 | **No network calls at runtime.** | The tool runs in a hangar office; assume no reliable internet. Any input is local YAML; any output is local files. |
 | **No persistent state between invocations.** | The scenario YAML carries everything the tool needs. Two consecutive runs with the same input must produce the same output without any side channel. Enables determinism (quality goal #2) and matches the "tool, not service" stance. |
