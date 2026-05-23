@@ -75,12 +75,11 @@ manual workflow above is canonical.
 
 ## Index
 
-| ADR | Title                                                                        | Status   |
-|-----|------------------------------------------------------------------------------|----------|
-| 0000 | [Record architecture decisions](0000-record-architecture-decisions.md)      | Accepted |
-
-The five initial retroactive ADRs (parts model, det = −1 coordinate
-transform, RR-MC solver algorithm, diversity metric, maintenance bay
-rule) will be added by [#136](https://github.com/DocGerd/hangarfit/issues/136)
-and successive PRs in milestone #12; this Index is the canonical list
-once they land.
+| ADR  | Title                                                                                                  | Status   |
+|------|--------------------------------------------------------------------------------------------------------|----------|
+| 0000 | [Record architecture decisions](0000-record-architecture-decisions.md)                                 | Accepted |
+| 0001 | [Aircraft geometry as a list of parts](0001-aircraft-parts-model.md)                                   | Accepted |
+| 0002 | [Plane-local → world transform has determinant −1](0002-determinant-minus-one-transform.md)            | Accepted |
+| 0003 | [Random-restart min-conflicts (RR-MC) for the static layout solver](0003-rr-mc-solver-algorithm.md)    | Accepted |
+| 0004 | [Diversity metric for K alternatives (edit count with per-plane thresholds)](0004-diversity-metric.md) | Accepted |
+| 0005 | [Maintenance bay rule — fuselage centroid in back strip](0005-maintenance-bay-rule.md)                 | Accepted |
