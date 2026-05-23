@@ -308,6 +308,18 @@ def load_scenario(
     # maintenance (optional, same shape as load_layout)
     maintenance_plane = _extract_maintenance_plane(raw, path)
 
+    # Pre-Scenario boundary check: maintenance_plane must be in fleet_in.
+    # Mirrors the pre-Layout check added in PR #105 for load_layout.
+    # Catching this here (before Scenario construction) lets us produce a
+    # path-prefixed actionable message with the actual fleet_in list instead
+    # of the bare ValueError that would otherwise bubble up from
+    # Scenario.__post_init__.
+    if maintenance_plane is not None and maintenance_plane not in fleet_in:
+        raise LoaderError(
+            f"{path}: maintenance_plane {maintenance_plane!r} is not in fleet_in "
+            f"{list(fleet_in)}; either add it to fleet_in or fix the plane id."
+        )
+
     # constraints (optional). `or {}` is wrong here — it collapses every
     # falsy YAML value (including `constraints: []` or `constraints: 0`)
     # to `{}` before the isinstance check, silently treating shape bugs
