@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
+from typing import Any
 
 import matplotlib
 
@@ -32,7 +33,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.patches import Polygon as MplPolygon  # noqa: E402
 
 from .geometry import WorldPart, aircraft_parts_world  # noqa: E402
-from .models import CheckResult, Layout, WingPosition  # noqa: E402
+from .models import CheckResult, Layout, Placement, WingPosition  # noqa: E402
 
 _WING_COLORS: dict[WingPosition, str] = {
     "high": "#3498db",  # blue
@@ -48,12 +49,12 @@ _FALLBACK_COLOR = "#95a5a6"  # gray
 _CONFLICT_COLOR = "#e74c3c"  # red
 
 _FUSELAGE_ALPHA = 0.9  # near-opaque: two fuselages overlapping is always
-                       # a conflict, no value in seeing through.
-_WING_ALPHA = 0.4      # translucent so stacked wings (z-disjoint nesting,
-                       # case 3 / case 7-8) show their plan-view overlap.
-_STRUT_LINEWIDTH = 1.2 # struts are physically thin (~5 cm × ~1.3 m); a
-                       # filled polygon would be near-invisible at hangar
-                       # scale, so we draw an outline instead.
+# a conflict, no value in seeing through.
+_WING_ALPHA = 0.4  # translucent so stacked wings (z-disjoint nesting,
+# case 3 / case 7-8) show their plan-view overlap.
+_STRUT_LINEWIDTH = 1.2  # struts are physically thin (~5 cm × ~1.3 m); a
+# filled polygon would be near-invisible at hangar
+# scale, so we draw an outline instead.
 
 # Arrow length for the nose-direction marker, in meters. Hardcoded rather
 # than scaling with hangar size: at the fleet's ~6-9 m fuselage scale,
@@ -157,7 +158,7 @@ def nose_direction(heading_deg: float) -> tuple[float, float]:
     return (math.sin(h), math.cos(h))
 
 
-def _draw_hangar(ax, layout: Layout) -> None:
+def _draw_hangar(ax: Any, layout: Layout) -> None:
     """Hangar rectangle with a gap in the front wall for the door and a
     shaded back strip for the maintenance bay."""
     hangar = layout.hangar
@@ -175,7 +176,12 @@ def _draw_hangar(ax, layout: Layout) -> None:
     )
 
     # Back, left, right walls — solid.
-    ax.plot([0, hangar.width_m], [hangar.length_m, hangar.length_m], color=_HANGAR_EDGE, lw=2)
+    ax.plot(
+        [0, hangar.width_m],
+        [hangar.length_m, hangar.length_m],
+        color=_HANGAR_EDGE,
+        lw=2,
+    )
     ax.plot([0, 0], [0, hangar.length_m], color=_HANGAR_EDGE, lw=2)
     ax.plot([hangar.width_m, hangar.width_m], [0, hangar.length_m], color=_HANGAR_EDGE, lw=2)
 
@@ -186,7 +192,7 @@ def _draw_hangar(ax, layout: Layout) -> None:
     ax.plot([door_left, door_right], [0, 0], color=_DOOR_EDGE, lw=1, linestyle=":")
 
 
-def _draw_aircraft(ax, layout: Layout) -> None:
+def _draw_aircraft(ax: Any, layout: Layout) -> None:
     """Draw each placed plane as its world parts, color-keyed by wing position."""
     for placement in layout.placements:
         aircraft = layout.fleet[placement.plane_id]
@@ -197,7 +203,7 @@ def _draw_aircraft(ax, layout: Layout) -> None:
         _annotate_plane(ax, placement, aircraft.id)
 
 
-def _draw_part(ax, part: WorldPart, color: str) -> None:
+def _draw_part(ax: Any, part: WorldPart, color: str) -> None:
     """Render a single world part. Fuselage is near-opaque (two fuselages
     overlapping is always a conflict; no value in seeing through), wing
     translucent (so stacked wings show their plan-view overlap visually),
@@ -212,14 +218,34 @@ def _draw_part(ax, part: WorldPart, color: str) -> None:
     """
     coords = list(part.polygon.exterior.coords)[:-1]
     if part.kind == "fuselage" or part.kind == "tail":
-        patch = MplPolygon(coords, closed=True, facecolor=color, edgecolor=_HANGAR_EDGE,
-                           alpha=_FUSELAGE_ALPHA, lw=0.5, zorder=2)
+        patch = MplPolygon(
+            coords,
+            closed=True,
+            facecolor=color,
+            edgecolor=_HANGAR_EDGE,
+            alpha=_FUSELAGE_ALPHA,
+            lw=0.5,
+            zorder=2,
+        )
     elif part.kind == "wing":
-        patch = MplPolygon(coords, closed=True, facecolor=color, edgecolor=color,
-                           alpha=_WING_ALPHA, lw=0.5, zorder=1)
+        patch = MplPolygon(
+            coords,
+            closed=True,
+            facecolor=color,
+            edgecolor=color,
+            alpha=_WING_ALPHA,
+            lw=0.5,
+            zorder=1,
+        )
     elif part.kind == "strut":
-        patch = MplPolygon(coords, closed=True, facecolor="none", edgecolor=_HANGAR_EDGE,
-                           lw=_STRUT_LINEWIDTH, zorder=3)
+        patch = MplPolygon(
+            coords,
+            closed=True,
+            facecolor="none",
+            edgecolor=_HANGAR_EDGE,
+            lw=_STRUT_LINEWIDTH,
+            zorder=3,
+        )
     else:
         raise ValueError(
             f"_draw_part: unhandled part kind {part.kind!r}. "
@@ -228,13 +254,15 @@ def _draw_part(ax, part: WorldPart, color: str) -> None:
     ax.add_patch(patch)
 
 
-def _annotate_plane(ax, placement, plane_id: str) -> None:
+def _annotate_plane(ax: Any, placement: Placement, plane_id: str) -> None:
     """Plane id label + a short arrow showing the nose direction."""
     dx, dy = nose_direction(placement.heading_deg)
     ax.annotate(
         "",
-        xy=(placement.x_m + dx * _NOSE_ARROW_LENGTH_M,
-            placement.y_m + dy * _NOSE_ARROW_LENGTH_M),
+        xy=(
+            placement.x_m + dx * _NOSE_ARROW_LENGTH_M,
+            placement.y_m + dy * _NOSE_ARROW_LENGTH_M,
+        ),
         xytext=(placement.x_m, placement.y_m),
         arrowprops=dict(arrowstyle="->", color=_HANGAR_EDGE, lw=1),
         zorder=4,
@@ -251,7 +279,7 @@ def _annotate_plane(ax, placement, plane_id: str) -> None:
     )
 
 
-def _draw_conflict_overlay(ax, layout: Layout, check_result: CheckResult) -> None:
+def _draw_conflict_overlay(ax: Any, layout: Layout, check_result: CheckResult) -> None:
     """Redraw every part of every plane named in any conflict, in red,
     with a thicker edge so the conflict reads at a glance."""
     conflicting_planes: set[str] = set()
@@ -274,7 +302,7 @@ def _draw_conflict_overlay(ax, layout: Layout, check_result: CheckResult) -> Non
             ax.add_patch(patch)
 
 
-def _finalize_axes(ax, layout: Layout, title: str | None) -> None:
+def _finalize_axes(ax: Any, layout: Layout, title: str | None) -> None:
     """Equal-aspect axes, hangar-sized view, sensible labels, optional title.
 
     The y-axis is inverted so the door (y = 0) renders at the *top* of

@@ -1,0 +1,16 @@
+# Two pins at exactly the same coordinates — pins collide in plan view
+# and at the same z-band, so the pin-only Layout fails
+# collisions.check() before the solver's search ever starts.
+#
+# Used to pin solver check #3 (pin self-collision, spec §4.1.3). The
+# planes (Husky + CTSL) are chosen so neither carries a maintenance
+# requirement and both can validly be pinned with on_carts=false.
+
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
+fleet_in: [aviat_husky, ctsl]
+constraints:
+  aviat_husky:
+    pin: { x_m: 5.0, y_m: 5.0, heading_deg: 0.0, on_carts: false }
+  ctsl:
+    pin: { x_m: 5.0, y_m: 5.0, heading_deg: 0.0, on_carts: false }   # exact same spot

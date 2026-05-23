@@ -16,6 +16,7 @@ from hangarfit.models import (
     MaintenanceBay,
     Part,
     Placement,
+    SearchConfig,
     StrutsSpec,
 )
 
@@ -103,9 +104,7 @@ class TestPart:
         "z_bottom_m, z_top_m",
         [(1.0, 1.0), (2.0, 1.5)],
     )
-    def test_z_top_must_exceed_z_bottom(
-        self, z_bottom_m: float, z_top_m: float
-    ) -> None:
+    def test_z_top_must_exceed_z_bottom(self, z_bottom_m: float, z_top_m: float) -> None:
         with pytest.raises(ValueError, match="z_top_m must exceed z_bottom_m"):
             _ok_part(z_bottom_m=z_bottom_m, z_top_m=z_top_m)
 
@@ -362,7 +361,9 @@ class TestHangar:
             Hangar(
                 length_m=25.0,
                 width_m=width_m,
-                door=Door(center_x_m=9.0, width_m=12.0) if width_m > 12 else Door(center_x_m=1.0, width_m=0.5),
+                door=Door(center_x_m=9.0, width_m=12.0)
+                if width_m > 12
+                else Door(center_x_m=1.0, width_m=0.5),
                 maintenance_bay=MaintenanceBay(depth_m=9.0),
                 clearance_m=0.3,
                 wing_layer_clearance_m=0.2,
@@ -493,7 +494,13 @@ class TestLayout:
                 fleet=self._fleet_of(a),
                 hangar=_ok_hangar(),
                 placements=(
-                    Placement(plane_id="bar", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False),
+                    Placement(
+                        plane_id="bar",
+                        x_m=0.0,
+                        y_m=0.0,
+                        heading_deg=0.0,
+                        on_carts=False,
+                    ),
                 ),
             )
 
@@ -504,8 +511,20 @@ class TestLayout:
                 fleet=self._fleet_of(a),
                 hangar=_ok_hangar(),
                 placements=(
-                    Placement(plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False),
-                    Placement(plane_id="foo", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False),
+                    Placement(
+                        plane_id="foo",
+                        x_m=0.0,
+                        y_m=0.0,
+                        heading_deg=0.0,
+                        on_carts=False,
+                    ),
+                    Placement(
+                        plane_id="foo",
+                        x_m=5.0,
+                        y_m=5.0,
+                        heading_deg=0.0,
+                        on_carts=False,
+                    ),
                 ),
             )
 
@@ -516,7 +535,13 @@ class TestLayout:
                 fleet=self._fleet_of(a),
                 hangar=_ok_hangar(),
                 placements=(
-                    Placement(plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False),
+                    Placement(
+                        plane_id="foo",
+                        x_m=0.0,
+                        y_m=0.0,
+                        heading_deg=0.0,
+                        on_carts=False,
+                    ),
                 ),
             )
 
@@ -564,7 +589,13 @@ class TestLayout:
                 fleet=self._fleet_of(a),
                 hangar=_ok_hangar(),
                 placements=(
-                    Placement(plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False),
+                    Placement(
+                        plane_id="foo",
+                        x_m=0.0,
+                        y_m=0.0,
+                        heading_deg=0.0,
+                        on_carts=False,
+                    ),
                 ),
                 maintenance_plane="ghost",
             )
@@ -577,7 +608,13 @@ class TestLayout:
                 fleet=self._fleet_of(a, b),
                 hangar=_ok_hangar(),
                 placements=(
-                    Placement(plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False),
+                    Placement(
+                        plane_id="foo",
+                        x_m=0.0,
+                        y_m=0.0,
+                        heading_deg=0.0,
+                        on_carts=False,
+                    ),
                 ),
                 maintenance_plane="bar",
             )
@@ -738,6 +775,28 @@ class TestCheckResult:
         assert r.valid is False
         assert len(r.conflicts) == 1
 
+    def test_default_total_penetration_is_zero(self) -> None:
+        """Default-constructed CheckResult has total_penetration_m2 == 0.0."""
+        result = CheckResult()
+        assert result.total_penetration_m2 == 0.0
+        assert result.valid is True
+
+    def test_total_penetration_field_is_independent_of_validity(self) -> None:
+        """Explicit penetration is preserved; validity is conflict-derived only."""
+        result = CheckResult(total_penetration_m2=2.5)
+        assert result.total_penetration_m2 == 2.5
+        assert result.valid is True  # derived from conflicts, not penetration
+
+    def test_total_penetration_rejects_nan(self) -> None:
+        """NaN would silently corrupt Phase 2a's lexicographic sort key."""
+        with pytest.raises(ValueError, match="must be finite"):
+            CheckResult(total_penetration_m2=float("nan"))
+
+    def test_total_penetration_rejects_negative(self) -> None:
+        """A summed area is non-negative by construction; reject anything else."""
+        with pytest.raises(ValueError, match="must be >= 0.0"):
+            CheckResult(total_penetration_m2=-0.1)
+
 
 class TestFrozenBehavior:
     """Cross-cutting: every public dataclass should be frozen."""
@@ -768,3 +827,27 @@ class TestFrozenBehavior:
         )
         with pytest.raises(dataclasses.FrozenInstanceError):
             layout.maintenance_plane = "foo"  # type: ignore[misc]
+
+
+class TestSearchConfig:
+    """Construction + post_init invariants for ``SearchConfig`` (spec §4.2 of
+    the v0.6.0 solver-polish release adds ``max_restarts``)."""
+
+    def test_max_restarts_default_is_none(self) -> None:
+        """``None`` preserves the pre-v0.6.0 wall-clock-only termination."""
+        sc = SearchConfig()
+        assert sc.max_restarts is None
+
+    def test_max_restarts_positive_accepted(self) -> None:
+        sc = SearchConfig(max_restarts=1)
+        assert sc.max_restarts == 1
+        sc = SearchConfig(max_restarts=42)
+        assert sc.max_restarts == 42
+
+    def test_max_restarts_zero_rejected(self) -> None:
+        with pytest.raises(ValueError, match="max_restarts"):
+            SearchConfig(max_restarts=0)
+
+    def test_max_restarts_negative_rejected(self) -> None:
+        with pytest.raises(ValueError, match="max_restarts"):
+            SearchConfig(max_restarts=-1)

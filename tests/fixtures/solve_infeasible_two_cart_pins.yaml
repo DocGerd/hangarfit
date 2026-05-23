@@ -1,0 +1,19 @@
+# Two cart_eligible planes both pinned with on_carts=true.
+#
+# The Phase 1 cart rule says: at most one cart_eligible plane may use the
+# spare carts at a time (Layout.__post_init__ enforces it). Scenario does
+# NOT enforce this cross-pin rule today — it only validates each pin's
+# on_carts against its own plane's movement_mode. That gap is exactly the
+# case the solver's check #3 has to catch separately, with its own kind
+# trivially_infeasible_pin_cart_rule.
+#
+# Used by test_solve_trivially_infeasible_when_two_cart_eligible_pins_on_carts.
+
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
+fleet_in: [cessna_140, ctsl]
+constraints:
+  cessna_140:
+    pin: { x_m: 3.0, y_m: 5.0, heading_deg: 0.0, on_carts: true }
+  ctsl:
+    pin: { x_m: 8.0, y_m: 5.0, heading_deg: 0.0, on_carts: true }

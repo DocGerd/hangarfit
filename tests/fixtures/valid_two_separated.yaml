@@ -1,14 +1,16 @@
 # Case 1 — two high-wing aircraft parked well-separated. Valid.
 #
-# ctsl (cantilever, 8.6 m wingspan) at (5, 3.5, 0): fuselage x [4.5, 5.5],
-#   y [0.35, 6.65]; wing x [0.7, 9.3], y [3.8, 5.2], z [1.9, 2.2].
-# scheibe_falke (cantilever, 16.6 m wingspan) at (9, 14, 90): fuselage
-#   x [5.15, 12.85], y [13.65, 14.35]; wing x [9.9, 11.1], y [5.7, 22.3],
+# ctsl (cantilever, 8.59 m wingspan) at (5, 4.0, 0): fuselage x
+#   [4.5, 5.5], y [0.37, 6.97]; wing x [0.705, 9.295], y [3.97, 5.37],
+#   z [1.9, 2.2].
+# scheibe_falke (cantilever, 18.0 m wingspan) at (9, 14, 90): fuselage
+#   x [5.2, 12.8], y [13.65, 14.35]; wing x [9.9, 11.1], y [5.0, 23.0],
 #   z [1.9, 2.1].
 #
-# Wing-wing nearest approach: 0.6 m in x, 0.5 m in y → polygon distance
-# ≈ 0.78 m, well above the 0.3 m horizontal clearance. Fuselages are
-# 7+ m apart in y. No part has any plan-view conflict.
+# Wing-wing nearest approach: x gap = 9.9 − 9.295 = 0.605 m; wings
+# overlap in y (5.0 < 5.37) so polygon distance ≈ 0.605 m, above
+# the 0.3 m horizontal clearance. Fuselages are 6.68 m apart in y.
+# No part has any plan-view conflict.
 
 fleet: ../../data/fleet.yaml
 hangar: ../../data/hangar.yaml
@@ -16,7 +18,7 @@ hangar: ../../data/hangar.yaml
 placements:
   - plane: ctsl
     x_m: 5.0
-    y_m: 3.5
+    y_m: 4.0
     heading_deg: 0.0
     on_carts: false
   - plane: scheibe_falke

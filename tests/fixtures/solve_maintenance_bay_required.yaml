@@ -1,0 +1,23 @@
+# Maintenance-bay-required scenario: maintenance plane set, NOT pinned —
+# the solver must independently place its fuselage centroid in the
+# back-most strip of the hangar (the maintenance bay, y >= length_m −
+# depth_m).
+#
+# Spec §6.5: expected `found`, maintenance plane centroid in bay strip.
+# This is the "did the search actually honor the maintenance rule"
+# canary — the collision checker enforces the rule, but each restart
+# starts the maintenance plane at a free position; descent must steer
+# it back into the bay.
+#
+# Fleet: 3 planes, wild_thing as maintenance. Small fleet ensures
+# search robustness across seeds (a tighter scenario risks the
+# exhausted_budget skip swallowing real regressions).
+#
+# Hangar: test_hangar_large (30 m length × 25 m width). Bay starts at
+# y = 30 − 9 = 21.
+
+fleet: ../../data/fleet.yaml
+hangar: ./test_hangar_large.yaml
+fleet_in: [aviat_husky, fuji, wild_thing]
+maintenance:
+  plane: wild_thing

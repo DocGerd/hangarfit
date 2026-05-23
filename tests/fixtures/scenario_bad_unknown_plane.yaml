@@ -1,0 +1,6 @@
+# Invalid: fleet_in references a plane id that doesn't exist in the
+# fleet. Scenario.__post_init__ rejects this.
+
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
+fleet_in: [aviat_husky, not_a_real_plane]

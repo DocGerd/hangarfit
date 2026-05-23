@@ -1,0 +1,27 @@
+# Force-no-carts-conflict fixture — the SYMMETRIC counterpart of
+# solve_force_carts_conflict.yaml.
+#
+# An `always_own_gear` plane is forced `on_carts=True`. Contradiction:
+# `always_own_gear` is the fleet-data declaration that the plane can NEVER
+# go on carts; setting `force_on_carts=True` overrides that with an
+# impossible operational constraint.
+#
+# Spec §6.5: expected `LoaderError` at scenario load time. The check
+# fires in `Scenario.__post_init__` at the
+# `force_on_carts is True and movement_mode == "always_own_gear"` branch
+# (the other side of the same If/then pair caught by
+# solve_force_carts_conflict.yaml).
+#
+# Choice of plane: aviat_husky. It's `always_own_gear` per data/fleet.yaml
+# and unrelated to any other constraint here, keeping the contract under
+# test unambiguous.
+#
+# Hangar/fleet_in kept minimal — this fixture never reaches the solver;
+# the loader rejects it.
+
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
+fleet_in: [aviat_husky, fuji]
+constraints:
+  aviat_husky:
+    force_on_carts: true

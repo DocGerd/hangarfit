@@ -1,0 +1,9 @@
+# Scenario with a force_on_carts constraint on a cart_eligible plane
+# (cessna_140 is one of the four cart_eligible airframes).
+
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
+fleet_in: [cessna_140, ctsl]
+constraints:
+  cessna_140:
+    force_on_carts: true

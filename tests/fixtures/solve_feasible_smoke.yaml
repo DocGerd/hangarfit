@@ -1,0 +1,12 @@
+# Single Husky in the default placeholder hangar — must remain feasible
+# (no infeasibility check fires) so the solver's exhausted_budget
+# placeholder path is exercised by Chunk C's smoke test.
+#
+# Do NOT bloat this scenario without re-checking feasibility — adding
+# more planes can trip check #2 (Σ areas) under the placeholder hangar
+# dims; see CLAUDE.md's "Placeholder hangar can't fit the full fleet"
+# note.
+
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
+fleet_in: [aviat_husky]

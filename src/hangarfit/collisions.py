@@ -38,21 +38,24 @@ from __future__ import annotations
 
 from shapely.ops import unary_union
 
-from .geometry import WorldPart, aircraft_parts_world, polygon_overlap
+from .geometry import WorldPart, aircraft_parts_world, polygon_overlap, polygon_overlap_area
 from .models import CheckResult, Conflict, Hangar, Layout
 
 
 def check(layout: Layout) -> CheckResult:
     """Run all geometric checks and return a :class:`CheckResult`."""
     world_parts: dict[str, list[WorldPart]] = {
-        p.plane_id: aircraft_parts_world(layout.fleet[p.plane_id], p)
-        for p in layout.placements
+        p.plane_id: aircraft_parts_world(layout.fleet[p.plane_id], p) for p in layout.placements
     }
     conflicts: list[Conflict] = []
     conflicts.extend(_hangar_bounds_conflicts(world_parts, layout.hangar))
     conflicts.extend(_maintenance_conflicts(world_parts, layout))
-    conflicts.extend(_pairwise_conflicts(world_parts, layout.hangar))
-    return CheckResult(conflicts=tuple(conflicts))
+    pairwise, total_penetration_m2 = _pairwise_conflicts(world_parts, layout.hangar)
+    conflicts.extend(pairwise)
+    return CheckResult(
+        conflicts=tuple(conflicts),
+        total_penetration_m2=total_penetration_m2,
+    )
 
 
 def _hangar_bounds_conflicts(
@@ -92,9 +95,7 @@ def _hangar_bounds_conflicts(
     return out
 
 
-def _first_out_of_bounds_vertex(
-    part: WorldPart, hangar: Hangar
-) -> tuple[float, float] | None:
+def _first_out_of_bounds_vertex(part: WorldPart, hangar: Hangar) -> tuple[float, float] | None:
     """Return ``(x, y)`` of the first vertex of ``part`` outside the
     hangar rectangle, or ``None`` if every vertex is inside."""
     for x, y in list(part.polygon.exterior.coords)[:-1]:
@@ -123,9 +124,7 @@ def _maintenance_conflicts(
     """
     if layout.maintenance_plane is None:
         return []
-    fuselage_parts = [
-        p for p in world_parts[layout.maintenance_plane] if p.kind == "fuselage"
-    ]
+    fuselage_parts = [p for p in world_parts[layout.maintenance_plane] if p.kind == "fuselage"]
     if not fuselage_parts:
         # The :class:`Aircraft` model permits parts of any kind, including
         # zero fuselages. If the designated maintenance plane has no fuselage,
@@ -163,7 +162,7 @@ def _maintenance_conflicts(
 
 def _pairwise_conflicts(
     world_parts: dict[str, list[WorldPart]], hangar: Hangar
-) -> list[Conflict]:
+) -> tuple[list[Conflict], float]:
     """For every pair of parts from *different* aircraft, emit a conflict
     iff both the plan-view-overlap rule and the z-overlap rule fire.
 
@@ -190,8 +189,18 @@ def _pairwise_conflicts(
     is the intended shape — these are two distinct geometric collisions
     (one per physical strut), not a duplicate. The ``detail`` strings
     differ via their z-ranges and the gap computation.
+
+    Returns a ``(conflicts, total_penetration_m2)`` tuple. The second
+    component accumulates the shapely ``intersection().area`` (via
+    :func:`hangarfit.geometry.polygon_overlap_area`) of every pairwise
+    conflict — used as Phase 2a's secondary scoring key to break
+    plateaus in the integer conflict-count metric. Clearance-only
+    conflicts (polygons within ``clearance_m`` but not actually
+    intersecting) contribute 0, matching the spec's "two planes
+    overlapping" framing.
     """
     out: list[Conflict] = []
+    total_penetration_m2 = 0.0
     ids = list(world_parts.keys())
     for i in range(len(ids)):
         for j in range(i + 1, len(ids)):
@@ -200,7 +209,8 @@ def _pairwise_conflicts(
                 for pb in world_parts[b_id]:
                     if _parts_conflict(pa, pb, hangar):
                         out.append(_build_pairwise_conflict(pa, pb, a_id, b_id, hangar))
-    return out
+                        total_penetration_m2 += polygon_overlap_area(pa.polygon, pb.polygon)
+    return out, total_penetration_m2
 
 
 def _parts_conflict(pa: WorldPart, pb: WorldPart, hangar: Hangar) -> bool:

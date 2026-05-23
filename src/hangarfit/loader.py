@@ -30,6 +30,8 @@ from .models import (
     MaintenanceBay,
     Part,
     Placement,
+    PlaneConstraint,
+    Scenario,
     StrutsSpec,
 )
 
@@ -48,8 +50,7 @@ def _to_float(value: Any, field_name: str) -> float:
         return float(value)
     except (TypeError, ValueError) as e:
         raise LoaderError(
-            f"{field_name!r}: expected number, got {value!r} "
-            f"({type(value).__name__})"
+            f"{field_name!r}: expected number, got {value!r} ({type(value).__name__})"
         ) from e
 
 
@@ -213,6 +214,163 @@ def load_layout(
         raise LoaderError(f"{path}: {e}") from e
 
 
+def load_scenario(
+    path: Path | str,
+    *,
+    fleet: dict[str, Aircraft] | None = None,
+    hangar: Hangar | None = None,
+) -> Scenario:
+    """Load a scenario YAML into a validated :class:`Scenario`.
+
+    Path resolution and override-conflict policy mirror :func:`load_layout`:
+    ``fleet:`` and ``hangar:`` YAML refs are resolved relative to the
+    scenario file's directory (with the absolute-path-overrides-join
+    behaviour of :class:`pathlib.Path`), and passing ``fleet=`` or
+    ``hangar=`` as a kwarg while the YAML *also* sets the corresponding
+    field raises ``LoaderError`` rather than letting one source of truth
+    silently shadow the other.
+
+    Scenario YAML schema:
+
+    ``fleet_in: [plane_id, ...]`` is required and must be non-empty.
+    ``maintenance: {plane: plane_id}`` is optional.
+    ``constraints`` is a mapping of ``plane_id -> {pin?, force_on_carts?}``;
+    see :func:`_build_plane_constraint` for the pin schema (notably:
+    ``pin.plane_id`` is taken from the constraint key, NOT repeated under
+    the pin block).
+    """
+    path = Path(path)
+    raw = _read_yaml(path)
+    if not isinstance(raw, dict):
+        raise LoaderError(f"{path}: top-level must be a mapping")
+
+    # fleet_in (required) — checked before fleet/hangar are loaded so that
+    # a missing required field is reported as such, rather than as a
+    # downstream "file not found" when the fleet path is bogus.
+    if "fleet_in" not in raw:
+        raise LoaderError(f"{path}: missing required field 'fleet_in'")
+    fleet_in_raw = raw["fleet_in"]
+    if not isinstance(fleet_in_raw, list):
+        raise LoaderError(f"{path}: 'fleet_in' must be a list")
+    fleet_in = tuple(str(x) for x in fleet_in_raw)
+
+    # fleet / hangar — same pattern as load_layout
+    if fleet is None:
+        fleet_ref = raw.get("fleet")
+        if fleet_ref is None:
+            raise LoaderError(
+                f"{path}: 'fleet' field is required when no fleet override is provided"
+            )
+        fleet = load_fleet((path.parent / fleet_ref).resolve())
+    elif "fleet" in raw:
+        raise LoaderError(
+            f"{path}: 'fleet' field is set in YAML but a fleet override was also "
+            f"provided programmatically; remove one to disambiguate"
+        )
+
+    if hangar is None:
+        hangar_ref = raw.get("hangar")
+        if hangar_ref is None:
+            raise LoaderError(
+                f"{path}: 'hangar' field is required when no hangar override is provided"
+            )
+        hangar = load_hangar((path.parent / hangar_ref).resolve())
+    elif "hangar" in raw:
+        raise LoaderError(
+            f"{path}: 'hangar' field is set in YAML but a hangar override was also "
+            f"provided programmatically; remove one to disambiguate"
+        )
+
+    # maintenance (optional, same shape as load_layout)
+    maintenance_plane = _extract_maintenance_plane(raw, path)
+
+    # constraints (optional). `or {}` is wrong here — it collapses every
+    # falsy YAML value (including `constraints: []` or `constraints: 0`)
+    # to `{}` before the isinstance check, silently treating shape bugs
+    # as "no constraints". Use explicit None-handling so the isinstance
+    # check actually fires for non-dict shapes.
+    constraints_raw = raw.get("constraints", {})
+    if constraints_raw is None:  # explicit YAML null: `constraints:`
+        constraints_raw = {}
+    if not isinstance(constraints_raw, dict):
+        raise LoaderError(f"{path}: 'constraints' must be a mapping")
+    constraints: dict[str, PlaneConstraint] = {}
+    for plane_id, cdata in constraints_raw.items():
+        try:
+            constraints[plane_id] = _build_plane_constraint(plane_id, cdata)
+        except (ValueError, KeyError, TypeError, LoaderError) as e:
+            raise LoaderError(f"{path}: constraint {plane_id!r}: {e}") from e
+
+    try:
+        return Scenario(
+            fleet=fleet,
+            hangar=hangar,
+            fleet_in=fleet_in,
+            maintenance_plane=maintenance_plane,
+            constraints=constraints,
+        )
+    except ValueError as e:
+        raise LoaderError(f"{path}: {e}") from e
+
+
+def _build_plane_constraint(plane_id: str, data: Any) -> PlaneConstraint:
+    """Build a :class:`PlaneConstraint` from one entry in a scenario YAML
+    ``constraints:`` block.
+
+    YAML schema accepted:
+
+    .. code-block:: yaml
+
+        constraints:
+          <plane_id>:
+            pin: { x_m: <float>, y_m: <float>, heading_deg: <float>, on_carts: <bool> }
+            force_on_carts: <bool>
+
+    Both ``pin`` and ``force_on_carts`` are optional. Omitting both
+    yields a "free" constraint (the solver may place the plane anywhere
+    within physical / cart-rule limits).
+
+    **Implicit ``pin.plane_id``** — the loader fills :attr:`Placement.plane_id`
+    from the constraint key, so authors don't repeat the plane id under
+    the ``pin`` block. The Scenario invariant
+    ``pin.plane_id == constraint key`` only matters when constructing
+    :class:`Scenario` directly in Python.
+
+    **Required ``pin.on_carts``** — there is no sensible default, so the
+    YAML must spell it out explicitly. ``always_cart`` and
+    ``always_own_gear`` planes have a single legal value;
+    ``cart_eligible`` planes have two and a silent default would silently
+    pick the wrong one for users who didn't mean it.
+    """
+    if not isinstance(data, dict):
+        raise LoaderError(f"must be a mapping, got {type(data).__name__}")
+
+    pin_data = data.get("pin")
+    pin: Placement | None = None
+    if pin_data is not None:
+        if not isinstance(pin_data, dict):
+            raise LoaderError(f"'pin' must be a mapping, got {type(pin_data).__name__}")
+        # pin's plane_id is filled in from the constraint key (the YAML schema
+        # doesn't repeat it — the user already keys it under the plane).
+        required = ("x_m", "y_m", "heading_deg", "on_carts")
+        for key in required:
+            if key not in pin_data:
+                raise LoaderError(f"'pin' missing required field {key!r}")
+        pin = Placement(
+            plane_id=plane_id,
+            x_m=_to_float(pin_data["x_m"], "pin.x_m"),
+            y_m=_to_float(pin_data["y_m"], "pin.y_m"),
+            heading_deg=_to_float(pin_data["heading_deg"], "pin.heading_deg"),
+            on_carts=_to_bool(pin_data["on_carts"], "pin.on_carts"),
+        )
+
+    force_on_carts = data.get("force_on_carts")
+    if force_on_carts is not None:
+        force_on_carts = _to_bool(force_on_carts, "force_on_carts")
+
+    return PlaneConstraint(pin=pin, force_on_carts=force_on_carts)
+
+
 def _extract_maintenance_plane(raw: dict, path: Path) -> str | None:
     """Pull ``maintenance_plane`` from the layout YAML, rejecting common
     typos (``maintenance: cessna_150`` with no nested ``plane:`` key)."""
@@ -223,13 +381,10 @@ def _extract_maintenance_plane(raw: dict, path: Path) -> str | None:
         return None  # explicit `maintenance: ~` → no maintenance plane
     if not isinstance(m, dict):
         raise LoaderError(
-            f"{path}: 'maintenance' must be a mapping with a 'plane' key, "
-            f"got {type(m).__name__}"
+            f"{path}: 'maintenance' must be a mapping with a 'plane' key, got {type(m).__name__}"
         )
     if "plane" not in m:
-        raise LoaderError(
-            f"{path}: 'maintenance' block present but lacks required 'plane' key"
-        )
+        raise LoaderError(f"{path}: 'maintenance' block present but lacks required 'plane' key")
     return m["plane"]
 
 
@@ -336,18 +491,27 @@ def _expand_struts(spec: StrutsSpec, wing: Part) -> list[Part]:
             f"loader requires a strictly positive span"
         )
     midpoint = (spec.fuselage_attach_y_m + spec.wing_attach_y_m) / 2.0
-    common = {
-        "kind": "strut",
-        "length_m": spec.width_m,
-        "width_m": strut_span,
-        "offset_x_m": spec.fuselage_attach_x_m,
-        "angle_deg": 0.0,
-        "z_bottom_m": spec.fuselage_attach_z_m,
-        "z_top_m": wing.z_bottom_m,
-    }
     return [
-        Part(offset_y_m=midpoint, **common),   # right side
-        Part(offset_y_m=-midpoint, **common),  # left side
+        Part(  # right side
+            kind="strut",
+            length_m=spec.width_m,
+            width_m=strut_span,
+            offset_x_m=spec.fuselage_attach_x_m,
+            offset_y_m=midpoint,
+            angle_deg=0.0,
+            z_bottom_m=spec.fuselage_attach_z_m,
+            z_top_m=wing.z_bottom_m,
+        ),
+        Part(  # left side
+            kind="strut",
+            length_m=spec.width_m,
+            width_m=strut_span,
+            offset_x_m=spec.fuselage_attach_x_m,
+            offset_y_m=-midpoint,
+            angle_deg=0.0,
+            z_bottom_m=spec.fuselage_attach_z_m,
+            z_top_m=wing.z_bottom_m,
+        ),
     ]
 
 
@@ -375,5 +539,3 @@ def _read_yaml(path: Path) -> Any:
         raise LoaderError(f"file not found: {path}") from e
     except yaml.YAMLError as e:
         raise LoaderError(f"{path}: YAML parse error: {e}") from e
-
-

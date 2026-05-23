@@ -11,10 +11,12 @@ The full coordinate convention and parts-model collision rule live in
 
 from __future__ import annotations
 
+import math
 import typing
-from dataclasses import dataclass
+from collections.abc import Mapping
+from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Literal, Mapping
+from typing import Literal
 
 WingPosition = Literal["high", "mid", "low"]
 Gear = Literal["tailwheel", "nosewheel", "monowheel"]
@@ -52,17 +54,12 @@ class Part:
     def __post_init__(self) -> None:
         if self.kind not in _VALID_PART_KINDS:
             raise ValueError(
-                f"Part.kind must be one of {sorted(_VALID_PART_KINDS)}, "
-                f"got {self.kind!r}"
+                f"Part.kind must be one of {sorted(_VALID_PART_KINDS)}, got {self.kind!r}"
             )
         if self.length_m <= 0:
-            raise ValueError(
-                f"Part {self.kind!r}: length_m must be positive, got {self.length_m}"
-            )
+            raise ValueError(f"Part {self.kind!r}: length_m must be positive, got {self.length_m}")
         if self.width_m <= 0:
-            raise ValueError(
-                f"Part {self.kind!r}: width_m must be positive, got {self.width_m}"
-            )
+            raise ValueError(f"Part {self.kind!r}: width_m must be positive, got {self.width_m}")
         if self.z_bottom_m < 0:
             raise ValueError(
                 f"Part {self.kind!r}: z_bottom_m must be non-negative, got {self.z_bottom_m}"
@@ -97,9 +94,7 @@ class StrutsSpec:
 
     def __post_init__(self) -> None:
         if self.width_m <= 0:
-            raise ValueError(
-                f"StrutsSpec: width_m must be positive, got {self.width_m}"
-            )
+            raise ValueError(f"StrutsSpec: width_m must be positive, got {self.width_m}")
         if self.fuselage_attach_y_m < 0:
             raise ValueError(
                 f"StrutsSpec: fuselage_attach_y_m must be non-negative "
@@ -215,9 +210,7 @@ class Door:
         if self.width_m <= 0:
             raise ValueError(f"Door.width_m must be positive, got {self.width_m}")
         if self.center_x_m < 0:
-            raise ValueError(
-                f"Door.center_x_m must be non-negative, got {self.center_x_m}"
-            )
+            raise ValueError(f"Door.center_x_m must be non-negative, got {self.center_x_m}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -228,9 +221,7 @@ class MaintenanceBay:
 
     def __post_init__(self) -> None:
         if self.depth_m <= 0:
-            raise ValueError(
-                f"MaintenanceBay.depth_m must be positive, got {self.depth_m}"
-            )
+            raise ValueError(f"MaintenanceBay.depth_m must be positive, got {self.depth_m}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -254,9 +245,7 @@ class Hangar:
         if self.width_m <= 0:
             raise ValueError(f"Hangar.width_m must be positive, got {self.width_m}")
         if self.clearance_m < 0:
-            raise ValueError(
-                f"Hangar.clearance_m must be non-negative, got {self.clearance_m}"
-            )
+            raise ValueError(f"Hangar.clearance_m must be non-negative, got {self.clearance_m}")
         if self.wing_layer_clearance_m < 0:
             raise ValueError(
                 f"Hangar.wing_layer_clearance_m must be non-negative, "
@@ -362,19 +351,14 @@ class Layout:
         )
         if cart_count > 1:
             raise ValueError(
-                f"At most one cart_eligible plane may have on_carts=True "
-                f"(got {cart_count})"
+                f"At most one cart_eligible plane may have on_carts=True (got {cart_count})"
             )
 
         if self.maintenance_plane is not None:
             if self.maintenance_plane not in self.fleet:
-                raise ValueError(
-                    f"maintenance_plane {self.maintenance_plane!r} not in fleet"
-                )
+                raise ValueError(f"maintenance_plane {self.maintenance_plane!r} not in fleet")
             if self.maintenance_plane not in seen:
-                raise ValueError(
-                    f"maintenance_plane {self.maintenance_plane!r} is not placed"
-                )
+                raise ValueError(f"maintenance_plane {self.maintenance_plane!r} is not placed")
 
         object.__setattr__(self, "fleet", MappingProxyType(dict(self.fleet)))
 
@@ -400,25 +384,19 @@ class Conflict:
         if not self.planes:
             raise ValueError("Conflict.planes must have at least one plane id")
         if len(self.planes) > 2:
-            raise ValueError(
-                f"Conflict.planes must have 1 or 2 entries, got {len(self.planes)}"
-            )
+            raise ValueError(f"Conflict.planes must have 1 or 2 entries, got {len(self.planes)}")
         if any(not pid for pid in self.planes):
-            raise ValueError(
-                f"Conflict.planes entries must be non-empty, got {self.planes}"
-            )
+            raise ValueError(f"Conflict.planes entries must be non-empty, got {self.planes}")
         if len(set(self.planes)) != len(self.planes):
-            raise ValueError(
-                f"Conflict.planes entries must be distinct, got {self.planes}"
-            )
+            raise ValueError(f"Conflict.planes entries must be distinct, got {self.planes}")
 
     @classmethod
-    def single(cls, kind: str, plane: str, detail: str) -> "Conflict":
+    def single(cls, kind: str, plane: str, detail: str) -> Conflict:
         """Factory for a single-aircraft conflict (e.g. ``maintenance_position``)."""
         return cls(kind=kind, planes=(plane,), detail=detail)
 
     @classmethod
-    def pair(cls, kind: str, plane_a: str, plane_b: str, detail: str) -> "Conflict":
+    def pair(cls, kind: str, plane_a: str, plane_b: str, detail: str) -> Conflict:
         """Factory for a pairwise conflict (e.g. ``wing_strut_overlap``)."""
         return cls(kind=kind, planes=(plane_a, plane_b), detail=detail)
 
@@ -429,10 +407,344 @@ class CheckResult:
 
     ``valid`` is a derived property — there is no way to construct a
     ``CheckResult`` that claims to be valid while carrying conflicts.
+
+    ``total_penetration_m2`` is the summed shapely-``intersection().area``
+    across pairwise conflicts (length-2 ``Conflict.planes``) — used by
+    the Phase 2a solver as a smooth secondary scoring key to break
+    plateaus in the integer ``len(conflicts)`` metric. Single-plane
+    conflicts (``maintenance_position``, ``maintenance_no_fuselage``,
+    ``hangar_bounds``) contribute 0. The validity contract is unchanged:
+    ``valid`` is still derived from ``conflicts`` only.
     """
 
     conflicts: tuple[Conflict, ...] = ()
+    total_penetration_m2: float = 0.0
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.total_penetration_m2):
+            raise ValueError(
+                f"total_penetration_m2 must be finite, got {self.total_penetration_m2!r}"
+            )
+        if self.total_penetration_m2 < 0.0:
+            raise ValueError(
+                f"total_penetration_m2 must be >= 0.0, got {self.total_penetration_m2}"
+            )
 
     @property
     def valid(self) -> bool:
         return len(self.conflicts) == 0
+
+
+@dataclass(frozen=True, slots=True)
+class PlaneConstraint:
+    """Per-plane HARD constraints for a Scenario.
+
+    All fields optional — a constraint with everything None means 'free'
+    (the solver may place the plane anywhere within physical / cart-rule
+    limits). See spec §3.2 for the rationale.
+    """
+
+    pin: Placement | None = None
+    force_on_carts: bool | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class Scenario:
+    """Solver input for Phase 2a.
+
+    Cross-reference invariants validated in __post_init__:
+
+    - fleet_in is non-empty
+    - fleet_in has no duplicate entries
+    - every fleet_in id exists in fleet
+    - maintenance_plane (if set) is in fleet_in
+    - constraints.keys() ⊆ set(fleet_in)
+    - for each (plane_id, constraint): constraint.pin.plane_id == plane_id (if pin set)
+    - force_on_carts is consistent with movement_mode:
+        force_on_carts=True  → plane must NOT be always_own_gear
+        force_on_carts=False → plane must NOT be always_cart
+    - pin.on_carts is consistent with movement_mode (same rules)
+    - if both a pin and force_on_carts are set, their on_carts must agree
+    - fleet and constraints are wrapped in MappingProxyType (same pattern as Layout)
+
+    See spec §3.2 for the rationale.
+    """
+
+    fleet: Mapping[str, Aircraft]
+    hangar: Hangar
+    fleet_in: tuple[str, ...]
+    maintenance_plane: str | None = None
+    constraints: Mapping[str, PlaneConstraint] = field(default_factory=lambda: MappingProxyType({}))
+
+    def __post_init__(self) -> None:
+        # fleet_in must be non-empty (otherwise there's nothing to solve;
+        # downstream helpers like the sum-of-areas infeasibility check
+        # also do `fleet_in[0]` which would IndexError on empty input).
+        if not self.fleet_in:
+            raise ValueError("Scenario.fleet_in must be non-empty")
+
+        # fleet_in has no duplicates (one Husky can't park in two places).
+        # Mirror of the placements seen-set check in Layout.__post_init__.
+        if len(set(self.fleet_in)) != len(self.fleet_in):
+            raise ValueError(f"Scenario.fleet_in has duplicate entries: {self.fleet_in}")
+
+        # fleet_in references real planes
+        for pid in self.fleet_in:
+            if pid not in self.fleet:
+                raise ValueError(
+                    f"Scenario.fleet_in references unknown plane {pid!r}; "
+                    f"fleet has: {sorted(self.fleet)}"
+                )
+
+        fleet_in_set = set(self.fleet_in)
+
+        # maintenance_plane in fleet_in
+        if self.maintenance_plane is not None and self.maintenance_plane not in fleet_in_set:
+            raise ValueError(
+                f"Scenario.maintenance_plane {self.maintenance_plane!r} must be in fleet_in"
+            )
+
+        # constraint keys ⊆ fleet_in
+        for key in self.constraints:
+            if key not in fleet_in_set:
+                raise ValueError(f"Scenario.constraints has key {key!r} not in fleet_in")
+
+        # per-constraint validation
+        for plane_id, constraint in self.constraints.items():
+            plane = self.fleet[plane_id]
+
+            if constraint.pin is not None:
+                if constraint.pin.plane_id != plane_id:
+                    raise ValueError(
+                        f"Scenario.constraints[{plane_id!r}].pin.plane_id is "
+                        f"{constraint.pin.plane_id!r}; must equal the constraint key"
+                    )
+
+                # pin.on_carts consistency with movement_mode
+                if plane.movement_mode == "always_cart" and not constraint.pin.on_carts:
+                    raise ValueError(
+                        f"Scenario.constraints[{plane_id!r}].pin.on_carts=False "
+                        f"contradicts movement_mode={plane.movement_mode!r}"
+                    )
+                if plane.movement_mode == "always_own_gear" and constraint.pin.on_carts:
+                    raise ValueError(
+                        f"Scenario.constraints[{plane_id!r}].pin.on_carts=True "
+                        f"contradicts movement_mode={plane.movement_mode!r}"
+                    )
+
+            if constraint.force_on_carts is not None:
+                # force_on_carts consistency with movement_mode
+                if constraint.force_on_carts is True and plane.movement_mode == "always_own_gear":
+                    raise ValueError(
+                        f"Scenario.constraints[{plane_id!r}].force_on_carts=True "
+                        f"contradicts movement_mode={plane.movement_mode!r}"
+                    )
+                if constraint.force_on_carts is False and plane.movement_mode == "always_cart":
+                    raise ValueError(
+                        f"Scenario.constraints[{plane_id!r}].force_on_carts=False "
+                        f"contradicts movement_mode={plane.movement_mode!r}"
+                    )
+
+            # pin and force_on_carts must agree if both set
+            if (
+                constraint.pin is not None
+                and constraint.force_on_carts is not None
+                and constraint.pin.on_carts != constraint.force_on_carts
+            ):
+                raise ValueError(
+                    f"Scenario.constraints[{plane_id!r}]: pin.on_carts="
+                    f"{constraint.pin.on_carts} and force_on_carts="
+                    f"{constraint.force_on_carts} disagree (contradictory)"
+                )
+
+        object.__setattr__(self, "fleet", MappingProxyType(dict(self.fleet)))
+        # Always copy+wrap constraints — mirrors the unconditional pattern on
+        # fleet above (and on Layout.fleet). Skipping the copy when the caller
+        # passes a pre-wrapped MappingProxyType would let the caller leak
+        # mutations through their retained reference to the underlying dict.
+        object.__setattr__(self, "constraints", MappingProxyType(dict(self.constraints)))
+
+
+SolveStatus = Literal[
+    "found",
+    "found_partial",
+    "exhausted_budget",
+    "trivially_infeasible",
+]
+
+
+@dataclass(frozen=True, slots=True)
+class SolverDiagnostics:
+    """Per-solve diagnostic information.
+
+    ``best_partial`` and ``best_partial_layout`` are a fused pair — the
+    lowest-conflict :class:`CheckResult` seen and the matching
+    :class:`Layout` so it can be rendered. They MUST both be set or both
+    be ``None``; carrying one without the other is a self-inconsistent
+    state that would crash downstream rendering (Chunk F's CLI).
+
+    ``seed`` is the *actually-used* seed — ``None`` resolved to entropy
+    on entry to :func:`hangarfit.solver.solve` is recorded here so a run
+    can be replayed exactly.
+
+    ``diversity_impossible`` is ``True`` iff the static
+    ``K > 1 ∧ free_planes < min_planes_moved`` precondition fires on
+    :func:`hangarfit.solver.solve` entry (spec §4.1 of the v0.6.0
+    solver-polish release design). It mirrors the existing logger
+    warning as a structured, machine-readable signal so callers don't
+    have to scrape log records.
+
+    ``diversity_rejected_count`` is the number of valid layouts the
+    diversity filter rejected during the run. ``0`` is the healthy
+    default; a non-zero value means search produced more valid layouts
+    than the K-diversity gate accepted (informative when K>1 returns
+    ``found_partial``).
+
+    ``diversity_impossible`` and ``diversity_rejected_count`` are
+    **advisory**: structured mirrors of log warnings / search
+    instrumentation. Callers must not gate on them for status-level
+    decisions; that's ``status``'s job. They exist so dashboards and
+    tests can read the same signals as the logger without scraping log
+    records.
+    """
+
+    restarts_attempted: int
+    wall_time_s: float
+    best_partial: CheckResult | None
+    best_partial_layout: Layout | None
+    seed: int
+    diversity_impossible: bool = False
+    diversity_rejected_count: int = 0
+
+    def __post_init__(self) -> None:
+        if (self.best_partial is None) != (self.best_partial_layout is None):
+            raise ValueError(
+                "SolverDiagnostics.best_partial and best_partial_layout must "
+                "both be set or both be None"
+            )
+        if self.restarts_attempted < 0:
+            raise ValueError(
+                f"SolverDiagnostics.restarts_attempted must be >= 0, got {self.restarts_attempted}"
+            )
+        if not math.isfinite(self.wall_time_s) or self.wall_time_s < 0.0:
+            raise ValueError(
+                f"SolverDiagnostics.wall_time_s must be finite and >= 0, got {self.wall_time_s!r}"
+            )
+        if self.diversity_rejected_count < 0:
+            raise ValueError(
+                f"SolverDiagnostics.diversity_rejected_count must be >= 0, "
+                f"got {self.diversity_rejected_count}"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class SolveResult:
+    """Public output of :func:`hangarfit.solver.solve`.
+
+    ``layouts`` is 0..K valid Layouts, with K matching the caller's
+    ``alternatives`` request. The ``status`` field disambiguates partial
+    runs (see spec §4.7); status and ``layouts`` emptiness must agree:
+
+    - ``"found"`` / ``"found_partial"`` → at least one layout
+    - ``"exhausted_budget"`` / ``"trivially_infeasible"`` → zero layouts
+    """
+
+    status: SolveStatus
+    layouts: tuple[Layout, ...]
+    diagnostics: SolverDiagnostics
+
+    def __post_init__(self) -> None:
+        if self.status in ("found", "found_partial") and not self.layouts:
+            raise ValueError(f"SolveResult.status={self.status!r} requires at least one layout")
+        if self.status in ("exhausted_budget", "trivially_infeasible") and self.layouts:
+            raise ValueError(
+                f"SolveResult.status={self.status!r} must have empty layouts, "
+                f"got {len(self.layouts)}"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class DiversityConfig:
+    """Diversity-filter thresholds (see spec §4.6)."""
+
+    min_planes_moved: int = 2
+    position_threshold_m: float = 0.5
+    heading_threshold_deg: float = 30.0
+
+    def __post_init__(self) -> None:
+        if self.min_planes_moved < 1:
+            raise ValueError(
+                f"DiversityConfig.min_planes_moved must be >= 1 "
+                f"(zero makes diversity vacuous), got {self.min_planes_moved}"
+            )
+        if self.position_threshold_m <= 0.0:
+            raise ValueError(
+                f"DiversityConfig.position_threshold_m must be positive, "
+                f"got {self.position_threshold_m}"
+            )
+        if not (0.0 <= self.heading_threshold_deg <= 180.0):
+            raise ValueError(
+                f"DiversityConfig.heading_threshold_deg must be in [0, 180] "
+                f"(shorter arc), got {self.heading_threshold_deg}"
+            )
+
+
+@dataclass(frozen=True, slots=True)
+class SearchConfig:
+    """Solver hyperparameters (see spec §4.3, §4.5).
+
+    v1 defaults are guesses; tune with real data.
+
+    ``max_restarts`` is the v0.6.0 solver-polish addition (spec §4.2 of
+    ``docs/superpowers/specs/2026-05-22-v0.6.0-solver-polish-release-design.md``).
+    ``None`` preserves the pre-v0.6.0 wall-clock-only termination behavior.
+    When set, it acts as an *upper-bound counter* on the outer restart
+    loop in addition to ``budget_s``: whichever gate trips first wins.
+    Useful for cross-machine-deterministic exhaustion canaries that
+    can't rely on wall-clock budget cutoffs.
+    """
+
+    candidates_per_iter: int = 8
+    k_stall: int = 50
+    pos_sigma_m: float = 0.5
+    heading_sigma_deg: float = 10.0
+    max_restarts: int | None = None
+    """Hard cap on the outer restart loop. ``None`` (default) preserves
+    the pre-v0.6.0 wall-clock-only termination behavior. When set, must
+    be ``>= 1``; serves as an upper-bound counter in addition to
+    ``solve(..., budget_s=...)`` — whichever gate trips first wins.
+    Useful for cross-machine-deterministic exhaustion canaries that
+    can't rely on wall-clock budget cutoffs.
+
+    ``None`` is the only "opt out" sentinel in :class:`SearchConfig` /
+    :class:`DiversityConfig` / :class:`SolverDiagnostics`; all other
+    numeric fields require a concrete positive value. Pass ``None``
+    explicitly to disable the cap; passing ``0`` is rejected (it would
+    skip the search loop entirely)."""
+
+    def __post_init__(self) -> None:
+        if self.candidates_per_iter < 1:
+            raise ValueError(
+                f"SearchConfig.candidates_per_iter must be >= 1 "
+                f"(descent picks one per iter), got {self.candidates_per_iter}"
+            )
+        if self.k_stall < 1:
+            raise ValueError(
+                f"SearchConfig.k_stall must be >= 1 "
+                f"(zero would restart on every iter), got {self.k_stall}"
+            )
+        if self.pos_sigma_m <= 0.0:
+            raise ValueError(
+                f"SearchConfig.pos_sigma_m must be positive "
+                f"(zero freezes the trajectory), got {self.pos_sigma_m}"
+            )
+        if self.heading_sigma_deg <= 0.0:
+            raise ValueError(
+                f"SearchConfig.heading_sigma_deg must be positive, got {self.heading_sigma_deg}"
+            )
+        if self.max_restarts is not None and self.max_restarts < 1:
+            raise ValueError(
+                f"SearchConfig.max_restarts must be >= 1 when set "
+                f"(pass ``None`` to disable the restart cap; ``0`` would "
+                f"skip the search loop entirely), got {self.max_restarts}"
+            )

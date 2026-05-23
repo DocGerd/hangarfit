@@ -1,0 +1,10 @@
+# Invalid: force_on_carts=true on an always_own_gear airframe. The
+# Husky has tundra tires and no cart geometry; the constraint
+# contradicts its movement_mode.
+
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
+fleet_in: [aviat_husky]
+constraints:
+  aviat_husky:
+    force_on_carts: true   # aviat_husky is always_own_gear → contradiction

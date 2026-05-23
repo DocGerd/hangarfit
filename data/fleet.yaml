@@ -28,7 +28,7 @@ aircraft:
     notes: "Cantilever wing; outriggers folded into wing footprint at the tips"
     parts:
       - kind: fuselage
-        length_m: 7.7
+        length_m: 7.6
         width_m: 0.7
         offset_x_m: 0.0
         offset_y_m: 0.0
@@ -36,7 +36,7 @@ aircraft:
         z_top_m: 1.5
       - kind: wing
         length_m: 1.2
-        width_m: 16.6
+        width_m: 18.0
         offset_x_m: 1.5
         offset_y_m: 0.0
         z_bottom_m: 1.9
@@ -54,21 +54,21 @@ aircraft:
     measured: false
     parts:
       - kind: fuselage
-        length_m: 7.0
+        length_m: 6.88
         width_m: 0.85
-        offset_x_m: 0.0
+        offset_x_m: -1.72
         offset_y_m: 0.0
         z_bottom_m: 0.0
         z_top_m: 1.5
       - kind: wing
         length_m: 1.4
-        width_m: 10.7
-        offset_x_m: 1.2
+        width_m: 10.82
+        offset_x_m: -0.52
         offset_y_m: 0.0
         z_bottom_m: 2.0
         z_top_m: 2.3
     struts:
-      fuselage_attach_x_m: 0.5
+      fuselage_attach_x_m: -1.22
       fuselage_attach_y_m: 0.425   # ~half fuselage width
       fuselage_attach_z_m: 0.5
       wing_attach_y_m: 1.8
@@ -87,16 +87,16 @@ aircraft:
     notes: "Only low-wing in the fleet — wing underside near ground level"
     parts:
       - kind: fuselage
-        length_m: 8.0
+        length_m: 7.98
         width_m: 1.0
-        offset_x_m: 0.0
+        offset_x_m: -0.40
         offset_y_m: 0.0
         z_bottom_m: 0.0
         z_top_m: 1.6
       - kind: wing
         length_m: 1.5
-        width_m: 9.4
-        offset_x_m: 0.5
+        width_m: 9.42
+        offset_x_m: 0.10
         offset_y_m: 0.0
         z_bottom_m: 0.8
         z_top_m: 1.1
@@ -113,21 +113,21 @@ aircraft:
     measured: false
     parts:
       - kind: fuselage
-        length_m: 5.5
+        length_m: 6.60
         width_m: 0.85
-        offset_x_m: 0.0
+        offset_x_m: -0.33
         offset_y_m: 0.0
         z_bottom_m: 0.0
         z_top_m: 1.4
       - kind: wing
         length_m: 1.2
-        width_m: 9.0
-        offset_x_m: 1.0
+        width_m: 9.15
+        offset_x_m: 0.67
         offset_y_m: 0.0
         z_bottom_m: 2.0
         z_top_m: 2.2
     struts:
-      fuselage_attach_x_m: 0.4
+      fuselage_attach_x_m: 0.07
       fuselage_attach_y_m: 0.425
       fuselage_attach_z_m: 0.5
       wing_attach_y_m: 1.6
@@ -145,21 +145,21 @@ aircraft:
     measured: false
     parts:
       - kind: fuselage
-        length_m: 6.4
+        length_m: 6.39
         width_m: 0.8
-        offset_x_m: 0.0
+        offset_x_m: -1.60
         offset_y_m: 0.0
         z_bottom_m: 0.0
         z_top_m: 1.5
       - kind: wing
         length_m: 1.5
-        width_m: 8.5
-        offset_x_m: 1.1
+        width_m: 9.31
+        offset_x_m: -0.50
         offset_y_m: 0.0
         z_bottom_m: 1.9
         z_top_m: 2.2
     struts:
-      fuselage_attach_x_m: 0.4
+      fuselage_attach_x_m: -1.20
       fuselage_attach_y_m: 0.4
       fuselage_attach_z_m: 0.5
       wing_attach_y_m: 1.5
@@ -178,21 +178,21 @@ aircraft:
     notes: "V-strut treated as one strut per side"
     parts:
       - kind: fuselage
-        length_m: 6.4
+        length_m: 6.55
         width_m: 0.85
-        offset_x_m: 0.0
+        offset_x_m: -1.64
         offset_y_m: 0.0
         z_bottom_m: 0.0
         z_top_m: 1.5
       - kind: wing
         length_m: 1.55
-        width_m: 10.2
-        offset_x_m: 1.1
+        width_m: 10.16
+        offset_x_m: -0.54
         offset_y_m: 0.0
         z_bottom_m: 2.0
         z_top_m: 2.3
     struts:
-      fuselage_attach_x_m: 0.5
+      fuselage_attach_x_m: -1.14
       fuselage_attach_y_m: 0.425
       fuselage_attach_z_m: 0.5
       wing_attach_y_m: 1.7
@@ -210,21 +210,21 @@ aircraft:
     measured: false
     parts:
       - kind: fuselage
-        length_m: 7.3
+        length_m: 6.56
         width_m: 0.9
-        offset_x_m: 0.0
+        offset_x_m: -0.33
         offset_y_m: 0.0
         z_bottom_m: 0.0
         z_top_m: 1.5
       - kind: wing
         length_m: 1.5
-        width_m: 10.1
-        offset_x_m: 1.1
+        width_m: 10.17
+        offset_x_m: 0.77
         offset_y_m: 0.0
         z_bottom_m: 2.0
         z_top_m: 2.3
     struts:
-      fuselage_attach_x_m: 0.5
+      fuselage_attach_x_m: 0.17
       fuselage_attach_y_m: 0.45
       fuselage_attach_z_m: 0.5
       wing_attach_y_m: 1.8
@@ -243,16 +243,16 @@ aircraft:
     notes: "Cantilever wing (no struts)"
     parts:
       - kind: fuselage
-        length_m: 6.3
+        length_m: 6.60
         width_m: 1.0
-        offset_x_m: 0.0
+        offset_x_m: -0.33
         offset_y_m: 0.0
         z_bottom_m: 0.0
         z_top_m: 1.4
       - kind: wing
         length_m: 1.4
-        width_m: 8.6
-        offset_x_m: 1.0
+        width_m: 8.59
+        offset_x_m: 0.67
         offset_y_m: 0.0
         z_bottom_m: 1.9
         z_top_m: 2.2
@@ -269,21 +269,21 @@ aircraft:
     measured: false
     parts:
       - kind: fuselage
-        length_m: 6.2
+        length_m: 5.85
         width_m: 0.85
-        offset_x_m: 0.0
+        offset_x_m: -0.29
         offset_y_m: 0.0
         z_bottom_m: 0.0
         z_top_m: 1.4
       - kind: wing
         length_m: 1.3
-        width_m: 9.0
-        offset_x_m: 1.0
+        width_m: 9.85
+        offset_x_m: 0.71
         offset_y_m: 0.0
         z_bottom_m: 1.9
         z_top_m: 2.2
     struts:
-      fuselage_attach_x_m: 0.4
+      fuselage_attach_x_m: 0.11
       fuselage_attach_y_m: 0.425
       fuselage_attach_z_m: 0.5
       wing_attach_y_m: 1.6

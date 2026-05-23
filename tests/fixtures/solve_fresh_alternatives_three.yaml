@@ -1,0 +1,13 @@
+# K-diverse alternatives fixture: 3 free planes in the larger test hangar.
+#
+# Used by tests/test_solver_search.py::test_solve_returns_k_diverse_alternatives
+# to exercise the K=3 acceptance path. Uses the 30 × 25 m test hangar so the
+# search has headroom to find multiple genuinely-distinct basins; the
+# placeholder 25 × 18 m hangar would force every layout into the same tight
+# arrangement (defeating diversity).
+#
+# No constraints — every plane is free to move under the diversity filter.
+
+fleet: ../../data/fleet.yaml
+hangar: ./test_hangar_large.yaml
+fleet_in: [aviat_husky, fuji, ctsl]
