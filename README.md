@@ -141,7 +141,7 @@ tests/              # pytest suite, including strut-aware collision golden tests
 
 ## More depth
 
-[`CLAUDE.md`](CLAUDE.md) is the durable project spec: the fleet (nine aircraft, mostly high-wing, with one low-wing), the parts-based collision rule, the coordinate convention (including the non-obvious heading transform), and the Phase 1 deliverables list. Read it before contributing anything geometric.
+Architecture lives in [`docs/architecture/`](docs/architecture/) and [`docs/adr/`](docs/adr/) — start with [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md) for the parts-based collision rule, the coordinate convention (including the non-obvious heading transform), and the testing posture; the matching ADRs ([ADR-0001](docs/adr/0001-aircraft-parts-model.md), [ADR-0002](docs/adr/0002-determinant-minus-one-transform.md)) record *why* each decision has the shape it does. Read those before contributing anything geometric. [`CLAUDE.md`](CLAUDE.md) is the operational guide — workflow, subagents, project-local config — not the architectural canon.
 
 ## License
 

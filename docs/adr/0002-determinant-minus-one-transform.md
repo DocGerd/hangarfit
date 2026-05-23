@@ -34,8 +34,8 @@ deliberate, the determinant is supposed to be −1, and the implementation
 encodes two simultaneous convention flips (compass-vs-math, world-frame
 handedness). This ADR exists to stop the "correction" that turns a
 working transform into a silently broken one, and to make the *why*
-discoverable from the code rather than reachable only through CLAUDE.md
-or a synchronous conversation with the maintainer.
+discoverable from the code rather than reachable only through a
+synchronous conversation with the maintainer.
 
 ## Decision Drivers
 
@@ -86,9 +86,9 @@ convention is paid by *every* future YAML author and PNG reader.
 
 The transform's handedness is not a bug to be fixed but a derived
 consequence of two upstream choices we want to keep. We make it safe
-by documenting it three ways (CLAUDE.md, this ADR, the module
-docstring) and by pinning it with a regression test that fails the
-instant someone substitutes a pure rotation.
+by documenting it three ways (§8 Crosscutting Concepts, this ADR, the
+module docstring) and by pinning it with a regression test that fails
+the instant someone substitutes a pure rotation.
 
 ### Why the matrix has determinant −1: the two sign flips
 
@@ -272,8 +272,9 @@ ongoing cost is worse. Rejected.
   a defect, just a property. The map is invertible (its inverse is
   itself, since reflections are involutions composed with rotations of
   appropriate sign).
-- **The decision is now discoverable from `docs/adr/` and from the
-  module docstring**, not only from CLAUDE.md or a maintainer
+- **The decision is now discoverable from `docs/adr/`, from
+  [§8 Crosscutting Concepts](../architecture/08-crosscutting-concepts.md#the-coordinate-convention),
+  and from the module docstring**, not only from a maintainer
   conversation.
 
 ### Negative
@@ -282,7 +283,8 @@ ongoing cost is worse. Rejected.
   matrix does not look like the textbook form most graphics tutorials
   teach. We accept the recurring overhead of explaining why it stays.
 - **One more concept to learn** before touching `geometry.py`. The
-  module docstring and CLAUDE.md "Coordinate convention" section
+  module docstring and [§8 Crosscutting Concepts — "The coordinate
+  convention"](../architecture/08-crosscutting-concepts.md#the-coordinate-convention)
   attempt to front-load that learning, and the
   `geometry-invariant-guard` subagent catches regressions at PR
   review, but the cost is real.
@@ -320,26 +322,27 @@ ongoing cost is worse. Rejected.
   geometry test exercises at least one non-axis-aligned heading with
   a distinguishing probe. This is a defense-in-depth layer beyond
   the pytest assertion.
-- **The CLAUDE.md "Coordinate convention" section** spells out the
-  convention in prose, so contributors encounter the explanation
-  before they encounter the code. The
-  `geometry.py` module docstring repeats the warning at the file
-  level.
+- **[§8 Crosscutting Concepts — "The coordinate
+  convention"](../architecture/08-crosscutting-concepts.md#the-coordinate-convention)**
+  spells out the convention in prose, so contributors encounter the
+  explanation before they encounter the code. The `geometry.py`
+  module docstring repeats the warning at the file level.
 - **The PR review checklist** (per CLAUDE.md "Subagents" section)
   routes any change to `geometry.py` or `collisions.py` through
   `geometry-invariant-guard` automatically — the maintainer does not
   have to remember to invoke it.
 
-Together: docstring at the code site, ADR for the rationale,
-CLAUDE.md for the operational convention, pytest assertion for
-automated regression, and a subagent for PR-time review. A
-"correction" to a pure-rotation matrix would have to defeat all five
-to land.
+Together: docstring at the code site, ADR for the rationale, §8
+Crosscutting Concepts for the operational convention, pytest
+assertion for automated regression, and a subagent for PR-time
+review. A "correction" to a pure-rotation matrix would have to defeat
+all five to land.
 
 ## More Information
 
-- **Authoritative prose explanation:** `CLAUDE.md` §"Coordinate
-  convention" — the source the rest of this ADR distills.
+- **Authoritative prose explanation:** [§8 Crosscutting Concepts — "The
+  coordinate convention"](../architecture/08-crosscutting-concepts.md#the-coordinate-convention)
+  — the source the rest of this ADR distills.
 - **Implementation:** [`src/hangarfit/geometry.py`](../../src/hangarfit/geometry.py),
   specifically `aircraft_parts_world` (the world-coordinate list
   comprehension is the load-bearing line).

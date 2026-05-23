@@ -63,6 +63,16 @@ itself (holonomic on carts; Dubins-path-style on own gear) is a
 property of the planner that does not yet exist; the parts model and
 collision checker are deliberately motion-agnostic.
 
+### The door is a visual marker only
+
+The hangar's `door` field positions the opening for the PNG renderer
+to draw a gap in the front wall, but the collision checker does **not**
+treat the door as a separate opening: every part of every placed plane
+must fit fully inside the hangar rectangle for the layout to be
+considered valid. There is no "door clearance" rule beyond the
+hangar-bounds check itself. Whether a plane can be *moved* out through
+the door is a future-planner concern, deliberately out of scope here.
+
 ## The coordinate convention
 
 The single most contributor-confusing concept in the project. Read

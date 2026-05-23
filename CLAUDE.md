@@ -1,189 +1,36 @@
 # Project context — hangarfit
 
-This file is the durable context for the project. Read it first in any new session.
+This file is the durable **operational** context for the project: how we work, where the live config lives, and what is still uncertain. Architectural knowledge — the domain model, the coordinate convention, the module map, the decisions that shaped the substrate — lives in [`docs/architecture/`](docs/architecture/) and [`docs/adr/`](docs/adr/). Read this file first in any new session; follow the Quick Reference below to drill in.
 
 ---
 
 ## What this project is
 
-`hangarfit` is an **on-demand exception tool** for a flying club: when the standard hangar parking layout breaks (delayed return, surprise maintenance, etc.), it helps find *a* valid alternative arrangement.
+`hangarfit` is an **on-demand exception tool** for a flying club: when the standard hangar parking layout breaks (delayed return, surprise maintenance, etc.), it helps find *a* valid alternative arrangement. The tool checks whether a hand-authored candidate layout is physically valid and renders a top-down PNG so a human can eyeball it; the solver searches for one when no candidate is in hand.
 
-The tool checks whether a hand-authored candidate layout is physically valid (no fuselage / wing / strut collisions, fits in the hangar, maintenance plane in the right spot) and renders a top-down PNG so a human can eyeball it.
-
-**Status:** Phase 1 (substrate: data model, collision checker, visualizer, CLI) and Phase 2a (static layout solver, `hangarfit solve`) have both shipped. Current active work and milestone status live in auto-memory and GitHub milestones, not here.
+**Status:** Phase 1 (substrate) and Phase 2a (static layout solver, `hangarfit solve`) have both shipped. Live milestone status lives in auto-memory and GitHub milestones, not here.
 
 ---
 
-## The fleet (9 aircraft)
+## Quick Reference — where architectural content actually lives
 
-| ID | Name | Wing | Gear | Movement mode | Wing strut? | Notes |
-|---|---|---|---|---|---|---|
-| `scheibe_falke` | Scheibe SF-25E Falke | High | Monowheel + outriggers | `always_cart` | No (cantilever) | Outriggers folded into wing footprint |
-| `aviat_husky` | Aviat Husky A-1 | High | Tailwheel | `always_own_gear` | **Yes** | |
-| `fuji` | Fuji FA-200 | **Low** | Nosewheel | `always_own_gear` | No (cantilever) | The only low-wing |
-| `wild_thing` | Wild Thing | High | Nosewheel | `always_cart` | **Yes** | |
-| `zlin_savage` | Zlin Savage | High | Tailwheel | `always_cart` | **Yes** | |
-| `cessna_140` | Cessna 140 | High | Tailwheel | `cart_eligible` | **Yes** | V-strut treated as one strut per side |
-| `cessna_150` | Cessna 150 | High | Nosewheel | `cart_eligible` | **Yes** | |
-| `ctsl` | Flight Design CTSL | High | Nosewheel | `cart_eligible` | No (cantilever) | |
-| `fk9_mkii` | FK9 Mk II | High | Nosewheel | `cart_eligible` | **Yes** | |
-
-**Cart rule**: of the 4 `cart_eligible` planes, **at most one** uses the spare carts at a time. Cart mounting is operationally free — the algorithm can pick any cart assignment.
-
-**Motion (relevant for the future planner, not Phase 1 collision)**:
-- On carts: holonomic (any direction, including sideways).
-- On own gear: non-holonomic (Dubins-path-style curves bounded by turn radius).
-
----
-
-## The hangar
-
-Stack-like layout: deep, one door at the front. The back-most spot doubles as the **maintenance bay** (curtained off when in use); a plane scheduled for maintenance must already be parked at the back. All dimensions in `data/hangar.yaml` are **placeholders** until real measurements are taken.
-
----
-
-## The parts model (the most important rule)
-
-> Each aircraft is a list of **parts**. Every part is an oriented rectangle in plan view with a height range `[z_bottom_m, z_top_m]`. Fuselage, wing, each strut, and the tail (where modeled) are all parts — the closed set of `PartKind` values lives in `models.py`.
->
-> **Collision rule**: two parts from different aircraft conflict iff **both** hold:
->
-> 1. **In plan view**: `polygon_a.distance(polygon_b) < clearance_m` (the closest distance between the polygons is less than the horizontal clearance).
-> 2. **In height**: the gap between `[z_bottom_a, z_top_a]` and `[z_bottom_b, z_top_b]` is less than `wing_layer_clearance_m` (treating overlap as a gap of 0).
->
-> Parts of the *same* aircraft are never checked against each other (a Husky's wing and its own strut "overlap" by design).
-
-This is the single most important geometric rule in the project. Every future feature sits on top of it. If the parts model or the collision rule is wrong, every downstream layout will be wrong.
-
-### Why parts (and not a single bounding box)?
-
-- A single bbox can't represent the legality of a **high-wing's wingtip overlapping a low-wing's fuselage area in plan view**: the heights differ, so it's fine, but a flat bbox would mark it as a collision.
-- **Wing struts** (on Husky, Wild Thing, Zlin Savage, both Cessnas, FK9) occupy a thin column from lower fuselage out to the underside of the wing. The "wing volume" of a strut-braced plane is NOT free — another plane's wing can't nest through where the strut lives. The parts model expresses this directly; a bbox model cannot.
-
-### YAML convenience: the `struts:` block
-
-For strut-braced planes, `fleet.yaml` accepts a high-level `struts:` block that the loader expands into two mirrored strut `Part`s (one per side). This keeps the YAML readable while still funneling into the uniform parts model internally.
-
----
-
-## Coordinate convention
-
-**Hangar (world) coordinates**: origin at the front-left corner, looking down.
-
-```
-       +x ->
-  +---[door]-------+
-  |                |
-  | y (deeper)     |
-  v                |
-  |                |
-  +----------------+
-```
-
-- `+x` runs right along the door wall.
-- `+y` runs deeper into the hangar.
-- **Heading 0°** = nose pointing toward `+y` (deeper into hangar).
-- **Heading 90°** = nose toward `+x` (right).
-
-**Plane-local coordinates** (used in `fleet.yaml` part offsets):
-
-- Origin = plane reference point (main-gear / cart centroid).
-- `+x` = forward (toward nose).
-- `+y` = right (toward right wingtip).
-
-**Implication for fuselage offsets in `data/fleet.yaml`**: because the main gear sits *forward* of the geometric fuselage centroid, every fuselage's `offset_x_m` is **negative** (≈ −0.25 × length for tailwheels, ≈ −0.05 × length for nosewheels; monowheel `scheibe_falke` is 0). Resetting any of these to 0 silently breaks the gear-at-origin contract — see PR #58 for the audit that fixed this. Wing and strut offsets shift in tandem so each airplane's internal geometry stays self-consistent.
-
-**The transform** (plane-local → world). `heading_deg` is the **compass-style angle of the nose**, measured from world `+y` (the "deeper into hangar" direction), CW positive. Concretely:
-
-- At `heading_deg = 0`, the nose vector in world coords is `(0, 1)`.
-- At `heading_deg = 90°`, the nose vector is `(1, 0)`.
-- At `heading_deg = 45°`, the nose vector is `(√2/2, √2/2)` — pointing into the (+x, +y) quadrant.
-
-A part with plane-local offset `(u, v)` (u forward, v right) at placement `(px, py, heading)` lands at:
-
-```
-world_x = px + u·sin(heading) + v·cos(heading)
-world_y = py + u·cos(heading) − v·sin(heading)
-```
-
-Equivalently, the linear part is `[[sin h, cos h], [cos h, −sin h]]` applied to `(u, v)`. **This matrix has determinant −1** — it is a rotation **composed with a reflection**, not a pure rotation. Two ways to land here: (a) compass headings rotate CW while standard math angles rotate CCW (one sign flip), and (b) the plane-local right-handed-feeling axes (forward, right) end up describing a left-handed mapping when laid against the (right-along-door, deeper-into-hangar) world frame (a second sign flip).
-
-**Do NOT** drop in a textbook CCW rotation matrix `[[cos α, −sin α], [sin α, cos α]]` and call it done — the result will be silently wrong, and worse, will *look* correct in tests at headings 0°, 90°, 180° because those are the symmetric cases. Tests must include at least one **non-axis-aligned heading** (45° is canonical) to catch any regression: at heading 45° the nose vector should be `(√2/2, √2/2)`, and a plane-local part at `(u=0, v=1)` (one meter to the right of plane origin) should land at world `(√2/2, −√2/2)` — right and toward the door, never up and into the hangar.
-
-### Door model in Phase 1
-
-The door is a **visual marker only**. All aircraft parts must fit fully inside the hangar rectangle for the layout to be considered valid. The door is rendered as a gap in the front wall by the visualizer but doesn't affect collision logic.
-
-### Default clearances
-
-Both clearances are configurable in `data/hangar.yaml` (`Hangar.clearance_m`, `Hangar.wing_layer_clearance_m`).
-
-| Clearance | Default | Key in `hangar.yaml` |
-|---|---|---|
-| Horizontal | 0.30 m | `clearance_m` |
-| Vertical | 0.20 m | `wing_layer_clearance_m` |
-
----
-
-## Phase 1 deliverables
-
-All shipped. Tagged as `v0.1.0` (`20cf741` on `main`). Phase 2a (static layout solver) shipped subsequently — see "Phase 2a deliverables" below.
-
-| # | Deliverable | Issue | Status |
-|---|---|---|---|
-| 1 | `data/fleet.yaml` — 9 aircraft, parts model, **placeholder dimensions** flagged with `measured: false` | #3 | ✅ shipped |
-| 2 | `data/hangar.yaml` — hangar dimensions + door + maintenance bay (placeholders) | #3 | ✅ shipped |
-| 3 | `src/hangarfit/collisions.py` — the collision checker (the heart of Phase 1) | #5 | ✅ shipped |
-| 4 | `src/hangarfit/visualize.py` — matplotlib top-down PNG renderer | #6 | ✅ shipped |
-| 5 | `src/hangarfit/cli.py` — `hangarfit check layouts/example.yaml --render out.png` | #7 | ✅ shipped |
-| 6 | Strut-aware golden-test suite in `tests/test_collisions.py` — same-height wing overlap, high-over-low height-disjoint pass, strut-blocks-nesting, inboard / outboard strut-free nesting, maintenance-bay rule, all-9-planes valid layout (the cart rule is exercised separately at `Layout` construction; see module map) | #5 | ✅ shipped |
-
-The strut-aware golden tests are the canary that the parts model is intact. If they pass, the geometry is trustworthy on the current (placeholder) data.
-
-## Phase 2a deliverables
-
-Static layout solver — given a `Scenario` (fleet, hangar, constraints, optional pins), find up to K diverse valid `Layout`s. All shipped 2026-05-22.
-
-| # | Deliverable | Issue / PR | Status |
-|---|---|---|---|
-| 1 | Spec + plan docs (`docs/superpowers/specs/`, `docs/superpowers/plans/`) | #80 / #81 | ✅ shipped |
-| 2 | `CheckResult.total_penetration_m2` + collisions.py penetration accounting (Chunk A) | #82 / #83 | ✅ shipped |
-| 3 | New solver dataclasses (`Scenario`, `PlaneConstraint`, `SolveResult`, `SolverDiagnostics`, `DiversityConfig`, `SearchConfig`) + `SolveStatus` literal + `load_scenario()` (Chunk B) | #84 / #85 | ✅ shipped |
-| 4 | `src/hangarfit/solver.py` skeleton + pre-search infeasibility checks (Chunk C) | #86 / #87 | ✅ shipped |
-| 5 | RR-MC search loop, `solve(alternatives=1)` (Chunk D) | #88 / #89 | ✅ shipped |
-| 6 | K-diverse alternatives + termination (Chunk E) | #90 / #91 | ✅ shipped |
-| 7 | `hangarfit solve` CLI subcommand (Chunk F) | #93 / #94 | ✅ shipped |
-| 8 | v1 fixture matrix + determinism canaries (Chunk G) | #96 / #97 | ✅ shipped |
-
-Algorithm: random-restart hill climbing with min-conflicts descent (RR-MC). Continuous `(x_m, y_m, heading_deg)`. Constraints in v1: maintenance plane, per-plane `pin` (full `Placement`), per-plane `force_on_carts`. Diversity filter uses edit-count metric (M=2 planes moved, 0.5 m position threshold, 30° heading threshold). See `docs/superpowers/specs/2026-05-22-phase2a-static-layout-solver-design.md` for the full design rationale.
-
-## Where things live (module map)
-
-| File | Responsibility |
+| Looking for | See |
 |---|---|
-| `src/hangarfit/models.py` | Frozen dataclasses + invariants (`Aircraft`, `Hangar`, `Layout`, `Conflict`, `CheckResult`). Cross-reference rules (cart rule, `movement_mode` ↔ `on_carts`, maintenance plane in fleet & placed) are enforced in `Layout.__post_init__`. |
-| `src/hangarfit/loader.py` | YAML → models. Expands the high-level `struts:` block into two mirrored strut `Part`s before constructing `Aircraft`. |
-| `src/hangarfit/geometry.py` | Plane-local → world transform (the determinant −1 trap lives here) and `aircraft_parts_world()`. |
-| `src/hangarfit/collisions.py` | The `check(layout)` entry point. Enforces hangar bounds, maintenance-bay intrusion (when `layout.maintenance_plane` is set, the bay rectangle becomes a hard keep-out — any non-occupant part vertex strictly inside the bay fires a `bay_intrusion` conflict; occupant absence is enforced upstream by `Layout`), and pairwise parts overlap. **Not here:** the cart rule (already enforced upstream in `Layout`). |
-| `src/hangarfit/visualize.py` | Top-down PNG renderer. Forces a headless matplotlib backend at import time so it runs in CI / pytest without a display server. When a `CheckResult` is passed, validates that its conflicts reference only planes from the layout, then overdraws the conflicting parts in red. |
-| `src/hangarfit/solver.py` | RR-MC layout search. `solve(scenario, budget_s, alternatives, seed)` is the public entry; internals handle pre-search infeasibility checks, initial placement, descent step (min-conflicts perturbation), restart cycle, diversity filter, and three-way termination. RNG is single-threaded and seeded for full reproducibility. |
-| `src/hangarfit/cli.py` | Argparse dispatch for both `hangarfit check` (Phase 1) and `hangarfit solve` (Phase 2a). Owns IO + arg-parsing only; both subcommands are thin wrappers around library entry points. JSON schemas: `hangarfit.check/v1`, `hangarfit.solve/v1`. |
-| `layouts/example.yaml` | Default valid layout for the canonical smoke test — a 6-plane "Saturday morning, 3 out flying" exception scenario (PR #69). Pinned valid by `tests/test_cli.py::test_default_example_layout_is_valid`. |
-| `layouts/example_invalid.yaml` | Companion bad layout for the red-overlay rendering demo. Exercises three conflict kinds (`hangar_bounds`, `wing_wing_overlap`, `strut_wing_overlap`). Pinned invalid by `tests/test_cli.py::test_default_example_invalid_layout_lists_conflicts`. |
-| `tests/fixtures/*.yaml` | One YAML per scenario. Phase 1: `valid_*` / `invalid_*` for layout-validity regressions. Phase 2a: `solve_*` for solver-contract fixtures (see `tests/test_solver_fixture_matrix.py` for the v1 matrix). Add new regressions by dropping in a fixture, not by writing geometry literals in Python. New fixtures should be scaffolded with `/new-fixture kind=… slug=… rationale="…"` (see `.claude/skills/new-fixture/SKILL.md`). |
-| `tests/test_solver_fixture_matrix.py` | Per-fixture matrix tests for `solve_*.yaml`. Shared `_assert_universal_properties` helper enforces all six spec §6.2 universal property assertions (status enum, every layout valid, seed populated, best_partial fused with infeasible statuses, pairwise diversity, pre-search wall-time guard). Per-test functions add fixture-specific invariants on top. |
-| `tests/test_solver_canaries.py` | Determinism canaries — parametrized over 3 fixtures asserting `solve(seed=42)` returns bit-for-bit identical SolveResult across runs. Intentionally fragile; deliberate algorithm changes require updating expected outputs. |
-| `tests/fixtures/test_hangar_large.yaml` | Test-only larger hangar (30 × 25 m, length × width). Used by `valid_all_nine_planes.yaml` because the placeholder fleet's strut bracing forces ~2.6 m of x-clearance between strut-braced planes whose fuselage y-bands overlap — which doesn't fit in the placeholder 25 × 18 m hangar (see `data/hangar.yaml`). This is a placeholder-dimension artifact, not a checker bug. Will go away once real measurements arrive. See the fixture header for full reasoning. |
+| What `hangarfit` is and the quality goals it optimizes for | [§1 Introduction & Goals](docs/architecture/01-introduction-and-goals.md) |
+| What is in / out of scope, the external actors, exit-code semantics pointer | [§3 Context & Scope](docs/architecture/03-context-and-scope.md) |
+| Module map (`cli`, `loader`, `models`, `geometry`, `collisions`, `solver`, `visualize`) and per-module responsibilities | [§5 Building Block View](docs/architecture/05-building-block-view.md) |
+| Runtime flow of `check` and `solve` invocations | [§6 Runtime View](docs/architecture/06-runtime-view.md) |
+| **The parts model** (collision rule, why parts not bbox, `struts:` block) | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#the-parts-model) + [ADR-0001](docs/adr/0001-aircraft-parts-model.md) |
+| **The coordinate convention + the determinant-−1 transform trap** | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#the-coordinate-convention) + [ADR-0002](docs/adr/0002-determinant-minus-one-transform.md) |
+| **The maintenance bay rule** (current `bay_intrusion` semantics) | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#the-maintenance-bay-rule) + [ADR-0005](docs/adr/0005-maintenance-bay-rule.md) (Deprecated, retained for history; successor ADR tracked in [#158](https://github.com/DocGerd/hangarfit/issues/158)) |
+| Fleet composition (per-plane wing type, gear, movement mode, struts) | [`data/fleet.yaml`](data/fleet.yaml) — the source of truth; §8 calls out the strut-braced subset and the only low-wing |
+| Hangar dimensions, door, maintenance bay rectangle | [`data/hangar.yaml`](data/hangar.yaml) — all values currently placeholders pending real measurement |
+| Default clearances (`clearance_m`, `wing_layer_clearance_m`) | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#default-clearances) |
+| RR-MC solver algorithm and the determinism contract | [ADR-0003](docs/adr/0003-rr-mc-solver-algorithm.md) |
+| Diversity metric (edit-count, thresholds) | [ADR-0004](docs/adr/0004-diversity-metric.md) |
+| All architecture decisions, including superseded ones | [`docs/adr/`](docs/adr/) |
 
-### Still out of scope (post Phase 2a)
-
-Phase 2a shipped the static layout solver — what was previously "no planner / search" is now `hangarfit solve`. What remains explicitly out of scope:
-
-- **No movement-sequence planning** — "Tower of Hanoi" reshuffling between current state and target layout. The solver finds *a* valid target; it does not plan the moves to get there.
-- **No tracking of current hangar state across runs.** Each invocation is stateless; the scenario YAML carries everything.
-- **No GUI / web frontend.** CLI + PNG only.
-- **No handling of late arrivals** as a live event stream. The tool is invoked on demand against a hand-authored scenario.
-- **No soft constraints / preferences.** Constraints in v1 are HARD: pin, force_on_carts, maintenance plane. No "prefer this region" / "minimise total movement vs baseline" objectives.
+If you find yourself about to write a domain assertion in this file, **don't** — extend the relevant arc42 section or ADR instead. CLAUDE.md is for *how we work together*; arc42/ADR is for *what the system is and why*.
 
 ---
 
@@ -227,7 +74,7 @@ Use the best-fitted model for the task. The model class to pick is "as much reas
 - **`pr-review-toolkit:comment-analyzer`** — for PRs that meaningfully change docs (README, CLAUDE.md, docstrings).
 - **`pr-review-toolkit:silent-failure-hunter`** — for PRs touching loader or collision code.
 - **`pr-review-toolkit:type-design-analyzer`** — when `models.py` changes.
-- **`geometry-invariant-guard`** — for any PR touching `src/hangarfit/geometry.py` or `src/hangarfit/collisions.py`; guards the determinant-−1 sign-flip trap in the coordinate transform.
+- **`geometry-invariant-guard`** — for any PR touching `src/hangarfit/geometry.py` or `src/hangarfit/collisions.py`; guards the coordinate-transform sign-flip trap (see [ADR-0002](docs/adr/0002-determinant-minus-one-transform.md)).
 - **`feature-dev:code-architect`** — only for genuinely novel design decisions, not routine implementation.
 
 Most coding goes direct in-session. Subagent dispatch is for review work and isolated heavy lifts.
@@ -275,7 +122,7 @@ Allowed but not the default. Use only when two feature branches need parallel wo
 
 - **Real measurements** for every aircraft (`measured: false` in `fleet.yaml`). All current dimensions are eyeballed placeholders.
 - **Real hangar measurements** (`data/hangar.yaml`) — length, width, door position and width, maintenance bay depth.
-- **Placeholder hangar can't fit the full fleet.** The 25 × 18 m placeholder hangar (length × width) cannot fit all 9 aircraft at once, regardless of heading combinations — verified wingspans (scheibe 18 m wing, husky 10.82 m wing, etc.) plus the clearance budget exceed the available door width. The default `layouts/example.yaml` is a deliberate 6-plane subset; test fixtures that need all 9 use `tests/fixtures/test_hangar_large.yaml` (30 × 25 m). Real hangar measurements will reset this.
+- **Placeholder hangar can't fit the full fleet.** The placeholder hangar in [`data/hangar.yaml`](data/hangar.yaml) is too tight to fit every aircraft at once under the placeholder clearance budget. The default [`layouts/example.yaml`](layouts/example.yaml) is a deliberate 6-plane subset; test fixtures that need the full fleet use [`tests/fixtures/test_hangar_large.yaml`](tests/fixtures/test_hangar_large.yaml). Real hangar measurements will reset this.
 
 The collision checker will run on placeholder data, but until the measurements are real, the output is illustrative only.
 
