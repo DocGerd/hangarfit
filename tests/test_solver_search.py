@@ -45,23 +45,32 @@ def test_initial_placement_for_free_plane_is_within_hangar():
     assert 0.0 <= p.heading_deg < 360.0
 
 
-def test_initial_placement_for_maintenance_biases_to_back_strip():
-    """The maintenance plane's initial y is inside the maintenance bay."""
+def test_initial_placements_skips_maintenance_plane():
+    """``_initial_placements`` must omit the maintenance occupant from the
+    returned dict — the bay is closed and the occupant is treated as away
+    (Layout invariant: maintenance_plane MUST NOT appear in placements).
+
+    Previously the solver sampled an initial placement for the maintenance
+    plane (biased into the back strip) and then filtered it out at
+    Layout-build time. With the ``bay_intrusion`` semantics, there is no
+    plane-shaped occupant to sample for — the bay rectangle becomes a
+    hard obstacle via the collision rule, and the solver simply iterates
+    over the N−1 non-maintenance planes.
+    """
     from hangarfit.loader import load_scenario
-    from hangarfit.solver import _initial_placement_for_plane
+    from hangarfit.solver import _initial_placements
 
     s = load_scenario("tests/fixtures/scenario_with_pin.yaml")
-    # In scenario_with_pin, maintenance_plane is fuji (not pinned).
+    assert s.maintenance_plane == "fuji", "fixture sanity"
+
     rng = random.Random(42)
-    p = _initial_placement_for_plane(
-        plane_id="fuji",
-        scenario=s,
-        rng=rng,
-        on_carts=False,
-        bias_to_maintenance_bay=True,
+    placements = _initial_placements(scenario=s, rng=rng, cart_bucket=frozenset())
+
+    assert "fuji" not in placements, (
+        f"maintenance occupant must not be sampled, got keys={set(placements)}"
     )
-    bay_y_start = s.hangar.length_m - s.hangar.maintenance_bay.depth_m
-    assert bay_y_start <= p.y_m <= s.hangar.length_m
+    expected = set(s.fleet_in) - {"fuji"}
+    assert set(placements) == expected
 
 
 def test_cart_buckets_collapses_when_another_cart_eligible_is_force_locked_on():

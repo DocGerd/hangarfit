@@ -82,19 +82,6 @@ def test_solve_deterministic_given_seed(fixture):
     # different RNG state -> different layouts.
 
 
-@pytest.mark.skip(
-    reason=(
-        "Calibration drift: filtering the maintenance plane out of solver "
-        "output shortened the search by one plane, so every available "
-        "fixture/seed combination now finds a layout on restart 0 — there is "
-        "no max_restarts value below the natural success count that would "
-        "trip the exhausted_budget branch this canary is meant to exercise. "
-        "Recalibrate against a freshly-constructed tighter fixture once the "
-        "solver-internals work (drop maintenance plane from placeable set, "
-        "remove bay-bias machinery) lands. Tracked alongside the broader "
-        "solver migration for the maintenance-bay walling milestone."
-    )
-)
 def test_solve_deterministic_best_partial_under_max_restarts() -> None:
     """``solve(..., search=SearchConfig(max_restarts=K))`` exhausts
     deterministically across machines.
@@ -106,45 +93,48 @@ def test_solve_deterministic_best_partial_under_max_restarts() -> None:
     inevitable outcome regardless of machine speed, and the
     ``best_partial_layout`` becomes machine-independent.
 
-    Calibration (recorded 2026-05-22 for traceability):
-        Ran ``solve(scenario, budget_s=10.0, seed=42)`` once on
-        ``solve_fresh_six_planes.yaml`` to record the natural restart
-        count to first success. Observed ``restarts_attempted=2``
-        (status=found, wall_time≈1.3 s on the calibration machine).
-        Per the v0.6.0 plan Task 2 brief, the canary's ``max_restarts``
-        is set deliberately small (``observed // 2 = 1``) so the cap
-        trips before the natural success, forcing exhaustion. The
-        ``budget_s=30.0`` here is generous; ``max_restarts`` is the
-        gate that trips first. If a future algorithm change pushes
-        natural success below 2 restarts at seed=42 (i.e., succeeds on
-        restart 0), this canary needs re-calibration on
-        ``solve_diversity_impossible_warn.yaml`` per the plan's
-        fallback procedure.
+    Calibration (recorded 2026-05-23 for #108):
+        After the solver stopped sampling an initial placement for
+        the maintenance occupant (#108 closes the milestone-#9 cleanup
+        that began at #103), the RNG state shifted — one fewer
+        ``random()``/``uniform()`` call per restart — and every
+        previously-tried (fixture, seed=42) combination collapsed to
+        natural-success on restart 0, leaving no ``max_restarts``
+        value that could trip before success.
 
-    Fallback fixture calibration (recorded 2026-05-23):
-        Ran ``solve(scenario, budget_s=10.0, seed=42)`` on
-        ``solve_diversity_impossible_warn.yaml`` to pre-pin the
-        fallback. Observed ``status=found, restarts_attempted=1,
-        wall_time≈0.009 s``. With observed=1, the standard
-        ``max_restarts = observed // 2`` recipe would yield 0, which
-        :class:`SearchConfig.__post_init__` rejects. If a future
-        switch to this fallback fixture is needed, pick a different
-        seed whose natural restart count is ≥ 2 (so ``observed // 2
-        >= 1``) or use a different fixture — do NOT clamp to
-        ``max_restarts=1``, which would NOT trip before natural
-        success on this fixture (the cap would equal the natural
-        success count and the predicate is strictly ``<``, not
-        ``<=``).
+        Re-probed with ``solve(scenario, budget_s=10.0)`` across the
+        existing fixture set at seeds {7, 13, 42, 99, 123, 256}.
+        ``solve_fresh_six_planes.yaml`` at ``seed=256`` records
+        ``status=found, restarts_attempted=3`` — the most headroom in
+        the probe. Per the v0.6.0 plan Task 2 recipe, the cap is set
+        deliberately small (``max_restarts = observed // 2 = 1``) so
+        it trips well before the natural success at restart 3,
+        forcing exhaustion. Two-restart headroom protects against
+        future RNG-shift regressions tightening natural success to 2.
+
+        Re-calibration trigger: if a future algorithm change pushes
+        natural success to ``restarts_attempted <= 1`` at seed=256,
+        re-probe seeds for the same fixture and pick one whose
+        ``restarts_attempted >= 2``; update ``seed`` below.
+
+        Floor: ``observed >= 2`` is required because
+        ``max_restarts = observed // 2`` must be ``>= 1`` and
+        :class:`SearchConfig.__post_init__` rejects
+        ``max_restarts=0``. With ``observed=2``, the cap is still
+        ``1 < 2`` (the predicate is strictly ``<``, not ``<=``), so
+        the canary keeps working — but headroom drops to one restart
+        and is one regression away from breaking.
     """
     fixture = "tests/fixtures/solve_fresh_six_planes.yaml"
     max_restarts = 1
+    seed = 256
 
     s1 = load_scenario(fixture)
     r1 = solve(
         s1,
         budget_s=30.0,
         alternatives=1,
-        seed=42,
+        seed=seed,
         search=SearchConfig(max_restarts=max_restarts),
     )
 
@@ -153,7 +143,7 @@ def test_solve_deterministic_best_partial_under_max_restarts() -> None:
         s2,
         budget_s=30.0,
         alternatives=1,
-        seed=42,
+        seed=seed,
         search=SearchConfig(max_restarts=max_restarts),
     )
 
@@ -165,7 +155,19 @@ def test_solve_deterministic_best_partial_under_max_restarts() -> None:
         f"got {r1.status} (calibration drift — see test docstring)"
     )
     assert r2.status == r1.status
-    assert r1.diagnostics.restarts_attempted == max_restarts
+    # restarts_attempted == max_restarts confirms the cap was the gate that
+    # tripped, not the wall-clock budget. If wall_time_s drifts close to
+    # budget_s=30.0 (e.g., per-restart slowdown on a slow CI VM), the budget
+    # would trip first and restarts_attempted would be < max_restarts —
+    # exhausted_budget status would still hold but for the wrong reason.
+    assert r1.diagnostics.restarts_attempted == max_restarts, (
+        f"max_restarts cap must trip before wall-clock budget. "
+        f"Got restarts_attempted={r1.diagnostics.restarts_attempted}, "
+        f"max_restarts={max_restarts}, wall_time_s={r1.diagnostics.wall_time_s:.2f}, "
+        f"budget_s=30.0. If wall_time is near budget, the canary's "
+        f"cross-machine determinism guarantee is broken — raise budget_s "
+        f"or investigate per-restart slowdown."
+    )
     assert r2.diagnostics.restarts_attempted == max_restarts
 
     # The fused-pair contract — both Some when exhausted_budget.
