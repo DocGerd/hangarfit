@@ -610,6 +610,50 @@ maintenance_bay: {center_x_m: 13.5, width_m: 9, depth_m: 9}
         with pytest.raises(LoaderError, match="doesn't fit in hangar width"):
             load_hangar(path)
 
+    @pytest.mark.parametrize(
+        ("bay_yaml", "expected_match"),
+        [
+            # Right-wall overflow: center_x_m + width_m/2 = 15.0 + 4.5 = 19.5 > width_m=18.0.
+            (
+                "{center_x_m: 15.0, width_m: 9, depth_m: 9}",
+                r"MaintenanceBay.*doesn't fit in hangar width",
+            ),
+            # Left-wall overflow: center_x_m - width_m/2 = 2.0 - 4.5 = -2.5 < 0.
+            (
+                "{center_x_m: 2.0, width_m: 9, depth_m: 9}",
+                r"MaintenanceBay.*doesn't fit in hangar width",
+            ),
+            # Depth equals length: leaves no non-bay parking. Hangar.__post_init__
+            # raises a *different* ValueError than the width-overflow branch.
+            (
+                "{center_x_m: 13.5, width_m: 9, depth_m: 25}",
+                r"MaintenanceBay\.depth_m.*must be strictly less than Hangar\.length_m",
+            ),
+        ],
+        ids=["right_wall_overflow", "left_wall_overflow", "depth_equals_length"],
+    )
+    def test_maintenance_bay_invariant_propagates_from_model(
+        self, tmp_path: Path, bay_yaml: str, expected_match: str
+    ) -> None:
+        """Each ``Hangar.__post_init__`` invariant on the maintenance bay
+        must wrap as ``LoaderError`` at the loader boundary (mirror of
+        ``test_door_does_not_fit_propagates_from_model`` but parametrized
+        over the two ``bay_left < 0 or bay_right > width_m`` cases plus
+        the ``depth_m >= length_m`` branch — three failure modes from
+        three distinct model-level ``raise ValueError`` sites).
+        """
+        path = _write(
+            tmp_path / "h.yaml",
+            f"""
+length_m: 25.0
+width_m: 18.0
+door: {{center_x_m: 9.0, width_m: 12.0}}
+maintenance_bay: {bay_yaml}
+""",
+        )
+        with pytest.raises(LoaderError, match=expected_match):
+            load_hangar(path)
+
     def test_top_level_not_a_mapping(self, tmp_path: Path) -> None:
         path = _write(tmp_path / "h.yaml", "- a\n- b\n")
         with pytest.raises(LoaderError, match="top-level must be a mapping"):
@@ -890,6 +934,89 @@ maintenance:
         with pytest.raises(
             LoaderError, match="'maintenance' block present but lacks required 'plane'"
         ):
+            load_layout(layout_path)
+
+    def test_maintenance_occupant_also_in_placements_rejected_with_actionable_error(
+        self, tmp_path: Path
+    ) -> None:
+        """A layout YAML that names a ``maintenance.plane`` and also lists
+        that plane under ``placements`` is rejected at load time with an
+        actionable error.
+
+        The bay occupant is treated as away — absent from ``placements`` by
+        Layout invariant (#103). The loader catches this combination
+        explicitly so YAML authors get a directly-actionable message
+        ("Remove it from placements") rather than the bubbled Layout
+        invariant text. Layout's invariant remains the programmatic
+        backstop for non-loader callers.
+
+        The parenthetical "(or fix the plane id if it doesn't match an
+        aircraft in the fleet)" steers users toward the right root cause
+        in the typo'd-id case, where naive "remove the row" advice would
+        be a two-step debug (remove row → hit "not in fleet" → realise
+        the id was wrong all along).
+        """
+        self._minimal_fleet_and_hangar(tmp_path)
+        layout_path = _write(
+            tmp_path / "layout.yaml",
+            """
+fleet: fleet.yaml
+hangar: hangar.yaml
+maintenance: {plane: foo}
+placements:
+  - {plane: foo, x_m: 5, y_m: 5, heading_deg: 0, on_carts: false}
+""",
+        )
+        with pytest.raises(LoaderError) as exc_info:
+            load_layout(layout_path)
+        msg = str(exc_info.value)
+        assert "'foo'" in msg, f"error must name the offending plane: {msg}"
+        assert "placements" in msg, f"error must point at placements: {msg}"
+        assert "Remove it from placements" in msg, (
+            f"error must include actionable suffix; got: {msg}"
+        )
+        assert "fix the plane id" in msg, f"error must include the typo'd-id hint; got: {msg}"
+
+    def test_maintenance_occupant_appearing_among_other_placements_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        """The loop-not-just-first-row form of the check: when the
+        occupant appears alongside *other* valid placements, the loader
+        still catches it. Guards against a buggy short-circuit like
+        ``placements[0].plane_id == maintenance_plane`` that would happen
+        to pass the single-plane fixture above.
+        """
+        _write(
+            tmp_path / "fleet.yaml",
+            _fleet_yaml(
+                _aircraft_entry("foo", movement_mode="always_own_gear", turn_radius_m=5.0),
+                _aircraft_entry("bar", movement_mode="always_own_gear", turn_radius_m=5.0),
+            ),
+        )
+        _write(
+            tmp_path / "hangar.yaml",
+            """
+length_m: 25.0
+width_m: 18.0
+door: {center_x_m: 9.0, width_m: 12.0}
+maintenance_bay: {center_x_m: 13.5, width_m: 9, depth_m: 9}
+""",
+        )
+        # `bar` is the maintenance occupant. The realistic real-world bug
+        # shape: user has a valid layout for `foo` and accidentally adds a
+        # row for the maintenance plane as the second placement.
+        layout_path = _write(
+            tmp_path / "layout.yaml",
+            """
+fleet: fleet.yaml
+hangar: hangar.yaml
+maintenance: {plane: bar}
+placements:
+  - {plane: foo, x_m: 5, y_m: 5, heading_deg: 0, on_carts: false}
+  - {plane: bar, x_m: 10, y_m: 10, heading_deg: 0, on_carts: false}
+""",
+        )
+        with pytest.raises(LoaderError, match="maintenance_plane 'bar' is named in placements"):
             load_layout(layout_path)
 
     def test_override_and_yaml_ref_conflict_for_fleet(self, tmp_path: Path) -> None:
