@@ -406,10 +406,35 @@ class TestBayIntrusion:
     def test_fixture_partial_width_bay_plane_in_side_aisle_valid(self) -> None:
         """Closed bay, plane parked in the side aisle (back strip, but
         outside the bay x range). Asserts partial-width semantics — the
-        side aisle remains usable even when the bay is closed."""
-        result = check(_load("valid_partial_width_bay_plane_in_side_aisle"))
+        side aisle remains usable even when the bay is closed.
+
+        Beyond ``result.valid``, this also pins the geometric intent:
+        at least one part must have a vertex with ``y > y_min`` (i.e.
+        in the back strip) AND ``x < x_min`` (in the side aisle). A
+        future fixture drift that pushed the plane forward of the
+        back strip would still pass ``result.valid`` but would no
+        longer exercise the partial-width path.
+        """
+        from hangarfit.geometry import aircraft_parts_world
+
+        layout = _load("valid_partial_width_bay_plane_in_side_aisle")
+        result = check(layout)
         assert result.valid, (
             f"side-aisle layout must pass with closed partial-width bay, got {result.conflicts!r}"
+        )
+        bay = layout.hangar.maintenance_bay
+        x_min = bay.center_x_m - bay.width_m / 2
+        y_min = layout.hangar.length_m - bay.depth_m
+        in_side_aisle = any(
+            vx < x_min and vy > y_min
+            for placement in layout.placements
+            for wp in aircraft_parts_world(layout.fleet[placement.plane_id], placement)
+            for vx, vy in list(wp.polygon.exterior.coords)[:-1]
+        )
+        assert in_side_aisle, (
+            "fixture must place at least one vertex in the side aisle "
+            "(x < x_min and y > y_min); otherwise it no longer exercises "
+            "the partial-width semantics it documents"
         )
 
     def test_fixture_bay_intrusion_wingtip_invalid(self) -> None:
@@ -428,9 +453,35 @@ class TestBayIntrusion:
         """A vertex landing exactly on a bay edge (``x == x_min``) must
         NOT trip the rule. Guards the strict-inequality semantics at
         the fixture level (the synthetic unit tests do the same at the
-        function level)."""
-        result = check(_load("valid_part_vertex_on_bay_edge"))
+        function level).
+
+        Beyond ``result.valid``, this also pins the on-edge property:
+        at least one part must have a vertex with ``abs(x - x_min)``
+        below floating-point tolerance. If a future fixture drift
+        moved the plane off the edge by a few cm, ``result.valid``
+        would still hold but the fixture would no longer guard the
+        strict-vs-non-strict boundary case.
+        """
+        import math
+
+        from hangarfit.geometry import aircraft_parts_world
+
+        layout = _load("valid_part_vertex_on_bay_edge")
+        result = check(layout)
         assert result.valid, f"vertex on bay edge must count as outside; got {result.conflicts!r}"
+        bay = layout.hangar.maintenance_bay
+        x_min = bay.center_x_m - bay.width_m / 2
+        on_edge = any(
+            math.isclose(vx, x_min, abs_tol=1e-9)
+            for placement in layout.placements
+            for wp in aircraft_parts_world(layout.fleet[placement.plane_id], placement)
+            for vx, _vy in list(wp.polygon.exterior.coords)[:-1]
+        )
+        assert on_edge, (
+            "fixture must place at least one part vertex at x = x_min "
+            "exactly; otherwise it no longer exercises the strict-< edge "
+            "case it documents"
+        )
 
     def test_defensive_skip_protects_against_occupant_leak(self) -> None:
         """If the maintenance occupant ever leaks into ``world_parts``

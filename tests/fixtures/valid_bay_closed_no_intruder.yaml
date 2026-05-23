@@ -6,8 +6,10 @@
 # (absent from placements by Layout invariant).
 #
 # ctsl at (5, 5, 0): wing world x = [0.705, 9.295], y = [4.97, 6.37].
-# Wing's right-rear vertex (9.295, 6.37) has x > 9 (just inside bay x
+# Wing's right-front vertex (9.295, 6.37) has x > 9 (just inside bay x
 # range), but y = 6.37 < 16 (well outside bay y range) → no intrusion.
+# (Plane-local +x is forward toward the nose, so the wing's +x edge maps
+# to the deeper-into-hangar side of the part at heading 0.)
 # Pins down the "well clear" happy path for the bay rule.
 
 fleet: ../../data/fleet.yaml

@@ -11,10 +11,12 @@
 # burning the budget.
 #
 # Bay (data/hangar.yaml placeholder): x ∈ (9, 18), y > 16.
-# aviat_husky pinned at (6, 16.5, 0) — wing right-rear vertex at
-# (11.41, 16.68) is strictly inside the bay. scheibe_falke is the
-# maintenance occupant (in fleet_in, but absent from placements
-# by Layout invariant).
+# aviat_husky pinned at (6, 16.5, 0) — wing right-front vertex at
+# (11.41, 16.68) is strictly inside the bay. (Plane-local +x is
+# forward toward the nose, so the wing's +x edge maps to the
+# deeper-into-hangar side of the part at heading 0.) scheibe_falke
+# is the maintenance occupant (in fleet_in, but absent from
+# placements by Layout invariant).
 #
 # Future-of-#108 note: once the solver gains bay-area awareness
 # (drops the occupant from the placeable set, narrows the floor by

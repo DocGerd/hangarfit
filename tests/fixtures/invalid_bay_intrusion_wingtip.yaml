@@ -4,8 +4,10 @@
 # Bay (data/hangar.yaml placeholder): x ∈ (9, 18), y > 16.
 #
 # aviat_husky at (6, 16.5, 0) — wing world x = [0.59, 11.41], y =
-# [15.28, 16.68]. The wing's right-rear vertex (11.41, 16.68) sits
-# at x ∈ (9, 18) AND y > 16 → strictly inside the bay. Exactly one
+# [15.28, 16.68]. The wing's right-front vertex (11.41, 16.68) sits
+# at x ∈ (9, 18) AND y > 16 → strictly inside the bay. (Plane-local
+# +x is forward toward the nose, so the wing's +x edge maps to the
+# deeper-into-hangar side of the part at heading 0.) Exactly one
 # `bay_intrusion` conflict fires (the other three wing vertices and
 # all fuselage/strut vertices stay outside).
 
