@@ -84,13 +84,13 @@ def test_load_scenario_rejects_maintenance_plane_not_in_fleet_in(tmp_path):
     actual fleet_in list, and a fix hint.  This mirrors the boundary-check
     added for load_layout in PR #105 (closes #177).
     """
+    import shutil
+
     from hangarfit.loader import load_scenario
 
     # Write the bad scenario adjacent to root data files so relative refs
     # resolve correctly from tmp_path.
     (tmp_path / "data").mkdir()
-    import shutil
-
     shutil.copy("data/fleet.yaml", tmp_path / "data" / "fleet.yaml")
     shutil.copy("data/hangar.yaml", tmp_path / "data" / "hangar.yaml")
     bad = tmp_path / "bad_maintenance.yaml"

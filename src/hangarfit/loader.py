@@ -308,12 +308,10 @@ def load_scenario(
     # maintenance (optional, same shape as load_layout)
     maintenance_plane = _extract_maintenance_plane(raw, path)
 
-    # Pre-Scenario boundary check: maintenance_plane must be in fleet_in.
-    # Mirrors the pre-Layout check added in PR #105 for load_layout.
-    # Catching this here (before Scenario construction) lets us produce a
-    # path-prefixed actionable message with the actual fleet_in list instead
-    # of the bare ValueError that would otherwise bubble up from
-    # Scenario.__post_init__.
+    # Pre-Scenario boundary check: surface the YAML-author error with a
+    # path prefix here instead of relying on Scenario.__post_init__'s
+    # bare ValueError bubbling through the except ValueError → LoaderError
+    # wrap below (which would drop the actionable fleet_in hint).
     if maintenance_plane is not None and maintenance_plane not in fleet_in:
         raise LoaderError(
             f"{path}: maintenance_plane {maintenance_plane!r} is not in fleet_in "
