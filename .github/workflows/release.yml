@@ -1,0 +1,117 @@
+name: Release
+
+# Builds an sdist and wheel from a v* tag, signs both with Sigstore
+# keyless cosign (via the workflow's OIDC identity — no long-lived
+# signing key to manage), and publishes the artifacts plus their
+# signatures to the matching GitHub Release.
+#
+# Two triggers:
+#   - push of a v* tag: the normal path for new releases.
+#   - workflow_dispatch with `tag` input: backfill for existing tags
+#     (v0.1.0, v0.6.0, v0.6.1) whose Release objects either don't
+#     exist yet or were created before this workflow landed.
+#
+# Refs: closes #138 (Scorecard: Signed-Releases -1 → ≥8).
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build and (re-)release (e.g. v0.6.0). Used for backfill.'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.event.inputs.tag || github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build, sign, and publish release artifacts
+    runs-on: ubuntu-latest
+    permissions:
+      # gh release create / upload writes to the Releases API.
+      contents: write
+      # Required for Sigstore keyless signing — cosign exchanges this
+      # OIDC token for a short-lived Fulcio certificate.
+      id-token: write
+
+    steps:
+      - name: Resolve tag (push event or dispatch input)
+        id: tag
+        # User-controllable workflow_dispatch input is laundered via
+        # env: so it can never end up inside the run: script as a
+        # template-interpolated shell fragment.
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_TAG: ${{ inputs.tag }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "name=$DISPATCH_TAG" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out the tag's commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          ref: ${{ steps.tag.outputs.name }}
+          persist-credentials: false
+
+      - name: Set up Python 3.11
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.11"
+
+      - name: Install the `build` frontend
+        run: pip install --upgrade build
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
+
+      - name: Sign each artifact with keyless cosign
+        # `--yes` skips cosign's interactive consent prompt (required in
+        # CI). The OIDC token is auto-discovered via the standard
+        # ACTIONS_ID_TOKEN_REQUEST_* env vars that `id-token: write`
+        # makes available. One .sig (signature) and .pem (Fulcio cert)
+        # per built artifact, sitting alongside it in dist/.
+        run: |
+          set -euo pipefail
+          for artifact in dist/*.tar.gz dist/*.whl; do
+            cosign sign-blob --yes \
+              --output-signature "${artifact}.sig" \
+              --output-certificate "${artifact}.pem" \
+              "${artifact}"
+          done
+          ls -la dist/
+
+      - name: Create the GitHub Release if it doesn't exist yet
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.name }}
+        run: |
+          if ! gh release view "$TAG" >/dev/null 2>&1; then
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes-from-tag
+          fi
+
+      - name: Upload signed artifacts to the Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.name }}
+        # --clobber so re-running on the same tag (e.g. fixing a failed
+        # earlier run) overwrites the prior upload instead of erroring.
+        run: |
+          gh release upload "$TAG" \
+            dist/*.tar.gz dist/*.tar.gz.sig dist/*.tar.gz.pem \
+            dist/*.whl    dist/*.whl.sig    dist/*.whl.pem \
+            --clobber
