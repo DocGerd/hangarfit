@@ -50,12 +50,12 @@ def test_initial_placements_skips_maintenance_plane():
     returned dict — the bay is closed and the occupant is treated as away
     (Layout invariant: maintenance_plane MUST NOT appear in placements).
 
-    Before milestone #9, the solver sampled an initial placement for the
-    maintenance plane (biased into the back strip) and then filtered it
-    out at Layout-build time. With the new ``bay_intrusion`` semantics,
-    there is no plane-shaped occupant to sample for — the bay rectangle
-    becomes a hard obstacle via the collision rule, and the solver simply
-    iterates over the N−1 non-maintenance planes.
+    Previously the solver sampled an initial placement for the maintenance
+    plane (biased into the back strip) and then filtered it out at
+    Layout-build time. With the ``bay_intrusion`` semantics, there is no
+    plane-shaped occupant to sample for — the bay rectangle becomes a
+    hard obstacle via the collision rule, and the solver simply iterates
+    over the N−1 non-maintenance planes.
     """
     from hangarfit.loader import load_scenario
     from hangarfit.solver import _initial_placements

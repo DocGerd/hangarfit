@@ -531,10 +531,10 @@ def _initial_placements(
     4. Membership in ``cart_bucket`` for cart_eligible planes.
 
     The maintenance plane (if any) is skipped entirely — under the
-    ``bay_intrusion`` semantics from milestone #9 the occupant is treated
-    as away (absent from the Layout's placements). The bay rectangle is
-    a hard obstacle via the collision rule, so no surrogate sample is
-    needed.
+    ``bay_intrusion`` semantics (see ``docs/architecture/08-crosscutting-concepts.md``
+    "The maintenance bay rule") the occupant is treated as away (absent
+    from the Layout's placements). The bay rectangle is a hard obstacle
+    via the collision rule, so no surrogate sample is needed.
     """
     placements: dict[str, Placement] = {}
     for pid in scenario.fleet_in:
@@ -595,6 +595,11 @@ def _enumerate_cart_buckets(scenario: Scenario) -> list[frozenset[str]]:
     free_cart_eligibles: list[str] = []
     has_committed_cart_eligible_on_carts = False
     for pid in scenario.fleet_in:
+        if pid == scenario.maintenance_plane:
+            # Occupant is treated as away — it never enters the layout, so
+            # round-robining a singleton cart bucket for it would be a no-op
+            # restart that wastes one slot of the C+1 rotation.
+            continue
         plane = scenario.fleet[pid]
         if not plane.is_cart_eligible:
             continue
@@ -725,10 +730,6 @@ def _descent_step(
     ``Layout.__post_init__`` and are skipped.
     """
     # Build current Layout from placements (uses Layout invariants — free check).
-    # ``placements`` is the dict produced by ``_initial_placements`` and threaded
-    # through descent — the maintenance plane is absent from its keys by
-    # construction, so a straight ``placements.values()`` upholds the
-    # bay-occupant Layout invariant without an inline filter.
     current_layout = Layout(
         fleet=scenario.fleet,
         hangar=scenario.hangar,
