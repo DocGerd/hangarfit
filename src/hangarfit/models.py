@@ -547,6 +547,25 @@ class Scenario:
             if key not in fleet_in_set:
                 raise ValueError(f"Scenario.constraints has key {key!r} not in fleet_in")
 
+        # maintenance_plane cannot carry a pin or force_on_carts constraint.
+        # The maintenance occupant is treated as away (absent from placements),
+        # so any pin or force_on_carts on it would be silently ignored by the
+        # solver.  Reject early so the user gets a clear error rather than a
+        # layout that ignored their constraint.
+        if (
+            self.maintenance_plane is not None
+            and self.maintenance_plane in self.constraints
+            and (
+                self.constraints[self.maintenance_plane].pin is not None
+                or self.constraints[self.maintenance_plane].force_on_carts is not None
+            )
+        ):
+            raise ValueError(
+                f"Scenario.maintenance_plane {self.maintenance_plane!r} cannot also "
+                f"carry a pin or force_on_carts constraint — the maintenance occupant "
+                f"is treated as away (absent from placements)."
+            )
+
         # per-constraint validation
         for plane_id, constraint in self.constraints.items():
             plane = self.fleet[plane_id]

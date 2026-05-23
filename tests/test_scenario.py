@@ -290,6 +290,61 @@ def test_scenario_rejects_pin_and_force_on_carts_disagreement(fleet, hangar):
         )
 
 
+# ── Scenario: maintenance_plane + constraint guard ──────────────────────
+
+
+def test_scenario_rejects_pin_on_maintenance_plane(fleet, hangar):
+    """Pinning the maintenance plane is incoherent — it is treated as absent
+    from placements, so a pin on it would be silently ignored by the solver.
+    Scenario.__post_init__ must reject this with a clear ValueError."""
+    # cessna_140 is cart_eligible so on_carts=True is valid per movement_mode.
+    # The rejection must fire because it is ALSO the maintenance_plane, not
+    # because of any cart-rule or movement_mode violation.
+    with pytest.raises(ValueError, match="cessna_140"):
+        Scenario(
+            fleet=fleet,
+            hangar=hangar,
+            fleet_in=("cessna_140", "aviat_husky"),
+            maintenance_plane="cessna_140",
+            constraints={
+                "cessna_140": PlaneConstraint(
+                    pin=Placement(
+                        plane_id="cessna_140",
+                        x_m=2.0,
+                        y_m=14.0,
+                        heading_deg=0.0,
+                        on_carts=True,
+                    )
+                )
+            },
+        )
+
+
+def test_scenario_rejects_force_on_carts_on_maintenance_plane(fleet, hangar):
+    """force_on_carts on the maintenance plane is equally incoherent.
+
+    The maintenance occupant is absent from placements so the solver cannot
+    honour a force_on_carts constraint on it — reject at construction rather
+    than silently ignoring it.
+
+    Pinned as a separate test to ensure both branches of the disjunct
+    (pin is not None | force_on_carts is not None) are covered independently
+    — a refactor that checked only one branch would silently miss the other.
+    """
+    # aviat_husky is always_own_gear; force_on_carts=False would ordinarily
+    # be an independent movement_mode violation — use cessna_150 (cart_eligible)
+    # so force_on_carts=True is otherwise legal and the rejection is solely
+    # due to the maintenance_plane conflict.
+    with pytest.raises(ValueError, match="cessna_150"):
+        Scenario(
+            fleet=fleet,
+            hangar=hangar,
+            fleet_in=("cessna_150", "aviat_husky"),
+            maintenance_plane="cessna_150",
+            constraints={"cessna_150": PlaneConstraint(force_on_carts=True)},
+        )
+
+
 # ── SolveStatus / SolverDiagnostics / SolveResult ───────────────────────
 
 
