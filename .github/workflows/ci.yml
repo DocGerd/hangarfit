@@ -85,8 +85,10 @@ jobs:
       - name: Install pip-tools (pinned)
         # Pinned so a pip-tools release that changes resolver behavior or
         # output formatting cannot surprise the guard. Bump deliberately
-        # together with the version used to regenerate requirements-dev.txt.
-        run: pip install 'pip-tools==7.4.1'
+        # together with the version used to regenerate requirements-dev.txt
+        # — keep this version in lockstep with the regeneration command
+        # documented in CLAUDE.md.
+        run: pip install 'pip-tools==7.5.3'
 
       - name: Regenerate lockfile against existing pins
         # Copy first so pip-compile honors the committed lockfile as a pin
@@ -95,20 +97,39 @@ jobs:
         # drift whenever an unrelated transitive package had a new release.
         # With it, the comparison only diverges when pyproject.toml actually
         # demands a different package set.
+        #
+        # `--no-strip-extras` is explicit so this stays correct across the
+        # pip-tools 8.0 default flip (which inverts the strip-extras default
+        # and would otherwise silently prune transitive extras the day
+        # someone bumps the pin).
         run: |
           cp requirements-dev.txt /tmp/expected.txt
-          pip-compile --quiet --generate-hashes --extra dev -o /tmp/expected.txt pyproject.toml
+          pip-compile --quiet --generate-hashes --no-strip-extras --extra dev -o /tmp/expected.txt pyproject.toml
 
       - name: Compare package==version sets
         # A textual diff of the two files is flaky: pip-compile output is not
         # bit-stable across pip-tools versions (hash ordering, comment
         # placement). The actual install-time invariant is the *set* of
         # `package==version` pairs, so extract and compare just that.
+        #
+        # The extracts are written to real files (not `<(...)` process
+        # substitution) so that a `grep` returning zero matches — which
+        # would otherwise silently produce two empty streams that diff sees
+        # as identical — is caught by the explicit non-empty sanity check.
+        # The regex starts with [A-Za-z0-9] because PEP 503 allows package
+        # names that begin with a digit (e.g., `2to3`); anchoring to letters
+        # only would re-introduce a silent-skip into the guard itself.
         run: |
           extract() {
-            grep -E '^[A-Za-z][A-Za-z0-9._-]*==' "$1" | sed 's/ *\\$//' | sort
+            grep -E '^[A-Za-z0-9][A-Za-z0-9._-]*==' "$1" | sed 's/ *\\$//' | sort
           }
-          if ! diff -u <(extract requirements-dev.txt) <(extract /tmp/expected.txt); then
-            echo "::error::requirements-dev.txt is out of sync with pyproject.toml. Regenerate with: pip-compile --generate-hashes --extra dev -o requirements-dev.txt pyproject.toml"
+          extract requirements-dev.txt > /tmp/committed.set
+          extract /tmp/expected.txt    > /tmp/regenerated.set
+          if [ ! -s /tmp/committed.set ] || [ ! -s /tmp/regenerated.set ]; then
+            echo "::error::extract() produced an empty package set — the regex no longer matches the lockfile format. Update the guard."
+            exit 1
+          fi
+          if ! diff -u /tmp/committed.set /tmp/regenerated.set; then
+            echo "::error::requirements-dev.txt is out of sync with pyproject.toml. Regenerate on Python 3.11 with: pip-compile --generate-hashes --no-strip-extras --extra dev -o requirements-dev.txt pyproject.toml"
             exit 1
           fi
