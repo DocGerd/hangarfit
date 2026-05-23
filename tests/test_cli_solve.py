@@ -381,3 +381,38 @@ class TestSolveRender:
         assert "{i}" in captured.err
         assert "--render" in captured.err
         assert not out.exists()
+
+    def test_k_gt_1_substitutes_i_for_each_alternative(self, tmp_path, capsys):
+        """K>1 happy path: ``{i}`` substitutes at every i in 1..K.
+
+        The K=1 substitute test only exercises ``i=1``. This test runs
+        ``--alternatives 2`` against a fixture that reliably yields two
+        diverse layouts and asserts the enumerate-loop body fires for
+        both i=1 AND i=2 (the i>=2 case is the previously-uncovered
+        branch).
+        """
+        fixture = str(FIXTURES_DIR / "solve_fresh_alternatives_three.yaml")
+        render_pattern = str(tmp_path / "out_{i}.png")
+        yaml_pattern = str(tmp_path / "out_{i}.yaml")
+        rc = main(
+            [
+                "solve",
+                fixture,
+                "--alternatives",
+                "2",
+                "--budget",
+                "5.0",
+                "--seed",
+                "42",
+                "--render",
+                render_pattern,
+                "--write-yaml",
+                yaml_pattern,
+            ]
+        )
+        assert rc == 0, f"K>1 solve failed (rc={rc}); stderr={capsys.readouterr().err}"
+        # Both alternatives must be present — i=1 and the new i=2 branch.
+        assert (tmp_path / "out_1.png").exists()
+        assert (tmp_path / "out_2.png").exists()
+        assert (tmp_path / "out_1.yaml").exists()
+        assert (tmp_path / "out_2.yaml").exists()
