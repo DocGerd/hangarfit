@@ -153,8 +153,16 @@ ruff format src/ tests/
 # Type check
 mypy src/hangarfit/
 
+# Regenerate the CI hash-pinned dev-deps lockfile (after editing
+# pyproject.toml [project.optional-dependencies] dev). Requires
+# pip-tools: `pip install pip-tools` (or `uv pip install pip-tools`).
+pip-compile --generate-hashes --extra dev -o requirements-dev.txt pyproject.toml
+
 # CI: GitHub Actions runs `pytest` on Python 3.11 + 3.12 for PRs into
-# develop/main (see .github/workflows/ci.yml). No coverage gate yet.
+# develop/main (see .github/workflows/ci.yml). CI installs dev deps
+# from the hash-pinned `requirements-dev.txt` with `--require-hashes`,
+# then installs the project itself in editable mode without
+# resolving dependencies again. No coverage gate yet.
 
 # Phase 1 acceptance smoke test
 hangarfit check layouts/example.yaml --render out.png
