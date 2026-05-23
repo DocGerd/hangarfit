@@ -99,11 +99,16 @@ predicates and aggregates conflicts:
 
 1. **Hangar bounds** — every part of every placed plane is inside the
    hangar rectangle.
-2. **Maintenance bay** — the designated maintenance plane's fuselage
-   centroid lies in the back strip; if it has no fuselage parts, an
-   explicit `maintenance_no_fuselage` conflict is emitted rather than
-   silently passing (see
-   [ADR-0005](../adr/0005-maintenance-bay-rule.md)).
+2. **Maintenance bay intrusion** — when `layout.maintenance_plane` is
+   set, the bay rectangle is a hard keep-out for every non-occupant
+   plane. Any vertex of any non-occupant part that lies strictly
+   inside the bay fires a `bay_intrusion` conflict on the owning
+   plane (one per offending part). The occupant itself is absent
+   from `layout.placements` by `Layout.__post_init__` invariant. See
+   [§8 Crosscutting Concepts](08-crosscutting-concepts.md#the-maintenance-bay-rule)
+   for the full rule; [ADR-0005](../adr/0005-maintenance-bay-rule.md)
+   is the (Deprecated) record of the Phase 1 rule that this one
+   superseded.
 3. **Pairwise parts overlap** — across every pair of placed planes,
    every part-pair is tested with the two-clause predicate
    (plan-view distance < `clearance_m` AND height gap <

@@ -39,7 +39,7 @@ runtime view belong together). The other TBD rows are each one issue.
 | 4  | Solution Strategy        | [`04-solution-strategy.md`](04-solution-strategy.md)                   | ✅ shipped |
 | 5  | Building Block View      | [`05-building-block-view.md`](05-building-block-view.md)               | ✅ shipped |
 | 6  | Runtime View             | [`06-runtime-view.md`](06-runtime-view.md)                             | ✅ shipped |
-| 8  | Crosscutting Concepts    | `08-crosscutting-concepts.md`                                          | TBD ([#134](https://github.com/DocGerd/hangarfit/issues/134)) |
+| 8  | Crosscutting Concepts    | [`08-crosscutting-concepts.md`](08-crosscutting-concepts.md)           | ✅ shipped |
 | 9  | Architecture Decisions   | [`09-architecture-decisions.md`](09-architecture-decisions.md) → [`docs/adr/`](../adr/) | ✅ shipped |
 
 ## Sections deliberately omitted
