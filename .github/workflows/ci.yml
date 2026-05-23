@@ -116,20 +116,29 @@ jobs:
         # substitution) so that a `grep` returning zero matches — which
         # would otherwise silently produce two empty streams that diff sees
         # as identical — is caught by the explicit non-empty sanity check.
-        # The regex starts with [A-Za-z0-9] because PEP 503 allows package
-        # names that begin with a digit (e.g., `2to3`); anchoring to letters
-        # only would re-introduce a silent-skip into the guard itself.
+        # The `|| true` wrap on grep is load-bearing: under GitHub Actions'
+        # default `bash -eo pipefail` shell, a no-match grep exits 1, the
+        # pipeline exits 1 via pipefail, and `set -e` would kill the step
+        # *before* the sanity check could run — meaning the helpful
+        # `::error::` annotation below would never reach the operator. The
+        # regex starts with [A-Za-z0-9] because PEP 503 allows package
+        # names that begin with a digit (e.g., `2to3`); the optional
+        # `(\[...\])?` group matches extras-decorated names like
+        # `coverage[toml]==X` that `--no-strip-extras` emits — without it,
+        # extras would be silently dropped from both sides of the
+        # comparison, re-introducing the same silent-skip class.
         run: |
           extract() {
-            grep -E '^[A-Za-z0-9][A-Za-z0-9._-]*==' "$1" | sed 's/ *\\$//' | sort
+            { grep -E '^[A-Za-z0-9][A-Za-z0-9._-]*(\[[A-Za-z0-9._,-]+\])?==' "$1" || true; } \
+              | sed 's/ *\\$//' | sort
           }
           extract requirements-dev.txt > /tmp/committed.set
           extract /tmp/expected.txt    > /tmp/regenerated.set
           if [ ! -s /tmp/committed.set ] || [ ! -s /tmp/regenerated.set ]; then
-            echo "::error::extract() produced an empty package set — the regex no longer matches the lockfile format. Update the guard."
+            echo "::error::extract() produced an empty package set — the regex in .github/workflows/ci.yml no longer matches the lockfile format. Update the guard."
             exit 1
           fi
           if ! diff -u /tmp/committed.set /tmp/regenerated.set; then
-            echo "::error::requirements-dev.txt is out of sync with pyproject.toml. Regenerate on Python 3.11 with: pip-compile --generate-hashes --no-strip-extras --extra dev -o requirements-dev.txt pyproject.toml"
+            echo "::error::requirements-dev.txt is out of sync with pyproject.toml. Regenerate on Python 3.11 with pip-tools==7.5.3: pip-compile --generate-hashes --no-strip-extras --extra dev -o requirements-dev.txt pyproject.toml"
             exit 1
           fi
