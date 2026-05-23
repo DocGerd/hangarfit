@@ -6,7 +6,8 @@ instead of lists where collections appear (so the whole graph is
 effectively immutable after construction).
 
 The full coordinate convention and parts-model collision rule live in
-``CLAUDE.md`` at the repo root — this module just encodes the types.
+``docs/architecture/08-crosscutting-concepts.md`` — this module just
+encodes the types.
 """
 
 from __future__ import annotations
@@ -34,8 +35,9 @@ class Part:
     """One oriented rectangle in plane-local coordinates with a height range.
 
     The universal collision unit. Fuselage, wing, and each strut are all
-    represented as ``Part`` instances. See ``CLAUDE.md`` for the
-    plane-local coordinate convention (``+x`` forward, ``+y`` right).
+    represented as ``Part`` instances. See
+    ``docs/architecture/08-crosscutting-concepts.md`` "The coordinate
+    convention" for plane-local coordinates (``+x`` forward, ``+y`` right).
 
     ``kind`` is closed: ``"fuselage" | "wing" | "strut" | "tail"``. New
     kinds must be added to ``PartKind`` and the matching ``_VALID_PART_KINDS``
@@ -251,7 +253,9 @@ class Hangar:
     """The hangar floor plan.
 
     Coordinates: ``(0, 0)`` at the front-left corner, ``+x`` along the
-    door wall, ``+y`` deeper into the hangar. See ``CLAUDE.md``.
+    door wall, ``+y`` deeper into the hangar. See
+    ``docs/architecture/08-crosscutting-concepts.md`` "The coordinate
+    convention".
     """
 
     length_m: float

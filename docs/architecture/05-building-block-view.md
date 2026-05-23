@@ -50,6 +50,18 @@ Frozen dataclasses for every domain concept: `Part`, `Aircraft`,
 `PlaneConstraint`, `SolveResult`, `SolverDiagnostics`,
 `DiversityConfig`, `SearchConfig` and the `SolveStatus` literal.
 
+`MaintenanceBay` is a back-anchored partial-width rectangle
+(`center_x_m`, `width_m`, `depth_m`) — `Hangar.__post_init__`
+enforces that the bay sub-rectangle fits inside the hangar
+(`center_x_m ± width_m/2 ∈ [0, hangar.width_m]` and
+`depth_m < hangar.length_m`).
+
+`Layout.__post_init__` inverts the Phase 1 maintenance invariant
+(updated in [#103](https://github.com/DocGerd/hangarfit/issues/103)):
+the bay occupant must **not** appear in `placements` (it is treated as
+away). The collision checker and visualizer rely on this invariant —
+neither needs to special-case the occupant.
+
 `__post_init__` enforces all invariants that cannot be expressed via
 the type system — the cart rule (`movement_mode` ↔ `on_carts`
 consistency, at most one cart-eligible plane actually on carts), the
@@ -78,6 +90,14 @@ of truth, eliminating any risk of strut volume being double-counted.
 Has tests in `tests/test_loader.py` that exercise the `struts:`
 expansion end-to-end so the YAML convenience can never silently
 desync from the canonical parts representation.
+
+For the `maintenance.plane` field, the loader raises a YAML-author-
+actionable `LoaderError` when the named occupant also appears in
+`placements`, with the hint "Remove it from placements (or fix the
+plane id if it doesn't match an aircraft in the fleet)". The
+`Layout.__post_init__` invariant catches the same combination as a
+programmatic backstop for callers that construct `Layout` instances
+directly.
 
 ### `geometry.py` — the determinant −1 transform
 
@@ -128,9 +148,19 @@ integer `len(conflicts)` metric).
 `solve(scenario, budget_s, alternatives, seed)` is the public entry.
 Internally:
 
-- **Pre-search infeasibility checks** — fail fast on obviously broken
-  scenarios (e.g., maintenance plane pinned outside the back strip,
-  pins outside hangar bounds).
+- **Pre-search infeasibility checks** — three literal-impossibility
+  gates fail fast before the search loop runs: (1) a per-plane bbox
+  exceeds the hangar's max dimension, (2) the fleet's Σ bbox areas
+  exceed the hangar floor, (3) the pin-only Layout (every constrained
+  pin, occupant excluded) fails ``check_layout`` — including the case
+  where a non-maintenance plane is pinned such that its geometry
+  intrudes into the closed bay rectangle (covered by
+  ``test_solve_trivially_infeasible_when_pinned_plane_intrudes_into_closed_bay``).
+- **Maintenance plane handling** — when `scenario.maintenance_plane` is
+  set, the solver drops that plane from the placeable set entirely (no
+  initial placement, no perturbation, no cart-bucket slot). The bay
+  rectangle is enforced as a hard obstacle by the `bay_intrusion`
+  collision rule, so no surrogate sample is needed.
 - **Initial placement** — random valid placements respecting pins.
 - **Descent step** — min-conflicts perturbation: identify the plane
   with the largest conflict contribution (by `total_penetration_m2`),
@@ -158,6 +188,15 @@ across runs (compliance check:
 Renders a layout (with or without a `CheckResult` overlay) to PNG using
 matplotlib. Forces a headless backend at import time so the module runs
 in CI / pytest without a display server.
+
+The maintenance bay renders conditionally on `layout.maintenance_plane`:
+when `None`, the bay area is just normal floor (no overlay); when a
+plane is named, the partial-width bay rectangle
+(`MaintenanceBay.center_x_m` / `width_m` / `depth_m`) is filled with a
+hatched red "wall" style and the label `IN MAINTENANCE: <plane_id>` is
+centered inside. The occupant aircraft itself is not drawn — by Layout
+invariant it's absent from `placements` and the existing draw loop
+skips it without special-casing.
 
 When a `CheckResult` is passed, the renderer validates that every
 conflict's referenced planes are in the layout, then overdraws the

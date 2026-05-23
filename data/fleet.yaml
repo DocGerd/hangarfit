@@ -5,7 +5,8 @@
 # entry has `measured: false` as a grep handle so you can audit what
 # still needs real numbers.
 #
-# Conventions (see CLAUDE.md for the full version):
+# Conventions (see `docs/architecture/08-crosscutting-concepts.md`
+# "The coordinate convention" and "The parts model" for the full version):
 # - Plane-local coords: +x = forward (toward nose), +y = right (toward right wingtip)
 # - Origin of plane-local frame = main-gear / cart centroid
 # - Each Part is an oriented rectangle: length_m runs along plane +x,
