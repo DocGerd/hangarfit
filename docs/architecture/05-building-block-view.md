@@ -20,6 +20,7 @@ flowchart TD
     cli --> collisions
     cli --> solver
     cli --> visualize
+    cli --> models
 
     loader --> models
 
@@ -34,8 +35,10 @@ flowchart TD
 ```
 
 Edges point from caller to callee. `models.py` is the lowest-level
-module (no project imports); `cli.py` is the highest (orchestrates
-everything).
+module (no project imports); every other module imports the
+dataclasses it consumes from `models.py`, including `cli.py` for
+type-annotated returns like `CheckResult` and `SolveResult`. `cli.py`
+is the highest module — it orchestrates everything.
 
 ## Per-module responsibilities
 
@@ -111,8 +114,9 @@ The cart rule is **not** here — it is already enforced upstream in
 valid `Layout`.
 
 Returns a `CheckResult` with the list of `Conflict`s plus the
-`total_penetration_m2` aggregate (added in Phase 2a Chunk A as a smooth
-secondary score for the solver).
+`total_penetration_m2` aggregate (added when the Phase 2a solver
+landed, as a smooth secondary score that breaks plateaus in the
+integer `len(conflicts)` metric).
 
 ### `solver.py` — RR-MC layout search
 
@@ -134,10 +138,11 @@ Internally:
 - **Diversity filter** — post-acceptance, reject candidates that match
   an already-accepted one within the edit-count thresholds (see
   [ADR-0004](../adr/0004-diversity-metric.md)).
-- **Three-way termination** — `found` (K solutions accepted),
-  `found_partial` (some but fewer than K, budget exhausted),
-  `exhausted_budget` (zero accepted), `trivially_infeasible` (pre-search
-  check failed).
+- **Termination** — three search outcomes (`found` = K accepted;
+  `found_partial` = some-but-fewer-than-K accepted, budget exhausted;
+  `exhausted_budget` = zero accepted, budget exhausted) plus the
+  pre-search literal `trivially_infeasible` returned before the
+  search loop runs at all.
 
 The RNG is single-threaded and seeded for bit-identical reproducibility
 across runs (compliance check:
@@ -175,7 +180,7 @@ Exit codes:
 |------|---------|---------|
 | 0 | Valid layout | Found ≥ 1 valid layout (`found` or `found_partial`) |
 | 1 | Invalid layout (conflicts found) | No valid layout (`exhausted_budget` or `trivially_infeasible`); also `found_partial` with `--strict-k` |
-| 2 | Could not check (file not found, bad YAML, invariant violation) | Could not solve (file not found, bad YAML, invariant violation, IO error during render/write) |
+| 2 | Could not check (file not found, bad YAML, invariant violation, IO error during render) | Could not solve (file not found, bad YAML, invariant violation, IO error during render/write) |
 
 ## Module-level invariants
 

@@ -96,7 +96,13 @@ sequenceDiagram
                 Note over Solver: increment<br/>diversity_rejected_count
             end
         end
-        Solver-->>CLI: SolveResult(status, layouts, diagnostics, seed)
+        alt K accepted before budget
+            Solver-->>CLI: SolveResult(status=found, layouts, diagnostics, seed)
+        else some-but-fewer-than-K accepted, budget exhausted
+            Solver-->>CLI: SolveResult(status=found_partial, layouts, diagnostics, seed)
+        else zero accepted, budget exhausted
+            Solver-->>CLI: SolveResult(status=exhausted_budget, layouts=[], diagnostics, seed)
+        end
     end
 
     loop per accepted layout
@@ -112,7 +118,9 @@ same project version (same `hangarfit.solve/v1` schema), the returned
 load-bearing contract behind quality goal #2; the determinism canaries
 in `tests/test_solver_canaries.py` are the regression guard.
 
-**Three-way termination.** The solver returns one of four statuses:
+**Termination statuses.** The solver returns one of four
+`SolveStatus` literals — three from the search loop and one from
+the pre-search infeasibility check:
 
 | Status | Meaning | Exit code (without `--strict-k`) |
 |--------|---------|-----------------------------------|

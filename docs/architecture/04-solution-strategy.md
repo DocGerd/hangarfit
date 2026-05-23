@@ -8,6 +8,11 @@ to which ADR, not a re-derivation.
 
 ## Headline decisions
 
+Ordered roughly Phase 1 → Phase 2a → cross-cutting scope and operations
+choices: the geometric substrate first (parts model, transform), then
+the solver layered on top of it (algorithm, constraint posture), then
+the surrounding shape of the tool (delivery, documentation).
+
 ### Aircraft geometry as a list of parts, not a single bounding box
 
 Every aircraft carries a tuple of `Part`s — each an oriented rectangle
@@ -90,21 +95,6 @@ See [§2 Architecture Constraints](02-architecture-constraints.md) for
 the constraint statement and
 [§3 Context & Scope](03-context-and-scope.md) for the operational
 rationale.
-
-### Strict GitFlow + PR review per change; no direct `develop` pushes
-
-The project uses GitFlow with a protected `develop` and `main`. Every
-change lands via a `feature/<slug>` branch and a PR; the
-`pr-review-toolkit:code-reviewer` (or, for docs-only PRs, the
-`comment-analyzer`) subagent is invoked on every PR. Findings convert to
-inline review threads on the diff; each thread is either fixed and
-re-pushed or replied-with-rationale, then resolved via the GraphQL
-`resolveReviewThread` mutation. Only the maintainer merges.
-
-This is heavy for a single-maintainer project but is the load-bearing
-discipline behind quality goal #1 (correctness of the collision rule):
-the review-and-resolve cycle catches mistakes before they enter the
-codebase, where they would otherwise compound.
 
 ### Plain Markdown docs + ADRs; no MkDocs or Sphinx
 
