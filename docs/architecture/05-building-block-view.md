@@ -126,9 +126,10 @@ predicates and aggregates conflicts:
    plane (one per offending part). The occupant itself is absent
    from `layout.placements` by `Layout.__post_init__` invariant. See
    [§8 Crosscutting Concepts](08-crosscutting-concepts.md#the-maintenance-bay-rule)
-   for the full rule; [ADR-0005](../adr/0005-maintenance-bay-rule.md)
-   is the (Deprecated) record of the Phase 1 rule that this one
-   superseded.
+   for the full rule; the decision is recorded in
+   [ADR-0006](../adr/0006-bay-intrusion-maintenance-rule.md) (Accepted),
+   with [ADR-0005](../adr/0005-maintenance-bay-rule.md) preserved as
+   the Superseded Phase 1 predecessor.
 3. **Pairwise parts overlap** — across every pair of placed planes,
    every part-pair is tested with the two-clause predicate
    (plan-view distance < `clearance_m` AND height gap <

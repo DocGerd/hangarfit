@@ -89,15 +89,18 @@ Concretely, in
 [`src/hangarfit/collisions.py::_bay_intrusion_conflicts`](../../src/hangarfit/collisions.py):
 when `layout.maintenance_plane is not None`, every non-occupant part is
 scanned vertex-by-vertex. The bay is the axis-aligned rectangle
-anchored to the back wall:
+anchored to the back wall, and the in-bay predicate uses strict
+inequality on the three interior edges (`x_min < x < x_max` and
+`y > y_min`) and inclusive comparison on the back edge:
 
-- `x ∈ (center_x_m − width_m/2, center_x_m + width_m/2)` — three
-  interior edges use strict `<` (a vertex *on* the edge sits in the
-  side aisle, not in the bay).
-- `y ∈ (length_m − depth_m, length_m]` — the front-of-bay edge uses
-  strict `<`, but the back edge is inclusive: it coincides with the
-  hangar's outer wall, which `_hangar_bounds_conflicts` already treats
-  as inside, so the bay rule must match.
+- `x ∈ (center_x_m − width_m/2, center_x_m + width_m/2)` — left and
+  right edges strict: a vertex *on* the edge sits in the side aisle,
+  not in the bay.
+- `y ∈ (length_m − depth_m, length_m]` — the front-of-bay edge is
+  strict (a vertex *on* the front edge is outside the bay); the back
+  edge is inclusive because it coincides with the hangar's outer
+  wall, which `_hangar_bounds_conflicts` already treats as inside.
+  The two rules must agree at `y = length_m`.
 
 Any vertex that lands strictly inside the rectangle emits a single
 `bay_intrusion` conflict on the owning plane, naming the offending part
@@ -224,34 +227,48 @@ correlate. The chosen rule eliminates both.
 
 ## Compliance
 
-- **Positive cases:**
-  [`tests/test_collisions.py::TestBayIntrusion`](../../tests/test_collisions.py)
-  covers the open-bay no-op path (`maintenance_plane is None`),
-  closed-bay clear (occupant set but no intruder), partial-width
-  side-aisle parking, and vertices exactly on the bay edge (strict
-  `<` boundary). Five fixture-based goldens
-  (`tests/fixtures/valid_bay_*`).
-- **Negative case:**
-  `tests/test_collisions.py::TestBayIntrusion::test_intrusion_wingtip_fires_bay_intrusion`
-  exercises the canonical "wingtip into closed bay" scenario; the
+`tests/test_collisions.py::TestBayIntrusion` is the regression-pin
+class for this ADR. Anchoring by test method name (not line number)
+so future reorderings don't rot the references:
+
+- **Open-bay no-op:** `test_open_bay_never_fires` —
+  `maintenance_plane is None` skips the whole check.
+- **Closed-bay positive cases:** `test_closed_bay_flags_deep_intrusion`,
+  `test_left_edge_sub_epsilon_inside_fires`,
+  `test_front_edge_sub_epsilon_inside_fires`,
+  `test_corner_vertex_strictly_inside_fires` — the four canonical
+  geometric ways a vertex ends up inside the bay rectangle.
+- **Edge boundaries (strict-inside semantics):**
+  `test_left_edge_vertex_strictly_outside_passes`,
+  `test_front_edge_vertex_on_boundary_passes` (left/front edges:
+  strict, vertex on the edge counts as outside) +
+  `test_back_edge_at_hangar_wall_counts_as_inside` (back edge:
+  inclusive, vertex at `y = length_m` is inside).
+- **Negative case (wingtip into bay):**
+  `test_fixture_bay_intrusion_wingtip_invalid` — exercises the
+  canonical "wingtip into closed bay" scenario; the
   `invalid_bay_intrusion_wingtip.yaml` fixture pins it.
+- **Fixture goldens (5 total under `tests/fixtures/`):**
+  `valid_bay_closed_no_intruder`, `valid_bay_open_planes_in_back_strip`,
+  `valid_partial_width_bay_plane_in_side_aisle`,
+  `valid_part_vertex_on_bay_edge`, and `invalid_bay_intrusion_wingtip`
+  — each loaded by a `test_fixture_*` method in `TestBayIntrusion`.
 - **Legacy retirement:**
-  [`tests/test_collisions.py:377-386`](../../tests/test_collisions.py)
-  asserts that the `maintenance_position` and
-  `maintenance_no_fuselage` conflict kinds are not present in any
-  emitted conflict — a regression guard against accidental
-  re-introduction.
+  `test_retired_conflict_kinds_never_emitted` asserts that the
+  `maintenance_position` and `maintenance_no_fuselage` conflict kinds
+  are not present in any emitted conflict — a regression guard
+  against accidental re-introduction.
 - **Solver pre-search integration:**
   `tests/test_solver_infeasibility.py::test_solve_trivially_infeasible_when_pinned_plane_intrudes_into_closed_bay`
   exercises the case where the pin-only Layout build inside
   `_check_trivially_infeasible` fires a `bay_intrusion` — confirming
   the rule short-circuits the solver before any restart runs.
-- **Defensive skip:**
-  `tests/test_collisions.py` contains a synthetic-Layout test that
-  calls `_bay_intrusion_conflicts` directly with a `world_parts` dict
-  that includes the maintenance plane (bypassing the Layout invariant)
-  and asserts no conflict is emitted — the defensive `continue` is
-  pinned.
+- **Defensive occupant-skip:**
+  `test_defensive_skip_protects_against_occupant_leak` calls
+  `_bay_intrusion_conflicts` directly with a `world_parts` dict
+  whose key is the maintenance plane id (bypassing the Layout
+  invariant) and asserts no conflict is emitted — the defensive
+  `continue` is pinned.
 
 ## More Information
 
@@ -272,8 +289,11 @@ correlate. The chosen rule eliminates both.
   — the rule's module-level role.
 - **Spec:**
   [`docs/superpowers/specs/2026-05-22-maintenance-bay-walling-design.md`](../superpowers/specs/2026-05-22-maintenance-bay-walling-design.md)
-  §4 (approach selection: A = vertex-inverted-rectangle, B = phantom
-  occupant, C = shapely subtract) and §5 (rule details).
+  §3 (Decision log — chose approach A: inverted-rectangle keep-out
+  as the dual of `_hangar_bounds_conflicts`) and §5.2
+  (`_bay_intrusion_conflicts` shape). Approaches B (phantom occupant)
+  and C (`shapely.difference`) are this ADR's expansion, considered
+  during the implementation of the spec's chosen approach.
 - **Implementation:**
   [`src/hangarfit/collisions.py::_bay_intrusion_conflicts`](../../src/hangarfit/collisions.py).
 - **Milestone:**
