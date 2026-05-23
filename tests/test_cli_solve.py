@@ -139,7 +139,8 @@ class TestSolveHumanOutput:
         already used by ``test_solver_search`` for the same purpose)
         with a tiny budget so the solver almost certainly exhausts.
         Skip-on-lucky guard follows the
-        ``tests/test_solver_search.py:355-391`` pattern: if a fast
+        ``test_solve_exhausted_budget_reports_best_partial_pair``
+        pattern (in ``tests/test_solver_search.py``): if a fast
         machine accidentally finds a layout we skip rather than fail.
         """
         import pytest
