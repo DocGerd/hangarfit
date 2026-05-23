@@ -19,8 +19,9 @@
 # (750 m² floor) gives headroom for the heuristic to pass. Real
 # measurements (issue #79) will reset this constraint.
 #
-# Maintenance plane: scheibe_falke, pinned at y=25 — inside the back-9m
-# maintenance bay (bay starts at length_m − depth_m = 30 − 9 = 21).
+# Maintenance bay is OPEN — the back-strip area is just normal floor;
+# scheibe_falke is pinned there as a regular placement (not as the bay
+# occupant). The repair scenario is about pin-respect, not maintenance.
 #
 # Coordinate notes (CLAUDE.md convention): heading 0° = nose toward +y;
 # all planes face deeper into the hangar.
@@ -28,8 +29,6 @@
 fleet: ../../data/fleet.yaml
 hangar: ./test_hangar_large.yaml
 fleet_in: [ctsl, zlin_savage, fuji, wild_thing, aviat_husky, scheibe_falke]
-maintenance:
-  plane: scheibe_falke
 constraints:
   ctsl:
     pin: { x_m: 5.0, y_m: 5.0, heading_deg: 0.0, on_carts: false }

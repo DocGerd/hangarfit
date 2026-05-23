@@ -114,7 +114,13 @@ class TestRenderLayout:
 
 class TestRendererHandlesEdgeCases:
     def test_layout_with_maintenance_plane_renders(self, tmp_path: Path) -> None:
-        layout = _load("valid_maintenance_at_bay_boundary")
+        """A layout naming a maintenance plane (occupant absent from
+        placements) still renders; the renderer treats the maintenance
+        block as metadata. The walled-rect rendering itself is
+        exercised separately once that visualizer change ships.
+        """
+        layout = load_layout(REPO_ROOT / "layouts" / "example.yaml")
+        assert layout.maintenance_plane is not None  # sanity: the case we care about
         out = tmp_path / "maintenance.png"
         render_layout(layout, out)
         _assert_valid_png(out)
@@ -131,7 +137,6 @@ class TestRendererHandlesEdgeCases:
         "fixture_name",
         [
             "invalid_hangar_bounds",
-            "invalid_maintenance_position",
             "invalid_fuselage_fuselage",
             "invalid_strut_blocks_nesting",
         ],
@@ -139,9 +144,9 @@ class TestRendererHandlesEdgeCases:
     def test_renders_invalid_fixtures_with_conflict_overlay(
         self, tmp_path: Path, fixture_name: str
     ) -> None:
-        """All invalid fixtures (covering every Conflict.kind branch:
-        hangar_bounds, maintenance_position, fuselage_fuselage_overlap,
-        strut_wing_overlap) must render cleanly with conflict overlay."""
+        """All invalid fixtures (covering hangar_bounds,
+        fuselage_fuselage_overlap, strut_wing_overlap conflict kinds)
+        must render cleanly with conflict overlay."""
         layout = _load(fixture_name)
         result = check(layout)
         out = tmp_path / f"{fixture_name}.png"
