@@ -1,6 +1,10 @@
 # ADR-NNNN: <Short, declarative title — the decision, not the topic>
 
 - **Status:** Proposed | Accepted | Deprecated | Superseded by [ADR-XXXX](XXXX-slug.md)
+  <!-- Proposed at PR-open; Accepted at PR-merge; Deprecated when the
+       decision no longer applies but is not replaced; Superseded when
+       a later ADR replaces it (link the replacement). -->
+
 - **Date:** YYYY-MM-DD
 - **Deciders:** <names / GitHub handles>
 

@@ -42,13 +42,20 @@ We use a [MADR](https://adr.github.io/madr/)-flavored Markdown template
   superseded. A deprecated ADR stays in the directory with its status
   updated; its number is still its name.
 - The next available number is `current_highest + 1`. If two ADRs are
-  proposed in parallel, the second one to land takes the next number
-  (resolve at PR-rebase time, not at proposal time).
+  proposed in parallel, the second one to land takes the next number.
+  Resolve at PR-rebase time, not at proposal time: the later-landing PR
+  renames its file (`git mv NNNN-old-slug.md MMMM-old-slug.md`), updates
+  the `# ADR-MMMM:` header inside the file, updates the
+  [Index](#index) entry, and updates any cross-references in other
+  ADRs that pointed at the old number. The earlier-landing PR is
+  not touched.
 - ADR-0000 is reserved for the meta-decision "we use ADRs."
 
 ## How to author a new ADR
 
-1. Pick the next number (run `ls docs/adr/[0-9]*.md` and add one).
+1. Pick the next number. The exact incantation is
+   `ls docs/adr/[0-9][0-9][0-9][0-9]-*.md | tail -1` to see the current
+   highest; add one and zero-pad to four digits.
 2. Copy `template.md` to `NNNN-short-slug.md`, using kebab-case for the
    slug.
 3. Fill in the sections. Honor the "≥ 2 considered options" rule.
@@ -72,6 +79,8 @@ manual workflow above is canonical.
 |-----|------------------------------------------------------------------------------|----------|
 | 0000 | [Record architecture decisions](0000-record-architecture-decisions.md)      | Accepted |
 
-ADRs 0001–0005 (parts model, det = −1 transform, RR-MC solver algorithm,
-diversity metric, maintenance bay rule) are tracked in
-[#136](https://github.com/DocGerd/hangarfit/issues/136).
+The five initial retroactive ADRs (parts model, det = −1 coordinate
+transform, RR-MC solver algorithm, diversity metric, maintenance bay
+rule) will be added by [#136](https://github.com/DocGerd/hangarfit/issues/136)
+and successive PRs in milestone #12; this Index is the canonical list
+once they land.
