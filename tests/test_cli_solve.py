@@ -120,8 +120,10 @@ class TestSolveHumanOutput:
         out = capsys.readouterr().out
         assert "Trivially infeasible" in out
 
-    def test_human_output_exhausted_budget(self, capsys):
-        # Plane bigger than hangar -> trivially infeasible via check #1.
+    def test_human_output_trivially_infeasible_plane_too_big(self, capsys):
+        # Plane bigger than hangar -> trivially infeasible via check #1
+        # (per-plane bbox > max hangar dim). Pairs with the pins-clash
+        # variant above to cover both pre-search infeasibility kinds.
         fixture = str(FIXTURES_DIR / "solve_infeasible_plane_too_big.yaml")
         rc = main(["solve", fixture, "--budget", "1.0", "--seed", "42"])
         assert rc == 1
@@ -129,6 +131,29 @@ class TestSolveHumanOutput:
         # plane_too_big hits the per-plane infeasibility check (#1), so
         # it surfaces as trivially_infeasible too.
         assert "Trivially infeasible" in out
+
+    def test_human_output_exhausted_budget(self, capsys):
+        """Real `exhausted_budget` branch of `_emit_solve_human`.
+
+        Uses ``solve_fresh_six_planes.yaml`` (the six-plane fixture
+        already used by ``test_solver_search`` for the same purpose)
+        with a tiny budget so the solver almost certainly exhausts.
+        Skip-on-lucky guard follows the
+        ``tests/test_solver_search.py:355-391`` pattern: if a fast
+        machine accidentally finds a layout we skip rather than fail.
+        """
+        import pytest
+
+        fixture = str(FIXTURES_DIR / "solve_fresh_six_planes.yaml")
+        rc = main(["solve", fixture, "--budget", "0.05", "--seed", "42"])
+        out = capsys.readouterr().out
+        if rc == 0 and "Found" in out:
+            pytest.skip("seed=42 + 0.05s got lucky; tighten budget if this skips often")
+        assert rc == 1
+        # Three diagnostic lines printed by the exhausted_budget branch:
+        assert "No valid layout found in" in out
+        assert "Best partial had" in out and "conflict" in out
+        assert "Hint: increase --budget" in out
 
 
 class TestSolveJsonOutput:
