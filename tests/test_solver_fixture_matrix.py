@@ -296,22 +296,28 @@ def test_solve_all_nine_large_hangar_finds_layout():
 
     Spec §6.5: expected `found`. Universal properties cover validity;
     nothing additional to assert beyond status + layout count.
+
+    Calibration (spec §4.3, ``K = max(observed × 2, 5)`` under ``seed=42``):
+    observed restarts_attempted = 2 (deterministic across 3 trials at ~3.2s
+    wall time per run); K = max(2 × 2, 5) = 5. A regression that pushes this
+    beyond 5 restarts trips the assert below instead of silently skipping.
     """
     s = load_scenario(f"{FIXTURES}/solve_all_nine_large_hangar.yaml")
-    r = solve(s, budget_s=30.0, alternatives=1, seed=42)
+    r = solve(
+        s,
+        budget_s=30.0,
+        alternatives=1,
+        seed=42,
+        search=SearchConfig(max_restarts=5),
+    )
 
-    if r.status == "exhausted_budget":
-        pytest.skip(
-            f"Solver didn't find a 9-plane layout in 30s "
-            f"(restarts={r.diagnostics.restarts_attempted}). The Phase 1 "
-            f"hand-authored valid_all_nine_planes layout demonstrates a "
-            f"solution exists; the solver just didn't stumble onto it. "
-            f"Re-tune SearchConfig or extend the budget if this becomes "
-            f"a pattern."
-        )
+    assert r.status == "found", (
+        f"Fixture 'solve_all_nine_large_hangar.yaml' exhausted within max_restarts=5 "
+        f"(restarts_attempted={r.diagnostics.restarts_attempted}); a regression "
+        f"is likely (was previously found within 2 restarts under seed=42)."
+    )
 
     _assert_universal_properties(r)
-    assert r.status == "found"
     assert len(r.layouts) == 1
     assert len(r.layouts[0].placements) == 9
     # Maintenance plane survival: a regression where the solver dropped
