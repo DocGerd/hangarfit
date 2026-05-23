@@ -385,6 +385,39 @@ class TestBayIntrusion:
         assert "maintenance_position" not in kinds
         assert "maintenance_no_fuselage" not in kinds
 
+    def test_defensive_skip_protects_against_occupant_leak(self) -> None:
+        """If the maintenance occupant ever leaks into ``world_parts``
+        (would require a Layout-invariant bypass), the rule must skip
+        it rather than emit "occupant intrudes into its own bay"
+        nonsense. Exercises the defensive ``if plane_id ==
+        layout.maintenance_plane: continue`` guard by calling the
+        private rule with a hand-built world_parts dict whose key is
+        the maintenance plane id.
+        """
+        from hangarfit.collisions import _bay_intrusion_conflicts
+        from hangarfit.geometry import aircraft_parts_world
+        from hangarfit.models import Placement
+
+        # A valid (occupant-absent) Layout to supply the bay geometry
+        # and maintenance_plane name.
+        layout = self._build_layout(bay_open=False)
+        # Hand-build world_parts WITH the occupant — bypassing the
+        # Layout invariant that would normally make this state
+        # unreachable. Place the occupant deep inside the bay so its
+        # fuselage vertex would trigger an intrusion if the skip
+        # weren't there.
+        occupant_placement = Placement(
+            plane_id="occupant", x_m=14.0, y_m=20.0, heading_deg=0.0, on_carts=True
+        )
+        leaked_world_parts = {
+            "occupant": aircraft_parts_world(layout.fleet["occupant"], occupant_placement)
+        }
+        conflicts = _bay_intrusion_conflicts(leaked_world_parts, layout)
+        assert conflicts == [], (
+            f"defensive skip failed: occupant emitted bay_intrusion against "
+            f"its own bay; got {conflicts!r}"
+        )
+
 
 class TestTotalPenetration:
     """Behavioral tests for ``CheckResult.total_penetration_m2``.
