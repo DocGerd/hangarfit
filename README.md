@@ -137,7 +137,7 @@ tests/              # pytest suite, including strut-aware collision golden tests
 ## Documentation
 
 - [`docs/architecture/`](docs/architecture/) — the project's architecture documentation, in a slim subset of the [Arc42](https://arc42.org/) template. Read [§1 Introduction & Goals](docs/architecture/01-introduction-and-goals.md) and [§3 Context & Scope](docs/architecture/03-context-and-scope.md) first.
-- `docs/adr/` — Architecture Decision Records (the *why* behind the architecture). Coming in [#135](https://github.com/DocGerd/hangarfit/issues/135).
+- [`docs/adr/`](docs/adr/) — Architecture Decision Records (the *why* behind the architecture). Start with [ADR-0000](docs/adr/0000-record-architecture-decisions.md), then read individual records as their topics come up.
 
 ## More depth
 
