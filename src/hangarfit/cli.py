@@ -182,7 +182,7 @@ def cmd_check(args: argparse.Namespace) -> int:
 
 
 def _emit_solve_human(result: SolveResult, *, alternatives: int) -> None:
-    """Write the human-readable summary to stdout. See spec §5.3."""
+    """Write the human-readable summary to stdout."""
     d = result.diagnostics
     if result.status == "trivially_infeasible":
         # `best_partial` is fused with the explanatory conflict by the
@@ -271,7 +271,7 @@ def _placement_delta(a: Layout, b: Layout) -> tuple[int, float]:
 
 
 def cmd_solve(args: argparse.Namespace) -> int:
-    """Run the ``solve`` subcommand. See spec §5 for the data flow."""
+    """Run the ``solve`` subcommand."""
     # Defer the solver import only: ``hangarfit check`` invocations should
     # not pay the solver's import cost. Matplotlib is NOT deferred here —
     # ``from hangarfit import visualize`` at module top (cli.py:20) already
@@ -470,7 +470,7 @@ def _check_result_to_dict(result: CheckResult) -> dict:
 
 
 def _emit_solve_json(scenario_path: str, result: SolveResult) -> None:
-    """Write the hangarfit.solve/v1 payload to stdout. See spec §5.4."""
+    """Write the hangarfit.solve/v1 payload to stdout."""
     d = result.diagnostics
     payload = {
         "schema": _SOLVE_JSON_SCHEMA,
