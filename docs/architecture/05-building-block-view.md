@@ -1,0 +1,213 @@
+# §5 Building Block View
+
+The system has one level of decomposition: the Python modules under
+`src/hangarfit/`. There is no deeper "subsystem" layer — each module is
+small and single-purpose by design.
+
+## Level 1: module map
+
+```mermaid
+flowchart TD
+    cli["cli.py<br/>argparse, IO, exit codes"]
+    loader["loader.py<br/>YAML → models<br/>struts: block expansion"]
+    models["models.py<br/>frozen dataclasses<br/>invariants in __post_init__"]
+    geometry["geometry.py<br/>plane-local → world transform<br/>(determinant −1)"]
+    collisions["collisions.py<br/>check(layout) entry<br/>hangar bounds + maintenance + part overlaps"]
+    solver["solver.py<br/>RR-MC search<br/>deterministic RNG"]
+    visualize["visualize.py<br/>top-down PNG renderer<br/>headless matplotlib"]
+
+    cli --> loader
+    cli --> collisions
+    cli --> solver
+    cli --> visualize
+    cli --> models
+
+    loader --> models
+
+    solver --> collisions
+    solver --> models
+
+    collisions --> geometry
+    collisions --> models
+
+    visualize --> geometry
+    visualize --> models
+```
+
+Edges point from caller to callee. `models.py` is the lowest-level
+module (no project imports); every other module imports the
+dataclasses it consumes from `models.py`, including `cli.py` for
+type-annotated returns like `CheckResult` and `SolveResult`. `cli.py`
+is the highest module — it orchestrates everything.
+
+## Per-module responsibilities
+
+### `models.py` — data + invariants
+
+Frozen dataclasses for every domain concept: `Part`, `Aircraft`,
+`Hangar`, `MaintenanceBay`, `Placement`, `Layout`, `Conflict`,
+`CheckResult`, plus the Phase 2a solver types `Scenario`,
+`PlaneConstraint`, `SolveResult`, `SolverDiagnostics`,
+`DiversityConfig`, `SearchConfig` and the `SolveStatus` literal.
+
+`__post_init__` enforces all invariants that cannot be expressed via
+the type system — the cart rule (`movement_mode` ↔ `on_carts`
+consistency, at most one cart-eligible plane actually on carts), the
+maintenance-plane-is-in-fleet rule, the
+maintenance-plane-is-not-in-placements rule. A constructed instance is
+guaranteed structurally valid; nothing downstream re-checks.
+
+`PartKind` is a closed `Literal` set (`"fuselage"`, `"wing"`,
+`"strut"`, `"tail"`). The `Conflict.kind` taxonomy is also closed —
+adding a new conflict kind is a code change here, not just a string
+constant elsewhere.
+
+This module imports nothing from the rest of the project. It is the
+project's vocabulary.
+
+### `loader.py` — YAML → models
+
+Parses `fleet.yaml`, `hangar.yaml`, layout YAMLs, and scenario YAMLs
+into the dataclasses from `models.py`. The single non-trivial
+transformation is the `struts:` block — a high-level YAML shorthand
+for strut-braced aircraft that the loader expands into two mirrored
+strut `Part`s before constructing the `Aircraft`. The constructed
+`Aircraft` has no `struts` field; the parts tuple is the single source
+of truth, eliminating any risk of strut volume being double-counted.
+
+Has tests in `tests/test_loader.py` that exercise the `struts:`
+expansion end-to-end so the YAML convenience can never silently
+desync from the canonical parts representation.
+
+### `geometry.py` — the determinant −1 transform
+
+Two responsibilities: (1) the plane-local → world transform itself, and
+(2) `aircraft_parts_world()`, which applies the transform to every part
+of an aircraft at a given `Placement` and returns world-coordinate
+polygons.
+
+The transform is the load-bearing det = −1 mapping (see
+[ADR-0002](../adr/0002-determinant-minus-one-transform.md)). Tests in
+`tests/test_geometry.py` include the 45° canary that catches any
+sign-flip regression. PRs touching this file additionally invoke the
+`geometry-invariant-guard` review-time subagent.
+
+### `collisions.py` — the heart of Phase 1
+
+`check(layout)` is the public entry point. It runs three independent
+predicates and aggregates conflicts:
+
+1. **Hangar bounds** — every part of every placed plane is inside the
+   hangar rectangle.
+2. **Maintenance bay** — the designated maintenance plane's fuselage
+   centroid lies in the back strip; if it has no fuselage parts, an
+   explicit `maintenance_no_fuselage` conflict is emitted rather than
+   silently passing (see
+   [ADR-0005](../adr/0005-maintenance-bay-rule.md)).
+3. **Pairwise parts overlap** — across every pair of placed planes,
+   every part-pair is tested with the two-clause predicate
+   (plan-view distance < `clearance_m` AND height gap <
+   `wing_layer_clearance_m`).
+
+The cart rule is **not** here — it is already enforced upstream in
+`Layout.__post_init__`. `collisions.py` operates on a structurally
+valid `Layout`.
+
+Returns a `CheckResult` with the list of `Conflict`s plus the
+`total_penetration_m2` aggregate (added when the Phase 2a solver
+landed, as a smooth secondary score that breaks plateaus in the
+integer `len(conflicts)` metric).
+
+### `solver.py` — RR-MC layout search
+
+`solve(scenario, budget_s, alternatives, seed)` is the public entry.
+Internally:
+
+- **Pre-search infeasibility checks** — fail fast on obviously broken
+  scenarios (e.g., maintenance plane pinned outside the back strip,
+  pins outside hangar bounds).
+- **Initial placement** — random valid placements respecting pins.
+- **Descent step** — min-conflicts perturbation: identify the plane
+  with the largest conflict contribution (by `total_penetration_m2`),
+  perturb it to reduce its contribution, repeat until zero conflicts
+  or local minimum.
+- **Restart cycle** — when descent plateaus, restart with a new random
+  placement.
+- **Acceptance gate** — every candidate runs through `collisions.check()`
+  before counting as accepted.
+- **Diversity filter** — post-acceptance, reject candidates that match
+  an already-accepted one within the edit-count thresholds (see
+  [ADR-0004](../adr/0004-diversity-metric.md)).
+- **Termination** — three search outcomes (`found` = K accepted;
+  `found_partial` = some-but-fewer-than-K accepted, budget exhausted;
+  `exhausted_budget` = zero accepted, budget exhausted) plus the
+  pre-search literal `trivially_infeasible` returned before the
+  search loop runs at all.
+
+The RNG is single-threaded and seeded for bit-identical reproducibility
+across runs (compliance check:
+`tests/test_solver_canaries.py`).
+
+### `visualize.py` — top-down PNG renderer
+
+Renders a layout (with or without a `CheckResult` overlay) to PNG using
+matplotlib. Forces a headless backend at import time so the module runs
+in CI / pytest without a display server.
+
+When a `CheckResult` is passed, the renderer validates that every
+conflict's referenced planes are in the layout, then overdraws the
+conflicting parts in red. The two-layer rendering (base layout in
+neutral colors, conflicts in red on top) lets the operator see *what
+broke* at a glance.
+
+The render is the only project output that is not also JSON-encodable;
+it is the human's sanity-check.
+
+### `cli.py` — argparse dispatch + IO + exit codes
+
+Two subcommands: `hangarfit check` (Phase 1) and `hangarfit solve`
+(Phase 2a). Both subcommands are thin wrappers around the library
+entry points (`check()` and `solve()` respectively); this module owns
+only argparse, IO routing, and exit-code mapping.
+
+JSON schemas are versioned: `hangarfit.check/v1` and
+`hangarfit.solve/v1`. Bumping a version is reserved for breaking
+changes to the payload shape; additive fields do not bump.
+
+Exit codes:
+
+| Code | `check` | `solve` |
+|------|---------|---------|
+| 0 | Valid layout | Found ≥ 1 valid layout (`found` or `found_partial`) |
+| 1 | Invalid layout (conflicts found) | No valid layout (`exhausted_budget` or `trivially_infeasible`); also `found_partial` with `--strict-k` |
+| 2 | Could not check (file not found, bad YAML, invariant violation, IO error during render) | Could not solve (file not found, bad YAML, invariant violation, IO error during render/write) |
+
+## Module-level invariants
+
+Three invariants hold across the whole substrate:
+
+1. **`models.py` imports nothing from the rest of the project.** Other
+   modules import *from* `models.py`. This means data definitions
+   cannot depend on geometry, collision, solver, or rendering logic —
+   the vocabulary stays independent.
+2. **`check(layout)` is the only acceptance gate.** The solver does
+   not bypass it; the CLI does not bypass it; the visualizer does not
+   bypass it. A `Layout` that `check()` accepts is *the* definition of
+   "valid layout."
+3. **`solver.py` is single-threaded.** Reproducibility is achieved by
+   threading a seeded RNG through every randomized step; parallelism
+   would compromise that.
+
+Each invariant is enforced by code review rather than by mechanical
+check; each has a corresponding test or subagent that catches the
+common ways it could be broken.
+
+## What this view does *not* show
+
+- **Data formats on disk.** The YAML schemas for `fleet.yaml`,
+  `hangar.yaml`, layout YAMLs, and scenario YAMLs are documented in
+  the file headers and exercised by `tests/fixtures/*.yaml` examples.
+- **Runtime sequences.** See [§6 Runtime View](06-runtime-view.md).
+- **Crosscutting domain rules** (the parts model itself, the
+  coordinate convention, default clearances, testing posture). See
+  [§8 Crosscutting Concepts](08-crosscutting-concepts.md).
