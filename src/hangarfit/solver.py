@@ -124,7 +124,18 @@ def solve(
     diversity_rejected_count = 0
     restart_index = 0
 
-    while time.monotonic() - start < budget_s:
+    # Outer restart loop. Two independent termination gates; first to
+    # trip wins:
+    #   1. Wall-clock budget (`budget_s`) — always present.
+    #   2. Restart count (`search.max_restarts`) — opt-in via v0.6.0's
+    #      SearchConfig field (spec §4.2). `None` preserves the
+    #      pre-v0.6.0 wall-clock-only behavior. Useful for
+    #      cross-machine-deterministic exhaustion canaries.
+    # Inside the loop, the K-diverse termination at the bottom is the
+    # third gate ("found enough alternatives") — independent of these.
+    while time.monotonic() - start < budget_s and (
+        search.max_restarts is None or restart_index < search.max_restarts
+    ):
         cart_bucket = _cart_bucket_for_restart(cart_buckets, restart_index=restart_index)
         try:
             placements = _initial_placements(scenario=scenario, rng=rng, cart_bucket=cart_bucket)

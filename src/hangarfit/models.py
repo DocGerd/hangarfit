@@ -694,12 +694,33 @@ class SearchConfig:
     """Solver hyperparameters (see spec §4.3, §4.5).
 
     v1 defaults are guesses; tune with real data.
+
+    ``max_restarts`` is the v0.6.0 solver-polish addition (spec §4.2 of
+    ``docs/superpowers/specs/2026-05-22-v0.6.0-solver-polish-release-design.md``).
+    ``None`` preserves the pre-v0.6.0 wall-clock-only termination behavior.
+    When set, it acts as an *upper-bound counter* on the outer restart
+    loop in addition to ``budget_s``: whichever gate trips first wins.
+    Useful for cross-machine-deterministic exhaustion canaries that
+    can't rely on wall-clock budget cutoffs.
     """
 
     candidates_per_iter: int = 8
     k_stall: int = 50
     pos_sigma_m: float = 0.5
     heading_sigma_deg: float = 10.0
+    max_restarts: int | None = None
+    """Hard cap on the outer restart loop. ``None`` (default) preserves
+    the pre-v0.6.0 wall-clock-only termination behavior. When set, must
+    be ``>= 1``; serves as an upper-bound counter in addition to
+    ``solve(..., budget_s=...)`` — whichever gate trips first wins.
+    Useful for cross-machine-deterministic exhaustion canaries that
+    can't rely on wall-clock budget cutoffs.
+
+    ``None`` is the only "opt out" sentinel in :class:`SearchConfig` /
+    :class:`DiversityConfig` / :class:`SolverDiagnostics`; all other
+    numeric fields require a concrete positive value. Pass ``None``
+    explicitly to disable the cap; passing ``0`` is rejected (it would
+    skip the search loop entirely)."""
 
     def __post_init__(self) -> None:
         if self.candidates_per_iter < 1:
@@ -720,4 +741,10 @@ class SearchConfig:
         if self.heading_sigma_deg <= 0.0:
             raise ValueError(
                 f"SearchConfig.heading_sigma_deg must be positive, got {self.heading_sigma_deg}"
+            )
+        if self.max_restarts is not None and self.max_restarts < 1:
+            raise ValueError(
+                f"SearchConfig.max_restarts must be >= 1 when set "
+                f"(pass ``None`` to disable the restart cap; ``0`` would "
+                f"skip the search loop entirely), got {self.max_restarts}"
             )
