@@ -156,6 +156,85 @@ class TestSolveHumanOutput:
         assert "Hint: increase --budget" in out
 
 
+class TestSolveFleetHangarOverrides:
+    """`--fleet` / `--hangar` override flags exercise both branches of
+    :func:`hangarfit.cli._resolve_fleet_hangar_refs` (override + embedded)
+    plus the LoaderError collision when both are set.
+    """
+
+    # Resolve repo-relative defaults to absolute paths once: scenarios
+    # written into tmp_path can't use the original "../../data/..." refs.
+    REPO_ROOT = Path(__file__).resolve().parents[1]
+    DEFAULT_FLEET = str(REPO_ROOT / "data" / "fleet.yaml")
+    DEFAULT_HANGAR = str(REPO_ROOT / "data" / "hangar.yaml")
+
+    def test_fleet_and_hangar_overrides_positive_path(self, tmp_path, capsys):
+        """Scenario without embedded refs + both CLI overrides → solves.
+
+        Exercises the `args.fleet is not None` and `args.hangar is not
+        None` branches of `_resolve_fleet_hangar_refs` (plus the
+        load_scenario override paths).
+        """
+        scenario = tmp_path / "scenario_no_refs.yaml"
+        scenario.write_text("fleet_in: [aviat_husky]\n")
+        rc = main(
+            [
+                "solve",
+                str(scenario),
+                "--budget",
+                "2.0",
+                "--seed",
+                "42",
+                "--fleet",
+                self.DEFAULT_FLEET,
+                "--hangar",
+                self.DEFAULT_HANGAR,
+            ]
+        )
+        assert rc == 0, f"override solve failed; stderr={capsys.readouterr().err}"
+        out = capsys.readouterr().out
+        assert "Found" in out
+
+    def test_fleet_override_collides_with_embedded_ref(self, tmp_path, capsys):
+        """`--fleet` + scenario with `fleet:` → LoaderError → rc=2."""
+        rc = main(
+            [
+                "solve",
+                SMOKE_FIXTURE,
+                "--budget",
+                "0.1",
+                "--seed",
+                "42",
+                "--fleet",
+                self.DEFAULT_FLEET,
+            ]
+        )
+        assert rc == 2
+        captured = capsys.readouterr()
+        assert "error:" in captured.err
+        # LoaderError text identifies the ambiguous field.
+        assert "fleet" in captured.err
+
+    def test_hangar_override_collides_with_embedded_ref(self, tmp_path, capsys):
+        """`--hangar` + scenario with `hangar:` → LoaderError → rc=2."""
+        rc = main(
+            [
+                "solve",
+                SMOKE_FIXTURE,
+                "--budget",
+                "0.1",
+                "--seed",
+                "42",
+                "--hangar",
+                self.DEFAULT_HANGAR,
+            ]
+        )
+        assert rc == 2
+        captured = capsys.readouterr()
+        assert "error:" in captured.err
+        assert "hangar" in captured.err
+
+
 class TestSolveJsonOutput:
     """Spec §5.4 — hangarfit.solve/v1 schema."""
 
