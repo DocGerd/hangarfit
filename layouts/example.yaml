@@ -2,8 +2,9 @@
 #
 # Scenario: Saturday morning. Three of the club's nine aircraft are out
 # (Cessna 140 and 150 doing training flights, FK9 on a pleasure flight),
-# six are home in non-standard positions. Scheibe Falke is in the back
-# for scheduled maintenance.
+# five are home in non-standard positions. Scheibe Falke is in the
+# walled maintenance bay (the occupant is treated as physically absent
+# from the parking problem; the bay rectangle is a hard keep-out).
 #
 # This is the canonical smoke test from CLAUDE.md:
 #
@@ -71,10 +72,6 @@ placements:
     heading_deg: 0.0
     on_carts: false        # always_own_gear
 
-  # Maintenance bay (back): the motorglider sits along the back wall,
-  # its 18 m wingspan exactly spanning the hangar width
-  - plane: scheibe_falke
-    x_m: 9.0
-    y_m: 20.5
-    heading_deg: 0.0
-    on_carts: true         # always_cart
+  # scheibe_falke is in the maintenance bay (declared above under
+  # ``maintenance.plane``) — by Layout invariant it must NOT appear in
+  # placements while the bay is closed.

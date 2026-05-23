@@ -230,8 +230,16 @@ class MaintenanceBay:
     depth_m: float
 
     def __post_init__(self) -> None:
-        if self.center_x_m <= 0:
-            raise ValueError(f"MaintenanceBay.center_x_m must be positive, got {self.center_x_m}")
+        # ``center_x_m`` follows :class:`Door`'s precedent (non-negative);
+        # the spec interval ``center_x_m ± width_m/2 ∈ [0, hangar.width_m]``
+        # admits ``center_x_m == width_m/2`` (left edge flush with x=0),
+        # so the local guard is non-negativity, not strict positivity.
+        # The bay-fits-in-hangar check on :class:`Hangar` enforces the
+        # full interval.
+        if self.center_x_m < 0:
+            raise ValueError(
+                f"MaintenanceBay.center_x_m must be non-negative, got {self.center_x_m}"
+            )
         if self.width_m <= 0:
             raise ValueError(f"MaintenanceBay.width_m must be positive, got {self.width_m}")
         if self.depth_m <= 0:

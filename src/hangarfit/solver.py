@@ -149,14 +149,17 @@ def solve(
         # ValueError is reachable here. `_enumerate_cart_buckets` already
         # filters bucket assignments that would violate the cart rule;
         # Scenario invariants enforce pin/on_carts/movement_mode consistency;
-        # placements are over `scenario.fleet_in` (no duplicates, all in
-        # fleet); the maintenance plane is in placements by construction.
-        # Any ValueError here would mean a real bug — let it propagate as
+        # the placements generator skips the maintenance plane so the
+        # bay-occupant invariant holds; remaining placements are over
+        # `scenario.fleet_in` (no duplicates, all in fleet). Any
+        # ValueError here would mean a real bug — let it propagate as
         # one rather than burn the budget on silent restart absorption.
         initial_layout = Layout(
             fleet=scenario.fleet,
             hangar=scenario.hangar,
-            placements=tuple(placements[pid] for pid in scenario.fleet_in),
+            placements=tuple(
+                placements[pid] for pid in scenario.fleet_in if pid != scenario.maintenance_plane
+            ),
             maintenance_plane=scenario.maintenance_plane,
         )
         current_score = _score(initial_layout)
@@ -180,7 +183,11 @@ def solve(
                 candidate_layout = Layout(
                     fleet=scenario.fleet,
                     hangar=scenario.hangar,
-                    placements=tuple(placements[pid] for pid in scenario.fleet_in),
+                    placements=tuple(
+                        placements[pid]
+                        for pid in scenario.fleet_in
+                        if pid != scenario.maintenance_plane
+                    ),
                     maintenance_plane=scenario.maintenance_plane,
                 )
                 if _is_diverse_enough(candidate_layout, accepted_layouts, diversity):
@@ -218,7 +225,11 @@ def solve(
                 best_partial_layout = Layout(
                     fleet=scenario.fleet,
                     hangar=scenario.hangar,
-                    placements=tuple(placements[pid] for pid in scenario.fleet_in),
+                    placements=tuple(
+                        placements[pid]
+                        for pid in scenario.fleet_in
+                        if pid != scenario.maintenance_plane
+                    ),
                     maintenance_plane=scenario.maintenance_plane,
                 )
 
@@ -373,18 +384,11 @@ def _check_trivially_infeasible(
 
         # Build a Layout containing ONLY the pinned planes.
         #
-        # ``maintenance_plane`` is set on the pin-only Layout iff the
-        # maintenance plane is itself pinned. This lets `collisions.check()`
-        # fire the maintenance_position rule on a pinned-out-of-bay
-        # maintenance plane — without it, that case would silently slip
-        # past pre-search and burn the entire solve() budget in the
-        # trajectory loop (every restart would hit the same conflict on
-        # the pinned plane, `_descent_step` would return None, restart
-        # again, ad infinitum until budget).
-        #
-        # If the maintenance plane is NOT pinned, we leave maintenance
-        # off the pin-only Layout — its position will be sampled freely
-        # during search, so pre-search has nothing to check.
+        # The maintenance plane (if any) is excluded from placements by
+        # Layout invariant — it is treated as "away". Pinning the
+        # maintenance plane is incoherent under that semantics and is
+        # filtered here defensively (Scenario validation could also
+        # reject it; for now we just ignore the pin).
         #
         # No try/except: every remaining Layout invariant that could fire
         # here is either structurally impossible given pin-only construction
@@ -392,17 +396,13 @@ def _check_trivially_infeasible(
         # pin.on_carts vs movement_mode). A genuinely unexpected ValueError
         # should propagate as a bug, not get silently re-wrapped as a pin
         # infeasibility.
-        maintenance_pinned = (
-            scenario.maintenance_plane is not None
-            and scenario.maintenance_plane in scenario.constraints
-            and scenario.constraints[scenario.maintenance_plane].pin is not None
-        )
-        maint_for_check = scenario.maintenance_plane if maintenance_pinned else None
         pin_only_layout = Layout(
             fleet=scenario.fleet,
             hangar=scenario.hangar,
-            placements=tuple(pinned_placements),
-            maintenance_plane=maint_for_check,
+            placements=tuple(
+                p for p in pinned_placements if p.plane_id != scenario.maintenance_plane
+            ),
+            maintenance_plane=scenario.maintenance_plane,
         )
 
         pin_check = check_layout(pin_only_layout)
@@ -742,7 +742,9 @@ def _descent_step(
     current_layout = Layout(
         fleet=scenario.fleet,
         hangar=scenario.hangar,
-        placements=tuple(placements[pid] for pid in scenario.fleet_in),
+        placements=tuple(
+            placements[pid] for pid in scenario.fleet_in if pid != scenario.maintenance_plane
+        ),
         maintenance_plane=scenario.maintenance_plane,
     )
 
@@ -813,7 +815,9 @@ def _descent_step(
             trial_layout = Layout(
                 fleet=scenario.fleet,
                 hangar=scenario.hangar,
-                placements=tuple(trial[pid] for pid in scenario.fleet_in),
+                placements=tuple(
+                    trial[pid] for pid in scenario.fleet_in if pid != scenario.maintenance_plane
+                ),
                 maintenance_plane=scenario.maintenance_plane,
             )
         except ValueError:
