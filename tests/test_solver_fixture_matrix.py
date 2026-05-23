@@ -336,8 +336,11 @@ def test_solve_all_nine_large_hangar_finds_layout():
 
     _assert_universal_properties(r, max_wall_time_s=15.0)
     assert len(r.layouts) == 1
-    assert len(r.layouts[0].placements) == 9
+    # 9-plane fleet with one in maintenance → 8 placed planes. The Layout
+    # invariant (#103) forbids the occupant from appearing in placements.
+    assert len(r.layouts[0].placements) == 8
     # Maintenance plane survival: a regression where the solver dropped
-    # `maintenance_plane=None` would still produce a valid 9-plane layout
-    # because the bay rule no-ops when no maintenance plane is set.
+    # ``maintenance_plane=None`` would still produce a valid 8-plane layout
+    # (the bay rule no-ops when no maintenance plane is set), so we pin the
+    # field explicitly to catch that case.
     assert r.layouts[0].maintenance_plane == "scheibe_falke"
