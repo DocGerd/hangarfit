@@ -153,8 +153,23 @@ ruff format src/ tests/
 # Type check
 mypy src/hangarfit/
 
+# Regenerate the CI hash-pinned dev-deps lockfile. Required after
+# editing EITHER `[project] dependencies` OR
+# `[project.optional-dependencies] dev` in pyproject.toml — the lockfile
+# is generated with `--extra dev`, which covers BOTH groups, so both
+# need to be in sync. CI's `pip install -e . --no-deps` will silently
+# skip a runtime dep that's in pyproject.toml but missing from the
+# lockfile (ImportError surfaces only at test-collection time). Run on
+# the **lowest** supported Python (3.11) so the resolved wheels cover
+# the full CI matrix. Requires pip-tools: `pip install pip-tools` (or
+# `uv pip install pip-tools`).
+pip-compile --generate-hashes --extra dev -o requirements-dev.txt pyproject.toml
+
 # CI: GitHub Actions runs `pytest` on Python 3.11 + 3.12 for PRs into
-# develop/main (see .github/workflows/ci.yml). No coverage gate yet.
+# develop/main (see .github/workflows/ci.yml). CI installs dev deps
+# from the hash-pinned `requirements-dev.txt` with `--require-hashes`,
+# then installs the project itself in editable mode without
+# resolving dependencies again. No coverage gate yet.
 
 # Phase 1 acceptance smoke test
 hangarfit check layouts/example.yaml --render out.png
