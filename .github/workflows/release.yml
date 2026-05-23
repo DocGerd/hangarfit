@@ -189,7 +189,7 @@ jobs:
           view_out=$(gh release view "$TAG" 2>&1) && view_rc=0 || view_rc=$?
           if [ "$view_rc" -eq 0 ]; then
             echo "Release for $TAG already exists; skipping create."
-          elif echo "$view_out" | grep -q "release not found"; then
+          elif echo "$view_out" | grep -qxF "release not found"; then
             gh release create "$TAG" \
               --title "$TAG" \
               --notes-from-tag
@@ -225,11 +225,18 @@ jobs:
           done
 
           # Visibility for the clobber case — fresh Fulcio cert
-          # replacing the original.
+          # replacing the original. The `|| true` covers both the
+          # first-time-release path (the create step above just made
+          # an empty release; no assets to warn about) and transient
+          # API blips here (the upload below will fail loudly on a
+          # real outage, so we don't lose the error). `-F` on the
+          # grep makes the asset-name match a fixed string — wheel
+          # filenames contain `.` which would otherwise be a regex
+          # wildcard.
           existing=$(gh release view "$TAG" --json assets --jq '.assets[].name' 2>/dev/null || true)
           for a in "${assets[@]}"; do
             name=$(basename "$a")
-            if echo "$existing" | grep -qx "$name"; then
+            if echo "$existing" | grep -qxF "$name"; then
               echo "WARNING: about to clobber existing asset $name on $TAG (fresh Fulcio cert replaces the original)" >&2
             fi
           done
