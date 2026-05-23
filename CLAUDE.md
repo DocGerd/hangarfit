@@ -118,6 +118,12 @@ Allowed but not the default. Use only when two feature branches need parallel wo
 
 ---
 
+## Security policy & Scorecard rationale
+
+Vulnerability reporting lives in [SECURITY.md](SECURITY.md). The rationale for the structural-zero OpenSSF Scorecard checks (Code-Review, Maintained, Contributors, Packaging) — why they score 0 by design and what we do instead — is documented in [docs/security-posture.md](docs/security-posture.md). If you're asked about the Scorecard number, point at that doc rather than the raw aggregate.
+
+---
+
 ## Open questions / TBD before trusting output
 
 - **Real measurements** for every aircraft (`measured: false` in `fleet.yaml`). All current dimensions are eyeballed placeholders.
