@@ -1,18 +1,20 @@
 # Security posture — Scorecard structural zeros, explained
 
 [OpenSSF Scorecard](https://securityscorecards.dev/) gives `hangarfit` an
-aggregate of around **6.5 / 10** at the time of writing. Four of the
-checks contributing to that number score **0** (or **-1**), and they
-score that way because of structural properties of the project that we
-do not intend to change. This document explains, per check, why the
-zero is *structural* rather than a defect — so an outside reviewer
-arriving from a Scorecard report can see the rationale in-tree rather
-than guessing.
+aggregate of around **6.5 / 10** at the time this document was written
+(PR #166, 2026-05-23). Four of the checks contributing to that number
+score **0** (or **-1**), and they score that way because of structural
+properties of the project that we do not intend to change. This
+document explains, per check, why the zero is *structural* rather than
+a defect — so an outside reviewer arriving from a Scorecard report can
+see the rationale in-tree rather than guessing.
 
 Three of the four also cap the realistic ceiling of our aggregate score
-at roughly **8.0–8.5**, even after the rest of the supply-chain
-hardening in milestone
-[v0.7.0](https://github.com/DocGerd/hangarfit/milestone/13) lands.
+at roughly **8.0–8.5** — the per-check breakdown that produces that
+ceiling lives in the
+[v0.7.0 milestone description](https://github.com/DocGerd/hangarfit/milestone/13).
+Even after the rest of the supply-chain hardening in that milestone
+lands, three structural zeros remain in the average.
 
 If you want to verify any of this against the live data, see
 [Where the score lives](#where-the-score-lives) at the bottom.
@@ -21,26 +23,29 @@ If you want to verify any of this against the live data, see
 
 ## Code-Review (score 0)
 
-**What the check measures.** Scorecard inspects the most recent (up to
-30) commits on the default branch and counts how many landed via a
-pull request with at least one `APPROVED` review. A score of 0 means
-**none** of them did.
+**What the check measures.** Scorecard inspects the most recent
+changesets (up to 30) on the default branch and scores on the **share**
+of those that show evidence of review — on GitHub, that means a PR with
+at least one `APPROVED` review. A score of 0 means none of the
+inspected changesets carry that evidence.
 
-**Why we score 0.** `hangarfit` has a single maintainer. GitHub does
-not permit a maintainer to formally `APPROVE` their own pull request
-(the "Approve" radio is disabled when reviewing your own PR), so every
-PR merges with **zero** formal approvals on file — regardless of how
-much review actually happened.
+**Why we score 0.** `hangarfit` has a single maintainer.
+[GitHub does not allow a PR's author to approve their own pull request](https://docs.github.com/en/pull-requests/collaborating-with-pull-requests/reviewing-changes-in-pull-requests/about-pull-request-reviews):
+submitting an `APPROVE` review event as the PR author is refused
+(HTTP 422 from the REST API). Every PR therefore merges with **zero**
+formal approvals on file, regardless of how much review actually
+happened.
 
 What did happen on every one of those PRs is a substantive review pass
-performed by Claude Code via the in-repo
-[`/pr-review` toolkit](../.claude/README.md). That toolkit dispatches
-specialised review subagents (the `pr-review-toolkit` family plus
-repo-specific ones like `geometry-invariant-guard`), and every finding
-is converted into a review thread **on the diff**, then either fixed
-in code or replied to with rationale before the thread is resolved.
-The PR-review process is documented in
-[CLAUDE.md › Per-PR process](../CLAUDE.md#per-pr-process).
+performed by Claude Code via the
+[`/pr-review` workflow documented in CLAUDE.md](../CLAUDE.md#per-pr-process).
+That workflow dispatches a mix of subagents from the external
+`pr-review-toolkit` plugin (`code-reviewer`, `comment-analyzer`,
+`silent-failure-hunter`, …) and the repo-local
+[`geometry-invariant-guard`](../.claude/agents/geometry-invariant-guard.md).
+Every finding is converted into a review thread **on the diff**, then
+either fixed in code or replied to with rationale before the thread is
+resolved.
 
 So the Scorecard 0 is accurate as a count of `APPROVED` reviews; it is
 **not** accurate as a count of *reviews that happened*. We have not
@@ -87,8 +92,7 @@ scope statement. The expected contributor population is one
 maintainer plus, perhaps, a small number of club members. There are no
 upstream consumers and no realistic path to multi-organisation
 commits, because the tool is not interesting to anyone outside this
-specific deployment. The check is, in effect, asking the wrong
-question of this codebase.
+specific deployment.
 
 **Will it move?** Almost certainly not, and we are not trying to move
 it. A 0 here means "this project does not look like a typical
