@@ -213,15 +213,18 @@ def load_layout(
     # naming the bay occupant in ``placements``. ``Layout.__post_init__``
     # catches this too, but with a generic invariant message; raise here
     # with an actionable suffix so the YAML author knows exactly what to
-    # edit. The Layout invariant remains the programmatic backstop for
-    # callers that build Layouts in code rather than via load_layout.
+    # edit. DO NOT remove the Layout invariant — it's the only line of
+    # defense for callers that construct Layouts directly in code
+    # (tests, solver internals, REPL exploration). This loader check is
+    # a UX improvement for the YAML path, not a replacement.
     if maintenance_plane is not None:
         for p in placements:
             if p.plane_id == maintenance_plane:
                 raise LoaderError(
                     f"{path}: maintenance_plane {maintenance_plane!r} is named in "
                     f"placements; an aircraft in maintenance is treated as away and "
-                    f"must NOT be placed. Remove it from placements."
+                    f"must NOT be placed. Remove it from placements (or fix the plane "
+                    f"id if it doesn't match an aircraft in the fleet)."
                 )
 
     try:
