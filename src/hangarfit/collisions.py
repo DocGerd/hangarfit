@@ -124,6 +124,12 @@ def _maintenance_conflicts(
     """
     if layout.maintenance_plane is None:
         return []
+    # The maintenance occupant is absent from placements by Layout
+    # invariant (treated as "away"), so it has no entry in world_parts
+    # either. The legacy position-rule check has nothing to evaluate
+    # against and no longer applies — return cleanly.
+    if layout.maintenance_plane not in world_parts:
+        return []
     fuselage_parts = [p for p in world_parts[layout.maintenance_plane] if p.kind == "fuselage"]
     if not fuselage_parts:
         # The :class:`Aircraft` model permits parts of any kind, including

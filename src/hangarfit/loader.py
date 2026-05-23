@@ -111,7 +111,10 @@ def load_hangar(path: Path | str) -> Hangar:
 
     bay_data = raw.get("maintenance_bay")
     if not isinstance(bay_data, dict):
-        raise LoaderError(f"{path}: 'maintenance_bay' must be a mapping with 'depth_m'")
+        raise LoaderError(
+            f"{path}: 'maintenance_bay' must be a mapping with "
+            f"'center_x_m', 'width_m', and 'depth_m'"
+        )
 
     for key in ("length_m", "width_m"):
         if key not in raw:
@@ -119,8 +122,9 @@ def load_hangar(path: Path | str) -> Hangar:
     for key in ("center_x_m", "width_m"):
         if key not in door_data:
             raise LoaderError(f"{path}: missing required field 'door.{key}'")
-    if "depth_m" not in bay_data:
-        raise LoaderError(f"{path}: missing required field 'maintenance_bay.depth_m'")
+    for key in ("center_x_m", "width_m", "depth_m"):
+        if key not in bay_data:
+            raise LoaderError(f"{path}: missing required field 'maintenance_bay.{key}'")
 
     try:
         return Hangar(
@@ -131,7 +135,9 @@ def load_hangar(path: Path | str) -> Hangar:
                 width_m=_to_float(door_data["width_m"], "door.width_m"),
             ),
             maintenance_bay=MaintenanceBay(
-                depth_m=_to_float(bay_data["depth_m"], "maintenance_bay.depth_m")
+                center_x_m=_to_float(bay_data["center_x_m"], "maintenance_bay.center_x_m"),
+                width_m=_to_float(bay_data["width_m"], "maintenance_bay.width_m"),
+                depth_m=_to_float(bay_data["depth_m"], "maintenance_bay.depth_m"),
             ),
             clearance_m=_to_float(raw.get("clearance_m", 0.3), "clearance_m"),
             wing_layer_clearance_m=_to_float(

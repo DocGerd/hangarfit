@@ -145,14 +145,19 @@ class TestRealDataFiles:
         assert hangar.length_m == 25.0
         assert hangar.width_m == 18.0
         assert hangar.door.center_x_m == 9.0
+        assert hangar.maintenance_bay.center_x_m == 13.5
+        assert hangar.maintenance_bay.width_m == 9.0
         assert hangar.maintenance_bay.depth_m == 9.0
 
     def test_load_example_layout(self) -> None:
         layout = load_layout(EXAMPLE_LAYOUT)
-        # The default example is the Saturday-morning scenario: 6 planes
-        # at home, 3 out flying. See layouts/example.yaml for context.
-        assert len(layout.placements) == 6
+        # Saturday-morning scenario: 3 planes out flying; scheibe_falke
+        # in the (walled) maintenance bay so 5 planes appear in placements.
+        # The bay occupant is named in ``maintenance.plane`` but excluded
+        # from ``placements`` by Layout invariant.
+        assert len(layout.placements) == 5
         assert layout.maintenance_plane == "scheibe_falke"
+        assert "scheibe_falke" not in {p.plane_id for p in layout.placements}
 
 
 # ----------------------------------------------------------------------------
@@ -561,7 +566,7 @@ class TestHangarLoaderErrors:
             """
 width_m: 18.0
 door: {center_x_m: 9, width_m: 12}
-maintenance_bay: {depth_m: 9}
+maintenance_bay: {center_x_m: 13.5, width_m: 9, depth_m: 9}
 """,
         )
         with pytest.raises(LoaderError, match="missing required field 'length_m'"):
@@ -573,7 +578,7 @@ maintenance_bay: {depth_m: 9}
             """
 length_m: 25.0
 width_m: 18.0
-maintenance_bay: {depth_m: 9}
+maintenance_bay: {center_x_m: 13.5, width_m: 9, depth_m: 9}
 """,
         )
         with pytest.raises(LoaderError, match="'door' must be a mapping"):
@@ -586,7 +591,7 @@ maintenance_bay: {depth_m: 9}
 length_m: 25.0
 width_m: 18.0
 door: {width_m: 12}
-maintenance_bay: {depth_m: 9}
+maintenance_bay: {center_x_m: 13.5, width_m: 9, depth_m: 9}
 """,
         )
         with pytest.raises(LoaderError, match="missing required field 'door.center_x_m'"):
@@ -599,7 +604,7 @@ maintenance_bay: {depth_m: 9}
 length_m: 25.0
 width_m: 18.0
 door: {center_x_m: 1.0, width_m: 12.0}
-maintenance_bay: {depth_m: 9}
+maintenance_bay: {center_x_m: 13.5, width_m: 9, depth_m: 9}
 """,
         )
         with pytest.raises(LoaderError, match="doesn't fit in hangar width"):
@@ -622,17 +627,23 @@ door: {center_x_m: 9, width_m: 12}
         with pytest.raises(LoaderError, match="'maintenance_bay' must be a mapping"):
             load_hangar(path)
 
-    def test_missing_maintenance_bay_depth(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("missing_key", ["center_x_m", "width_m", "depth_m"])
+    def test_missing_maintenance_bay_field(self, tmp_path: Path, missing_key: str) -> None:
+        all_fields = {"center_x_m": 13.5, "width_m": 9, "depth_m": 9}
+        del all_fields[missing_key]
+        bay_yaml = ", ".join(f"{k}: {v}" for k, v in all_fields.items())
         path = _write(
             tmp_path / "h.yaml",
-            """
+            f"""
 length_m: 25.0
 width_m: 18.0
-door: {center_x_m: 9, width_m: 12}
-maintenance_bay: {}
+door: {{center_x_m: 9, width_m: 12}}
+maintenance_bay: {{{bay_yaml}}}
 """,
         )
-        with pytest.raises(LoaderError, match="missing required field 'maintenance_bay.depth_m'"):
+        with pytest.raises(
+            LoaderError, match=f"missing required field 'maintenance_bay.{missing_key}'"
+        ):
             load_hangar(path)
 
     def test_clearance_defaults_applied(self, tmp_path: Path) -> None:
@@ -642,7 +653,7 @@ maintenance_bay: {}
 length_m: 25.0
 width_m: 18.0
 door: {center_x_m: 9.0, width_m: 12.0}
-maintenance_bay: {depth_m: 9}
+maintenance_bay: {center_x_m: 13.5, width_m: 9, depth_m: 9}
 """,
         )
         h = load_hangar(path)
@@ -667,7 +678,7 @@ class TestLayoutLoader:
 length_m: 25.0
 width_m: 18.0
 door: {center_x_m: 9.0, width_m: 12.0}
-maintenance_bay: {depth_m: 9}
+maintenance_bay: {center_x_m: 13.5, width_m: 9, depth_m: 9}
 """,
         )
         return fleet, hangar
@@ -723,7 +734,7 @@ placements:
 length_m: 25.0
 width_m: 18.0
 door: {center_x_m: 9.0, width_m: 12.0}
-maintenance_bay: {depth_m: 9}
+maintenance_bay: {center_x_m: 13.5, width_m: 9, depth_m: 9}
 """,
         )
         layout_path = _write(
