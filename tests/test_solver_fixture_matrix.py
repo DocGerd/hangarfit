@@ -20,11 +20,17 @@ from hangarfit.solver import _heading_delta_short_arc, solve
 FIXTURES = "tests/fixtures"
 
 
-def _assert_universal_properties(r: SolveResult) -> None:
+def _assert_universal_properties(r: SolveResult, max_wall_time_s: float | None = None) -> None:
     """Apply spec §6.2 property assertions that every fixture test
     shares: status enum, every layout independently valid, seed populated,
     best_partial fused with infeasible statuses, pairwise diversity when
     K > 1, and the pre-search wall-time guard for trivially_infeasible.
+
+    Per-fixture wall-time regression guard (#122): when
+    ``max_wall_time_s`` is supplied and the search actually ran
+    (``found`` / ``found_partial``), the helper asserts the diagnostic
+    wall time stayed below that bound. Calibrated per fixture by the
+    caller; see each test's docstring for the chosen value.
     """
     assert r.status in {"found", "found_partial", "exhausted_budget", "trivially_infeasible"}
 
@@ -40,6 +46,14 @@ def _assert_universal_properties(r: SolveResult) -> None:
     if r.status == "trivially_infeasible":
         # Pre-search check ran; no actual search burned.
         assert r.diagnostics.wall_time_s < 0.5
+
+    if max_wall_time_s is not None and r.status in {"found", "found_partial"}:
+        assert r.diagnostics.wall_time_s < max_wall_time_s, (
+            f"solver wall_time_s={r.diagnostics.wall_time_s:.3f} exceeded "
+            f"per-fixture bound {max_wall_time_s:.3f}s — likely a per-restart "
+            f"slowdown regression (restarts_attempted="
+            f"{r.diagnostics.restarts_attempted})."
+        )
 
     if len(r.layouts) > 1:
         # Every pair satisfies the diversity rule (n_moved >= min_planes_moved).
@@ -82,6 +96,9 @@ def test_solve_pinned_one_plane_honors_pin():
     observed restarts_attempted = 1 (deterministic across 3 trials); K = 5.
     A regression that pushes this beyond 5 restarts trips the assert below
     instead of silently skipping.
+
+    wall_time_s bounded below 1.0s (#122); calibrated as
+    ``min(budget * 0.5, max(observed * 4, 1.0))`` with observed ≈ 0.09s.
     """
     s = load_scenario(f"{FIXTURES}/solve_pinned_one_plane.yaml")
     r = solve(
@@ -98,7 +115,7 @@ def test_solve_pinned_one_plane_honors_pin():
         f"is likely (was previously found within 1 restart under seed=42)."
     )
 
-    _assert_universal_properties(r)
+    _assert_universal_properties(r, max_wall_time_s=1.0)
     assert len(r.layouts) == 1
 
     pinned = s.constraints["aviat_husky"].pin
@@ -126,6 +143,9 @@ def test_solve_repair_minimal_edit_honors_all_pins():
     observed restarts_attempted = 1 (deterministic across 3 trials); K = 5.
     A regression that pushes this beyond 5 restarts trips the assert below
     instead of silently skipping.
+
+    wall_time_s bounded below 1.0s (#122); calibrated as
+    ``min(budget * 0.5, max(observed * 4, 1.0))`` with observed ≈ 0.012s.
     """
     s = load_scenario(f"{FIXTURES}/solve_repair_minimal_edit.yaml")
     r = solve(
@@ -142,7 +162,7 @@ def test_solve_repair_minimal_edit_honors_all_pins():
         f"is likely (was previously found within 1 restart under seed=42)."
     )
 
-    _assert_universal_properties(r)
+    _assert_universal_properties(r, max_wall_time_s=1.0)
     assert len(r.layouts) == 1
 
     placements_by_id = {p.plane_id: p for p in r.layouts[0].placements}
@@ -172,6 +192,10 @@ def test_solve_force_carts_lock_respects_lock():
     observed restarts_attempted = 1 (deterministic across 3 trials); K = 5.
     A regression that pushes this beyond 5 restarts trips the assert below
     instead of silently skipping.
+
+    wall_time_s bounded below 1.0s (#122); calibrated as
+    ``min(budget * 0.5, max(observed * 4, 1.0))`` with observed ≈ 0.001s
+    (1.0s floor dominates — prevents flake when observed × 4 << 0.01s).
     """
     s = load_scenario(f"{FIXTURES}/solve_force_carts_lock.yaml")
     r = solve(
@@ -188,7 +212,7 @@ def test_solve_force_carts_lock_respects_lock():
         f"is likely (was previously found within 1 restart under seed=42)."
     )
 
-    _assert_universal_properties(r)
+    _assert_universal_properties(r, max_wall_time_s=1.0)
     placed = next(p for p in r.layouts[0].placements if p.plane_id == "cessna_140")
     assert placed.on_carts is True
 
@@ -248,6 +272,10 @@ def test_solve_maintenance_bay_required_places_maintenance_in_bay():
     # observed restarts_attempted = 1 (deterministic across 3 trials); K = 5.
     # A regression that pushes this beyond 5 restarts trips the assert below
     # instead of silently skipping.
+    #
+    # wall_time_s bounded below 1.0s (#122); calibrated as
+    # ``min(budget * 0.5, max(observed * 4, 1.0))`` with observed ≈ 0.001s
+    # (1.0s floor dominates — prevents flake when observed × 4 << 0.01s).
     r = solve(
         s,
         budget_s=5.0,
@@ -262,7 +290,7 @@ def test_solve_maintenance_bay_required_places_maintenance_in_bay():
         f"is likely (was previously found within 1 restart under seed=42)."
     )
 
-    _assert_universal_properties(r)
+    _assert_universal_properties(r, max_wall_time_s=1.0)
     layout = r.layouts[0]
     assert layout.maintenance_plane == "wild_thing"
 
@@ -298,9 +326,14 @@ def test_solve_all_nine_large_hangar_finds_layout():
     nothing additional to assert beyond status + layout count.
 
     Calibration (spec §4.3, ``K = max(observed × 2, 5)`` under ``seed=42``):
-    observed restarts_attempted = 2 (deterministic across 3 trials at ~3.2s
+    observed restarts_attempted = 2 (deterministic across 3 trials at ~3.5s
     wall time per run); K = max(2 × 2, 5) = 5. A regression that pushes this
     beyond 5 restarts trips the assert below instead of silently skipping.
+
+    wall_time_s bounded below 15.0s (#122); calibrated as
+    ``min(budget * 0.5, max(observed * 4, 1.0))`` with observed ≈ 3.5s
+    (observed × 4 ≈ 14s; rounded up to 15.0 for a clean number under the
+    budget × 0.5 = 15.0 cap).
     """
     s = load_scenario(f"{FIXTURES}/solve_all_nine_large_hangar.yaml")
     r = solve(
@@ -317,7 +350,7 @@ def test_solve_all_nine_large_hangar_finds_layout():
         f"is likely (was previously found within 2 restarts under seed=42)."
     )
 
-    _assert_universal_properties(r)
+    _assert_universal_properties(r, max_wall_time_s=15.0)
     assert len(r.layouts) == 1
     assert len(r.layouts[0].placements) == 9
     # Maintenance plane survival: a regression where the solver dropped
