@@ -36,17 +36,22 @@ plane is absent from `layout.placements` and present in `layout.fleet`
 **bay rectangle becomes a hard keep-out for every other plane's parts**.
 The bay is the axis-aligned rectangle anchored to the back wall:
 `x ∈ (center_x_m − width_m/2, center_x_m + width_m/2)`,
-`y ∈ (length_m − depth_m, length_m]`. Any vertex of a non-occupant
-part that lies strictly inside that rectangle fires a `bay_intrusion`
-conflict on the owning plane — one conflict per offending part.
+`y ∈ (length_m − depth_m, length_m]`. The half-open notation reflects
+that the back-`y` edge is *inherited* from the hangar boundary
+(inclusive, enforced upstream by `_hangar_bounds_conflicts`) and not
+re-tested here. Any vertex of a non-occupant part that lies strictly
+inside that rectangle fires a `bay_intrusion` conflict on the owning
+plane — one conflict per offending part.
 
 This rule replaced the earlier "fuselage centroid in the back strip"
-rule during milestone #9 (the bay-walling work). The earlier rule is
-recorded historically in [ADR-0005](../adr/0005-maintenance-bay-rule.md);
-the current rule is the one implemented in
+rule during the bay-walling work that completed in
+[#103](https://github.com/DocGerd/hangarfit/issues/103) and follow-up
+PRs. The earlier rule is recorded historically in
+[ADR-0005](../adr/0005-maintenance-bay-rule.md) (now Status:
+**Deprecated**); the current rule is the one implemented in
 `src/hangarfit/collisions.py::_bay_intrusion_conflicts` and is what
-the checker actually enforces today. A successor ADR for the
-`bay_intrusion` rule is a future tracking item.
+the checker actually enforces today. The formal successor ADR is
+tracked in [#158](https://github.com/DocGerd/hangarfit/issues/158).
 
 ### Movement modes (relevant for the future planner, not Phase 1)
 
@@ -117,8 +122,8 @@ length` for nosewheels; `scheibe_falke`'s monowheel is at the
 centroid, so its offset is 0). Wing and strut offsets shift in
 tandem so each airplane's internal geometry stays self-consistent.
 Resetting any fuselage offset to 0 silently breaks the
-gear-at-origin contract — PR #58 audited and fixed an earlier
-regression of exactly this shape.
+gear-at-origin contract — an earlier regression of exactly this
+shape was caught and reversed during the Phase 1 audit.
 
 ## Default clearances
 
@@ -177,11 +182,15 @@ Two signal channels exist:
 
 - **`Conflict.kind`** — emitted by the collision checker for
   geometric / placement violations of a structurally valid layout.
-  Examples in the current taxonomy: `hangar_bounds`, `bay_intrusion`,
-  and the pairwise `<kindA>_<kindB>_overlap` family
-  (`fuselage_wing_overlap`, `strut_wing_overlap`, etc., always
-  alphabetically sorted so the kind is deterministic regardless of
-  iteration order).
+  Examples in the current taxonomy: `hangar_bounds` and
+  `bay_intrusion` (both single-plane conflicts — `Conflict.planes`
+  has one entry), and the pairwise `<kindA>_<kindB>_overlap` family
+  (`fuselage_wing_overlap`, `strut_wing_overlap`, etc., two-plane
+  conflicts with the kind names always alphabetically sorted so the
+  string is deterministic regardless of iteration order). The
+  single-vs-pair arity matters downstream: the visualizer highlights
+  one plane vs two; `total_penetration_m2` accounting only sums the
+  pair-arity overlap area; the solver's scoring uses both.
 - **Construction-time exceptions** — raised by
   `Layout.__post_init__` and the loader for structural problems
   (cart rule violated, maintenance plane absent from fleet,
@@ -210,10 +219,15 @@ load-bearing:
    Same scenario + same seed → bit-identical `SolveResult`. Achieved
    by single-threaded RNG threaded through every randomized step
    (initial placement, perturbation, restart-order choice). The
-   determinism canaries in `tests/test_solver_canaries.py` are
-   intentionally fragile: any unintended drift fails CI immediately
-   and forces a conscious decision about whether the drift was
-   wanted. See [ADR-0003](../adr/0003-rr-mc-solver-algorithm.md).
+   diversity filter's accept/reject decisions are part of the same
+   contract — same seed → same K layouts in the same order
+   (see [ADR-0004](../adr/0004-diversity-metric.md) for the filter's
+   metric). The determinism canaries in `tests/test_solver_canaries.py`
+   are intentionally fragile: any unintended drift fails CI
+   immediately and forces a conscious decision about whether the
+   drift was wanted. See
+   [ADR-0003](../adr/0003-rr-mc-solver-algorithm.md) for the search
+   algorithm itself.
 
 The "no parallelism in the solver" choice is the direct corollary —
 parallelism would compromise determinism (different thread
@@ -297,14 +311,15 @@ decision means:
 
 ### Single source of truth per fact
 
-Each load-bearing fact lives in exactly one place. The collision
-predicate lives in code; the parts model rule lives in
-[ADR-0001](../adr/0001-aircraft-parts-model.md); the coordinate
-convention lives in
-[ADR-0002](../adr/0002-determinant-minus-one-transform.md) and §8
-above. Cross-references link rather than duplicate; the Arc42 §3 →
-§8 → ADR chain is the canonical descent from operational view to
-mechanical detail.
+Each load-bearing *rationale* lives in exactly one ADR. The
+*operational statement* of the same fact may appear in code (the
+collision predicate), in this Arc42 set (the parts model summary in
+§8, the coordinate convention summary in §8), and in `CLAUDE.md`'s
+session-context surface — but each of those is a pointer to the
+canonical ADR, not a parallel source. The Arc42 §3 → §8 → ADR chain
+is the canonical descent from operational view to mechanical detail.
+Cross-references link rather than duplicate so that updating a
+decision means updating one ADR, not chasing every restatement.
 
 ### No backwards-compat artifacts in docs
 
