@@ -82,4 +82,4 @@ manual workflow above is canonical.
 | 0002 | [Plane-local → world transform has determinant −1](0002-determinant-minus-one-transform.md)            | Accepted |
 | 0003 | [Random-restart min-conflicts (RR-MC) for the static layout solver](0003-rr-mc-solver-algorithm.md)    | Accepted |
 | 0004 | [Diversity metric for K alternatives (edit count with per-plane thresholds)](0004-diversity-metric.md) | Accepted |
-| 0005 | [Maintenance bay rule — fuselage centroid in back strip](0005-maintenance-bay-rule.md)                 | Accepted |
+| 0005 | [Maintenance bay rule — fuselage centroid in back strip](0005-maintenance-bay-rule.md)                 | Deprecated (superseded in code; successor ADR tracked in [#158](https://github.com/DocGerd/hangarfit/issues/158)) |

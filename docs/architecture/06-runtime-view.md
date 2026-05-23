@@ -74,7 +74,7 @@ sequenceDiagram
     Loader-->>CLI: Scenario (structurally valid)
 
     CLI->>Solver: solve(scenario, budget_s=30, alternatives=3, seed=42)
-    Note over Solver: Pre-search infeasibility checks<br/>(pins inside hangar?<br/>maint plane in back strip?)
+    Note over Solver: Pre-search infeasibility checks<br/>(per-plane bbox fits?<br/>Σ areas fit?<br/>pin-only Layout passes check?)
     alt trivially infeasible
         Solver-->>CLI: SolveResult(status=trivially_infeasible)
     else feasible

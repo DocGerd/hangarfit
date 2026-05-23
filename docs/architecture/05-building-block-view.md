@@ -56,6 +56,12 @@ enforces that the bay sub-rectangle fits inside the hangar
 (`center_x_m ± width_m/2 ∈ [0, hangar.width_m]` and
 `depth_m < hangar.length_m`).
 
+`Layout.__post_init__` inverts the Phase 1 maintenance invariant
+(updated in [#103](https://github.com/DocGerd/hangarfit/issues/103)):
+the bay occupant must **not** appear in `placements` (it is treated as
+away). The collision checker and visualizer rely on this invariant —
+neither needs to special-case the occupant.
+
 `__post_init__` enforces all invariants that cannot be expressed via
 the type system — the cart rule (`movement_mode` ↔ `on_carts`
 consistency, at most one cart-eligible plane actually on carts), the
@@ -142,10 +148,14 @@ integer `len(conflicts)` metric).
 `solve(scenario, budget_s, alternatives, seed)` is the public entry.
 Internally:
 
-- **Pre-search infeasibility checks** — fail fast on obviously broken
-  scenarios (e.g., a non-maintenance plane pinned such that its geometry
-  intrudes into the closed bay rectangle, fleet bbox sum exceeds hangar
-  floor area, pin self-collision on the pin-only Layout).
+- **Pre-search infeasibility checks** — three literal-impossibility
+  gates fail fast before the search loop runs: (1) a per-plane bbox
+  exceeds the hangar's max dimension, (2) the fleet's Σ bbox areas
+  exceed the hangar floor, (3) the pin-only Layout (every constrained
+  pin, occupant excluded) fails ``check_layout`` — including the case
+  where a non-maintenance plane is pinned such that its geometry
+  intrudes into the closed bay rectangle (covered by
+  ``test_solve_trivially_infeasible_when_pinned_plane_intrudes_into_closed_bay``).
 - **Maintenance plane handling** — when `scenario.maintenance_plane` is
   set, the solver drops that plane from the placeable set entirely (no
   initial placement, no perturbation, no cart-bucket slot). The bay
