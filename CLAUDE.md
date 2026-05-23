@@ -165,10 +165,13 @@ mypy src/hangarfit/
 # is generated with `--extra dev`, which covers BOTH groups, so both
 # need to be in sync. CI's `pip install -e . --no-deps` will silently
 # skip a runtime dep that's in pyproject.toml but missing from the
-# lockfile (ImportError surfaces only at test-collection time). Run on
-# the **lowest** supported Python (3.11) so the resolved wheels cover
-# the full CI matrix. Requires pip-tools: `pip install pip-tools` (or
-# `uv pip install pip-tools`).
+# lockfile (ImportError surfaces only at test-collection time). The
+# `lockfile-drift` CI job (see .github/workflows/ci.yml) enforces this
+# invariant on every PR by regenerating the lockfile against the
+# committed pyproject.toml and comparing the resolved
+# `package==version` set. Run on the **lowest** supported Python (3.11)
+# so the resolved wheels cover the full CI matrix. Requires pip-tools:
+# `pip install pip-tools` (or `uv pip install pip-tools`).
 pip-compile --generate-hashes --extra dev -o requirements-dev.txt pyproject.toml
 
 # CI: GitHub Actions runs `pytest` on Python 3.11 + 3.12 for PRs into

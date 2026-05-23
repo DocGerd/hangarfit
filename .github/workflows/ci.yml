@@ -62,3 +62,53 @@ jobs:
           files: ./coverage.xml
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  lockfile-drift:
+    # Guards the silent-failure path created by `pip install -e . --no-deps`
+    # in the test job: a runtime dep added to pyproject.toml but missing from
+    # requirements-dev.txt would install successfully and only surface as an
+    # ImportError at test-collection time. This job regenerates the lockfile
+    # against the current pyproject.toml and fails if the resolved
+    # `package==version` set diverges from what is checked in. See issue #161.
+    name: lockfile drift check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Set up Python 3.11
+        # Match the regeneration instruction in CLAUDE.md: run on the lowest
+        # supported Python so the resolved wheels cover the full CI matrix.
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.11"
+
+      - name: Install pip-tools (pinned)
+        # Pinned so a pip-tools release that changes resolver behavior or
+        # output formatting cannot surprise the guard. Bump deliberately
+        # together with the version used to regenerate requirements-dev.txt.
+        run: pip install 'pip-tools==7.4.1'
+
+      - name: Regenerate lockfile against existing pins
+        # Copy first so pip-compile honors the committed lockfile as a pin
+        # source. Without the copy, pip-compile would freshly resolve every
+        # transitive dep against the latest PyPI versions, producing false
+        # drift whenever an unrelated transitive package had a new release.
+        # With it, the comparison only diverges when pyproject.toml actually
+        # demands a different package set.
+        run: |
+          cp requirements-dev.txt /tmp/expected.txt
+          pip-compile --quiet --generate-hashes --extra dev -o /tmp/expected.txt pyproject.toml
+
+      - name: Compare package==version sets
+        # A textual diff of the two files is flaky: pip-compile output is not
+        # bit-stable across pip-tools versions (hash ordering, comment
+        # placement). The actual install-time invariant is the *set* of
+        # `package==version` pairs, so extract and compare just that.
+        run: |
+          extract() {
+            grep -E '^[A-Za-z][A-Za-z0-9._-]*==' "$1" | sed 's/ *\\$//' | sort
+          }
+          if ! diff -u <(extract requirements-dev.txt) <(extract /tmp/expected.txt); then
+            echo "::error::requirements-dev.txt is out of sync with pyproject.toml. Regenerate with: pip-compile --generate-hashes --extra dev -o requirements-dev.txt pyproject.toml"
+            exit 1
+          fi
