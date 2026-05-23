@@ -1,6 +1,6 @@
 # ADR-0005: Maintenance bay rule — fuselage centroid in back strip, explicit conflict on no fuselage
 
-- **Status:** Deprecated — superseded in code by the `bay_intrusion` rule shipped during milestone #9 (the bay-walling work, [#103](https://github.com/DocGerd/hangarfit/issues/103)). A formal successor ADR is tracked in [#158](https://github.com/DocGerd/hangarfit/issues/158); the body below records the Phase 1 rule as it stood until then.
+- **Status:** Superseded by [ADR-0006](0006-bay-intrusion-maintenance-rule.md) — the `bay_intrusion` rule shipped during milestone #9 (the bay-walling work, [#103](https://github.com/DocGerd/hangarfit/issues/103)) replaced the centroid-in-back-strip rule documented below. ADR-0006 records the current rule and decision; the body of this ADR stays in place as the historical record of the Phase 1 rule.
 - **Date:** 2026-05-21
 - **Deciders:** [@DocGerd](https://github.com/DocGerd)
 

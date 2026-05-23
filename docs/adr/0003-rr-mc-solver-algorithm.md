@@ -309,3 +309,35 @@ silently rejected at scoring time). Rejected.
 - Related issue:
   [#136](https://github.com/DocGerd/hangarfit/issues/136)
   (the retroactive-ADR backfill that produced this record).
+
+## Amendments
+
+### 2026-05-23 — maintenance-plane handling, post-milestone-#9
+
+Two passages in the body above describe how RR-MC handles the
+maintenance plane:
+
+- Algorithm shape section: *"The maintenance plane (if not pinned)
+  gets a back-bay biased initial."*
+- Rejection-rationale (Why not LP/ILP?): *"RR-MC handles both by
+  construction (the maintenance plane gets a back-bay biased initial; the
+  cart rule is enforced by Layout.__post_init__ …)"*
+
+Both predate milestone #9. As of [#108](https://github.com/DocGerd/hangarfit/issues/108)
+(part of [Milestone #9](https://github.com/DocGerd/hangarfit/milestone/9)),
+the solver drops the maintenance plane from the placeable set entirely —
+no initial placement, no perturbation, no cart-bucket slot. The bay
+rectangle is enforced as a hard obstacle by the `bay_intrusion`
+collision rule (see [ADR-0006](0006-bay-intrusion-maintenance-rule.md)),
+so no surrogate sample is needed. The "back-bay biased initial"
+machinery was removed.
+
+The RR-MC algorithm itself (descent, restart, scoring, diversity
+filter, termination) is unchanged by this — the maintenance plane's
+absence from the placeable set is a setup change, not an algorithm
+change. This ADR's `Status: Accepted` stands; the amendment block here
+records the behavioral diff so a future reader walking ADR-0003 in
+isolation isn't misled by the in-body wording.
+
+See [§5 Building Block View — `solver.py`](../architecture/05-building-block-view.md#solverpy--rr-mc-layout-search)
+for the current "Maintenance plane handling" bullet.
