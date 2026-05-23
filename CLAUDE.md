@@ -127,7 +127,7 @@ Vulnerability reporting lives in [SECURITY.md](SECURITY.md). The rationale for t
 ## Open questions / TBD before trusting output
 
 - **Real measurements** for every aircraft (`measured: false` in `fleet.yaml`). All current dimensions are eyeballed placeholders.
-- **Real hangar measurements** (`data/hangar.yaml`) — length, width, door position and width, maintenance bay depth.
+- **Real hangar measurements** (`data/hangar.yaml`) — length, width, door position and width, maintenance bay rectangle (`center_x_m`, `width_m`, `depth_m` — back-anchored, partial-width).
 - **Placeholder hangar can't fit the full fleet.** The placeholder hangar in [`data/hangar.yaml`](data/hangar.yaml) is too tight to fit every aircraft at once under the placeholder clearance budget. The default [`layouts/example.yaml`](layouts/example.yaml) is a deliberate 6-plane subset; test fixtures that need the full fleet use [`tests/fixtures/test_hangar_large.yaml`](tests/fixtures/test_hangar_large.yaml). Real hangar measurements will reset this.
 
 The collision checker will run on placeholder data, but until the measurements are real, the output is illustrative only.
