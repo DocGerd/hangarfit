@@ -76,3 +76,60 @@ def test_load_scenario_missing_fleet_in(tmp_path):
     missing.write_text("fleet: ../../data/fleet.yaml\nhangar: ../../data/hangar.yaml\n")
     with pytest.raises(LoaderError, match="fleet_in"):
         load_scenario(missing)
+
+
+def test_load_scenario_rejects_maintenance_plane_not_in_fleet_in(tmp_path):
+    """Loader-path: maintenance.plane not in fleet_in raises LoaderError with
+    an actionable message that includes the path, the bad plane id, the
+    actual fleet_in list, and a fix hint.  This mirrors the boundary-check
+    added for load_layout in PR #105 (closes #177).
+    """
+    import shutil
+
+    from hangarfit.loader import load_scenario
+
+    # Write the bad scenario adjacent to root data files so relative refs
+    # resolve correctly from tmp_path.
+    (tmp_path / "data").mkdir()
+    shutil.copy("data/fleet.yaml", tmp_path / "data" / "fleet.yaml")
+    shutil.copy("data/hangar.yaml", tmp_path / "data" / "hangar.yaml")
+    bad = tmp_path / "bad_maintenance.yaml"
+    bad.write_text(
+        "fleet: data/fleet.yaml\n"
+        "hangar: data/hangar.yaml\n"
+        "fleet_in: [aviat_husky, ctsl]\n"
+        "maintenance:\n"
+        "  plane: ghost\n"
+    )
+    with pytest.raises(LoaderError) as exc_info:
+        load_scenario(bad)
+    msg = str(exc_info.value)
+    # Must name the bad plane id
+    assert "ghost" in msg, f"message should name the bad plane id; got: {msg!r}"
+    # Must include the file path
+    assert str(bad) in msg, f"message should include the file path; got: {msg!r}"
+    # Must show the actual fleet_in list so the user knows what is valid
+    assert "aviat_husky" in msg, f"message should list valid fleet_in planes; got: {msg!r}"
+    # Must include a fix hint (actionable suffix)
+    assert "either add it to fleet_in or fix the plane id" in msg, (
+        f"message should include actionable fix hint; got: {msg!r}"
+    )
+
+
+def test_scenario_post_init_backstop_still_fires_on_direct_construction():
+    """Direct-construction path: Scenario.__post_init__ still raises ValueError
+    when maintenance_plane is not in fleet_in, bypassing the loader guard.
+    This ensures the programmatic backstop is not removed.
+    """
+    from hangarfit.loader import load_fleet, load_hangar
+    from hangarfit.models import Scenario
+
+    fleet = load_fleet("data/fleet.yaml")
+    hangar = load_hangar("data/hangar.yaml")
+    with pytest.raises(ValueError, match="maintenance_plane"):
+        Scenario(
+            fleet=fleet,
+            hangar=hangar,
+            fleet_in=("aviat_husky", "ctsl"),
+            maintenance_plane="ghost",  # not in fleet_in and not in fleet
+        )
