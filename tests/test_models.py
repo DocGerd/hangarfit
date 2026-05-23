@@ -820,7 +820,7 @@ class TestLayout:
 
 class TestConflict:
     def test_one_plane_conflict(self) -> None:
-        c = Conflict(kind="maintenance_position", planes=("foo",), detail="not in back zone")
+        c = Conflict(kind="hangar_bounds", planes=("foo",), detail="vertex past wall")
         assert len(c.planes) == 1
 
     def test_two_plane_conflict(self) -> None:
@@ -853,8 +853,8 @@ class TestConflict:
             Conflict(kind="x", planes=("foo", "foo"), detail="x")
 
     def test_single_factory(self) -> None:
-        c = Conflict.single(kind="maintenance_position", plane="foo", detail="x")
-        assert c.kind == "maintenance_position"
+        c = Conflict.single(kind="bay_intrusion", plane="foo", detail="x")
+        assert c.kind == "bay_intrusion"
         assert c.planes == ("foo",)
 
     def test_pair_factory(self) -> None:

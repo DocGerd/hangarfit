@@ -401,10 +401,11 @@ class Conflict:
     """One reason a layout is invalid.
 
     ``planes`` carries 1 or 2 *distinct, non-empty* aircraft IDs
-    depending on the rule that fired (layout-wide rules like
-    ``maintenance_position`` cite one plane; pairwise rules like
-    ``wing_strut_overlap`` cite two). Use ``Conflict.single()`` /
-    ``Conflict.pair()`` at call sites to make the arity explicit.
+    depending on the rule that fired (single-plane rules like
+    ``hangar_bounds`` or ``bay_intrusion`` cite one plane; pairwise
+    rules like ``wing_strut_overlap`` cite two). Use
+    ``Conflict.single()`` / ``Conflict.pair()`` at call sites to make
+    the arity explicit.
     """
 
     kind: str
@@ -425,7 +426,7 @@ class Conflict:
 
     @classmethod
     def single(cls, kind: str, plane: str, detail: str) -> Conflict:
-        """Factory for a single-aircraft conflict (e.g. ``maintenance_position``)."""
+        """Factory for a single-aircraft conflict (e.g. ``hangar_bounds`` or ``bay_intrusion``)."""
         return cls(kind=kind, planes=(plane,), detail=detail)
 
     @classmethod
@@ -445,9 +446,9 @@ class CheckResult:
     across pairwise conflicts (length-2 ``Conflict.planes``) — used by
     the Phase 2a solver as a smooth secondary scoring key to break
     plateaus in the integer ``len(conflicts)`` metric. Single-plane
-    conflicts (``maintenance_position``, ``maintenance_no_fuselage``,
-    ``hangar_bounds``) contribute 0. The validity contract is unchanged:
-    ``valid`` is still derived from ``conflicts`` only.
+    conflicts (``hangar_bounds``, ``bay_intrusion``) contribute 0. The
+    validity contract is unchanged: ``valid`` is still derived from
+    ``conflicts`` only.
     """
 
     conflicts: tuple[Conflict, ...] = ()

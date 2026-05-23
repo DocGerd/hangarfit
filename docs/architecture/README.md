@@ -36,9 +36,9 @@ runtime view belong together). The other TBD rows are each one issue.
 | 1  | Introduction & Goals     | [`01-introduction-and-goals.md`](01-introduction-and-goals.md)         | ✅ shipped |
 | 2  | Architecture Constraints | [`02-architecture-constraints.md`](02-architecture-constraints.md)     | ✅ shipped |
 | 3  | Context & Scope          | [`03-context-and-scope.md`](03-context-and-scope.md)                   | ✅ shipped |
-| 4  | Solution Strategy        | `04-solution-strategy.md`                                              | TBD ([#133](https://github.com/DocGerd/hangarfit/issues/133)) |
-| 5  | Building Block View      | `05-building-block-view.md`                                            | TBD ([#133](https://github.com/DocGerd/hangarfit/issues/133)) |
-| 6  | Runtime View             | `06-runtime-view.md`                                                   | TBD ([#133](https://github.com/DocGerd/hangarfit/issues/133)) |
+| 4  | Solution Strategy        | [`04-solution-strategy.md`](04-solution-strategy.md)                   | ✅ shipped |
+| 5  | Building Block View      | [`05-building-block-view.md`](05-building-block-view.md)               | ✅ shipped |
+| 6  | Runtime View             | [`06-runtime-view.md`](06-runtime-view.md)                             | ✅ shipped |
 | 8  | Crosscutting Concepts    | `08-crosscutting-concepts.md`                                          | TBD ([#134](https://github.com/DocGerd/hangarfit/issues/134)) |
 | 9  | Architecture Decisions   | [`09-architecture-decisions.md`](09-architecture-decisions.md) → [`docs/adr/`](../adr/) | ✅ shipped |
 
