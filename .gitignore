@@ -44,3 +44,9 @@ out*.png
 # Explicit even though *.local.* already matches — keeps the intent
 # visible to contributors grepping for ".claude" (issue #35).
 .claude/settings.local.json
+
+# Per-agent isolation worktrees created by Claude Code's Agent tool when
+# invoked with `isolation: "worktree"`. The tool writes to
+# `.claude/worktrees/agent-<hash>/`; nothing in there is ever meant to be
+# committed (issue #148).
+.claude/worktrees/
