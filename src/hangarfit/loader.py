@@ -421,7 +421,10 @@ def _extract_maintenance_plane(raw: dict, path: Path) -> str | None:
             f"got {plane!r} ({type(plane).__name__})"
         )
     if not plane:
-        raise LoaderError(f"{path}: 'maintenance.plane' must be non-empty")
+        raise LoaderError(
+            f"{path}: 'maintenance.plane' must be non-empty; "
+            f"either remove the 'maintenance' block entirely or supply a valid aircraft id"
+        )
     return plane
 
 

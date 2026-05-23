@@ -1052,8 +1052,12 @@ maintenance:
   plane: 42
 """,
         )
-        with pytest.raises(LoaderError, match="'maintenance.plane' must be a string"):
+        with pytest.raises(LoaderError) as exc_info:
             load_layout(layout_path)
+        msg = str(exc_info.value)
+        assert "must be a string aircraft id" in msg
+        assert "42" in msg
+        assert "int" in msg
 
     def test_maintenance_plane_empty_string_rejected(self, tmp_path: Path) -> None:
         """`maintenance: {plane: ""}` used to slip through silently."""
@@ -1069,8 +1073,12 @@ maintenance:
   plane: ""
 """,
         )
-        with pytest.raises(LoaderError, match="'maintenance.plane' must be non-empty"):
+        with pytest.raises(LoaderError) as exc_info:
             load_layout(layout_path)
+        msg = str(exc_info.value)
+        assert "must be non-empty" in msg
+        assert "either remove the 'maintenance' block entirely" in msg
+        assert "supply a valid aircraft id" in msg
 
     def test_override_and_yaml_ref_conflict_for_fleet(self, tmp_path: Path) -> None:
         """If the layout YAML has `fleet:` AND the caller passes a fleet
