@@ -60,12 +60,12 @@ plane — one conflict per offending part.
 This rule replaced the earlier "fuselage centroid in the back strip"
 rule during the bay-walling work that completed in
 [#103](https://github.com/DocGerd/hangarfit/issues/103) and follow-up
-PRs. The earlier rule is recorded historically in
-[ADR-0005](../adr/0005-maintenance-bay-rule.md) (now Status:
-**Deprecated**); the current rule is the one implemented in
-`src/hangarfit/collisions.py::_bay_intrusion_conflicts` and is what
-the checker actually enforces today. The formal successor ADR is
-tracked in [#158](https://github.com/DocGerd/hangarfit/issues/158).
+PRs. The current rule's decision is recorded in
+[ADR-0006](../adr/0006-bay-intrusion-maintenance-rule.md) (Status:
+**Accepted**); the Phase 1 predecessor is preserved in
+[ADR-0005](../adr/0005-maintenance-bay-rule.md) (Status: **Superseded
+by ADR-0006**). The implementation lives in
+`src/hangarfit/collisions.py::_bay_intrusion_conflicts`.
 
 ### Movement modes (relevant for the future planner, not Phase 1)
 
