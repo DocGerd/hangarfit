@@ -120,8 +120,10 @@ class TestSolveHumanOutput:
         out = capsys.readouterr().out
         assert "Trivially infeasible" in out
 
-    def test_human_output_exhausted_budget(self, capsys):
-        # Plane bigger than hangar -> trivially infeasible via check #1.
+    def test_human_output_trivially_infeasible_plane_too_big(self, capsys):
+        # Plane bigger than hangar -> trivially infeasible via check #1
+        # (per-plane bbox > max hangar dim). Pairs with the pins-clash
+        # variant above to cover both pre-search infeasibility kinds.
         fixture = str(FIXTURES_DIR / "solve_infeasible_plane_too_big.yaml")
         rc = main(["solve", fixture, "--budget", "1.0", "--seed", "42"])
         assert rc == 1
@@ -129,6 +131,109 @@ class TestSolveHumanOutput:
         # plane_too_big hits the per-plane infeasibility check (#1), so
         # it surfaces as trivially_infeasible too.
         assert "Trivially infeasible" in out
+
+    def test_human_output_exhausted_budget(self, capsys):
+        """Real `exhausted_budget` branch of `_emit_solve_human`.
+
+        Uses ``solve_fresh_six_planes.yaml`` (the six-plane fixture
+        already used by ``test_solver_search`` for the same purpose)
+        with a tiny budget so the solver almost certainly exhausts.
+        Skip-on-lucky guard follows the
+        ``test_solve_exhausted_budget_reports_best_partial_pair``
+        pattern (in ``tests/test_solver_search.py``): if a fast
+        machine accidentally finds a layout we skip rather than fail.
+        """
+        import pytest
+
+        fixture = str(FIXTURES_DIR / "solve_fresh_six_planes.yaml")
+        rc = main(["solve", fixture, "--budget", "0.05", "--seed", "42"])
+        out = capsys.readouterr().out
+        if rc == 0 and "Found" in out:
+            pytest.skip("seed=42 + 0.05s got lucky; tighten budget if this skips often")
+        assert rc == 1
+        # Three diagnostic lines printed by the exhausted_budget branch:
+        assert "No valid layout found in" in out
+        assert "Best partial had" in out and "conflict" in out
+        assert "Hint: increase --budget" in out
+
+
+class TestSolveFleetHangarOverrides:
+    """`--fleet` / `--hangar` override flags exercise both branches of
+    :func:`hangarfit.cli._resolve_fleet_hangar_refs` (override + embedded)
+    plus the LoaderError collision when both are set.
+    """
+
+    # Resolve repo-relative defaults to absolute paths once: scenarios
+    # written into tmp_path can't use the original "../../data/..." refs.
+    REPO_ROOT = Path(__file__).resolve().parents[1]
+    DEFAULT_FLEET = str(REPO_ROOT / "data" / "fleet.yaml")
+    DEFAULT_HANGAR = str(REPO_ROOT / "data" / "hangar.yaml")
+
+    def test_fleet_and_hangar_overrides_positive_path(self, tmp_path, capsys):
+        """Scenario without embedded refs + both CLI overrides → solves.
+
+        Exercises the `args.fleet is not None` and `args.hangar is not
+        None` branches of `_resolve_fleet_hangar_refs` (plus the
+        load_scenario override paths).
+        """
+        scenario = tmp_path / "scenario_no_refs.yaml"
+        scenario.write_text("fleet_in: [aviat_husky]\n")
+        rc = main(
+            [
+                "solve",
+                str(scenario),
+                "--budget",
+                "2.0",
+                "--seed",
+                "42",
+                "--fleet",
+                self.DEFAULT_FLEET,
+                "--hangar",
+                self.DEFAULT_HANGAR,
+            ]
+        )
+        assert rc == 0, f"override solve failed; stderr={capsys.readouterr().err}"
+        out = capsys.readouterr().out
+        assert "Found" in out
+
+    def test_fleet_override_collides_with_embedded_ref(self, tmp_path, capsys):
+        """`--fleet` + scenario with `fleet:` → LoaderError → rc=2."""
+        rc = main(
+            [
+                "solve",
+                SMOKE_FIXTURE,
+                "--budget",
+                "0.1",
+                "--seed",
+                "42",
+                "--fleet",
+                self.DEFAULT_FLEET,
+            ]
+        )
+        assert rc == 2
+        captured = capsys.readouterr()
+        assert "error:" in captured.err
+        # LoaderError text identifies the ambiguous field.
+        assert "fleet" in captured.err
+
+    def test_hangar_override_collides_with_embedded_ref(self, tmp_path, capsys):
+        """`--hangar` + scenario with `hangar:` → LoaderError → rc=2."""
+        rc = main(
+            [
+                "solve",
+                SMOKE_FIXTURE,
+                "--budget",
+                "0.1",
+                "--seed",
+                "42",
+                "--hangar",
+                self.DEFAULT_HANGAR,
+            ]
+        )
+        assert rc == 2
+        captured = capsys.readouterr()
+        assert "error:" in captured.err
+        assert "hangar" in captured.err
 
 
 class TestSolveJsonOutput:
@@ -239,6 +344,41 @@ class TestSolveRender:
         )
         assert rc == 0
         assert out.exists()
+
+    def test_write_yaml_roundtrip_preserves_maintenance_plane(self, tmp_path, capsys):
+        """Maintenance round-trip: the `payload["maintenance"] = ...`
+        branch at the bottom of ``_write_yamls`` had no coverage because
+        the smoke fixture is single-Husky with no maintenance block.
+
+        Pre-condition fence: this test uses an existing maintenance
+        fixture as-is — Milestone #9 (maintenance bay walling) is
+        deferred per spec §8 and this test does NOT assume walled-bay
+        semantics. The current soft-hint bay model is what's under test.
+        """
+        from hangarfit import loader
+
+        fixture = str(FIXTURES_DIR / "solve_maintenance_bay_required.yaml")
+        out = tmp_path / "roundtrip.yaml"
+        rc = main(
+            [
+                "solve",
+                fixture,
+                "--budget",
+                "5.0",
+                "--seed",
+                "42",
+                "--write-yaml",
+                str(out),
+            ]
+        )
+        assert rc == 0, f"solve failed (rc={rc}); stderr={capsys.readouterr().err}"
+        assert out.exists()
+        capsys.readouterr()  # drain solve stdout
+
+        # Round-trip: load the written layout and verify the
+        # maintenance plane key survived the dump → parse cycle.
+        layout = loader.load_layout(out)
+        assert layout.maintenance_plane == "wild_thing"
 
     def test_write_yaml_roundtrips_via_check(self, tmp_path, capsys):
         out = tmp_path / "out.yaml"
@@ -356,3 +496,63 @@ class TestSolveRender:
         assert "{i}" in captured.err
         assert "--render" in captured.err
         assert not out.exists()
+
+    def test_render_to_nonexistent_dir_returns_2(self, tmp_path, capsys):
+        """OSError during write → rc=2 with `error:` in stderr.
+
+        Covers the ``except OSError`` arm at cli.py wrapping
+        ``_write_renders`` / ``_write_yamls`` — currently unexercised
+        because every other render/write test routes to a tmp_path
+        directory that already exists.
+        """
+        target = tmp_path / "no_such_dir" / "out.png"
+        rc = main(
+            [
+                "solve",
+                SMOKE_FIXTURE,
+                "--budget",
+                "2.0",
+                "--seed",
+                "42",
+                "--render",
+                str(target),
+            ]
+        )
+        assert rc == 2
+        captured = capsys.readouterr()
+        assert "error:" in captured.err
+
+    def test_k_gt_1_substitutes_i_for_each_alternative(self, tmp_path, capsys):
+        """K>1 happy path: ``{i}`` substitutes at every i in 1..K.
+
+        The K=1 substitute test only exercises ``i=1``. This test runs
+        ``--alternatives 2`` against a fixture that reliably yields two
+        diverse layouts and asserts the enumerate-loop body fires for
+        both i=1 AND i=2 (the i>=2 case is the previously-uncovered
+        branch).
+        """
+        fixture = str(FIXTURES_DIR / "solve_fresh_alternatives_three.yaml")
+        render_pattern = str(tmp_path / "out_{i}.png")
+        yaml_pattern = str(tmp_path / "out_{i}.yaml")
+        rc = main(
+            [
+                "solve",
+                fixture,
+                "--alternatives",
+                "2",
+                "--budget",
+                "5.0",
+                "--seed",
+                "42",
+                "--render",
+                render_pattern,
+                "--write-yaml",
+                yaml_pattern,
+            ]
+        )
+        assert rc == 0, f"K>1 solve failed (rc={rc}); stderr={capsys.readouterr().err}"
+        # Both alternatives must be present — i=1 and the new i=2 branch.
+        assert (tmp_path / "out_1.png").exists()
+        assert (tmp_path / "out_2.png").exists()
+        assert (tmp_path / "out_1.yaml").exists()
+        assert (tmp_path / "out_2.yaml").exists()

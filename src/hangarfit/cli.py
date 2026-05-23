@@ -19,7 +19,7 @@ import sys
 
 from hangarfit import collisions, visualize
 from hangarfit.loader import LoaderError, load_fleet, load_hangar, load_layout
-from hangarfit.models import CheckResult, Conflict, Layout, SolveResult
+from hangarfit.models import CheckResult, Conflict, DiversityConfig, Layout, SolveResult
 
 _JSON_SCHEMA = "hangarfit.check/v1"
 _SOLVE_JSON_SCHEMA = "hangarfit.solve/v1"
@@ -182,7 +182,7 @@ def cmd_check(args: argparse.Namespace) -> int:
 
 
 def _emit_solve_human(result: SolveResult, *, alternatives: int) -> None:
-    """Write the human-readable summary to stdout. See spec §5.3."""
+    """Write the human-readable summary to stdout."""
     d = result.diagnostics
     if result.status == "trivially_infeasible":
         # `best_partial` is fused with the explanatory conflict by the
@@ -233,26 +233,26 @@ def _emit_solve_human(result: SolveResult, *, alternatives: int) -> None:
         print(line)
 
 
-# Position threshold (m) used purely for the human-output "shifted vs"
-# count. Mirrors DiversityConfig.position_threshold_m's default so the
-# narration agrees with the filter that gated acceptance — not imported
-# from DiversityConfig because the CLI doesn't (yet) expose the threshold
-# as a flag; if it ever does, swap the constant for the configured value.
-_HUMAN_SHIFT_THRESHOLD_M = 0.5
-
-
 def _placement_delta(a: Layout, b: Layout) -> tuple[int, float]:
     """Return (planes_moved, mean_xy_shift_m) between two layouts.
 
     Planes-moved counts placements whose Euclidean (x, y) shift exceeds
-    ``_HUMAN_SHIFT_THRESHOLD_M`` — same metric the solver's diversity
-    filter uses. Heading-only shifts are intentionally ignored for the
-    narration: the audience is reading "how different does this layout
-    LOOK"; a pure rotation reads as the same layout to the eye even
-    though the solver considers it diverse.
+    ``DiversityConfig().position_threshold_m`` — same metric the
+    solver's diversity filter uses. Pulling the threshold directly from
+    ``DiversityConfig`` (rather than mirroring it as a local constant)
+    keeps the human-output narration in lockstep with the filter that
+    gated acceptance: if the default ever changes, both sides shift
+    together. ``DiversityConfig`` is a frozen dataclass with no side
+    effects, so instantiating it here is free.
+
+    Heading-only shifts are intentionally ignored for the narration:
+    the audience is reading "how different does this layout LOOK"; a
+    pure rotation reads as the same layout to the eye even though the
+    solver considers it diverse.
     """
     import math
 
+    threshold = DiversityConfig().position_threshold_m
     by_id_a = {p.plane_id: p for p in a.placements}
     by_id_b = {p.plane_id: p for p in b.placements}
     shared = sorted(set(by_id_a) & set(by_id_b))
@@ -264,17 +264,19 @@ def _placement_delta(a: Layout, b: Layout) -> tuple[int, float]:
         dy = pa.y_m - pb.y_m
         shift = math.hypot(dx, dy)
         total_shift += shift
-        if shift > _HUMAN_SHIFT_THRESHOLD_M:
+        if shift > threshold:
             moved += 1
     mean = total_shift / len(shared) if shared else 0.0
     return moved, mean
 
 
 def cmd_solve(args: argparse.Namespace) -> int:
-    """Run the ``solve`` subcommand. See spec §5 for the data flow."""
-    # Imports are local so that `hangarfit check` users don't pay the
-    # solver / matplotlib import cost — matplotlib is the slow one and
-    # only `--render` needs it.
+    """Run the ``solve`` subcommand."""
+    # Defer the solver import only: ``hangarfit check`` invocations should
+    # not pay the solver's import cost. Matplotlib is NOT deferred here —
+    # ``from hangarfit import visualize`` at module top (cli.py:20) already
+    # eagerly imports matplotlib and pins the Agg backend, so both `check`
+    # and `solve` callers pay that cost regardless.
     from hangarfit.loader import load_scenario
     from hangarfit.solver import solve
 
@@ -468,7 +470,7 @@ def _check_result_to_dict(result: CheckResult) -> dict:
 
 
 def _emit_solve_json(scenario_path: str, result: SolveResult) -> None:
-    """Write the hangarfit.solve/v1 payload to stdout. See spec §5.4."""
+    """Write the hangarfit.solve/v1 payload to stdout."""
     d = result.diagnostics
     payload = {
         "schema": _SOLVE_JSON_SCHEMA,
