@@ -31,11 +31,13 @@ conflict.
    `SolveResult` payloads. Without this, no one can debug a layout report
    or diff two runs. Determinism canaries (`tests/test_solver_canaries.py`)
    are intentionally fragile so any unintended drift surfaces in CI.
-3. **Contributor on-rampability.** The project is single-maintainer for
-   now but intended to outlive that. Every architectural choice should be
-   readable in isolation: the codebase, this document set, and the ADRs
-   together should let a new contributor land their first useful change
-   without a synchronous handover.
+3. **Readability without a synchronous handover.** The project is
+   single-maintainer for now but public, and intended to outlive that
+   arrangement. The codebase, this document set, and the ADRs together
+   should let an outside reader form a working mental model — and an
+   eventual contributor land a useful change — without needing direct
+   conversation with the maintainer. This is what "professionalize the
+   public repo" cashes out to in practice.
 4. **Small-tool ergonomics.** No external services, no database, no
    account, no daemon. Install with `pip`, invoke from a terminal, get an
    answer (and optionally a PNG) in seconds. The tool exists to remove

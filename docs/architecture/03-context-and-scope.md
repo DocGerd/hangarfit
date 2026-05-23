@@ -49,9 +49,12 @@ The tool runs entirely on the user's local machine:
   the club's aircraft and building; layout/scenario YAML is authored
   per-invocation.
 - **Outputs.** A JSON result on stdout (with `--json`) or a human-readable
-  status on stderr, an exit code (`0` valid / `1` invalid or no
-  solution / `2` couldn't run), and optionally a PNG render via
-  `--render`.
+  status on stderr, an exit code, and optionally a PNG render via
+  `--render`. Exit-code semantics differ between `hangarfit check` and
+  `hangarfit solve` (e.g., `solve` reports `1` for both
+  "no layout found" and, under `--strict-k`, "fewer than K alternatives
+  found"); the canonical tables live in the root
+  [`README.md`](../../README.md#exit-codes-check).
 - **No external systems.** The CLI does not call any network service,
   read any database, write to any shared state, or read environment
   variables beyond what Python and `matplotlib` need to find their own
