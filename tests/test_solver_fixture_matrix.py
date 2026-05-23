@@ -31,6 +31,15 @@ def _assert_universal_properties(r: SolveResult, max_wall_time_s: float | None =
     (``found`` / ``found_partial``), the helper asserts the diagnostic
     wall time stayed below that bound. Calibrated per fixture by the
     caller; see each test's docstring for the chosen value.
+
+    Calibration recipe for new fixtures:
+    ``max_wall_time_s = min(budget_s * 0.5, max(observed * 4, 1.0))`` —
+    cap at half the budget, scale to 4× observed, floor at 1.0s for
+    flake resistance on slow CI VMs. Note: when ``observed * 4`` falls
+    below the 1.0s floor (4 of 5 v1 fixtures hit this case), the bound
+    catches *order-of-magnitude* regressions rather than the 4×
+    threshold the formula targets; the floor trades detection power
+    for stability and is intentional.
     """
     assert r.status in {"found", "found_partial", "exhausted_budget", "trivially_infeasible"}
 
