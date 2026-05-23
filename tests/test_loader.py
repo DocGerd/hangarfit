@@ -1019,6 +1019,67 @@ placements:
         with pytest.raises(LoaderError, match="maintenance_plane 'bar' is named in placements"):
             load_layout(layout_path)
 
+    def test_maintenance_plane_null_rejected(self, tmp_path: Path) -> None:
+        """`maintenance: {plane: ~}` used to silently return None, disabling
+        the maintenance feature.  It should raise with an actionable message."""
+        self._minimal_fleet_and_hangar(tmp_path)
+        layout_path = _write(
+            tmp_path / "layout.yaml",
+            """
+fleet: fleet.yaml
+hangar: hangar.yaml
+placements:
+  - {plane: foo, x_m: 5, y_m: 5, heading_deg: 0, on_carts: false}
+maintenance:
+  plane: ~
+""",
+        )
+        with pytest.raises(LoaderError, match="'maintenance.plane' is null"):
+            load_layout(layout_path)
+
+    def test_maintenance_plane_non_string_rejected(self, tmp_path: Path) -> None:
+        """`maintenance: {plane: 42}` (int) used to pass through silently,
+        then fail with a confusing 'not in fleet' message at Layout construction."""
+        self._minimal_fleet_and_hangar(tmp_path)
+        layout_path = _write(
+            tmp_path / "layout.yaml",
+            """
+fleet: fleet.yaml
+hangar: hangar.yaml
+placements:
+  - {plane: foo, x_m: 5, y_m: 5, heading_deg: 0, on_carts: false}
+maintenance:
+  plane: 42
+""",
+        )
+        with pytest.raises(LoaderError) as exc_info:
+            load_layout(layout_path)
+        msg = str(exc_info.value)
+        assert "must be a string aircraft id" in msg
+        assert "42" in msg
+        assert "int" in msg
+
+    def test_maintenance_plane_empty_string_rejected(self, tmp_path: Path) -> None:
+        """`maintenance: {plane: ""}` used to slip through silently."""
+        self._minimal_fleet_and_hangar(tmp_path)
+        layout_path = _write(
+            tmp_path / "layout.yaml",
+            """
+fleet: fleet.yaml
+hangar: hangar.yaml
+placements:
+  - {plane: foo, x_m: 5, y_m: 5, heading_deg: 0, on_carts: false}
+maintenance:
+  plane: ""
+""",
+        )
+        with pytest.raises(LoaderError) as exc_info:
+            load_layout(layout_path)
+        msg = str(exc_info.value)
+        assert "must be non-empty" in msg
+        assert "either remove the 'maintenance' block entirely" in msg
+        assert "supply a valid aircraft id" in msg
+
     def test_override_and_yaml_ref_conflict_for_fleet(self, tmp_path: Path) -> None:
         """If the layout YAML has `fleet:` AND the caller passes a fleet
         override, the loader refuses to silently shadow one with the other."""

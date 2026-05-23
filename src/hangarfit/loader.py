@@ -419,7 +419,23 @@ def _extract_maintenance_plane(raw: dict, path: Path) -> str | None:
         )
     if "plane" not in m:
         raise LoaderError(f"{path}: 'maintenance' block present but lacks required 'plane' key")
-    return m["plane"]
+    plane = m["plane"]
+    if plane is None:
+        raise LoaderError(
+            f"{path}: 'maintenance.plane' is null; either remove the 'maintenance' "
+            f"block entirely or name an aircraft id"
+        )
+    if not isinstance(plane, str):
+        raise LoaderError(
+            f"{path}: 'maintenance.plane' must be a string aircraft id, "
+            f"got {plane!r} ({type(plane).__name__})"
+        )
+    if not plane:
+        raise LoaderError(
+            f"{path}: 'maintenance.plane' must be non-empty; "
+            f"either remove the 'maintenance' block entirely or supply a valid aircraft id"
+        )
+    return plane
 
 
 def _build_aircraft(entry: Any) -> Aircraft:
