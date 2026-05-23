@@ -117,6 +117,60 @@ def test_solve_trivially_infeasible_when_two_cart_eligible_pins_on_carts():
     assert bp.conflicts[0].kind == "trivially_infeasible_pin_cart_rule"
 
 
+def test_solve_trivially_infeasible_threads_diversity_impossible_when_k_gt_1():
+    """Pre-search early-return must thread diversity_impossible into diagnostics.
+
+    Covers solver.py's `_check_trivially_infeasible` branch (around L96-107):
+    when the static K>1 ∧ free_planes<min_planes_moved precondition AND the
+    trivially-infeasible check both fire, the SolveResult's diagnostics
+    must still carry the correct `diversity_impossible=True` signal. Without
+    explicit coverage, a refactor that moved the early return *above* the
+    diversity_impossible computation would silently lose the signal — and
+    nothing else asserts it on this codepath.
+
+    The pins-clash fixture is the right host: 2 pinned planes → free_planes=0,
+    DiversityConfig default min_planes_moved=2 → 0<2 ∧ alternatives=3>1 →
+    diversity_impossible=True. The pin self-collision then trips
+    `_check_trivially_infeasible` check #3.
+    """
+    from hangarfit.loader import load_scenario
+    from hangarfit.models import DiversityConfig
+    from hangarfit.solver import solve
+
+    s = load_scenario("tests/fixtures/solve_infeasible_pins_clash.yaml")
+    r = solve(
+        s, budget_s=5.0, alternatives=3, seed=42, diversity=DiversityConfig(min_planes_moved=2)
+    )
+
+    assert r.status == "trivially_infeasible"
+    assert r.diagnostics.diversity_impossible is True
+    # rejected_count must be 0 — the early return short-circuits BEFORE
+    # the search loop runs (this is also the case the new __post_init__
+    # cross-field guard enforces).
+    assert r.diagnostics.diversity_rejected_count == 0
+
+
+def test_solve_trivially_infeasible_alternatives_1_clears_diversity_impossible():
+    """Companion to the K>1 test above — pins the threading in the negative direction.
+
+    Same fixture (pins clash → trivially_infeasible), but with alternatives=1
+    the static precondition `alternatives > 1` is False so
+    diversity_impossible must be False even though free_planes=0. Without
+    this negative-direction assertion, a regression that hardcoded
+    diversity_impossible=True on the early-return path would slip past
+    the positive test above.
+    """
+    from hangarfit.loader import load_scenario
+    from hangarfit.solver import solve
+
+    s = load_scenario("tests/fixtures/solve_infeasible_pins_clash.yaml")
+    r = solve(s, budget_s=5.0, alternatives=1, seed=42)
+
+    assert r.status == "trivially_infeasible"
+    assert r.diagnostics.diversity_impossible is False
+    assert r.diagnostics.diversity_rejected_count == 0
+
+
 def test_solve_trivially_infeasible_when_maintenance_pin_outside_bay():
     """Maintenance plane pinned outside the back maintenance bay.
 

@@ -77,7 +77,8 @@ def solve(
         for pid in scenario.fleet_in
         if scenario.constraints.get(pid) is None or scenario.constraints[pid].pin is None
     )
-    if alternatives > 1 and free_planes < diversity.min_planes_moved:
+    diversity_impossible = alternatives > 1 and free_planes < diversity.min_planes_moved
+    if diversity_impossible:
         _logger.warning(
             "requested %d alternatives but only 1 is achievable "
             "(%d of %d planes are pinned). Expect status=found_partial.",
@@ -101,6 +102,7 @@ def solve(
                 best_partial=bad_check,
                 best_partial_layout=bad_layout,
                 seed=resolved_seed,
+                diversity_impossible=diversity_impossible,
             ),
         )
 
@@ -119,6 +121,7 @@ def solve(
     best_partial_score: tuple[int, float] = (sys.maxsize, float("inf"))
     best_partial_layout: Layout | None = None
     accepted_layouts: list[Layout] = []
+    diversity_rejected_count = 0
     restart_index = 0
 
     # Outer restart loop. Two independent termination gates; first to
@@ -182,6 +185,13 @@ def solve(
                 )
                 if _is_diverse_enough(candidate_layout, accepted_layouts, diversity):
                     accepted_layouts.append(candidate_layout)
+                else:
+                    # The candidate is valid (score (0, 0.0)) but too
+                    # similar to an already-accepted layout. Count it
+                    # so callers can see how much search work was lost
+                    # to the diversity gate (spec §4.1 of the v0.6.0
+                    # solver-polish release design).
+                    diversity_rejected_count += 1
                 # Whether accepted or not, restart to try for a different
                 # basin. Continuing to descend from a valid state would just
                 # walk in place (already at score (0, 0.0)).
@@ -239,6 +249,8 @@ def solve(
                 best_partial=None,
                 best_partial_layout=None,
                 seed=resolved_seed,
+                diversity_impossible=diversity_impossible,
+                diversity_rejected_count=diversity_rejected_count,
             ),
         )
     bp = check_layout(best_partial_layout) if best_partial_layout is not None else None
@@ -251,6 +263,8 @@ def solve(
             best_partial=bp,
             best_partial_layout=best_partial_layout,
             seed=resolved_seed,
+            diversity_impossible=diversity_impossible,
+            diversity_rejected_count=diversity_rejected_count,
         ),
     )
 

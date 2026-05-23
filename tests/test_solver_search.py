@@ -262,6 +262,11 @@ def test_solve_finds_layout_for_trivial_single_plane():
     assert r.status == "found"
     assert len(r.layouts) == 1
     assert check(r.layouts[0]).valid
+    # K=1 happy path: the diversity filter is vacuously True with no
+    # accepted layouts, so the reject branch is unreachable when
+    # alternatives=1. A regression that moved the rejected_count
+    # increment outside the `else:` arm in solver.py would surface here.
+    assert r.diagnostics.diversity_rejected_count == 0
 
 
 def test_solve_finds_layout_for_fresh_six_planes():
@@ -716,6 +721,9 @@ def test_solve_emits_diversity_impossible_warning(caplog):
     # layout lives in result.layouts, not in best_partial).
     assert r.diagnostics.best_partial is None
     assert r.diagnostics.best_partial_layout is None
+    # Spec §4.1 (v0.6.0 release): the structured flag mirrors the
+    # logger warning so callers don't have to scrape log records.
+    assert r.diagnostics.diversity_impossible is True
 
 
 def test_solve_does_not_warn_when_diversity_is_achievable(caplog):
@@ -735,7 +743,7 @@ def test_solve_does_not_warn_when_diversity_is_achievable(caplog):
     # Fresh-six-planes fixture: 6 planes, none pinned → free_planes=6 >= M=2.
     s = load_scenario("tests/fixtures/solve_fresh_alternatives_three.yaml")
     with caplog.at_level(logging.WARNING):
-        solve(s, alternatives=3, seed=42, diversity=DiversityConfig(min_planes_moved=1))
+        r = solve(s, alternatives=3, seed=42, diversity=DiversityConfig(min_planes_moved=1))
 
     # The diversity-impossible warning text contains "achievable" — assert
     # no such warning fired. (Other unrelated warnings are fine.)
@@ -743,6 +751,39 @@ def test_solve_does_not_warn_when_diversity_is_achievable(caplog):
     assert not diversity_warnings, (
         f"Expected NO diversity-impossible warning when free_planes >= M; "
         f"got {[r.message for r in diversity_warnings]}"
+    )
+    # Spec §4.1 (v0.6.0 release): structured flag must agree with the
+    # absent log warning.
+    assert r.diagnostics.diversity_impossible is False
+
+
+def test_solve_diversity_rejected_count_increments_on_reject():
+    """Diversity filter rejects raise `diagnostics.diversity_rejected_count`.
+
+    Uses the diversity-impossible fixture (2 of 3 planes pinned, M=2):
+    every trajectory after the first finds the same valid layout-shape
+    (one degree of freedom), so subsequent valid candidates are rejected
+    by `_is_diverse_enough`. Over a 5 s budget the count is reliably >0.
+
+    Spec §4.1 (v0.6.0 release) — the counter is informative when K>1
+    returns `found_partial` despite the trajectory loop producing more
+    than one valid layout.
+    """
+    from hangarfit.loader import load_scenario
+    from hangarfit.solver import solve
+
+    s = load_scenario("tests/fixtures/solve_diversity_impossible_warn.yaml")
+    r = solve(s, budget_s=5.0, alternatives=3, seed=42)
+
+    # The fixture forces found_partial (see test_solve_emits_diversity_impossible_warning).
+    assert r.status == "found_partial"
+    assert len(r.layouts) == 1
+    # And — the heart of this test — at least one valid candidate was
+    # produced by search and rejected by the diversity filter.
+    assert r.diagnostics.diversity_rejected_count > 0, (
+        f"Expected diversity_rejected_count > 0 on diversity-impossible fixture; "
+        f"got {r.diagnostics.diversity_rejected_count}. "
+        f"restarts_attempted={r.diagnostics.restarts_attempted}"
     )
 
 

@@ -357,6 +357,43 @@ def test_solver_diagnostics_rejects_negative_wall_time():
         )
 
 
+def test_solver_diagnostics_diversity_fields_default():
+    """diversity_impossible and diversity_rejected_count default to False/0.
+
+    See spec §4.1 of the v0.6.0 solver-polish release design — these two
+    fields are observability signals so the diversity warning at
+    ``solver.py`` becomes machine-readable rather than logger-only. The
+    default of ``False`` / ``0`` means an unmodified solver run on a
+    healthy fixture must report no diversity friction at all.
+    """
+    from hangarfit.models import SolverDiagnostics
+
+    d = SolverDiagnostics(
+        restarts_attempted=0,
+        wall_time_s=0.0,
+        best_partial=None,
+        best_partial_layout=None,
+        seed=42,
+    )
+    assert d.diversity_impossible is False
+    assert d.diversity_rejected_count == 0
+
+
+def test_solver_diagnostics_rejects_negative_diversity_rejected_count():
+    """diversity_rejected_count is a non-negative counter (spec §4.1)."""
+    from hangarfit.models import SolverDiagnostics
+
+    with pytest.raises(ValueError, match="diversity_rejected_count"):
+        SolverDiagnostics(
+            restarts_attempted=0,
+            wall_time_s=0.0,
+            best_partial=None,
+            best_partial_layout=None,
+            seed=42,
+            diversity_rejected_count=-1,
+        )
+
+
 def test_solve_result_construct_empty_for_infeasible():
     """Status=trivially_infeasible MUST have empty layouts."""
     from hangarfit.models import (
