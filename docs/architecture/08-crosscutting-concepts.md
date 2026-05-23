@@ -30,14 +30,23 @@ full rationale and rejected alternatives.
 
 ### The maintenance bay rule
 
-A scenario designates one aircraft as the maintenance occupant. The
-rule for "is it in the bay?" is: the **centroid of the maintenance
-plane's fuselage parts** lies within the back strip
-(`y ≥ hangar.length_m − hangar.maintenance_bay.depth_m`, with strict
-`<` failure: a centroid exactly on the boundary counts as in the bay).
-If the designated plane has no fuselage parts, an explicit
-`maintenance_no_fuselage` conflict is emitted rather than silently
-passing. See [ADR-0005](../adr/0005-maintenance-bay-rule.md).
+A scenario designates one aircraft as the maintenance occupant; that
+plane is absent from `layout.placements` and present in `layout.fleet`
+(enforced by `Layout.__post_init__`). When the occupant is set, the
+**bay rectangle becomes a hard keep-out for every other plane's parts**.
+The bay is the axis-aligned rectangle anchored to the back wall:
+`x ∈ (center_x_m − width_m/2, center_x_m + width_m/2)`,
+`y ∈ (length_m − depth_m, length_m]`. Any vertex of a non-occupant
+part that lies strictly inside that rectangle fires a `bay_intrusion`
+conflict on the owning plane — one conflict per offending part.
+
+This rule replaced the earlier "fuselage centroid in the back strip"
+rule during milestone #9 (the bay-walling work). The earlier rule is
+recorded historically in [ADR-0005](../adr/0005-maintenance-bay-rule.md);
+the current rule is the one implemented in
+`src/hangarfit/collisions.py::_bay_intrusion_conflicts` and is what
+the checker actually enforces today. A successor ADR for the
+`bay_intrusion` rule is a future tracking item.
 
 ### Movement modes (relevant for the future planner, not Phase 1)
 
@@ -158,25 +167,34 @@ This pattern is the project-wide answer to "where should
 cross-reference invariants live?" — the data layer, at construction
 time, not as scattered checks in each consumer.
 
-## Explicit conflicts over silent passes
+## Explicit conflicts and explicit construction errors over silent passes
 
-When the system encounters an unevaluatable case — input that is
-structurally valid but semantically undefined — the answer is an
-**explicit conflict** with a named `kind`, not a silent pass.
+When the system encounters a violation — geometric or structural —
+the answer is an **explicit signal** with a named taxonomy entry,
+not a silent pass.
 
-The canonical case is `maintenance_no_fuselage`: if the designated
-maintenance plane has no `Part` of kind `"fuselage"`, the centroid
-check has nothing to evaluate against. Silent-pass would mean any
-placement of that plane qualifies (dangerous); silent-fail would
-hide the structural problem (also dangerous). The checker emits a
-named conflict so fixtures can pin it, the visualizer can render it,
-and humans can diagnose it. See
-[ADR-0005](../adr/0005-maintenance-bay-rule.md) for the full record
-of that rejected-silent-pass decision.
+Two signal channels exist:
 
-The discipline extends beyond that one case: when in doubt, add a
-new `Conflict.kind` value and emit it, rather than letting the
-silent path through.
+- **`Conflict.kind`** — emitted by the collision checker for
+  geometric / placement violations of a structurally valid layout.
+  Examples in the current taxonomy: `hangar_bounds`, `bay_intrusion`,
+  and the pairwise `<kindA>_<kindB>_overlap` family
+  (`fuselage_wing_overlap`, `strut_wing_overlap`, etc., always
+  alphabetically sorted so the kind is deterministic regardless of
+  iteration order).
+- **Construction-time exceptions** — raised by
+  `Layout.__post_init__` and the loader for structural problems
+  (cart rule violated, maintenance plane absent from fleet,
+  maintenance plane also in placements). A `Layout` either
+  constructs successfully (and the structural invariants hold) or
+  raises immediately; no caller has to re-check.
+
+The discipline is: when in doubt, add a new `Conflict.kind` value
+and emit it, or raise at construction with a precise message —
+never let the silent path through. The pairwise overlap kinds'
+alphabetical-sort rule is in service of the same posture: a
+deterministic name lets fixtures and tests pin the exact failure
+mode, which silent-fail behaviour could not.
 
 ## Determinism
 
