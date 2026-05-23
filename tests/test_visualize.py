@@ -19,13 +19,15 @@ project's "determinant-(-1) trap" (see ``CLAUDE.md`` and
 from __future__ import annotations
 
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
+from matplotlib.patches import Polygon as MplPolygon
 from PIL import Image
 
 from hangarfit.collisions import check
 from hangarfit.loader import load_layout
-from hangarfit.visualize import nose_direction, render_layout
+from hangarfit.visualize import _BAY_WALL_FACE, _draw_maintenance_bay, nose_direction, render_layout
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -63,8 +65,10 @@ class TestRenderLayout:
 
     def test_renders_all_9_plane_layout(self, tmp_path: Path) -> None:
         """The all-9-planes acceptance layout exercises every wing_position
-        (low + high), every movement_mode, cantilever + strut-braced planes,
-        and the maintenance bay overlay together."""
+        (low + high), every movement_mode, and cantilever + strut-braced
+        planes together. Bay state for this fixture is *open* (no
+        maintenance plane) — the closed-bay overlay is exercised by
+        :class:`TestConditionalBayRendering` below."""
         layout = _load("valid_all_nine_planes")
         out = tmp_path / "all_nine.png"
         render_layout(layout, out)
@@ -115,9 +119,8 @@ class TestRenderLayout:
 class TestRendererHandlesEdgeCases:
     def test_layout_with_maintenance_plane_renders(self, tmp_path: Path) -> None:
         """A layout naming a maintenance plane (occupant absent from
-        placements) still renders; the renderer treats the maintenance
-        block as metadata. The walled-rect rendering itself is
-        exercised separately once that visualizer change ships.
+        placements) still renders. The walled-rect dispatch is exercised
+        directly in :class:`TestConditionalBayRendering` below.
         """
         layout = load_layout(REPO_ROOT / "layouts" / "example.yaml")
         assert layout.maintenance_plane is not None  # sanity: the case we care about
@@ -151,6 +154,142 @@ class TestRendererHandlesEdgeCases:
         result = check(layout)
         out = tmp_path / f"{fixture_name}.png"
         render_layout(layout, out, check_result=result)
+        _assert_valid_png(out)
+
+
+class TestConditionalBayRendering:
+    """The bay rectangle's rendering depends on ``Layout.maintenance_plane``:
+
+    - ``None`` → bay is not drawn (just normal floor).
+    - non-``None`` → bay rect is filled with a hatched wall style and an
+      ``IN MAINTENANCE: <plane_id>`` label is centered inside.
+    """
+
+    def test_open_bay_skips_drawing(self) -> None:
+        """``layout.maintenance_plane is None`` → ``_draw_maintenance_bay``
+        is a no-op. No bay rect, no label."""
+        layout = _load("valid_bay_open_planes_in_back_strip")
+        assert layout.maintenance_plane is None  # fixture sanity
+        ax = MagicMock()
+
+        _draw_maintenance_bay(ax, layout)
+
+        ax.add_patch.assert_not_called()
+        ax.text.assert_not_called()
+
+    def test_closed_bay_adds_hatched_red_patch_and_label(self) -> None:
+        """``layout.maintenance_plane is not None`` →
+        ``_draw_maintenance_bay`` adds exactly one Polygon patch (hatched,
+        with the bay-wall facecolor) and exactly one text whose body
+        begins with ``IN MAINTENANCE:`` and names the occupant.
+        """
+        import matplotlib.colors
+
+        layout = _load("valid_bay_closed_no_intruder")
+        assert layout.maintenance_plane == "scheibe_falke"  # fixture sanity
+        ax = MagicMock()
+
+        _draw_maintenance_bay(ax, layout)
+
+        ax.add_patch.assert_called_once()
+        patch = ax.add_patch.call_args.args[0]
+        assert isinstance(patch, MplPolygon)
+        assert patch.get_hatch(), (
+            f"closed-bay patch must carry a hatch pattern; got {patch.get_hatch()!r}"
+        )
+        # Pinning the facecolor against the module constant catches a
+        # regression that swaps the bay fill to ``_CONFLICT_COLOR``: both
+        # would render as "red box" and lose the bay-vs-conflict
+        # distinction the module's visualize.py comment calls load-bearing.
+        face = patch.get_facecolor()
+        expected = matplotlib.colors.to_rgba(_BAY_WALL_FACE, alpha=face[3])
+        assert face == expected, f"closed-bay facecolor must be _BAY_WALL_FACE; got {face!r}"
+
+        ax.text.assert_called_once()
+        # ax.text is positional (x, y, s, **kwargs) — the third arg is the label.
+        label_string = ax.text.call_args.args[2]
+        assert label_string.startswith("IN MAINTENANCE:"), (
+            f"label must start with 'IN MAINTENANCE:'; got {label_string!r}"
+        )
+        assert "scheibe_falke" in label_string, (
+            f"label must name the occupant; got {label_string!r}"
+        )
+
+    def test_closed_bay_patch_uses_partial_width_back_strip_geometry(self) -> None:
+        """The bay rect drawn must match the partial-width back-anchored
+        rectangle defined by ``MaintenanceBay.center_x_m`` / ``width_m`` /
+        ``depth_m`` — both axes pinned.
+
+        Guards against two regression classes after #103's model expansion:
+
+        - x-axis: re-shading the full ``[0, hangar.width_m]`` back strip
+          (the pre-#103 behavior). The fixture's bay is right-flush
+          (``max(xs) == hangar.width_m``), so the ``min(xs) > 0`` strict
+          guard is the one that catches the regression on this fixture.
+        - y-axis: swapping ``length_m - depth_m`` for ``0`` (door wall)
+          or ``length_m - depth_m / 2`` — the keep-out region would slide
+          to the wrong wall, render visually wrong, yet leave x-axis
+          assertions green.
+        """
+        layout = _load("valid_bay_closed_no_intruder")
+        hangar = layout.hangar
+        bay = hangar.maintenance_bay
+        ax = MagicMock()
+
+        _draw_maintenance_bay(ax, layout)
+
+        patch = ax.add_patch.call_args.args[0]
+        # Closed polygon: matplotlib-style 5 vertices (last = first).
+        xs = [v[0] for v in patch.get_xy()]
+        ys = [v[1] for v in patch.get_xy()]
+
+        assert 0 < min(xs) < bay.center_x_m, (
+            f"min(xs)={min(xs)} suggests full-width back-strip regression"
+        )
+        assert min(xs) == bay.center_x_m - bay.width_m / 2
+        assert max(xs) == bay.center_x_m + bay.width_m / 2
+
+        assert min(ys) == hangar.length_m - bay.depth_m
+        assert max(ys) == hangar.length_m
+
+    def test_open_bay_layout_produces_valid_png(self, tmp_path: Path) -> None:
+        """End-to-end smoke: the open-bay fixture renders a valid PNG."""
+        layout = _load("valid_bay_open_planes_in_back_strip")
+        out = tmp_path / "open_bay.png"
+        render_layout(layout, out)
+        _assert_valid_png(out)
+
+    def test_closed_bay_layout_produces_valid_png(self, tmp_path: Path) -> None:
+        """End-to-end smoke: the closed-bay fixture renders a valid PNG."""
+        layout = _load("valid_bay_closed_no_intruder")
+        out = tmp_path / "closed_bay.png"
+        render_layout(layout, out)
+        _assert_valid_png(out)
+
+    def test_closed_bay_with_conflict_overlay_renders(self, tmp_path: Path) -> None:
+        """Combined closed-bay × conflict-overlay smoke. Guards against a
+        z-order regression where the bay patch obscures the red conflict
+        overlay or vice versa. The closed-bay fixture has a clean layout,
+        so we synthesize a non-clean ``CheckResult`` on one of its placed
+        planes — the renderer only needs *some* conflict to traverse the
+        overlay branch."""
+        from hangarfit.models import CheckResult, Conflict
+
+        layout = _load("valid_bay_closed_no_intruder")
+        assert layout.maintenance_plane is not None  # fixture sanity
+        placed_pid = layout.placements[0].plane_id
+        synthetic = CheckResult(
+            conflicts=(
+                Conflict.single(
+                    kind="hangar_bounds",
+                    plane=placed_pid,
+                    detail="synthetic — exercise overlay-on-closed-bay path",
+                ),
+            )
+        )
+
+        out = tmp_path / "closed_bay_with_conflict.png"
+        render_layout(layout, out, check_result=synthetic)
         _assert_valid_png(out)
 
 
