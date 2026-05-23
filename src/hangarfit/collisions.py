@@ -128,10 +128,12 @@ def _bay_intrusion_conflicts(
     inclusive.
 
     The maintenance occupant is absent from placements by Layout
-    invariant, so it has no entry in ``world_parts`` and cannot be the
-    subject of an intrusion conflict against itself — the
-    "non-occupant" qualifier is enforced structurally, not via a
-    skip-id check here.
+    invariant, so it should not appear in ``world_parts``. A defensive
+    ``continue`` still skips it explicitly — if a future bug ever
+    let the occupant leak in (a hand-built Layout that bypassed
+    construction, a solver regression), the silent nonsense conflict
+    "the occupant intrudes into its own bay" would otherwise be
+    indistinguishable from a real intrusion.
 
     Emits one ``bay_intrusion`` conflict per offending **part**, with
     the first-violating vertex (matches the per-part granularity of
@@ -145,6 +147,8 @@ def _bay_intrusion_conflicts(
     y_min = layout.hangar.length_m - bay.depth_m
     out: list[Conflict] = []
     for plane_id, parts in world_parts.items():
+        if plane_id == layout.maintenance_plane:
+            continue
         for part in parts:
             bad = _first_vertex_in_bay(part, x_min, x_max, y_min)
             if bad is None:
@@ -157,7 +161,7 @@ def _bay_intrusion_conflicts(
                     detail=(
                         f"part {part.kind!r} vertex ({x:.3f}, {y:.3f}) inside "
                         f"closed maintenance bay (x ∈ ({x_min:g}, {x_max:g}), "
-                        f"y ∈ ({y_min:g}, {layout.hangar.length_m:g}]; "
+                        f"y ∈ ({y_min:g}, {layout.hangar.length_m:g}); "
                         f"occupant={layout.maintenance_plane!r})"
                     ),
                 )

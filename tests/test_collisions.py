@@ -361,15 +361,18 @@ class TestBayIntrusion:
         )
 
     def test_corner_vertex_strictly_inside_fires(self) -> None:
-        """An intruder at the front-left corner of the bay: its
-        front-left vertex (10.5, 16.5) is strictly inside both
-        x_min < x < x_max and y > y_min."""
+        """An intruder straddling the bay's front-left corner: the
+        center is at (11, 16.5), so the part's front-left vertex
+        (10.5, 16) sits exactly on the front edge (passes the strict
+        check) while the rear-left vertex (10.5, 17) is strictly
+        inside both ``x_min < x < x_max`` and ``y > y_min``. The
+        per-part check must find the strictly-inside vertex even when
+        another vertex of the same part is tangent.
+        """
         layout = self._build_layout(
             bay_open=False, intruder_offset_x_m=-3.0, intruder_offset_y_m=-3.5
-        )  # center at (11, 16.5), front-left vertex at (10.5, 16)
+        )
         result = check(layout)
-        # Front-left vertex (10.5, 16) has y on edge — passes. But
-        # rear-left vertex (10.5, 17) is strictly inside.
         assert "bay_intrusion" in _conflict_kinds(result)
 
     def test_retired_conflict_kinds_never_emitted(self) -> None:
