@@ -42,11 +42,6 @@ placements:
     heading_deg: 0.0
     on_carts: true         # the single cart_eligible plane on carts
 
-  # Maintenance plane in the bay — placed correctly (no conflict here);
-  # this is just to satisfy the Layout invariant that the designated
-  # maintenance plane is also placed
-  - plane: scheibe_falke
-    x_m: 9.0
-    y_m: 18.0
-    heading_deg: 0.0
-    on_carts: true
+  # scheibe_falke is in the maintenance bay (declared above under
+  # ``maintenance.plane``) — by Layout invariant it must NOT appear in
+  # placements while the bay is closed.
