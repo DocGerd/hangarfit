@@ -215,11 +215,25 @@ class Door:
 
 @dataclass(frozen=True, slots=True)
 class MaintenanceBay:
-    """The back-most strip of the hangar that doubles as the maintenance bay."""
+    """A back-anchored partial-width rectangle reserved for maintenance.
 
+    The bay always touches the hangar's back wall; its y-extent is
+    ``[hangar.length_m - depth_m, hangar.length_m]``. Its x-extent is
+    centered on ``center_x_m`` with width ``width_m`` (same idiom as
+    :class:`Door`). The bay-fits-in-hangar check
+    (``center_x_m ± width_m/2 ∈ [0, hangar.width_m]``) lives in
+    :class:`Hangar` because it needs the hangar width.
+    """
+
+    center_x_m: float
+    width_m: float
     depth_m: float
 
     def __post_init__(self) -> None:
+        if self.center_x_m <= 0:
+            raise ValueError(f"MaintenanceBay.center_x_m must be positive, got {self.center_x_m}")
+        if self.width_m <= 0:
+            raise ValueError(f"MaintenanceBay.width_m must be positive, got {self.width_m}")
         if self.depth_m <= 0:
             raise ValueError(f"MaintenanceBay.depth_m must be positive, got {self.depth_m}")
 
@@ -258,6 +272,14 @@ class Hangar:
                 f"Door (center={self.door.center_x_m}, width={self.door.width_m}) "
                 f"doesn't fit in hangar width {self.width_m}"
             )
+        bay_left = self.maintenance_bay.center_x_m - self.maintenance_bay.width_m / 2
+        bay_right = self.maintenance_bay.center_x_m + self.maintenance_bay.width_m / 2
+        if bay_left < 0 or bay_right > self.width_m:
+            raise ValueError(
+                f"MaintenanceBay (center={self.maintenance_bay.center_x_m}, "
+                f"width={self.maintenance_bay.width_m}) "
+                f"doesn't fit in hangar width {self.width_m}"
+            )
         if self.maintenance_bay.depth_m >= self.length_m:
             raise ValueError(
                 f"MaintenanceBay.depth_m={self.maintenance_bay.depth_m} "
@@ -294,13 +316,13 @@ class Layout:
     - the cart rule (at most one ``cart_eligible`` plane on carts),
     - ``always_cart`` ↔ ``on_carts=True`` consistency,
     - ``always_own_gear`` ↔ ``on_carts=False`` consistency,
-    - the maintenance plane (if set) is in the fleet and is placed.
+    - the maintenance plane (if set) is in the fleet **and is NOT in
+      placements** (the occupant is treated as "away" — physically
+      absent from the parking problem).
 
-    The maintenance plane's **position** rule ("must be parked in the
-    back-most strip of the hangar") is *not* enforced here — it depends
-    on placement geometry and the hangar's maintenance-bay depth, so it
-    lives in the collision checker (#5) alongside the other geometric
-    rules.
+    The bay-closure rule (no other plane's parts may cross into the
+    closed bay rectangle) is a geometric check; it lives in the
+    collision checker alongside the other geometric rules.
 
     On construction, ``fleet`` is wrapped in ``MappingProxyType`` so
     that the cross-reference invariants stay valid for the lifetime of
@@ -357,8 +379,11 @@ class Layout:
         if self.maintenance_plane is not None:
             if self.maintenance_plane not in self.fleet:
                 raise ValueError(f"maintenance_plane {self.maintenance_plane!r} not in fleet")
-            if self.maintenance_plane not in seen:
-                raise ValueError(f"maintenance_plane {self.maintenance_plane!r} is not placed")
+            if self.maintenance_plane in seen:
+                raise ValueError(
+                    f"maintenance_plane {self.maintenance_plane!r} must NOT be in "
+                    f"placements when in maintenance (occupant is treated as away)"
+                )
 
         object.__setattr__(self, "fleet", MappingProxyType(dict(self.fleet)))
 

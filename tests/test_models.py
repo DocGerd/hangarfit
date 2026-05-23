@@ -64,7 +64,7 @@ def _ok_hangar() -> Hangar:
         length_m=25.0,
         width_m=18.0,
         door=Door(center_x_m=9.0, width_m=12.0),
-        maintenance_bay=MaintenanceBay(depth_m=9.0),
+        maintenance_bay=MaintenanceBay(center_x_m=9.0, width_m=4.0, depth_m=9.0),
         clearance_m=0.3,
         wing_layer_clearance_m=0.2,
     )
@@ -329,13 +329,25 @@ class TestDoor:
 
 class TestMaintenanceBay:
     def test_valid_construction(self) -> None:
-        m = MaintenanceBay(depth_m=9.0)
+        m = MaintenanceBay(center_x_m=13.5, width_m=9.0, depth_m=9.0)
         assert m.depth_m == 9.0
+        assert m.center_x_m == 13.5
+        assert m.width_m == 9.0
 
     @pytest.mark.parametrize("depth_m", [0.0, -1.0])
     def test_non_positive_depth_rejected(self, depth_m: float) -> None:
         with pytest.raises(ValueError, match="depth_m must be positive"):
-            MaintenanceBay(depth_m=depth_m)
+            MaintenanceBay(center_x_m=9.0, width_m=4.0, depth_m=depth_m)
+
+    @pytest.mark.parametrize("center_x_m", [0.0, -1.0])
+    def test_non_positive_center_x_rejected(self, center_x_m: float) -> None:
+        with pytest.raises(ValueError, match="center_x_m must be positive"):
+            MaintenanceBay(center_x_m=center_x_m, width_m=4.0, depth_m=9.0)
+
+    @pytest.mark.parametrize("width_m", [0.0, -2.0])
+    def test_non_positive_width_rejected(self, width_m: float) -> None:
+        with pytest.raises(ValueError, match="width_m must be positive"):
+            MaintenanceBay(center_x_m=9.0, width_m=width_m, depth_m=9.0)
 
 
 class TestHangar:
@@ -350,7 +362,7 @@ class TestHangar:
                 length_m=length_m,
                 width_m=18.0,
                 door=Door(center_x_m=9.0, width_m=12.0),
-                maintenance_bay=MaintenanceBay(depth_m=9.0),
+                maintenance_bay=MaintenanceBay(center_x_m=9.0, width_m=4.0, depth_m=9.0),
                 clearance_m=0.3,
                 wing_layer_clearance_m=0.2,
             )
@@ -364,7 +376,7 @@ class TestHangar:
                 door=Door(center_x_m=9.0, width_m=12.0)
                 if width_m > 12
                 else Door(center_x_m=1.0, width_m=0.5),
-                maintenance_bay=MaintenanceBay(depth_m=9.0),
+                maintenance_bay=MaintenanceBay(center_x_m=9.0, width_m=4.0, depth_m=9.0),
                 clearance_m=0.3,
                 wing_layer_clearance_m=0.2,
             )
@@ -375,7 +387,7 @@ class TestHangar:
                 length_m=25.0,
                 width_m=18.0,
                 door=Door(center_x_m=9.0, width_m=12.0),
-                maintenance_bay=MaintenanceBay(depth_m=9.0),
+                maintenance_bay=MaintenanceBay(center_x_m=9.0, width_m=4.0, depth_m=9.0),
                 clearance_m=-0.1,
                 wing_layer_clearance_m=0.2,
             )
@@ -385,7 +397,7 @@ class TestHangar:
             length_m=25.0,
             width_m=18.0,
             door=Door(center_x_m=9.0, width_m=12.0),
-            maintenance_bay=MaintenanceBay(depth_m=9.0),
+            maintenance_bay=MaintenanceBay(center_x_m=9.0, width_m=4.0, depth_m=9.0),
             clearance_m=0.0,
             wing_layer_clearance_m=0.0,
         )
@@ -397,7 +409,7 @@ class TestHangar:
                 length_m=25.0,
                 width_m=18.0,
                 door=Door(center_x_m=4.0, width_m=12.0),  # left edge at -2
-                maintenance_bay=MaintenanceBay(depth_m=9.0),
+                maintenance_bay=MaintenanceBay(center_x_m=9.0, width_m=4.0, depth_m=9.0),
                 clearance_m=0.3,
                 wing_layer_clearance_m=0.2,
             )
@@ -408,7 +420,7 @@ class TestHangar:
                 length_m=25.0,
                 width_m=18.0,
                 door=Door(center_x_m=15.0, width_m=12.0),  # right edge at 21
-                maintenance_bay=MaintenanceBay(depth_m=9.0),
+                maintenance_bay=MaintenanceBay(center_x_m=9.0, width_m=4.0, depth_m=9.0),
                 clearance_m=0.3,
                 wing_layer_clearance_m=0.2,
             )
@@ -419,7 +431,7 @@ class TestHangar:
                 length_m=25.0,
                 width_m=18.0,
                 door=Door(center_x_m=9.0, width_m=12.0),
-                maintenance_bay=MaintenanceBay(depth_m=30.0),
+                maintenance_bay=MaintenanceBay(center_x_m=9.0, width_m=4.0, depth_m=30.0),
                 clearance_m=0.3,
                 wing_layer_clearance_m=0.2,
             )
@@ -431,7 +443,7 @@ class TestHangar:
                 length_m=25.0,
                 width_m=18.0,
                 door=Door(center_x_m=9.0, width_m=12.0),
-                maintenance_bay=MaintenanceBay(depth_m=25.0),
+                maintenance_bay=MaintenanceBay(center_x_m=9.0, width_m=4.0, depth_m=25.0),
                 clearance_m=0.3,
                 wing_layer_clearance_m=0.2,
             )
@@ -442,7 +454,7 @@ class TestHangar:
             length_m=25.0,
             width_m=18.0,
             door=Door(center_x_m=6.0, width_m=12.0),
-            maintenance_bay=MaintenanceBay(depth_m=9.0),
+            maintenance_bay=MaintenanceBay(center_x_m=9.0, width_m=4.0, depth_m=9.0),
             clearance_m=0.3,
             wing_layer_clearance_m=0.2,
         )
@@ -454,11 +466,59 @@ class TestHangar:
             length_m=25.0,
             width_m=18.0,
             door=Door(center_x_m=12.0, width_m=12.0),
-            maintenance_bay=MaintenanceBay(depth_m=9.0),
+            maintenance_bay=MaintenanceBay(center_x_m=9.0, width_m=4.0, depth_m=9.0),
             clearance_m=0.3,
             wing_layer_clearance_m=0.2,
         )
         assert h.door.center_x_m == 12.0
+
+    def test_maintenance_bay_overflows_left(self) -> None:
+        with pytest.raises(ValueError, match="MaintenanceBay.*doesn't fit in hangar width"):
+            Hangar(
+                length_m=25.0,
+                width_m=18.0,
+                door=Door(center_x_m=9.0, width_m=12.0),
+                # bay center at 4, width 10 → left edge at -1
+                maintenance_bay=MaintenanceBay(center_x_m=4.0, width_m=10.0, depth_m=9.0),
+                clearance_m=0.3,
+                wing_layer_clearance_m=0.2,
+            )
+
+    def test_maintenance_bay_overflows_right(self) -> None:
+        with pytest.raises(ValueError, match="MaintenanceBay.*doesn't fit in hangar width"):
+            Hangar(
+                length_m=25.0,
+                width_m=18.0,
+                door=Door(center_x_m=9.0, width_m=12.0),
+                # bay center at 15, width 10 → right edge at 20 > width=18
+                maintenance_bay=MaintenanceBay(center_x_m=15.0, width_m=10.0, depth_m=9.0),
+                clearance_m=0.3,
+                wing_layer_clearance_m=0.2,
+            )
+
+    def test_maintenance_bay_flush_with_left_wall_allowed(self) -> None:
+        """Bay's left edge exactly at x=0 is a legal boundary."""
+        h = Hangar(
+            length_m=25.0,
+            width_m=18.0,
+            door=Door(center_x_m=9.0, width_m=12.0),
+            maintenance_bay=MaintenanceBay(center_x_m=4.0, width_m=8.0, depth_m=9.0),
+            clearance_m=0.3,
+            wing_layer_clearance_m=0.2,
+        )
+        assert h.maintenance_bay.center_x_m == 4.0
+
+    def test_maintenance_bay_flush_with_right_wall_allowed(self) -> None:
+        """Bay's right edge exactly at x=width_m is a legal boundary."""
+        h = Hangar(
+            length_m=25.0,
+            width_m=18.0,
+            door=Door(center_x_m=9.0, width_m=12.0),
+            maintenance_bay=MaintenanceBay(center_x_m=14.0, width_m=8.0, depth_m=9.0),
+            clearance_m=0.3,
+            wing_layer_clearance_m=0.2,
+        )
+        assert h.maintenance_bay.center_x_m == 14.0
 
 
 class TestPlacement:
@@ -600,10 +660,17 @@ class TestLayout:
                 maintenance_plane="ghost",
             )
 
-    def test_maintenance_plane_must_be_placed(self) -> None:
+    def test_maintenance_plane_must_NOT_be_in_placements(self) -> None:
+        """The occupant is treated as 'away' — it must not also appear placed.
+
+        This is the post-#103 invariant flip: previously the maintenance
+        plane was required to be placed (in the back strip); now it must
+        be absent from ``placements`` because the bay closure removes
+        it from the parking problem.
+        """
         a = _ok_aircraft("foo", movement_mode="always_own_gear", turn_radius_m=5.0)
         b = _ok_aircraft("bar", movement_mode="always_own_gear", turn_radius_m=5.0)
-        with pytest.raises(ValueError, match="is not placed"):
+        with pytest.raises(ValueError, match="must NOT be in placements"):
             Layout(
                 fleet=self._fleet_of(a, b),
                 hangar=_ok_hangar(),
@@ -615,21 +682,30 @@ class TestLayout:
                         heading_deg=0.0,
                         on_carts=False,
                     ),
+                    Placement(
+                        plane_id="bar",
+                        x_m=5.0,
+                        y_m=5.0,
+                        heading_deg=0.0,
+                        on_carts=False,
+                    ),
                 ),
                 maintenance_plane="bar",
             )
 
     def test_maintenance_plane_happy_path(self) -> None:
+        """maintenance_plane in fleet, NOT in placements — the new valid shape."""
         a = _ok_aircraft("foo", movement_mode="always_own_gear", turn_radius_m=5.0)
+        b = _ok_aircraft("bar", movement_mode="always_own_gear", turn_radius_m=5.0)
         layout = Layout(
-            fleet=self._fleet_of(a),
+            fleet=self._fleet_of(a, b),
             hangar=_ok_hangar(),
             placements=(
                 Placement(plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False),
             ),
-            maintenance_plane="foo",
+            maintenance_plane="bar",
         )
-        assert layout.maintenance_plane == "foo"
+        assert layout.maintenance_plane == "bar"
 
     def test_fleet_key_must_match_aircraft_id(self) -> None:
         a = _ok_aircraft("real_id", movement_mode="always_own_gear", turn_radius_m=5.0)
