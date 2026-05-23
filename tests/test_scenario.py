@@ -300,7 +300,10 @@ def test_scenario_rejects_pin_on_maintenance_plane(fleet, hangar):
     # cessna_140 is cart_eligible so on_carts=True is valid per movement_mode.
     # The rejection must fire because it is ALSO the maintenance_plane, not
     # because of any cart-rule or movement_mode violation.
-    with pytest.raises(ValueError, match="cessna_140"):
+    with pytest.raises(
+        ValueError,
+        match=r"cessna_140.*cannot also carry|cannot also carry.*cessna_140",
+    ):
         Scenario(
             fleet=fleet,
             hangar=hangar,
@@ -335,13 +338,39 @@ def test_scenario_rejects_force_on_carts_on_maintenance_plane(fleet, hangar):
     # be an independent movement_mode violation — use cessna_150 (cart_eligible)
     # so force_on_carts=True is otherwise legal and the rejection is solely
     # due to the maintenance_plane conflict.
-    with pytest.raises(ValueError, match="cessna_150"):
+    with pytest.raises(
+        ValueError,
+        match=r"cessna_150.*cannot also carry|cannot also carry.*cessna_150",
+    ):
         Scenario(
             fleet=fleet,
             hangar=hangar,
             fleet_in=("cessna_150", "aviat_husky"),
             maintenance_plane="cessna_150",
             constraints={"cessna_150": PlaneConstraint(force_on_carts=True)},
+        )
+
+
+def test_scenario_rejects_force_on_carts_false_on_maintenance_plane(fleet, hangar):
+    """force_on_carts=False on the maintenance plane is rejected by the
+    maintenance-plane guard, not by the movement_mode guard.
+
+    ``cessna_140`` is cart_eligible, so ``force_on_carts=False`` (use own gear)
+    is a valid movement_mode choice in isolation.  The maintenance-plane guard
+    must fire first — confirming the ``is not None`` check covers both True and
+    False, and that the error message names the maintenance-plane conflict rather
+    than a movement_mode violation.
+    """
+    with pytest.raises(
+        ValueError,
+        match=r"cessna_140.*cannot also carry|cannot also carry.*cessna_140",
+    ):
+        Scenario(
+            fleet=fleet,
+            hangar=hangar,
+            fleet_in=("cessna_140", "cessna_150"),
+            maintenance_plane="cessna_140",
+            constraints={"cessna_140": PlaneConstraint(force_on_carts=False)},
         )
 
 
