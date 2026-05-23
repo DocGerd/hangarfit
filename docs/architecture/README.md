@@ -36,7 +36,7 @@ If you are new to the project, read in this order:
 | 5  | Building Block View      | `05-building-block-view.md`                                            | TBD ([#133](https://github.com/DocGerd/hangarfit/issues/133)) |
 | 6  | Runtime View             | `06-runtime-view.md`                                                   | TBD ([#133](https://github.com/DocGerd/hangarfit/issues/133)) |
 | 8  | Crosscutting Concepts    | `08-crosscutting-concepts.md`                                          | TBD ([#134](https://github.com/DocGerd/hangarfit/issues/134)) |
-| 9  | Architecture Decisions   | `09-architecture-decisions.md` → [`docs/adr/`](../adr/)                | TBD ([#135](https://github.com/DocGerd/hangarfit/issues/135)) |
+| 9  | Architecture Decisions   | [`09-architecture-decisions.md`](09-architecture-decisions.md) → [`docs/adr/`](../adr/) | ✅ shipped |
 
 ## Sections deliberately omitted
 
@@ -58,5 +58,6 @@ section load-bearing.
 
 ## ADRs
 
-Decisions belong in [`docs/adr/`](../adr/). The Arc42 §9 page is a thin
-redirect once it ships ([#135](https://github.com/DocGerd/hangarfit/issues/135)).
+Decisions belong in [`docs/adr/`](../adr/). The Arc42 §9 page
+([`09-architecture-decisions.md`](09-architecture-decisions.md)) is a thin
+redirect to that directory.
