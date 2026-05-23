@@ -610,6 +610,26 @@ maintenance_bay: {center_x_m: 13.5, width_m: 9, depth_m: 9}
         with pytest.raises(LoaderError, match="doesn't fit in hangar width"):
             load_hangar(path)
 
+    def test_maintenance_bay_does_not_fit_propagates_from_model(self, tmp_path: Path) -> None:
+        """Mirror of ``test_door_does_not_fit_propagates_from_model`` for
+        the bay rectangle. ``center_x_m + width_m/2 > hangar.width_m``
+        violates :attr:`Hangar.maintenance_bay` bounds (fires from
+        :meth:`Hangar.__post_init__`); the loader must wrap the
+        ``ValueError`` as ``LoaderError`` like every other Hangar invariant.
+        """
+        path = _write(
+            tmp_path / "h.yaml",
+            """
+length_m: 25.0
+width_m: 18.0
+door: {center_x_m: 9.0, width_m: 12.0}
+maintenance_bay: {center_x_m: 15.0, width_m: 9, depth_m: 9}
+""",
+        )
+        # center_x_m=15.0 + width_m/2=4.5 = 19.5 > width_m=18.0 → bay overflows the right wall.
+        with pytest.raises(LoaderError, match="MaintenanceBay.*doesn't fit in hangar width"):
+            load_hangar(path)
+
     def test_top_level_not_a_mapping(self, tmp_path: Path) -> None:
         path = _write(tmp_path / "h.yaml", "- a\n- b\n")
         with pytest.raises(LoaderError, match="top-level must be a mapping"):
@@ -891,6 +911,40 @@ maintenance:
             LoaderError, match="'maintenance' block present but lacks required 'plane'"
         ):
             load_layout(layout_path)
+
+    def test_maintenance_occupant_also_in_placements_rejected_with_actionable_error(
+        self, tmp_path: Path
+    ) -> None:
+        """A layout YAML that names a ``maintenance.plane`` and also lists
+        that plane under ``placements`` is rejected at load time with an
+        actionable error.
+
+        The bay occupant is treated as away — absent from ``placements`` by
+        Layout invariant (#103). The loader catches this combination
+        explicitly so YAML authors get a directly-actionable message
+        ("Remove it from placements") rather than the bubbled Layout
+        invariant text. Layout's invariant remains the programmatic
+        backstop for non-loader callers.
+        """
+        self._minimal_fleet_and_hangar(tmp_path)
+        layout_path = _write(
+            tmp_path / "layout.yaml",
+            """
+fleet: fleet.yaml
+hangar: hangar.yaml
+maintenance: {plane: foo}
+placements:
+  - {plane: foo, x_m: 5, y_m: 5, heading_deg: 0, on_carts: false}
+""",
+        )
+        with pytest.raises(LoaderError) as exc_info:
+            load_layout(layout_path)
+        msg = str(exc_info.value)
+        assert "'foo'" in msg, f"error must name the offending plane: {msg}"
+        assert "placements" in msg, f"error must point at placements: {msg}"
+        assert "Remove it from placements" in msg, (
+            f"error must include actionable suffix; got: {msg}"
+        )
 
     def test_override_and_yaml_ref_conflict_for_fleet(self, tmp_path: Path) -> None:
         """If the layout YAML has `fleet:` AND the caller passes a fleet
