@@ -28,6 +28,20 @@ fin) is a code change in `src/hangarfit/models.py`, not just a YAML
 edit — see [ADR-0001](../adr/0001-aircraft-parts-model.md) for the
 full rationale and rejected alternatives.
 
+**Fleet composition relevant to the parts model.** Of the nine
+aircraft in `data/fleet.yaml`, six are **strut-braced** (the Aviat
+Husky, Wild Thing, Zlin Savage, Cessna 140, Cessna 150, and FK9 Mk II)
+and three are **cantilever** (Scheibe SF-25E Falke, Fuji FA-200, and
+Flight Design CTSL). The **Fuji is the only low-wing**; every other
+aircraft is high-wing. These two facts — which planes have struts and
+which plane is low-wing — drive the operationally interesting cases
+of the collision rule: strut-braced planes block another plane's
+wing from nesting through their wing volume, and the only low-wing
+allows a high-wing's wingtip to legally project over its fuselage
+area in plan view (the height-disjoint pass-through case). Per-plane
+dimensions, gear types, and movement modes live in `data/fleet.yaml`
+as the source of truth.
+
 ### The maintenance bay rule
 
 A scenario designates one aircraft as the maintenance occupant; that
@@ -70,8 +84,10 @@ to draw a gap in the front wall, but the collision checker does **not**
 treat the door as a separate opening: every part of every placed plane
 must fit fully inside the hangar rectangle for the layout to be
 considered valid. There is no "door clearance" rule beyond the
-hangar-bounds check itself. Whether a plane can be *moved* out through
-the door is a future-planner concern, deliberately out of scope here.
+hangar-bounds check itself (`_hangar_bounds_conflicts` in
+`src/hangarfit/collisions.py`). Whether a plane can be *moved* out
+through the door is a future-planner concern, deliberately out of
+scope here.
 
 ## The coordinate convention
 
