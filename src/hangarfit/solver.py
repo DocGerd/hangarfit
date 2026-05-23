@@ -149,17 +149,16 @@ def solve(
         # ValueError is reachable here. `_enumerate_cart_buckets` already
         # filters bucket assignments that would violate the cart rule;
         # Scenario invariants enforce pin/on_carts/movement_mode consistency;
-        # the placements generator skips the maintenance plane so the
+        # `_initial_placements` skips the maintenance plane so the
         # bay-occupant invariant holds; remaining placements are over
-        # `scenario.fleet_in` (no duplicates, all in fleet). Any
-        # ValueError here would mean a real bug — let it propagate as
-        # one rather than burn the budget on silent restart absorption.
+        # ``scenario.fleet_in − {maintenance_plane}`` (no duplicates, all in
+        # fleet). Any ValueError here would mean a real bug — let it
+        # propagate as one rather than burn the budget on silent restart
+        # absorption.
         initial_layout = Layout(
             fleet=scenario.fleet,
             hangar=scenario.hangar,
-            placements=tuple(
-                placements[pid] for pid in scenario.fleet_in if pid != scenario.maintenance_plane
-            ),
+            placements=tuple(placements.values()),
             maintenance_plane=scenario.maintenance_plane,
         )
         current_score = _score(initial_layout)
@@ -183,11 +182,7 @@ def solve(
                 candidate_layout = Layout(
                     fleet=scenario.fleet,
                     hangar=scenario.hangar,
-                    placements=tuple(
-                        placements[pid]
-                        for pid in scenario.fleet_in
-                        if pid != scenario.maintenance_plane
-                    ),
+                    placements=tuple(placements.values()),
                     maintenance_plane=scenario.maintenance_plane,
                 )
                 if _is_diverse_enough(candidate_layout, accepted_layouts, diversity):
@@ -225,11 +220,7 @@ def solve(
                 best_partial_layout = Layout(
                     fleet=scenario.fleet,
                     hangar=scenario.hangar,
-                    placements=tuple(
-                        placements[pid]
-                        for pid in scenario.fleet_in
-                        if pid != scenario.maintenance_plane
-                    ),
+                    placements=tuple(placements.values()),
                     maintenance_plane=scenario.maintenance_plane,
                 )
 
@@ -457,12 +448,10 @@ def _initial_placement_for_plane(
     scenario: Scenario,
     rng: _random_module.Random,
     on_carts: bool,
-    bias_to_maintenance_bay: bool = False,
 ) -> Placement:
     """Sample an initial :class:`Placement` for one plane (spec §4.2).
 
     - If pinned → return the pin verbatim.
-    - If ``bias_to_maintenance_bay`` → ``(x, y)`` uniform in the back bay strip.
     - Otherwise → ``(x, y)`` uniform inside hangar (with bbox-derived margin),
       ``heading_deg`` uniform on ``[0, 360°)``.
 
@@ -483,13 +472,8 @@ def _initial_placement_for_plane(
     margin_x = max(max_length, max_width) / 2
     margin_y = margin_x
 
-    if bias_to_maintenance_bay:
-        bay_depth = hangar.maintenance_bay.depth_m
-        y_lo = max(margin_y, hangar.length_m - bay_depth)
-        y_hi = hangar.length_m - margin_y
-    else:
-        y_lo = margin_y
-        y_hi = hangar.length_m - margin_y
+    y_lo = margin_y
+    y_hi = hangar.length_m - margin_y
 
     x_lo = margin_x
     x_hi = hangar.width_m - margin_x
@@ -546,12 +530,17 @@ def _initial_placements(
     3. Plane's ``movement_mode`` for always_cart / always_own_gear.
     4. Membership in ``cart_bucket`` for cart_eligible planes.
 
-    The maintenance plane gets the bay-bias unless it's pinned (a pin
-    already fixes its position; biasing would be a no-op since the pin
-    is returned verbatim).
+    The maintenance plane (if any) is skipped entirely — under the
+    ``bay_intrusion`` semantics from milestone #9 the occupant is treated
+    as away (absent from the Layout's placements). The bay rectangle is
+    a hard obstacle via the collision rule, so no surrogate sample is
+    needed.
     """
     placements: dict[str, Placement] = {}
     for pid in scenario.fleet_in:
+        if pid == scenario.maintenance_plane:
+            continue
+
         plane = scenario.fleet[pid]
         constraint = scenario.constraints.get(pid)
 
@@ -567,14 +556,11 @@ def _initial_placements(
         else:  # cart_eligible
             on_carts = pid in cart_bucket
 
-        bias = scenario.maintenance_plane == pid and (constraint is None or constraint.pin is None)
-
         placements[pid] = _initial_placement_for_plane(
             plane_id=pid,
             scenario=scenario,
             rng=rng,
             on_carts=on_carts,
-            bias_to_maintenance_bay=bias,
         )
 
     return placements
@@ -738,13 +724,15 @@ def _descent_step(
     (e.g. cart rule) raise ``ValueError`` from
     ``Layout.__post_init__`` and are skipped.
     """
-    # Build current Layout from placements (uses Layout invariants — free check)
+    # Build current Layout from placements (uses Layout invariants — free check).
+    # ``placements`` is the dict produced by ``_initial_placements`` and threaded
+    # through descent — the maintenance plane is absent from its keys by
+    # construction, so a straight ``placements.values()`` upholds the
+    # bay-occupant Layout invariant without an inline filter.
     current_layout = Layout(
         fleet=scenario.fleet,
         hangar=scenario.hangar,
-        placements=tuple(
-            placements[pid] for pid in scenario.fleet_in if pid != scenario.maintenance_plane
-        ),
+        placements=tuple(placements.values()),
         maintenance_plane=scenario.maintenance_plane,
     )
 
@@ -815,9 +803,7 @@ def _descent_step(
             trial_layout = Layout(
                 fleet=scenario.fleet,
                 hangar=scenario.hangar,
-                placements=tuple(
-                    trial[pid] for pid in scenario.fleet_in if pid != scenario.maintenance_plane
-                ),
+                placements=tuple(trial.values()),
                 maintenance_plane=scenario.maintenance_plane,
             )
         except ValueError:
