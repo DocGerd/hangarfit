@@ -344,6 +344,41 @@ class TestSolveRender:
         assert rc == 0
         assert out.exists()
 
+    def test_write_yaml_roundtrip_preserves_maintenance_plane(self, tmp_path, capsys):
+        """Maintenance round-trip: the `payload["maintenance"] = ...`
+        branch at the bottom of ``_write_yamls`` had no coverage because
+        the smoke fixture is single-Husky with no maintenance block.
+
+        Pre-condition fence: this test uses an existing maintenance
+        fixture as-is — Milestone #9 (maintenance bay walling) is
+        deferred per spec §8 and this test does NOT assume walled-bay
+        semantics. The current soft-hint bay model is what's under test.
+        """
+        from hangarfit import loader
+
+        fixture = str(FIXTURES_DIR / "solve_maintenance_bay_required.yaml")
+        out = tmp_path / "roundtrip.yaml"
+        rc = main(
+            [
+                "solve",
+                fixture,
+                "--budget",
+                "5.0",
+                "--seed",
+                "42",
+                "--write-yaml",
+                str(out),
+            ]
+        )
+        assert rc == 0, f"solve failed (rc={rc}); stderr={capsys.readouterr().err}"
+        assert out.exists()
+        capsys.readouterr()  # drain solve stdout
+
+        # Round-trip: load the written layout and verify the
+        # maintenance plane key survived the dump → parse cycle.
+        layout = loader.load_layout(out)
+        assert layout.maintenance_plane == "wild_thing"
+
     def test_write_yaml_roundtrips_via_check(self, tmp_path, capsys):
         out = tmp_path / "out.yaml"
         rc = main(
