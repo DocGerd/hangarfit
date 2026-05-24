@@ -115,7 +115,7 @@ def test_solve_pinned_one_plane_honors_pin():
         budget_s=5.0,
         alternatives=1,
         seed=42,
-        search=SearchConfig(max_restarts=5),
+        search=SearchConfig(max_restarts=5, spread=False),
     )
 
     assert r.status == "found", (
@@ -162,7 +162,7 @@ def test_solve_repair_minimal_edit_honors_all_pins():
         budget_s=5.0,
         alternatives=1,
         seed=42,
-        search=SearchConfig(max_restarts=5),
+        search=SearchConfig(max_restarts=5, spread=False),
     )
 
     assert r.status == "found", (
@@ -212,7 +212,7 @@ def test_solve_force_carts_lock_respects_lock():
         budget_s=5.0,
         alternatives=1,
         seed=42,
-        search=SearchConfig(max_restarts=5),
+        search=SearchConfig(max_restarts=5, spread=False),
     )
 
     assert r.status == "found", (
@@ -277,7 +277,7 @@ def test_solve_maintenance_bay_required_excludes_occupant_from_placements():
         budget_s=5.0,
         alternatives=1,
         seed=42,
-        search=SearchConfig(max_restarts=5),
+        search=SearchConfig(max_restarts=5, spread=False),
     )
 
     assert r.status == "found", (
@@ -325,7 +325,7 @@ def test_solve_all_nine_large_hangar_finds_layout():
         budget_s=30.0,
         alternatives=1,
         seed=42,
-        search=SearchConfig(max_restarts=5),
+        search=SearchConfig(max_restarts=5, spread=False),
     )
 
     assert r.status == "found", (

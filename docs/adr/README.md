@@ -84,3 +84,6 @@ manual workflow above is canonical.
 | 0004 | [Diversity metric for K alternatives (edit count with per-plane thresholds)](0004-diversity-metric.md) | Accepted |
 | 0005 | [Maintenance bay rule — fuselage centroid in back strip](0005-maintenance-bay-rule.md)                 | Superseded by [ADR-0006](0006-bay-intrusion-maintenance-rule.md) |
 | 0006 | [Maintenance bay rule — `bay_intrusion` on any non-occupant vertex strictly inside the bay rectangle](0006-bay-intrusion-maintenance-rule.md) | Accepted |
+| 0008 | [Inter-plane spread soft preference (repulsion-energy surrogate for maximin)](0008-inter-plane-spread-soft-preference.md) | Accepted |
+
+*ADR-0007 is reserved for the Phase 3a tow-path planner (issue #195) and has not yet been written; the index intentionally skips it.*

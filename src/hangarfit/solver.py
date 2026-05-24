@@ -7,17 +7,21 @@ the current implementation supports:
 - pre-search infeasibility detection (§4.1)  [Chunk C]
 - random-restart hill climb with min-conflicts descent (§4.2-§4.4)  [Chunk D]
 - K-diverse alternatives + termination (§4.5-§4.7)  [Chunk E]
+- inter-plane spread post-pass (``_spread`` / ``_inter_plane_energy``; ADR-0008,
+  default on via ``SearchConfig.spread``)
 """
 
 from __future__ import annotations
 
 import logging
+import math
 import random as _random_module
 import secrets
 import sys
 import time
 
 from hangarfit.collisions import check as check_layout
+from hangarfit.geometry import WorldPart, aircraft_parts_world
 from hangarfit.models import (
     Aircraft,
     CheckResult,
@@ -179,6 +183,19 @@ def solve(
                 # alternatives=1 path never re-enters this branch). For K>1
                 # subsequent valid layouts are gated on pairwise diversity vs
                 # everything already accepted.
+                if search.spread:
+                    placements = _spread(
+                        placements,
+                        scenario,
+                        rng,
+                        search,
+                        start=start,
+                        budget_s=budget_s,
+                        pinned_planes=pinned_planes,
+                    )
+                # No try/except: _spread returns placements preserving every Layout invariant
+                # (on_carts unchanged, no dup/fleet drift), so any ValueError here is a
+                # structural bug and should propagate.
                 candidate_layout = Layout(
                     fleet=scenario.fleet,
                     hangar=scenario.hangar,
@@ -498,6 +515,157 @@ def _initial_placement_for_plane(
         heading_deg=heading,
         on_carts=on_carts,
     )
+
+
+def _inter_plane_energy(
+    placements: dict[str, Placement],
+    scenario: Scenario,
+    scale: float,
+) -> float:
+    """Smooth repulsion energy ``E = Σ_{i<j} exp(−gap_ij / scale)`` (spec §4).
+
+    ``gap_ij`` is the minimum plan-view edge-to-edge distance between plane
+    ``i``'s and plane ``j``'s world parts (shapely ``polygon.distance``).
+    Lower ``E`` ⇒ planes further apart; close pairs dominate the sum, so
+    minimizing it maximizes the *minimum* gap (a smooth maximin surrogate).
+    Returns ``0.0`` when fewer than two planes are present. Ignores z
+    (plan-view only) — see ADR-0008 for the nesting limitation.
+    """
+    ids = sorted(placements)
+    if len(ids) < 2:
+        return 0.0
+    world: dict[str, list[WorldPart]] = {
+        pid: aircraft_parts_world(scenario.fleet[pid], placements[pid]) for pid in ids
+    }
+    energy = 0.0
+    for i in range(len(ids)):
+        for j in range(i + 1, len(ids)):
+            gap = min(
+                pa.polygon.distance(pb.polygon) for pa in world[ids[i]] for pb in world[ids[j]]
+            )
+            energy += math.exp(-gap / scale)
+    return energy
+
+
+def _spread(
+    placements: dict[str, Placement],
+    scenario: Scenario,
+    rng: _random_module.Random,
+    search: SearchConfig,
+    *,
+    start: float,
+    budget_s: float,
+    pinned_planes: frozenset[str],
+) -> dict[str, Placement]:
+    """Post-pass spread: maximize inter-plane separation on a VALID layout.
+
+    Greedy seeded hill-climb that minimizes :func:`_inter_plane_energy`,
+    accepting only candidates that stay valid (score ``(0, 0.0)``). Input
+    must already be valid; output is therefore always valid — this can only
+    improve separation or no-op. Pinned planes are fixed obstacles: they
+    contribute to pair distances but are never moved. Shares the global
+    wall-clock budget; returns the best (lowest-energy) placements found.
+
+    See ADR-0008 and spec §5.
+    """
+    scale = (
+        search.spread_scale_m
+        if search.spread_scale_m is not None
+        else 0.2 * min(scenario.hangar.width_m, scenario.hangar.length_m)
+    )
+
+    movable = sorted(pid for pid in placements if pid not in pinned_planes)
+    if not movable or len(placements) < 2:
+        # Nothing to optimize: all planes pinned (no movable target) or
+        # <2 planes (energy is identically 0.0).
+        return placements
+
+    current_energy = _inter_plane_energy(placements, scenario, scale)
+    last_improved = 0
+
+    for iter_count in range(10000):  # large cap; real exit via stall/budget
+        if time.monotonic() - start >= budget_s:
+            break
+
+        target = rng.choice(movable)
+
+        # Same candidate mix as _descent_step: (N-2) small nudges + 1 large + 1 flip.
+        candidates: list[Placement] = []
+        n_small = max(0, search.candidates_per_iter - 2)
+        for _ in range(n_small):
+            candidates.append(
+                _perturb_plane(
+                    current=placements[target],
+                    scenario=scenario,
+                    rng=rng,
+                    search=search,
+                    large_jump=False,
+                )
+            )
+        candidates.append(
+            _perturb_plane(
+                current=placements[target],
+                scenario=scenario,
+                rng=rng,
+                search=search,
+                large_jump=True,
+            )
+        )
+        candidates.append(
+            Placement(
+                plane_id=target,
+                x_m=placements[target].x_m,
+                y_m=placements[target].y_m,
+                heading_deg=(placements[target].heading_deg + 180.0) % 360.0,
+                on_carts=placements[target].on_carts,
+            )
+        )
+
+        # Pick the lowest-(energy, displacement) VALID candidate. Adopt it
+        # only if its energy is strictly below current (so the stall counter
+        # advances on non-improving iterations — no plateau-wander livelock).
+        best_key: tuple[float, float] | None = None
+        best_placements = placements
+        for cand in candidates:
+            trial = dict(placements)
+            trial[target] = cand
+            try:
+                trial_layout = Layout(
+                    fleet=scenario.fleet,
+                    hangar=scenario.hangar,
+                    placements=tuple(trial.values()),
+                    maintenance_plane=scenario.maintenance_plane,
+                )
+            except ValueError:
+                # Mirrors _descent_step's defensive catch. The only routinely-reachable
+                # trigger is the cart rule, but _perturb_plane and the 180° flip both
+                # preserve on_carts, so in practice no perturbation changes the cart
+                # configuration and this branch is never exercised in the current fleet.
+                # The catch remains as a defensive guard consistent with _descent_step;
+                # a ValueError here would indicate a structural bug, which is acceptable
+                # to skip-and-continue because the spread output is independently validated
+                # by the `_score == (0, 0.0)` gate and the whole pass is bounded.
+                continue
+            if _score(trial_layout) != (0, 0.0):
+                continue  # must STAY valid
+            e = _inter_plane_energy(trial, scenario, scale)
+            disp = (
+                (cand.x_m - placements[target].x_m) ** 2 + (cand.y_m - placements[target].y_m) ** 2
+            ) ** 0.5
+            key = (e, disp)
+            if best_key is None or key < best_key:
+                best_key = key
+                best_placements = trial
+
+        if best_key is not None and best_key[0] < current_energy:
+            placements = best_placements
+            current_energy = best_key[0]
+            last_improved = iter_count
+
+        if iter_count - last_improved >= search.k_stall:
+            break
+
+    return placements
 
 
 def _score(layout: Layout) -> tuple[int, float]:

@@ -960,3 +960,17 @@ class TestSearchConfig:
     def test_max_restarts_negative_rejected(self) -> None:
         with pytest.raises(ValueError, match="max_restarts"):
             SearchConfig(max_restarts=-1)
+
+    def test_search_config_spread_defaults_on(self) -> None:
+        cfg = SearchConfig()
+        assert cfg.spread is True
+        assert cfg.spread_scale_m is None
+
+    def test_search_config_spread_scale_must_be_positive_when_set(self) -> None:
+        with pytest.raises(ValueError, match="spread_scale_m"):
+            SearchConfig(spread_scale_m=0.0)
+        with pytest.raises(ValueError, match="spread_scale_m"):
+            SearchConfig(spread_scale_m=-2.0)
+        # None (adaptive) and positive are accepted
+        assert SearchConfig(spread_scale_m=None).spread_scale_m is None
+        assert SearchConfig(spread_scale_m=3.5).spread_scale_m == 3.5

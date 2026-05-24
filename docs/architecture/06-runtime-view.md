@@ -85,6 +85,7 @@ sequenceDiagram
                 Coll-->>Solver: CheckResult
                 alt zero conflicts
                     Note over Solver: candidate is valid
+                    Note over Solver: Spread (if SearchConfig.spread, default on):<br/>_spread maximizes inter-plane separation, only valid moves
                 else conflicts > 0
                     Note over Solver: perturb plane with max<br/>penetration contribution
                 end
@@ -111,6 +112,8 @@ sequenceDiagram
     end
     CLI->>Op: stdout JSON / stderr status + exit code
 ```
+
+**Spread (if `SearchConfig.spread`, default on):** the valid placements are refined by `_spread` to maximize inter-plane separation (minimize `Σ exp(−gap/scale)`), accepting only moves that stay valid. The spread layout is what proceeds to the diversity filter. See [ADR-0008](../adr/0008-inter-plane-spread-soft-preference.md).
 
 **Determinism.** Given the same scenario, the same `--seed`, and the
 same project version (same `hangarfit.solve/v1` schema), the returned

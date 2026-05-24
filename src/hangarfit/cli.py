@@ -119,6 +119,13 @@ def build_parser() -> argparse.ArgumentParser:
         metavar="PATH",
         help="Override the hangar data file (refused if scenario YAML also sets 'hangar').",
     )
+    solve.add_argument(
+        "--no-spread",
+        action="store_false",
+        dest="spread",
+        default=True,
+        help="Disable the inter-plane spread post-pass (default: spread enabled).",
+    )
 
     return parser
 
@@ -278,6 +285,7 @@ def cmd_solve(args: argparse.Namespace) -> int:
     # eagerly imports matplotlib and pins the Agg backend, so both `check`
     # and `solve` callers pay that cost regardless.
     from hangarfit.loader import load_scenario
+    from hangarfit.models import SearchConfig
     from hangarfit.solver import solve
 
     # Validate output PATTERNs BEFORE solving — a user who typoed
@@ -305,6 +313,7 @@ def cmd_solve(args: argparse.Namespace) -> int:
         budget_s=args.budget,
         alternatives=args.alternatives,
         seed=args.seed,
+        search=SearchConfig(spread=args.spread),
     )
 
     if args.json:

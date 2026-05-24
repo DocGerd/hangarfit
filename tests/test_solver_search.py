@@ -282,10 +282,11 @@ def test_solve_finds_layout_for_fresh_six_planes():
     """6 planes in placeholder hangar — should be findable within budget."""
     from hangarfit.collisions import check
     from hangarfit.loader import load_scenario
+    from hangarfit.models import SearchConfig
     from hangarfit.solver import solve
 
     s = load_scenario("tests/fixtures/solve_fresh_six_planes.yaml")
-    r = solve(s, budget_s=5.0, alternatives=1, seed=42)
+    r = solve(s, budget_s=5.0, alternatives=1, seed=42, search=SearchConfig(spread=False))
 
     if r.status == "exhausted_budget":
         pytest.skip(
@@ -353,11 +354,12 @@ def test_solve_is_deterministic_through_descent_loop():
     budget or skip rather than weakening the assertion.
     """
     from hangarfit.loader import load_scenario
+    from hangarfit.models import SearchConfig
     from hangarfit.solver import solve
 
     s = load_scenario("tests/fixtures/solve_fresh_six_planes.yaml")
-    r1 = solve(s, budget_s=10.0, alternatives=1, seed=42)
-    r2 = solve(s, budget_s=10.0, alternatives=1, seed=42)
+    r1 = solve(s, budget_s=10.0, alternatives=1, seed=42, search=SearchConfig(spread=False))
+    r2 = solve(s, budget_s=10.0, alternatives=1, seed=42, search=SearchConfig(spread=False))
 
     # Status mismatch here almost certainly means the CI runner is too
     # slow to reach `found` within budget_s, not a determinism break —
@@ -712,11 +714,12 @@ def test_solve_emits_diversity_impossible_warning(caplog):
     import logging
 
     from hangarfit.loader import load_scenario
+    from hangarfit.models import SearchConfig
     from hangarfit.solver import solve
 
     s = load_scenario("tests/fixtures/solve_diversity_impossible_warn.yaml")
     with caplog.at_level(logging.WARNING):
-        r = solve(s, budget_s=5.0, alternatives=3, seed=42)
+        r = solve(s, budget_s=5.0, alternatives=3, seed=42, search=SearchConfig(spread=False))
 
     # At least one warning about diversity impossibility.
     assert any(
@@ -746,13 +749,19 @@ def test_solve_does_not_warn_when_diversity_is_achievable(caplog):
     import logging
 
     from hangarfit.loader import load_scenario
-    from hangarfit.models import DiversityConfig
+    from hangarfit.models import DiversityConfig, SearchConfig
     from hangarfit.solver import solve
 
     # Fresh-six-planes fixture: 6 planes, none pinned → free_planes=6 >= M=2.
     s = load_scenario("tests/fixtures/solve_fresh_alternatives_three.yaml")
     with caplog.at_level(logging.WARNING):
-        r = solve(s, alternatives=3, seed=42, diversity=DiversityConfig(min_planes_moved=1))
+        r = solve(
+            s,
+            alternatives=3,
+            seed=42,
+            diversity=DiversityConfig(min_planes_moved=1),
+            search=SearchConfig(spread=False),
+        )
 
     # The diversity-impossible warning text contains "achievable" — assert
     # no such warning fired. (Other unrelated warnings are fine.)
@@ -779,10 +788,11 @@ def test_solve_diversity_rejected_count_increments_on_reject():
     than one valid layout.
     """
     from hangarfit.loader import load_scenario
+    from hangarfit.models import SearchConfig
     from hangarfit.solver import solve
 
     s = load_scenario("tests/fixtures/solve_diversity_impossible_warn.yaml")
-    r = solve(s, budget_s=5.0, alternatives=3, seed=42)
+    r = solve(s, budget_s=5.0, alternatives=3, seed=42, search=SearchConfig(spread=False))
 
     # The fixture forces found_partial (see test_solve_emits_diversity_impossible_warning).
     assert r.status == "found_partial"
@@ -798,11 +808,11 @@ def test_solve_diversity_rejected_count_increments_on_reject():
 
 def test_solve_returns_k_diverse_alternatives():
     from hangarfit.loader import load_scenario
-    from hangarfit.models import DiversityConfig
+    from hangarfit.models import DiversityConfig, SearchConfig
     from hangarfit.solver import _is_diverse_enough, solve
 
     s = load_scenario("tests/fixtures/solve_fresh_alternatives_three.yaml")
-    r = solve(s, budget_s=10.0, alternatives=3, seed=42)
+    r = solve(s, budget_s=10.0, alternatives=3, seed=42, search=SearchConfig(spread=False))
 
     if r.status == "exhausted_budget":
         pytest.skip("Search didn't find K=3 within budget; acceptable on placeholder data.")
@@ -818,3 +828,283 @@ def test_solve_returns_k_diverse_alternatives():
             assert _is_diverse_enough(L_i, others, div), (
                 f"layouts[{i}] and layouts[{j}] are not diverse from each other"
             )
+
+
+def test_inter_plane_energy_zero_for_single_plane():
+    from hangarfit.loader import load_scenario
+    from hangarfit.models import Placement
+    from hangarfit.solver import _inter_plane_energy
+
+    s = load_scenario("tests/fixtures/solve_all_nine_large_hangar.yaml")
+    pid = next(p for p in s.fleet_in if p != s.maintenance_plane)
+    placements = {pid: Placement(plane_id=pid, x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)}
+
+    assert _inter_plane_energy(placements, s, scale=5.0) == 0.0
+
+
+def test_inter_plane_energy_higher_when_planes_closer():
+    from hangarfit.loader import load_scenario
+    from hangarfit.models import Placement
+    from hangarfit.solver import _inter_plane_energy
+
+    s = load_scenario("tests/fixtures/solve_all_nine_large_hangar.yaml")
+    a, b = [p for p in s.fleet_in if p != s.maintenance_plane][:2]
+    scale = 5.0
+
+    near = {
+        a: Placement(plane_id=a, x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False),
+        b: Placement(plane_id=b, x_m=7.0, y_m=7.0, heading_deg=0.0, on_carts=False),
+    }
+    far = {
+        a: Placement(plane_id=a, x_m=3.0, y_m=3.0, heading_deg=0.0, on_carts=False),
+        b: Placement(plane_id=b, x_m=22.0, y_m=27.0, heading_deg=0.0, on_carts=False),
+    }
+    # Closer planes -> smaller gap -> larger exp(-gap/scale) term.
+    assert _inter_plane_energy(near, s, scale) > _inter_plane_energy(far, s, scale)
+
+
+def test_inter_plane_energy_symmetric_in_plane_order():
+    from hangarfit.loader import load_scenario
+    from hangarfit.models import Placement
+    from hangarfit.solver import _inter_plane_energy
+
+    s = load_scenario("tests/fixtures/solve_all_nine_large_hangar.yaml")
+    a, b = [p for p in s.fleet_in if p != s.maintenance_plane][:2]
+    pa = Placement(plane_id=a, x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
+    pb = Placement(plane_id=b, x_m=9.0, y_m=11.0, heading_deg=30.0, on_carts=False)
+
+    assert _inter_plane_energy({a: pa, b: pb}, s, 5.0) == _inter_plane_energy(
+        {b: pb, a: pa}, s, 5.0
+    )
+
+
+def _valid_placements(seed: int):
+    """Solve (without spread) to obtain a valid placements dict to feed _spread.
+
+    Uses a small 3-plane feasible fixture so the solve is fast AND there are
+    real plane pairs (single-plane fixtures make spread tests vacuous).
+    """
+    from hangarfit.loader import load_scenario
+    from hangarfit.models import SearchConfig
+    from hangarfit.solver import solve
+
+    s = load_scenario("tests/fixtures/solve_fresh_alternatives_three.yaml")
+    r = solve(s, budget_s=5.0, seed=seed, search=SearchConfig(spread=False))
+    assert r.layouts, "fixture must be solvable without spread"
+    placements = {p.plane_id: p for p in r.layouts[0].placements}
+    return s, placements
+
+
+def test_spread_preserves_validity_and_never_worsens_energy():
+    import random
+    import time
+
+    from hangarfit.models import Layout, SearchConfig
+    from hangarfit.solver import _inter_plane_energy, _score, _spread
+
+    s, placements = _valid_placements(seed=11)
+    scale = 0.2 * min(s.hangar.width_m, s.hangar.length_m)
+    e_before = _inter_plane_energy(placements, s, scale)
+
+    out = _spread(
+        placements,
+        s,
+        random.Random(11),
+        SearchConfig(),
+        start=time.monotonic(),
+        budget_s=5.0,
+        pinned_planes=frozenset(),
+    )
+    e_after = _inter_plane_energy(out, s, scale)
+
+    # Energy never increases (spread only improves or no-ops).
+    assert e_after <= e_before
+    # Output is still a valid layout.
+    layout = Layout(
+        fleet=s.fleet,
+        hangar=s.hangar,
+        placements=tuple(out.values()),
+        maintenance_plane=s.maintenance_plane,
+    )
+    assert _score(layout) == (0, 0.0)
+
+
+def test_spread_is_deterministic_for_same_seed():
+    import random
+    import time
+
+    from hangarfit.models import SearchConfig
+    from hangarfit.solver import _spread
+
+    s, placements = _valid_placements(seed=11)
+
+    out_a = _spread(
+        placements,
+        s,
+        random.Random(99),
+        SearchConfig(),
+        start=time.monotonic(),
+        budget_s=60.0,
+        pinned_planes=frozenset(),
+    )
+    out_b = _spread(
+        placements,
+        s,
+        random.Random(99),
+        SearchConfig(),
+        start=time.monotonic(),
+        budget_s=60.0,
+        pinned_planes=frozenset(),
+    )
+
+    assert {k: (v.x_m, v.y_m, v.heading_deg) for k, v in out_a.items()} == {
+        k: (v.x_m, v.y_m, v.heading_deg) for k, v in out_b.items()
+    }
+
+
+def test_spread_does_not_move_pinned_planes():
+    import random
+    import time
+
+    from hangarfit.models import SearchConfig
+    from hangarfit.solver import _spread
+
+    s, placements = _valid_placements(seed=11)
+    frozen_id = sorted(placements)[0]
+    frozen_before = placements[frozen_id]
+
+    out = _spread(
+        placements,
+        s,
+        random.Random(11),
+        SearchConfig(),
+        start=time.monotonic(),
+        budget_s=5.0,
+        pinned_planes=frozenset({frozen_id}),
+    )
+    assert out[frozen_id] == frozen_before
+
+
+def test_spread_scale_m_override_changes_spreading():
+    """A larger spread_scale_m gradient reaches across the hangar and spreads
+    more than a tiny one; verifies spread_scale_m is actually honored, not
+    ignored in favor of the adaptive default."""
+    import random
+    import time
+
+    from hangarfit.models import SearchConfig
+    from hangarfit.solver import _inter_plane_energy, _spread
+
+    s, placements = _valid_placements(seed=11)
+    kw = dict(budget_s=60.0, pinned_planes=frozenset())
+
+    out_tiny = _spread(
+        placements,
+        s,
+        random.Random(7),
+        SearchConfig(spread_scale_m=0.01),
+        start=time.monotonic(),
+        **kw,
+    )
+    out_large = _spread(
+        placements,
+        s,
+        random.Random(7),
+        SearchConfig(spread_scale_m=50.0),
+        start=time.monotonic(),
+        **kw,
+    )
+    # Measure both at a single neutral scale: the large-scale run should reach
+    # a more-separated (lower-energy) configuration than the tiny-scale run.
+    e_tiny = _inter_plane_energy(out_tiny, s, scale=1.0)
+    e_large = _inter_plane_energy(out_large, s, scale=1.0)
+    assert e_large <= e_tiny, f"spread_scale_m had no effect: tiny={e_tiny} large={e_large}"
+
+
+def test_spread_noop_when_all_planes_pinned():
+    """When every plane is pinned (no movable target) but >=2 planes exist,
+    _spread returns the input unchanged via the `not movable` guard."""
+    import random
+    import time
+
+    from hangarfit.models import SearchConfig
+    from hangarfit.solver import _spread
+
+    s, placements = _valid_placements(seed=11)
+    assert len(placements) >= 2, "fixture sanity"
+    all_pinned = frozenset(placements.keys())
+
+    out = _spread(
+        placements,
+        s,
+        random.Random(3),
+        SearchConfig(),
+        start=time.monotonic(),
+        budget_s=5.0,
+        pinned_planes=all_pinned,
+    )
+    assert out == placements
+
+
+def test_spread_noop_when_single_movable_plane():
+    import random
+    import time
+
+    from hangarfit.loader import load_scenario
+    from hangarfit.models import Placement, SearchConfig
+    from hangarfit.solver import _spread
+
+    s = load_scenario("tests/fixtures/solve_all_nine_large_hangar.yaml")
+    pid = next(p for p in s.fleet_in if p != s.maintenance_plane)
+    placements = {pid: Placement(plane_id=pid, x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)}
+
+    out = _spread(
+        placements,
+        s,
+        random.Random(1),
+        SearchConfig(),
+        start=time.monotonic(),
+        budget_s=1.0,
+        pinned_planes=frozenset(),
+    )
+    assert out == placements
+
+
+def test_spread_runs_with_single_movable_among_pinned():
+    import random
+    import time
+
+    from hangarfit.models import Layout, SearchConfig
+    from hangarfit.solver import _inter_plane_energy, _score, _spread
+
+    s, placements = _valid_placements(seed=11)
+    ids = sorted(placements)
+    assert len(ids) >= 3, "fixture must have >=3 planes for this test"
+    # Pin all but the last plane -> exactly one movable, but >=2 planes total.
+    pinned = frozenset(ids[:-1])
+    scale = 0.2 * min(s.hangar.width_m, s.hangar.length_m)
+    e_before = _inter_plane_energy(placements, s, scale)
+
+    out = _spread(
+        placements,
+        s,
+        random.Random(11),
+        SearchConfig(),
+        start=time.monotonic(),
+        budget_s=60.0,
+        pinned_planes=pinned,
+    )
+
+    # Pinned planes never moved.
+    for pid in pinned:
+        assert out[pid] == placements[pid]
+    # Output still valid.
+    layout = Layout(
+        fleet=s.fleet,
+        hangar=s.hangar,
+        placements=tuple(out.values()),
+        maintenance_plane=s.maintenance_plane,
+    )
+    assert _score(layout) == (0, 0.0)
+    # Energy not worse (the one movable plane only improves or no-ops).
+    assert _inter_plane_energy(out, s, scale) <= e_before

@@ -261,6 +261,10 @@ schedules → different visit orders → different first-found layouts).
 If a future performance need demands parallelism, it gets its own
 ADR.
 
+## Soft preferences
+
+The hard score tuple `(conflict_count, total_penetration_m2)` measures only illegal overlap. The first **soft** preference — inter-plane spread (maximize separation once valid) — ships as an isolated post-pass (`solver._spread`), deliberately *outside* the hard tuple so the conflict-resolution determinism contract ([ADR-0003](../adr/0003-rr-mc-solver-algorithm.md)) is unaffected. See [ADR-0008](../adr/0008-inter-plane-spread-soft-preference.md) for the repulsion-energy metric and why it is a post-pass rather than a third score key.
+
 ## Testing posture
 
 ### Fixture-driven over Python literals

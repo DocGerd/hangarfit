@@ -62,21 +62,28 @@ See [ADR-0003](../adr/0003-rr-mc-solver-algorithm.md) for the algorithm
 and [ADR-0004](../adr/0004-diversity-metric.md) for the diversity filter
 that sits on top.
 
-### Hard constraints only in v1; no soft preferences
+### Hard constraints first; soft preferences as isolated post-passes
 
 The solver answers a satisficing question — "find *a* valid layout
 under these hard constraints" — rather than an optimisation question
-("find the *best* layout by these soft preferences"). Constraints in
-v1 are exclusively HARD: maintenance plane, per-plane `pin` (full
+("find the *best* layout by these soft preferences"). Constraints are
+exclusively HARD: maintenance plane, per-plane `pin` (full
 Placement), per-plane `force_on_carts`. There is no "prefer this
 region," no "minimise total movement vs baseline," no weighted
-multi-objective.
+multi-objective in the conflict-resolution loop itself.
 
-This is a deliberate scope choice from §3 Context: the operational
-need is "find a layout that works on day X," not "find the best
-possible layout across all hypothetical days." If a soft-constraint
-optimisation use case materialises, it gets its own ADR before any
-code is added.
+Soft preferences ship as **isolated post-passes** that run only after
+a layout is already valid. This keeps the hard-constraint
+determinism contract ([ADR-0003](../adr/0003-rr-mc-solver-algorithm.md))
+unaffected. The first shipped soft preference is the **inter-plane
+spread post-pass** (`solver._spread`, #145): once a layout reaches
+`(0, 0.0)`, a repulsion-energy minimisation (`Σ exp(−gap/scale)`)
+maximises inter-plane separation while preserving validity. See
+[ADR-0008](../adr/0008-inter-plane-spread-soft-preference.md).
+
+If further soft-constraint optimisation use cases materialise, each
+gets its own ADR and, if possible, its own isolated post-pass rather
+than a new key in the hard score tuple.
 
 ### CLI + JSON + optional PNG; nothing else
 
