@@ -157,13 +157,20 @@ jobs:
           fi
           # Defense-in-depth (issue #199): the non-empty check above
           # catches a *fully* empty extract, but not a pip-compile run that
-          # exits 0 while emitting a *partial* lockfile. Assert the
-          # load-bearing runtime deps + core dev tools survived the
-          # regeneration, so a silently-dropped pin can't diff equal
-          # against an identically-degraded committed file.
-          for pkg in pyyaml shapely matplotlib pytest ruff mypy; do
+          # exits 0 while emitting a *partial* lockfile — if the committed
+          # and regenerated files are degraded identically, the diff below
+          # passes and a dropped pin goes unnoticed. Assert that every
+          # *directly-declared* dependency (pyproject [project.dependencies]
+          # + [project.optional-dependencies] dev) survived regeneration.
+          # The declaration boundary is the principled line: transitives are
+          # pip-compile's concern, and a dropped transitive surfaces via the
+          # diff (asymmetric drop) or as an ImportError at test collection.
+          # A count-floor would add nothing — a regen-vs-committed shortfall
+          # is already an asymmetric diff failure; only this absolute check
+          # covers the symmetric-degradation case.
+          for pkg in pyyaml shapely matplotlib pytest pytest-cov ruff mypy types-pyyaml types-shapely; do
             grep -qE "^${pkg}==" /tmp/regenerated.set || {
-              echo "::error::dev lockfile regeneration is missing a required pin: ${pkg} — pip-compile may have produced partial output."
+              echo "::error::dev lockfile regeneration dropped a declared dependency: ${pkg} — pip-compile may have produced partial output."
               exit 1
             }
           done
@@ -236,12 +243,16 @@ jobs:
             exit 1
           fi
           # Defense-in-depth (issue #199): same partial-output guard as the
-          # dev-lockfile job. Assert the build toolchain's required pins
-          # survived the regeneration so a silently-dropped pin can't diff
-          # equal against an identically-degraded committed file.
+          # dev-lockfile job, inlined here so it survives independent edits.
+          # Asserts the directly-declared build deps (requirements-build.in:
+          # build, setuptools, wheel) plus `packaging` — the cross-lockfile
+          # skew anchor constrained via `-c requirements-dev.txt`.
+          # Transitives (e.g. pyproject-hooks) are out of scope for the same
+          # reason as the dev job: their loss surfaces via the diff or a
+          # build failure.
           for pkg in build setuptools wheel packaging; do
             grep -qE "^${pkg}==" /tmp/regenerated-build.set || {
-              echo "::error::build lockfile regeneration is missing a required pin: ${pkg} — pip-compile may have produced partial output."
+              echo "::error::build lockfile regeneration dropped a declared dependency: ${pkg} — pip-compile may have produced partial output."
               exit 1
             }
           done
