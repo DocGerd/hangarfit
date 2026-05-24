@@ -113,16 +113,26 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install the `build` frontend
-        # Known supply-chain gap (tracked in #168): the rest of the
-        # repo's dev deps are hash-pinned via requirements-dev.txt, but
-        # `build` is not yet. Pinning it requires its own lockfile and
-        # is deliberately scoped out of #138 to keep the blast radius
-        # small.
-        run: pip install --upgrade build
+      - name: Install the build toolchain (hash-pinned)
+        # The signing workflow must build from a hash-verified toolchain.
+        # An unpinned `build` frontend — or the isolated, unpinned backend
+        # fetch that `python -m build` performs by default — would let a
+        # `build`/`setuptools`/`wheel`/`packaging` package compromised on
+        # PyPI taint the artifacts that this workflow then signs with its
+        # legitimate Fulcio identity. The Sigstore signatures would still
+        # verify; nothing would look broken. requirements-build.txt pins
+        # build + setuptools + wheel (+ transitive pyproject-hooks,
+        # packaging) with hashes. Addresses #168 and the release-side
+        # backend gap (sibling of #162) — the PR body carries the
+        # auto-closing `Closes`.
+        run: pip install --require-hashes -r requirements-build.txt
 
       - name: Build sdist and wheel
-        run: python -m build
+        # --no-isolation builds with the hash-verified host toolchain
+        # installed above instead of letting `build` create an isolated
+        # env that re-fetches the PEP-517 backend (setuptools/wheel)
+        # unpinned.
+        run: python -m build --no-isolation
 
       - name: Install cosign
         uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
