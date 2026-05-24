@@ -866,3 +866,119 @@ def test_inter_plane_energy_symmetric_in_plane_order():
     assert _inter_plane_energy({a: pa, b: pb}, s, 5.0) == _inter_plane_energy(
         {b: pb, a: pa}, s, 5.0
     )
+
+
+def _valid_placements(seed: int):
+    """Solve (without spread) to obtain a valid placements dict to feed _spread.
+
+    Uses a small 3-plane feasible fixture so the solve is fast AND there are
+    real plane pairs (single-plane fixtures make spread tests vacuous).
+    """
+    from hangarfit.loader import load_scenario
+    from hangarfit.models import SearchConfig
+    from hangarfit.solver import solve
+
+    s = load_scenario("tests/fixtures/solve_fresh_alternatives_three.yaml")
+    r = solve(s, budget_s=5.0, seed=seed, search=SearchConfig(spread=False))
+    assert r.layouts, "fixture must be solvable without spread"
+    placements = {p.plane_id: p for p in r.layouts[0].placements}
+    return s, placements
+
+
+def test_spread_preserves_validity_and_never_worsens_energy():
+    import random
+    import time
+
+    from hangarfit.models import Layout, SearchConfig
+    from hangarfit.solver import _inter_plane_energy, _score, _spread
+
+    s, placements = _valid_placements(seed=11)
+    scale = 0.2 * min(s.hangar.width_m, s.hangar.length_m)
+    e_before = _inter_plane_energy(placements, s, scale)
+
+    out = _spread(
+        placements,
+        s,
+        random.Random(11),
+        SearchConfig(),
+        start=time.monotonic(),
+        budget_s=5.0,
+        pinned_planes=frozenset(),
+    )
+    e_after = _inter_plane_energy(out, s, scale)
+
+    # Energy never increases (spread only improves or no-ops).
+    assert e_after <= e_before
+    # Output is still a valid layout.
+    layout = Layout(
+        fleet=s.fleet,
+        hangar=s.hangar,
+        placements=tuple(out.values()),
+        maintenance_plane=s.maintenance_plane,
+    )
+    assert _score(layout) == (0, 0.0)
+
+
+def test_spread_is_deterministic_for_same_seed():
+    import random
+    import time
+
+    from hangarfit.models import SearchConfig
+    from hangarfit.solver import _spread
+
+    s, placements = _valid_placements(seed=11)
+    kw = dict(start=time.monotonic(), budget_s=5.0, pinned_planes=frozenset())
+
+    out_a = _spread(placements, s, random.Random(99), SearchConfig(), **kw)
+    out_b = _spread(placements, s, random.Random(99), SearchConfig(), **kw)
+
+    assert {k: (v.x_m, v.y_m, v.heading_deg) for k, v in out_a.items()} == {
+        k: (v.x_m, v.y_m, v.heading_deg) for k, v in out_b.items()
+    }
+
+
+def test_spread_does_not_move_pinned_planes():
+    import random
+    import time
+
+    from hangarfit.models import SearchConfig
+    from hangarfit.solver import _spread
+
+    s, placements = _valid_placements(seed=11)
+    frozen_id = sorted(placements)[0]
+    frozen_before = placements[frozen_id]
+
+    out = _spread(
+        placements,
+        s,
+        random.Random(11),
+        SearchConfig(),
+        start=time.monotonic(),
+        budget_s=5.0,
+        pinned_planes=frozenset({frozen_id}),
+    )
+    assert out[frozen_id] == frozen_before
+
+
+def test_spread_noop_when_single_movable_plane():
+    import random
+    import time
+
+    from hangarfit.loader import load_scenario
+    from hangarfit.models import Placement, SearchConfig
+    from hangarfit.solver import _spread
+
+    s = load_scenario("tests/fixtures/solve_all_nine_large_hangar.yaml")
+    pid = next(p for p in s.fleet_in if p != s.maintenance_plane)
+    placements = {pid: Placement(plane_id=pid, x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)}
+
+    out = _spread(
+        placements,
+        s,
+        random.Random(1),
+        SearchConfig(),
+        start=time.monotonic(),
+        budget_s=1.0,
+        pinned_planes=frozenset(),
+    )
+    assert out == placements

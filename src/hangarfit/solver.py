@@ -532,6 +532,117 @@ def _inter_plane_energy(
     return energy
 
 
+def _spread(
+    placements: dict[str, Placement],
+    scenario: Scenario,
+    rng: _random_module.Random,
+    search: SearchConfig,
+    *,
+    start: float,
+    budget_s: float,
+    pinned_planes: frozenset[str],
+) -> dict[str, Placement]:
+    """Post-pass spread: maximize inter-plane separation on a VALID layout.
+
+    Greedy seeded hill-climb that minimizes :func:`_inter_plane_energy`,
+    accepting only candidates that stay valid (score ``(0, 0.0)``). Input
+    must already be valid; output is therefore always valid — this can only
+    improve separation or no-op. Pinned planes are fixed obstacles: they
+    contribute to pair distances but are never moved. Shares the global
+    wall-clock budget; returns the best (lowest-energy) placements found.
+
+    See ADR-0008 and spec §5.
+    """
+    scale = (
+        search.spread_scale_m
+        if search.spread_scale_m is not None
+        else 0.2 * min(scenario.hangar.width_m, scenario.hangar.length_m)
+    )
+
+    movable = sorted(pid for pid in placements if pid not in pinned_planes)
+    if not movable or len(placements) < 2:
+        return placements
+
+    current_energy = _inter_plane_energy(placements, scenario, scale)
+    last_improved = 0
+
+    for iter_count in range(10000):  # large cap; real exit via stall/budget
+        if time.monotonic() - start >= budget_s:
+            break
+
+        target = rng.choice(movable)
+
+        # Same candidate mix as _descent_step: (N-2) small nudges + 1 large + 1 flip.
+        candidates: list[Placement] = []
+        n_small = max(0, search.candidates_per_iter - 2)
+        for _ in range(n_small):
+            candidates.append(
+                _perturb_plane(
+                    current=placements[target],
+                    scenario=scenario,
+                    rng=rng,
+                    search=search,
+                    large_jump=False,
+                )
+            )
+        candidates.append(
+            _perturb_plane(
+                current=placements[target],
+                scenario=scenario,
+                rng=rng,
+                search=search,
+                large_jump=True,
+            )
+        )
+        candidates.append(
+            Placement(
+                plane_id=target,
+                x_m=placements[target].x_m,
+                y_m=placements[target].y_m,
+                heading_deg=(placements[target].heading_deg + 180.0) % 360.0,
+                on_carts=placements[target].on_carts,
+            )
+        )
+
+        # Pick the lowest-(energy, displacement) VALID candidate. Adopt it
+        # only if its energy is strictly below current (so the stall counter
+        # advances on non-improving iterations — no plateau-wander livelock).
+        best_key: tuple[float, float] | None = None
+        best_placements = placements
+        for cand in candidates:
+            trial = dict(placements)
+            trial[target] = cand
+            try:
+                trial_layout = Layout(
+                    fleet=scenario.fleet,
+                    hangar=scenario.hangar,
+                    placements=tuple(trial.values()),
+                    maintenance_plane=scenario.maintenance_plane,
+                )
+            except ValueError:
+                continue  # cart-rule etc. — skip
+            if _score(trial_layout) != (0, 0.0):
+                continue  # must STAY valid
+            e = _inter_plane_energy(trial, scenario, scale)
+            disp = (
+                (cand.x_m - placements[target].x_m) ** 2 + (cand.y_m - placements[target].y_m) ** 2
+            ) ** 0.5
+            key = (e, disp)
+            if best_key is None or key < best_key:
+                best_key = key
+                best_placements = trial
+
+        if best_key is not None and best_key[0] < current_energy:
+            placements = best_placements
+            current_energy = best_key[0]
+            last_improved = iter_count
+
+        if iter_count - last_improved >= search.k_stall:
+            break
+
+    return placements
+
+
 def _score(layout: Layout) -> tuple[int, float]:
     """Hierarchical scoring (spec §4.4): ``(conflict_count, total_penetration_m2)``.
 
