@@ -1,67 +1,145 @@
-# ADR-0008: Inter-plane spread soft preference (repulsion-energy surrogate for maximin)
+# ADR-0008: Inter-plane spread — repulsion-energy surrogate for maximin separation
 
-**Status:** Accepted
-**Date:** 2026-05-24
-**Issue:** #145
-**Spec:** docs/superpowers/specs/2026-05-24-inter-plane-spread-design.md
+- **Status:** Accepted
 
-## Context
+- **Date:** 2026-05-24
+- **Deciders:** Patrick Kuhn (DocGerd)
+
+## Context & Problem Statement
 
 The Phase 2a scoring tuple `(conflict_count, total_penetration_m2)` measures
 only *illegal* overlap. Once a layout reaches `(0, 0.0)` the descent stops, so
-inter-plane spacing is merely legal, not comfortable. Surfaced 2026-05-23 in
-the v0.6.1 visual walkthrough. The agreed objective (reversing issue #145's
-original "minimize/pack" framing) is to **maximize** inter-plane separation so
-a human can tow a plane in/out with comfortable wingtip clearance.
+inter-plane spacing is merely legal, not comfortable. Surfaced during the
+v0.6.1 visual walkthrough (issue #145), the agreed objective — reversing the
+original "minimize/pack" framing — is to **maximize** inter-plane separation so
+a human can tow a plane in/out with comfortable wingtip clearance. The question
+this ADR answers is: what post-pass strategy maximizes separation without
+touching the hard-feasibility machinery?
 
-## Decision
+## Decision Drivers
 
-Add an isolated post-pass `_spread()` in `solver.py`, called when a trajectory
-reaches `(0, 0.0)`, before the diversity check. It runs a seeded greedy
-hill-climb that minimizes a smooth repulsion energy
-`E = Σ_{i<j} exp(−gap_ij / scale)` over plane pairs, where `gap_ij` is the
-minimum plan-view edge-to-edge footprint distance (shapely `polygon.distance`).
-Only moves that keep the layout valid are accepted. On by default
-(`SearchConfig.spread=True`), with a `--no-spread` CLI toggle.
+- **Maximize, not minimize.** User reversal 2026-05-24: easier tow-in/out,
+  less wingtip-strike risk. The "minimum overlap" half is already the hard
+  constraint.
+- **Smooth gradient over flat maximin.** A hill-climber needs a gradient on
+  every move; pure maximin is flat except at the closest pair.
+- **Even spacing over aggregate sum.** Max-sum dispersion (Σ pairwise
+  distance) is smooth but Kuby (1987) showed it yields uneven spreads —
+  clusters at extremes to maximize the aggregate, leaving some pairs close.
+- **No singularity.** The energy kernel must remain bounded even for
+  valid-but-touching planes.
+- **Preserve the ADR-0003 determinism contract.** With `spread=False` the
+  RNG stream must be byte-identical to the pre-spread solver.
+- **Isolate the soft logic from the hard-feasibility code.** A fused
+  approach would require two descent regimes in one function.
 
-## Rationale
+## Considered Options
 
-- **Maximize, not minimize.** User reversal 2026-05-24: easier tow-in/out, less
-  wingtip-strike risk. The "minimum overlap" half is already the hard constraint.
-- **Repulsion energy over pure maximin.** Pure maximin (the p-dispersion
-  objective) is exact but flat for a hill-climber — only the closest pair has a
-  gradient. The repulsion energy is smooth (every plane move changes it) while
-  weighting close pairs heavily, so it protects the minimum gap and converges
-  toward maximin-like even spreading (the Riesz-energy → maximin-separation
-  principle).
-- **Repulsion energy over max-sum.** Max-sum (Σ pairwise distance) is smooth but
-  Kuby (1987) showed it yields *uneven* spreads — it clusters subsets at extremes
-  to maximize the aggregate, leaving some pairs close. The wrong objective for
-  "maximum gap".
-- **Bounded `exp` kernel over inverse-power `1/gap^s`.** No singularity near
-  valid-but-touching planes; one near-touching pair can't dominate the sum.
-- **Post-pass structure over fused descent.** The descent is conflict-driven —
-  at zero conflicts there is no plane to perturb, so a "fused" approach would be
-  two regimes bolted into one function. A separate `_spread()` keeps the
-  hard-feasibility code and the `(int, float)` score tuple untouched, isolates
-  the soft logic, and makes the toggle a trivial skip — preserving the ADR-0003
-  determinism contract (with `spread=False` the RNG stream is byte-identical to
-  the pre-spread solver).
+1. **Repulsion-energy post-pass `_spread()` — `E = Σ_{i<j} exp(−gap_ij / scale)`**
+   *(Chosen.)*
+2. **Pure maximin / leximin** — exact p-dispersion objective; flat for a
+   hill-climber.
+3. **Max-sum dispersion (Σ pairwise distance)** — smooth but yields uneven
+   spreads (Kuby 1987).
+4. **Inverse-power Riesz kernel `1/gap^s`** — has a singularity near
+   valid-but-touching planes; one near-touching pair can dominate the sum.
+5. **Fused 3-tuple descent** — bolt spread into the existing descent loop as
+   a third score component; collapses two independent regimes into one
+   function.
+
+## Decision Outcome
+
+**Chosen option: repulsion-energy post-pass (`_spread`)**, because the
+bounded `exp` kernel is smooth everywhere (every plane move changes `E`),
+weights close pairs heavily so it protects the minimum gap, and converges
+toward maximin-like even spreading (the Riesz-energy → maximin-separation
+principle) — while keeping the hard-feasibility code and `(int, float)` score
+tuple completely untouched.
+
+Concretely: `_spread()` is called in `solver.py` when a trajectory reaches
+`(0, 0.0)`, before the diversity check. It runs a seeded greedy hill-climb
+that minimizes `E = Σ_{i<j} exp(−gap_ij / scale)` over plane pairs, where
+`gap_ij` is the minimum plan-view edge-to-edge footprint distance (shapely
+`polygon.distance`). Only moves that keep the layout valid (`_score == (0,
+0.0)`) are accepted. On by default (`SearchConfig.spread=True`), with a
+`--no-spread` CLI toggle.
+
+### Why not pure maximin / leximin?
+
+Pure maximin (the p-dispersion objective) is exact but flat for a
+hill-climber — only the closest pair has a gradient. A hill-climb on a flat
+objective wanders without converging; the repulsion energy is a smooth
+surrogate that recovers the same qualitative result.
+
+### Why not max-sum dispersion?
+
+Max-sum (Σ pairwise distance) is smooth but Kuby (1987) showed it yields
+*uneven* spreads — it clusters subsets at extremes to maximize the aggregate,
+leaving some pairs close. The wrong objective for "maximum gap."
+
+### Why not an inverse-power Riesz kernel?
+
+No singularity near valid-but-touching planes is a hard requirement. The
+inverse-power kernel `1/gap^s` diverges as `gap → 0`; one near-touching pair
+can dominate the sum and cause numerical instability. The bounded `exp` kernel
+has none of that complexity.
+
+### Why not fused 3-tuple descent?
+
+The descent is conflict-driven — at zero conflicts there is no "most-violating
+plane" to perturb and the `(int, float)` score tuple has no term for
+inter-plane preference. A fused approach would be two regimes bolted into one
+function with a mode-switch. A separate `_spread()` keeps the hard-feasibility
+code unchanged, isolates the soft logic, and makes the toggle a trivial skip —
+preserving the ADR-0003 determinism contract (with `spread=False` the RNG
+stream is byte-identical to the pre-spread solver).
 
 ## Consequences
 
-- Each valid trajectory runs past first-valid to a spread stall ⇒ longer
-  wall-time; fixture-matrix mechanics tests are pinned to `spread=False`.
+### Positive
+
+- Each valid trajectory is refined toward better human usability (wider
+  wingtip clearances) at no correctness cost — `_spread` can only improve
+  or no-op, never invalidate.
+- The hard-feasibility machinery (`_descent_step`, `_score`, `check_layout`)
+  is completely untouched; the spread logic is isolated and independently
+  testable.
+- Toggle is trivial: `--no-spread` / `SearchConfig.spread=False` skips
+  `_spread` entirely and the RNG stream is byte-identical to pre-spread.
+
+### Negative
+
+- Each valid trajectory runs past first-valid to a spread stall, increasing
+  wall-time. Fixture-matrix mechanics tests are pinned to `spread=False` to
+  avoid this cost.
 - **Known limitation (plan-view gap):** the energy ignores z, so the single
-  low-wing plane that could legally nest plan-view-overlapping under a high wing
-  is mildly de-nested (spread does not reward the nest; the hard constraint
-  still permits it). A z-aware kernel is a possible follow-up.
-- **Known interaction (diversity):** spreading drives layouts toward a canonical
-  even arrangement, so for `K > 1` two basins may spread to similar results and
-  the second is diversity-rejected (wasted work, never invalid output).
+  low-wing plane that could legally nest plan-view-overlapping under a high
+  wing is mildly de-nested (spread does not reward the nest; the hard
+  constraint still permits it). A z-aware kernel is a possible follow-up.
 
-## Alternatives considered
+### Neutral
 
-Pure maximin / leximin; max-sum dispersion; inverse-power Riesz kernel;
-fused-descent 3-tuple score. All rejected above. Wall-adherence, aesthetic
-alignment, and z-aware nesting are deferred as separate concerns.
+- **Known interaction (diversity):** spreading drives layouts toward a
+  canonical even arrangement, so for `K > 1` two basins may spread to
+  similar results and the second is diversity-rejected (wasted work, never
+  invalid output).
+
+## Compliance
+
+- **`tests/test_solver_spread.py`** — solve()-level spread tests: verifies
+  `_spread` is called when `SearchConfig.spread=True`, that the resulting
+  layout is valid, and that `spread=False` produces a byte-identical RNG
+  stream to the pre-spread solver.
+- **`tests/test_solver_search.py`** — unit tests for `_spread` and
+  `_inter_plane_energy` directly: energy function correctness, early-return
+  guards (all pinned / fewer than 2 planes), stall-exit, budget-exit, and
+  the "only valid moves accepted" invariant.
+
+## More Information
+
+- Related ADRs: [ADR-0003 — RR-MC solver algorithm and determinism contract](0003-rr-mc-solver-algorithm.md)
+- Related specs: [`docs/superpowers/specs/2026-05-24-inter-plane-spread-design.md`](../superpowers/specs/2026-05-24-inter-plane-spread-design.md)
+- Related issues / PRs: [#145](https://github.com/DocGerd/hangarfit/issues/145)
+- External references: Kuby, M. J. (1987). "Programming models for facility
+  dispersion: the *p*-dispersion and maxisum dispersion problems."
+  *Geographical Analysis* 19(4): 315–329.

@@ -179,8 +179,7 @@ Internally:
   `exhausted_budget` = zero accepted, budget exhausted) plus the
   pre-search literal `trivially_infeasible` returned before the
   search loop runs at all.
-
-- **Spread post-pass** (`_spread`, `_inter_plane_energy`): after a layout reaches `(0, 0.0)`, maximizes inter-plane separation by minimizing the repulsion energy `Σ exp(−gap/scale)` while preserving validity. On by default; `--no-spread` / `SearchConfig.spread=False` disables it. See [ADR-0008](../adr/0008-inter-plane-spread-soft-preference.md).
+- **Spread post-pass** (`_spread`, `_inter_plane_energy`) — after a layout reaches `(0, 0.0)`, maximizes inter-plane separation by minimizing the repulsion energy `Σ exp(−gap/scale)` while preserving validity. On by default; `--no-spread` / `SearchConfig.spread=False` disables it. See [ADR-0008](../adr/0008-inter-plane-spread-soft-preference.md).
 
 The RNG is single-threaded and seeded for bit-identical reproducibility
 across runs (compliance check:

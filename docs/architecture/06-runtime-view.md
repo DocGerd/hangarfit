@@ -85,11 +85,11 @@ sequenceDiagram
                 Coll-->>Solver: CheckResult
                 alt zero conflicts
                     Note over Solver: candidate is valid
+                    Note over Solver: Spread (if SearchConfig.spread, default on):<br/>_spread maximizes inter-plane separation, only valid moves
                 else conflicts > 0
                     Note over Solver: perturb plane with max<br/>penetration contribution
                 end
             end
-            Note over Solver: Spread (if SearchConfig.spread, default on):<br/>_spread refines placement to maximize<br/>inter-plane separation (Σ exp(−gap/scale)),<br/>accepting only moves that stay valid
             Note over Solver: Diversity filter:<br/>compare candidate to<br/>already-accepted layouts
             alt diverse enough
                 Note over Solver: append to accepted

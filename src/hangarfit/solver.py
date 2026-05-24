@@ -7,6 +7,8 @@ the current implementation supports:
 - pre-search infeasibility detection (§4.1)  [Chunk C]
 - random-restart hill climb with min-conflicts descent (§4.2-§4.4)  [Chunk D]
 - K-diverse alternatives + termination (§4.5-§4.7)  [Chunk E]
+- inter-plane spread post-pass (``_spread`` / ``_inter_plane_energy``; ADR-0008,
+  default on via ``SearchConfig.spread``)
 """
 
 from __future__ import annotations
@@ -191,6 +193,9 @@ def solve(
                         budget_s=budget_s,
                         pinned_planes=pinned_planes,
                     )
+                # No try/except: _spread returns placements preserving every Layout invariant
+                # (on_carts unchanged, no dup/fleet drift), so any ValueError here is a
+                # structural bug and should propagate.
                 candidate_layout = Layout(
                     fleet=scenario.fleet,
                     hangar=scenario.hangar,
@@ -571,6 +576,8 @@ def _spread(
 
     movable = sorted(pid for pid in placements if pid not in pinned_planes)
     if not movable or len(placements) < 2:
+        # Nothing to optimize: all planes pinned (no movable target) or
+        # <2 planes (energy is identically 0.0).
         return placements
 
     current_energy = _inter_plane_energy(placements, scenario, scale)
@@ -630,7 +637,15 @@ def _spread(
                     maintenance_plane=scenario.maintenance_plane,
                 )
             except ValueError:
-                continue  # cart-rule etc. — skip
+                # Mirrors _descent_step's defensive catch. The only routinely-reachable
+                # trigger is the cart rule, but _perturb_plane and the 180° flip both
+                # preserve on_carts, so in practice no perturbation changes the cart
+                # configuration and this branch is never exercised in the current fleet.
+                # The catch remains as a defensive guard consistent with _descent_step;
+                # a ValueError here would indicate a structural bug, which is acceptable
+                # to skip-and-continue because the spread output is independently validated
+                # by the `_score == (0, 0.0)` gate and the whole pass is bounded.
+                continue
             if _score(trial_layout) != (0, 0.0):
                 continue  # must STAY valid
             e = _inter_plane_energy(trial, scenario, scale)
