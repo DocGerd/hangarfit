@@ -155,6 +155,18 @@ jobs:
             echo "::error::extract() produced an empty package set — the regex in .github/workflows/ci.yml no longer matches the lockfile format. Update the guard."
             exit 1
           fi
+          # Defense-in-depth (issue #199): the non-empty check above
+          # catches a *fully* empty extract, but not a pip-compile run that
+          # exits 0 while emitting a *partial* lockfile. Assert the
+          # load-bearing runtime deps + core dev tools survived the
+          # regeneration, so a silently-dropped pin can't diff equal
+          # against an identically-degraded committed file.
+          for pkg in pyyaml shapely matplotlib pytest ruff mypy; do
+            grep -qE "^${pkg}==" /tmp/regenerated.set || {
+              echo "::error::dev lockfile regeneration is missing a required pin: ${pkg} — pip-compile may have produced partial output."
+              exit 1
+            }
+          done
           if ! diff -u /tmp/committed.set /tmp/regenerated.set; then
             echo "::error::requirements-dev.txt is out of sync with pyproject.toml. Regenerate on Python 3.11 with pip-tools==7.5.3: pip-compile --generate-hashes --no-strip-extras --extra dev -o requirements-dev.txt pyproject.toml"
             exit 1
@@ -223,6 +235,16 @@ jobs:
             echo "::error::extract() produced an empty package set — the regex in .github/workflows/ci.yml no longer matches the lockfile format. Update the guard."
             exit 1
           fi
+          # Defense-in-depth (issue #199): same partial-output guard as the
+          # dev-lockfile job. Assert the build toolchain's required pins
+          # survived the regeneration so a silently-dropped pin can't diff
+          # equal against an identically-degraded committed file.
+          for pkg in build setuptools wheel packaging; do
+            grep -qE "^${pkg}==" /tmp/regenerated-build.set || {
+              echo "::error::build lockfile regeneration is missing a required pin: ${pkg} — pip-compile may have produced partial output."
+              exit 1
+            }
+          done
           if ! diff -u /tmp/committed-build.set /tmp/regenerated-build.set; then
             echo "::error::requirements-build.txt is out of sync. Regenerate on Python 3.11 with pip-tools==7.5.3: pip-compile --generate-hashes --no-strip-extras --allow-unsafe -o requirements-build.txt requirements-build.in"
             exit 1
