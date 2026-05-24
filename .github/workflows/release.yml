@@ -121,8 +121,10 @@ jobs:
         # PyPI taint the artifacts that this workflow then signs with its
         # legitimate Fulcio identity. The Sigstore signatures would still
         # verify; nothing would look broken. requirements-build.txt pins
-        # build + setuptools + wheel (+ transitive) with hashes. Closes
-        # #168 and the release-side backend gap (sibling of #162).
+        # build + setuptools + wheel (+ transitive pyproject-hooks,
+        # packaging) with hashes. Addresses #168 and the release-side
+        # backend gap (sibling of #162) — the PR body carries the
+        # auto-closing `Closes`.
         run: pip install --require-hashes -r requirements-build.txt
 
       - name: Build sdist and wheel

@@ -3,10 +3,10 @@
 # wheels. Hash-pinned via `requirements-build.txt` so that:
 #   - ci.yml's `pip install -e . --no-deps --no-build-isolation` uses a
 #     hash-verified host setuptools/wheel instead of fetching the
-#     PEP-517 build-system requires from PyPI unpinned (closes #162).
+#     PEP-517 build-system requires from PyPI unpinned (addresses #162).
 #   - release.yml's `python -m build --no-isolation` builds and signs
 #     artifacts with a hash-verified toolchain instead of an unpinned
-#     `build` frontend + an isolated, unpinned backend fetch (closes
+#     `build` frontend + an isolated, unpinned backend fetch (addresses
 #     #168, and the release-side backend gap neither issue scoped).
 #
 # Regenerate (Python 3.11, pip-tools 7.5.3 — same toolchain as
@@ -23,5 +23,7 @@
 -c requirements-dev.txt
 
 build
+# Floor mirrors pyproject.toml [build-system].requires; the resolved
+# version is pinned in requirements-build.txt.
 setuptools>=68
 wheel

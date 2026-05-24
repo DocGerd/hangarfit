@@ -42,15 +42,19 @@ jobs:
         # Hash-pinned setuptools/wheel for the --no-build-isolation
         # editable install below, closing the residual PEP-517 gap (#162)
         # where pip's isolated build env re-fetched the build-system
-        # requires from PyPI unpinned. packaging is constrained to the
-        # dev-lockfile version in requirements-build.in, so this install
-        # introduces no version skew with the dev deps above.
+        # requires from PyPI unpinned. packaging is constrained (via
+        # `-c requirements-dev.txt` inside requirements-build.in) to the
+        # dev-lockfile version, so this install introduces no version skew
+        # with the dev deps above.
         run: pip install --require-hashes -r requirements-build.txt
 
       - name: Install project (editable, no deps)
+        # MUST run after the build-toolchain install above:
         # --no-build-isolation reuses the hash-verified host setuptools/
-        # wheel installed above instead of letting pip spin up an isolated
-        # build env that re-fetches them unpinned.
+        # wheel from that step instead of letting pip spin up an isolated
+        # build env that re-fetches them unpinned. Reordering or dropping
+        # that step makes this one fail with an opaque PEP-517 backend
+        # error.
         run: pip install -e . --no-deps --no-build-isolation
 
       - name: Lint with ruff
@@ -181,6 +185,11 @@ jobs:
           python-version: "3.11"
 
       - name: Install pip-tools (pinned)
+        # Same version as the dev-lockfile guard and the regeneration
+        # command in CLAUDE.md — kept in lockstep so a pip-tools release
+        # that changes resolver behavior or output formatting cannot
+        # surprise the guard. Bump deliberately, together with both
+        # lockfiles.
         run: pip install 'pip-tools==7.5.3'
 
       - name: Regenerate build lockfile against existing pins
@@ -197,8 +206,12 @@ jobs:
 
       - name: Compare package==version sets
         # Identical set-comparison strategy to the dev-lockfile guard (see
-        # its comment for why a textual diff is too flaky and why the
-        # `|| true` + non-empty sanity check are load-bearing).
+        # its comment for the full rationale on why a textual diff is too
+        # flaky). Inlined here so it survives independent edits to the
+        # sibling job: the `{ grep ... || true; }` wrap is load-bearing
+        # under GitHub Actions' default `bash -eo pipefail` — a zero-match
+        # grep exits 1 and would abort the step before the non-empty
+        # sanity check below could emit its diagnostic.
         run: |
           extract() {
             { grep -E '^[A-Za-z0-9][A-Za-z0-9._-]*(\[[A-Za-z0-9._,-]+\])?==' "$1" || true; } \
