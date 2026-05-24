@@ -107,10 +107,7 @@ def test_solve_pinned_one_plane_honors_pin():
     instead of silently skipping.
 
     wall_time_s bounded below 1.0s (#122); calibrated as
-    ``min(budget * 0.5, max(observed * 4, 1.0))`` with observed ≈ 0.09s
-    (descent only). After #145 the spread post-pass shares the remaining
-    budget, lifting observed to ≈ 3.3s; bound recalibrated to
-    ``min(budget * 0.95, max(observed * 1.5, 1.0))`` = 4.9s.
+    ``min(budget * 0.5, max(observed * 4, 1.0))`` with observed ≈ 0.09s.
     """
     s = load_scenario(f"{FIXTURES}/solve_pinned_one_plane.yaml")
     r = solve(
@@ -118,7 +115,7 @@ def test_solve_pinned_one_plane_honors_pin():
         budget_s=5.0,
         alternatives=1,
         seed=42,
-        search=SearchConfig(max_restarts=5),
+        search=SearchConfig(max_restarts=5, spread=False),
     )
 
     assert r.status == "found", (
@@ -127,7 +124,7 @@ def test_solve_pinned_one_plane_honors_pin():
         f"is likely (was previously found within 1 restart under seed=42)."
     )
 
-    _assert_universal_properties(r, max_wall_time_s=4.9)
+    _assert_universal_properties(r, max_wall_time_s=1.0)
     assert len(r.layouts) == 1
 
     pinned = s.constraints["aviat_husky"].pin
@@ -157,10 +154,7 @@ def test_solve_repair_minimal_edit_honors_all_pins():
     instead of silently skipping.
 
     wall_time_s bounded below 1.0s (#122); calibrated as
-    ``min(budget * 0.5, max(observed * 4, 1.0))`` with observed ≈ 0.012s
-    (descent only). After #145 the spread post-pass shares the remaining
-    budget, lifting observed to ≈ 1.0s; bound recalibrated to
-    ``min(budget * 0.95, max(observed * 1.5, 1.0))`` = 1.5s.
+    ``min(budget * 0.5, max(observed * 4, 1.0))`` with observed ≈ 0.012s.
     """
     s = load_scenario(f"{FIXTURES}/solve_repair_minimal_edit.yaml")
     r = solve(
@@ -168,7 +162,7 @@ def test_solve_repair_minimal_edit_honors_all_pins():
         budget_s=5.0,
         alternatives=1,
         seed=42,
-        search=SearchConfig(max_restarts=5),
+        search=SearchConfig(max_restarts=5, spread=False),
     )
 
     assert r.status == "found", (
@@ -177,7 +171,7 @@ def test_solve_repair_minimal_edit_honors_all_pins():
         f"is likely (was previously found within 1 restart under seed=42)."
     )
 
-    _assert_universal_properties(r, max_wall_time_s=1.5)
+    _assert_universal_properties(r, max_wall_time_s=1.0)
     assert len(r.layouts) == 1
 
     placements_by_id = {p.plane_id: p for p in r.layouts[0].placements}
@@ -210,9 +204,7 @@ def test_solve_force_carts_lock_respects_lock():
 
     wall_time_s bounded below 1.0s (#122); calibrated as
     ``min(budget * 0.5, max(observed * 4, 1.0))`` with observed ≈ 0.001s
-    (descent only; 1.0s floor dominates). After #145 the spread post-pass
-    shares the remaining budget, lifting observed to ≈ 1.8s; bound
-    recalibrated to ``min(budget * 0.95, max(observed * 1.5, 1.0))`` = 2.8s.
+    (1.0s floor dominates — prevents flake when observed × 4 << 0.01s).
     """
     s = load_scenario(f"{FIXTURES}/solve_force_carts_lock.yaml")
     r = solve(
@@ -220,7 +212,7 @@ def test_solve_force_carts_lock_respects_lock():
         budget_s=5.0,
         alternatives=1,
         seed=42,
-        search=SearchConfig(max_restarts=5),
+        search=SearchConfig(max_restarts=5, spread=False),
     )
 
     assert r.status == "found", (
@@ -229,7 +221,7 @@ def test_solve_force_carts_lock_respects_lock():
         f"is likely (was previously found within 1 restart under seed=42)."
     )
 
-    _assert_universal_properties(r, max_wall_time_s=2.8)
+    _assert_universal_properties(r, max_wall_time_s=1.0)
     placed = next(p for p in r.layouts[0].placements if p.plane_id == "cessna_140")
     assert placed.on_carts is True
 
@@ -285,7 +277,7 @@ def test_solve_maintenance_bay_required_excludes_occupant_from_placements():
         budget_s=5.0,
         alternatives=1,
         seed=42,
-        search=SearchConfig(max_restarts=5),
+        search=SearchConfig(max_restarts=5, spread=False),
     )
 
     assert r.status == "found", (
@@ -333,7 +325,7 @@ def test_solve_all_nine_large_hangar_finds_layout():
         budget_s=30.0,
         alternatives=1,
         seed=42,
-        search=SearchConfig(max_restarts=5),
+        search=SearchConfig(max_restarts=5, spread=False),
     )
 
     assert r.status == "found", (
