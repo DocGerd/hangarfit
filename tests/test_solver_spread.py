@@ -60,6 +60,27 @@ def test_solve_default_enables_spread():
     ]
 
 
+def test_solve_k2_with_spread_never_invalid_and_diverse_if_found():
+    """The spread/diversity interaction (spec known-interaction): with K=2 and
+    spread on, every returned layout must be valid, and if status==found the
+    two layouts must still be pairwise-diverse (spread must not collapse them
+    into a near-identical pair that slips past validity)."""
+    from hangarfit.collisions import check
+    from hangarfit.loader import load_scenario
+    from hangarfit.models import DiversityConfig, SearchConfig
+    from hangarfit.solver import _is_diverse_enough, solve
+
+    s = load_scenario("tests/fixtures/solve_fresh_alternatives_three.yaml")
+    r = solve(s, budget_s=10.0, alternatives=2, seed=0, search=SearchConfig(spread=True))
+
+    # Invariant that must ALWAYS hold: no invalid layout is ever returned.
+    assert all(check(layout).valid for layout in r.layouts)
+    # If two were found, they must be pairwise diverse.
+    if r.status == "found":
+        assert len(r.layouts) == 2
+        assert _is_diverse_enough(r.layouts[1], [r.layouts[0]], DiversityConfig())
+
+
 @pytest.mark.slow
 def test_solve_nine_plane_canary_spread_valid_and_not_worse():
     """Slow: the issue #145 canary (9 planes). Spread keeps the layout valid

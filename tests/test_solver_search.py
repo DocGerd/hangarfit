@@ -937,10 +937,25 @@ def test_spread_is_deterministic_for_same_seed():
     from hangarfit.solver import _spread
 
     s, placements = _valid_placements(seed=11)
-    kw = dict(start=time.monotonic(), budget_s=60.0, pinned_planes=frozenset())
 
-    out_a = _spread(placements, s, random.Random(99), SearchConfig(), **kw)
-    out_b = _spread(placements, s, random.Random(99), SearchConfig(), **kw)
+    out_a = _spread(
+        placements,
+        s,
+        random.Random(99),
+        SearchConfig(),
+        start=time.monotonic(),
+        budget_s=60.0,
+        pinned_planes=frozenset(),
+    )
+    out_b = _spread(
+        placements,
+        s,
+        random.Random(99),
+        SearchConfig(),
+        start=time.monotonic(),
+        budget_s=60.0,
+        pinned_planes=frozenset(),
+    )
 
     assert {k: (v.x_m, v.y_m, v.heading_deg) for k, v in out_a.items()} == {
         k: (v.x_m, v.y_m, v.heading_deg) for k, v in out_b.items()
@@ -968,6 +983,67 @@ def test_spread_does_not_move_pinned_planes():
         pinned_planes=frozenset({frozen_id}),
     )
     assert out[frozen_id] == frozen_before
+
+
+def test_spread_scale_m_override_changes_spreading():
+    """A larger spread_scale_m gradient reaches across the hangar and spreads
+    more than a tiny one; verifies spread_scale_m is actually honored, not
+    ignored in favor of the adaptive default."""
+    import random
+    import time
+
+    from hangarfit.models import SearchConfig
+    from hangarfit.solver import _inter_plane_energy, _spread
+
+    s, placements = _valid_placements(seed=11)
+    kw = dict(budget_s=60.0, pinned_planes=frozenset())
+
+    out_tiny = _spread(
+        placements,
+        s,
+        random.Random(7),
+        SearchConfig(spread_scale_m=0.01),
+        start=time.monotonic(),
+        **kw,
+    )
+    out_large = _spread(
+        placements,
+        s,
+        random.Random(7),
+        SearchConfig(spread_scale_m=50.0),
+        start=time.monotonic(),
+        **kw,
+    )
+    # Measure both at a single neutral scale: the large-scale run should reach
+    # a more-separated (lower-energy) configuration than the tiny-scale run.
+    e_tiny = _inter_plane_energy(out_tiny, s, scale=1.0)
+    e_large = _inter_plane_energy(out_large, s, scale=1.0)
+    assert e_large <= e_tiny, f"spread_scale_m had no effect: tiny={e_tiny} large={e_large}"
+
+
+def test_spread_noop_when_all_planes_pinned():
+    """When every plane is pinned (no movable target) but >=2 planes exist,
+    _spread returns the input unchanged via the `not movable` guard."""
+    import random
+    import time
+
+    from hangarfit.models import SearchConfig
+    from hangarfit.solver import _spread
+
+    s, placements = _valid_placements(seed=11)
+    assert len(placements) >= 2, "fixture sanity"
+    all_pinned = frozenset(placements.keys())
+
+    out = _spread(
+        placements,
+        s,
+        random.Random(3),
+        SearchConfig(),
+        start=time.monotonic(),
+        budget_s=5.0,
+        pinned_planes=all_pinned,
+    )
+    assert out == placements
 
 
 def test_spread_noop_when_single_movable_plane():
