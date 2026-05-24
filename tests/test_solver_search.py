@@ -927,7 +927,7 @@ def test_spread_is_deterministic_for_same_seed():
     from hangarfit.solver import _spread
 
     s, placements = _valid_placements(seed=11)
-    kw = dict(start=time.monotonic(), budget_s=5.0, pinned_planes=frozenset())
+    kw = dict(start=time.monotonic(), budget_s=60.0, pinned_planes=frozenset())
 
     out_a = _spread(placements, s, random.Random(99), SearchConfig(), **kw)
     out_b = _spread(placements, s, random.Random(99), SearchConfig(), **kw)
@@ -982,3 +982,43 @@ def test_spread_noop_when_single_movable_plane():
         pinned_planes=frozenset(),
     )
     assert out == placements
+
+
+def test_spread_runs_with_single_movable_among_pinned():
+    import random
+    import time
+
+    from hangarfit.models import Layout, SearchConfig
+    from hangarfit.solver import _inter_plane_energy, _score, _spread
+
+    s, placements = _valid_placements(seed=11)
+    ids = sorted(placements)
+    assert len(ids) >= 3, "fixture must have >=3 planes for this test"
+    # Pin all but the last plane -> exactly one movable, but >=2 planes total.
+    pinned = frozenset(ids[:-1])
+    scale = 0.2 * min(s.hangar.width_m, s.hangar.length_m)
+    e_before = _inter_plane_energy(placements, s, scale)
+
+    out = _spread(
+        placements,
+        s,
+        random.Random(11),
+        SearchConfig(),
+        start=time.monotonic(),
+        budget_s=60.0,
+        pinned_planes=pinned,
+    )
+
+    # Pinned planes never moved.
+    for pid in pinned:
+        assert out[pid] == placements[pid]
+    # Output still valid.
+    layout = Layout(
+        fleet=s.fleet,
+        hangar=s.hangar,
+        placements=tuple(out.values()),
+        maintenance_plane=s.maintenance_plane,
+    )
+    assert _score(layout) == (0, 0.0)
+    # Energy not worse (the one movable plane only improves or no-ops).
+    assert _inter_plane_energy(out, s, scale) <= e_before
