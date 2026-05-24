@@ -12,12 +12,14 @@ the current implementation supports:
 from __future__ import annotations
 
 import logging
+import math
 import random as _random_module
 import secrets
 import sys
 import time
 
 from hangarfit.collisions import check as check_layout
+from hangarfit.geometry import WorldPart, aircraft_parts_world
 from hangarfit.models import (
     Aircraft,
     CheckResult,
@@ -498,6 +500,36 @@ def _initial_placement_for_plane(
         heading_deg=heading,
         on_carts=on_carts,
     )
+
+
+def _inter_plane_energy(
+    placements: dict[str, Placement],
+    scenario: Scenario,
+    scale: float,
+) -> float:
+    """Smooth repulsion energy ``E = Σ_{i<j} exp(−gap_ij / scale)`` (spec §4).
+
+    ``gap_ij`` is the minimum plan-view edge-to-edge distance between plane
+    ``i``'s and plane ``j``'s world parts (shapely ``polygon.distance``).
+    Lower ``E`` ⇒ planes further apart; close pairs dominate the sum, so
+    minimizing it maximizes the *minimum* gap (a smooth maximin surrogate).
+    Returns ``0.0`` when fewer than two planes are present. Ignores z
+    (plan-view only) — see ADR-0008 for the nesting limitation.
+    """
+    ids = sorted(placements)
+    if len(ids) < 2:
+        return 0.0
+    world: dict[str, list[WorldPart]] = {
+        pid: aircraft_parts_world(scenario.fleet[pid], placements[pid]) for pid in ids
+    }
+    energy = 0.0
+    for i in range(len(ids)):
+        for j in range(i + 1, len(ids)):
+            gap = min(
+                pa.polygon.distance(pb.polygon) for pa in world[ids[i]] for pb in world[ids[j]]
+            )
+            energy += math.exp(-gap / scale)
+    return energy
 
 
 def _score(layout: Layout) -> tuple[int, float]:

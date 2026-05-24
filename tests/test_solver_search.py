@@ -818,3 +818,51 @@ def test_solve_returns_k_diverse_alternatives():
             assert _is_diverse_enough(L_i, others, div), (
                 f"layouts[{i}] and layouts[{j}] are not diverse from each other"
             )
+
+
+def test_inter_plane_energy_zero_for_single_plane():
+    from hangarfit.loader import load_scenario
+    from hangarfit.models import Placement
+    from hangarfit.solver import _inter_plane_energy
+
+    s = load_scenario("tests/fixtures/solve_all_nine_large_hangar.yaml")
+    pid = next(p for p in s.fleet_in if p != s.maintenance_plane)
+    placements = {pid: Placement(plane_id=pid, x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)}
+
+    assert _inter_plane_energy(placements, s, scale=5.0) == 0.0
+
+
+def test_inter_plane_energy_higher_when_planes_closer():
+    from hangarfit.loader import load_scenario
+    from hangarfit.models import Placement
+    from hangarfit.solver import _inter_plane_energy
+
+    s = load_scenario("tests/fixtures/solve_all_nine_large_hangar.yaml")
+    a, b = [p for p in s.fleet_in if p != s.maintenance_plane][:2]
+    scale = 5.0
+
+    near = {
+        a: Placement(plane_id=a, x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False),
+        b: Placement(plane_id=b, x_m=7.0, y_m=7.0, heading_deg=0.0, on_carts=False),
+    }
+    far = {
+        a: Placement(plane_id=a, x_m=3.0, y_m=3.0, heading_deg=0.0, on_carts=False),
+        b: Placement(plane_id=b, x_m=22.0, y_m=27.0, heading_deg=0.0, on_carts=False),
+    }
+    # Closer planes -> smaller gap -> larger exp(-gap/scale) term.
+    assert _inter_plane_energy(near, s, scale) > _inter_plane_energy(far, s, scale)
+
+
+def test_inter_plane_energy_symmetric_in_plane_order():
+    from hangarfit.loader import load_scenario
+    from hangarfit.models import Placement
+    from hangarfit.solver import _inter_plane_energy
+
+    s = load_scenario("tests/fixtures/solve_all_nine_large_hangar.yaml")
+    a, b = [p for p in s.fleet_in if p != s.maintenance_plane][:2]
+    pa = Placement(plane_id=a, x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
+    pb = Placement(plane_id=b, x_m=9.0, y_m=11.0, heading_deg=30.0, on_carts=False)
+
+    assert _inter_plane_energy({a: pa, b: pb}, s, 5.0) == _inter_plane_energy(
+        {b: pb, a: pa}, s, 5.0
+    )
