@@ -181,6 +181,16 @@ def solve(
                 # alternatives=1 path never re-enters this branch). For K>1
                 # subsequent valid layouts are gated on pairwise diversity vs
                 # everything already accepted.
+                if search.spread:
+                    placements = _spread(
+                        placements,
+                        scenario,
+                        rng,
+                        search,
+                        start=start,
+                        budget_s=budget_s,
+                        pinned_planes=pinned_planes,
+                    )
                 candidate_layout = Layout(
                     fleet=scenario.fleet,
                     hangar=scenario.hangar,
