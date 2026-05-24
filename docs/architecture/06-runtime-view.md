@@ -89,6 +89,7 @@ sequenceDiagram
                     Note over Solver: perturb plane with max<br/>penetration contribution
                 end
             end
+            Note over Solver: Spread (if SearchConfig.spread, default on):<br/>_spread refines placement to maximize<br/>inter-plane separation (Σ exp(−gap/scale)),<br/>accepting only moves that stay valid
             Note over Solver: Diversity filter:<br/>compare candidate to<br/>already-accepted layouts
             alt diverse enough
                 Note over Solver: append to accepted
@@ -111,6 +112,8 @@ sequenceDiagram
     end
     CLI->>Op: stdout JSON / stderr status + exit code
 ```
+
+**Spread (if `SearchConfig.spread`, default on):** the valid placements are refined by `_spread` to maximize inter-plane separation (minimize `Σ exp(−gap/scale)`), accepting only moves that stay valid. The spread layout is what proceeds to the diversity filter. See [ADR-0008](../adr/0008-inter-plane-spread-soft-preference.md).
 
 **Determinism.** Given the same scenario, the same `--seed`, and the
 same project version (same `hangarfit.solve/v1` schema), the returned
