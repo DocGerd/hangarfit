@@ -782,6 +782,21 @@ class SearchConfig:
     explicitly to disable the cap; passing ``0`` is rejected (it would
     skip the search loop entirely)."""
 
+    spread: bool = True
+    """When True (default), ``solve()`` runs a post-pass spread phase on each
+    valid layout that maximizes inter-plane separation (minimizes the
+    repulsion energy ``Σ exp(−gap/scale)``) while preserving validity. Set
+    False to skip it entirely — the RNG stream is then byte-identical to the
+    pre-spread solver, so determinism goldens written before this feature
+    still hold. See ADR-0008 and
+    ``docs/superpowers/specs/2026-05-24-inter-plane-spread-design.md``."""
+
+    spread_scale_m: float | None = None
+    """Length scale (metres) of the spread repulsion kernel ``exp(−gap/scale)``.
+    ``None`` (default) ⇒ adaptive ``0.2 × min(hangar.width_m, hangar.length_m)``,
+    keeping the kernel sensitive across hangar sizes. When set explicitly,
+    must be ``> 0``."""
+
     def __post_init__(self) -> None:
         if self.candidates_per_iter < 1:
             raise ValueError(
@@ -807,4 +822,9 @@ class SearchConfig:
                 f"SearchConfig.max_restarts must be >= 1 when set "
                 f"(pass ``None`` to disable the restart cap; ``0`` would "
                 f"skip the search loop entirely), got {self.max_restarts}"
+            )
+        if self.spread_scale_m is not None and self.spread_scale_m <= 0.0:
+            raise ValueError(
+                f"SearchConfig.spread_scale_m must be positive when set "
+                f"(pass None for the adaptive default), got {self.spread_scale_m}"
             )
