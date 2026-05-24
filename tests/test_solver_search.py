@@ -282,10 +282,11 @@ def test_solve_finds_layout_for_fresh_six_planes():
     """6 planes in placeholder hangar — should be findable within budget."""
     from hangarfit.collisions import check
     from hangarfit.loader import load_scenario
+    from hangarfit.models import SearchConfig
     from hangarfit.solver import solve
 
     s = load_scenario("tests/fixtures/solve_fresh_six_planes.yaml")
-    r = solve(s, budget_s=5.0, alternatives=1, seed=42)
+    r = solve(s, budget_s=5.0, alternatives=1, seed=42, search=SearchConfig(spread=False))
 
     if r.status == "exhausted_budget":
         pytest.skip(
@@ -353,11 +354,12 @@ def test_solve_is_deterministic_through_descent_loop():
     budget or skip rather than weakening the assertion.
     """
     from hangarfit.loader import load_scenario
+    from hangarfit.models import SearchConfig
     from hangarfit.solver import solve
 
     s = load_scenario("tests/fixtures/solve_fresh_six_planes.yaml")
-    r1 = solve(s, budget_s=10.0, alternatives=1, seed=42)
-    r2 = solve(s, budget_s=10.0, alternatives=1, seed=42)
+    r1 = solve(s, budget_s=10.0, alternatives=1, seed=42, search=SearchConfig(spread=False))
+    r2 = solve(s, budget_s=10.0, alternatives=1, seed=42, search=SearchConfig(spread=False))
 
     # Status mismatch here almost certainly means the CI runner is too
     # slow to reach `found` within budget_s, not a determinism break —
@@ -712,11 +714,12 @@ def test_solve_emits_diversity_impossible_warning(caplog):
     import logging
 
     from hangarfit.loader import load_scenario
+    from hangarfit.models import SearchConfig
     from hangarfit.solver import solve
 
     s = load_scenario("tests/fixtures/solve_diversity_impossible_warn.yaml")
     with caplog.at_level(logging.WARNING):
-        r = solve(s, budget_s=5.0, alternatives=3, seed=42)
+        r = solve(s, budget_s=5.0, alternatives=3, seed=42, search=SearchConfig(spread=False))
 
     # At least one warning about diversity impossibility.
     assert any(
@@ -746,13 +749,19 @@ def test_solve_does_not_warn_when_diversity_is_achievable(caplog):
     import logging
 
     from hangarfit.loader import load_scenario
-    from hangarfit.models import DiversityConfig
+    from hangarfit.models import DiversityConfig, SearchConfig
     from hangarfit.solver import solve
 
     # Fresh-six-planes fixture: 6 planes, none pinned → free_planes=6 >= M=2.
     s = load_scenario("tests/fixtures/solve_fresh_alternatives_three.yaml")
     with caplog.at_level(logging.WARNING):
-        r = solve(s, alternatives=3, seed=42, diversity=DiversityConfig(min_planes_moved=1))
+        r = solve(
+            s,
+            alternatives=3,
+            seed=42,
+            diversity=DiversityConfig(min_planes_moved=1),
+            search=SearchConfig(spread=False),
+        )
 
     # The diversity-impossible warning text contains "achievable" — assert
     # no such warning fired. (Other unrelated warnings are fine.)
@@ -779,10 +788,11 @@ def test_solve_diversity_rejected_count_increments_on_reject():
     than one valid layout.
     """
     from hangarfit.loader import load_scenario
+    from hangarfit.models import SearchConfig
     from hangarfit.solver import solve
 
     s = load_scenario("tests/fixtures/solve_diversity_impossible_warn.yaml")
-    r = solve(s, budget_s=5.0, alternatives=3, seed=42)
+    r = solve(s, budget_s=5.0, alternatives=3, seed=42, search=SearchConfig(spread=False))
 
     # The fixture forces found_partial (see test_solve_emits_diversity_impossible_warning).
     assert r.status == "found_partial"
@@ -798,11 +808,11 @@ def test_solve_diversity_rejected_count_increments_on_reject():
 
 def test_solve_returns_k_diverse_alternatives():
     from hangarfit.loader import load_scenario
-    from hangarfit.models import DiversityConfig
+    from hangarfit.models import DiversityConfig, SearchConfig
     from hangarfit.solver import _is_diverse_enough, solve
 
     s = load_scenario("tests/fixtures/solve_fresh_alternatives_three.yaml")
-    r = solve(s, budget_s=10.0, alternatives=3, seed=42)
+    r = solve(s, budget_s=10.0, alternatives=3, seed=42, search=SearchConfig(spread=False))
 
     if r.status == "exhausted_budget":
         pytest.skip("Search didn't find K=3 within budget; acceptable on placeholder data.")
