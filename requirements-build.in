@@ -1,0 +1,27 @@
+# Build toolchain — the PEP-517 build frontend (`build`) plus the
+# backend requires (`setuptools`, `wheel`) used to produce sdists and
+# wheels. Hash-pinned via `requirements-build.txt` so that:
+#   - ci.yml's `pip install -e . --no-deps --no-build-isolation` uses a
+#     hash-verified host setuptools/wheel instead of fetching the
+#     PEP-517 build-system requires from PyPI unpinned (closes #162).
+#   - release.yml's `python -m build --no-isolation` builds and signs
+#     artifacts with a hash-verified toolchain instead of an unpinned
+#     `build` frontend + an isolated, unpinned backend fetch (closes
+#     #168, and the release-side backend gap neither issue scoped).
+#
+# Regenerate (Python 3.11, pip-tools 7.5.3 — same toolchain as
+# requirements-dev.txt; see CLAUDE.md):
+#   pip-compile --generate-hashes --no-strip-extras --allow-unsafe -o requirements-build.txt requirements-build.in
+#
+# `--allow-unsafe` is REQUIRED here (unlike the dev lockfile): pip-tools
+# classifies setuptools/wheel as "unsafe to pin" and comments them out
+# by default, which would defeat --no-build-isolation. `--no-strip-extras`
+# mirrors the dev lockfile so a future pip-tools 8.0 default flip cannot
+# silently prune transitive extras. -c below constrains shared transitive
+# deps (e.g. packaging) to the versions already pinned in
+# requirements-dev.txt so ci.yml can install both lockfiles without skew.
+-c requirements-dev.txt
+
+build
+setuptools>=68
+wheel

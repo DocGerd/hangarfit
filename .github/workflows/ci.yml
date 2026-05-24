@@ -33,12 +33,25 @@ jobs:
           cache-dependency-path: |
             pyproject.toml
             requirements-dev.txt
+            requirements-build.txt
 
       - name: Install dev deps (hash-pinned)
         run: pip install --require-hashes -r requirements-dev.txt
 
+      - name: Install build toolchain (hash-pinned)
+        # Hash-pinned setuptools/wheel for the --no-build-isolation
+        # editable install below, closing the residual PEP-517 gap (#162)
+        # where pip's isolated build env re-fetched the build-system
+        # requires from PyPI unpinned. packaging is constrained to the
+        # dev-lockfile version in requirements-build.in, so this install
+        # introduces no version skew with the dev deps above.
+        run: pip install --require-hashes -r requirements-build.txt
+
       - name: Install project (editable, no deps)
-        run: pip install -e . --no-deps
+        # --no-build-isolation reuses the hash-verified host setuptools/
+        # wheel installed above instead of letting pip spin up an isolated
+        # build env that re-fetches them unpinned.
+        run: pip install -e . --no-deps --no-build-isolation
 
       - name: Lint with ruff
         run: ruff check src/ tests/
@@ -140,5 +153,64 @@ jobs:
           fi
           if ! diff -u /tmp/committed.set /tmp/regenerated.set; then
             echo "::error::requirements-dev.txt is out of sync with pyproject.toml. Regenerate on Python 3.11 with pip-tools==7.5.3: pip-compile --generate-hashes --no-strip-extras --extra dev -o requirements-dev.txt pyproject.toml"
+            exit 1
+          fi
+
+  build-lockfile-drift:
+    # Sibling of lockfile-drift, for requirements-build.txt (the
+    # hash-pinned build toolchain consumed by the editable install in the
+    # test job and by `python -m build` in release.yml). The build
+    # lockfile is generated from requirements-build.in, which constrains
+    # shared transitive deps (packaging) to requirements-dev.txt via `-c`.
+    # Two silent-drift paths this guards:
+    #   1. requirements-build.in edited but requirements-build.txt not
+    #      regenerated.
+    #   2. packaging bumped in requirements-dev.txt but the build lockfile
+    #      not regenerated — the test job would then install two different
+    #      packaging versions across its dev/build install steps.
+    name: build lockfile drift check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Set up Python 3.11
+        # Lowest supported Python, matching the dev-lockfile guard and the
+        # regeneration command documented in CLAUDE.md.
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.11"
+
+      - name: Install pip-tools (pinned)
+        run: pip install 'pip-tools==7.5.3'
+
+      - name: Regenerate build lockfile against existing pins
+        # Same copy-first rationale as the dev-lockfile guard: seeding with
+        # the committed lockfile makes pip-compile honor the existing pins
+        # so only a genuine change in requirements-build.in (or in the
+        # `-c requirements-dev.txt` constraint it reads) produces drift.
+        # --allow-unsafe and --no-strip-extras match the documented
+        # regeneration command so setuptools/wheel stay pinned and extras
+        # are not pruned.
+        run: |
+          cp requirements-build.txt /tmp/expected-build.txt
+          pip-compile --quiet --generate-hashes --no-strip-extras --allow-unsafe -o /tmp/expected-build.txt requirements-build.in
+
+      - name: Compare package==version sets
+        # Identical set-comparison strategy to the dev-lockfile guard (see
+        # its comment for why a textual diff is too flaky and why the
+        # `|| true` + non-empty sanity check are load-bearing).
+        run: |
+          extract() {
+            { grep -E '^[A-Za-z0-9][A-Za-z0-9._-]*(\[[A-Za-z0-9._,-]+\])?==' "$1" || true; } \
+              | sed 's/ *\\$//' | sort
+          }
+          extract requirements-build.txt   > /tmp/committed-build.set
+          extract /tmp/expected-build.txt   > /tmp/regenerated-build.set
+          if [ ! -s /tmp/committed-build.set ] || [ ! -s /tmp/regenerated-build.set ]; then
+            echo "::error::extract() produced an empty package set — the regex in .github/workflows/ci.yml no longer matches the lockfile format. Update the guard."
+            exit 1
+          fi
+          if ! diff -u /tmp/committed-build.set /tmp/regenerated-build.set; then
+            echo "::error::requirements-build.txt is out of sync. Regenerate on Python 3.11 with pip-tools==7.5.3: pip-compile --generate-hashes --no-strip-extras --allow-unsafe -o requirements-build.txt requirements-build.in"
             exit 1
           fi

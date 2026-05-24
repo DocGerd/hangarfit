@@ -178,11 +178,26 @@ mypy src/hangarfit/
 # the full CI matrix.
 pip-compile --generate-hashes --no-strip-extras --extra dev -o requirements-dev.txt pyproject.toml
 
+# Regenerate the hash-pinned BUILD-toolchain lockfile. Source is
+# `requirements-build.in` (build + setuptools + wheel). Required after
+# bumping any of those or after `packaging` moves in requirements-dev.txt
+# (the `.in` constrains shared transitive deps via `-c requirements-dev.txt`
+# so the two lockfiles can be installed together in CI without skew).
+# `--allow-unsafe` is REQUIRED — pip-tools classifies setuptools/wheel as
+# "unsafe to pin" and comments them out by default, which would defeat the
+# `--no-build-isolation` install in ci.yml. `--no-strip-extras` mirrors the
+# dev lockfile (8.0 default-flip defense). The `build-lockfile-drift` CI
+# job enforces this on every PR. Same toolchain as the dev lockfile:
+# pip-tools 7.5.3 on Python 3.11.
+pip-compile --generate-hashes --no-strip-extras --allow-unsafe -o requirements-build.txt requirements-build.in
+
 # CI: GitHub Actions runs `pytest` on Python 3.11 + 3.12 for PRs into
 # develop/main (see .github/workflows/ci.yml). CI installs dev deps
 # from the hash-pinned `requirements-dev.txt` with `--require-hashes`,
-# then installs the project itself in editable mode without
-# resolving dependencies again. No coverage gate yet.
+# the build toolchain from `requirements-build.txt` likewise, then
+# installs the project itself in editable mode with `--no-deps
+# --no-build-isolation` (reusing the hash-verified host setuptools/wheel
+# instead of an unpinned isolated build env). No coverage gate yet.
 
 # Phase 1 acceptance smoke test
 hangarfit check layouts/example.yaml --render out.png
