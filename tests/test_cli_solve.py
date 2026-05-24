@@ -417,6 +417,7 @@ class TestSolveRender:
                 "2.0",
                 "--seed",
                 "42",
+                "--no-spread",
             ]
         )
         assert rc == 0
@@ -433,6 +434,7 @@ class TestSolveRender:
                 "--seed",
                 "42",
                 "--strict-k",
+                "--no-spread",
             ]
         )
         assert rc_strict == 1
@@ -548,6 +550,7 @@ class TestSolveRender:
                 render_pattern,
                 "--write-yaml",
                 yaml_pattern,
+                "--no-spread",
             ]
         )
         assert rc == 0, f"K>1 solve failed (rc={rc}); stderr={capsys.readouterr().err}"
@@ -556,3 +559,25 @@ class TestSolveRender:
         assert (tmp_path / "out_2.png").exists()
         assert (tmp_path / "out_1.yaml").exists()
         assert (tmp_path / "out_2.yaml").exists()
+
+
+def test_solve_no_spread_flag_accepted_and_runs(tmp_path):
+    """`--no-spread` is accepted on `solve` and drives a successful no-spread run."""
+    from hangarfit.cli import main
+
+    out = tmp_path / "layout.yaml"
+    rc = main(
+        [
+            "solve",
+            "tests/fixtures/solve_all_nine_large_hangar.yaml",
+            "--seed",
+            "42",
+            "--budget",
+            "10",
+            "--no-spread",
+            "--write-yaml",
+            str(out),
+        ]
+    )
+    assert rc == 0
+    assert out.exists()
