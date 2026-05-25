@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from hangarfit.collisions import check as _check
-from hangarfit.models import Aircraft, Conflict, Layout, Placement
+from hangarfit.models import Aircraft, Conflict, Hangar, Layout, Placement
 
 SegmentKind = Literal["L", "S", "R"]
 _VALID_SEGMENT_KINDS = frozenset(typing.get_args(SegmentKind))
@@ -325,9 +325,12 @@ def _dubins_shortest(
 def plan_dubins(start: Pose, end: Pose, *, turn_radius_m: float) -> DubinsArc:
     """Closed-form shortest arc-line-arc path from ``start`` to ``end``.
 
-    ``turn_radius_m == 0`` is the cart pivot-in-place case (ADR-0007): the
-    positions must already match and the result is a single turn segment
-    whose ``length_m`` encodes the heading change in **radians**. For
+    ``turn_radius_m == 0`` is the cart case (ADR-0007: a cart is own-gear with
+    a zero turn radius). When ``start`` and ``end`` positions coincide it is a
+    pure pivot-in-place — a single turn segment whose ``length_m`` encodes the
+    heading change in **radians**. When they differ it is the r->0 Dubins
+    limit: pivot to the goal bearing, drive straight, pivot to the final
+    heading (a ``(turn, S, turn)`` arc, zero-length pivots dropped). For
     ``turn_radius_m > 0`` the standard Dubins set is solved and the shortest
     feasible word returned; collinear same-heading inputs collapse to a
     single ``"S"`` segment.
@@ -336,19 +339,36 @@ def plan_dubins(start: Pose, end: Pose, *, turn_radius_m: float) -> DubinsArc:
         raise ValueError(f"turn_radius_m must be finite and >= 0, got {turn_radius_m}")
 
     if turn_radius_m == 0.0:
-        if not (
-            math.isclose(start.x_m, end.x_m, abs_tol=1e-9)
-            and math.isclose(start.y_m, end.y_m, abs_tol=1e-9)
-        ):
-            raise ValueError(
-                "zero turn radius (cart pivot) requires start and end position to match"
-            )
-        # Short-arc compass delta in (-180, 180]. Compass is CW-positive, so a
-        # positive delta is a right turn ("R") in the math frame the integrator
-        # walks; the sign is pinned by test_zero_radius_is_pivot_in_place.
-        dtheta_deg = (end.heading_deg - start.heading_deg + 180.0) % 360.0 - 180.0
-        kind: SegmentKind = "R" if dtheta_deg >= 0.0 else "L"
-        return DubinsArc(start, end, 0.0, (Segment(kind, abs(math.radians(dtheta_deg))),))
+        dx = end.x_m - start.x_m
+        dy = end.y_m - start.y_m
+        dist = math.hypot(dx, dy)
+        if dist <= 1e-9:
+            # Pure pivot-in-place (positions coincide): a single turn segment
+            # whose length_m encodes the short-arc heading change in radians.
+            # Compass is CW-positive, so a positive delta is a right turn ("R")
+            # in the math frame the integrator walks; the sign is pinned by
+            # test_zero_radius_is_pivot_in_place.
+            dtheta_deg = (end.heading_deg - start.heading_deg + 180.0) % 360.0 - 180.0
+            pivot_kind: SegmentKind = "R" if dtheta_deg >= 0.0 else "L"
+            return DubinsArc(start, end, 0.0, (Segment(pivot_kind, abs(math.radians(dtheta_deg))),))
+        # Cart translation (ADR-0007 r->0 limit): a cart is own-gear with a zero
+        # turn radius, so the shortest path is pivot to the goal bearing, drive
+        # straight, then pivot to the final heading. All three legs live in one
+        # turn_radius_m=0 DubinsArc; pose_at already integrates an r=0 turn as a
+        # pivot-in-place (position held) and an "S" leg as translation. The goal
+        # bearing as a compass heading: math angle atan2(dy, dx) -> compass.
+        bearing_deg = math_rad_to_compass(math.atan2(dy, dx))
+        cart_segs: list[Segment] = []
+        seg1_deg = (bearing_deg - start.heading_deg + 180.0) % 360.0 - 180.0
+        if abs(seg1_deg) > 1e-9:
+            k1: SegmentKind = "R" if seg1_deg >= 0.0 else "L"
+            cart_segs.append(Segment(k1, abs(math.radians(seg1_deg))))
+        cart_segs.append(Segment("S", dist))
+        seg3_deg = (end.heading_deg - bearing_deg + 180.0) % 360.0 - 180.0
+        if abs(seg3_deg) > 1e-9:
+            k3: SegmentKind = "R" if seg3_deg >= 0.0 else "L"
+            cart_segs.append(Segment(k3, abs(math.radians(seg3_deg))))
+        return DubinsArc(start, end, 0.0, tuple(cart_segs))
 
     word, (t, p, q) = _dubins_shortest(start, end, turn_radius_m)
     r = turn_radius_m
@@ -375,6 +395,28 @@ def back_first_order(placements: tuple[Placement, ...]) -> tuple[Placement, ...]
     spike Q2). Shallower slots become obstacles for deeper ones, so deeper
     planes enter first."""
     return tuple(sorted(placements, key=lambda p: (-p.y_m, p.x_m, p.plane_id)))
+
+
+# ---------------------------------------------------------------------------
+# Door-cone entry pose (spike Q6 / ADR-0007: the door is a motion gate)
+# ---------------------------------------------------------------------------
+
+
+def entry_pose(target: Placement, hangar: Hangar) -> Pose:
+    """Door-cone entry pose for a plane heading to ``target`` (spike Q6).
+
+    The plane enters at the front boundary (``y = 0``) pointing straight into
+    the hangar (``heading_deg = 0`` ⇒ nose toward ``+y``). The entry ``x`` is
+    the target slot's ``x`` clamped into the door interval
+    ``[center − width/2, center + width/2]`` — a deterministic choice (ADR-0003)
+    that keeps the approach as straight as the door allows. This promotes the
+    door from a visual marker to a towplanner-level motion gate; ``collisions``
+    semantics are untouched (ADR-0007).
+    """
+    door = hangar.door
+    half = door.width_m / 2.0
+    x = min(max(target.x_m, door.center_x_m - half), door.center_x_m + half)
+    return Pose(x_m=x, y_m=0.0, heading_deg=0.0)
 
 
 # ---------------------------------------------------------------------------
@@ -425,3 +467,95 @@ def path_first_conflict(
             if mover.id in conflict.planes:
                 return conflict
     return None
+
+
+# ---------------------------------------------------------------------------
+# Empty-hangar fill planner + bounded order-retry (spike Q2 / ADR-0007)
+# ---------------------------------------------------------------------------
+
+
+class NoFeasiblePlanError(Exception):
+    """No collision-free entry order exists: the greedy back-first scan found
+    no feasible plane for some slot (spike Q2 / Risk #1).
+
+    Carries the plane that could not be placed and the conflict that blocked
+    it, so the caller (and the Wave 3 CLI) can name the offender.
+    """
+
+    def __init__(self, plane_id: str, conflict: Conflict) -> None:
+        super().__init__(
+            f"no feasible tow order: plane {plane_id!r} could not be placed "
+            f"without collision ({conflict.kind})"
+        )
+        self.plane_id = plane_id
+        self.conflict = conflict
+
+
+def plan_fill(target: Layout) -> MovesPlan:
+    """Plan a collision-free entry order + per-plane path for an empty fill.
+
+    Walks :func:`back_first_order` (deepest slot first); for each plane computes
+    the door-cone entry pose (:func:`entry_pose`) and the Dubins path to its slot
+    (cart-borne planes have ``effective_turn_radius_m() == 0`` ⇒ a
+    pivot-straight-pivot arc). Each iteration scans the not-yet-placed planes in
+    order and commits the first whose path is conflict-free against the
+    already-placed subset (the spike's "swap with the next-feasible plane" as a
+    deterministic scan). If a whole scan finds none feasible the greedy is stuck
+    (spike Risk #1) and the plan bails with :class:`NoFeasiblePlanError` naming
+    the deepest unplaceable plane.
+
+    No retry *budget* is needed: an already-placed plane is only ever an added
+    obstacle, so a plane infeasible against the current obstacles can never
+    become feasible later — the scan therefore makes monotonic progress (one
+    plane committed per iteration) and cannot spin. Deterministic (ADR-0003):
+    the order, the Dubins primitive, and the next-feasible scan are all RNG-free,
+    so a given ``target`` always yields the same :class:`MovesPlan`.
+    """
+    ordered = list(back_first_order(target.placements))
+    fleet = target.fleet
+    hangar = target.hangar
+
+    placed: list[Placement] = []
+    moves: list[Move] = []
+
+    while ordered:
+        chosen: int | None = None
+        chosen_arc: DubinsArc | None = None
+        # The deepest unplaced plane is scanned first, so its conflict (if it
+        # is rejected) is the one reported when the whole scan finds nothing.
+        deepest_conflict: Conflict | None = None
+        for idx, slot in enumerate(ordered):
+            plane = fleet[slot.plane_id]
+            arc = plan_dubins(
+                entry_pose(slot, hangar),
+                Pose.from_placement(slot),
+                turn_radius_m=plane.effective_turn_radius_m(),
+            )
+            # Only the already-committed planes are obstacles; the candidate
+            # mover is added by path_first_conflict per sample.
+            placed_layout = Layout(
+                fleet=fleet,
+                hangar=hangar,
+                placements=tuple(placed),
+                maintenance_plane=target.maintenance_plane,
+            )
+            conflict = path_first_conflict(
+                arc, plane, mover_on_carts=slot.on_carts, placed=placed_layout
+            )
+            if conflict is None:
+                chosen, chosen_arc = idx, arc
+                break
+            if deepest_conflict is None:
+                deepest_conflict = conflict
+        if chosen is None:
+            # Every remaining plane conflicts: greedy back-first is stuck. The
+            # deepest plane (ordered[0], scanned first) is the one we most
+            # wanted to place, and deepest_conflict is its own conflict.
+            assert deepest_conflict is not None  # ordered non-empty => scan ran
+            raise NoFeasiblePlanError(ordered[0].plane_id, deepest_conflict)
+        slot = ordered.pop(chosen)
+        assert chosen_arc is not None
+        moves.append(Move(slot.plane_id, Pose.from_placement(slot), chosen_arc))
+        placed.append(slot)
+
+    return MovesPlan(target_layout=target, moves=tuple(moves))
