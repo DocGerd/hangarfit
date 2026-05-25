@@ -104,16 +104,17 @@ def test_load_scenario_rejects_maintenance_plane_not_in_fleet_in(tmp_path):
     with pytest.raises(LoaderError) as exc_info:
         load_scenario(bad)
     msg = str(exc_info.value)
-    # Must name the bad plane id
+    # Names the bad plane id
     assert "ghost" in msg, f"message should name the bad plane id; got: {msg!r}"
-    # Must include the file path
+    # Includes the file path
     assert str(bad) in msg, f"message should include the file path; got: {msg!r}"
-    # Must show the actual fleet_in list so the user knows what is valid
+    # Enumerates the valid fleet_in so the user knows what is valid
     assert "aviat_husky" in msg, f"message should list valid fleet_in planes; got: {msg!r}"
-    # Must include a fix hint (actionable suffix)
-    assert "either add it to fleet_in or fix the plane id" in msg, (
-        f"message should include actionable fix hint; got: {msg!r}"
-    )
+    # Actionable guidance (the sorted fleet_in list is inserted, so assert the two halves)
+    assert "either add it to fleet_in" in msg, f"missing add-to-fleet_in guidance; got: {msg!r}"
+    assert "or fix the plane id" in msg, f"missing fix-the-id guidance; got: {msg!r}"
+    # 'ghost' has no near match → no false suggestion
+    assert "did you mean" not in msg, f"'ghost' should not get a suggestion; got: {msg!r}"
 
 
 def test_load_scenario_rejects_null_maintenance_plane(tmp_path):
@@ -158,6 +159,54 @@ def test_load_scenario_rejects_null_maintenance_plane(tmp_path):
     )
     with pytest.raises(LoaderError, match="'maintenance.plane' is null"):
         load_scenario(bad)
+
+
+def _stage_scenario(tmp_path, body: str):
+    """Write a scenario YAML next to copied real data files; return its path."""
+    import shutil
+
+    (tmp_path / "data").mkdir(exist_ok=True)
+    shutil.copy("data/fleet.yaml", tmp_path / "data" / "fleet.yaml")
+    shutil.copy("data/hangar.yaml", tmp_path / "data" / "hangar.yaml")
+    p = tmp_path / "scenario.yaml"
+    p.write_text("fleet: data/fleet.yaml\nhangar: data/hangar.yaml\n" + body)
+    return p
+
+
+def test_load_scenario_miscased_fleet_in_entry_suggests(tmp_path):
+    from hangarfit.loader import load_scenario
+
+    p = _stage_scenario(tmp_path, "fleet_in: [Aviat_husky, ctsl]\n")
+    with pytest.raises(LoaderError) as exc:
+        load_scenario(p)
+    msg = str(exc.value)
+    assert "fleet_in entry references unknown plane id 'Aviat_husky'" in msg
+    assert "did you mean 'aviat_husky'?" in msg
+
+
+def test_load_scenario_miscased_maintenance_suggests(tmp_path):
+    from hangarfit.loader import load_scenario
+
+    p = _stage_scenario(tmp_path, "fleet_in: [aviat_husky, ctsl]\nmaintenance:\n  plane: Ctsl\n")
+    with pytest.raises(LoaderError) as exc:
+        load_scenario(p)
+    msg = str(exc.value)
+    assert "maintenance.plane references unknown plane id 'Ctsl'" in msg
+    assert "did you mean 'ctsl'?" in msg
+
+
+def test_load_scenario_miscased_constraint_key_suggests(tmp_path):
+    from hangarfit.loader import load_scenario
+
+    p = _stage_scenario(
+        tmp_path,
+        "fleet_in: [aviat_husky, ctsl]\nconstraints:\n  Ctsl:\n    force_on_carts: false\n",
+    )
+    with pytest.raises(LoaderError) as exc:
+        load_scenario(p)
+    msg = str(exc.value)
+    assert "constraints key references unknown plane id 'Ctsl'" in msg
+    assert "did you mean 'ctsl'?" in msg
 
 
 def test_scenario_post_init_backstop_still_fires_on_direct_construction():

@@ -312,6 +312,9 @@ def load_scenario(
             f"provided programmatically; remove one to disambiguate"
         )
 
+    for pid in fleet_in:
+        _resolve_known_plane_id(pid, fleet, role="fleet_in entry", path=path)
+
     # maintenance (optional, same shape as load_layout)
     maintenance_plane = _extract_maintenance_plane(raw, path)
 
@@ -319,10 +322,13 @@ def load_scenario(
     # path prefix here instead of relying on Scenario.__post_init__'s
     # bare ValueError bubbling through the except ValueError → LoaderError
     # wrap below (which would drop the actionable fleet_in hint).
-    if maintenance_plane is not None and maintenance_plane not in fleet_in:
-        raise LoaderError(
-            f"{path}: maintenance_plane {maintenance_plane!r} is not in fleet_in "
-            f"{list(fleet_in)}; either add it to fleet_in or fix the plane id."
+    if maintenance_plane is not None:
+        _resolve_known_plane_id(
+            maintenance_plane,
+            fleet_in,
+            role="maintenance.plane",
+            path=path,
+            fix_hint=f"either add it to fleet_in {sorted(fleet_in)} or fix the plane id",
         )
 
     # constraints (optional). `or {}` is wrong here — it collapses every
@@ -337,6 +343,13 @@ def load_scenario(
         raise LoaderError(f"{path}: 'constraints' must be a mapping")
     constraints: dict[str, PlaneConstraint] = {}
     for plane_id, cdata in constraints_raw.items():
+        _resolve_known_plane_id(
+            plane_id,
+            fleet_in,
+            role="constraints key",
+            path=path,
+            fix_hint=f"either add it to fleet_in {sorted(fleet_in)} or fix the plane id",
+        )
         try:
             constraints[plane_id] = _build_plane_constraint(plane_id, cdata)
         except (ValueError, KeyError, TypeError, LoaderError) as e:
