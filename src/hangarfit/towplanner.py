@@ -13,7 +13,8 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Literal
 
-from hangarfit.models import Placement
+from hangarfit.collisions import check as _check
+from hangarfit.models import Aircraft, Conflict, Layout, Placement
 
 SegmentKind = Literal["L", "S", "R"]
 _VALID_SEGMENT_KINDS = frozenset(typing.get_args(SegmentKind))
@@ -374,3 +375,47 @@ def back_first_order(placements: tuple[Placement, ...]) -> tuple[Placement, ...]
     spike Q2). Shallower slots become obstacles for deeper ones, so deeper
     planes enter first."""
     return tuple(sorted(placements, key=lambda p: (-p.y_m, p.x_m, p.plane_id)))
+
+
+# ---------------------------------------------------------------------------
+# Sampled collision-during-motion (spike Q4)
+# ---------------------------------------------------------------------------
+
+
+def path_first_conflict(
+    arc: DubinsArc,
+    mover: Aircraft,
+    *,
+    mover_on_carts: bool,
+    placed: Layout,
+    step_m: float = 0.05,
+    step_deg: float = 1.0,
+) -> Conflict | None:
+    """First conflict naming ``mover`` while it tows along ``arc``, else ``None``.
+
+    Samples the arc; at each pose the mover is placed at that pose and checked
+    against the already-placed ``placed`` layout via :func:`collisions.check`.
+    This reuses the static oracle wholesale, so parts-overlap, hangar-bounds,
+    and bay-intrusion are all honoured *during motion* (spike Q4) — the path
+    planner does not re-derive any geometry. ``mover_on_carts`` is constant
+    along the arc (cart state does not change mid-tow), and conflicts that do
+    not involve ``mover`` (e.g. a pre-existing clash among placed planes) are
+    skipped so the mover is never blamed for them.
+    """
+    for pose in arc.sample(step_m=step_m, step_deg=step_deg):
+        moving = Placement(mover.id, pose.x_m, pose.y_m, pose.heading_deg, on_carts=mover_on_carts)
+        # Rebuilding the Layout per sample re-runs Layout.__post_init__ (cart
+        # cap, cart↔mode consistency, unique ids). Because placed.placements ∪
+        # {mover} is a subset of a valid target layout those invariants hold;
+        # a future caller that violates them gets a real ValueError, not a
+        # suppressed one.
+        sample_layout = Layout(
+            fleet=placed.fleet,
+            hangar=placed.hangar,
+            placements=(*placed.placements, moving),
+            maintenance_plane=placed.maintenance_plane,
+        )
+        for conflict in _check(sample_layout).conflicts:
+            if mover.id in conflict.planes:
+                return conflict
+    return None
