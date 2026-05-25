@@ -14,7 +14,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from hangarfit.collisions import check as _check
-from hangarfit.models import Aircraft, Conflict, Layout, Placement
+from hangarfit.models import Aircraft, Conflict, Hangar, Layout, Placement
 
 SegmentKind = Literal["L", "S", "R"]
 _VALID_SEGMENT_KINDS = frozenset(typing.get_args(SegmentKind))
@@ -395,6 +395,28 @@ def back_first_order(placements: tuple[Placement, ...]) -> tuple[Placement, ...]
     spike Q2). Shallower slots become obstacles for deeper ones, so deeper
     planes enter first."""
     return tuple(sorted(placements, key=lambda p: (-p.y_m, p.x_m, p.plane_id)))
+
+
+# ---------------------------------------------------------------------------
+# Door-cone entry pose (spike Q6 / ADR-0007: the door is a motion gate)
+# ---------------------------------------------------------------------------
+
+
+def entry_pose(target: Placement, hangar: Hangar) -> Pose:
+    """Door-cone entry pose for a plane heading to ``target`` (spike Q6).
+
+    The plane enters at the front boundary (``y = 0``) pointing straight into
+    the hangar (``heading_deg = 0`` ⇒ nose toward ``+y``). The entry ``x`` is
+    the target slot's ``x`` clamped into the door interval
+    ``[center − width/2, center + width/2]`` — a deterministic choice (ADR-0003)
+    that keeps the approach as straight as the door allows. This promotes the
+    door from a visual marker to a towplanner-level motion gate; ``collisions``
+    semantics are untouched (ADR-0007).
+    """
+    door = hangar.door
+    half = door.width_m / 2.0
+    x = min(max(target.x_m, door.center_x_m - half), door.center_x_m + half)
+    return Pose(x_m=x, y_m=0.0, heading_deg=0.0)
 
 
 # ---------------------------------------------------------------------------
