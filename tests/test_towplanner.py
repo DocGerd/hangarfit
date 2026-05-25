@@ -131,3 +131,13 @@ def test_back_first_is_pure_and_deterministic():
     twice = back_first_order(placements)
     assert once == twice
     assert placements == (_pl("A", 0.0, 1.0), _pl("B", 0.0, 9.0))  # input untouched
+    # Return type is a tuple, not the list sorted() produces — the tuple(...)
+    # wrapper is load-bearing (immutable return, matches the field type) and no
+    # other assertion would catch its removal (all project to lists).
+    assert isinstance(once, tuple)
+
+
+def test_back_first_empty_input_returns_empty_tuple():
+    # An all-away / maintenance-occupant-only layout has zero placements; the
+    # planner must hand that through cleanly (Layout permits zero placements).
+    assert back_first_order(()) == ()
