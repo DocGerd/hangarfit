@@ -37,6 +37,52 @@ def test_dubins_arc_rejects_unknown_segment_kind():
         Segment(kind="Q", length_m=1.0)
 
 
+def test_dubins_arc_rejects_negative_turn_radius():
+    with pytest.raises(ValueError):
+        DubinsArc(
+            start=Pose(0.0, 0.0, 0.0),
+            end=Pose(0.0, 1.0, 0.0),
+            turn_radius_m=-1.0,
+            segments=(Segment("S", 1.0),),
+        )
+
+
+def test_dubins_arc_allows_zero_turn_radius_pivot_sentinel():
+    # turn_radius_m == 0 is the cart pivot-in-place sentinel (ADR-0007) and
+    # must survive validation — guards against a `<= 0` reject.
+    arc = DubinsArc(
+        start=Pose(0.0, 0.0, 0.0),
+        end=Pose(0.0, 0.0, 90.0),
+        turn_radius_m=0.0,
+        segments=(Segment("R", math.radians(90.0)),),
+    )
+    assert arc.turn_radius_m == 0.0
+
+
+def test_dubins_arc_rejects_empty_segments():
+    with pytest.raises(ValueError):
+        DubinsArc(
+            start=Pose(0.0, 0.0, 0.0),
+            end=Pose(0.0, 0.0, 0.0),
+            turn_radius_m=5.0,
+            segments=(),
+        )
+
+
+def test_move_rejects_empty_plane_id():
+    with pytest.raises(ValueError):
+        Move(
+            plane_id="",
+            target_slot=Pose(1.0, 2.0, 0.0),
+            path=DubinsArc(
+                start=Pose(0.0, 0.0, 0.0),
+                end=Pose(1.0, 2.0, 0.0),
+                turn_radius_m=8.0,
+                segments=(Segment("S", math.hypot(1.0, 2.0)),),
+            ),
+        )
+
+
 def test_movesplan_construction_roundtrip():
     layout = object()  # placeholder; Move/MovesPlan do not validate layout in Wave 1
     move = Move(

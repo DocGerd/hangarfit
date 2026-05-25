@@ -8,11 +8,14 @@ docs/spikes/tow-path-planning.md. Wave 1 = the leaf primitives only.
 from __future__ import annotations
 
 import math
+import typing
 from dataclasses import dataclass
+from typing import Literal
 
 from hangarfit.models import Placement
 
-_VALID_SEGMENT_KINDS = frozenset({"L", "S", "R"})
+SegmentKind = Literal["L", "S", "R"]
+_VALID_SEGMENT_KINDS = frozenset(typing.get_args(SegmentKind))
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,7 +40,7 @@ class Segment:
     (straight), or ``R`` (right turn). ``length_m`` is the arc length of
     the leg in metres (always >= 0)."""
 
-    kind: str
+    kind: SegmentKind
     length_m: float
 
     def __post_init__(self) -> None:
@@ -60,6 +63,15 @@ class DubinsArc:
     turn_radius_m: float
     segments: tuple[Segment, ...]
 
+    def __post_init__(self) -> None:
+        # 0.0 is the cart pivot-in-place sentinel (ADR-0007) and is valid.
+        if self.turn_radius_m < 0.0 or not math.isfinite(self.turn_radius_m):
+            raise ValueError(
+                f"DubinsArc.turn_radius_m must be finite and >= 0, got {self.turn_radius_m}"
+            )
+        if not self.segments:
+            raise ValueError("DubinsArc.segments must be non-empty")
+
     @property
     def length_m(self) -> float:
         return math.fsum(s.length_m for s in self.segments)
@@ -72,6 +84,10 @@ class Move:
     plane_id: str
     target_slot: Pose
     path: DubinsArc
+
+    def __post_init__(self) -> None:
+        if not self.plane_id:
+            raise ValueError("Move.plane_id must be non-empty")
 
 
 @dataclass(frozen=True, slots=True)
