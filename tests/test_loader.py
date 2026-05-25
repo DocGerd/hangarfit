@@ -1209,8 +1209,12 @@ class TestPlaneIdSuggestion:
         assert _suggest_plane_id("zzz", ["foo", "bar"]) == ""
 
     def test_ambiguous_casefold_falls_through_to_no_suggestion(self) -> None:
-        # Two valid ids share a casefold → the casefold pass is ambiguous
-        # and is skipped; difflib finds no high-ratio match for 'FOO'.
+        # Two reasons combine to yield "": (1) 'foo' and 'Foo' share a
+        # casefold so the casefold pass is ambiguous and skipped; (2) difflib
+        # then also misses, because a case-only diff ('FOO' vs either) scores
+        # below the 0.6 cutoff. (These two reasons co-occur for any pure
+        # case-variant candidate, which is why the "ambiguous casefold yet
+        # difflib hits" branch is effectively unreachable.)
         assert _suggest_plane_id("FOO", ["foo", "Foo"]) == ""
 
     def test_exact_match_returns_empty(self) -> None:
@@ -1261,3 +1265,18 @@ class TestResolveKnownPlaneId:
         assert "unknown plane id 'zzz'" in msg
         assert "did you mean" not in msg
         assert msg.rstrip().endswith("'zzz'")
+
+    def test_near_match_suggestion_beats_fix_hint(self) -> None:
+        # Docstring invariant: when there IS a near match, the suggestion
+        # wins and the (generic) fix_hint is suppressed.
+        with pytest.raises(LoaderError) as exc:
+            _resolve_known_plane_id(
+                "Foo",
+                ["foo"],
+                role="maintenance.plane",
+                path=Path("s.yaml"),
+                fix_hint="either add it to fleet_in ['foo'] or fix the plane id",
+            )
+        msg = str(exc.value)
+        assert "did you mean 'foo'?" in msg
+        assert "either add it to fleet_in" not in msg
