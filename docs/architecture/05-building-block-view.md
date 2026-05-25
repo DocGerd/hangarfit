@@ -91,6 +91,10 @@ Has tests in `tests/test_loader.py` that exercise the `struts:`
 expansion end-to-end so the YAML convenience can never silently
 desync from the canonical parts representation.
 
+Plane ids are case-sensitive; unknown/mis-cased ids are rejected at load
+time with a `did you mean…?` suggestion (see spec
+`docs/superpowers/specs/2026-05-25-loader-plane-id-validation-design.md`).
+
 For the `maintenance.plane` field, the loader raises a YAML-author-
 actionable `LoaderError` when the named occupant also appears in
 `placements`, with the hint "Remove it from placements (or fix the

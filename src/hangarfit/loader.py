@@ -13,6 +13,12 @@ aircraft's high-level ``struts:`` block into two mirrored strut
 :class:`~hangarfit.models.Part` instances. After loading, the
 aircraft's ``parts`` tuple is the single source of truth for geometry
 — there is no separate ``struts`` field on the :class:`Aircraft`.
+
+Plane ids are **case-sensitive** and are not normalised. When a layout or
+scenario names an id that does not match the fleet exactly, the loader
+rejects it at parse time with a ``did you mean 'X'?`` suggestion (a
+case-insensitive match, else a ``difflib`` near match) rather than letting
+a mis-cased id slip through to a late, generic model-invariant error.
 """
 
 from __future__ import annotations
