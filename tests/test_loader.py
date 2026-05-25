@@ -13,6 +13,7 @@ import pytest
 
 from hangarfit.loader import (
     LoaderError,
+    _suggest_plane_id,
     load_fleet,
     load_hangar,
     load_layout,
@@ -1178,3 +1179,38 @@ def _minimal_aircraft_yaml(
     return _fleet_yaml(
         _aircraft_entry(plane_id, movement_mode=movement_mode, turn_radius_m=turn_radius_m)
     )
+
+
+# ----------------------------------------------------------------------------
+# _suggest_plane_id helper.
+# ----------------------------------------------------------------------------
+
+
+class TestPlaneIdSuggestion:
+    """Unit tests for the _suggest_plane_id near-match helper."""
+
+    def test_casefold_match_suggests_canonical_with_note(self) -> None:
+        assert _suggest_plane_id("Foo", ["foo"]) == (
+            "; did you mean 'foo'? (plane ids are case-sensitive)"
+        )
+
+    def test_all_caps_case_diff_still_suggests(self) -> None:
+        # difflib alone scores 'FOO' vs 'foo' at 0.0 (SequenceMatcher is
+        # case-sensitive); the casefold pass is what rescues this.
+        assert "did you mean 'foo'?" in _suggest_plane_id("FOO", ["foo"])
+
+    def test_typo_suggests_difflib_match(self) -> None:
+        assert _suggest_plane_id("cesna_150", ["cessna_150", "cessna_140"]) == (
+            "; did you mean 'cessna_150'?"
+        )
+
+    def test_novel_id_no_suggestion(self) -> None:
+        assert _suggest_plane_id("zzz", ["foo", "bar"]) == ""
+
+    def test_ambiguous_casefold_falls_through_to_no_suggestion(self) -> None:
+        # Two valid ids share a casefold → the casefold pass is ambiguous
+        # and is skipped; difflib finds no high-ratio match for 'FOO'.
+        assert _suggest_plane_id("FOO", ["foo", "Foo"]) == ""
+
+    def test_exact_match_returns_empty(self) -> None:
+        assert _suggest_plane_id("foo", ["foo", "bar"]) == ""

@@ -17,6 +17,8 @@ aircraft's ``parts`` tuple is the single source of truth for geometry
 
 from __future__ import annotations
 
+import difflib
+from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
 
@@ -436,6 +438,31 @@ def _extract_maintenance_plane(raw: dict, path: Path) -> str | None:
             f"either remove the 'maintenance' block entirely or supply a valid aircraft id"
         )
     return plane
+
+
+def _suggest_plane_id(candidate: str, valid_ids: Iterable[str]) -> str:
+    """Return a '; did you mean X?' fragment for a near-miss id, or '' if none.
+
+    Two passes, because ``difflib`` alone misses the headline case:
+    ``SequenceMatcher`` is case-sensitive, so ``'FOO'`` vs ``'foo'`` scores
+    0.0 and would yield no suggestion.
+
+    1. Case-insensitive exact match: if exactly one valid id equals the
+       candidate under ``casefold()`` (and isn't the candidate itself),
+       suggest it with the case-sensitivity note. If two valid ids share a
+       casefold (only possible for a fleet that deliberately uses
+       case-distinct ids), the pass is ambiguous and is skipped.
+    2. ``difflib.get_close_matches(n=1, cutoff=0.6)`` for genuine typos.
+    """
+    valid = list(valid_ids)
+    folded = candidate.casefold()
+    ci_matches = [v for v in valid if v.casefold() == folded and v != candidate]
+    if len(ci_matches) == 1:
+        return f"; did you mean {ci_matches[0]!r}? (plane ids are case-sensitive)"
+    close = difflib.get_close_matches(candidate, valid, n=1, cutoff=0.6)
+    if close and close[0] != candidate:
+        return f"; did you mean {close[0]!r}?"
+    return ""
 
 
 def _build_aircraft(entry: Any) -> Aircraft:
