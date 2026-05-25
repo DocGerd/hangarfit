@@ -230,10 +230,45 @@ def test_collinear_tiebreak_prefers_earliest_listed_word() -> None:
     assert word == ("L", "S", "L")
 
 
-def test_zero_radius_requires_matching_position() -> None:
-    # A cart cannot translate while pivoting; a moved goal is a caller bug.
-    with pytest.raises(ValueError, match="position"):
-        plan_dubins(Pose(0.0, 0.0, 0.0), Pose(1.0, 0.0, 90.0), turn_radius_m=0.0)
+def test_zero_radius_translation_is_pivot_straight_pivot() -> None:
+    # Cart from origin facing +y, goal 5 m east facing +x. The faithful r->0
+    # Dubins limit is: pivot to the goal bearing (+x = compass 90), drive
+    # straight 5 m, then (final heading already 90) no third pivot. ADR-0007
+    # models a cart as own-gear with turn_radius_m == 0, so a moved goal is a
+    # legitimate pivot-straight-pivot path, NOT a caller error.
+    start = Pose(0.0, 0.0, 0.0)
+    end = Pose(5.0, 0.0, 90.0)
+    arc = plan_dubins(start, end, turn_radius_m=0.0)
+    assert arc.turn_radius_m == 0.0
+    kinds = [s.kind for s in arc.segments]
+    assert kinds[0] in ("L", "R")  # initial pivot to bearing
+    assert "S" in kinds  # straight leg
+    last = arc.pose_at(arc.length_m)
+    assert last.x_m == pytest.approx(5.0, abs=1e-6)
+    assert last.y_m == pytest.approx(0.0, abs=1e-6)
+    assert _heading_close(last.heading_deg, 90.0)
+
+
+def test_zero_radius_translation_collinear_is_pure_straight() -> None:
+    # Already facing the goal and ending on the same heading: no pivots at all.
+    start = Pose(0.0, 0.0, 0.0)
+    end = Pose(0.0, 5.0, 0.0)
+    arc = plan_dubins(start, end, turn_radius_m=0.0)
+    assert [s.kind for s in arc.segments] == ["S"]
+    assert arc.length_m == pytest.approx(5.0)
+
+
+def test_zero_radius_translation_with_final_pivot() -> None:
+    # Goal off-axis AND a final heading change -> all three legs present.
+    start = Pose(0.0, 0.0, 0.0)
+    end = Pose(3.0, 4.0, 200.0)
+    arc = plan_dubins(start, end, turn_radius_m=0.0)
+    assert len(arc.segments) == 3
+    assert [s.kind for s in arc.segments][1] == "S"
+    last = arc.pose_at(arc.length_m)
+    assert last.x_m == pytest.approx(3.0, abs=1e-6)
+    assert last.y_m == pytest.approx(4.0, abs=1e-6)
+    assert _heading_close(last.heading_deg, 200.0)
 
 
 @pytest.mark.parametrize("bad_radius", [-1.0, math.inf, math.nan])

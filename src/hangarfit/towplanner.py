@@ -325,9 +325,12 @@ def _dubins_shortest(
 def plan_dubins(start: Pose, end: Pose, *, turn_radius_m: float) -> DubinsArc:
     """Closed-form shortest arc-line-arc path from ``start`` to ``end``.
 
-    ``turn_radius_m == 0`` is the cart pivot-in-place case (ADR-0007): the
-    positions must already match and the result is a single turn segment
-    whose ``length_m`` encodes the heading change in **radians**. For
+    ``turn_radius_m == 0`` is the cart case (ADR-0007: a cart is own-gear with
+    a zero turn radius). When ``start`` and ``end`` positions coincide it is a
+    pure pivot-in-place — a single turn segment whose ``length_m`` encodes the
+    heading change in **radians**. When they differ it is the r->0 Dubins
+    limit: pivot to the goal bearing, drive straight, pivot to the final
+    heading (a ``(turn, S, turn)`` arc, zero-length pivots dropped). For
     ``turn_radius_m > 0`` the standard Dubins set is solved and the shortest
     feasible word returned; collinear same-heading inputs collapse to a
     single ``"S"`` segment.
@@ -336,19 +339,36 @@ def plan_dubins(start: Pose, end: Pose, *, turn_radius_m: float) -> DubinsArc:
         raise ValueError(f"turn_radius_m must be finite and >= 0, got {turn_radius_m}")
 
     if turn_radius_m == 0.0:
-        if not (
-            math.isclose(start.x_m, end.x_m, abs_tol=1e-9)
-            and math.isclose(start.y_m, end.y_m, abs_tol=1e-9)
-        ):
-            raise ValueError(
-                "zero turn radius (cart pivot) requires start and end position to match"
-            )
-        # Short-arc compass delta in (-180, 180]. Compass is CW-positive, so a
-        # positive delta is a right turn ("R") in the math frame the integrator
-        # walks; the sign is pinned by test_zero_radius_is_pivot_in_place.
-        dtheta_deg = (end.heading_deg - start.heading_deg + 180.0) % 360.0 - 180.0
-        kind: SegmentKind = "R" if dtheta_deg >= 0.0 else "L"
-        return DubinsArc(start, end, 0.0, (Segment(kind, abs(math.radians(dtheta_deg))),))
+        dx = end.x_m - start.x_m
+        dy = end.y_m - start.y_m
+        dist = math.hypot(dx, dy)
+        if dist <= 1e-9:
+            # Pure pivot-in-place (positions coincide): a single turn segment
+            # whose length_m encodes the short-arc heading change in radians.
+            # Compass is CW-positive, so a positive delta is a right turn ("R")
+            # in the math frame the integrator walks; the sign is pinned by
+            # test_zero_radius_is_pivot_in_place.
+            dtheta_deg = (end.heading_deg - start.heading_deg + 180.0) % 360.0 - 180.0
+            pivot_kind: SegmentKind = "R" if dtheta_deg >= 0.0 else "L"
+            return DubinsArc(start, end, 0.0, (Segment(pivot_kind, abs(math.radians(dtheta_deg))),))
+        # Cart translation (ADR-0007 r->0 limit): a cart is own-gear with a zero
+        # turn radius, so the shortest path is pivot to the goal bearing, drive
+        # straight, then pivot to the final heading. All three legs live in one
+        # turn_radius_m=0 DubinsArc; pose_at already integrates an r=0 turn as a
+        # pivot-in-place (position held) and an "S" leg as translation. The goal
+        # bearing as a compass heading: math angle atan2(dy, dx) -> compass.
+        bearing_deg = math_rad_to_compass(math.atan2(dy, dx))
+        cart_segs: list[Segment] = []
+        seg1_deg = (bearing_deg - start.heading_deg + 180.0) % 360.0 - 180.0
+        if abs(seg1_deg) > 1e-9:
+            k1: SegmentKind = "R" if seg1_deg >= 0.0 else "L"
+            cart_segs.append(Segment(k1, abs(math.radians(seg1_deg))))
+        cart_segs.append(Segment("S", dist))
+        seg3_deg = (end.heading_deg - bearing_deg + 180.0) % 360.0 - 180.0
+        if abs(seg3_deg) > 1e-9:
+            k3: SegmentKind = "R" if seg3_deg >= 0.0 else "L"
+            cart_segs.append(Segment(k3, abs(math.radians(seg3_deg))))
+        return DubinsArc(start, end, 0.0, tuple(cart_segs))
 
     word, (t, p, q) = _dubins_shortest(start, end, turn_radius_m)
     r = turn_radius_m
