@@ -374,7 +374,11 @@ Append the standard case matrix. Each case has an analytically-known answer so a
 )
 def test_dubins_endpoints_match(start, end, radius, expect_words):
     arc = plan_dubins(start, end, turn_radius_m=radius)
-    last = list(arc.sample(step_m=0.05, step_deg=1.0))[-1]
+    # Assert the INTEGRATED endpoint (walking the segments), NOT arc.end —
+    # arc.end stores the input goal verbatim, so comparing to it is a
+    # tautology that would pass a wrong closed form. pose_at(length) only
+    # matches `end` if _dubins_shortest produced correct segment lengths.
+    last = arc.pose_at(arc.length_m)
     assert last.x_m == pytest.approx(end.x_m, abs=1e-3)
     assert last.y_m == pytest.approx(end.y_m, abs=1e-3)
     assert _heading_close(last.heading_deg, end.heading_deg)
@@ -434,39 +438,49 @@ Add sampling to `DubinsArc` (place the methods on the dataclass defined in Task 
             if seg.kind == "S":
                 x += step * math.cos(theta)
                 y += step * math.sin(theta)
-            else:  # "L" or "R": arc of radius r; r == 0 => pivot in place
+            else:  # "L"/"R": arc of radius r; r == 0 => cart pivot in place
+                sign = 1.0 if seg.kind == "L" else -1.0
                 if r == 0.0:
-                    pass  # cart pivot: position fixed; heading advances below
+                    # pivot: position fixed; `step` is radians of turn (see plan_dubins)
+                    theta += sign * step
                 else:
-                    sign = 1.0 if seg.kind == "L" else -1.0
-                    dtheta = sign * step / r
                     cx = x - sign * r * math.sin(theta)
                     cy = y + sign * r * math.cos(theta)
-                    theta_new = theta + dtheta
-                    x = cx + sign * r * math.sin(theta_new)
-                    y = cy - sign * r * math.cos(theta_new)
-                    theta = theta_new
-                if r == 0.0:
-                    # pivot: advance heading by `step` interpreted as radians of turn
-                    sign = 1.0 if seg.kind == "L" else -1.0
-                    theta += sign * step
+                    theta += sign * step / r
+                    x = cx + sign * r * math.sin(theta)
+                    y = cy - sign * r * math.cos(theta)
             remaining -= step
             if remaining <= 1e-12:
                 break
         return Pose(x_m=x, y_m=y, heading_deg=math_rad_to_compass(theta))
 
     def sample(self, *, step_m: float = 0.05, step_deg: float = 1.0):
-        """Yield poses from start to end. Step is the smaller of ``step_m`` of
-        translation or ``step_deg`` of heading change, per the spike (§Q4)."""
-        total = self.length_m
-        # For zero-radius pivots, length_m is the turn in radians*0... handle by
-        # always emitting start, a heading-spaced set, and end (see Task notes).
-        step = step_m
-        n = max(1, math.ceil(total / step)) if total > 0 else 1
+        """Yield integrated poses from start to end. Sample density is the FINER
+        of ``step_m`` translation or ``step_deg`` heading change along the arc
+        (spike §Q4), so zero-translation pivots still get angular resolution.
+        The final pose is ``pose_at(length)`` — the INTEGRATED endpoint, NOT the
+        stored ``self.end`` — so a wrong closed form surfaces as a mismatch
+        instead of being masked."""
+        total = self.length_m  # overloaded "progress" param that pose_at walks
+        trans_len = 0.0        # true translation distance (excludes pivots)
+        sweep_deg = 0.0        # total heading sweep
+        for s in self.segments:
+            if s.kind == "S":
+                trans_len += s.length_m
+            elif self.turn_radius_m > 0.0:  # real arc: length_m is arc length
+                trans_len += s.length_m
+                sweep_deg += math.degrees(s.length_m / self.turn_radius_m)
+            else:                           # r == 0 pivot: length_m is radians
+                sweep_deg += math.degrees(s.length_m)
+        n = max(
+            1,
+            math.ceil(trans_len / step_m) if trans_len > 0.0 else 0,
+            math.ceil(sweep_deg / step_deg) if sweep_deg > 0.0 else 0,
+        )
         yield self.start
         for i in range(1, n):
             yield self.pose_at(total * i / n)
-        yield self.end
+        yield self.pose_at(total)
 ```
 
 > **Pivot-in-place note (zero radius):** when `turn_radius_m == 0`, a turn segment's `length_m` must encode the heading change in **radians** (so `pose_at` advances `theta` by `step`). `plan_dubins` (next step) is responsible for emitting that representation for the `r == 0` case: a single turn `Segment` whose `length_m = abs(normalised heading delta in radians)`, kind `L`/`R` by sign. The `test_zero_radius_is_pivot_in_place` test gates this.
@@ -476,7 +490,7 @@ Add sampling to `DubinsArc` (place the methods on the dataclass defined in Task 
 Add `plan_dubins(start, end, *, turn_radius_m)` to `towplanner.py`. Structure:
 
 1. **Zero-radius pivot branch:** if `turn_radius_m == 0`: position must already match (assert `start.(x,y) ≈ end.(x,y)`); compute the short-arc heading delta `dθ = ((end.heading − start.heading + 180) mod 360) − 180`; emit one `Segment(kind="L" if dθ>0 else "R", length_m=abs(radians(dθ)))`. (Compass CW-positive: a positive compass delta is a right turn in math frame; pick the sign that `pose_at` reproduces — the canary/zero-radius tests gate it.)
-2. **General branch:** convert to the standard math frame (`θ0 = compass_to_math_rad(start.heading)`, `θ1 = compass_to_math_rad(end.heading)`, positions unchanged), then run the canonical **Shkel–Lumelsky Dubins set** (the six words LSL, RSR, LSR, RSL, RLR, LRL) over the normalised `(α, β, d)` with `d = dist/turn_radius_m`. Pick the shortest feasible word; build `segments` as `(Segment(w[0], t·r), Segment(w[1], p·r or p for S), Segment(w[2], q·r))` where turn-segment `length_m = angle·r` (arc length) and straight-segment `length_m = p·r`.
+2. **General branch:** convert to the standard math frame (`θ0 = compass_to_math_rad(start.heading)`, `θ1 = compass_to_math_rad(end.heading)`, positions unchanged), then run the canonical **Shkel–Lumelsky Dubins set** (the six words LSL, RSR, LSR, RSL, RLR, LRL) over the normalised `(α, β, d)` with `d = dist/turn_radius_m`. Pick the shortest feasible word; build `segments` as `(Segment(w[0], t·r), Segment(w[1], p·r), Segment(w[2], q·r))` where turn-segment `length_m = angle·r` (arc length) and straight-segment `length_m = p·r`. **Collapse zero-length legs** so a collinear straight returns `("S",)`, not a 3-tuple with zero-length turns (otherwise `test_straight_line_path_is_pure_S` fails on the segment-kind check).
 
 ```python
 def plan_dubins(start: "Pose", end: "Pose", *, turn_radius_m: float) -> "DubinsArc":
@@ -494,11 +508,15 @@ def plan_dubins(start: "Pose", end: "Pose", *, turn_radius_m: float) -> "DubinsA
     # (word, (t, p, q)) over the six words, then scale by turn_radius_m.
     word, (t, p, q) = _dubins_shortest(start, end, turn_radius_m)
     r = turn_radius_m
-    segs = (
+    raw = (
         Segment(word[0], t * r),
-        Segment("S", p * r) if word[1] == "S" else Segment(word[1], p * r),
+        Segment(word[1], p * r),  # word[1] is "S" for CSC words, a turn for CCC
         Segment(word[2], q * r),
     )
+    # Collapse zero-length legs: a collinear same-heading path comes back as
+    # (turn 0, "S", turn 0); drop the zeros so it is ("S",) and the `["S"]`
+    # segment-kind assertions hold. Keep at least one segment.
+    segs = tuple(s for s in raw if s.length_m > 1e-9) or (Segment("S", 0.0),)
     return DubinsArc(start, end, r, segs)
 ```
 
@@ -729,8 +747,8 @@ These depend on the exact APIs Wave 1 produces (`DubinsArc.sample`, `path_first_
 
 **Spec coverage (Wave 1 issues):** #188 → Task 1 (dataclasses + `effective_turn_radius_m`). #189 → Task 2 (closed-form + 45° canary). #190 → Task 3 (ordering). #191 → Task 4 (sampled check). All four Wave 1 issues map to a task. Waves 2–3 (#196, #197, #192, #193, #194) are roadmapped with their dependency on Wave 1 APIs named.
 
-**Placeholder scan:** No "TBD"/"handle edge cases" left. The one judgement call deferred to execution is the exact closed-form Dubins constants in `_dubins_shortest` — this is deliberate and TDD-gated (the analytic matrix + canary are complete and authoritative); porting a vetted closed form against a complete test suite is the correct discipline, not a placeholder. The pivot-sign in the `r==0` branch and the L/R sign in `pose_at` are likewise pinned by `test_zero_radius_is_pivot_in_place` and the canary.
+**Placeholder scan:** No "TBD"/"handle edge cases" left. The one judgement call deferred to execution is the exact closed-form Dubins constants in `_dubins_shortest` — this is deliberate and TDD-gated: `test_dubins_endpoints_match` asserts the **integrated** endpoint `arc.pose_at(arc.length_m)` (NOT the stored `arc.end`, which would be a tautology) against the target pose, so a wrong closed form fails the test; the 45° canary additionally guards the heading convention via `pose_at`'s intermediate samples. Porting a vetted closed form against this suite is the correct discipline, not a placeholder. The pivot-sign in the `r==0` branch and the L/R sign in `pose_at` are pinned by `test_zero_radius_is_pivot_in_place` and the canary.
 
 **Type consistency:** `Pose`, `Segment`, `DubinsArc`, `Move`, `MovesPlan`, `plan_dubins`, `compass_to_math_rad`, `math_rad_to_compass`, `back_first_order`, `path_first_conflict`, `DubinsArc.sample`/`pose_at`/`length_m` are referenced consistently across tasks. `effective_turn_radius_m()` matches the ADR-0007 contract. Segment-length semantics: turn segments store **arc length** in metres for `r>0` and **radians of turn** for the `r==0` pivot — this asymmetry is documented at the pivot note and gated by the zero-radius test; flagged here so the implementer does not "normalise" it away.
 
-**Known risk to watch during execution:** the `sample()` step for a zero-radius pivot (length is in radians, not metres) — `sample` uses `step_m` for `n`; for pivots the heading-spaced sampling (`step_deg`) should drive `n` instead. Resolve in Task 2 Step 5 so `test_zero_radius_is_pivot_in_place` emits enough samples; the test asserts position invariance, so under-sampling does not hide a bug, but Wave 2's pivot collision-checking will want adequate angular resolution.
+**Representation asymmetry (documented, consumed consistently):** `Segment.length_m` is metres for straights/real arcs but **radians** for zero-radius pivots. `sample()` accounts for this — it drives `n` by the FINER of true translation (`step_m`, excluding pivot "lengths") and angular sweep (`step_deg`), so zero-radius pivots get full angular resolution for Wave 2's pivot collision-checking, not just two endpoints. `plan_dubins`, `pose_at`, and `sample` all consume the asymmetry consistently; the pivot note in Task 2 Step 5 is the single place it is spelled out. Do not "normalise" it away during execution.
