@@ -156,14 +156,24 @@ meaning: *this carted plane has no own-gear taxi radius.*
 
 ## Open question (deferred, not decided here)
 
-**Sequence-level cart cap.** The existing rule caps `cart_eligible` planes at one
-per *layout* (`Layout.__post_init__`); it says nothing about a *sequence*. If two
-candidate layouts each legally place a different `cart_eligible` plane on the cart,
-the v1 planner happily plans both — each target layout satisfies the per-layout cap.
-Whether the rule should tighten to "at most one cart-eligible plane on the cart
-across the whole sequence" is left open. `MovesPlan` deliberately carries no
-cart-usage tally, so adding one later is non-breaking. The natural place to revisit
-is the v2 true cart-lift primitive.
+**Cart inventory for `cart_eligible` planes.** Carts are a finite shared resource,
+but **only for `cart_eligible` planes** — `always_cart` planes are guaranteed their
+own carts and do not draw from the inventory. Today that inventory is hard-coded to
+**one**: `Layout.__post_init__` rejects a layout with more than one `cart_eligible`
+plane on a cart, and that count deliberately excludes `always_cart` planes. Two
+questions are deferred:
+
+1. **Configurable size.** Should the single-cart limit become a configurable
+   `max_carts` for the eligible pool (the real hangar may own more than one spare
+   cart)?
+2. **Per-layout vs per-sequence.** The cap binds per *layout* today. A tow
+   *sequence* spanning multiple candidate layouts could place a different
+   `cart_eligible` plane on the (single) cart in each, and the v1 planner happily
+   plans both because each target layout independently satisfies the per-layout cap.
+   Whether the inventory should bind across the whole sequence is open.
+
+`MovesPlan` deliberately carries no cart-usage tally, so adding one later is
+non-breaking. The natural place to revisit both is the v2 true cart-lift primitive.
 
 ## Compliance
 
