@@ -13,6 +13,7 @@ import pytest
 
 from hangarfit.loader import (
     LoaderError,
+    _resolve_known_plane_id,
     _suggest_plane_id,
     load_fleet,
     load_hangar,
@@ -1214,3 +1215,49 @@ class TestPlaneIdSuggestion:
 
     def test_exact_match_returns_empty(self) -> None:
         assert _suggest_plane_id("foo", ["foo", "bar"]) == ""
+
+
+# ----------------------------------------------------------------------------
+# _resolve_known_plane_id gate.
+# ----------------------------------------------------------------------------
+
+
+class TestResolveKnownPlaneId:
+    """Unit tests for the _resolve_known_plane_id loader gate."""
+
+    def test_known_id_does_not_raise(self) -> None:
+        assert (
+            _resolve_known_plane_id("foo", ["foo", "bar"], role="placement", path=Path("x.yaml"))
+            is None
+        )
+
+    def test_case_mismatch_raises_with_suggestion(self) -> None:
+        with pytest.raises(LoaderError) as exc:
+            _resolve_known_plane_id("Foo", ["foo"], role="placement", path=Path("x.yaml"))
+        msg = str(exc.value)
+        assert "x.yaml" in msg
+        assert "placement references unknown plane id 'Foo'" in msg
+        assert "did you mean 'foo'?" in msg
+        assert "case-sensitive" in msg
+
+    def test_novel_id_with_fix_hint_shows_hint(self) -> None:
+        with pytest.raises(LoaderError) as exc:
+            _resolve_known_plane_id(
+                "ghost",
+                ["foo"],
+                role="maintenance.plane",
+                path=Path("s.yaml"),
+                fix_hint="either add it to fleet_in ['foo'] or fix the plane id",
+            )
+        msg = str(exc.value)
+        assert "maintenance.plane references unknown plane id 'ghost'" in msg
+        assert "either add it to fleet_in ['foo'] or fix the plane id" in msg
+        assert "did you mean" not in msg
+
+    def test_novel_id_no_hint_is_bare(self) -> None:
+        with pytest.raises(LoaderError) as exc:
+            _resolve_known_plane_id("zzz", ["foo"], role="placement", path=Path("x.yaml"))
+        msg = str(exc.value)
+        assert "unknown plane id 'zzz'" in msg
+        assert "did you mean" not in msg
+        assert msg.rstrip().endswith("'zzz'")

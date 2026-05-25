@@ -18,7 +18,7 @@ aircraft's ``parts`` tuple is the single source of truth for geometry
 from __future__ import annotations
 
 import difflib
-from collections.abc import Iterable
+from collections.abc import Collection, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -463,6 +463,35 @@ def _suggest_plane_id(candidate: str, valid_ids: Iterable[str]) -> str:
     if close and close[0] != candidate:
         return f"; did you mean {close[0]!r}?"
     return ""
+
+
+def _resolve_known_plane_id(
+    candidate: str,
+    valid_ids: Collection[str],
+    *,
+    role: str,
+    path: Path,
+    fix_hint: str = "",
+) -> None:
+    """Raise :class:`LoaderError` if ``candidate`` is not in ``valid_ids``.
+
+    The message is ``"{path}: {role} references unknown plane id
+    {candidate!r}{tail}"`` where ``tail`` is, in priority order: a
+    ``_suggest_plane_id`` fragment when there is a near match, else
+    ``"; " + fix_hint`` when ``fix_hint`` is set, else empty. A near-match
+    suggestion always wins over ``fix_hint`` — naming the likely-intended
+    id beats generic guidance.
+
+    This is an earlier, friendlier front door to the unknown-id checks in
+    ``Layout``/``Scenario.__post_init__``; those invariants are kept as the
+    backstop for callers that bypass the loader.
+    """
+    if candidate in valid_ids:
+        return
+    tail = _suggest_plane_id(candidate, valid_ids)
+    if not tail and fix_hint:
+        tail = f"; {fix_hint}"
+    raise LoaderError(f"{path}: {role} references unknown plane id {candidate!r}{tail}")
 
 
 def _build_aircraft(entry: Any) -> Aircraft:
