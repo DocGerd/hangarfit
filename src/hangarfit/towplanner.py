@@ -475,10 +475,11 @@ def path_first_conflict(
 
 
 class NoFeasiblePlanError(Exception):
-    """No collision-free entry order found within the retry budget (spike Q2).
+    """No collision-free entry order exists: the greedy back-first scan found
+    no feasible plane for some slot (spike Q2 / Risk #1).
 
-    Carries the plane that could not be placed and the last conflict that
-    blocked it, so the caller (and the Wave 3 CLI) can name the offender.
+    Carries the plane that could not be placed and the conflict that blocked
+    it, so the caller (and the Wave 3 CLI) can name the offender.
     """
 
     def __init__(self, plane_id: str, conflict: Conflict) -> None:
