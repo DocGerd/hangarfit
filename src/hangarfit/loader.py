@@ -318,6 +318,11 @@ def load_scenario(
     # maintenance (optional, same shape as load_layout)
     maintenance_plane = _extract_maintenance_plane(raw, path)
 
+    # Shared "did you mean / else add it to fleet_in" guidance for the two
+    # ids validated against fleet_in (maintenance plane + constraint keys).
+    # Built once so the two call sites can't drift apart during message tuning.
+    fleet_in_fix_hint = f"either add it to fleet_in {sorted(fleet_in)} or fix the plane id"
+
     # Pre-Scenario boundary check: surface the YAML-author error with a
     # path prefix here instead of relying on Scenario.__post_init__'s
     # bare ValueError bubbling through the except ValueError → LoaderError
@@ -328,7 +333,7 @@ def load_scenario(
             fleet_in,
             role="maintenance.plane",
             path=path,
-            fix_hint=f"either add it to fleet_in {sorted(fleet_in)} or fix the plane id",
+            fix_hint=fleet_in_fix_hint,
         )
 
     # constraints (optional). `or {}` is wrong here — it collapses every
@@ -348,7 +353,7 @@ def load_scenario(
             fleet_in,
             role="constraints key",
             path=path,
-            fix_hint=f"either add it to fleet_in {sorted(fleet_in)} or fix the plane id",
+            fix_hint=fleet_in_fix_hint,
         )
         try:
             constraints[plane_id] = _build_plane_constraint(plane_id, cdata)

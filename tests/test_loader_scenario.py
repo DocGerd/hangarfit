@@ -209,6 +209,19 @@ def test_load_scenario_miscased_constraint_key_suggests(tmp_path):
     assert "did you mean 'ctsl'?" in msg
 
 
+def test_load_scenario_typo_fleet_in_entry_suggests_via_difflib(tmp_path):
+    """A genuine (non-case) typo in a fleet_in entry is caught with a difflib
+    near-match suggestion — the other new tests cover only the casefold path."""
+    from hangarfit.loader import load_scenario
+
+    p = _stage_scenario(tmp_path, "fleet_in: [aviat_huksy, ctsl]\n")
+    with pytest.raises(LoaderError) as exc:
+        load_scenario(p)
+    msg = str(exc.value)
+    assert "fleet_in entry references unknown plane id 'aviat_huksy'" in msg
+    assert "did you mean 'aviat_husky'?" in msg
+
+
 def test_scenario_post_init_backstop_still_fires_on_direct_construction():
     """Direct-construction path: Scenario.__post_init__ still raises ValueError
     when maintenance_plane is not in fleet_in, bypassing the loader guard.
