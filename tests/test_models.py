@@ -268,6 +268,19 @@ class TestAircraft:
         with pytest.raises(AssertionError, match="turn_radius_m is None"):
             a.required_turn_radius_m()
 
+    def test_effective_turn_radius_zero_for_always_cart(self) -> None:
+        a = _ok_aircraft(movement_mode="always_cart", turn_radius_m=None)
+        assert a.effective_turn_radius_m() == 0.0
+
+    def test_effective_turn_radius_delegates_for_own_gear(self) -> None:
+        a = _ok_aircraft(movement_mode="always_own_gear", turn_radius_m=7.0)
+        assert a.effective_turn_radius_m() == 7.0
+        assert a.effective_turn_radius_m() == a.required_turn_radius_m()
+
+    def test_effective_turn_radius_delegates_for_cart_eligible(self) -> None:
+        a = _ok_aircraft(movement_mode="cart_eligible", turn_radius_m=9.5)
+        assert a.effective_turn_radius_m() == 9.5
+
     @pytest.mark.parametrize("wing_position", ["", "middle", "High", "MID", "bottom"])
     def test_invalid_wing_position_rejected(self, wing_position: str) -> None:
         with pytest.raises(ValueError, match="wing_position must be one of"):

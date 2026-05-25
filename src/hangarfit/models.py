@@ -202,6 +202,19 @@ class Aircraft:
             )
         return self.turn_radius_m
 
+    def effective_turn_radius_m(self) -> float:
+        """Turn radius for path planning: ``0.0`` for cart-borne planes
+        (a pivot-in-place), else the own-gear ``required_turn_radius_m()``.
+
+        This is the accessor the tow-path planner consumes (ADR-0007): a
+        cart-borne plane is modelled as own-gear with a zero turn radius.
+        Unlike :meth:`required_turn_radius_m`, this never raises — callers
+        that legitimately handle carts (the Dubins planner) use this one.
+        """
+        if self.movement_mode == "always_cart":
+            return 0.0
+        return self.required_turn_radius_m()
+
 
 @dataclass(frozen=True, slots=True)
 class Door:
