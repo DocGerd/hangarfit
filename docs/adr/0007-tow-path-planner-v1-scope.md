@@ -20,8 +20,9 @@ question the spike explicitly left open: cart-borne planes are modelled as
 own-gear with a zero turn radius (a pivot-in-place), but `turn_radius_m = 0`
 is **not representable in today's schema** — `data/fleet.yaml` carries `null`
 for the three `always_cart` planes, and `Aircraft.required_turn_radius_m()`
-(`src/hangarfit/models.py`) *raises* if that field is read for a carted plane.
-Something has to give before the planner can construct a cart plane's path.
+(`src/hangarfit/models.py`) *raises* when that field is `None` — which it is for
+every carted plane today. Something has to give before the planner can construct
+a cart plane's path.
 
 The label "v1" here means the **scope tier of the towplanner subsystem**, not a
 `hangarfit` semver version: v1 = this Phase 3a milestone; v2 = a later
@@ -71,8 +72,9 @@ Concretely on fork 4 (the question this ADR resolves): `effective_turn_radius_m(
 returns `0.0` for `always_cart` planes and delegates to `required_turn_radius_m()`
 otherwise. `data/fleet.yaml` keeps `null` for the cart planes; the loader and
 `Aircraft.__post_init__` validation are untouched; `required_turn_radius_m()`
-keeps raising for carted planes as a bug-guard for own-gear-only callers. The
-towplanner is the sole caller of the new accessor.
+keeps raising when `turn_radius_m is None` (the case for all carted planes today)
+as a bug-guard for own-gear-only callers. The towplanner is the sole caller of the
+new accessor.
 
 ### Why not rearrangement-first (fork 1)?
 
@@ -121,9 +123,9 @@ meaning: *this carted plane has no own-gear taxi radius.*
 
 - `turn_radius_m` becomes load-bearing for the first time, consumed honestly
   through one accessor; the planner body has no cart special-case.
-- No schema, loader, validator, or `fleet.yaml` value change — the smallest
-  possible footprint for the cart decision, and the v2 cart-lift primitive can
-  revise the approximation in code without a data migration.
+- No schema, loader, validator, or `fleet.yaml` value change — a small, code-only
+  footprint, and the v2 cart-lift primitive can revise the approximation in code
+  without a data migration.
 - The planner is **deterministic by construction** (total-order sort with a
   `plane_id` tie-break; closed-form Dubins; deterministic retry-swap), so the
   bundled `(Layout, MovesPlan)` output of `solve` preserves ADR-0003's contract.
@@ -186,10 +188,10 @@ non-breaking. The natural place to revisit both is the v2 true cart-lift primiti
 - Any PR touching `geometry.py` / `collisions.py` callers (the sampled
   collision-during-motion check) must be reviewed by the `geometry-invariant-guard`
   subagent per the standing CLAUDE.md rule.
-- The cart decision is verified by a unit test asserting
-  `effective_turn_radius_m()` returns `0.0` for `always_cart` planes and matches
-  `required_turn_radius_m()` otherwise, and that `data/fleet.yaml` still validates
-  with `null` for the cart planes (no schema change leaked in).
+- The cart decision will be verified (with #188, which adds the accessor) by a unit
+  test asserting `effective_turn_radius_m()` returns `0.0` for `always_cart` planes
+  and matches `required_turn_radius_m()` otherwise, and that `data/fleet.yaml` still
+  validates with `null` for the cart planes (no schema change leaked in).
 - Determinism is verified by the existing seeded-reproducibility tests extended to
   the bundled `(Layout, MovesPlan)` output.
 
