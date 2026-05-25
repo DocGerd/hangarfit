@@ -1,6 +1,6 @@
 # ADR-0007: Tow-path planner v1 — empty-hangar fill, Dubins-only, cart-as-own-gear
 
-- **Status:** Proposed
+- **Status:** Accepted
 
 - **Date:** 2026-05-25
 - **Deciders:** Patrick Kuhn (DocGerd)
