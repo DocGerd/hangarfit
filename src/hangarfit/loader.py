@@ -211,6 +211,11 @@ def load_layout(
 
     maintenance_plane = _extract_maintenance_plane(raw, path)
 
+    for p in placements:
+        _resolve_known_plane_id(p.plane_id, fleet, role="placement", path=path)
+    if maintenance_plane is not None:
+        _resolve_known_plane_id(maintenance_plane, fleet, role="maintenance.plane", path=path)
+
     # Pre-Layout boundary check for the most common YAML-author mistake:
     # naming the bay occupant in ``placements``. ``Layout.__post_init__``
     # catches this too, but with a generic invariant message; raise here

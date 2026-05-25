@@ -762,7 +762,7 @@ placements:
     heading_deg: 0
 """,
         )
-        with pytest.raises(LoaderError, match="unknown plane_id 'ghost'"):
+        with pytest.raises(LoaderError, match="unknown plane id 'ghost'"):
             load_layout(layout_path)
 
     def test_cart_rule_violation_propagates(self, tmp_path: Path) -> None:
@@ -1280,3 +1280,79 @@ class TestResolveKnownPlaneId:
         msg = str(exc.value)
         assert "did you mean 'foo'?" in msg
         assert "either add it to fleet_in" not in msg
+
+
+# ----------------------------------------------------------------------------
+# load_layout unknown/mis-cased plane id integration tests.
+# ----------------------------------------------------------------------------
+
+
+class TestUnknownPlaneIdLayout:
+    """Loader-boundary unknown/mis-cased plane id rejection for layouts."""
+
+    def _fleet_and_hangar(self, dir_: Path) -> None:
+        _write(
+            dir_ / "fleet.yaml",
+            _minimal_aircraft_yaml("foo", movement_mode="always_own_gear", turn_radius_m=5.0),
+        )
+        _write(
+            dir_ / "hangar.yaml",
+            """
+length_m: 25.0
+width_m: 18.0
+door: {center_x_m: 9.0, width_m: 12.0}
+maintenance_bay: {center_x_m: 13.5, width_m: 9, depth_m: 9}
+""",
+        )
+
+    def test_miscased_placement_id_suggests_canonical(self, tmp_path: Path) -> None:
+        self._fleet_and_hangar(tmp_path)
+        layout = _write(
+            tmp_path / "layout.yaml",
+            """
+fleet: fleet.yaml
+hangar: hangar.yaml
+placements:
+  - {plane: Foo, x_m: 5, y_m: 5, heading_deg: 0, on_carts: false}
+""",
+        )
+        with pytest.raises(LoaderError) as exc:
+            load_layout(layout)
+        msg = str(exc.value)
+        assert "placement references unknown plane id 'Foo'" in msg
+        assert "did you mean 'foo'?" in msg
+        assert "case-sensitive" in msg
+
+    def test_miscased_maintenance_id_suggests_canonical(self, tmp_path: Path) -> None:
+        self._fleet_and_hangar(tmp_path)
+        layout = _write(
+            tmp_path / "layout.yaml",
+            """
+fleet: fleet.yaml
+hangar: hangar.yaml
+placements: []
+maintenance: {plane: Foo}
+""",
+        )
+        with pytest.raises(LoaderError) as exc:
+            load_layout(layout)
+        msg = str(exc.value)
+        assert "maintenance.plane references unknown plane id 'Foo'" in msg
+        assert "did you mean 'foo'?" in msg
+
+    def test_novel_placement_id_no_false_suggestion(self, tmp_path: Path) -> None:
+        self._fleet_and_hangar(tmp_path)
+        layout = _write(
+            tmp_path / "layout.yaml",
+            """
+fleet: fleet.yaml
+hangar: hangar.yaml
+placements:
+  - {plane: zzz, x_m: 5, y_m: 5, heading_deg: 0, on_carts: false}
+""",
+        )
+        with pytest.raises(LoaderError) as exc:
+            load_layout(layout)
+        msg = str(exc.value)
+        assert "unknown plane id 'zzz'" in msg
+        assert "did you mean" not in msg
