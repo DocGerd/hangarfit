@@ -14,7 +14,7 @@ import pytest
 
 from hangarfit.geometry import aircraft_parts_world
 from hangarfit.models import Aircraft, Part, Placement
-from hangarfit.towplanner import Pose, compass_to_math_rad, plan_dubins
+from hangarfit.towplanner import Pose, _dubins_shortest, compass_to_math_rad, plan_dubins
 
 
 def _heading_close(a: float, b: float, tol: float = 0.5) -> bool:
@@ -183,12 +183,62 @@ def test_zero_radius_is_pivot_in_place() -> None:
     assert _heading_close(arc.pose_at(arc.length_m).heading_deg, 90.0)
 
 
+def test_zero_radius_sampler_density_tracks_heading_sweep() -> None:
+    """A pivot has zero translation, so its sample density must come from the
+    angular sweep (step_deg), not step_m. Without that branch the pivot would
+    yield only [start, end] (n=1) and the #191 motion check would skip the
+    swept volume of an in-place turn entirely."""
+    arc = plan_dubins(Pose(1.0, 1.0, 0.0), Pose(1.0, 1.0, 90.0), turn_radius_m=0.0)
+    # 90deg sweep at 1deg resolution -> ceil(90/1) intervals -> 91 poses.
+    poses = list(arc.sample(step_m=0.05, step_deg=1.0))
+    assert len(poses) == 91
+    # And the heading must advance monotonically through the sweep, not jump.
+    headings = [p.heading_deg for p in poses]
+    assert headings == sorted(headings)
+    assert headings[0] == pytest.approx(0.0)
+    assert _heading_close(headings[-1], 90.0)
+
+
+def test_zero_radius_pivot_left_for_negative_delta() -> None:
+    """A negative compass delta pivots the other way (the ``L`` branch),
+    complementing the +90 (``R``) case above. Pins the L sign at the
+    plan_dubins level, not just inside pose_at."""
+    arc = plan_dubins(Pose(2.0, 3.0, 90.0), Pose(2.0, 3.0, 0.0), turn_radius_m=0.0)
+    assert [s.kind for s in arc.segments] == ["L"]
+    assert arc.segments[0].length_m == pytest.approx(math.radians(90.0))
+    assert _heading_close(arc.pose_at(arc.length_m).heading_deg, 0.0)
+
+
+def test_zero_radius_pivot_180_resolves_to_short_arc() -> None:
+    """A 180deg pivot is the sign boundary: (180+180)%360-180 == -180, so it
+    takes the ``L`` branch and the >=0 'positive->R' rule never sees +180.
+    Either direction is geometrically valid; pin that it lands correctly and
+    deterministically as a single half-turn."""
+    arc = plan_dubins(Pose(0.0, 0.0, 0.0), Pose(0.0, 0.0, 180.0), turn_radius_m=0.0)
+    assert [s.kind for s in arc.segments] == ["L"]
+    assert arc.segments[0].length_m == pytest.approx(math.pi)
+    assert _heading_close(arc.pose_at(arc.length_m).heading_deg, 180.0)
+
+
+def test_collinear_tiebreak_prefers_earliest_listed_word() -> None:
+    """LSL/RSR/LSR/RSL all cost exactly ``d`` on a collinear same-heading path,
+    so the deterministic tie-break (fixed word order + strict ``<``) must
+    return the earliest-listed word, LSL. plan_dubins collapses this to
+    ("S",), masking the choice — assert on the internal so the ADR-0003
+    determinism invariant is queryable and a ``<`` -> ``<=`` flip fails."""
+    word, _ = _dubins_shortest(Pose(0.0, 0.0, 0.0), Pose(0.0, 8.0, 0.0), 4.0)
+    assert word == ("L", "S", "L")
+
+
 def test_zero_radius_requires_matching_position() -> None:
     # A cart cannot translate while pivoting; a moved goal is a caller bug.
     with pytest.raises(ValueError, match="position"):
         plan_dubins(Pose(0.0, 0.0, 0.0), Pose(1.0, 0.0, 90.0), turn_radius_m=0.0)
 
 
-def test_negative_turn_radius_rejected() -> None:
+@pytest.mark.parametrize("bad_radius", [-1.0, math.inf, math.nan])
+def test_invalid_turn_radius_rejected(bad_radius: float) -> None:
+    # plan_dubins requires a finite, non-negative radius (negative is
+    # nonsensical; inf/nan would silently corrupt the closed form).
     with pytest.raises(ValueError):
-        plan_dubins(Pose(0.0, 0.0, 0.0), Pose(0.0, 5.0, 0.0), turn_radius_m=-1.0)
+        plan_dubins(Pose(0.0, 0.0, 0.0), Pose(0.0, 5.0, 0.0), turn_radius_m=bad_radius)

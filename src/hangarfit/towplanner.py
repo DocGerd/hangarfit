@@ -210,8 +210,9 @@ def _mod2pi(theta: float) -> float:
 # radians; the straight leg p of a CSC word is a length in units of the turn
 # radius. Multiplying every parameter by the radius yields metres of arc
 # length (turn) / straight length, which is what ``Segment.length_m`` stores.
-# The forward integrator ``DubinsArc.pose_at`` matches this exact formulation,
-# so a correct (word, t, p, q) reproduces the goal pose when walked.
+# The forward integrator ``DubinsArc.pose_at`` walks this same formulation, so
+# a correct (word, t, p, q) reproduces the goal pose — a property enforced by
+# ``test_dubins_roundtrip_grid`` across all six words and three radii.
 # ---------------------------------------------------------------------------
 
 
@@ -276,7 +277,10 @@ def _lrl(alpha: float, beta: float, d: float) -> tuple[float, float, float] | No
 
 
 # Fixed iteration order ⇒ deterministic tie-breaking (ADR-0003): a strict
-# `<` comparison keeps the earliest-listed word when two words tie on cost.
+# `<` comparison keeps the earliest-listed word on EXACT cost ties (e.g. the
+# four-way collinear tie LSL/RSR/LSR/RSL). Geometrically-equal paths whose
+# float costs differ by a ULP still resolve deterministically — just to
+# whichever rounded smaller, not necessarily the earliest-listed.
 _WordSolver = Callable[[float, float, float], "tuple[float, float, float] | None"]
 _WORD_SOLVERS: tuple[tuple[_DubinsWord, _WordSolver], ...] = (
     (("L", "S", "L"), _lsl),
