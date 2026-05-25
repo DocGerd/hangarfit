@@ -14,6 +14,7 @@ from dataclasses import dataclass
 from typing import Literal
 
 from hangarfit.collisions import check as _check
+from hangarfit.geometry import aircraft_parts_world
 from hangarfit.models import Aircraft, Conflict, Hangar, Layout, Placement
 
 SegmentKind = Literal["L", "S", "R"]
@@ -424,6 +425,38 @@ def entry_pose(target: Placement, hangar: Hangar) -> Pose:
 # ---------------------------------------------------------------------------
 
 
+def _mover_motion_bounds_conflict(
+    mover: Aircraft, placement: Placement, hangar: Hangar
+) -> Conflict | None:
+    """First side/back-wall bounds violation for a plane *in transit*, else ``None``.
+
+    **Front-gap exemption (#197):** a plane being towed through the door
+    legitimately protrudes in front of it (``y < 0`` — the conceptual apron,
+    spike Q6). So — unlike the static :func:`hangarfit.collisions.check` oracle,
+    which forbids ``y < 0`` — the front wall is NOT enforced on the mover
+    mid-motion. The side walls (``0 ≤ x ≤ width``) and the back wall
+    (``y ≤ length``) still are; the mover's final slot is itself a valid static
+    placement, so full bounds hold at rest. Reuses the canonical
+    :func:`~hangarfit.geometry.aircraft_parts_world` transform rather than
+    re-deriving geometry — the determinant-(-1) trap lives there (ADR-0002).
+    """
+    for world_part in aircraft_parts_world(mover, placement):
+        for x, y in list(world_part.polygon.exterior.coords)[:-1]:
+            # The static rule is `0 <= x <= width and 0 <= y <= length`; the
+            # only relaxation is dropping the `0 <= y` front-wall lower bound.
+            if x < 0.0 or x > hangar.width_m or y > hangar.length_m:
+                return Conflict.single(
+                    kind="hangar_bounds",
+                    plane=mover.id,
+                    detail=(
+                        f"part {world_part.kind!r} vertex ({x:.3f}, {y:.3f}) "
+                        f"outside hangar side/back walls during tow "
+                        f"(0..{hangar.width_m:g} x ..{hangar.length_m:g})"
+                    ),
+                )
+    return None
+
+
 def path_first_conflict(
     arc: DubinsArc,
     mover: Aircraft,
@@ -437,12 +470,16 @@ def path_first_conflict(
 
     Samples the arc; at each pose the mover is placed at that pose and checked
     against the already-placed ``placed`` layout via :func:`collisions.check`.
-    This reuses the static oracle wholesale, so parts-overlap, hangar-bounds,
-    and bay-intrusion are all honoured *during motion* (spike Q4) — the path
-    planner does not re-derive any geometry. ``mover_on_carts`` is constant
-    along the arc (cart state does not change mid-tow), and conflicts that do
-    not involve ``mover`` (e.g. a pre-existing clash among placed planes) are
-    skipped so the mover is never blamed for them.
+    Parts-overlap and bay-intrusion are taken straight from that static oracle
+    (spike Q4) — the path planner does not re-derive that geometry. **Hangar
+    bounds for the mover are the one exception:** they go through
+    :func:`_mover_motion_bounds_conflict` instead, which applies the front-gap
+    exemption (#197) so a plane straddling the door at ``y < 0`` during entry is
+    not falsely blamed, while the side and back walls stay enforced. The
+    oracle's own hangar-bounds verdict on the mover is therefore skipped.
+    ``mover_on_carts`` is constant along the arc (cart state does not change
+    mid-tow), and conflicts that do not involve ``mover`` (e.g. a pre-existing
+    clash among placed planes) are skipped so the mover is never blamed for them.
 
     Precondition: ``mover.id`` must exist in ``placed.fleet`` — each per-sample
     :class:`Layout` references it, so an unknown id raises ``ValueError`` from
@@ -452,6 +489,11 @@ def path_first_conflict(
     """
     for pose in arc.sample(step_m=step_m, step_deg=step_deg):
         moving = Placement(mover.id, pose.x_m, pose.y_m, pose.heading_deg, on_carts=mover_on_carts)
+        # Mover hangar bounds: front-gap-exempt (a plane being towed in
+        # straddles the door at y < 0). Side/back walls still bite.
+        bounds_conflict = _mover_motion_bounds_conflict(mover, moving, placed.hangar)
+        if bounds_conflict is not None:
+            return bounds_conflict
         # Rebuilding the Layout per sample re-runs Layout.__post_init__ (cart
         # cap, cart↔mode consistency, unique ids). Because placed.placements ∪
         # {mover} is a subset of a valid target layout those invariants hold;
@@ -464,8 +506,14 @@ def path_first_conflict(
             maintenance_plane=placed.maintenance_plane,
         )
         for conflict in _check(sample_layout).conflicts:
-            if mover.id in conflict.planes:
-                return conflict
+            if mover.id not in conflict.planes:
+                continue
+            # The mover's hangar bounds are governed by the front-gap-exempt
+            # rule above, not the static front-wall rule — skip the oracle's
+            # mover hangar_bounds so a legitimate door protrusion is not blamed.
+            if conflict.kind == "hangar_bounds":
+                continue
+            return conflict
     return None
 
 

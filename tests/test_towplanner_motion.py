@@ -87,6 +87,38 @@ def _cart_plane(plane_id: str, *, turn_radius_m: float = 4.0) -> Aircraft:
     )
 
 
+def _spanning_fuselage() -> Part:
+    """A 4.0 m fuselage centered on the plane origin. At a ``y = 0`` entry pose
+    (heading 0) its rear half sits at ``y < 0`` — the plane straddles the door
+    line, exactly as a plane being towed *through* the door does. Unlike the
+    forward-mounted :func:`_fuselage_box`, this exercises the front-door gap."""
+    return Part(
+        kind="fuselage",
+        length_m=4.0,
+        width_m=0.6,
+        offset_x_m=0.0,
+        offset_y_m=0.0,
+        angle_deg=0.0,
+        z_bottom_m=0.0,
+        z_top_m=1.0,
+    )
+
+
+def _spanning_plane(plane_id: str, *, turn_radius_m: float = 4.0) -> Aircraft:
+    """An own-gear plane whose fuselage spans the origin (rear protrudes to
+    ``y < 0`` at a ``y = 0`` entry pose)."""
+    return Aircraft(
+        id=plane_id,
+        name=f"Spanning {plane_id}",
+        wing_position="high",
+        gear="tailwheel",
+        movement_mode="always_own_gear",
+        turn_radius_m=turn_radius_m,
+        measured=False,
+        parts=(_spanning_fuselage(),),
+    )
+
+
 @pytest.fixture
 def simple_hangar() -> Hangar:
     """A 20 m × 20 m hangar — large enough for an unobstructed x = 8 corridor.
@@ -172,6 +204,33 @@ def test_hangar_bounds_during_motion_names_mover(
     fleet = two_planes_fleet
     placed = Layout(fleet=fleet, hangar=simple_hangar, placements=())
     arc = plan_dubins(Pose(5.0, 18.0, 0.0), Pose(5.0, 20.5, 0.0), turn_radius_m=4.0)
+    conflict = path_first_conflict(arc, fleet["B"], mover_on_carts=False, placed=placed)
+    assert conflict is not None
+    assert conflict.kind == "hangar_bounds"
+    assert "B" in conflict.planes
+
+
+def test_front_door_protrusion_is_exempt_for_mover(simple_hangar: Hangar) -> None:
+    # A plane whose fuselage spans the origin protrudes to y = -2 at the y = 0
+    # entry pose (it is straddling the door, mid-tow). The front gap is exempt
+    # during motion (#197 / front-gap exemption): an otherwise-clear straight
+    # approach up the middle returns None, NOT a hangar_bounds conflict. The
+    # static collisions.check oracle WOULD flag the y = -2 rear vertex; this is
+    # the regression that the universal-no_feasible_plan bug was hiding behind.
+    fleet = {"B": _spanning_plane("B")}
+    placed = Layout(fleet=fleet, hangar=simple_hangar, placements=())
+    arc = plan_dubins(Pose(10.0, 0.0, 0.0), Pose(10.0, 10.0, 0.0), turn_radius_m=4.0)
+    assert path_first_conflict(arc, fleet["B"], mover_on_carts=False, placed=placed) is None
+
+
+def test_side_wall_still_enforced_for_mover_during_motion(simple_hangar: Hangar) -> None:
+    # Front-gap exemption removes ONLY the front (y < 0) boundary. A mover whose
+    # part pokes past a side wall (x < 0) while inside (y >= 0) still conflicts:
+    # heading 90 => nose toward +x, so the 4 m fuselage spans x in [-2, 2] at
+    # px = 0 and the rear vertex sits at x = -2 < 0 with y ~ 5 >= 0.
+    fleet = {"B": _spanning_plane("B")}
+    placed = Layout(fleet=fleet, hangar=simple_hangar, placements=())
+    arc = plan_dubins(Pose(0.0, 5.0, 90.0), Pose(2.0, 5.0, 90.0), turn_radius_m=4.0)
     conflict = path_first_conflict(arc, fleet["B"], mover_on_carts=False, placed=placed)
     assert conflict is not None
     assert conflict.kind == "hangar_bounds"
