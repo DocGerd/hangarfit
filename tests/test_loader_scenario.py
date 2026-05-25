@@ -116,6 +116,50 @@ def test_load_scenario_rejects_maintenance_plane_not_in_fleet_in(tmp_path):
     )
 
 
+def test_load_scenario_rejects_null_maintenance_plane(tmp_path):
+    """Loader-path: ``maintenance: {plane: ~}`` (YAML null) raises LoaderError
+    from ``load_scenario`` (closes #184).
+
+    ``_extract_maintenance_plane`` is shared by ``load_layout`` and
+    ``load_scenario``, but the null / non-string / empty-string rejections
+    are exercised in ``test_loader.py`` only through the ``load_layout``
+    entry point.  This test pins the symmetric guarantee for the
+    ``load_scenario`` caller so a future refactor that diverged the two
+    entry points (e.g. inlining per-caller logic, or a per-caller override)
+    would be caught.
+
+    Scope is one representative shape: the null case is the most
+    user-visible (issue #184).  The shared validator's other branches
+    (non-string, empty) are already covered via ``load_layout`` — re-testing
+    them through a second entry point would be redundant once this test
+    proves ``load_scenario`` routes through the validator at all.
+
+    Note the null guard fires *inside* ``_extract_maintenance_plane`` and so
+    precedes the ``maintenance_plane not in fleet_in`` boundary check that
+    ``test_load_scenario_rejects_maintenance_plane_not_in_fleet_in`` covers;
+    the two tests guard different lines on the same path.
+    """
+    import shutil
+
+    from hangarfit.loader import load_scenario
+
+    # Write the scenario adjacent to copied root data files so the relative
+    # fleet:/hangar: refs resolve from tmp_path (mirrors the not-in-fleet_in test).
+    (tmp_path / "data").mkdir()
+    shutil.copy("data/fleet.yaml", tmp_path / "data" / "fleet.yaml")
+    shutil.copy("data/hangar.yaml", tmp_path / "data" / "hangar.yaml")
+    bad = tmp_path / "null_maintenance.yaml"
+    bad.write_text(
+        "fleet: data/fleet.yaml\n"
+        "hangar: data/hangar.yaml\n"
+        "fleet_in: [aviat_husky, ctsl]\n"
+        "maintenance:\n"
+        "  plane: ~\n"
+    )
+    with pytest.raises(LoaderError, match="'maintenance.plane' is null"):
+        load_scenario(bad)
+
+
 def test_scenario_post_init_backstop_still_fires_on_direct_construction():
     """Direct-construction path: Scenario.__post_init__ still raises ValueError
     when maintenance_plane is not in fleet_in, bypassing the loader guard.
