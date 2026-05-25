@@ -9,7 +9,7 @@
 #     `build` frontend + an isolated, unpinned backend fetch (addresses
 #     #168, and the release-side backend gap neither issue scoped).
 #
-# Regenerate (Python 3.11, pip-tools 7.5.3 — same toolchain as
+# Regenerate (Python 3.12, pip-tools 7.5.3 — same toolchain as
 # requirements-dev.txt; see CLAUDE.md):
 #   pip-compile --generate-hashes --no-strip-extras --allow-unsafe -o requirements-build.txt requirements-build.in
 #

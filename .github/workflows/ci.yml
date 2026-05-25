@@ -21,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.12"]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
@@ -92,12 +92,13 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
-      - name: Set up Python 3.11
-        # Match the regeneration instruction in CLAUDE.md: run on the lowest
-        # supported Python so the resolved wheels cover the full CI matrix.
+      - name: Set up Python 3.12
+        # Match the regeneration instruction in CLAUDE.md: the single
+        # supported Python (3.12) — the interpreter the lockfiles are
+        # resolved against and the only version the test job runs.
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install pip-tools (pinned)
         # Pinned so a pip-tools release that changes resolver behavior or
@@ -175,7 +176,7 @@ jobs:
             }
           done
           if ! diff -u /tmp/committed.set /tmp/regenerated.set; then
-            echo "::error::requirements-dev.txt is out of sync with pyproject.toml. Regenerate on Python 3.11 with pip-tools==7.5.3: pip-compile --generate-hashes --no-strip-extras --extra dev -o requirements-dev.txt pyproject.toml"
+            echo "::error::requirements-dev.txt is out of sync with pyproject.toml. Regenerate on Python 3.12 with pip-tools==7.5.3: pip-compile --generate-hashes --no-strip-extras --extra dev -o requirements-dev.txt pyproject.toml"
             exit 1
           fi
 
@@ -196,12 +197,12 @@ jobs:
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
-      - name: Set up Python 3.11
-        # Lowest supported Python, matching the dev-lockfile guard and the
-        # regeneration command documented in CLAUDE.md.
+      - name: Set up Python 3.12
+        # The single supported Python (3.12), matching the dev-lockfile guard
+        # and the regeneration command documented in CLAUDE.md.
         uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
         with:
-          python-version: "3.11"
+          python-version: "3.12"
 
       - name: Install pip-tools (pinned)
         # Same version as the dev-lockfile guard and the regeneration
@@ -257,6 +258,6 @@ jobs:
             }
           done
           if ! diff -u /tmp/committed-build.set /tmp/regenerated-build.set; then
-            echo "::error::requirements-build.txt is out of sync. Regenerate on Python 3.11 with pip-tools==7.5.3: pip-compile --generate-hashes --no-strip-extras --allow-unsafe -o requirements-build.txt requirements-build.in"
+            echo "::error::requirements-build.txt is out of sync. Regenerate on Python 3.12 with pip-tools==7.5.3: pip-compile --generate-hashes --no-strip-extras --allow-unsafe -o requirements-build.txt requirements-build.in"
             exit 1
           fi

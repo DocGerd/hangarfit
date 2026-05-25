@@ -8,6 +8,8 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Changed
 
+- Raised the supported Python floor to **3.12** (was 3.11) and collapsed the CI test matrix to a single 3.12 job; both hash-pinned lockfiles are now resolved on 3.12. Anchored to the Ubuntu 24.04 LTS interpreter since CPython names no LTS. **Breaking change** for 3.11 users — warrants a minor version bump at the next release ([ADR-0009](docs/adr/0009-single-supported-python-version.md), #213).
+
 ### Fixed
 
 ## [0.1.0] — 2026-05-21
