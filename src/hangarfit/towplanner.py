@@ -361,3 +361,16 @@ def plan_dubins(start: Pose, end: Pose, *, turn_radius_m: float) -> DubinsArc:
     # segment-kind assertions hold. Keep at least one segment.
     segs = tuple(s for s in raw if s.length_m > 1e-9) or (Segment("S", 0.0),)
     return DubinsArc(start, end, r, segs)
+
+
+# ---------------------------------------------------------------------------
+# Entry ordering (spike Q2)
+# ---------------------------------------------------------------------------
+
+
+def back_first_order(placements: tuple[Placement, ...]) -> tuple[Placement, ...]:
+    """Deepest target slot first. Deterministic total order: ``y`` descending,
+    then ``x`` ascending, then ``plane_id`` ascending (ADR-0003 determinism;
+    spike Q2). Shallower slots become obstacles for deeper ones, so deeper
+    planes enter first."""
+    return tuple(sorted(placements, key=lambda p: (-p.y_m, p.x_m, p.plane_id)))
