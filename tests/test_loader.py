@@ -1209,13 +1209,30 @@ class TestPlaneIdSuggestion:
         assert _suggest_plane_id("zzz", ["foo", "bar"]) == ""
 
     def test_ambiguous_casefold_falls_through_to_no_suggestion(self) -> None:
-        # Two reasons combine to yield "": (1) 'foo' and 'Foo' share a
-        # casefold so the casefold pass is ambiguous and skipped; (2) difflib
-        # then also misses, because a case-only diff ('FOO' vs either) scores
-        # below the 0.6 cutoff. (These two reasons co-occur for any pure
-        # case-variant candidate, which is why the "ambiguous casefold yet
-        # difflib hits" branch is effectively unreachable.)
+        # Two reasons combine to yield "" for THIS input: (1) 'foo' and 'Foo'
+        # share a casefold so the casefold pass is ambiguous and skipped;
+        # (2) difflib then also misses, because 'FOO' differs from both only
+        # by case across all three chars, scoring 0.0 — below the 0.6 cutoff.
+        # A *smaller* case diff can still get a difflib hit after an ambiguous
+        # casefold — see test_ambiguous_casefold_can_still_difflib_suggest.
         assert _suggest_plane_id("FOO", ["foo", "Foo"]) == ""
+
+    def test_ambiguous_casefold_can_still_difflib_suggest(self) -> None:
+        # 'bar' and 'BAR' both fold to 'bar' → casefold pass ambiguous, skipped.
+        # But 'Bar' vs 'bar' differs in only one of three chars (ratio 0.667 >
+        # 0.6), so difflib still suggests — without the case-sensitivity note.
+        result = _suggest_plane_id("Bar", ["bar", "BAR"])
+        assert "did you mean 'bar'?" in result
+        assert "case-sensitive" not in result
+
+    def test_non_str_valid_members_do_not_crash(self) -> None:
+        # A malformed fleet.yaml can carry unquoted numeric/bool ids (int/bool
+        # fleet keys). The helper must degrade to "" — never AttributeError on
+        # .casefold(). (#176 silent-failure regression guard.)
+        assert _suggest_plane_id("ghost", [1, 2.5, True]) == ""
+
+    def test_non_str_candidate_does_not_crash(self) -> None:
+        assert _suggest_plane_id(1, ["foo", "bar"]) == ""  # type: ignore[arg-type]
 
     def test_exact_match_returns_empty(self) -> None:
         assert _suggest_plane_id("foo", ["foo", "bar"]) == ""
@@ -1356,3 +1373,33 @@ placements:
         msg = str(exc.value)
         assert "unknown plane id 'zzz'" in msg
         assert "did you mean" not in msg
+
+    def test_non_str_fleet_id_unknown_ref_is_clean_loadererror(self, tmp_path: Path) -> None:
+        # Regression (#176): an unquoted numeric fleet id (`id: 1` → int fleet
+        # key) plus an unknown *string* placement id must raise a clean
+        # LoaderError, not an AttributeError from .casefold() in the suggester.
+        # (The "1" passed here round-trips through YAML to an int key.)
+        _write(
+            tmp_path / "fleet.yaml",
+            _minimal_aircraft_yaml("1", movement_mode="always_own_gear", turn_radius_m=5.0),
+        )
+        _write(
+            tmp_path / "hangar.yaml",
+            """
+length_m: 25.0
+width_m: 18.0
+door: {center_x_m: 9.0, width_m: 12.0}
+maintenance_bay: {center_x_m: 13.5, width_m: 9, depth_m: 9}
+""",
+        )
+        layout = _write(
+            tmp_path / "layout.yaml",
+            """
+fleet: fleet.yaml
+hangar: hangar.yaml
+placements:
+  - {plane: ghost, x_m: 5, y_m: 5, heading_deg: 0, on_carts: false}
+""",
+        )
+        with pytest.raises(LoaderError, match="unknown plane id 'ghost'"):
+            load_layout(layout)

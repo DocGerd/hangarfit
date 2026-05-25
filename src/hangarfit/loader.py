@@ -480,16 +480,25 @@ def _suggest_plane_id(candidate: str, valid_ids: Iterable[str]) -> str:
        candidate under ``casefold()`` (and isn't the candidate itself),
        suggest it with the case-sensitivity note. If two valid ids share a
        casefold (only possible for a fleet that deliberately uses
-       case-distinct ids), the pass is ambiguous and is skipped.
+       case-distinct ids), the pass is ambiguous and is skipped — in which
+       case difflib may still return a suggestion (without the note) for a
+       near-enough candidate.
     2. ``difflib.get_close_matches(n=1, cutoff=0.6)`` for genuine typos.
+
+    Inputs are coerced to ``str`` defensively: callers pass fleet keys /
+    ``fleet_in`` entries that *should* be str, but a malformed ``fleet.yaml``
+    can carry an unquoted numeric/bool id (e.g. ``id: 1`` → ``int``) that
+    survives loading. This helper only produces a best-effort hint, so a
+    non-str id must degrade to "no suggestion", never an ``AttributeError``.
     """
-    valid = list(valid_ids)
-    folded = candidate.casefold()
-    ci_matches = [v for v in valid if v.casefold() == folded and v != candidate]
+    cand = str(candidate)
+    valid = [str(v) for v in valid_ids]
+    folded = cand.casefold()
+    ci_matches = [v for v in valid if v.casefold() == folded and v != cand]
     if len(ci_matches) == 1:
         return f"; did you mean {ci_matches[0]!r}? (plane ids are case-sensitive)"
-    close = difflib.get_close_matches(candidate, valid, n=1, cutoff=0.6)
-    if close and close[0] != candidate:
+    close = difflib.get_close_matches(cand, valid, n=1, cutoff=0.6)
+    if close and close[0] != cand:
         return f"; did you mean {close[0]!r}?"
     return ""
 
