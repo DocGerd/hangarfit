@@ -401,6 +401,12 @@ def path_first_conflict(
     along the arc (cart state does not change mid-tow), and conflicts that do
     not involve ``mover`` (e.g. a pre-existing clash among placed planes) are
     skipped so the mover is never blamed for them.
+
+    Precondition: ``mover.id`` must exist in ``placed.fleet`` — each per-sample
+    :class:`Layout` references it, so an unknown id raises ``ValueError`` from
+    ``Layout`` construction rather than being silently skipped. The Wave 2
+    caller (#196) builds ``placed`` from the full target fleet, which satisfies
+    this.
     """
     for pose in arc.sample(step_m=step_m, step_deg=step_deg):
         moving = Placement(mover.id, pose.x_m, pose.y_m, pose.heading_deg, on_carts=mover_on_carts)
