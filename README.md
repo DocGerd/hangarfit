@@ -36,7 +36,7 @@ Follow progress in [GitHub Issues](https://github.com/DocGerd/hangarfit/issues) 
 
 ## Install
 
-Requires Python 3.11 or newer.
+Requires Python 3.12 or newer.
 
 ```bash
 pip install -e ".[dev]"

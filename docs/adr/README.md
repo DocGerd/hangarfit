@@ -86,3 +86,4 @@ manual workflow above is canonical.
 | 0006 | [Maintenance bay rule — `bay_intrusion` on any non-occupant vertex strictly inside the bay rectangle](0006-bay-intrusion-maintenance-rule.md) | Accepted |
 | 0007 | [Tow-path planner v1 — empty-hangar fill, Dubins-only, cart-as-own-gear](0007-tow-path-planner-v1-scope.md) | Accepted |
 | 0008 | [Inter-plane spread soft preference (repulsion-energy surrogate for maximin)](0008-inter-plane-spread-soft-preference.md) | Accepted |
+| 0009 | [Single supported Python — 3.12, anchored to the distro LTS](0009-single-supported-python-version.md) | Proposed |

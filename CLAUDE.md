@@ -171,12 +171,12 @@ mypy src/hangarfit/
 # invariant on every PR by regenerating the lockfile against the
 # committed pyproject.toml and comparing the resolved
 # `package==version` set. The job pins `pip-tools==7.5.3` on Python
-# 3.11; use the same pip-tools version locally so the lockfile header
+# 3.12; use the same pip-tools version locally so the lockfile header
 # and the regenerated content stay consistent with what the guard
 # expects. `--no-strip-extras` is explicit so a future pip-tools 8.0
 # default flip cannot silently prune transitive extras. Run on the
-# **lowest** supported Python (3.11) so the resolved wheels cover
-# the full CI matrix.
+# single supported Python (3.12) — the interpreter the lockfile is
+# resolved against and the only version CI tests.
 pip-compile --generate-hashes --no-strip-extras --extra dev -o requirements-dev.txt pyproject.toml
 
 # Regenerate the hash-pinned BUILD-toolchain lockfile. Source is
@@ -189,10 +189,10 @@ pip-compile --generate-hashes --no-strip-extras --extra dev -o requirements-dev.
 # `--no-build-isolation` install in ci.yml. `--no-strip-extras` mirrors the
 # dev lockfile (8.0 default-flip defense). The `build-lockfile-drift` CI
 # job enforces this on every PR. Same toolchain as the dev lockfile:
-# pip-tools 7.5.3 on Python 3.11.
+# pip-tools 7.5.3 on Python 3.12.
 pip-compile --generate-hashes --no-strip-extras --allow-unsafe -o requirements-build.txt requirements-build.in
 
-# CI: GitHub Actions runs `pytest` on Python 3.11 + 3.12 for PRs into
+# CI: GitHub Actions runs `pytest` on Python 3.12 for PRs into
 # develop/main (see .github/workflows/ci.yml). CI installs dev deps
 # from the hash-pinned `requirements-dev.txt` with `--require-hashes`,
 # the build toolchain from `requirements-build.txt` likewise, then

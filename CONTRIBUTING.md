@@ -98,7 +98,7 @@ It has a short checklist — fill it in honestly.
 
 Before the PR can merge:
 
-- All CI status checks must be green on Python 3.11 **and** 3.12
+- All CI status checks must be green on Python 3.12
   (see `.github/workflows/ci.yml`).
 - Tests added or updated for any behaviour change. New collision scenarios
   belong in `tests/fixtures/` as a YAML file, not as geometry literals in
