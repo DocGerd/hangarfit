@@ -13,10 +13,18 @@ aircraft's high-level ``struts:`` block into two mirrored strut
 :class:`~hangarfit.models.Part` instances. After loading, the
 aircraft's ``parts`` tuple is the single source of truth for geometry
 — there is no separate ``struts`` field on the :class:`Aircraft`.
+
+Plane ids are **case-sensitive** and are not normalised. When a layout or
+scenario names an id that does not match the fleet exactly, the loader
+rejects it at parse time with a ``did you mean 'X'?`` suggestion (a
+case-insensitive match, else a ``difflib`` near match) rather than letting
+a mis-cased id slip through to a late, generic model-invariant error.
 """
 
 from __future__ import annotations
 
+import difflib
+from collections.abc import Collection, Iterable
 from pathlib import Path
 from typing import Any
 
@@ -209,6 +217,11 @@ def load_layout(
 
     maintenance_plane = _extract_maintenance_plane(raw, path)
 
+    for p in placements:
+        _resolve_known_plane_id(p.plane_id, fleet, role="placement", path=path)
+    if maintenance_plane is not None:
+        _resolve_known_plane_id(maintenance_plane, fleet, role="maintenance.plane", path=path)
+
     # Pre-Layout boundary check for the most common YAML-author mistake:
     # naming the bay occupant in ``placements``. ``Layout.__post_init__``
     # catches this too, but with a generic invariant message; raise here
@@ -305,17 +318,28 @@ def load_scenario(
             f"provided programmatically; remove one to disambiguate"
         )
 
+    for pid in fleet_in:
+        _resolve_known_plane_id(pid, fleet, role="fleet_in entry", path=path)
+
     # maintenance (optional, same shape as load_layout)
     maintenance_plane = _extract_maintenance_plane(raw, path)
+
+    # Shared "did you mean / else add it to fleet_in" guidance for the two
+    # ids validated against fleet_in (maintenance plane + constraint keys).
+    # Built once so the two call sites can't drift apart during message tuning.
+    fleet_in_fix_hint = f"either add it to fleet_in {sorted(fleet_in)} or fix the plane id"
 
     # Pre-Scenario boundary check: surface the YAML-author error with a
     # path prefix here instead of relying on Scenario.__post_init__'s
     # bare ValueError bubbling through the except ValueError → LoaderError
     # wrap below (which would drop the actionable fleet_in hint).
-    if maintenance_plane is not None and maintenance_plane not in fleet_in:
-        raise LoaderError(
-            f"{path}: maintenance_plane {maintenance_plane!r} is not in fleet_in "
-            f"{list(fleet_in)}; either add it to fleet_in or fix the plane id."
+    if maintenance_plane is not None:
+        _resolve_known_plane_id(
+            maintenance_plane,
+            fleet_in,
+            role="maintenance.plane",
+            path=path,
+            fix_hint=fleet_in_fix_hint,
         )
 
     # constraints (optional). `or {}` is wrong here — it collapses every
@@ -330,6 +354,13 @@ def load_scenario(
         raise LoaderError(f"{path}: 'constraints' must be a mapping")
     constraints: dict[str, PlaneConstraint] = {}
     for plane_id, cdata in constraints_raw.items():
+        _resolve_known_plane_id(
+            plane_id,
+            fleet_in,
+            role="constraints key",
+            path=path,
+            fix_hint=fleet_in_fix_hint,
+        )
         try:
             constraints[plane_id] = _build_plane_constraint(plane_id, cdata)
         except (ValueError, KeyError, TypeError, LoaderError) as e:
@@ -436,6 +467,69 @@ def _extract_maintenance_plane(raw: dict, path: Path) -> str | None:
             f"either remove the 'maintenance' block entirely or supply a valid aircraft id"
         )
     return plane
+
+
+def _suggest_plane_id(candidate: str, valid_ids: Iterable[str]) -> str:
+    """Return a '; did you mean X?' fragment for a near-miss id, or '' if none.
+
+    Two passes, because ``difflib`` alone misses the headline case:
+    ``SequenceMatcher`` is case-sensitive, so ``'FOO'`` vs ``'foo'`` scores
+    0.0 and would yield no suggestion.
+
+    1. Case-insensitive exact match: if exactly one valid id equals the
+       candidate under ``casefold()`` (and isn't the candidate itself),
+       suggest it with the case-sensitivity note. If two valid ids share a
+       casefold (only possible for a fleet that deliberately uses
+       case-distinct ids), the pass is ambiguous and is skipped — in which
+       case difflib may still return a suggestion (without the note) for a
+       near-enough candidate.
+    2. ``difflib.get_close_matches(n=1, cutoff=0.6)`` for genuine typos.
+
+    Inputs are coerced to ``str`` defensively: callers pass fleet keys /
+    ``fleet_in`` entries that *should* be str, but a malformed ``fleet.yaml``
+    can carry an unquoted numeric/bool id (e.g. ``id: 1`` → ``int``) that
+    survives loading. This helper only produces a best-effort hint, so a
+    non-str id must degrade to "no suggestion", never an ``AttributeError``.
+    """
+    cand = str(candidate)
+    valid = [str(v) for v in valid_ids]
+    folded = cand.casefold()
+    ci_matches = [v for v in valid if v.casefold() == folded and v != cand]
+    if len(ci_matches) == 1:
+        return f"; did you mean {ci_matches[0]!r}? (plane ids are case-sensitive)"
+    close = difflib.get_close_matches(cand, valid, n=1, cutoff=0.6)
+    if close and close[0] != cand:
+        return f"; did you mean {close[0]!r}?"
+    return ""
+
+
+def _resolve_known_plane_id(
+    candidate: str,
+    valid_ids: Collection[str],
+    *,
+    role: str,
+    path: Path,
+    fix_hint: str = "",
+) -> None:
+    """Raise :class:`LoaderError` if ``candidate`` is not in ``valid_ids``.
+
+    The message is ``"{path}: {role} references unknown plane id
+    {candidate!r}{tail}"`` where ``tail`` is, in priority order: a
+    ``_suggest_plane_id`` fragment when there is a near match, else
+    ``"; " + fix_hint`` when ``fix_hint`` is set, else empty. A near-match
+    suggestion always wins over ``fix_hint`` — naming the likely-intended
+    id beats generic guidance.
+
+    This is an earlier, friendlier front door to the unknown-id checks in
+    ``Layout``/``Scenario.__post_init__``; those invariants are kept as the
+    backstop for callers that bypass the loader.
+    """
+    if candidate in valid_ids:
+        return
+    tail = _suggest_plane_id(candidate, valid_ids)
+    if not tail and fix_hint:
+        tail = f"; {fix_hint}"
+    raise LoaderError(f"{path}: {role} references unknown plane id {candidate!r}{tail}")
 
 
 def _build_aircraft(entry: Any) -> Aircraft:

@@ -13,6 +13,8 @@ import pytest
 
 from hangarfit.loader import (
     LoaderError,
+    _resolve_known_plane_id,
+    _suggest_plane_id,
     load_fleet,
     load_hangar,
     load_layout,
@@ -760,7 +762,7 @@ placements:
     heading_deg: 0
 """,
         )
-        with pytest.raises(LoaderError, match="unknown plane_id 'ghost'"):
+        with pytest.raises(LoaderError, match="unknown plane id 'ghost'"):
             load_layout(layout_path)
 
     def test_cart_rule_violation_propagates(self, tmp_path: Path) -> None:
@@ -1178,3 +1180,226 @@ def _minimal_aircraft_yaml(
     return _fleet_yaml(
         _aircraft_entry(plane_id, movement_mode=movement_mode, turn_radius_m=turn_radius_m)
     )
+
+
+# ----------------------------------------------------------------------------
+# _suggest_plane_id helper.
+# ----------------------------------------------------------------------------
+
+
+class TestPlaneIdSuggestion:
+    """Unit tests for the _suggest_plane_id near-match helper."""
+
+    def test_casefold_match_suggests_canonical_with_note(self) -> None:
+        assert _suggest_plane_id("Foo", ["foo"]) == (
+            "; did you mean 'foo'? (plane ids are case-sensitive)"
+        )
+
+    def test_all_caps_case_diff_still_suggests(self) -> None:
+        # difflib alone scores 'FOO' vs 'foo' at 0.0 (SequenceMatcher is
+        # case-sensitive); the casefold pass is what rescues this.
+        assert "did you mean 'foo'?" in _suggest_plane_id("FOO", ["foo"])
+
+    def test_typo_suggests_difflib_match(self) -> None:
+        assert _suggest_plane_id("cesna_150", ["cessna_150", "cessna_140"]) == (
+            "; did you mean 'cessna_150'?"
+        )
+
+    def test_novel_id_no_suggestion(self) -> None:
+        assert _suggest_plane_id("zzz", ["foo", "bar"]) == ""
+
+    def test_ambiguous_casefold_falls_through_to_no_suggestion(self) -> None:
+        # Two reasons combine to yield "" for THIS input: (1) 'foo' and 'Foo'
+        # share a casefold so the casefold pass is ambiguous and skipped;
+        # (2) difflib then also misses, because 'FOO' differs from both only
+        # by case across all three chars, scoring 0.0 — below the 0.6 cutoff.
+        # A *smaller* case diff can still get a difflib hit after an ambiguous
+        # casefold — see test_ambiguous_casefold_can_still_difflib_suggest.
+        assert _suggest_plane_id("FOO", ["foo", "Foo"]) == ""
+
+    def test_ambiguous_casefold_can_still_difflib_suggest(self) -> None:
+        # 'bar' and 'BAR' both fold to 'bar' → casefold pass ambiguous, skipped.
+        # But 'Bar' vs 'bar' differs in only one of three chars (ratio 0.667 >
+        # 0.6), so difflib still suggests — without the case-sensitivity note.
+        result = _suggest_plane_id("Bar", ["bar", "BAR"])
+        assert "did you mean 'bar'?" in result
+        assert "case-sensitive" not in result
+
+    def test_non_str_valid_members_do_not_crash(self) -> None:
+        # A malformed fleet.yaml can carry unquoted numeric/bool ids (int/bool
+        # fleet keys). The helper must degrade to "" — never AttributeError on
+        # .casefold(). (#176 silent-failure regression guard.)
+        assert _suggest_plane_id("ghost", [1, 2.5, True]) == ""
+
+    def test_non_str_candidate_does_not_crash(self) -> None:
+        assert _suggest_plane_id(1, ["foo", "bar"]) == ""  # type: ignore[arg-type]
+
+    def test_exact_match_returns_empty(self) -> None:
+        assert _suggest_plane_id("foo", ["foo", "bar"]) == ""
+
+
+# ----------------------------------------------------------------------------
+# _resolve_known_plane_id gate.
+# ----------------------------------------------------------------------------
+
+
+class TestResolveKnownPlaneId:
+    """Unit tests for the _resolve_known_plane_id loader gate."""
+
+    def test_known_id_does_not_raise(self) -> None:
+        assert (
+            _resolve_known_plane_id("foo", ["foo", "bar"], role="placement", path=Path("x.yaml"))
+            is None
+        )
+
+    def test_case_mismatch_raises_with_suggestion(self) -> None:
+        with pytest.raises(LoaderError) as exc:
+            _resolve_known_plane_id("Foo", ["foo"], role="placement", path=Path("x.yaml"))
+        msg = str(exc.value)
+        assert "x.yaml" in msg
+        assert "placement references unknown plane id 'Foo'" in msg
+        assert "did you mean 'foo'?" in msg
+        assert "case-sensitive" in msg
+
+    def test_novel_id_with_fix_hint_shows_hint(self) -> None:
+        with pytest.raises(LoaderError) as exc:
+            _resolve_known_plane_id(
+                "ghost",
+                ["foo"],
+                role="maintenance.plane",
+                path=Path("s.yaml"),
+                fix_hint="either add it to fleet_in ['foo'] or fix the plane id",
+            )
+        msg = str(exc.value)
+        assert "maintenance.plane references unknown plane id 'ghost'" in msg
+        assert "either add it to fleet_in ['foo'] or fix the plane id" in msg
+        assert "did you mean" not in msg
+
+    def test_novel_id_no_hint_is_bare(self) -> None:
+        with pytest.raises(LoaderError) as exc:
+            _resolve_known_plane_id("zzz", ["foo"], role="placement", path=Path("x.yaml"))
+        msg = str(exc.value)
+        assert "unknown plane id 'zzz'" in msg
+        assert "did you mean" not in msg
+        assert msg.rstrip().endswith("'zzz'")
+
+    def test_near_match_suggestion_beats_fix_hint(self) -> None:
+        # Docstring invariant: when there IS a near match, the suggestion
+        # wins and the (generic) fix_hint is suppressed.
+        with pytest.raises(LoaderError) as exc:
+            _resolve_known_plane_id(
+                "Foo",
+                ["foo"],
+                role="maintenance.plane",
+                path=Path("s.yaml"),
+                fix_hint="either add it to fleet_in ['foo'] or fix the plane id",
+            )
+        msg = str(exc.value)
+        assert "did you mean 'foo'?" in msg
+        assert "either add it to fleet_in" not in msg
+
+
+# ----------------------------------------------------------------------------
+# load_layout unknown/mis-cased plane id integration tests.
+# ----------------------------------------------------------------------------
+
+
+class TestUnknownPlaneIdLayout:
+    """Loader-boundary unknown/mis-cased plane id rejection for layouts."""
+
+    def _fleet_and_hangar(self, dir_: Path) -> None:
+        _write(
+            dir_ / "fleet.yaml",
+            _minimal_aircraft_yaml("foo", movement_mode="always_own_gear", turn_radius_m=5.0),
+        )
+        _write(
+            dir_ / "hangar.yaml",
+            """
+length_m: 25.0
+width_m: 18.0
+door: {center_x_m: 9.0, width_m: 12.0}
+maintenance_bay: {center_x_m: 13.5, width_m: 9, depth_m: 9}
+""",
+        )
+
+    def test_miscased_placement_id_suggests_canonical(self, tmp_path: Path) -> None:
+        self._fleet_and_hangar(tmp_path)
+        layout = _write(
+            tmp_path / "layout.yaml",
+            """
+fleet: fleet.yaml
+hangar: hangar.yaml
+placements:
+  - {plane: Foo, x_m: 5, y_m: 5, heading_deg: 0, on_carts: false}
+""",
+        )
+        with pytest.raises(LoaderError) as exc:
+            load_layout(layout)
+        msg = str(exc.value)
+        assert "placement references unknown plane id 'Foo'" in msg
+        assert "did you mean 'foo'?" in msg
+        assert "case-sensitive" in msg
+
+    def test_miscased_maintenance_id_suggests_canonical(self, tmp_path: Path) -> None:
+        self._fleet_and_hangar(tmp_path)
+        layout = _write(
+            tmp_path / "layout.yaml",
+            """
+fleet: fleet.yaml
+hangar: hangar.yaml
+placements: []
+maintenance: {plane: Foo}
+""",
+        )
+        with pytest.raises(LoaderError) as exc:
+            load_layout(layout)
+        msg = str(exc.value)
+        assert "maintenance.plane references unknown plane id 'Foo'" in msg
+        assert "did you mean 'foo'?" in msg
+
+    def test_novel_placement_id_no_false_suggestion(self, tmp_path: Path) -> None:
+        self._fleet_and_hangar(tmp_path)
+        layout = _write(
+            tmp_path / "layout.yaml",
+            """
+fleet: fleet.yaml
+hangar: hangar.yaml
+placements:
+  - {plane: zzz, x_m: 5, y_m: 5, heading_deg: 0, on_carts: false}
+""",
+        )
+        with pytest.raises(LoaderError) as exc:
+            load_layout(layout)
+        msg = str(exc.value)
+        assert "unknown plane id 'zzz'" in msg
+        assert "did you mean" not in msg
+
+    def test_non_str_fleet_id_unknown_ref_is_clean_loadererror(self, tmp_path: Path) -> None:
+        # Regression (#176): an unquoted numeric fleet id (`id: 1` → int fleet
+        # key) plus an unknown *string* placement id must raise a clean
+        # LoaderError, not an AttributeError from .casefold() in the suggester.
+        # (The "1" passed here round-trips through YAML to an int key.)
+        _write(
+            tmp_path / "fleet.yaml",
+            _minimal_aircraft_yaml("1", movement_mode="always_own_gear", turn_radius_m=5.0),
+        )
+        _write(
+            tmp_path / "hangar.yaml",
+            """
+length_m: 25.0
+width_m: 18.0
+door: {center_x_m: 9.0, width_m: 12.0}
+maintenance_bay: {center_x_m: 13.5, width_m: 9, depth_m: 9}
+""",
+        )
+        layout = _write(
+            tmp_path / "layout.yaml",
+            """
+fleet: fleet.yaml
+hangar: hangar.yaml
+placements:
+  - {plane: ghost, x_m: 5, y_m: 5, heading_deg: 0, on_carts: false}
+""",
+        )
+        with pytest.raises(LoaderError, match="unknown plane id 'ghost'"):
+            load_layout(layout)
