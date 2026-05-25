@@ -467,3 +467,87 @@ def path_first_conflict(
             if mover.id in conflict.planes:
                 return conflict
     return None
+
+
+# ---------------------------------------------------------------------------
+# Empty-hangar fill planner + bounded order-retry (spike Q2 / ADR-0007)
+# ---------------------------------------------------------------------------
+
+
+class NoFeasiblePlanError(Exception):
+    """No collision-free entry order found within the retry budget (spike Q2).
+
+    Carries the plane that could not be placed and the last conflict that
+    blocked it, so the caller (and the Wave 3 CLI) can name the offender.
+    """
+
+    def __init__(self, plane_id: str, conflict: Conflict) -> None:
+        super().__init__(
+            f"no feasible tow order: plane {plane_id!r} could not be placed "
+            f"without collision ({conflict.kind})"
+        )
+        self.plane_id = plane_id
+        self.conflict = conflict
+
+
+def plan_fill(target: Layout) -> MovesPlan:
+    """Plan a collision-free entry order + per-plane path for an empty fill.
+
+    Walks :func:`back_first_order` (deepest slot first); for each plane computes
+    the door-cone entry pose (:func:`entry_pose`) and the Dubins path to its slot
+    (cart-borne planes have ``effective_turn_radius_m() == 0`` ⇒ a
+    pivot-straight-pivot arc). A plane whose path conflicts with the
+    already-placed subset is skipped in favour of the next feasible plane in the
+    order; after ``2 * n_planes`` rejected attempts the plan bails with
+    :class:`NoFeasiblePlanError`. Deterministic (ADR-0003): the order, the Dubins
+    primitive, and the next-feasible skip rule are all RNG-free, so a given
+    ``target`` always yields the same :class:`MovesPlan`.
+    """
+    ordered = list(back_first_order(target.placements))
+    fleet = target.fleet
+    hangar = target.hangar
+    budget = 2 * len(ordered)
+    swaps = 0
+
+    placed: list[Placement] = []
+    moves: list[Move] = []
+    last_conflict: Conflict | None = None
+
+    while ordered:
+        chosen: int | None = None
+        chosen_arc: DubinsArc | None = None
+        for idx, slot in enumerate(ordered):
+            plane = fleet[slot.plane_id]
+            arc = plan_dubins(
+                entry_pose(slot, hangar),
+                Pose.from_placement(slot),
+                turn_radius_m=plane.effective_turn_radius_m(),
+            )
+            # Only the already-committed planes are obstacles; the candidate
+            # mover is added by path_first_conflict per sample.
+            placed_layout = Layout(
+                fleet=fleet,
+                hangar=hangar,
+                placements=tuple(placed),
+                maintenance_plane=target.maintenance_plane,
+            )
+            conflict = path_first_conflict(
+                arc, plane, mover_on_carts=slot.on_carts, placed=placed_layout
+            )
+            if conflict is None:
+                chosen, chosen_arc = idx, arc
+                break
+            last_conflict = conflict
+            swaps += 1
+            if swaps > budget:
+                raise NoFeasiblePlanError(slot.plane_id, conflict)
+        if chosen is None:
+            # Every remaining plane conflicts; bail on the first (deepest).
+            assert last_conflict is not None
+            raise NoFeasiblePlanError(ordered[0].plane_id, last_conflict)
+        slot = ordered.pop(chosen)
+        assert chosen_arc is not None
+        moves.append(Move(slot.plane_id, Pose.from_placement(slot), chosen_arc))
+        placed.append(slot)
+
+    return MovesPlan(target_layout=target, moves=tuple(moves))
