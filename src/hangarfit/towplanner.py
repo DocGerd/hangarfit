@@ -496,26 +496,33 @@ def plan_fill(target: Layout) -> MovesPlan:
     Walks :func:`back_first_order` (deepest slot first); for each plane computes
     the door-cone entry pose (:func:`entry_pose`) and the Dubins path to its slot
     (cart-borne planes have ``effective_turn_radius_m() == 0`` ⇒ a
-    pivot-straight-pivot arc). A plane whose path conflicts with the
-    already-placed subset is skipped in favour of the next feasible plane in the
-    order; after ``2 * n_planes`` rejected attempts the plan bails with
-    :class:`NoFeasiblePlanError`. Deterministic (ADR-0003): the order, the Dubins
-    primitive, and the next-feasible skip rule are all RNG-free, so a given
-    ``target`` always yields the same :class:`MovesPlan`.
+    pivot-straight-pivot arc). Each iteration scans the not-yet-placed planes in
+    order and commits the first whose path is conflict-free against the
+    already-placed subset (the spike's "swap with the next-feasible plane" as a
+    deterministic scan). If a whole scan finds none feasible the greedy is stuck
+    (spike Risk #1) and the plan bails with :class:`NoFeasiblePlanError` naming
+    the deepest unplaceable plane.
+
+    No retry *budget* is needed: an already-placed plane is only ever an added
+    obstacle, so a plane infeasible against the current obstacles can never
+    become feasible later — the scan therefore makes monotonic progress (one
+    plane committed per iteration) and cannot spin. Deterministic (ADR-0003):
+    the order, the Dubins primitive, and the next-feasible scan are all RNG-free,
+    so a given ``target`` always yields the same :class:`MovesPlan`.
     """
     ordered = list(back_first_order(target.placements))
     fleet = target.fleet
     hangar = target.hangar
-    budget = 2 * len(ordered)
-    swaps = 0
 
     placed: list[Placement] = []
     moves: list[Move] = []
-    last_conflict: Conflict | None = None
 
     while ordered:
         chosen: int | None = None
         chosen_arc: DubinsArc | None = None
+        # The deepest unplaced plane is scanned first, so its conflict (if it
+        # is rejected) is the one reported when the whole scan finds nothing.
+        deepest_conflict: Conflict | None = None
         for idx, slot in enumerate(ordered):
             plane = fleet[slot.plane_id]
             arc = plan_dubins(
@@ -537,14 +544,14 @@ def plan_fill(target: Layout) -> MovesPlan:
             if conflict is None:
                 chosen, chosen_arc = idx, arc
                 break
-            last_conflict = conflict
-            swaps += 1
-            if swaps > budget:
-                raise NoFeasiblePlanError(slot.plane_id, conflict)
+            if deepest_conflict is None:
+                deepest_conflict = conflict
         if chosen is None:
-            # Every remaining plane conflicts; bail on the first (deepest).
-            assert last_conflict is not None
-            raise NoFeasiblePlanError(ordered[0].plane_id, last_conflict)
+            # Every remaining plane conflicts: greedy back-first is stuck. The
+            # deepest plane (ordered[0], scanned first) is the one we most
+            # wanted to place, and deepest_conflict is its own conflict.
+            assert deepest_conflict is not None  # ordered non-empty => scan ran
+            raise NoFeasiblePlanError(ordered[0].plane_id, deepest_conflict)
         slot = ordered.pop(chosen)
         assert chosen_arc is not None
         moves.append(Move(slot.plane_id, Pose.from_placement(slot), chosen_arc))

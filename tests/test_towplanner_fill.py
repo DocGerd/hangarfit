@@ -183,3 +183,28 @@ def test_plan_fill_bails_with_structured_error_when_unplannable(
         plan_fill(target)
     assert ei.value.plane_id in {"A", "B"}
     assert ei.value.conflict is not None
+
+
+def test_plan_fill_succeeds_when_only_last_scanned_is_feasible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Regression for the PR #220 lifetime swap-budget false-bail. Six planes,
+    # all at the same slot so back_first_order ties resolve to plane_id asc
+    # (scan order A..F). Each iteration only the alphabetically-LAST not-yet-
+    # placed plane is feasible, forcing maximal rejections (5+4+3+2+1 = 15). A
+    # lifetime budget of 2*n = 12 would bail on this fully-plannable target;
+    # plan_fill must place all six (it makes monotonic progress, no budget).
+    h = _hangar(width_m=20.0, length_m=30.0)
+    ids = ["A", "B", "C", "D", "E", "F"]
+    fleet = {pid: _box_plane(pid) for pid in ids}
+    target = _layout(fleet, h, *[_slot(pid, 10.0, 15.0) for pid in ids])
+
+    def fake_conflict(arc, mover, *, mover_on_carts, placed, **kw):  # noqa: ANN001, ANN202
+        remaining = set(ids) - {p.plane_id for p in placed.placements}
+        if mover.id == max(remaining):  # only the last-scanned remaining is OK
+            return None
+        return Conflict.single(kind="fuselage_fuselage_overlap", plane=mover.id, detail="forced")
+
+    monkeypatch.setattr(tp, "path_first_conflict", fake_conflict)
+    plan = plan_fill(target)
+    assert [m.plane_id for m in plan.moves] == ["F", "E", "D", "C", "B", "A"]
