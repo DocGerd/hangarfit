@@ -1,5 +1,18 @@
 # Bound-Aware Tow-Path Planner (Hybrid-A*) Implementation Plan
 
+> **⚠️ Acceptance criterion revised by #197 (2026-05-26).** This plan assumed
+> that with `plan_path` in place the solver fixture matrix would return to
+> `found` **with bundled, exact-validated plans** (see the "Definition of done"
+> / final acceptance steps). That proved too optimistic: even bound-aware
+> Hybrid-A* cannot route dense multi-plane fills in v1 (the 6-plane fixtures and
+> `layouts/example.yaml` are un-towable; spike Risk #1). #197 therefore reversed
+> the "fail-whole-solve / `no_feasible_plan`" decision to **best-effort
+> enrichment** — the matrix returns `found` with `plans[i] = None` where the
+> planner can't route a layout, and the `no_feasible_plan` status was dropped.
+> Hybrid-A* is still a real win (it routes turned/wide-wing single cases that
+> single-Dubins could not); dense-fill routing remains v2 (RRT-Connect). Treat
+> any `no_feasible_plan` reference below as historical.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Replace the single-shot `plan_dubins` call in `plan_fill` with a deterministic Hybrid-A* search (`plan_path`) that finds an in-bounds, obstacle-free multi-segment tow path from the door-cone entry pose to the target slot, so `solve` returns genuinely tow-able layouts (#222, unblocks #197).

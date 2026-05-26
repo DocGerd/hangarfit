@@ -4,6 +4,19 @@
 > spike's v2 obstacle/bound-aware path planning ([docs/spikes/tow-path-planning.md](../../spikes/tow-path-planning.md) Q3)
 > because the shipped v1 single-Dubins planner cannot tow the real fleet.
 > Next step: `superpowers:writing-plans` → implementation plan.
+>
+> **⚠️ Updated by #197 implementation (2026-05-26).** Two assumptions in this
+> spec proved false and were revised: (1) **"Decision-3 / fail-whole-solve"**
+> (referenced in §1, §4 failure semantics, §6 Tasks 4–5) was **reversed to
+> best-effort enrichment** — `solve()` keeps every valid layout and sets
+> `plans[i] = None` where the planner can't route it; the `no_feasible_plan`
+> status was dropped. (2) The §5 acceptance expectation that the bound-aware
+> planner would return the fixture matrix to `found` **with populated plans** was
+> too optimistic: even Hybrid-A* cannot route dense multi-plane fills in v1
+> (the 6-plane fixtures and `layouts/example.yaml` are un-towable), so the matrix
+> returns `found` with best-effort **`None`** plans. The planner is a real
+> improvement (it routes cases single-Dubins could not), but dense-fill routing
+> remains v2 (RRT-Connect). See the #197 PR for the shipped behaviour.
 
 ## 1. Problem & motivation
 
@@ -120,8 +133,8 @@ This planner is a **prerequisite** for #197 (solve integration) to go green/merg
 work already done on the `feature/197-solve-bundled-movesplan` branch is consistent with
 this design and is **kept**:
 
-- **Task 4** (`SolveResult.plans`, `no_feasible_plan` status, `unplannable_plane`) — correct as-is.
-- **Task 5** (solver wires `plan_fill`, fail-whole-solve) — correct; exactly what "keep strict" wants.
+- **Task 4** (`SolveResult.plans`, ~~`no_feasible_plan` status, `unplannable_plane`~~) — `SolveResult.plans` kept; **the `no_feasible_plan` status and `unplannable_plane` field were dropped during #197** (see top banner) — status stays search-driven and diagnostics carries `unroutable_planes: tuple[str, ...]`.
+- **Task 5** (solver wires `plan_fill`, ~~fail-whole-solve~~) — `plan_fill` is wired in, but **fail-whole was reversed to best-effort** (#197, top banner): un-routable layout → `plans[i] = None`, layout kept.
 - **Front-gap exemption** (`_mover_motion_bounds_conflict` + `path_first_conflict` change) — correct; any planner needs it.
 
 The Hybrid-A\* planner is new tracked work (its own issue/PR off `develop`, in milestone

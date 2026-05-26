@@ -17,6 +17,8 @@ from hangarfit.models import (
     Part,
     Placement,
     SearchConfig,
+    SolverDiagnostics,
+    SolveResult,
     StrutsSpec,
 )
 
@@ -987,3 +989,71 @@ class TestSearchConfig:
         # None (adaptive) and positive are accepted
         assert SearchConfig(spread_scale_m=None).spread_scale_m is None
         assert SearchConfig(spread_scale_m=3.5).spread_scale_m == 3.5
+
+
+# ---------------------------------------------------------------------------
+# SolveResult.plans — best-effort tow-plan bundle (#197)
+# ---------------------------------------------------------------------------
+
+
+def _make_diag() -> SolverDiagnostics:
+    """Minimal valid SolverDiagnostics with all required fields set."""
+    return SolverDiagnostics(
+        restarts_attempted=0,
+        wall_time_s=0.1,
+        best_partial=None,
+        best_partial_layout=None,
+        seed=42,
+    )
+
+
+def _make_valid_layout() -> Layout:
+    """A minimal valid Layout (one plane, empty placements)."""
+    a = _ok_aircraft("p1", movement_mode="always_own_gear", turn_radius_m=5.0)
+    return Layout(
+        fleet={a.id: a},
+        hangar=_ok_hangar(),
+        placements=(Placement(plane_id="p1", x_m=5.0, y_m=10.0, heading_deg=0.0, on_carts=False),),
+    )
+
+
+class TestSolveResultPlans:
+    """Invariant tests for the SolveResult.plans best-effort tow-plan bundle."""
+
+    def test_solveresult_plans_must_align_with_layouts(self) -> None:
+        # found/found_partial: len(plans) must equal len(layouts).
+        diag = _make_diag()
+        layout = _make_valid_layout()
+        with pytest.raises(ValueError, match="plans"):
+            SolveResult(status="found", layouts=(layout,), plans=(), diagnostics=diag)
+
+    def test_solveresult_plans_allows_none_entries(self) -> None:
+        # Best-effort: a returned layout whose tow plan the v1 planner could
+        # not compute is recorded as plans[i]=None — still aligned, still valid.
+        from hangarfit.towplanner import MovesPlan
+
+        diag = _make_diag()
+        layout = _make_valid_layout()
+        plan = MovesPlan(target_layout=layout, moves=())
+        sr = SolveResult(
+            status="found", layouts=(layout, layout), plans=(plan, None), diagnostics=diag
+        )
+        assert sr.plans == (plan, None)
+
+    def test_solveresult_plans_defaults_empty_for_backward_compat(self) -> None:
+        # Existing callers that build exhausted_budget/trivially_infeasible
+        # results without plans keep working.
+        diag = _make_diag()
+        sr = SolveResult(status="exhausted_budget", layouts=(), diagnostics=diag)
+        assert sr.plans == ()
+
+    def test_solveresult_empty_layout_status_rejects_stray_plans(self) -> None:
+        # plans is index-aligned with layouts for EVERY status, so an
+        # empty-layout status with a non-empty plans tuple is rejected too
+        # (not just the found/found_partial cardinality mismatch).
+        from hangarfit.towplanner import MovesPlan
+
+        diag = _make_diag()
+        stray = MovesPlan(target_layout=_make_valid_layout(), moves=())
+        with pytest.raises(ValueError, match="plans"):
+            SolveResult(status="exhausted_budget", layouts=(), plans=(stray,), diagnostics=diag)

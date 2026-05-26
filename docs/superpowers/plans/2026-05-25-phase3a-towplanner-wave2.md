@@ -1,5 +1,22 @@
 # Phase 3a Tow-Path Planner — Wave 2 (Module + solve integration) Implementation Plan
 
+> **⚠️ Partially superseded during #197 implementation (2026-05-26).** The
+> "Layout valid but un-towable → **fail whole solve**" decision below was
+> **reversed to best-effort enrichment** when implementation revealed that the
+> v1 planner cannot route *any* dense multi-plane fill — even the project's own
+> `layouts/example.yaml`, the tight-hangar `solve_fresh_six_planes.yaml`, and a
+> 6-plane fill in the *roomy* 30×25 m test hangar (`solve_pinned_one_plane.yaml`)
+> are all un-towable (spike Risk #1 / ADR-0007: Dubins-only + bounded Hybrid-A* with
+> documented false-negatives). Fail-whole would have made `hangarfit solve`
+> return `no_feasible_plan` for essentially every realistic scenario, discarding
+> valid static layouts on a heuristic's false negative. The shipped behaviour:
+> `solve()` keeps every valid layout and sets `plans[i] = None` where the planner
+> could not route it; the `no_feasible_plan` status was dropped; status stays
+> search-driven; the blocking planes are recorded in
+> `SolverDiagnostics.unroutable_planes`. A new `plan_paths: bool = True` param
+> lets callers skip the (expensive) tow-planning. The CLI passes `plan_paths=False`
+> (surfacing tow paths is #193). See the updated row 3 below and the #197 PR.
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Wire the Wave 1 primitives into a working empty-hangar-fill planner — `plan_fill(target: Layout) -> MovesPlan` with a bounded deterministic order-retry loop (#196) — then have `hangarfit solve` return a bundled `(Layout, MovesPlan)` result (#197).
@@ -18,7 +35,7 @@ These three forks were genuinely open after ADR-0007; the user chose, alternativ
 |---|---|---|
 | **Cart door→slot traversal** | **Extend `plan_dubins` r=0** to emit pivot→straight→pivot when start/end positions differ (still one `DubinsArc`, `turn_radius_m=0`). `plan_fill` stays cart-agnostic, honoring ADR-0007's "one motion primitive, no cart special-case in the planner body". | (b) *Separate `_plan_cart_arc` helper* — keeps the Wave 1 primitive test untouched but pushes a `movement_mode` branch into the planner body, against the ADR driver. (c) *Defer carts* — the fleet has 3 `always_cart` planes (Falke, Wild Thing, Zlin Savage); realistic scenarios would hard-fail. |
 | **`solve` result shape** | **Parallel `plans: tuple[MovesPlan, ...]` field** on `SolveResult`, index-aligned with `layouts`. Minimal glue (matches the issue's "~20 lines"); CLI keeps reading `.layouts`; backward-compatible (defaults to `()`). | *Bundle/`Candidate` type* (`layouts`→`candidates`) — higher cohesion but churns `SolveResult`, both CLI emit paths, the render/write helpers, and every existing solver test that builds or reads a `SolveResult`. |
-| **Layout valid but un-towable** | **Fail whole solve** — if *any* returned layout's `plan_fill` raises `NoFeasiblePlanError`, `solve` returns `status="no_feasible_plan"` with empty `layouts`/`plans` and the offending plane named in diagnostics. | *Keep layout, plan=None* — preserves valid static layouts but weakens the "every returned layout is tow-able" guarantee. *Drop the layout* — silently discards work. The user chose strict; see the **regression-guard** note in Task 6. |
+| **Layout valid but un-towable** | ~~**Fail whole solve**~~ → **REVERSED to "keep layout, plan=None" during #197 (see banner at top).** Originally: if *any* returned layout's `plan_fill` raises `NoFeasiblePlanError`, `solve` returns `status="no_feasible_plan"` with empty `layouts`/`plans`. Implementation showed the v1 planner cannot route any dense fill, so fail-whole made `solve` near-useless; the rejected "keep layout, plan=None" alternative became the chosen one. | *Drop the layout* — silently discards work (still rejected). The "every returned layout is tow-able" guarantee is intentionally not offered in v1: an un-routable layout is still a valid static arrangement, and the planner's failure is advisory (spike Risk #8). |
 
 **Consequence to carry into Wave 3 (#193 CLI):** because un-towable ⇒ whole-solve failure, the Wave 3 exit-code rule should read "exit non-zero when `status == no_feasible_plan`" — which already falls out of the existing `if not result.layouts: return 1` path (Task 6 keeps that intact). The spike's #193 wording ("non-zero exit when no feasible order exists for any candidate") is *tightened* by this decision; note it on #193 when Wave 3 is planned.
 
