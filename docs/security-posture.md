@@ -9,6 +9,10 @@ document explains, per check, why the zero is *structural* rather than
 a defect — so an outside reviewer arriving from a Scorecard report can
 see the rationale in-tree rather than guessing.
 
+One further check — **Branch-Protection** — scores a partial **3/10**
+rather than 0; it is documented here too because its residual gap is the
+same single-maintainer cap as Code-Review, not a missing protection.
+
 Three of the four also cap the realistic ceiling of our aggregate score
 at roughly **8.0–8.5** — the per-check breakdown that produces that
 ceiling lives in the
@@ -55,6 +59,56 @@ inventing a second-account-approves-its-own-bot fiction (see
 
 **Will it move?** Not without an external co-maintainer joining the
 project. That would be welcome but is not on the roadmap.
+
+---
+
+## Branch-Protection (score 3)
+
+**What the check measures.** Scorecard inspects the protection configured
+on the default branch and any release branches, awarding partial credit
+per tier of protection (admin enforcement, required status checks,
+required reviews, code-owner review, up-to-date-before-merge, …). A
+maximal configuration scores 10.
+
+**Why we score 3.** The two warnings Scorecard emits — *"branch does not
+require approvers"* and *"codeowners review is not required"* — are the
+[Code-Review](#code-review-score-0) cap wearing a different hat. Both ask
+for a **second person** to approve before merge, and on a single-maintainer
+repo there is no second person: GitHub refuses a PR author's own `APPROVE`
+(HTTP 422), so requiring ≥ 1 approver would deadlock *every* merge rather
+than improve security. Requiring code-owner review would deadlock it for
+the same reason — even though the repo does ship a
+[`CODEOWNERS`](../.github/CODEOWNERS) file (a catch-all naming the sole
+maintainer), so the right reviewer is already requested on every PR.
+
+Everything that *can* be enforced without a second human already is, on
+both protected branches (`develop` and `main`):
+
+- **Admin enforcement** — the rules apply to the maintainer too
+  (`enforce_admins`), so protection cannot be silently bypassed.
+- **Required status checks, strict** — PRs must pass the full CI gate
+  (tests, both lockfile-drift guards, CodeQL) and be up to date with the
+  base branch before merge.
+- **Stale-review dismissal** — approvals are dismissed on new pushes (a
+  no-op today given the reviewer count, but already correct for the day a
+  co-maintainer joins).
+
+So the 3 reflects a deliberately-applied, single-maintainer-maximal
+configuration — not an unprotected branch. See [#141] for the change that
+applied it.
+
+**A note on linear history.** `required_linear_history` is intentionally
+**off**. Enabling it would forbid the merge commits the GitFlow release
+flow depends on (`release/*` → `main`, and the back-merge to `develop`).
+The trade-off was explored in spike [#202]; do not "fix" this to chase a
+Scorecard point.
+
+**Will it move?** Only with an external co-maintainer — exactly as for
+[Code-Review](#code-review-score-0). The non-human protections are already
+maxed.
+
+[#141]: https://github.com/DocGerd/hangarfit/issues/141
+[#202]: https://github.com/DocGerd/hangarfit/issues/202
 
 ---
 
