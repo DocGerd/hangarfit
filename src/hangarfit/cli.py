@@ -308,12 +308,17 @@ def cmd_solve(args: argparse.Namespace) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 2
 
+    # plan_paths=False: the library-level bundle (SolveResult.plans) exists as
+    # of #197, but surfacing tow paths in the CLI (rendering + exit-code
+    # semantics) is #193. Until then, computing plans the CLI never displays
+    # would only add the per-plane Hybrid-A* search cost for no visible output.
     result = solve(
         scenario,
         budget_s=args.budget,
         alternatives=args.alternatives,
         seed=args.seed,
         search=SearchConfig(spread=args.spread),
+        plan_paths=False,
     )
 
     if args.json:
