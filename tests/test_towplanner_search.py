@@ -380,3 +380,156 @@ def test_plan_path_result_always_passes_the_exact_oracle() -> None:
         mover_on_carts=False,
     )
     assert path_first_conflict(arc, plane, mover_on_carts=False, placed=placed) is None
+
+
+# ── Branch-coverage tests for the search internals ──────────────────────────
+
+
+def _slab_plane(pid: str, z_bottom: float, z_top: float) -> Aircraft:
+    """An own-gear plane whose single part is a flat 4x4 m slab at a fixed
+    z-layer — lets a test place two parts that overlap in plan view but sit at
+    chosen vertical gaps, to exercise the z pre-filter branches."""
+    return Aircraft(
+        id=pid,
+        name=pid,
+        wing_position="high",
+        gear="tailwheel",
+        movement_mode="always_own_gear",
+        turn_radius_m=5.0,
+        measured=False,
+        parts=(
+            Part(
+                kind="wing",
+                length_m=4.0,
+                width_m=4.0,
+                offset_x_m=0.0,
+                offset_y_m=0.0,
+                angle_deg=0.0,
+                z_bottom_m=z_bottom,
+                z_top_m=z_top,
+            ),
+        ),
+    )
+
+
+def test_seg_cost_cart_pivot_is_penalty_times_radians() -> None:
+    # Cart pivot (r == 0): no translation; the cost is the turn penalty over the
+    # pivot radians (length_m encodes radians). Covers the r==0 branch of
+    # _seg_cost (the own-gear test only exercises r > 0).
+    from hangarfit.towplanner import _TURN_PENALTY
+
+    radians = math.radians(15.0)
+    assert _seg_cost(Segment("L", radians), turn_radius_m=0.0) == pytest.approx(
+        _TURN_PENALTY * radians
+    )
+
+
+def test_build_obstacles_excludes_the_mover_from_its_own_obstacle_set() -> None:
+    # If the mover is itself among placed.placements, _build_obstacles must skip
+    # it — it is the thing being routed, not an obstacle. Covers the mover-skip
+    # `continue` in _build_obstacles.
+    from hangarfit.towplanner import _build_obstacles
+
+    h = _hangar()
+    a = _winged_plane("A", span_m=6.0)
+    b = _winged_plane("B", span_m=6.0)
+    placed = Layout(
+        fleet={"A": a, "B": b},
+        hangar=h,
+        placements=(
+            Placement("A", 5.0, 10.0, 0.0, on_carts=False),
+            Placement("B", 12.0, 14.0, 0.0, on_carts=False),
+        ),
+    )
+    obstacles = _build_obstacles(placed, mover_id="B")
+    assert {wp.plane_id for wp in obstacles.world_parts} == {"A"}
+    assert len(obstacles.world_parts) == len(a.parts)
+
+
+def test_motion_clear_skips_obstacle_separated_beyond_wing_layer_clearance() -> None:
+    # gap_z >= wing_layer_clearance: the parts cannot collide regardless of
+    # plan-view overlap, so the z pre-filter skips the pair. _motion_clear is
+    # clear and the exact oracle agrees. Covers the `gap_z >= wlc` skip branch.
+    from hangarfit.towplanner import _build_obstacles, _motion_clear
+
+    h = _hangar(width_m=18.0, length_m=25.0)  # wing_layer_clearance_m = 0.2
+    mover = _slab_plane("B", z_bottom=0.0, z_top=1.0)  # z 0..1
+    high = _slab_plane("A", z_bottom=2.0, z_top=3.0)  # z 2..3 -> gap_z 1.0 >= 0.2
+    placed = Layout(
+        fleet={"A": high, "B": mover},
+        hangar=h,
+        placements=(Placement("A", 9.0, 12.0, 0.0, on_carts=False),),
+    )
+    obstacles = _build_obstacles(placed, mover_id="B")
+    pose = Pose(9.0, 12.0, 0.0)  # coincident with A in plan view, but z-separated
+    assert _motion_clear(mover, pose, obstacles, h) is True
+    exact_clear = (
+        path_first_conflict(
+            DubinsArc(pose, pose, 5.0, (Segment("S", 0.0),)),
+            mover,
+            mover_on_carts=False,
+            placed=placed,
+        )
+        is None
+    )
+    assert exact_clear is True
+
+
+def test_motion_clear_zero_wing_layer_clearance_skips_non_overlapping_z() -> None:
+    # wlc == 0: the z pre-filter skips pairs whose z-intervals do not strictly
+    # overlap (gap_z >= 0). Covers the `elif gap_z >= 0.0` (wlc == 0) branch.
+    from hangarfit.towplanner import _build_obstacles, _motion_clear
+
+    h = Hangar(
+        length_m=25.0,
+        width_m=18.0,
+        door=Door(center_x_m=9.0, width_m=10.0),
+        maintenance_bay=MaintenanceBay(center_x_m=9.0, width_m=2.0, depth_m=2.0),
+        clearance_m=0.3,
+        wing_layer_clearance_m=0.0,
+    )
+    mover = _slab_plane("B", z_bottom=0.0, z_top=1.0)  # z 0..1
+    touching = _slab_plane("A", z_bottom=1.0, z_top=2.0)  # z 1..2 -> gap_z 0.0 (>= 0)
+    placed = Layout(
+        fleet={"A": touching, "B": mover},
+        hangar=h,
+        placements=(Placement("A", 9.0, 12.0, 0.0, on_carts=False),),
+    )
+    obstacles = _build_obstacles(placed, mover_id="B")
+    pose = Pose(9.0, 12.0, 0.0)
+    # gap_z == 0 with wlc == 0 is "not strictly overlapping" -> no conflict.
+    assert _motion_clear(mover, pose, obstacles, h) is True
+    exact_clear = (
+        path_first_conflict(
+            DubinsArc(pose, pose, 5.0, (Segment("S", 0.0),)),
+            mover,
+            mover_on_carts=False,
+            placed=placed,
+        )
+        is None
+    )
+    assert exact_clear is True
+
+
+def test_plan_path_budget_exhaustion_breaks_and_raises_no_feasible_path() -> None:
+    # A small expansion budget on a proven-infeasible wide-wing/turned-goal case
+    # forces the budget `break` and the `no_feasible_path` raise, and the
+    # multi-node exploration of the constrained space exercises the
+    # stale-heap-entry skip — all without the cost of a full-budget search.
+    # (span 9 in an 14 m hangar with r=5 needs r+half_span=9.5 m of clearance
+    # each side: the valid turn interval is empty, so the goal is unreachable.)
+    h = _hangar(width_m=14.0, length_m=18.0)
+    plane = _winged_plane("A", span_m=9.0, turn_radius_m=5.0)
+    placed = Layout(fleet={"A": plane}, hangar=h, placements=())
+    with pytest.raises(NoFeasiblePlanError) as ei:
+        plan_path(
+            plane,
+            Pose(6.0, 0.0, 0.0),
+            Pose(6.0, 8.0, 234.0),
+            hangar=h,
+            placed=placed,
+            mover_on_carts=False,
+            max_expansions=150,
+        )
+    assert ei.value.plane_id == "A"
+    assert ei.value.conflict.kind == "no_feasible_path"
