@@ -673,14 +673,20 @@ def plan_fill(target: Layout) -> MovesPlan:
         for idx, slot in enumerate(ordered):
             plane = fleet[slot.plane_id]
             try:
+                # The full door cone drives the multi-start search (#262). Compute
+                # it once and pass it as `entries=`; the positional `entry` arg is
+                # ignored by plan_path whenever `entries` is set, so reuse cone[0]
+                # for it rather than recomputing entry_pose() (which plan_path would
+                # never read here).
+                cone = entry_poses(slot, hangar)
                 arc = plan_path(
                     plane,
-                    entry_pose(slot, hangar),
+                    cone[0],
                     Pose.from_placement(slot),
                     hangar=hangar,
                     placed=placed_layout,
                     mover_on_carts=slot.on_carts,
-                    entries=entry_poses(slot, hangar),
+                    entries=cone,
                 )
             except NoFeasiblePlanError as exc:
                 # This plane cannot be routed against the current obstacles; try

@@ -155,6 +155,8 @@ meaning: *this carted plane has no own-gear taxi radius.*
   gate** (entry pose constrained to the door interval, heading into the hangar).
   `collisions.check` semantics are untouched — nothing in the layout checker now
   cares about the door beyond the hangar-bounds rule it already enforces.
+  *(The single-ray entry pose described here was later replaced by a searched
+  cone — see the [#262 amendment](#2026-05-27--door-entry-cone-searched-262).)*
 
 ## Open question (deferred, not decided here)
 
@@ -194,6 +196,28 @@ non-breaking. The natural place to revisit both is the v2 true cart-lift primiti
   validates with `null` for the cart planes (no schema change leaked in).
 - Determinism is verified by the existing seeded-reproducibility tests extended to
   the bundled `(Layout, MovesPlan)` output.
+
+## Amendments
+
+### 2026-05-27 — door entry cone searched (#262)
+
+The Consequences (Neutral) section above describes the door as a motion gate
+with the **entry pose constrained to the door interval, heading into the
+hangar** — i.e. a single deterministic straight-in pose (one clamped `x`,
+`heading_deg = 0`). Spike Q6 had called this the "door-*cone*" but the v1
+implementation collapsed the cone to a single ray for simplicity.
+
+[#262](https://github.com/DocGerd/hangarfit/issues/262) restores the cone as a
+**searched set**: `entry_poses` now emits a fixed deterministic grid (3 x-samples
+along the door interval × 5 forward-admissible headings), the Hybrid-A* search
+seeds every wall-clearing candidate at `g = 0`, and the best total path across
+the cone wins. This shortens paths to off-to-the-side / angled slots while
+preserving the ADR-0003 determinism contract (fixed grid order + the existing
+monotonic-counter heap tie-break). The door remains a towplanner-level motion
+gate; `collisions.check` semantics are still untouched. See the updated
+[arc42 §8 door-cone description](../architecture/08-crosscutting-concepts.md)
+for the live behaviour. This is a refinement *within* this ADR's framing, not a
+reversal of any decision recorded here.
 
 ## More Information
 
