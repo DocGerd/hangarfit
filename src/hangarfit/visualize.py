@@ -26,7 +26,7 @@ from __future__ import annotations
 
 import math
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import matplotlib
 
@@ -37,6 +37,13 @@ from matplotlib.patches import Polygon as MplPolygon  # noqa: E402
 
 from .geometry import WorldPart, aircraft_parts_world  # noqa: E402
 from .models import CheckResult, Layout, Placement, WingPosition  # noqa: E402
+
+if TYPE_CHECKING:
+    # Annotation-only import: the runtime code in _draw_tow_paths is duck-typed
+    # (moves_plan.moves / move.path.sample()), so importing MovesPlan eagerly
+    # would add a needless module dependency. towplanner does not import
+    # visualize, so this is safe under TYPE_CHECKING either way.
+    from .towplanner import MovesPlan
 
 _WING_COLORS: dict[WingPosition, str] = {
     "high": "#3498db",  # blue
@@ -50,6 +57,23 @@ _WING_COLORS: dict[WingPosition, str] = {
 _FALLBACK_COLOR = "#95a5a6"  # gray
 
 _CONFLICT_COLOR = "#e74c3c"  # red
+
+# Tow-path overlay palette (#192). One colour per plane, cycled by sorted
+# plane_id. Deliberately excludes the conflict red (#e74c3c) and the gray
+# fallback so a path never blurs into a conflict highlight or a placeholder
+# part. Eight entries cover the fleet (<=9 planes); a 9th plane reuses the
+# first colour — acceptable since each path terminates at its annotated slot.
+_TOW_PATH_COLORS = (
+    "#1f77b4",  # blue
+    "#ff7f0e",  # orange
+    "#2ca02c",  # green
+    "#9467bd",  # purple
+    "#8c564b",  # brown
+    "#17becf",  # cyan
+    "#bcbd22",  # olive
+    "#e377c2",  # pink
+)
+_TOW_PATH_LINEWIDTH = 1.6
 
 _FUSELAGE_ALPHA = 0.9  # near-opaque: two fuselages overlapping is always
 # a conflict, no value in seeing through.
@@ -86,6 +110,7 @@ def render_layout(
     output_path: Path | str,
     *,
     check_result: CheckResult | None = None,
+    moves_plan: MovesPlan | None = None,
     title: str | None = None,
     dpi: int = 100,
 ) -> None:
@@ -98,6 +123,16 @@ def render_layout(
     part of every plane named in any conflict rather than guess which
     part-pair is the actual culprit. A future refinement could plumb
     part indices through ``Conflict.detail``.
+
+    If ``moves_plan`` is supplied, each plane's tow path is overlaid as a
+    polyline (one colour per plane) at the same z-tier as the conflict
+    overlay — see :func:`_draw_tow_paths` (#192). ``check_result`` and
+    ``moves_plan`` are independent: a layout can be rendered with neither,
+    either, or both.
+
+    This is renderer-only: no CLI flag exposes ``moves_plan`` to end users
+    yet — wiring ``--render-paths`` (and the bundle plumbing) is deferred to
+    #193.
     """
     # Defense in depth: even with ``matplotlib.use("Agg", force=True)``
     # at module import, a misconfigured environment (interactive backend
@@ -120,6 +155,8 @@ def render_layout(
         _draw_aircraft(ax, layout)
         if not (check_result is None or check_result.valid):
             _draw_conflict_overlay(ax, layout, check_result)
+        if moves_plan is not None:
+            _draw_tow_paths(ax, moves_plan)
         _finalize_axes(ax, layout, title)
         fig.savefig(str(output_path), dpi=dpi, bbox_inches="tight")
     finally:
@@ -353,6 +390,41 @@ def _draw_conflict_overlay(ax: Any, layout: Layout, check_result: CheckResult) -
                 zorder=5,
             )
             ax.add_patch(patch)
+
+
+def _draw_tow_paths(ax: Any, moves_plan: MovesPlan) -> None:
+    """Overlay each plane's tow path as a polyline, one colour per plane (#192).
+
+    Companion to :func:`_draw_conflict_overlay` at the same z-tier (5), so the
+    paths read on top of the aircraft parts (zorder 1-4) — spike Q7. Each path
+    is the sampled :class:`~hangarfit.towplanner.DubinsArc` polyline from the
+    door-cone entry pose to the target slot. Colours are assigned by *sorted*
+    ``plane_id`` so a given plan always renders the same plane in the same
+    colour regardless of move order (the ADR-0003 determinism spirit). The
+    in-memory ``MovesPlan`` shape is rich enough that a per-move PNG sequence
+    or animation can be added later without changing it (spike Q7).
+
+    Each polyline carries its ``plane_id`` as a matplotlib ``label``. No
+    legend is rendered today (``_finalize_axes`` draws none), so the label is
+    currently inert — it is a deliberate forward hook for a future legend, and
+    a path is already disambiguated by terminating at its annotated slot.
+    """
+    plane_ids = sorted({move.plane_id for move in moves_plan.moves})
+    colour_for = {
+        pid: _TOW_PATH_COLORS[i % len(_TOW_PATH_COLORS)] for i, pid in enumerate(plane_ids)
+    }
+    for move in moves_plan.moves:
+        poses = list(move.path.sample())
+        xs = [p.x_m for p in poses]
+        ys = [p.y_m for p in poses]
+        ax.plot(
+            xs,
+            ys,
+            color=colour_for[move.plane_id],
+            lw=_TOW_PATH_LINEWIDTH,
+            zorder=5,
+            label=move.plane_id,
+        )
 
 
 def _finalize_axes(ax: Any, layout: Layout, title: str | None) -> None:
