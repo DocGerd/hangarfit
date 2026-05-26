@@ -9,6 +9,10 @@ import math
 
 import pytest
 
+from hangarfit.loader import load_scenario
+from hangarfit.models import DiversityConfig, Layout
+from hangarfit.solver import _select_spread_diverse, _SpreadCandidate
+
 
 @pytest.fixture(autouse=True)
 def _stub_towplanning(monkeypatch):
@@ -170,3 +174,72 @@ def test_spread_quality_single_plane_is_inf_zero():
     placements = _placements(scenario, [(pid, 2.0, 2.0, 0.0)])
     scale = _resolve_spread_scale(scenario, SearchConfig())
     assert _spread_quality(placements, scenario, scale) == (math.inf, 0.0)
+
+
+# ---------------------------------------------------------------------------
+# _select_spread_diverse (#267)
+# ---------------------------------------------------------------------------
+
+
+def _layout(scenario, specs):
+    """A valid Layout from (plane_id, x, y, heading) specs. Layout.__post_init__
+    enforces only structural invariants (no collision check), so arbitrary
+    positions are fine for selection/diversity tests."""
+    return Layout(
+        fleet=scenario.fleet,
+        hangar=scenario.hangar,
+        placements=tuple(_placements(scenario, specs).values()),
+        maintenance_plane=None,
+    )
+
+
+def test_select_nested_pair_loses_to_spread():
+    """The core regression: a nested basin (min_gap 0.0) must never be chosen
+    over a well-spread one (min_gap 2.0), even with a worse restart_index."""
+    scenario = load_scenario("tests/fixtures/scenario_minimal.yaml")
+    p = list(scenario.fleet_in)
+    nested = _layout(scenario, [(p[0], 2.0, 2.0, 0.0), (p[1], 2.0, 2.0, 0.0)])
+    spread = _layout(scenario, [(p[0], 2.0, 2.0, 0.0), (p[1], 12.0, 9.0, 0.0)])
+    pool = [
+        _SpreadCandidate(layout=nested, min_gap=0.0, energy=5.0, restart_index=0),
+        _SpreadCandidate(layout=spread, min_gap=2.0, energy=1.0, restart_index=1),
+    ]
+    selected, rejected = _select_spread_diverse(pool, alternatives=1, diversity=DiversityConfig())
+    assert [c.min_gap for c in selected] == [2.0]
+    assert rejected == 0
+
+
+def test_select_energy_breaks_min_gap_ties():
+    scenario = load_scenario("tests/fixtures/scenario_minimal.yaml")
+    p = list(scenario.fleet_in)
+    a = _layout(scenario, [(p[0], 2.0, 2.0, 0.0), (p[1], 12.0, 9.0, 0.0)])
+    b = _layout(scenario, [(p[0], 2.0, 2.0, 0.0), (p[1], 12.0, 9.0, 0.0)])
+    pool = [
+        _SpreadCandidate(layout=a, min_gap=2.0, energy=3.0, restart_index=0),
+        _SpreadCandidate(layout=b, min_gap=2.0, energy=1.0, restart_index=1),
+    ]
+    selected, _ = _select_spread_diverse(pool, alternatives=1, diversity=DiversityConfig())
+    assert selected[0].energy == 1.0  # lower energy wins the tie
+
+
+def test_select_enforces_diversity_and_counts_rejects():
+    """K=2: the top-spread basin is picked; a near-identical second basin is
+    rejected by the diversity gate; a genuinely different one is accepted."""
+    scenario = load_scenario("tests/fixtures/scenario_minimal.yaml")
+    p = list(scenario.fleet_in)
+    base = _layout(scenario, [(p[0], 2.0, 2.0, 0.0), (p[1], 12.0, 9.0, 0.0)])
+    twin = _layout(scenario, [(p[0], 2.1, 2.0, 0.0), (p[1], 12.1, 9.0, 0.0)])
+    diff = _layout(scenario, [(p[0], 6.0, 5.0, 0.0), (p[1], 16.0, 12.0, 0.0)])
+    pool = [
+        _SpreadCandidate(layout=base, min_gap=3.0, energy=1.0, restart_index=0),
+        _SpreadCandidate(layout=twin, min_gap=2.5, energy=1.0, restart_index=1),
+        _SpreadCandidate(layout=diff, min_gap=2.0, energy=1.0, restart_index=2),
+    ]
+    selected, rejected = _select_spread_diverse(pool, alternatives=2, diversity=DiversityConfig())
+    assert [c.min_gap for c in selected] == [3.0, 2.0]  # base, then diff; twin skipped
+    assert rejected == 1
+
+
+def test_select_empty_pool_returns_empty():
+    selected, rejected = _select_spread_diverse([], alternatives=2, diversity=DiversityConfig())
+    assert selected == [] and rejected == 0

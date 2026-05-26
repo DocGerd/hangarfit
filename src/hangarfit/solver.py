@@ -19,6 +19,7 @@ import random as _random_module
 import secrets
 import sys
 import time
+from typing import NamedTuple
 
 from hangarfit.collisions import check as check_layout
 from hangarfit.geometry import WorldPart, aircraft_parts_world
@@ -1105,6 +1106,46 @@ def _heading_delta_short_arc(a: float, b: float) -> float:
     """
     d = abs(a - b) % 360.0
     return min(d, 360.0 - d)
+
+
+class _SpreadCandidate(NamedTuple):
+    """A valid, spread-polished basin found during search, with its quality."""
+
+    layout: Layout
+    min_gap: float
+    energy: float
+    restart_index: int
+
+
+def _select_spread_diverse(
+    pool: list[_SpreadCandidate],
+    alternatives: int,
+    diversity: DiversityConfig,
+) -> tuple[list[_SpreadCandidate], int]:
+    """Select up to ``alternatives`` best-spread, pairwise-diverse candidates.
+
+    Order the pool by ``(−min_gap, energy, restart_index)``: largest minimum
+    plan-view gap first, ties broken by lower repulsion energy, then by restart
+    order for a *total* (so deterministic — ADR-0003) ordering. Greedily accept
+    a candidate iff it is diverse enough (ADR-0004) against everything already
+    selected; the first pick is always accepted (diversity is vacuous on the
+    empty selection). Returns ``(selected, diversity_rejected)`` in best-spread
+    order, where ``diversity_rejected`` counts candidates *examined* (before the
+    ``alternatives`` quota was met) that the diversity gate turned away. For
+    ``alternatives == 1`` this is always 0 — selection stops after the first,
+    vacuous pick.
+    """
+    ordered = sorted(pool, key=lambda c: (-c.min_gap, c.energy, c.restart_index))
+    selected: list[_SpreadCandidate] = []
+    diversity_rejected = 0
+    for cand in ordered:
+        if _is_diverse_enough(cand.layout, [c.layout for c in selected], diversity):
+            selected.append(cand)
+            if len(selected) >= alternatives:
+                break
+        else:
+            diversity_rejected += 1
+    return selected, diversity_rejected
 
 
 def _is_diverse_enough(
