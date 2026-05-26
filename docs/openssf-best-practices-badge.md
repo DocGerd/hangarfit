@@ -11,6 +11,7 @@ It also satisfies the Scorecard **CII-Best-Practices** check (code-scanning
 alert #4) once the entry reaches Passing — see
 [`security-posture.md`](security-posture.md) for the broader Scorecard picture.
 
+- **Badge:** **Passing** (100%) — project [12987](https://www.bestpractices.dev/projects/12987), awarded 2026-05-26.
 - **Repository:** <https://github.com/DocGerd/hangarfit>
 - **Default branch:** `develop`
 - **License:** Apache-2.0
