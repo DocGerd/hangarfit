@@ -6,24 +6,32 @@ This directory holds **team-shared** [Claude Code](https://docs.claude.com/en/do
 
 | File | Status | Purpose |
 |---|---|---|
-| `settings.json` | committed | Team defaults — auto-run `pytest` after edits under `src/hangarfit/` or `tests/`. |
+| `settings.json` | committed | Team defaults — a `PreToolUse` guard that blocks hand-edits to the hash-pinned `requirements-*.txt` lockfiles, plus a `PostToolUse` hook that runs `ruff` + `pytest` after edits under `src/hangarfit/` or `tests/`. |
 | `settings.local.json` | **gitignored** | Optional per-contributor override (see below). |
 | `README.md` | committed | This file. |
 
-## The PostToolUse pytest hook
+## The on-edit hooks
 
-`settings.json` registers a `PostToolUse` hook on the `Edit` and `Write` tools. After Claude Code edits a file, the hook inspects the edited path and:
+`settings.json` registers two hooks on the `Edit` and `Write` tools, both shared with every contributor on clone.
 
-- If the path matches `src/hangarfit/**` or `tests/**` → runs `pytest -q --no-header 2>&1 | tail -30` and shows the last 30 lines in the transcript.
+### PreToolUse — lockfile guard (blocking)
+
+Before an edit lands, this hook inspects the target path. If its basename matches `requirements-*.txt` it **blocks the edit** (exit code `2`) and tells Claude to regenerate the lockfile with the matching `pip-compile` command in [`CLAUDE.md`](../CLAUDE.md) instead. Those files (`requirements-dev.txt`, `requirements-build.txt`, `requirements-fuzz.txt`, `requirements-pip-tools.txt`) are hash-pinned and machine-generated; hand-editing them passes locally but fails the `*-lockfile-drift` CI jobs confusingly. The guard keys on the `requirements-*.txt` glob, so the editable `requirements-*.in` sources are never blocked, and `pip-compile` (which runs via Bash, not Edit/Write) is unaffected. This is the one **blocking** hook — a safety rail, not advisory.
+
+### PostToolUse — ruff + pytest (non-blocking)
+
+After Claude Code edits a file, this hook inspects the edited path and:
+
+- If the path matches `src/hangarfit/**` or `tests/**` → runs `ruff check` and `ruff format --check` on the edited file, then `pytest -q --no-header`, showing the tail of each in the transcript.
 - Otherwise → no-op.
 
-The hook is **non-blocking**: it always exits `0`, even if `pytest` fails. The failing output is shown to Claude as feedback, but the edit itself is never aborted. Treat it as a fast smoke signal, not a gate.
+This mirrors three of the gates CI enforces (`ruff check`, `ruff format --check`, `pytest`) so problems surface on edit instead of in CI. `mypy` is deliberately omitted — too slow to run on every edit. The hook is **non-blocking**: it always exits `0`, even if a check fails. Failing output is shown to Claude as feedback, but the edit itself is never aborted. Treat it as a fast smoke signal, not a gate.
 
 Path matching is glob-based (`*/src/hangarfit/*` / `*/tests/*`), anchored with a leading `/` so that sibling directories like `vendor-src/hangarfit/` or `contests/` do not accidentally trigger the hook.
 
 ## Opting out (per contributor)
 
-Set the env var `HANGARFIT_SKIP_PYTEST_HOOK=1` in your shell init (`~/.bashrc`, `~/.zshrc`, etc.). The hook detects this and exits immediately without running pytest. Unset (or restart your shell) to re-enable.
+Set the env var `HANGARFIT_SKIP_PYTEST_HOOK=1` in your shell init (`~/.bashrc`, `~/.zshrc`, etc.). The **PostToolUse** ruff + pytest hook detects this and exits immediately. Unset (or restart your shell) to re-enable. The PreToolUse lockfile guard is intentionally **not** opt-out-able — it is a cheap safety rail and the legitimate regeneration path (`pip-compile` via Bash) is never blocked anyway.
 
 ```bash
 # ~/.bashrc or ~/.zshrc

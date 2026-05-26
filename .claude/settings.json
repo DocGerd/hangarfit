@@ -1,12 +1,24 @@
 {
   "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "path=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get(\"tool_input\",{}).get(\"file_path\",\"\"))'); case \"$(basename \"$path\")\" in requirements-*.txt) echo \"[hangarfit guard] $path is a hash-pinned lockfile — do not hand-edit. Regenerate it with the matching pip-compile command in CLAUDE.md (Useful commands); the *-lockfile-drift CI jobs enforce this.\" >&2; exit 2 ;; *) exit 0 ;; esac",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
     "PostToolUse": [
       {
         "matcher": "Edit|Write",
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -n \"$HANGARFIT_SKIP_PYTEST_HOOK\" ]; then cat > /dev/null; exit 0; fi; path=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get(\"tool_input\",{}).get(\"file_path\",\"\"))'); case \"$path\" in */src/hangarfit/*|*/tests/*) echo \"[hangarfit hook] running pytest after edit of $path\"; pytest -q --no-header 2>&1 | tail -30 ;; *) : ;; esac; exit 0",
+            "command": "if [ -n \"$HANGARFIT_SKIP_PYTEST_HOOK\" ]; then cat > /dev/null; exit 0; fi; path=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get(\"tool_input\",{}).get(\"file_path\",\"\"))'); case \"$path\" in */src/hangarfit/*|*/tests/*) echo \"[hangarfit hook] ruff + pytest after edit of $path\"; ruff check \"$path\" 2>&1 | tail -15; ruff format --check \"$path\" 2>&1 | tail -5; pytest -q --no-header 2>&1 | tail -30 ;; *) : ;; esac; exit 0",
             "timeout": 120
           }
         ]
