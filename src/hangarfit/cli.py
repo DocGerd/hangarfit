@@ -16,10 +16,17 @@ from __future__ import annotations
 import argparse
 import json
 import sys
+from typing import TYPE_CHECKING
 
 from hangarfit import collisions, visualize
 from hangarfit.loader import LoaderError, load_fleet, load_hangar, load_layout
 from hangarfit.models import CheckResult, Conflict, DiversityConfig, Layout, SolveResult
+
+if TYPE_CHECKING:
+    # Annotation-only: avoids importing the solver/towplanner stack at module
+    # load for `hangarfit check` callers (the solver import is already deferred
+    # into cmd_solve for the same reason).
+    from hangarfit.towplanner import MovesPlan
 
 _JSON_SCHEMA = "hangarfit.check/v1"
 _SOLVE_JSON_SCHEMA = "hangarfit.solve/v1"
@@ -87,6 +94,17 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         metavar="PATTERN",
         help="Write top-down PNG(s). Must contain '{i}' if --alternatives > 1.",
+    )
+    solve.add_argument(
+        "--render-paths",
+        action="store_true",
+        dest="render_paths",
+        help=(
+            "Overlay each plane's tow path on the --render PNG(s), one colour per "
+            "plane (requires --render). Tow-plans every returned layout; a layout "
+            "the v1 planner cannot route is rendered without paths and a warning "
+            "names the blocking plane. Exit 3 if NO candidate is tow-routable."
+        ),
     )
     solve.add_argument(
         "--write-yaml",
@@ -300,6 +318,13 @@ def cmd_solve(args: argparse.Namespace) -> int:
                 )
                 return 2
 
+    # --render-paths overlays the tow paths onto the --render PNG(s); without a
+    # --render target there is nothing to draw on. Fail fast (usage error)
+    # rather than tow-plan and silently produce no visible output.
+    if args.render_paths and args.render is None:
+        print("error: --render-paths requires --render PATTERN", file=sys.stderr)
+        return 2
+
     try:
         fleet_override = load_fleet(args.fleet) if args.fleet is not None else None
         hangar_override = load_hangar(args.hangar) if args.hangar is not None else None
@@ -308,17 +333,17 @@ def cmd_solve(args: argparse.Namespace) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 2
 
-    # plan_paths=False: the library-level bundle (SolveResult.plans) exists as
-    # of #197, but surfacing tow paths in the CLI (rendering + exit-code
-    # semantics) is #193. Until then, computing plans the CLI never displays
-    # would only add the per-plane Hybrid-A* search cost for no visible output.
+    # Tow-plan only when the user asked to render paths (#193). Otherwise
+    # plan_paths=False: the library bundle (SolveResult.plans) is available to
+    # callers, but the CLI would just pay the per-plane Hybrid-A* search cost
+    # for output it never draws.
     result = solve(
         scenario,
         budget_s=args.budget,
         alternatives=args.alternatives,
         seed=args.seed,
         search=SearchConfig(spread=args.spread),
-        plan_paths=False,
+        plan_paths=args.render_paths,
     )
 
     if args.json:
@@ -326,12 +351,22 @@ def cmd_solve(args: argparse.Namespace) -> int:
     else:
         _emit_solve_human(result, alternatives=args.alternatives)
 
+    # Structured tow-path warnings: name the plane that blocked each layout the
+    # v1 planner could not route (best-effort — the layout is still valid and is
+    # rendered, just without a path overlay; ADR-0007 / #197).
+    if args.render_paths:
+        _warn_unroutable(result)
+
     # Renders / YAML writes. Only run if we have layouts to write —
     # exhausted_budget / trivially_infeasible carry empty `layouts`.
     if result.layouts:
         try:
             if args.render is not None:
-                _write_renders(result.layouts, args.render)
+                _write_renders(
+                    result.layouts,
+                    args.render,
+                    plans=result.plans if args.render_paths else None,
+                )
             if args.write_yaml is not None:
                 fleet_ref, hangar_ref = _resolve_fleet_hangar_refs(args)
                 _write_yamls(result.layouts, args.write_yaml, fleet_ref, hangar_ref)
@@ -339,9 +374,15 @@ def cmd_solve(args: argparse.Namespace) -> int:
             print(f"error: write failed: {e}", file=sys.stderr)
             return 2
 
-    # Exit code (spec §5.2). --strict-k flips 0 -> 1 only for found_partial.
+    # Exit code (spec §5.2). Precedence: no layouts > no-tow-order > strict-k.
     if not result.layouts:
         return 1
+    # --render-paths only: exit 3 when the v1 planner could route NO candidate
+    # (spike Q8/Q2 "no feasible order for any candidate"). A valid layout still
+    # rendered, so this is distinct from exit 1 (no layout at all). Checked
+    # before --strict-k: "can't tow anything" is the more actionable failure.
+    if args.render_paths and all(plan is None for plan in result.plans):
+        return 3
     if result.status == "found_partial" and args.strict_k:
         return 1
     return 0
@@ -356,15 +397,52 @@ def _expand_pattern(pattern: str, i: int) -> str:
     return pattern.replace("{i}", str(i))
 
 
-def _write_renders(layouts: tuple[Layout, ...], pattern: str) -> None:
+def _write_renders(
+    layouts: tuple[Layout, ...],
+    pattern: str,
+    *,
+    plans: tuple[MovesPlan | None, ...] | None = None,
+) -> None:
     """Render each layout to PATTERN with ``{i}`` substituted.
+
+    When ``plans`` is supplied (``--render-paths``), it is index-aligned with
+    ``layouts``: ``plans[i]`` is overlaid as a tow-path polyline, or ``None``
+    (un-routable layout) renders the plain layout. ``plans=None`` renders no
+    overlays at all.
 
     Single-pass loop — any OSError bubbles to the caller; we don't
     swallow partial-write state because a half-written render set is
     worse than a clean failure that the user can re-run.
     """
     for i, layout in enumerate(layouts, start=1):
-        visualize.render_layout(layout, _expand_pattern(pattern, i))
+        moves_plan = plans[i - 1] if plans is not None else None
+        visualize.render_layout(layout, _expand_pattern(pattern, i), moves_plan=moves_plan)
+
+
+def _warn_unroutable(result: SolveResult) -> None:
+    """Emit one stderr warning per returned layout the v1 planner could not
+    tow-route, naming the blocking plane (best-effort; the layout is still
+    valid and rendered, just without a path overlay — ADR-0007 / #197).
+
+    ``diagnostics.unroutable_planes`` is a *compacted* list (one entry per
+    ``None`` plan, in returned-layout order), so the j-th ``None`` plan pairs
+    with the j-th blocking plane. The solver builds both in one pass (one
+    plane appended per ``None``), so the lengths must match; we assert that
+    rather than papering over a desync with a misleading placeholder name (a
+    mismatch is a producer bug, not a user condition).
+    """
+    unrouted_layouts = [i for i, plan in enumerate(result.plans, start=1) if plan is None]
+    planes = result.diagnostics.unroutable_planes
+    assert len(planes) == len(unrouted_layouts), (
+        f"unroutable_planes ({len(planes)}) out of sync with None plans "
+        f"({len(unrouted_layouts)}) — solver bug"
+    )
+    for layout_index, plane in zip(unrouted_layouts, planes, strict=True):
+        print(
+            f"warning: layout {layout_index}: no feasible tow path "
+            f"(plane {plane!r} could not be routed); rendered without paths",
+            file=sys.stderr,
+        )
 
 
 def _resolve_fleet_hangar_refs(args: argparse.Namespace) -> tuple[str, str]:
@@ -503,6 +581,10 @@ def _emit_solve_json(scenario_path: str, result: SolveResult) -> None:
                 if d.best_partial_layout is not None
                 else None
             ),
+            # Additive field (#193): the planes the v1 tow planner could not
+            # route, in returned-layout order. Empty unless --render-paths ran
+            # the planner. Backward-compatible — no schema bump.
+            "unroutable_planes": list(d.unroutable_planes),
         },
     }
     print(json.dumps(payload, indent=2))
