@@ -229,8 +229,9 @@ pip-compile --generate-hashes --no-strip-extras --allow-unsafe -o requirements-p
 # Phase 1 acceptance smoke test
 hangarfit check layouts/example.yaml --render out.png
 
-# Phase 3a: solve + tow-path overlay. Best-effort: un-routable planes are
-# dropped from the overlay; exit 3 only if NO candidate layout is tow-routable.
+# Phase 3a: solve + tow-path overlay. Best-effort: a layout the v1 planner
+# can't fully route renders without paths (blocking plane named on stderr);
+# exit 3 only if NO candidate layout is tow-routable.
 hangarfit solve tests/fixtures/scenario_minimal.yaml --render out.png --render-paths
 
 # GitFlow loops
