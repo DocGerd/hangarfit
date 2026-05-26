@@ -195,11 +195,16 @@ authentication enabled at the GitHub account level. Every sensitive repository
 action — commit pushes, PR merges, branch-protection changes — is gated behind
 this factor.
 
-**Why this is a self-attestation.** Account-level 2FA on a *personal* GitHub
-account is not externally verifiable via the GitHub REST API. The
-`GET /users/{username}` endpoint returns `"two_factor_authentication": null`
-for all callers, including the authenticated account holder. There is no
-API surface that exposes this field to outside observers.
+**Why this is a self-attestation.** A *personal* GitHub account's 2FA status is
+not verifiable by an *outside* observer via the GitHub REST API. The public
+`GET /users/{username}` endpoint never exposes a user's
+`two_factor_authentication` status to third parties. The *authenticated*
+`GET /user` endpoint can surface the field to the account holder, but whether
+it returns a boolean or `null` depends on the token type and scope (a classic
+PAT with `read:user` can return it; the OAuth token used by the `gh` CLI here
+returns `null`) — and that is the holder inspecting their *own* account, not a
+third party verifying it. No endpoint lets an external reviewer confirm a
+personal account's 2FA state.
 
 A GitHub *organisation* can enforce "require 2FA for all members" as a policy
 and expose that enforcement status via `GET /orgs/{org}`; but `hangarfit` is
