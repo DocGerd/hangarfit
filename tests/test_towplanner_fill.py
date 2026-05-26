@@ -204,7 +204,9 @@ def test_plan_fill_bails_with_structured_error_when_unplannable(
     monkeypatch.setattr(tp, "plan_path", fake_plan_path)
     with pytest.raises(NoFeasiblePlanError) as ei:
         plan_fill(target)
-    assert ei.value.plane_id in {"A", "B"}
+    # The bail names the DEEPEST unplaceable plane (ordered[0]); B is at y=22, A
+    # at y=8, so back_first_order scans B first and the bail pins B.
+    assert ei.value.plane_id == "B"
     assert ei.value.conflict is not None
 
 

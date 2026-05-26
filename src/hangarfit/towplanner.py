@@ -178,8 +178,9 @@ class MovesPlan:
     """A full entry plan: the target layout plus the moves in execution order.
 
     Deliberately carries no sequence-level cart-usage tally (ADR-0007
-    open question). The ``target_layout`` type is ``Layout`` at runtime;
-    typed loosely here to keep Wave 1's leaf module import-light."""
+    open question). The ``target_layout`` type is ``Layout`` at runtime; kept as
+    ``object`` to avoid tightening the bundled-output public API until #197
+    locks its shape."""
 
     target_layout: object
     moves: tuple[Move, ...]
@@ -442,7 +443,7 @@ def _mover_motion_bounds_conflict(
 ) -> Conflict | None:
     """First side/back-wall bounds violation for a plane *in transit*, else ``None``.
 
-    **Front-gap exemption (#197):** a plane being towed through the door
+    **Front-gap exemption (#222):** a plane being towed through the door
     legitimately protrudes in front of it (``y < 0`` — the conceptual apron,
     spike Q6). So — unlike the static :func:`hangarfit.collisions.check` oracle,
     which forbids ``y < 0`` — the front wall is NOT enforced on the mover
@@ -486,7 +487,7 @@ def path_first_conflict(
     (spike Q4) — the path planner does not re-derive that geometry. **Hangar
     bounds for the mover are the one exception:** they go through
     :func:`_mover_motion_bounds_conflict` instead, which applies the front-gap
-    exemption (#197) so a plane straddling the door at ``y < 0`` during entry is
+    exemption (#222) so a plane straddling the door at ``y < 0`` during entry is
     not falsely blamed, while the side and back walls stay enforced. The
     oracle's own hangar-bounds verdict on the mover is therefore skipped.
     ``mover_on_carts`` is constant along the arc (cart state does not change
@@ -495,9 +496,9 @@ def path_first_conflict(
 
     Precondition: ``mover.id`` must exist in ``placed.fleet`` — each per-sample
     :class:`Layout` references it, so an unknown id raises ``ValueError`` from
-    ``Layout`` construction rather than being silently skipped. The Wave 2
-    caller (#196) builds ``placed`` from the full target fleet, which satisfies
-    this.
+    ``Layout`` construction rather than being silently skipped. The callers
+    (``plan_fill`` #196 and ``plan_path`` #222, which re-validates its final
+    path here) build ``placed`` from the full target fleet, satisfying this.
     """
     for pose in arc.sample(step_m=step_m, step_deg=step_deg):
         moving = Placement(mover.id, pose.x_m, pose.y_m, pose.heading_deg, on_carts=mover_on_carts)
@@ -660,9 +661,10 @@ def _primitives(turn_radius_m: float) -> tuple[Segment, ...]:
 
     Own-gear (``r > 0``): a left arc, a straight, and a right arc, each of
     length ``step`` (metres) chosen so a turn changes heading by ~one heading
-    cell. Cart (``r == 0``): a left pivot and a right pivot of
+    cell. Cart (``r == 0``): a left pivot, a straight of ``_GRID_XY_M`` metres,
+    and a right pivot — the same (L, S, R) order; each pivot is
     ``math.radians(_GRID_DEG)`` radians (one heading cell; ``length_m`` encodes
-    radians, ADR-0007), plus a straight of ``_GRID_XY_M`` metres.
+    radians for the pivot segments, ADR-0007).
     """
     if turn_radius_m == 0.0:
         dtheta = math.radians(_GRID_DEG)
@@ -707,10 +709,17 @@ def _cell(pose: Pose) -> tuple[int, int, int]:
 # ── Hybrid-A* search core ────────────────────────────────────────────────────
 
 
-@dataclass(slots=True)
+@dataclass(frozen=True, slots=True)
 class _SearchNode:
     """A Hybrid-A* node: a pose, its g-cost from start, and the parent link +
-    the primitive segment that produced it (for path reconstruction)."""
+    the primitive segment that produced it (for path reconstruction).
+
+    Frozen: a node is built once and only read thereafter (heap ordering is the
+    ``(f, counter)`` tuple, never the node). Freezing forecloses the classic A*
+    bug of mutating ``g`` in place after a node is on the heap, which would
+    silently corrupt the ``best_g`` stale-entry check. **Invariant:** ``seg`` is
+    ``None`` iff ``parent`` is ``None`` (the start node); every child carries
+    both — :func:`_reconstruct_segments` relies on this to stop at the root."""
 
     pose: Pose
     g: float
@@ -762,6 +771,16 @@ class _Obstacles:
     bay_xmax: float
     bay_ymin: float
     bay_active: bool
+
+    def __post_init__(self) -> None:
+        # The parallel-array pairing is load-bearing: _motion_clear zips
+        # world_parts with world_part_aabbs by index. Assert parity at build
+        # time so a divergence fails loudly here rather than deep in the search.
+        if len(self.world_parts) != len(self.world_part_aabbs):
+            raise ValueError(
+                f"_Obstacles: world_parts ({len(self.world_parts)}) and "
+                f"world_part_aabbs ({len(self.world_part_aabbs)}) must be equal-length"
+            )
 
 
 def _build_obstacles(placed: Layout, *, mover_id: str) -> _Obstacles:

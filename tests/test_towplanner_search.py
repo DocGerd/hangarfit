@@ -533,3 +533,88 @@ def test_plan_path_budget_exhaustion_breaks_and_raises_no_feasible_path() -> Non
         )
     assert ei.value.plane_id == "A"
     assert ei.value.conflict.kind == "no_feasible_path"
+
+
+def test_plan_path_routes_around_a_parked_plane() -> None:
+    # A plane parked in the straight-shot corridor blocks the direct Dubins path;
+    # plan_path must detour around it and return an exact-oracle-clean,
+    # multi-segment arc that still lands on the goal. This is the focused
+    # plan_path-WITH-obstacles guard (the equivalence tests only probe
+    # _motion_clear at single poses; the full search-against-obstacles path is
+    # otherwise exercised only indirectly, via plan_fill).
+    from hangarfit.towplanner import plan_dubins
+
+    def _box(pid: str) -> Aircraft:
+        return Aircraft(
+            id=pid,
+            name=pid,
+            wing_position="high",
+            gear="tailwheel",
+            movement_mode="always_own_gear",
+            turn_radius_m=2.0,
+            measured=False,
+            parts=(
+                Part(
+                    kind="fuselage",
+                    length_m=2.0,
+                    width_m=1.0,
+                    offset_x_m=0.0,
+                    offset_y_m=0.0,
+                    angle_deg=0.0,
+                    z_bottom_m=0.0,
+                    z_top_m=1.4,
+                ),
+            ),
+        )
+
+    h = Hangar(
+        length_m=16.0,
+        width_m=20.0,
+        door=Door(center_x_m=10.0, width_m=10.0),
+        maintenance_bay=MaintenanceBay(center_x_m=10.0, width_m=2.0, depth_m=2.0),
+        clearance_m=0.3,
+        wing_layer_clearance_m=0.2,
+    )
+    mover, parked = _box("M"), _box("X")
+    placed = Layout(
+        fleet={"M": mover, "X": parked},
+        hangar=h,
+        placements=(Placement("X", 10.0, 6.0, 0.0, on_carts=False),),
+    )
+    entry, goal = Pose(10.0, 0.0, 0.0), Pose(10.0, 12.0, 0.0)
+    # The straight Dubins shot would drive through the parked plane.
+    assert (
+        path_first_conflict(
+            plan_dubins(entry, goal, turn_radius_m=2.0),
+            mover,
+            mover_on_carts=False,
+            placed=placed,
+        )
+        is not None
+    )
+    arc = plan_path(mover, entry, goal, hangar=h, placed=placed, mover_on_carts=False)
+    # A detour (more than a single <=3-leg Dubins shot) that lands on the goal...
+    assert len(arc.segments) > 3
+    last = arc.pose_at(arc.length_m)
+    assert last.x_m == pytest.approx(10.0, abs=1e-3)
+    assert last.y_m == pytest.approx(12.0, abs=1e-3)
+    assert abs(((last.heading_deg - 0.0 + 180.0) % 360.0) - 180.0) < 0.5
+    # ...and is exact-oracle clean against the parked plane.
+    assert path_first_conflict(arc, mover, mover_on_carts=False, placed=placed) is None
+
+
+def test_obstacles_rejects_mismatched_parallel_arrays() -> None:
+    # The parallel-array invariant (world_parts || world_part_aabbs, same length)
+    # is asserted at construction so a divergence fails loudly here, not deep in
+    # the search. Covers the __post_init__ parity guard.
+    from hangarfit.towplanner import _Obstacles
+
+    with pytest.raises(ValueError, match="equal-length"):
+        _Obstacles(
+            world_parts=(),
+            world_part_aabbs=((0.0, 0.0, 1.0, 1.0),),  # length 1 vs 0 -> mismatch
+            bay_xmin=0.0,
+            bay_xmax=0.0,
+            bay_ymin=0.0,
+            bay_active=False,
+        )
