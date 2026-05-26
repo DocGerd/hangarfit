@@ -78,24 +78,30 @@ repo there is no second person: GitHub refuses a PR author's own `APPROVE`
 (HTTP 422), so requiring ≥ 1 approver would deadlock *every* merge rather
 than improve security. Requiring code-owner review would deadlock it for
 the same reason — even though the repo does ship a
-[`CODEOWNERS`](../.github/CODEOWNERS) file (a catch-all naming the sole
-maintainer), so the right reviewer is already requested on every PR.
+[`CODEOWNERS`](../.github/CODEOWNERS) file naming the sole maintainer as
+code-owner for the whole tree (GitHub suppresses the code-owner review
+request on the author's own PR, which here is essentially every PR).
 
 Everything that *can* be enforced without a second human already is, on
 both protected branches (`develop` and `main`):
 
 - **Admin enforcement** — the rules apply to the maintainer too
   (`enforce_admins`), so protection cannot be silently bypassed.
-- **Required status checks, strict** — PRs must pass the full CI gate
-  (tests, both lockfile-drift guards, CodeQL) and be up to date with the
-  base branch before merge.
+- **Required status checks, strict** — PRs must pass the configured CI
+  gate (the test suite on every supported Python and both lockfile-drift
+  guards, plus CodeQL on `develop`) and be up to date with the base branch
+  before merge. The exact required-check set is configured per branch and
+  reconciled at each release cut, so `develop` and `main` are not always
+  byte-identical (e.g. CodeQL runs on `develop` PRs only).
 - **Stale-review dismissal** — approvals are dismissed on new pushes (a
   no-op today given the reviewer count, but already correct for the day a
   co-maintainer joins).
 
 So the 3 reflects a deliberately-applied, single-maintainer-maximal
-configuration — not an unprotected branch. See [#141] for the change that
-applied it.
+configuration — not an unprotected branch. [#141] applied it; note that
+issue aimed for "3 → 6+", but the realized ceiling is 3 precisely because
+every remaining tier (required approvers, code-owner review) is
+second-person-gated — the cap this section describes.
 
 **A note on linear history.** `required_linear_history` is intentionally
 **off**. Enabling it would forbid the merge commits the GitFlow release
