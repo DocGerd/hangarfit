@@ -410,20 +410,92 @@ def back_first_order(placements: tuple[Placement, ...]) -> tuple[Placement, ...]
 
 
 # ---------------------------------------------------------------------------
-# Door-cone entry pose (spike Q6 / ADR-0007: the door is a motion gate)
+# Door-cone entry poses (spike Q6 / ADR-0007 / #262: the door is a motion gate)
 # ---------------------------------------------------------------------------
+
+# The five headings of the forward-admissible entry cone: straight-in ±30°
+# in 15° steps.  All five point generally inward (nose toward +y hemisphere).
+# Rear-entry headings (near 180°) are out of scope here — see issue #261.
+_CONE_HEADINGS: tuple[float, ...] = (330.0, 345.0, 0.0, 15.0, 30.0)
+
+
+def entry_poses(target: Placement, hangar: Hangar) -> tuple[Pose, ...]:
+    """All door-cone entry poses for a plane heading to ``target`` (#262).
+
+    Returns a **fixed, deterministic grid** of up to 15 candidate start poses
+    (3 x-samples × 5 headings, deduplicated):
+
+    **Headings** — the 5-heading forward-admissible cone:
+    ``{330°, 345°, 0°, 15°, 30°}`` (straight-in ±30° in 15° steps; all point
+    generally inward).  Near-180° rear-entry headings are out of scope here (#261).
+
+    **X-samples** — three values within the door interval
+    ``[center − width/2, center + width/2]``:
+
+    1. The door centre (``center_x_m``).
+    2. The clamped target x — same as :func:`entry_pose`'s output (the v1 choice).
+    3. The midpoint between those two.
+
+    All three are clamped into the door interval; duplicates (when the target x
+    equals the centre or its midpoint) are removed while preserving the
+    deterministic order: x-outer loop, heading-inner loop, emit in
+    ``(x_sample_idx_asc, heading_idx_asc)`` order.
+
+    **Emit order** (fixed for ADR-0003 determinism):
+
+    - Outer loop: x-sample index 0 (door centre), 1 (clamped target), 2 (midpoint).
+    - Inner loop: headings in ``_CONE_HEADINGS`` order (330°, 345°, 0°, 15°, 30°).
+    - Duplicate ``(x, heading)`` pairs (exact float equality) are skipped on the
+      second occurrence.
+
+    The caller (:func:`plan_path` via ``entries=`` and :func:`plan_fill`) filters
+    candidates that clip the side/back walls at the entry pose before seeding the
+    search; a straight-in centre pose is always the final fallback so the search
+    has at least one start.
+
+    Returns a non-empty :class:`tuple` of :class:`Pose` objects, each with
+    ``y_m = 0.0`` and ``heading_deg`` from ``_CONE_HEADINGS``.
+    """
+    door = hangar.door
+    half = door.width_m / 2.0
+    lo = door.center_x_m - half
+    hi = door.center_x_m + half
+
+    def _clamp(x: float) -> float:
+        return min(max(x, lo), hi)
+
+    # The three candidate x values (before dedup).
+    x_centre = door.center_x_m
+    x_target = _clamp(target.x_m)
+    x_mid = _clamp((x_centre + x_target) / 2.0)
+
+    x_samples = (x_centre, x_target, x_mid)
+
+    seen: set[tuple[float, float]] = set()
+    poses: list[Pose] = []
+    for x in x_samples:
+        for h in _CONE_HEADINGS:
+            key = (x, h)
+            if key in seen:
+                continue
+            seen.add(key)
+            poses.append(Pose(x_m=x, y_m=0.0, heading_deg=h))
+
+    return tuple(poses)
 
 
 def entry_pose(target: Placement, hangar: Hangar) -> Pose:
-    """Door-cone entry pose for a plane heading to ``target`` (spike Q6).
+    """Single-pose door-cone entry (v1 baseline; spike Q6 / ADR-0007).
 
-    The plane enters at the front boundary (``y = 0``) pointing straight into
-    the hangar (``heading_deg = 0`` ⇒ nose toward ``+y``). The entry ``x`` is
-    the target slot's ``x`` clamped into the door interval
-    ``[center − width/2, center + width/2]`` — a deterministic choice (ADR-0003)
-    that keeps the approach as straight as the door allows. This promotes the
-    door from a visual marker to a towplanner-level motion gate; ``collisions``
-    semantics are untouched (ADR-0007).
+    Returns **one** pose: front boundary (``y = 0``), heading straight into
+    the hangar (``0°`` ⇒ nose toward ``+y``), x clamped to the door interval.
+    This is the straight-in pose that :func:`entry_poses` always includes as one
+    of its x-sample candidates.
+
+    Kept for backward compatibility and tests.  :func:`plan_fill` now uses
+    :func:`entry_poses` (the full cone) instead.
+
+    See :func:`entry_poses` for the multi-pose searched cone (#262).
     """
     door = hangar.door
     half = door.width_m / 2.0
@@ -554,23 +626,26 @@ def plan_fill(target: Layout) -> MovesPlan:
     """Plan a collision-free entry order + per-plane path for an empty fill.
 
     Walks :func:`back_first_order` (deepest slot first); for each plane searches
-    for an in-bounds path from the door-cone entry pose (:func:`entry_pose`) to
-    its target slot via :func:`plan_path` (a deterministic Hybrid-A* search).
-    Cart-borne planes have ``effective_turn_radius_m() == 0`` and are handled by
-    the same search with zero-radius pivot primitives. Each iteration scans the
-    not-yet-placed planes in order and commits the first for which :func:`plan_path`
-    succeeds (i.e. finds an in-bounds, collision-free arc) against the
-    already-placed subset — the spike's "swap with the next-feasible plane" as a
-    deterministic scan. If a whole scan finds none feasible the greedy is stuck
-    (spike Risk #1) and the plan bails with :class:`NoFeasiblePlanError` naming
-    the deepest unplaceable plane.
+    for an in-bounds path from the door-cone entry poses (:func:`entry_poses`) to
+    its target slot via :func:`plan_path` (a deterministic Hybrid-A* search with
+    multi-start door-cone seeding, #262).  All surviving cone candidates are
+    seeded at ``g = 0``; the search naturally picks the shortest across the whole
+    cone.  Cart-borne planes have ``effective_turn_radius_m() == 0`` and are
+    handled by the same search with zero-radius pivot primitives. Each iteration
+    scans the not-yet-placed planes in order and commits the first for which
+    :func:`plan_path` succeeds (i.e. finds an in-bounds, collision-free arc)
+    against the already-placed subset — the spike's "swap with the next-feasible
+    plane" as a deterministic scan. If a whole scan finds none feasible the greedy
+    is stuck (spike Risk #1) and the plan bails with :class:`NoFeasiblePlanError`
+    naming the deepest unplaceable plane.
 
     No retry *budget* is needed: an already-placed plane is only ever an added
     obstacle, so a plane infeasible against the current obstacles can never
     become feasible later — the scan therefore makes monotonic progress (one
     plane committed per iteration) and cannot spin. Deterministic (ADR-0003):
-    the order, the Hybrid-A* primitive fan, and the next-feasible scan are all
-    RNG-free, so a given ``target`` always yields the same :class:`MovesPlan`.
+    the order, the Hybrid-A* primitive fan, the cone grid, and the next-feasible
+    scan are all RNG-free, so a given ``target`` always yields the same
+    :class:`MovesPlan`.
     """
     ordered = list(back_first_order(target.placements))
     fleet = target.fleet
@@ -605,6 +680,7 @@ def plan_fill(target: Layout) -> MovesPlan:
                     hangar=hangar,
                     placed=placed_layout,
                     mover_on_carts=slot.on_carts,
+                    entries=entry_poses(slot, hangar),
                 )
             except NoFeasiblePlanError as exc:
                 # This plane cannot be routed against the current obstacles; try
@@ -734,6 +810,21 @@ def _reconstruct_segments(node: _SearchNode) -> list[Segment]:
         cur = cur.parent
     out.reverse()
     return out
+
+
+def _root_pose(node: _SearchNode) -> Pose:
+    """The start pose of the search branch that produced ``node``.
+
+    Walks the parent chain to the root (the node where ``seg is None``).  In a
+    single-start search the root is always the ``entry`` pose; in a multi-start
+    search (#262) different nodes may have different roots, and the returned arc's
+    ``start`` must reflect the actual root, not the arbitrarily-chosen positional
+    ``entry`` argument.
+    """
+    cur = node
+    while cur.parent is not None:
+        cur = cur.parent
+    return cur.pose
 
 
 # ── Precomputed obstacle set + fast per-pose checker (#222, Task 5) ──────────
@@ -904,9 +995,25 @@ def plan_path(
     hangar: Hangar,
     placed: Layout,
     mover_on_carts: bool,
+    entries: tuple[Pose, ...] | None = None,
     max_expansions: int = _MAX_EXPANSIONS,
 ) -> DubinsArc:
-    """Deterministic Hybrid-A* tow path from ``entry`` to ``goal`` (#222).
+    """Deterministic Hybrid-A* tow path from ``entry`` (or ``entries``) to ``goal``.
+
+    **Single-start mode** (``entries=None``, the default / backward-compatible
+    behaviour): seeds the search with the single ``entry`` pose at ``g = 0``.
+
+    **Multi-start / door-cone mode** (``entries`` provided, #262): seeds the
+    search frontier with every *surviving* start pose from the cone — a pose
+    survives iff its footprint at the front boundary does not clip the side or
+    back walls (:func:`_mover_motion_bounds_conflict`; the front-wall ``y < 0``
+    exemption still applies).  If ALL candidates are filtered out, the fallback
+    is the door-centre straight-in pose (always safe) so the search always has
+    at least one start.  Each surviving start is enqueued at ``g = 0`` with its
+    own Euclidean heuristic; A* then naturally expands the most-promising start
+    first and returns the best total path across the whole cone.  The
+    ``DubinsArc.start`` of the returned arc is the cone pose that *won* (from
+    :func:`_root_pose`), not necessarily ``entry``.
 
     Searches continuous ``(x, y, heading)`` with the fixed primitive fan
     (:func:`_primitives`), grid-binned via :func:`_cell`, an admissible Euclidean
@@ -925,6 +1032,12 @@ def plan_path(
     fixed primitive order + a monotonic counter tie-break; ``_motion_clear`` is
     pure and deterministic, so determinism is preserved.
 
+    **Merge-conflict note for #261 (Reeds–Shepp / reverse entry):** this
+    function's start-seeding region (the code between ``r = ...`` and ``while
+    open_heap``) was changed by #262.  The analytic-expansion region (the
+    ``final_arc = plan_dubins(...)`` block) is **untouched** here and is owned
+    by #261.  Keep that invariant when merging.
+
     ``hangar`` is consumed directly by :func:`_motion_clear` (bounds, clearances,
     bay rectangle); ``placed.hangar`` is the same object and also reaches the
     exact-oracle safety net via :func:`path_first_conflict`.
@@ -933,17 +1046,52 @@ def plan_path(
     # Static obstacle set, computed once: placed planes don't move while this one
     # is routed. Drives the fast per-pose `_motion_clear` used during search.
     obstacles = _build_obstacles(placed, mover_id=mover.id)
-    start = _SearchNode(entry, 0.0, None, None)
     counter = 0
+
+    # ── Build the effective start set ────────────────────────────────────────
+    # Single-start (no cone): use the bare ``entry`` unchanged.
+    # Multi-start (cone provided): filter cone candidates that clip side/back walls
+    # at the entry pose; fall back to the door-centre straight-in pose if all are
+    # filtered so the search always has at least one start.
+    if entries is None:
+        start_poses: tuple[Pose, ...] = (entry,)
+    else:
+        # Filter: keep only poses whose footprint at the door boundary is clear of
+        # side/back walls (front-wall y<0 exemption already built into the predicate).
+        surviving: list[Pose] = []
+        for candidate_pose in entries:
+            candidate_placement = Placement(
+                mover.id,
+                candidate_pose.x_m,
+                candidate_pose.y_m,
+                candidate_pose.heading_deg,
+                on_carts=False,
+            )
+            if _mover_motion_bounds_conflict(mover, candidate_placement, hangar) is None:
+                surviving.append(candidate_pose)
+        if surviving:
+            start_poses = tuple(surviving)
+        else:
+            # Fallback: straight-in door-centre pose (always fits through the door).
+            start_poses = (Pose(x_m=hangar.door.center_x_m, y_m=0.0, heading_deg=0.0),)
+
+    # ── Seed the open heap with all surviving start poses ───────────────────
     # Heuristic: straight-line Euclidean distance. Deliberately looser than the
     # spec's Dubins-distance suggestion — Euclidean ≤ Dubins length ≤ true cost
     # and the g-cost turn penalty is ≥ 0, so it stays admissible (it may expand a
     # few more nodes, never fewer; do NOT "tighten" it to the Dubins shot without
     # re-checking admissibility and the determinism canary).
-    open_heap: list[tuple[float, int, _SearchNode]] = [
-        (math.hypot(goal.x_m - entry.x_m, goal.y_m - entry.y_m), counter, start)
-    ]
-    best_g: dict[tuple[int, int, int], float] = {_cell(entry): 0.0}
+    open_heap: list[tuple[float, int, _SearchNode]] = []
+    best_g: dict[tuple[int, int, int], float] = {}
+    for start_pose in start_poses:
+        start_node = _SearchNode(start_pose, 0.0, None, None)
+        start_key = _cell(start_pose)
+        h_start = math.hypot(goal.x_m - start_pose.x_m, goal.y_m - start_pose.y_m)
+        # Only seed if not already dominated by a cheaper start in the same cell.
+        if best_g.get(start_key, math.inf) - 1e-9 > 0.0:
+            best_g[start_key] = 0.0
+            heapq.heappush(open_heap, (h_start, counter, start_node))
+            counter += 1
     expansions = 0
 
     while open_heap:
@@ -960,6 +1108,7 @@ def plan_path(
         # path is exact-oracle-clean no matter what the fast checker accepted
         # during search. The `and` short-circuits left-to-right, so the cheap
         # `_motion_clear` screen always runs before the costly oracle.
+        # NOTE: do NOT modify this block — it is owned by #261 (Reeds–Shepp).
         final_arc = plan_dubins(node.pose, goal, turn_radius_m=r)
         if all(
             _motion_clear(mover, p, obstacles, hangar)
@@ -973,7 +1122,12 @@ def plan_path(
             # do-nothing arc that the safety net (sampling only the start pose of
             # a zero-length arc) could not catch.
             assert segs, "plan_path: reconstructed + analytic segments are empty"
-            candidate = DubinsArc(entry, goal, r, segs)
+            # Use the root of this node's parent chain as start (#262 multi-start):
+            # different cone poses may win for different runs/goals, and the arc's
+            # ``start`` must reflect the actual winning root, not the positional
+            # ``entry`` argument.
+            arc_start = _root_pose(node)
+            candidate = DubinsArc(arc_start, goal, r, segs)
             # Safety net: validate the WHOLE candidate path (coarse-sampled
             # primitive prefix + analytic suffix) with the EXACT oracle at fine
             # resolution. Returning only on agreement makes the result
