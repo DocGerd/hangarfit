@@ -14,8 +14,15 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Literal
 
+from shapely.geometry import Polygon
+
+# `_parts_conflict` is the exact oracle's per-pair predicate (collisions.py). The
+# fast in-search checker `_motion_clear` reuses it verbatim — rather than
+# re-deriving the polygon-clearance + z-gap rule — so the two can never diverge.
+# Importing a sibling-module private is the same pattern as `check as _check`.
+from hangarfit.collisions import _parts_conflict
 from hangarfit.collisions import check as _check
-from hangarfit.geometry import aircraft_parts_world
+from hangarfit.geometry import WorldPart, aircraft_parts_world
 from hangarfit.models import Aircraft, Conflict, Hangar, Layout, Placement
 
 SegmentKind = Literal["L", "S", "R"]
@@ -702,6 +709,156 @@ def _reconstruct_segments(node: _SearchNode) -> list[Segment]:
     return out
 
 
+# ── Precomputed obstacle set + fast per-pose checker (#222, Task 5) ──────────
+#
+# The exact oracle `path_first_conflict` rebuilds a Layout and runs the full
+# Shapely `collisions.check` for EVERY sampled pose — correct but slow for the
+# inner search loop. `_motion_clear` is a fast equivalent: it precomputes the
+# static obstacle geometry once per plane-search (`_build_obstacles`) and checks
+# a single mover pose against it, mirroring the oracle's three relevant rules
+# (mover hangar bounds, bay intrusion, pairwise parts overlap). It MUST yield the
+# same clear/conflict verdict as the oracle for the mover at a single pose. The
+# exact oracle remains the AUTHORITY on the final returned path (`plan_path`
+# re-validates the chosen arc with `path_first_conflict` before returning), so a
+# fast-vs-exact divergence can never SHIP a bad path.
+
+
+@dataclass(frozen=True, slots=True)
+class _Obstacles:
+    """Precomputed static geometry for one plane-search: placed planes' world
+    parts and the (optional) maintenance-bay keep-out rectangle.
+
+    Placed planes do not move while a single plane is routed, so this is built
+    once per :func:`plan_path` invocation and reused for every sampled pose.
+    """
+
+    world_parts: tuple[WorldPart, ...]
+    # AABBs parallel to ``world_parts`` (same index), precomputed because the
+    # obstacle polygons are static across every sampled pose of a search — only
+    # the mover's AABB changes per pose. Avoids recomputing ``poly.bounds`` for
+    # each obstacle on every :func:`_motion_clear` call.
+    world_part_aabbs: tuple[tuple[float, float, float, float], ...]
+    bay_xmin: float
+    bay_xmax: float
+    bay_ymin: float
+    bay_active: bool
+
+
+def _build_obstacles(placed: Layout, *, mover_id: str) -> _Obstacles:
+    """Compute the static obstacle set once (placed planes don't move while one
+    plane is routed). The bay is a keep-out only when a maintenance plane is set
+    (mirrors :func:`hangarfit.collisions._bay_intrusion_conflicts`).
+
+    The mover itself (``mover_id``) is excluded from the obstacle parts — it is
+    the thing being moved, not an obstacle. The maintenance occupant is absent
+    from ``placed.placements`` by Layout invariant, so the mover is correctly
+    subject to the bay keep-out (it is never the occupant).
+    """
+    parts: list[WorldPart] = []
+    for placement in placed.placements:
+        if placement.plane_id == mover_id:
+            continue
+        parts.extend(aircraft_parts_world(placed.fleet[placement.plane_id], placement))
+    bay = placed.hangar.maintenance_bay
+    return _Obstacles(
+        world_parts=tuple(parts),
+        world_part_aabbs=tuple(_aabb(p.polygon) for p in parts),
+        bay_xmin=bay.center_x_m - bay.width_m / 2,
+        bay_xmax=bay.center_x_m + bay.width_m / 2,
+        bay_ymin=placed.hangar.length_m - bay.depth_m,
+        bay_active=placed.maintenance_plane is not None,
+    )
+
+
+def _aabb(poly: Polygon) -> tuple[float, float, float, float]:
+    """Axis-aligned bounding box of a polygon as ``(xmin, ymin, xmax, ymax)``.
+
+    A cheap plan-view pre-filter: two parts whose AABBs are separated by more
+    than the clearance cannot conflict, so the (relatively costly) exact
+    polygon predicate is skipped for them. Uses Shapely's ``bounds``.
+    """
+    xmin, ymin, xmax, ymax = poly.bounds
+    return xmin, ymin, xmax, ymax
+
+
+def _motion_clear(mover: Aircraft, pose: Pose, obstacles: _Obstacles, hangar: Hangar) -> bool:
+    """Fast per-pose verdict: ``True`` iff the mover at ``pose`` is collision-free.
+
+    Mirrors the EXACT oracle (:func:`path_first_conflict` → ``collisions.check``)
+    for the mover at one pose, across the three rules that can name the mover:
+
+    (A) **Hangar bounds** — via :func:`_mover_motion_bounds_conflict` (side/back
+        walls enforced; front ``y < 0`` exempt during tow, #222). Same predicate
+        the oracle uses for the mover.
+    (B) **Pairwise parts overlap** — reuses :func:`collisions._parts_conflict`
+        verbatim (the oracle's own per-pair predicate) so the polygon-clearance
+        and z-gap-vs-``wing_layer_clearance_m`` rules can never diverge. A z and
+        an AABB pre-filter cut the candidate set first; both are conservative
+        (they only skip pairs ``_parts_conflict`` would also reject), so the
+        final verdict is identical to checking every pair.
+    (C) **Bay intrusion** — mirrors :func:`collisions._first_vertex_in_bay`
+        exactly (strict ``<`` on left/right/front edges; no upper-``y`` test —
+        the back edge is the hangar wall) when the bay is closed.
+
+    ``on_carts`` is fixed to ``False`` here: :func:`~hangarfit.geometry.aircraft_parts_world`
+    derives part geometry from pose only (``x``/``y``/``heading``) and the parts,
+    NOT from ``on_carts``, so the part polygons are identical to the oracle's
+    regardless of cart state. (Verified by reading ``aircraft_parts_world``.)
+
+    The exact oracle remains the authority on the final returned path — see the
+    module note above and the safety-net re-check in :func:`plan_path`.
+    """
+    placement = Placement(mover.id, pose.x_m, pose.y_m, pose.heading_deg, on_carts=False)
+    mover_parts = aircraft_parts_world(mover, placement)
+
+    # (A) Hangar bounds (front-gap-exempt for the mover).
+    if _mover_motion_bounds_conflict(mover, placement, hangar) is not None:
+        return False
+
+    clearance = hangar.clearance_m
+    wlc = hangar.wing_layer_clearance_m
+    for mp in mover_parts:
+        # (C) Bay intrusion: any exterior vertex strictly inside the closed bay.
+        if obstacles.bay_active:
+            for x, y in list(mp.polygon.exterior.coords)[:-1]:
+                if obstacles.bay_xmin < x < obstacles.bay_xmax and y > obstacles.bay_ymin:
+                    return False
+
+        # (B) Pairwise overlap against each placed-plane part.
+        if obstacles.world_parts:
+            mp_xmin, mp_ymin, mp_xmax, mp_ymax = _aabb(mp.polygon)
+            for op, (op_xmin, op_ymin, op_xmax, op_ymax) in zip(
+                obstacles.world_parts, obstacles.world_part_aabbs, strict=True
+            ):
+                # z pre-filter: skip only when z-separated ENOUGH that
+                # _parts_conflict's z-gap rule would reject — i.e. gap_z exceeds
+                # the active z-threshold. This is the divergence trap: a SMALL
+                # positive gap in [0, wlc) must NOT be skipped (the oracle flags
+                # it), so the skip threshold is `wlc` (when wlc>0) else 0.
+                gap_z = max(mp.z_bottom_m, op.z_bottom_m) - min(mp.z_top_m, op.z_top_m)
+                if wlc > 0.0:
+                    if gap_z >= wlc:
+                        continue
+                elif gap_z >= 0.0:
+                    continue
+                # AABB plan-view pre-filter inflated by clearance: separated by
+                # more than clearance => cannot conflict. Obstacle AABBs are
+                # precomputed (static across poses). (At clearance==0 a touching
+                # AABB edge survives the filter and the exact predicate decides
+                # via intersects-and-not-touches.)
+                if (
+                    mp_xmin - op_xmax > clearance
+                    or op_xmin - mp_xmax > clearance
+                    or mp_ymin - op_ymax > clearance
+                    or op_ymin - mp_ymax > clearance
+                ):
+                    continue
+                # Exact predicate (the oracle's own) — reuse guarantees equivalence.
+                if _parts_conflict(mp, op, hangar):
+                    return False
+    return True
+
+
 def plan_path(
     mover: Aircraft,
     entry: Pose,
@@ -718,26 +875,33 @@ def plan_path(
     (:func:`_primitives`), grid-binned via :func:`_cell`, an admissible Euclidean
     heuristic, and an analytic-expansion shortcut: at every popped node a direct
     ``plan_dubins`` shot to ``goal`` is tried first, so an unobstructed plane
-    finishes in one arc. Edge/shot validity is the front-gap-exempt
-    :func:`path_first_conflict`. The result is a single :class:`DubinsArc` whose
+    finishes in one arc. Per-edge and analytic-shot validity during search use
+    the FAST per-pose checker :func:`_motion_clear` (against an obstacle set
+    precomputed once via :func:`_build_obstacles`) — an edge/shot is valid iff
+    every sampled pose is clear. Before the analytic shot is RETURNED it is
+    re-validated by the EXACT oracle :func:`path_first_conflict` (the safety net),
+    so the returned path is exact-oracle-clean regardless of any fast-vs-exact
+    divergence during search. The result is a single :class:`DubinsArc` whose
     segments concatenate the chosen primitives + the final analytic arc (all
     share ``turn_radius_m``). Raises :class:`NoFeasiblePlanError` when no
     in-bounds path is found within ``max_expansions``. RNG-free (ADR-0003):
-    fixed primitive order + a monotonic counter tie-break.
+    fixed primitive order + a monotonic counter tie-break; ``_motion_clear`` is
+    pure and deterministic, so determinism is preserved.
 
-    ``hangar`` is unused here (bounds reach the search via ``placed.hangar``
-    inside :func:`path_first_conflict`); it is kept in the signature for
-    stability with the Task-5 fast ``_motion_clear`` path, which consumes it
-    directly.
+    ``hangar`` is consumed directly by :func:`_motion_clear` (bounds, clearances,
+    bay rectangle); ``placed.hangar`` is the same object and also reaches the
+    exact-oracle safety net via :func:`path_first_conflict`.
     """
     r = mover.effective_turn_radius_m()
+    # Static obstacle set, computed once: placed planes don't move while this one
+    # is routed. Drives the fast per-pose `_motion_clear` used during search.
+    obstacles = _build_obstacles(placed, mover_id=mover.id)
     start = _SearchNode(entry, 0.0, None, None)
     counter = 0
     open_heap: list[tuple[float, int, _SearchNode]] = [
         (math.hypot(goal.x_m - entry.x_m, goal.y_m - entry.y_m), counter, start)
     ]
     best_g: dict[tuple[int, int, int], float] = {_cell(entry): 0.0}
-    last_conflict: Conflict | None = None
     expansions = 0
 
     while open_heap:
@@ -747,32 +911,36 @@ def plan_path(
         if best_g.get(ckey, math.inf) < node.g - 1e-9:
             continue
 
-        # Analytic expansion: try to close to the goal directly.
+        # Analytic expansion: try to close to the goal directly. Screen every
+        # sample with the fast checker first (short-circuits on the first
+        # not-clear sample); only if all clear do we pay for the EXACT oracle as a
+        # safety net. Return iff the oracle ALSO confirms clean, so the returned
+        # path is exact-oracle-clean no matter what the fast checker accepted
+        # during search. The `and` short-circuits left-to-right, so the cheap
+        # `_motion_clear` screen always runs before the costly oracle.
         final_arc = plan_dubins(node.pose, goal, turn_radius_m=r)
-        conflict = path_first_conflict(
-            final_arc, mover, mover_on_carts=mover_on_carts, placed=placed
-        )
-        if conflict is None:
+        if all(_motion_clear(mover, p, obstacles, hangar) for p in final_arc.sample()) and (
+            path_first_conflict(final_arc, mover, mover_on_carts=mover_on_carts, placed=placed)
+            is None
+        ):
             segs = tuple(_reconstruct_segments(node)) + final_arc.segments
             # ``final_arc.segments`` is always non-empty (plan_dubins guarantees
             # it), so ``segs`` cannot be empty; the fallback is belt-and-braces
             # for DubinsArc's non-empty-segments invariant and never fires.
             return DubinsArc(entry, goal, r, segs or (Segment("S", 0.0),))
-        last_conflict = conflict
+        # else (fast screen failed, OR fast passed but the exact oracle rejected):
+        # do not ship; fall through to primitive expansion.
 
         if expansions >= max_expansions:
             break
         expansions += 1
 
-        # Primitive expansion (fixed order L, S, R for determinism).
+        # Primitive expansion (fixed order L, S, R for determinism). An edge is
+        # valid iff every sampled pose is clear per the fast checker.
         for seg in _primitives(r):
             child_pose = _step_pose(node.pose, seg, r)
             edge = DubinsArc(node.pose, child_pose, r, (seg,))
-            edge_conflict = path_first_conflict(
-                edge, mover, mover_on_carts=mover_on_carts, placed=placed
-            )
-            if edge_conflict is not None:
-                last_conflict = edge_conflict
+            if not all(_motion_clear(mover, p, obstacles, hangar) for p in edge.sample()):
                 continue
             child_g = node.g + _seg_cost(seg, r)
             child_key = _cell(child_pose)
@@ -785,11 +953,14 @@ def plan_path(
                     (child_g + h, counter, _SearchNode(child_pose, child_g, seg, node)),
                 )
 
+    # The per-edge / analytic validity checks now use the fast `_motion_clear`,
+    # which returns a boolean rather than a specific :class:`Conflict`, so no
+    # per-edge conflict object is available to surface here. Report a generic
+    # "no in-bounds tow path found" naming the mover — sufficient for the caller
+    # (plan_fill / the Wave 3 CLI) to identify the offender.
     raise NoFeasiblePlanError(
         mover.id,
-        last_conflict
-        if last_conflict is not None
-        else Conflict.single(
+        Conflict.single(
             kind="hangar_bounds",
             plane=mover.id,
             detail="no in-bounds tow path found",

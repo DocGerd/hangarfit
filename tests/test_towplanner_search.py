@@ -2,8 +2,9 @@ import math
 
 import pytest
 
-from hangarfit.models import Aircraft, Door, Hangar, Layout, MaintenanceBay, Part
+from hangarfit.models import Aircraft, Door, Hangar, Layout, MaintenanceBay, Part, Placement
 from hangarfit.towplanner import (
+    DubinsArc,
     NoFeasiblePlanError,
     Pose,
     Segment,
@@ -202,3 +203,180 @@ def test_plan_path_canary_pins_a_known_maneuver() -> None:
     # Values pinned from first green run (2026-05-26).
     assert kinds == "SSSRSL"
     assert arc.length_m == pytest.approx(16.81759168818229, abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# Task 5: fast _motion_clear must match the exact oracle's verdict, and the
+# returned path must always survive the exact-oracle safety net.
+# ---------------------------------------------------------------------------
+
+
+def test_motion_clear_matches_path_first_conflict_verdict_on_samples() -> None:
+    # The fast checker and the exact oracle must agree (clear vs conflict) on a
+    # set of probe poses: clear interior, side-wall clip, overlap with a placed
+    # plane, and a front-door protrusion (clear, because front-gap-exempt).
+    from hangarfit.towplanner import _build_obstacles, _motion_clear
+
+    h = _hangar(width_m=18.0, length_m=25.0)
+    a = _winged_plane("A", span_m=8.0)
+    b = _winged_plane("B", span_m=8.0)
+    placed = Layout(
+        fleet={"A": a, "B": b},
+        hangar=h,
+        placements=(Placement("A", 4.0, 10.0, 0.0, on_carts=False),),
+    )
+    obstacles = _build_obstacles(placed, mover_id="B")
+    probes = [
+        Pose(12.0, 12.0, 0.0),  # clear interior
+        Pose(0.0, 12.0, 90.0),  # wing pokes past x<0 side wall
+        Pose(4.0, 10.0, 0.0),  # right on top of placed A -> overlap
+        Pose(12.0, 0.0, 0.0),  # front protrusion (y<0) -> clear (exempt)
+    ]
+    for pose in probes:
+        fast = _motion_clear(b, pose, obstacles, h)  # True iff clear
+        exact = (
+            path_first_conflict(
+                DubinsArc(pose, pose, 5.0, (Segment("S", 0.0),)),
+                b,
+                mover_on_carts=False,
+                placed=placed,
+            )
+            is None
+        )
+        assert fast == exact, f"divergence at {pose}: fast={fast} exact={exact}"
+
+
+def test_motion_clear_matches_oracle_on_small_positive_z_gap() -> None:
+    # Guards the gap-vs-wing_layer_clearance rule: two horizontally-overlapping
+    # parts whose z-intervals do NOT overlap but are within wing_layer_clearance
+    # must BOTH be flagged by the oracle and by _motion_clear (a naive z-interval
+    # skip would wrongly call this clear). Build an obstacle part whose z sits a
+    # small positive gap (< wing_layer_clearance_m) above the mover's top part.
+    from hangarfit.towplanner import _build_obstacles, _motion_clear
+
+    # wing_layer_clearance_m = 0.2. Two single-part planes whose only part is a
+    # horizontal slab. Placed plane "A" sits z=1.6..2.0; mover "B" sits z=0.0..1.5.
+    # The vertical gap is 1.6 - 1.5 = 0.1 m, strictly in (0, 0.2) => oracle flags.
+    h = _hangar(width_m=18.0, length_m=25.0)  # wing_layer_clearance_m=0.2, clearance_m=0.3
+
+    def _slab(pid: str, z_bottom: float, z_top: float) -> Aircraft:
+        return Aircraft(
+            id=pid,
+            name=f"Slab {pid}",
+            wing_position="high",
+            gear="tailwheel",
+            movement_mode="always_own_gear",
+            turn_radius_m=5.0,
+            measured=False,
+            parts=(
+                Part(
+                    kind="wing",
+                    length_m=4.0,
+                    width_m=4.0,
+                    offset_x_m=0.0,
+                    offset_y_m=0.0,
+                    angle_deg=0.0,
+                    z_bottom_m=z_bottom,
+                    z_top_m=z_top,
+                ),
+            ),
+        )
+
+    a = _slab("A", z_bottom=1.6, z_top=2.0)
+    b = _slab("B", z_bottom=0.0, z_top=1.5)
+    placed = Layout(
+        fleet={"A": a, "B": b},
+        hangar=h,
+        placements=(Placement("A", 9.0, 12.0, 0.0, on_carts=False),),
+    )
+    obstacles = _build_obstacles(placed, mover_id="B")
+    # Mover B coincident with A in plan view at this pose => plan-view overlap;
+    # z-gap 0.1 m < 0.2 m wlc => oracle conflict.
+    coincident = Pose(9.0, 12.0, 0.0)
+    exact = path_first_conflict(
+        DubinsArc(coincident, coincident, 5.0, (Segment("S", 0.0),)),
+        b,
+        mover_on_carts=False,
+        placed=placed,
+    )
+    assert exact is not None, "oracle must flag the small-positive-z-gap overlap"
+    fast = _motion_clear(b, coincident, obstacles, h)
+    assert fast is False, "fast checker must also flag the small-positive-z-gap overlap"
+
+
+def test_motion_clear_matches_oracle_on_bay_intrusion() -> None:
+    # Guards the (C) bay-intrusion branch of _motion_clear, which the other
+    # probes never reach (they set no maintenance_plane => bay_active is False).
+    # With the bay CLOSED, a mover vertex strictly inside the bay must be flagged
+    # by BOTH the exact oracle and _motion_clear; a mover clear of the bay must be
+    # cleared by both. An inverted bay condition would pass the other tests but
+    # fail here.
+    from hangarfit.towplanner import _build_obstacles, _motion_clear
+
+    h = _hangar(width_m=18.0, length_m=25.0)  # bay: x in (8, 10), y in (23, 25]
+
+    def _small(pid: str) -> Aircraft:
+        return Aircraft(
+            id=pid,
+            name=pid,
+            wing_position="high",
+            gear="tailwheel",
+            movement_mode="always_own_gear",
+            turn_radius_m=5.0,
+            measured=False,
+            parts=(
+                Part(
+                    kind="fuselage",
+                    length_m=1.0,
+                    width_m=1.0,
+                    offset_x_m=0.0,
+                    offset_y_m=0.0,
+                    angle_deg=0.0,
+                    z_bottom_m=0.0,
+                    z_top_m=1.0,
+                ),
+            ),
+        )
+
+    # "M" is the bay occupant: in the fleet but NOT in placements (Layout
+    # invariant), so the bay is a closed keep-out for the mover "B".
+    fleet = {"B": _small("B"), "M": _small("M")}
+    placed = Layout(fleet=fleet, hangar=h, placements=(), maintenance_plane="M")
+    obstacles = _build_obstacles(placed, mover_id="B")
+    assert obstacles.bay_active is True
+    b = fleet["B"]
+    probes = [
+        Pose(9.0, 24.0, 0.0),  # 1x1 part spans (8.5,9.5)x(23.5,24.5) -> inside bay
+        Pose(9.0, 12.0, 0.0),  # interior, clear of bay
+        Pose(9.0, 22.0, 0.0),  # spans y (21.5,22.5), below bay front (23) -> clear
+    ]
+    for pose in probes:
+        fast = _motion_clear(b, pose, obstacles, h)
+        exact = (
+            path_first_conflict(
+                DubinsArc(pose, pose, 5.0, (Segment("S", 0.0),)),
+                b,
+                mover_on_carts=False,
+                placed=placed,
+            )
+            is None
+        )
+        assert fast == exact, f"bay divergence at {pose}: fast={fast} exact={exact}"
+
+
+def test_plan_path_result_always_passes_the_exact_oracle() -> None:
+    # The safety net: whatever the search used, the returned arc is exact-clean.
+    # Geometry matches the feasible maneuvering case (span=6, 14x20, turn 2,
+    # goal 90 deg) settled on in Task 3 (span=10/18x25/234 deg is infeasible).
+    h = _hangar(width_m=14.0, length_m=20.0)
+    plane = _winged_plane("A", span_m=6.0, turn_radius_m=2.0)
+    placed = Layout(fleet={"A": plane}, hangar=h, placements=())
+    arc = plan_path(
+        plane,
+        Pose(7.0, 0.0, 0.0),
+        Pose(7.0, 5.0, 90.0),
+        hangar=h,
+        placed=placed,
+        mover_on_carts=False,
+    )
+    assert path_first_conflict(arc, plane, mover_on_carts=False, placed=placed) is None
