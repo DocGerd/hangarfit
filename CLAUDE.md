@@ -8,7 +8,7 @@ This file is the durable **operational** context for the project: how we work, w
 
 `hangarfit` is an **on-demand exception tool** for a flying club: when the standard hangar parking layout breaks (delayed return, surprise maintenance, etc.), it helps find *a* valid alternative arrangement. The tool checks whether a hand-authored candidate layout is physically valid and renders a top-down PNG so a human can eyeball it; the solver searches for one when no candidate is in hand.
 
-**Status:** Phase 1 (substrate) and Phase 2a (static layout solver, `hangarfit solve`) have both shipped. Live milestone status lives in auto-memory and GitHub milestones, not here.
+**Status:** Phase 1 (substrate), Phase 2a (static layout solver, `hangarfit solve`), and Phase 3a (tow-path planning, `hangarfit solve --render-paths`) have all shipped. Live milestone status lives in auto-memory and GitHub milestones, not here.
 
 ---
 
@@ -29,6 +29,8 @@ This file is the durable **operational** context for the project: how we work, w
 | RR-MC solver algorithm and the determinism contract | [ADR-0003](docs/adr/0003-rr-mc-solver-algorithm.md) |
 | Diversity metric (edit-count, thresholds) | [ADR-0004](docs/adr/0004-diversity-metric.md) |
 | **The spread post-pass** (maximize inter-plane gap once valid) | [ADR-0008](docs/adr/0008-inter-plane-spread-soft-preference.md) |
+| **The tow-path planner** (empty-hangar fill, Dubins arcs, `solve --render-paths`, exit-3 tow-routability) | [§5 Building Block View](docs/architecture/05-building-block-view.md) (`towplanner`) + [ADR-0007](docs/adr/0007-tow-path-planner-v1-scope.md) |
+| Why the project targets a single Python (3.12), not a range | [ADR-0009](docs/adr/0009-single-supported-python-version.md) |
 | All architecture decisions, including superseded ones | [`docs/adr/`](docs/adr/) |
 
 If you find yourself about to write a domain assertion in this file, **don't** — extend the relevant arc42 section or ADR instead. CLAUDE.md is for *how we work together*; arc42/ADR is for *what the system is and why*.
@@ -226,6 +228,11 @@ pip-compile --generate-hashes --no-strip-extras --allow-unsafe -o requirements-p
 
 # Phase 1 acceptance smoke test
 hangarfit check layouts/example.yaml --render out.png
+
+# Phase 3a: solve + tow-path overlay. Best-effort: a layout the v1 planner
+# can't fully route renders without paths (blocking plane named on stderr);
+# exit 3 only if NO candidate layout is tow-routable.
+hangarfit solve tests/fixtures/scenario_minimal.yaml --render out.png --render-paths
 
 # GitFlow loops
 git switch develop && git pull
