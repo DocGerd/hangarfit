@@ -28,7 +28,7 @@ flowchart LR
 
     json["JSON result<br/>(stdout)"]
     png["PNG render<br/>(optional)"]
-    exitcode["exit code<br/>(0 / 1 / 2)"]
+    exitcode["exit code<br/>(0 / 1 / 2 / 3)"]
 
     yaml_fleet --> cli
     yaml_hangar --> cli

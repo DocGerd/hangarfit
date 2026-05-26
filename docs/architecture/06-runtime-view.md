@@ -136,6 +136,20 @@ With `--strict-k`, `found_partial` also returns exit code 1 — useful
 for scripted invocation where "fewer than K alternatives" should be
 treated as failure.
 
+**Exit code 3 — `--render-paths` tow-routability (#193).** Exit code is
+not solely a function of `SolveStatus`. When `--render-paths` is set the
+CLI tow-plans every returned layout (the bundled `(Layout, MovesPlan)`
+of `solve()`, ADR-0007) and renders the path overlay. Because the v1
+planner has documented false-negatives, an un-routable layout is *kept*
+(best-effort, #197) and rendered without paths. If **no** returned
+candidate is tow-routable, the CLI exits **3** — distinct from exit 1
+(no layout at all), since a valid static layout was still found and
+rendered. If at least one candidate is routable the exit code stays 0
+(each un-routable one emits a stderr warning naming the blocked plane).
+Exit 3 is checked before the `--strict-k` exit-1 rule. Without
+`--render-paths` the CLI does not tow-plan, so tow-routability never
+affects the exit code.
+
 **No retries inside solve().** The solver does not retry on a single
 candidate's failure — it just restarts. There is no exception path
 from `check()` into the solver other than structural failure (which
