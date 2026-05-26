@@ -36,6 +36,16 @@ markers = [
     "slow: tests that may exceed the default 5 s per-fixture solve budget (excluded by default via addopts; run on demand via `pytest -m slow`)",
 ]
 
+[tool.coverage.run]
+# Measure branch coverage, not just statement coverage, so a conditional
+# whose body is exercised but whose alternate edge is never taken (e.g. an
+# `if` with no covered `else`) shows up as a partial rather than reading as
+# fully covered. Set here rather than as a `--cov-branch` CLI flag so local
+# `pytest --cov` and CI pick it up identically — same local==CI parity goal
+# as the `addopts` marker filter above. coverage.py reads this section
+# automatically under pytest-cov.
+branch = true
+
 [tool.ruff]
 line-length = 100
 target-version = "py312"
