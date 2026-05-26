@@ -28,6 +28,27 @@ from hangarfit.loader import load_scenario
 from hangarfit.models import SearchConfig
 from hangarfit.solver import solve
 
+
+@pytest.fixture(autouse=True)
+def _stub_towplanning(monkeypatch):
+    """Keep these determinism canaries fast by stubbing tow-planning.
+
+    solve() tow-plans every returned layout by default (``plan_paths=True``,
+    #197), and tow-planning runs a bounded Hybrid-A* search per plane —
+    seconds on a multi-plane fill. These canaries assert IDENTICAL solver
+    output across runs (layouts/seed/best_partial), never on ``plans``, so a
+    trivial ``plan_fill`` stub preserves the default code path while removing
+    the cost. The real planner↔solver integration lives in
+    ``tests/test_solver_towplanner.py``.
+    """
+    import hangarfit.solver as solver_mod
+    from hangarfit.towplanner import MovesPlan
+
+    monkeypatch.setattr(
+        solver_mod, "plan_fill", lambda target: MovesPlan(target_layout=target, moves=())
+    )
+
+
 # Three canary fixtures chosen for coverage breadth:
 #  - trivial_single_plane: simplest possible search; sensitive to the
 #    initial-placement RNG.
