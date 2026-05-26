@@ -1,0 +1,9 @@
+# Fuzzing-only toolchain (Atheris). Installed SOLELY by the nightly fuzz
+# workflow (.github/workflows/fuzz.yml) — deliberately NOT in pyproject.toml so
+# routine `pip install -e .[dev]` never pulls a native libFuzzer wheel.
+# Hypothesis itself lives in the dev extra (it runs on every PR); only Atheris
+# is here. Shared transitives are constrained to the dev lockfile via `-c` so
+# the nightly job can install requirements-dev.txt and requirements-fuzz.txt
+# together without version skew (mirrors requirements-build.in).
+-c requirements-dev.txt
+atheris>=3.0.0
