@@ -524,3 +524,59 @@ class TestDrawTowPaths:
         out = tmp_path / "with_paths.png"
         render_layout(layout, out, moves_plan=plan)
         _assert_valid_png(out)
+
+    @staticmethod
+    def _curved_move(plane_id: str):
+        """A genuinely curved (multi-segment CSC) move built via the real
+        ``plan_dubins``, so ``sample()`` yields interior poses — exercises the
+        non-straight branch the vertical S-leg helper cannot reach."""
+        from hangarfit.towplanner import Move, Pose, plan_dubins
+
+        start = Pose(x_m=0.0, y_m=0.0, heading_deg=0.0)
+        goal = Pose(x_m=5.0, y_m=0.0, heading_deg=180.0)
+        arc = plan_dubins(start, goal, turn_radius_m=1.5)
+        return Move(plane_id=plane_id, target_slot=goal, path=arc)
+
+    def test_curved_path_samples_interior_points(self) -> None:
+        # A turning path must be drawn as the full sampled polyline, not just
+        # its two endpoints — guards a regression that collapses sample() to
+        # [start, end] (which would silently flatten every curve).
+        from hangarfit.visualize import _draw_tow_paths
+
+        ax = MagicMock()
+        _draw_tow_paths(ax, self._plan(self._curved_move("a")))
+        xs = ax.plot.call_args.args[0]
+        assert len(xs) > 2, f"curved path should sample interior points, got {len(xs)}"
+
+    def test_label_is_the_plane_id(self) -> None:
+        # The matplotlib label carries the plane id (a future-legend hook);
+        # pin it directly rather than only relying on it as a test proxy.
+        from hangarfit.visualize import _draw_tow_paths
+
+        ax = MagicMock()
+        _draw_tow_paths(ax, self._plan(self._vertical_move("husky", 0.0, 0.0, 5.0)))
+        assert ax.plot.call_args.kwargs["label"] == "husky"
+
+    def test_colour_cycle_wraps_beyond_palette(self) -> None:
+        # 9 planes > 8-colour palette: must not raise (the i % len cycle), and
+        # exactly one colour repeats (the 9th reuses the first). Guards against
+        # a regression to direct indexing (IndexError on a 9-plane fleet).
+        from hangarfit.visualize import _TOW_PATH_COLORS, _draw_tow_paths
+
+        moves = [self._vertical_move(f"p{i}", float(i), 0.0, 3.0) for i in range(9)]
+        ax = MagicMock()
+        _draw_tow_paths(ax, self._plan(*moves))
+        assert ax.plot.call_count == 9
+        colours = [c.kwargs["color"] for c in ax.plot.call_args_list]
+        assert len(set(colours)) == len(_TOW_PATH_COLORS)  # 8 distinct, one reused
+
+    def test_render_layout_with_both_check_result_and_moves_plan(self, tmp_path: Path) -> None:
+        # The docstring promises check_result and moves_plan are independent —
+        # render an invalid layout with BOTH overlays and confirm a valid PNG.
+        layout = _load("invalid_wing_wing_same_height")
+        result = check(layout)
+        assert not result.valid  # fixture precondition
+        plan = self._plan(self._vertical_move("a", 3.0, 1.0, 6.0))
+        out = tmp_path / "both_overlays.png"
+        render_layout(layout, out, check_result=result, moves_plan=plan)
+        _assert_valid_png(out)

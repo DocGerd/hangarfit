@@ -129,6 +129,10 @@ def render_layout(
     overlay — see :func:`_draw_tow_paths` (#192). ``check_result`` and
     ``moves_plan`` are independent: a layout can be rendered with neither,
     either, or both.
+
+    This is renderer-only: no CLI flag exposes ``moves_plan`` to end users
+    yet — wiring ``--render-paths`` (and the bundle plumbing) is deferred to
+    #193.
     """
     # Defense in depth: even with ``matplotlib.use("Agg", force=True)``
     # at module import, a misconfigured environment (interactive backend
@@ -399,6 +403,11 @@ def _draw_tow_paths(ax: Any, moves_plan: MovesPlan) -> None:
     colour regardless of move order (the ADR-0003 determinism spirit). The
     in-memory ``MovesPlan`` shape is rich enough that a per-move PNG sequence
     or animation can be added later without changing it (spike Q7).
+
+    Each polyline carries its ``plane_id`` as a matplotlib ``label``. No
+    legend is rendered today (``_finalize_axes`` draws none), so the label is
+    currently inert — it is a deliberate forward hook for a future legend, and
+    a path is already disambiguated by terminating at its annotated slot.
     """
     plane_ids = sorted({move.plane_id for move in moves_plan.moves})
     colour_for = {
