@@ -10,8 +10,8 @@ import math
 import pytest
 
 from hangarfit.loader import load_scenario
-from hangarfit.models import DiversityConfig, Layout
-from hangarfit.solver import _select_spread_diverse, _SpreadCandidate
+from hangarfit.models import DiversityConfig, Layout, SearchConfig
+from hangarfit.solver import _select_spread_diverse, _SpreadCandidate, solve
 
 
 @pytest.fixture(autouse=True)
@@ -70,19 +70,27 @@ def test_solve_spread_on_widens_min_gap_vs_off():
 
 
 def test_solve_default_enables_spread():
-    """Fast: bare solve() == explicit spread=True (default is on).
+    """Fast: default-spread solve() == explicit spread=True (default is on).
 
-    Verifies that SearchConfig().spread is True and that the same seed
-    produces identical placements whether spread is implicit or explicit.
-    seed=0 verified: default == explicit_on (same placements).
+    Verifies that ``SearchConfig().spread`` is True by running two same-seed
+    solves whose only differing field is an explicit ``spread=True``, and
+    asserting identical selected placements.
+
+    Both solves are bounded by ``max_restarts`` (not wall-clock ``budget_s``):
+    since #267, ``solve()`` no longer breaks on the first valid layout — it
+    collects every valid basin found within its termination gate and selects
+    the best-spread one. Under a wall-clock budget the *number* of basins
+    collected is timing-dependent, so two same-seed runs can select different
+    winners; bounding by ``max_restarts`` makes the basin pool — and hence the
+    selected layout — a deterministic function of the seed (ADR-0003).
     """
     from hangarfit.loader import load_scenario
     from hangarfit.models import SearchConfig
     from hangarfit.solver import solve
 
     s = load_scenario("tests/fixtures/solve_fresh_alternatives_three.yaml")
-    default = solve(s, budget_s=5.0, seed=0)
-    explicit_on = solve(s, budget_s=5.0, seed=0, search=SearchConfig(spread=True))
+    default = solve(s, budget_s=30.0, seed=0, search=SearchConfig(max_restarts=20))
+    explicit_on = solve(s, budget_s=30.0, seed=0, search=SearchConfig(max_restarts=20, spread=True))
     assert default.layouts and explicit_on.layouts
     assert [(p.x_m, p.y_m, p.heading_deg) for p in default.layouts[0].placements] == [
         (p.x_m, p.y_m, p.heading_deg) for p in explicit_on.layouts[0].placements
@@ -243,3 +251,29 @@ def test_select_enforces_diversity_and_counts_rejects():
 def test_select_empty_pool_returns_empty():
     selected, rejected = _select_spread_diverse([], alternatives=2, diversity=DiversityConfig())
     assert selected == [] and rejected == 0
+
+
+def test_solve_populates_spread_diagnostics():
+    scenario = load_scenario("tests/fixtures/solve_fresh_six_planes.yaml")
+    r = solve(scenario, seed=7, search=SearchConfig(max_restarts=20), plan_paths=False)
+    assert r.status in ("found", "found_partial")
+    d = r.diagnostics
+    assert len(d.min_pairwise_gap_m) == len(r.layouts)
+    assert d.valid_basins_found >= len(r.layouts)
+    assert all(g > 0.0 for g in d.min_pairwise_gap_m)
+
+
+def test_solve_spread_selection_is_deterministic():
+    scenario = load_scenario("tests/fixtures/solve_fresh_six_planes.yaml")
+    cfg = SearchConfig(max_restarts=20)
+    a = solve(scenario, seed=7, search=cfg, plan_paths=False)
+    b = solve(scenario, seed=7, search=cfg, plan_paths=False)
+    assert a.diagnostics.min_pairwise_gap_m == b.diagnostics.min_pairwise_gap_m
+    assert [_layout_key(lay) for lay in a.layouts] == [_layout_key(lay) for lay in b.layouts]
+
+
+def _layout_key(layout):
+    return tuple(
+        (p.plane_id, round(p.x_m, 6), round(p.y_m, 6), round(p.heading_deg, 6))
+        for p in layout.placements
+    )

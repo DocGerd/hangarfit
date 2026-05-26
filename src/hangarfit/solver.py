@@ -55,6 +55,17 @@ def solve(
 
     See spec §3.3 for the contract.
 
+    Returns the **best-spread** valid layout(s) found across *all* restarts
+    within budget (best-of-all-basins, #267) — NOT the first valid one. The
+    restart loop always runs to ``budget_s`` / ``search.max_restarts`` (no
+    break-on-first-valid, including under ``search.spread=False``), recording
+    every valid (spread-polished) basin into a pool; the returned layouts are
+    then chosen from that pool by maximin plan-view gap subject to the
+    diversity gate (ADR-0004). Consequently the returned ``alternatives`` are
+    ordered **best-spread-first**, not in discovery order, and
+    ``diagnostics.min_pairwise_gap_m`` / ``diagnostics.valid_basins_found``
+    surface the selected gaps and the size of the explored basin pool.
+
     When ``plan_paths`` is ``True`` (the default), each returned layout is
     also tow-planned (#197): ``result.plans[i]`` is the
     :class:`~hangarfit.towplanner.MovesPlan` for ``result.layouts[i]``, or
@@ -140,9 +151,9 @@ def solve(
     # natural tuple lex-compare unambiguous.
     best_partial_score: tuple[int, float] = (sys.maxsize, float("inf"))
     best_partial_layout: Layout | None = None
-    accepted_layouts: list[Layout] = []
-    diversity_rejected_count = 0
+    pool: list[_SpreadCandidate] = []
     restart_index = 0
+    spread_scale = _resolve_spread_scale(scenario, search)
 
     # Outer restart loop. Two independent termination gates; first to
     # trip wins:
@@ -193,12 +204,6 @@ def solve(
             if time.monotonic() - start >= budget_s:
                 break
             if current_score == (0, 0.0):
-                # Valid! Apply the K-diversity filter (spec §4.6). When
-                # accepted_layouts is empty, _is_diverse_enough is vacuously
-                # True — the first valid layout is always accepted (and the
-                # alternatives=1 path never re-enters this branch). For K>1
-                # subsequent valid layouts are gated on pairwise diversity vs
-                # everything already accepted.
                 if search.spread:
                     placements = _spread(
                         placements,
@@ -209,28 +214,24 @@ def solve(
                         budget_s=budget_s,
                         pinned_planes=pinned_planes,
                     )
-                # No try/except: _spread returns placements preserving every Layout invariant
-                # (on_carts unchanged, no dup/fleet drift), so any ValueError here is a
-                # structural bug and should propagate.
+                # _spread preserves every Layout invariant; a ValueError here
+                # would be a structural bug, so let it propagate.
                 candidate_layout = Layout(
                     fleet=scenario.fleet,
                     hangar=scenario.hangar,
                     placements=tuple(placements.values()),
                     maintenance_plane=scenario.maintenance_plane,
                 )
-                if _is_diverse_enough(candidate_layout, accepted_layouts, diversity):
-                    accepted_layouts.append(candidate_layout)
-                else:
-                    # The candidate is valid (score (0, 0.0)) but too
-                    # similar to an already-accepted layout. Count it
-                    # so callers can see how much search work was lost
-                    # to the diversity gate (spec §4.1 of the v0.6.0
-                    # solver-polish release design).
-                    diversity_rejected_count += 1
-                # Whether accepted or not, restart to try for a different
-                # basin. Continuing to descend from a valid state would just
-                # walk in place (already at score (0, 0.0)).
-                break
+                min_gap, energy = _spread_quality(placements, scenario, spread_scale)
+                pool.append(
+                    _SpreadCandidate(
+                        layout=candidate_layout,
+                        min_gap=min_gap,
+                        energy=energy,
+                        restart_index=restart_index,
+                    )
+                )
+                break  # restart to seek a different basin
 
             step_result = _descent_step(
                 placements=placements,
@@ -261,19 +262,14 @@ def solve(
                 break  # stall — restart
 
         restart_index += 1
-        if len(accepted_layouts) >= alternatives:
-            break
 
     elapsed = time.monotonic() - start
 
-    if accepted_layouts:
-        # `found` fires when the outer loop broke via the
-        # `len(accepted_layouts) >= alternatives` check above (so the count
-        # is exactly `alternatives` — Chunk D path and Chunk E happy path).
-        # `found_partial` fires when budget exhausted with `0 < n < K`
-        # — reachable in Chunk E for K>1 (the diversity-impossible scenario
-        # is one driver, but any K>1 run that runs out of budget mid-fill
-        # also lands here).
+    selected, diversity_rejected_count = _select_spread_diverse(pool, alternatives, diversity)
+
+    if selected:
+        accepted_layouts = [c.layout for c in selected]
+        min_gaps = tuple(c.min_gap for c in selected)
         status: SolveStatus = "found" if len(accepted_layouts) >= alternatives else "found_partial"
         # Tow-plan every returned layout (best-effort enrichment, #197). The
         # v1 planner (Dubins-only + bounded Hybrid-A* — #222 under ADR-0007)
@@ -320,6 +316,8 @@ def solve(
                 diversity_impossible=diversity_impossible,
                 diversity_rejected_count=diversity_rejected_count,
                 unroutable_planes=tuple(unroutable),
+                min_pairwise_gap_m=min_gaps,
+                valid_basins_found=len(pool),
             ),
         )
     bp = check_layout(best_partial_layout) if best_partial_layout is not None else None
@@ -334,6 +332,7 @@ def solve(
             seed=resolved_seed,
             diversity_impossible=diversity_impossible,
             diversity_rejected_count=diversity_rejected_count,
+            valid_basins_found=len(pool),
         ),
     )
 
