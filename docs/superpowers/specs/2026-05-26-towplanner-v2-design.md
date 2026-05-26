@@ -51,8 +51,9 @@ filed dependency graph: #263 nose-out is cheap *only* with #261 (and eased by
 ### Closed form
 - New `plan_reeds_shepp(start, end, *, turn_radius_m)` beside `plan_dubins`.
 - Implement the textbook RS family via the **base-formula + symmetry-generation**
-  method (timeflip / reflect / backwards transforms applied to ~9 base
-  word-solvers) to generate the full 48-word set mechanically, rather than
+  method (the **timeflip / reflect** goal symmetries — four combinations:
+  identity, timeflip, reflect, timeflip+reflect — applied to 8 base
+  word-solvers) to generate the full word set mechanically, rather than
   hand-coding 48 formulae. Each feasible word → signed `(t,u,v,…)` legs → `Segment`s
   carrying `gear`. Standard reference: Reeds & Shepp (1990); the symmetry approach
   follows the widely-used `reeds_shepp` formulation.
@@ -81,10 +82,11 @@ when backing a carted plane is cheaper. Confirm cleanly via a unit test.
 Fixed word-iteration order + strict `<` cost tie-break (identical discipline to
 today's `_WORD_SOLVERS`). The reverse front-gap exemption (#222) is free:
 `_mover_motion_bounds_conflict` is pose-only and gear-agnostic, so a plane backing
-out through the door at y<0 is still exempt on the side/back walls only.
+out through the door at y<0 is still exempt on the front wall only (the side
+and back walls remain enforced).
 
 ### Governance
-- **New ADR-0009** "Reeds–Shepp motion model (towplanner v2)", **Supersedes
+- **New ADR-0010** "Reeds–Shepp motion model (towplanner v2)", **Supersedes
   ADR-0007 fork-2 "Dubins-only"** (update ADR-0007 status note + the ADR README).
 - Extend the ADR-0007-mandated **45° heading canary** with a reverse case
   (the CW-compass vs CCW-radians sign-flip trap, ADR-0002).
