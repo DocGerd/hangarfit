@@ -100,13 +100,15 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install pip-tools (pinned)
-        # Pinned so a pip-tools release that changes resolver behavior or
-        # output formatting cannot surprise the guard. Bump deliberately
-        # together with the version used to regenerate requirements-dev.txt
-        # — keep this version in lockstep with the regeneration command
-        # documented in CLAUDE.md.
-        run: pip install 'pip-tools==7.5.3'
+      - name: Install pip-tools (hash-pinned)
+        # Hash-pinned via requirements-pip-tools.txt so the guard that
+        # enforces lockfile integrity is itself installed with verified
+        # integrity — closes the `pipCommand not pinned by hash` Scorecard
+        # finding the bare `pip install pip-tools==7.5.3` triggered (#224).
+        # The lockfile pins pip-tools==7.5.3, the version CLAUDE.md mandates
+        # for regeneration; bump it deliberately, in lockstep with the
+        # build-lockfile guard and the regeneration commands in CLAUDE.md.
+        run: pip install --require-hashes -r requirements-pip-tools.txt
 
       - name: Regenerate lockfile against existing pins
         # Copy first so pip-compile honors the committed lockfile as a pin
@@ -204,13 +206,12 @@ jobs:
         with:
           python-version: "3.12"
 
-      - name: Install pip-tools (pinned)
-        # Same version as the dev-lockfile guard and the regeneration
-        # command in CLAUDE.md — kept in lockstep so a pip-tools release
-        # that changes resolver behavior or output formatting cannot
-        # surprise the guard. Bump deliberately, together with both
-        # lockfiles.
-        run: pip install 'pip-tools==7.5.3'
+      - name: Install pip-tools (hash-pinned)
+        # Same hash-pinned bootstrap as the dev-lockfile guard
+        # (requirements-pip-tools.txt) — see that step for the full
+        # rationale. Kept in lockstep so both guards install the identical
+        # pip-tools 7.5.3 with verified integrity.
+        run: pip install --require-hashes -r requirements-pip-tools.txt
 
       - name: Regenerate build lockfile against existing pins
         # Same copy-first rationale as the dev-lockfile guard: seeding with
