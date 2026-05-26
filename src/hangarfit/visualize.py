@@ -130,9 +130,9 @@ def render_layout(
     ``moves_plan`` are independent: a layout can be rendered with neither,
     either, or both.
 
-    This is renderer-only: no CLI flag exposes ``moves_plan`` to end users
-    yet — wiring ``--render-paths`` (and the bundle plumbing) is deferred to
-    #193.
+    The ``hangarfit solve --render-paths`` flag is the CLI entry point that
+    plumbs each layout's bundled ``MovesPlan`` (from ``solve()``) through to
+    this parameter (#193).
     """
     # Defense in depth: even with ``matplotlib.use("Agg", force=True)``
     # at module import, a misconfigured environment (interactive backend

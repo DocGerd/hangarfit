@@ -109,7 +109,10 @@ A scenario YAML carries `fleet:` / `hangar:` refs plus a `fleet_in:` list (which
 |---|---|
 | 0 | Found at least one valid layout (`status` = `found` or `found_partial`) |
 | 1 | No valid layout found (`status` = `exhausted_budget` or `trivially_infeasible`); with `--strict-k`, also fires for `found_partial` |
-| 2 | Could not solve (file not found, bad YAML, invariant violation, IO error during render/write) |
+| 2 | Could not solve (file not found, bad YAML, invariant violation, IO error during render/write, or `--render-paths` without `--render`) |
+| 3 | `--render-paths` only: valid layout(s) found but the v1 tow planner could not route **any** of them. The layouts still render (without path overlays); each blocked layout gets a stderr warning naming the plane. Distinct from code 1 (no layout at all). |
+
+`--render-paths` overlays each plane's tow path on the `--render` PNG(s) (one colour per plane). It tow-plans every returned layout; a layout the v1 planner cannot route is rendered without paths. If **at least one** candidate is routable the exit code is 0 (un-routable ones still warn); code 3 fires only when none are routable.
 
 ### JSON schemas
 
