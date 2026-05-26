@@ -192,6 +192,16 @@ pip-compile --generate-hashes --no-strip-extras --extra dev -o requirements-dev.
 # pip-tools 7.5.3 on Python 3.12.
 pip-compile --generate-hashes --no-strip-extras --allow-unsafe -o requirements-build.txt requirements-build.in
 
+# Regenerate the hash-pinned FUZZING-toolchain lockfile. Source is
+# `requirements-fuzz.in` (Atheris only — Hypothesis lives in the dev extra).
+# Atheris is installed solely by the nightly fuzz workflow, never by
+# `pip install -e .[dev]`, so it is kept out of pyproject.toml. The `.in`
+# constrains shared transitives via `-c requirements-dev.txt` so the nightly
+# job can install the dev and fuzz lockfiles together without skew. The
+# `fuzz-lockfile-drift` CI job enforces this on every PR. Same toolchain as
+# the other lockfiles: pip-tools 7.5.3 on Python 3.12.
+pip-compile --generate-hashes --no-strip-extras -o requirements-fuzz.txt requirements-fuzz.in
+
 # Regenerate the hash-pinned PIP-TOOLS bootstrap lockfile. Source is
 # `requirements-pip-tools.in` (a single `pip-tools==7.5.3` pin). This is
 # the toolchain the two lockfile-drift guard jobs install to regenerate

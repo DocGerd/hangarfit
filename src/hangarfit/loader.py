@@ -681,5 +681,7 @@ def _read_yaml(path: Path) -> Any:
             return yaml.safe_load(f)
     except FileNotFoundError as e:
         raise LoaderError(f"file not found: {path}") from e
+    except UnicodeDecodeError as e:
+        raise LoaderError(f"{path}: file is not valid UTF-8: {e}") from e
     except yaml.YAMLError as e:
         raise LoaderError(f"{path}: YAML parse error: {e}") from e

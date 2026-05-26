@@ -1403,3 +1403,12 @@ placements:
         )
         with pytest.raises(LoaderError, match="unknown plane id 'ghost'"):
             load_layout(layout)
+
+
+def test_load_fleet_rejects_non_utf8_file(tmp_path: Path) -> None:
+    """A file with invalid UTF-8 bytes must surface as LoaderError, not a
+    bare UnicodeDecodeError leaking out of _read_yaml."""
+    bad = tmp_path / "fleet.yaml"
+    bad.write_bytes(b"\xff\xfe\x00bad bytes not utf-8")
+    with pytest.raises(LoaderError, match="UTF-8"):
+        load_fleet(bad)
