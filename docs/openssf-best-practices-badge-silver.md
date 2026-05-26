@@ -39,7 +39,12 @@ Everything else is mechanical. These need a human:
 
 1. **Submit the answers.** Enter the statuses below in the Silver questionnaire
    at <https://www.bestpractices.dev/projects/12987>, then, once Silver is
-   awarded, swap the README badge to the Silver variant.
+   awarded, swap the README badge to the Silver variant. Criteria you mark
+   **Met** that the form flags `met_url_required` need a public evidence URL —
+   most map to an obvious repo file (e.g. `governance` → `GOVERNANCE.md`), but
+   `assurance_case`'s evidence is the [Assurance case](#assurance-case) section
+   of *this* document, so point it at this file's rendered GitHub URL
+   (`…/docs/openssf-best-practices-badge-silver.md#assurance-case`).
 2. **Self-attestations** — only the maintainer can truthfully assert these; they
    are all true: `implement_secure_design`, `documentation_current`,
    `access_continuity`, `regression_tests_added50`.
@@ -141,7 +146,7 @@ also [`SECURITY.md`](../SECURITY.md) and [`security-posture.md`](security-postur
 | Criterion | Status | Justification + evidence |
 |---|---|---|
 | `report_tracker` (MUST) | **Met** | GitHub Issues + [`.github/ISSUE_TEMPLATE/`](../.github/ISSUE_TEMPLATE) (bug/feature/question). |
-| `vulnerability_report_credit` (MUST) | **Met** (vacuous) | No vulnerabilities reported to date, so none to credit; [`SECURITY.md`](../SECURITY.md) welcomes reports and would credit reporters. |
+| `vulnerability_report_credit` (MUST) | **N/A** | No vulnerabilities have been reported to date, so there are none to credit (`na_allowed`); [`SECURITY.md`](../SECURITY.md) welcomes reports and the project will credit reporters when any are resolved. |
 | `vulnerability_response_process` (MUST) | **Met** | [`SECURITY.md`](../SECURITY.md) documents the private-advisory reporting path and a best-effort response expectation. |
 
 ## 6. Quality
