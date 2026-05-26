@@ -11,7 +11,7 @@
 # two lockfiles; see CLAUDE.md):
 #   pip-compile --generate-hashes --no-strip-extras --allow-unsafe -o requirements-pip-tools.txt requirements-pip-tools.in
 #
-# `--allow-unsafe` is REQUIRED: pip-tools depends on setuptools + wheel,
+# `--allow-unsafe` is REQUIRED: pip-tools depends on pip + setuptools,
 # which pip-tools classifies as "unsafe to pin" and comments out by
 # default — but `pip install --require-hashes` is all-or-nothing, so an
 # un-pinned transitive dep would make the install fail. `--no-strip-extras`

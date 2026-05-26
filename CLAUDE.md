@@ -200,10 +200,10 @@ pip-compile --generate-hashes --no-strip-extras --allow-unsafe -o requirements-b
 # `pip install pip-tools==7.5.3` the guards used to run (#224). Required
 # after bumping the pip-tools pin (do that here AND in the `.in`, in
 # lockstep with the version named in the two regeneration commands
-# above). `--allow-unsafe` is REQUIRED — pip-tools depends on
-# setuptools/wheel, which pip-tools comments out by default; `--require-
-# hashes` is all-or-nothing, so an un-pinned transitive dep would make
-# the guard-job install fail. Same toolchain: pip-tools 7.5.3 / Python 3.12.
+# above). `--allow-unsafe` is REQUIRED — pip-tools depends on pip +
+# setuptools, which pip-tools comments out by default; `--require-hashes`
+# is all-or-nothing, so an un-pinned transitive dep would make the
+# guard-job install fail. Same toolchain: pip-tools 7.5.3 / Python 3.12.
 pip-compile --generate-hashes --no-strip-extras --allow-unsafe -o requirements-pip-tools.txt requirements-pip-tools.in
 
 # CI: GitHub Actions runs `pytest` on Python 3.12 for PRs into
