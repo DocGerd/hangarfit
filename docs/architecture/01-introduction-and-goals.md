@@ -21,8 +21,8 @@ In rough order of priority — earlier goals trump later ones when they
 conflict.
 
 1. **Correctness of the collision rule.** Every downstream feature
-   (`check`, `solve`, future planners) sits on top of the parts-based
-   collision check. A subtle bug here produces output that *looks*
+   (`check`, `solve`, the `towplanner`, future planners) sits on top of
+   the parts-based collision check. A subtle bug here produces output that *looks*
    plausible but is wrong, which is the worst possible failure mode in
    this domain. The strut-aware golden-test suite in `tests/test_collisions.py`
    is the canary.

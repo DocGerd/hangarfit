@@ -67,15 +67,26 @@ PRs. The current rule's decision is recorded in
 by ADR-0006**). The implementation lives in
 `src/hangarfit/collisions.py::_bay_intrusion_conflicts`.
 
-### Movement modes (relevant for the future planner, not Phase 1)
+### Movement modes
 
 Each aircraft has a `movement_mode` in `{"always_cart",
 "always_own_gear", "cart_eligible"}`. The cart rule — at most one
 `cart_eligible` plane on carts in any layout — is enforced in
-`Layout.__post_init__`, not in the collision checker. Motion behaviour
-itself (holonomic on carts; Dubins-path-style on own gear) is a
-property of the planner that does not yet exist; the parts model and
-collision checker are deliberately motion-agnostic.
+`Layout.__post_init__`, not in the collision checker. The parts model
+and collision checker remain deliberately **motion-agnostic** — they
+describe where a plane *is*, never how it got there.
+
+Motion behaviour now lives in the `towplanner` module (Phase 3a), which
+uses a **single Dubins motion primitive** for every plane: a cart-borne
+plane is treated as own-gear with `turn_radius_m = 0` (a pivot-in-place),
+supplied through `Aircraft.effective_turn_radius_m()`. This **retires the
+earlier "holonomic on carts; Dubins-path-style on own gear" two-mode
+framing** — there is one primitive, not two (ADR-0007, forks 2–3). A
+consequence: `turn_radius_m` is now **load-bearing**. It was an unused
+placeholder through Phase 1/2a and is consumed by the planner's Dubins
+arithmetic and its bound-aware Hybrid-A\* path search ([#222](https://github.com/DocGerd/hangarfit/issues/222)).
+Cart planes keep `turn_radius_m: null` in `fleet.yaml`; the zero radius
+is supplied by the accessor, not baked into the data (ADR-0007, fork 4).
 
 ### The door is a visual marker only
 
@@ -85,9 +96,17 @@ treat the door as a separate opening: every part of every placed plane
 must fit fully inside the hangar rectangle for the layout to be
 considered valid. There is no "door clearance" rule beyond the
 hangar-bounds check itself (`_hangar_bounds_conflicts` in
-`src/hangarfit/collisions.py`). Whether a plane can be *moved* out
-through the door is a future-planner concern, deliberately out of
-scope here.
+`src/hangarfit/collisions.py`).
+
+At the `collisions.check` level the door stays a **visual marker only** —
+the static checker cares solely about the hangar-bounds rectangle. The
+`towplanner` (Phase 3a) is the first consumer to treat the door as a
+**motion gate**: a plane enters from a door-cone entry pose (constrained
+to the door interval, heading into the hangar) and is towed to its slot
+along a Dubins path, with the front gap exempted during motion (a mover
+may straddle `y < 0` in front of the door mid-tow). That door semantics
+lives entirely in the planner and changes no `collisions.check` verdict
+(ADR-0007).
 
 ## The coordinate convention
 
