@@ -2,8 +2,8 @@
 
 ``slow``-marked (excluded from the default ``pytest`` run; see pyproject
 ``addopts``). ``plan_fill`` now runs a Hybrid-A* search (``plan_path``) per
-plane instead of a single closed-form Dubins shot, so this guards against the
-search running away on realistic, solver-produced layouts.
+plane instead of a single closed-form Reeds–Shepp analytic shot, so this guards
+against the search running away on realistic, solver-produced layouts.
 
 NOTE on scope: on this branch the solver does NOT yet call the planner — that
 bundling is #197 (blocked-by #222). So this gate drives ``plan_fill`` DIRECTLY
@@ -26,13 +26,21 @@ from hangarfit.towplanner import NoFeasiblePlanError, path_first_conflict, plan_
 
 # Wall-clock ceiling for one layout's fill. The search budget is per-plane
 # (_MAX_EXPANSIONS expansions), so an un-towable plane costs ~budget-exhaustion
-# time to prove infeasible (~10s for the wide-wing husky on the placeholder
-# hangar at the tuned budget). This `slow`-marked gate is a runaway guard, not a
+# time to prove infeasible. This `slow`-marked gate is a runaway guard, not a
 # tight regression bound — it catches the order-of-magnitude (pre-tuning the
-# same layout took ~177s); the 30s ceiling leaves ~3x margin over the observed
-# worst case for slower machines. Tighten once #197 exercises the planner
-# through solve() on real (measured) hangar geometry.
-_PLAN_FILL_CEILING_S = 30.0
+# same layout took ~177s).
+#
+# Bumped 30s → 75s for the Reeds–Shepp motion model (ADR-0010): the primitive
+# fan grew from 3 (forward L/S/R) to 6 (+ reverse L/S/R), so each expansion now
+# screens roughly twice the edges and the worst-case budget-exhaustion bail on
+# an un-towable layout (the six-plane fresh fill, where several planes are
+# un-routable at 700 expansions each) doubled to ~50s observed. 75s keeps the
+# runaway guard meaningful — it is still less than half the 177s pre-tuning
+# baseline — with margin over the observed worst case for slower machines.
+# Tighten once #197/v2 exercise the planner through solve() on real (measured)
+# hangar geometry, or once the primitive fan is pruned (e.g. dropping the
+# redundant reverse cart pivots, or gating reverse edges behind a heuristic).
+_PLAN_FILL_CEILING_S = 75.0
 
 
 @pytest.mark.slow
