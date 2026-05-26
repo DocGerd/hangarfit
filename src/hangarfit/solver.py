@@ -596,6 +596,48 @@ def _inter_plane_energy(
     return energy
 
 
+def _resolve_spread_scale(scenario: Scenario, search: SearchConfig) -> float:
+    """Repulsion length-scale for spread (spec §4): explicit override or
+    20% of the smaller hangar dimension. Single source so ``_spread`` and
+    ``_spread_quality`` always agree."""
+    if search.spread_scale_m is not None:
+        return search.spread_scale_m
+    return 0.2 * min(scenario.hangar.width_m, scenario.hangar.length_m)
+
+
+def _spread_quality(
+    placements: dict[str, Placement],
+    scenario: Scenario,
+    scale: float,
+) -> tuple[float, float]:
+    """Return ``(min_gap, energy)`` for a layout in one pass over plane-pairs.
+
+    ``min_gap`` is the minimum plan-view edge-to-edge distance between any two
+    planes' world parts (``math.inf`` when <2 planes — no pairs). ``energy``
+    is the same ``Σ exp(−gap/scale)`` repulsion :func:`_inter_plane_energy`
+    computes; returning both from one pairwise sweep avoids paying the
+    (expensive) shapely distances twice when scoring a candidate basin. The
+    hot ``_spread`` loop keeps using the energy-only :func:`_inter_plane_energy`
+    — this is called once per accepted basin, not per perturbation.
+    """
+    ids = sorted(placements)
+    if len(ids) < 2:
+        return (math.inf, 0.0)
+    world: dict[str, list[WorldPart]] = {
+        pid: aircraft_parts_world(scenario.fleet[pid], placements[pid]) for pid in ids
+    }
+    min_gap = math.inf
+    energy = 0.0
+    for i in range(len(ids)):
+        for j in range(i + 1, len(ids)):
+            gap = min(
+                pa.polygon.distance(pb.polygon) for pa in world[ids[i]] for pb in world[ids[j]]
+            )
+            min_gap = min(min_gap, gap)
+            energy += math.exp(-gap / scale)
+    return (min_gap, energy)
+
+
 def _spread(
     placements: dict[str, Placement],
     scenario: Scenario,
@@ -617,11 +659,7 @@ def _spread(
 
     See ADR-0008 and spec §5.
     """
-    scale = (
-        search.spread_scale_m
-        if search.spread_scale_m is not None
-        else 0.2 * min(scenario.hangar.width_m, scenario.hangar.length_m)
-    )
+    scale = _resolve_spread_scale(scenario, search)
 
     movable = sorted(pid for pid in placements if pid not in pinned_planes)
     if not movable or len(placements) < 2:

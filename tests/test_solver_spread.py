@@ -1,6 +1,11 @@
-"""solve()-level tests for the inter-plane spread phase (#145)."""
+"""solve()-level tests for the inter-plane spread phase (#145).
+
+Also covers the _resolve_spread_scale / _spread_quality helpers (#267).
+"""
 
 from __future__ import annotations
+
+import math
 
 import pytest
 
@@ -117,3 +122,51 @@ def test_solve_nine_plane_canary_spread_valid_and_not_worse():
     on = solve(s, budget_s=15.0, seed=42, search=SearchConfig(spread=True))
     assert off.layouts and on.layouts
     assert _min_pairwise_gap(on.layouts[0], s) >= _min_pairwise_gap(off.layouts[0], s)
+
+
+# ---------------------------------------------------------------------------
+# _resolve_spread_scale / _spread_quality helpers (#267)
+# ---------------------------------------------------------------------------
+
+
+def _placements(scenario, specs):
+    """Build a {plane_id: Placement} from (plane_id, x, y, heading) specs."""
+    from hangarfit.models import Placement
+
+    return {
+        pid: Placement(plane_id=pid, x_m=x, y_m=y, heading_deg=h, on_carts=False)
+        for (pid, x, y, h) in specs
+    }
+
+
+def test_spread_quality_energy_matches_inter_plane_energy():
+    from hangarfit.loader import load_scenario
+    from hangarfit.models import SearchConfig
+    from hangarfit.solver import (
+        _inter_plane_energy,
+        _resolve_spread_scale,
+        _spread_quality,
+    )
+
+    scenario = load_scenario("tests/fixtures/scenario_minimal.yaml")
+    pids = list(scenario.fleet_in)
+    placements = _placements(scenario, [(pids[0], 2.0, 2.0, 0.0), (pids[1], 12.0, 9.0, 0.0)])
+    scale = _resolve_spread_scale(scenario, SearchConfig())
+    min_gap, energy = _spread_quality(placements, scenario, scale)
+    assert energy == _inter_plane_energy(placements, scenario, scale)
+    assert math.isfinite(min_gap) and min_gap >= 0.0
+
+
+def test_spread_quality_single_plane_is_inf_zero():
+    from hangarfit.loader import load_scenario
+    from hangarfit.models import SearchConfig
+    from hangarfit.solver import (
+        _resolve_spread_scale,
+        _spread_quality,
+    )
+
+    scenario = load_scenario("tests/fixtures/scenario_minimal.yaml")
+    pid = scenario.fleet_in[0]
+    placements = _placements(scenario, [(pid, 2.0, 2.0, 0.0)])
+    scale = _resolve_spread_scale(scenario, SearchConfig())
+    assert _spread_quality(placements, scenario, scale) == (math.inf, 0.0)
