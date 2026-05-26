@@ -132,7 +132,7 @@ The test suite includes a strut-aware golden set for the collision checker cover
 ## Project layout
 
 ```
-src/hangarfit/      # models, loader, geometry, collisions, visualize, cli
+src/hangarfit/      # models, loader, geometry, collisions, solver, towplanner, visualize, cli
 data/               # fleet.yaml, hangar.yaml — placeholder measurements
 layouts/            # hand-authored candidate layouts, one YAML per scenario
 tests/              # pytest suite, including strut-aware collision golden tests

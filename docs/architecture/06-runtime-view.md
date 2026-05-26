@@ -64,6 +64,7 @@ sequenceDiagram
     participant CLI as cli.py
     participant Loader as loader.py
     participant Solver as solver.py
+    participant Tow as towplanner.py
     participant Coll as collisions.py
     participant Viz as visualize.py
     participant FS as Filesystem
@@ -98,22 +99,26 @@ sequenceDiagram
             end
         end
         alt K accepted before budget
-            Solver-->>CLI: SolveResult(status=found, layouts, diagnostics, seed)
+            Solver->>Tow: plan_fill(layout) per accepted layout (if plan_paths)
+            Tow-->>Solver: MovesPlan or None (best-effort)
+            Solver-->>CLI: SolveResult(status=found, layouts, plans, diagnostics, seed)
         else some-but-fewer-than-K accepted, budget exhausted
-            Solver-->>CLI: SolveResult(status=found_partial, layouts, diagnostics, seed)
+            Solver-->>CLI: SolveResult(status=found_partial, layouts, plans, diagnostics, seed)
         else zero accepted, budget exhausted
-            Solver-->>CLI: SolveResult(status=exhausted_budget, layouts=[], diagnostics, seed)
+            Solver-->>CLI: SolveResult(status=exhausted_budget, layouts=[], plans=[], diagnostics, seed)
         end
     end
 
     loop per accepted layout
-        CLI->>Viz: render(layout)
+        CLI->>Viz: render(layout, moves_plan if --render-paths)
         Viz->>FS: write out_i.png
     end
     CLI->>Op: stdout JSON / stderr status + exit code
 ```
 
 **Spread (if `SearchConfig.spread`, default on):** the valid placements are refined by `_spread` to maximize inter-plane separation (minimize `Σ exp(−gap/scale)`), accepting only moves that stay valid. The spread layout is what proceeds to the diversity filter. See [ADR-0008](../adr/0008-inter-plane-spread-soft-preference.md).
+
+**Tow-plan bundle (if `plan_paths`, default on):** before returning, `solve` tow-plans each accepted layout via `towplanner.plan_fill`, producing `SolveResult.plans` index-aligned with `layouts` — the bundled `(Layout, MovesPlan)` output. This is **best-effort**: a layout the v1 planner cannot route gets `plans[i] = None` (the blocking plane recorded in `diagnostics.unroutable_planes`) rather than being dropped, so `status` stays search-driven (ADR-0007 / [§8 *Movement modes*](08-crosscutting-concepts.md)). The CLI computes the bundle only under `--render-paths` (it overlays each path on the PNG, and exits 3 if no candidate is routable — see the exit-code note below); a plain `solve` invocation passes `plan_paths=False` and pays no planning cost. Tow-planning is RNG-free, so the bundle is bit-identical across runs for a seed.
 
 **Determinism.** Given the same scenario, the same `--seed`, and the
 same project version (same `hangarfit.solve/v1` schema), the returned

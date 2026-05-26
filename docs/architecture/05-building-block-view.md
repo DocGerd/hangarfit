@@ -14,6 +14,7 @@ flowchart TD
     geometry["geometry.py<br/>plane-local → world transform<br/>(determinant −1)"]
     collisions["collisions.py<br/>check(layout) entry<br/>hangar bounds + maintenance + part overlaps"]
     solver["solver.py<br/>RR-MC search<br/>deterministic RNG"]
+    towplanner["towplanner.py<br/>tow-path planning<br/>Dubins + bound-aware Hybrid-A*"]
     visualize["visualize.py<br/>top-down PNG renderer<br/>headless matplotlib"]
 
     cli --> loader
@@ -26,6 +27,11 @@ flowchart TD
 
     solver --> collisions
     solver --> models
+    solver --> towplanner
+
+    towplanner --> collisions
+    towplanner --> geometry
+    towplanner --> models
 
     collisions --> geometry
     collisions --> models
@@ -184,10 +190,50 @@ Internally:
   pre-search literal `trivially_infeasible` returned before the
   search loop runs at all.
 - **Spread post-pass** (`_spread`, `_inter_plane_energy`) — after a layout reaches `(0, 0.0)`, maximizes inter-plane separation by minimizing the repulsion energy `Σ exp(−gap/scale)` while preserving validity. On by default; `--no-spread` / `SearchConfig.spread=False` disables it. See [ADR-0008](../adr/0008-inter-plane-spread-soft-preference.md).
+- **Tow-plan bundling** (`plan_paths=True`, default) — each returned layout is tow-planned via `towplanner.plan_fill`, and the result is index-aligned into `SolveResult.plans`. This is **best-effort**: a layout the v1 planner cannot route gets `plans[i] = None` (and is named in `diagnostics.unroutable_planes`) rather than being discarded — the static layout is the answer, the tow plan is advisory. `status` stays search-driven. See the `towplanner.py` entry below and [ADR-0007](../adr/0007-tow-path-planner-v1-scope.md).
 
 The RNG is single-threaded and seeded for bit-identical reproducibility
 across runs (compliance check:
-`tests/test_solver_canaries.py`).
+`tests/test_solver_canaries.py`). Tow-planning is RNG-free, so the
+bundled `(Layout, MovesPlan)` output preserves the same determinism
+contract.
+
+### `towplanner.py` — tow-path planning
+
+Answers *how* the planes get to a layout, where `solver.py` answers
+*where* they go. Given a target `Layout`, `plan_fill` computes a
+collision-free entry **order** (deepest slot first) and a per-plane
+**path** from the door-cone entry pose to the target slot, returning a
+`MovesPlan` (a tuple of `Move`s, each carrying a `DubinsArc`). Scope is
+the **empty-hangar fill** case — every plane enters once (ADR-0007).
+
+- **Single motion primitive** — every plane is routed as a Dubins path;
+  a cart-borne plane is own-gear with `turn_radius_m = 0` (pivot-in-place),
+  via `Aircraft.effective_turn_radius_m()`. No two-mode (holonomic/Dubins)
+  branch — see §8 *Movement modes*.
+- **Bound-aware Hybrid-A\*** (`plan_path`, [#222](https://github.com/DocGerd/hangarfit/issues/222))
+  — a deterministic search over Dubins motion primitives finds an
+  in-bounds, obstacle-free multi-segment path when a single shortest-arc
+  would clip a wall or an already-placed plane. Bounded by a
+  node-expansion budget; the full returned path is re-validated by the
+  exact `collisions.check`-based oracle (`path_first_conflict`).
+- **Collision-during-motion** reuses the static checker: each sampled
+  pose along an arc is checked against the already-placed subset, so
+  parts / hangar-bounds / bay rules are honoured *during* the tow, not
+  just at the destination. The front gap at the door is exempt during
+  motion (§8 *The door*).
+- **Failure is honest** — a layout it cannot route raises
+  `NoFeasiblePlanError` naming the offending plane; `solve` records it
+  best-effort (see the bundling bullet above), and the CLI's
+  `--render-paths` surfaces it (warning + exit code 3, [§6](06-runtime-view.md)).
+- **Deterministic** (no RNG): a given `Layout` always yields the same
+  `MovesPlan`, preserving [ADR-0003](../adr/0003-rr-mc-solver-algorithm.md)'s
+  contract through the bundle.
+
+The module is pure-data + closed-form geometry plus the Hybrid-A\* search;
+it imports `models`, `geometry`, and `collisions`, and is imported only
+by `solver.py` (the `MovesPlan` type reference in `cli.py` / `visualize.py`
+is annotation-only, under `TYPE_CHECKING`).
 
 ### `visualize.py` — top-down PNG renderer
 
