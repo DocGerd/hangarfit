@@ -16,6 +16,10 @@ jobs:
   fuzz:
     name: Fuzz YAML loader
     runs-on: ubuntu-latest
+    # The Atheris step is time-boxed to 300s and the Hypothesis deep run is
+    # ~100s; this ceiling fails a stuck nightly fast instead of riding the
+    # 6h default job timeout.
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
