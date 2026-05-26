@@ -98,9 +98,11 @@ sequenceDiagram
                 Note over Solver: increment<br/>diversity_rejected_count
             end
         end
-        alt K accepted before budget
-            Solver->>Tow: plan_fill(layout) per accepted layout (if plan_paths)
+        opt plan_paths (default on) — applies to found & found_partial
+            Solver->>Tow: plan_fill(layout) per accepted layout
             Tow-->>Solver: MovesPlan or None (best-effort)
+        end
+        alt K accepted before budget
             Solver-->>CLI: SolveResult(status=found, layouts, plans, diagnostics, seed)
         else some-but-fewer-than-K accepted, budget exhausted
             Solver-->>CLI: SolveResult(status=found_partial, layouts, plans, diagnostics, seed)

@@ -232,8 +232,8 @@ the **empty-hangar fill** case — every plane enters once (ADR-0007).
 
 The module is pure-data + closed-form geometry plus the Hybrid-A\* search;
 it imports `models`, `geometry`, and `collisions`, and is imported only
-by `solver.py` (the `MovesPlan` type reference in `cli.py` / `visualize.py`
-is annotation-only, under `TYPE_CHECKING`).
+by `solver.py` at runtime (the `MovesPlan` type reference in `cli.py`,
+`visualize.py`, and `models.py` is annotation-only, under `TYPE_CHECKING`).
 
 ### `visualize.py` — top-down PNG renderer
 
