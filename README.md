@@ -142,6 +142,7 @@ tests/              # pytest suite, including strut-aware collision golden tests
 
 - [`docs/architecture/`](docs/architecture/) — the project's architecture documentation, in a slim subset of the [Arc42](https://arc42.org/) template. Read [§1 Introduction & Goals](docs/architecture/01-introduction-and-goals.md) and [§3 Context & Scope](docs/architecture/03-context-and-scope.md) first.
 - [`docs/adr/`](docs/adr/) — Architecture Decision Records (the *why* behind the architecture). Start with [ADR-0000](docs/adr/0000-record-architecture-decisions.md), then read individual records as their topics come up.
+- **Security & standards** — [`docs/security-posture.md`](docs/security-posture.md) (OpenSSF Scorecard structural zeros, explained), [`docs/openssf-best-practices-badge.md`](docs/openssf-best-practices-badge.md) (Best Practices Badge answer script), and [`docs/osps-baseline-L1.md`](docs/osps-baseline-L1.md) (OpenSSF Baseline Level-1 self-attestation).
 
 ## More depth
 

@@ -23,6 +23,12 @@ lands, three structural zeros remain in the average.
 If you want to verify any of this against the live data, see
 [Where the score lives](#where-the-score-lives) at the bottom.
 
+This document covers the **Scorecard** picture. The project's **OpenSSF
+Baseline** Level-1 self-attestation — the full 24-control checklist — lives in
+[`osps-baseline-L1.md`](osps-baseline-L1.md); the MFA control documented below
+([Two-factor authentication](#two-factor-authentication-osps-ac-0101)) is the
+one control shared between the two.
+
 ---
 
 ## Code-Review (score 0)
