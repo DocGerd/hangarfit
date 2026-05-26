@@ -683,15 +683,18 @@ class SolverDiagnostics:
     tests can read the same signals as the logger without scraping log
     records.
 
-    ``unroutable_planes`` records, in returned-layout order, the plane
-    the v1 tow-path planner could not route for each layout it failed to
-    plan (one entry per ``None`` in :attr:`SolveResult.plans`). Empty
-    when every returned layout was tow-planned, or when tow-planning was
-    not attempted (``solve(..., plan_paths=False)``). It is **advisory**:
-    the v1 planner (Dubins-only + bounded Hybrid-A*, ADR-0007) has
-    documented false-negatives, so an un-routable layout is still a valid
-    static arrangement — the entry flags a planning gap, not an invalid
-    layout.
+    ``unroutable_planes`` is a flat, advisory list of the blocking plane
+    ids for the layouts the v1 tow-path planner could not route, in
+    returned-layout order. There is one entry per ``None`` in
+    :attr:`SolveResult.plans`, but the tuple is **compacted** (only the
+    failing layouts contribute) — it is *not* positionally indexable to
+    ``plans``/``layouts``; to attribute a failure to a specific layout,
+    read the ``None`` positions in ``plans``. Empty when every returned
+    layout was tow-planned, or when tow-planning was not attempted
+    (``solve(..., plan_paths=False)``). Advisory: the v1 planner
+    (Dubins-only + bounded Hybrid-A* — #222 under ADR-0007) has documented
+    false-negatives, so an un-routable layout is still a valid static
+    arrangement — the entry flags a planning gap, not an invalid layout.
     """
 
     restarts_attempted: int

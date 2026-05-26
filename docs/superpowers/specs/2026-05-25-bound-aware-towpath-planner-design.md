@@ -133,8 +133,8 @@ This planner is a **prerequisite** for #197 (solve integration) to go green/merg
 work already done on the `feature/197-solve-bundled-movesplan` branch is consistent with
 this design and is **kept**:
 
-- **Task 4** (`SolveResult.plans`, `no_feasible_plan` status, `unplannable_plane`) — correct as-is.
-- **Task 5** (solver wires `plan_fill`, fail-whole-solve) — correct; exactly what "keep strict" wants.
+- **Task 4** (`SolveResult.plans`, ~~`no_feasible_plan` status, `unplannable_plane`~~) — `SolveResult.plans` kept; **the `no_feasible_plan` status and `unplannable_plane` field were dropped during #197** (see top banner) — status stays search-driven and diagnostics carries `unroutable_planes: tuple[str, ...]`.
+- **Task 5** (solver wires `plan_fill`, ~~fail-whole-solve~~) — `plan_fill` is wired in, but **fail-whole was reversed to best-effort** (#197, top banner): un-routable layout → `plans[i] = None`, layout kept.
 - **Front-gap exemption** (`_mover_motion_bounds_conflict` + `path_first_conflict` change) — correct; any planner needs it.
 
 The Hybrid-A\* planner is new tracked work (its own issue/PR off `develop`, in milestone

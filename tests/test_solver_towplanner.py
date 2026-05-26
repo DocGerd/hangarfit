@@ -121,3 +121,48 @@ def test_solve_best_effort_real_planner_on_untowable_fill():
     assert any(p is None for p in result.plans)
     assert len(result.diagnostics.unroutable_planes) == sum(1 for p in result.plans if p is None)
     assert result.diagnostics.unroutable_planes  # non-empty
+
+
+def test_solve_k_gt_1_bundle_alignment_with_mixed_routability(monkeypatch):
+    """K>1: the per-layout loop builds an aligned plans tuple with a mix of
+    real plans and None, and unroutable_planes records exactly the failed
+    layouts in order.
+
+    Uses the real RR-MC search to produce multiple diverse layouts, but a
+    selective ``plan_fill`` stub that fails only the *second* layout planned —
+    so we can pin the positional alignment (plans[1] is None, the others are
+    real) deterministically, which no single-alternative test can.
+    """
+    import hangarfit.solver as solver_mod
+    from hangarfit.loader import load_scenario
+    from hangarfit.models import Conflict
+    from hangarfit.solver import solve
+    from hangarfit.towplanner import MovesPlan, NoFeasiblePlanError
+
+    calls = {"n": 0}
+
+    def fail_second_only(target):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            pid = target.placements[0].plane_id
+            raise NoFeasiblePlanError(
+                pid, Conflict.single(kind="no_feasible_path", plane=pid, detail="stub")
+            )
+        return MovesPlan(target_layout=target, moves=())
+
+    monkeypatch.setattr(solver_mod, "plan_fill", fail_second_only)
+
+    scenario = load_scenario("tests/fixtures/solve_fresh_alternatives_three.yaml")
+    result = solve(scenario, budget_s=10.0, alternatives=3, seed=0)
+
+    # This fixture+seed must yield at least 2 diverse layouts for the test to
+    # be meaningful; fail loudly (not vacuously) if the search regresses.
+    assert len(result.layouts) >= 2, f"need >=2 layouts to test K>1 alignment, got {result.layouts}"
+    assert len(result.plans) == len(result.layouts)
+    # The 2nd layout planned is the only failure: positionally aligned None.
+    assert result.plans[0] is not None
+    assert result.plans[1] is None
+    assert all(p is not None for i, p in enumerate(result.plans) if i != 1)
+    # unroutable_planes is the compacted list of exactly that one failure.
+    assert result.diagnostics.unroutable_planes == (result.layouts[1].placements[0].plane_id,)
+    assert len(result.diagnostics.unroutable_planes) == sum(1 for p in result.plans if p is None)

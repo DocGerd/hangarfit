@@ -4,8 +4,9 @@
 > "Layout valid but un-towable → **fail whole solve**" decision below was
 > **reversed to best-effort enrichment** when implementation revealed that the
 > v1 planner cannot route *any* dense multi-plane fill — even the project's own
-> `layouts/example.yaml` and a 6-plane fill in the roomy 30×25 m test hangar are
-> un-towable (spike Risk #1 / ADR-0007: Dubins-only + bounded Hybrid-A* with
+> `layouts/example.yaml`, the tight-hangar `solve_fresh_six_planes.yaml`, and a
+> 6-plane fill in the *roomy* 30×25 m test hangar (`solve_pinned_one_plane.yaml`)
+> are all un-towable (spike Risk #1 / ADR-0007: Dubins-only + bounded Hybrid-A* with
 > documented false-negatives). Fail-whole would have made `hangarfit solve`
 > return `no_feasible_plan` for essentially every realistic scenario, discarding
 > valid static layouts on a heuristic's false negative. The shipped behaviour:

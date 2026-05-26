@@ -275,12 +275,13 @@ def solve(
         # also lands here).
         status: SolveStatus = "found" if len(accepted_layouts) >= alternatives else "found_partial"
         # Tow-plan every returned layout (best-effort enrichment, #197). The
-        # v1 planner (Dubins-only + bounded Hybrid-A*, ADR-0007) cannot route
-        # dense multi-plane fills and has documented false-negatives, so an
-        # un-routable layout is recorded as plans[i]=None rather than discarding
-        # the otherwise-valid static arrangement — the layout is the headline
-        # answer; the tow plan is advisory (spike Risk #8). The `status` stays
-        # search-driven: tow-planning never changes found/found_partial.
+        # v1 planner (Dubins-only + bounded Hybrid-A* — #222 under ADR-0007)
+        # cannot route dense multi-plane fills and has documented
+        # false-negatives, so an un-routable layout is recorded as plans[i]=None
+        # rather than discarding the otherwise-valid static arrangement — the
+        # layout is the headline answer; the tow plan is advisory (spike
+        # Risk #8). The `status` stays search-driven: tow-planning never changes
+        # found/found_partial.
         plans: tuple[MovesPlan | None, ...]
         unroutable: list[str] = []
         if plan_paths:
@@ -291,10 +292,16 @@ def solve(
                 except NoFeasiblePlanError as e:
                     built.append(None)
                     unroutable.append(e.plane_id)
+                    # Log the conflict kind/detail too, not just the plane: it
+                    # distinguishes a genuinely-boxed-in plane from a Hybrid-A*
+                    # budget exhaustion (a known false-negative class), which
+                    # call for different operator responses.
                     _logger.warning(
-                        "layout not tow-routable by the v1 planner: plane %r blocked; "
-                        "returning the valid static layout without a tow plan",
+                        "layout not tow-routable by the v1 planner: plane %r blocked "
+                        "(%s: %s); returning the valid static layout without a tow plan",
                         e.plane_id,
+                        e.conflict.kind,
+                        e.conflict.detail,
                     )
             plans = tuple(built)
         else:
