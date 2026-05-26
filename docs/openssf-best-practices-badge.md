@@ -11,7 +11,7 @@ It also satisfies the Scorecard **CII-Best-Practices** check (code-scanning
 alert #4) once the entry reaches Passing — see
 [`security-posture.md`](security-posture.md) for the broader Scorecard picture.
 
-- **Badge:** **Passing** (100%) — project [12987](https://www.bestpractices.dev/projects/12987), awarded 2026-05-26.
+- **Badge:** **Passing** tier — project [12987](https://www.bestpractices.dev/projects/12987), awarded 2026-05-26 (live status: see the README badge).
 - **Repository:** <https://github.com/DocGerd/hangarfit>
 - **Default branch:** `develop`
 - **License:** Apache-2.0
@@ -19,9 +19,9 @@ alert #4) once the entry reaches Passing — see
 - **Crypto:** none — the tool does no cryptography, so every `crypto_*` criterion is **N/A**.
 
 > **MUST / SHOULD / SUGGESTED:** only unmet **MUST** criteria (or unmet
-> **SHOULD**s without a justified exception) block the badge. The two items
-> below that aren't cleanly Met (`dynamic_analysis`, `crypto_random`) are
-> SUGGESTED/N/A and do **not** block Passing.
+> **SHOULD**s without a justified exception) block the badge. The one Unmet
+> item below (`dynamic_analysis`, SUGGESTED) and the `crypto_*` group (all
+> N/A) do **not** block Passing.
 
 ---
 
@@ -103,7 +103,7 @@ Everything else is mechanical. These three need a human:
 | `test_policy` | **Met** | CONTRIBUTING.md requires tests for any behaviour change. |
 | `tests_are_added` | **Met** | New collision scenarios are added as YAML fixtures per CONTRIBUTING.md. |
 | `tests_documented_added` | **Met** | The add-a-fixture policy is documented in CONTRIBUTING.md. |
-| `warnings` | **Met** | ruff lint (`E,F,I,B,UP,SIM`) + mypy strict; enforced via pre-commit and CI. <https://github.com/DocGerd/hangarfit/blob/develop/.pre-commit-config.yaml> |
+| `warnings` | **Met** | ruff lint (`E,F,I,B,UP,SIM`) enforced via pre-commit + CI; mypy strict enforced in CI. <https://github.com/DocGerd/hangarfit/blob/develop/.github/workflows/ci.yml> |
 | `warnings_fixed` | **Met** | CI fails on lint/format/type findings, so warnings are fixed before merge. |
 | `warnings_strict` | **Met** | mypy `disallow_untyped_defs` on `hangarfit.*`; ruff format `--check` in CI. |
 
