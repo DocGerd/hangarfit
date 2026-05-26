@@ -7,6 +7,7 @@ docs/spikes/tow-path-planning.md. Wave 1 = the leaf primitives only.
 
 from __future__ import annotations
 
+import heapq
 import math
 import typing
 from collections.abc import Callable, Iterator
@@ -665,4 +666,124 @@ def _cell(pose: Pose) -> tuple[int, int, int]:
         round(pose.x_m / _GRID_XY_M),
         round(pose.y_m / _GRID_XY_M),
         round(pose.heading_deg / _GRID_DEG) % _HEADING_BINS,
+    )
+
+
+# ── Hybrid-A* search core ────────────────────────────────────────────────────
+
+
+@dataclass(slots=True)
+class _SearchNode:
+    """A Hybrid-A* node: a pose, its g-cost from start, and the parent link +
+    the primitive segment that produced it (for path reconstruction)."""
+
+    pose: Pose
+    g: float
+    seg: Segment | None
+    parent: _SearchNode | None
+
+
+def _reconstruct_segments(node: _SearchNode) -> list[Segment]:
+    """Segments from the start pose to ``node``, in travel order."""
+    out: list[Segment] = []
+    cur: _SearchNode | None = node
+    while cur is not None and cur.seg is not None:
+        out.append(cur.seg)
+        cur = cur.parent
+    out.reverse()
+    return out
+
+
+def plan_path(
+    mover: Aircraft,
+    entry: Pose,
+    goal: Pose,
+    *,
+    hangar: Hangar,
+    placed: Layout,
+    mover_on_carts: bool,
+    max_expansions: int = _MAX_EXPANSIONS,
+) -> DubinsArc:
+    """Deterministic Hybrid-A* tow path from ``entry`` to ``goal`` (#222).
+
+    Searches continuous ``(x, y, heading)`` with the fixed primitive fan
+    (:func:`_primitives`), grid-binned via :func:`_cell`, an admissible Euclidean
+    heuristic, and an analytic-expansion shortcut: at every popped node a direct
+    ``plan_dubins`` shot to ``goal`` is tried first, so an unobstructed plane
+    finishes in one arc. Edge/shot validity is the front-gap-exempt
+    :func:`path_first_conflict`. The result is a single :class:`DubinsArc` whose
+    segments concatenate the chosen primitives + the final analytic arc (all
+    share ``turn_radius_m``). Raises :class:`NoFeasiblePlanError` when no
+    in-bounds path is found within ``max_expansions``. RNG-free (ADR-0003):
+    fixed primitive order + a monotonic counter tie-break.
+
+    ``hangar`` is unused here (bounds reach the search via ``placed.hangar``
+    inside :func:`path_first_conflict`); it is kept in the signature for
+    stability with the Task-5 fast ``_motion_clear`` path, which consumes it
+    directly.
+    """
+    r = mover.effective_turn_radius_m()
+    start = _SearchNode(entry, 0.0, None, None)
+    counter = 0
+    open_heap: list[tuple[float, int, _SearchNode]] = [
+        (math.hypot(goal.x_m - entry.x_m, goal.y_m - entry.y_m), counter, start)
+    ]
+    best_g: dict[tuple[int, int, int], float] = {_cell(entry): 0.0}
+    last_conflict: Conflict | None = None
+    expansions = 0
+
+    while open_heap:
+        _, _, node = heapq.heappop(open_heap)
+        ckey = _cell(node.pose)
+        # Stale heap entry (a cheaper path to this cell was found after pushing).
+        if best_g.get(ckey, math.inf) < node.g - 1e-9:
+            continue
+
+        # Analytic expansion: try to close to the goal directly.
+        final_arc = plan_dubins(node.pose, goal, turn_radius_m=r)
+        conflict = path_first_conflict(
+            final_arc, mover, mover_on_carts=mover_on_carts, placed=placed
+        )
+        if conflict is None:
+            segs = tuple(_reconstruct_segments(node)) + final_arc.segments
+            # ``final_arc.segments`` is always non-empty (plan_dubins guarantees
+            # it), so ``segs`` cannot be empty; the fallback is belt-and-braces
+            # for DubinsArc's non-empty-segments invariant and never fires.
+            return DubinsArc(entry, goal, r, segs or (Segment("S", 0.0),))
+        last_conflict = conflict
+
+        if expansions >= max_expansions:
+            break
+        expansions += 1
+
+        # Primitive expansion (fixed order L, S, R for determinism).
+        for seg in _primitives(r):
+            child_pose = _step_pose(node.pose, seg, r)
+            edge = DubinsArc(node.pose, child_pose, r, (seg,))
+            edge_conflict = path_first_conflict(
+                edge, mover, mover_on_carts=mover_on_carts, placed=placed
+            )
+            if edge_conflict is not None:
+                last_conflict = edge_conflict
+                continue
+            child_g = node.g + _seg_cost(seg, r)
+            child_key = _cell(child_pose)
+            if child_g < best_g.get(child_key, math.inf) - 1e-9:
+                best_g[child_key] = child_g
+                counter += 1
+                h = math.hypot(goal.x_m - child_pose.x_m, goal.y_m - child_pose.y_m)
+                heapq.heappush(
+                    open_heap,
+                    (child_g + h, counter, _SearchNode(child_pose, child_g, seg, node)),
+                )
+
+    raise NoFeasiblePlanError(
+        mover.id,
+        last_conflict
+        if last_conflict is not None
+        else Conflict.single(
+            kind="hangar_bounds",
+            plane=mover.id,
+            detail="no in-bounds tow path found",
+        ),
     )
