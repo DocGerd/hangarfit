@@ -67,7 +67,7 @@ class Segment:
     independent (a reverse-L backs up while the wheels steer left). ``length_m``
     is the leg's arc length in metres (always ``>= 0``); the integrator applies
     ``gear`` to the translation step. Defaulting ``gear`` to ``+1`` keeps every
-    forward-only (Dubins-era) ``Segment(kind, length)`` call valid (ADR-0010
+    forward-only (Dubins-era) ``Segment(kind, length_m)`` call valid (ADR-0010
     supersedes ADR-0007 fork-2 "Dubins-only")."""
 
     kind: SegmentKind
@@ -87,9 +87,12 @@ class Segment:
 
 @dataclass(frozen=True, slots=True)
 class DubinsArc:
-    """Closed-form shortest path between two oriented poses under a minimum
+    """Closed-form path container between two oriented poses under a minimum
     turn radius. ``turn_radius_m = 0`` denotes a cart-borne pivot-in-place
-    (ADR-0007). ``segments`` is the ordered leg decomposition."""
+    (ADR-0007). ``segments`` is the ordered leg decomposition; a segment may
+    carry ``gear = -1`` for a **reverse** leg (the Reeds–Shepp extension,
+    ADR-0010), so this now holds Reeds–Shepp paths too — the ``Dubins`` in the
+    name is historical (forward-only Dubins was the v1 motion model)."""
 
     start: Pose
     end: Pose
@@ -116,7 +119,8 @@ class DubinsArc:
         angle from ``+x``) and returns a compass-convention :class:`Pose`.
         For a turn segment, ``s_m`` consumed is metres of arc length when
         ``turn_radius_m > 0`` and **radians of pivot** when it is ``0``
-        (the cart pivot-in-place encoding — see :func:`plan_dubins`).
+        (the cart pivot-in-place encoding — see :func:`_plan_cart`, shared by
+        :func:`plan_dubins` and :func:`plan_reeds_shepp`).
         """
         x = self.start.x_m
         y = self.start.y_m
@@ -487,10 +491,11 @@ def _cart_seg_weight(seg: Segment) -> float:
 #
 # Built by the textbook **base-formula + symmetry-generation** method: a small
 # set of base word-solvers (CSC, CCC, CCCC, CCSC, CCSCC) in the NORMALISED math
-# frame, then the three Reeds–Shepp symmetry transforms — TIMEFLIP (reverse all
-# gears + reflect the goal through time), REFLECT (swap L↔R steering + reflect
-# the goal across the x-axis), and BACKWARDS (traverse the word end-to-start) —
-# applied mechanically to enumerate the full word family. This is the standard
+# frame, then two Reeds–Shepp goal symmetries — TIMEFLIP (reverse all gears;
+# the word for the time-reversed goal (-x, y, -phi)) and REFLECT (swap L↔R
+# steering; the word for the x-axis-mirrored goal (x, -y, -phi)) — each base
+# solver evaluated under the four combinations (identity, timeflip, reflect,
+# timeflip+reflect) to enumerate the full word family. This is the standard
 # `reeds_shepp` construction; the base formulas follow Reeds & Shepp (1990) /
 # the OMPL/PythonRobotics presentation.
 #
@@ -1094,20 +1099,23 @@ _SEARCH_STEP_DEG = 5.0
 def _primitives(turn_radius_m: float) -> tuple[Segment, ...]:
     """The fixed motion-primitive fan, in deterministic order (ADR-0010 v2).
 
-    **Six primitives** in fixed order ``Lf, Sf, Rf, Lr, Sr, Rr`` — the three
-    forward steerings (left arc, straight, right arc) then the same three in
-    reverse (gear ``-1``). The reverse primitives are the Reeds–Shepp extension:
-    the search can now back up to reorient instead of driving a full
-    turning-circle loop. Fixed order ⇒ deterministic expansion (ADR-0003).
+    Own-gear (``r > 0``): **six primitives** in fixed order ``Lf, Sf, Rf, Lr,
+    Sr, Rr`` — the three forward steerings (left arc, straight, right arc) then
+    the same three in reverse (gear ``-1``). The reverse primitives are the
+    Reeds–Shepp extension: the search can now back up to reorient instead of
+    driving a full turning-circle loop. Fixed order ⇒ deterministic expansion
+    (ADR-0003).
 
     Own-gear (``r > 0``): each arc/straight is ``step`` metres, chosen so a turn
-    changes heading by ~one heading cell. Cart (``r == 0``): the L/R primitives
-    are pivots of ``math.radians(_GRID_DEG)`` radians and the straight is
-    ``_GRID_XY_M`` metres. A reverse PIVOT is geometrically identical to the
-    forward pivot of the opposite steering, so only the **reverse straight**
-    adds a genuinely new cart move; the reverse pivots are kept for a uniform
-    six-primitive fan (they are redundant, never harmful — the grid de-dups
-    coincident child cells).
+    changes heading by ~one heading cell. Cart (``r == 0``): a reverse PIVOT
+    rotates heading the same way as the forward pivot of the *opposite* steering
+    (``pose_at`` holds position fixed and flips the heading delta for a reverse
+    leg), so ``Lr``/``Rr`` are exact duplicates of ``Rf``/``Lf`` and would only
+    ever lose the ``best_g`` race to their cheaper forward twin — pure dead work
+    (an extra ``_motion_clear`` sweep per expansion that can never win). They are
+    therefore omitted: the cart fan is the four useful moves ``Lf, Sf, Rf, Sr``
+    (forward pivots + straight, plus the genuinely-new **reverse straight** that
+    backs the cart up). Fixed order ⇒ deterministic expansion (ADR-0003).
     """
     if turn_radius_m == 0.0:
         dtheta = math.radians(_GRID_DEG)
@@ -1115,9 +1123,7 @@ def _primitives(turn_radius_m: float) -> tuple[Segment, ...]:
             Segment("L", dtheta),
             Segment("S", _GRID_XY_M),
             Segment("R", dtheta),
-            Segment("L", dtheta, gear=-1),
             Segment("S", _GRID_XY_M, gear=-1),
-            Segment("R", dtheta, gear=-1),
         )
     step = max(_GRID_XY_M, turn_radius_m * math.radians(_GRID_DEG))
     return (
@@ -1150,7 +1156,9 @@ def _seg_cost(seg: Segment, turn_radius_m: float) -> float:
     :data:`_REVERSE_COST_FACTOR` (ADR-0010), so the search prefers forward
     motion and only backs up when it is genuinely cheaper (the nose-out win).
     The factor scales the whole leg cost — translation and turn penalty alike —
-    so a reverse arc is penalised consistently with a reverse straight.
+    so a reverse arc is penalised consistently with a reverse straight. (The
+    cart fan no longer emits reverse pivots — see :func:`_primitives` — so for
+    ``r == 0`` the factor only ever applies to the reverse straight.)
     """
     factor = _REVERSE_COST_FACTOR if seg.gear == -1 else 1.0
     if seg.kind == "S":

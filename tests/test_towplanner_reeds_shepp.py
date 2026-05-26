@@ -206,6 +206,25 @@ def test_cart_reverse_straight_backs_out() -> None:
     assert _heading_close(last.heading_deg, 0.0)
 
 
+def test_cart_prefers_forward_when_not_cheaper_to_reverse() -> None:
+    """Mirror of :func:`test_cart_reverse_straight_backs_out`: a goal directly
+    AHEAD (same heading) is a single FORWARD "S" leg. Backing in would cost a
+    180° pivot + a reverse straight (×_REVERSE_COST_FACTOR) + a 180° pivot, so
+    the forward option is strictly cheaper and `_plan_cart`'s `min((forward,
+    reverse), …)` must keep it — pinning the prefer-forward tie-break (ADR-0003
+    determinism: no gratuitous reverse)."""
+    start = Pose(5.0, 3.0, 0.0)
+    end = Pose(5.0, 8.0, 0.0)  # 5 m straight ahead (heading 0 ⇒ +y)
+    arc = plan_reeds_shepp(start, end, turn_radius_m=0.0)
+    assert arc.turn_radius_m == 0.0
+    assert [s.kind for s in arc.segments] == ["S"]
+    assert arc.segments[0].gear == 1  # forward, not a contrived reverse
+    last = arc.pose_at(arc.length_m)
+    assert last.x_m == pytest.approx(5.0, abs=1e-9)
+    assert last.y_m == pytest.approx(8.0, abs=1e-9)
+    assert _heading_close(last.heading_deg, 0.0)
+
+
 def test_cart_pivot_in_place_still_works_via_reeds_shepp() -> None:
     """RS must degrade to the same pivot-in-place as Dubins for r = 0 when the
     positions coincide (delegation to the cart branch)."""

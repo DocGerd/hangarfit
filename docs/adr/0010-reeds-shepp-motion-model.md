@@ -74,10 +74,13 @@ Concretely:
 - **Cost model — prefer forward.** Word selection minimises
   Σ(`|leg_length|` × factor), where a **reverse** leg carries
   `_REVERSE_COST_FACTOR = 1.5`.
-- **Search integration.** `_primitives` returns **six** primitives in fixed
-  order `Lf, Sf, Rf, Lr, Sr, Rr`; `_seg_cost` multiplies a reverse leg by the
-  factor; the Hybrid-A\* analytic-expansion shot is `plan_reeds_shepp` instead
-  of `plan_dubins`.
+- **Search integration.** Own-gear (`r > 0`): `_primitives` returns **six**
+  primitives in fixed order `Lf, Sf, Rf, Lr, Sr, Rr`. Cart (`r == 0`): **four**
+  — `Lf, Sf, Rf, Sr` — the reverse pivots are omitted because a reverse pivot
+  rotates heading the same way as the opposite forward pivot (an exact duplicate
+  that always loses the `best_g` race), so only the reverse *straight* is a new
+  cart move. `_seg_cost` multiplies a reverse leg by the factor; the Hybrid-A\*
+  analytic-expansion shot is `plan_reeds_shepp` instead of `plan_dubins`.
 - **Cart.** `plan_reeds_shepp` delegates the `turn_radius_m == 0` case to the
   shared `_plan_cart` helper with reverse enabled, so a carted plane may back
   straight out of a slot when that is cheaper.
@@ -143,12 +146,13 @@ word algebra, not a bolt-on. One vocabulary, one cost model, one integrator.
 
 ### Negative
 
-- The search primitive fan **doubled** from 3 (forward L/S/R) to 6 (+ reverse
-  L/S/R), so each Hybrid-A\* expansion screens roughly twice the edges. On an
-  un-towable layout the worst-case budget-exhaustion bail time roughly doubled
-  (the six-plane fresh-fill perf gate went ~26 s → ~50 s; its `slow` ceiling was
-  raised 30 s → 75 s with a documented rationale). A future pass can prune the
-  fan (the reverse cart pivots are redundant with the forward ones) or gate
+- The own-gear search primitive fan **doubled** from 3 (forward L/S/R) to 6 (+
+  reverse L/S/R), so each Hybrid-A\* expansion screens roughly twice the edges.
+  On an un-towable layout the worst-case budget-exhaustion bail time roughly
+  doubled (the six-plane fresh-fill perf gate went ~26 s → ~50 s; its `slow`
+  ceiling was raised 30 s → 75 s with a documented rationale). The redundant
+  reverse *cart* pivots were already pruned (the cart fan is four, not six — see
+  Decision above); a future pass can further trim the own-gear fan or gate
   reverse edges behind a heuristic.
 - Two coexisting closed-form planners (`plan_dubins`, `plan_reeds_shepp`). The
   Hybrid-A\* analytic shot now uses Reeds–Shepp; `plan_dubins` remains for the

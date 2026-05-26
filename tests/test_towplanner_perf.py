@@ -2,8 +2,8 @@
 
 ``slow``-marked (excluded from the default ``pytest`` run; see pyproject
 ``addopts``). ``plan_fill`` now runs a Hybrid-A* search (``plan_path``) per
-plane instead of a single closed-form Dubins shot, so this guards against the
-search running away on realistic, solver-produced layouts.
+plane instead of a single closed-form Reeds–Shepp analytic shot, so this guards
+against the search running away on realistic, solver-produced layouts.
 
 NOTE on scope: on this branch the solver does NOT yet call the planner — that
 bundling is #197 (blocked-by #222). So this gate drives ``plan_fill`` DIRECTLY

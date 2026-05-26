@@ -27,17 +27,19 @@ def test_primitives_own_gear_are_six_in_lf_sf_rf_lr_sr_rr_order() -> None:
     assert all(s.length_m > 0.0 for s in segs)
 
 
-def test_primitives_cart_are_six_pivot_straight_in_order() -> None:
-    # Cart (r == 0): the same six-primitive fan. Pivots encode one heading cell
-    # in radians; the straights encode metres. Reverse straight is the new cart
-    # move (ADR-0010); reverse pivots are redundant but kept for a uniform fan.
+def test_primitives_cart_are_four_pivot_straight_in_order() -> None:
+    # Cart (r == 0): four primitives Lf, Sf, Rf, Sr. Pivots encode one heading
+    # cell in radians; the straights encode metres. The reverse STRAIGHT is the
+    # genuinely-new cart move (ADR-0010); reverse pivots are omitted because a
+    # reverse pivot rotates heading the same way as the opposite forward pivot
+    # (an exact duplicate that always loses the best_g race — pure dead work).
     segs = _primitives(turn_radius_m=0.0)
-    assert [s.kind for s in segs] == ["L", "S", "R", "L", "S", "R"]
-    assert [s.gear for s in segs] == [1, 1, 1, -1, -1, -1]
+    assert [s.kind for s in segs] == ["L", "S", "R", "S"]
+    assert [s.gear for s in segs] == [1, 1, 1, -1]
     assert segs[0].length_m == pytest.approx(math.radians(15.0))
     assert segs[1].length_m == pytest.approx(0.5)
     assert segs[2].length_m == pytest.approx(math.radians(15.0))
-    assert segs[4].length_m == pytest.approx(0.5)  # reverse straight, metres
+    assert segs[3].length_m == pytest.approx(0.5)  # reverse straight, metres
 
 
 def test_step_pose_straight_advances_along_heading() -> None:
@@ -127,8 +129,8 @@ def _winged_plane(pid: str, *, span_m: float = 10.0, turn_radius_m: float = 5.0)
 
 
 def test_plan_path_clear_straight_is_a_single_analytic_shot() -> None:
-    # Slot straight ahead, same heading: the start node's analytic Dubins shot
-    # is clear, so the search returns immediately with that arc's endpoint.
+    # Slot straight ahead, same heading: the start node's analytic Reeds–Shepp
+    # shot is clear, so the search returns immediately with that arc's endpoint.
     h = _hangar()
     plane = _winged_plane("A", span_m=6.0)
     placed = Layout(fleet={"A": plane}, hangar=h, placements=())
@@ -142,8 +144,8 @@ def test_plan_path_clear_straight_is_a_single_analytic_shot() -> None:
 
 
 def test_plan_path_finds_inbounds_path_when_direct_shot_sweeps_a_wing_out() -> None:
-    # Moderately wide wing + a 90-degree final heading: the direct shortest Dubins
-    # shot picks a long R-S-L arc that sweeps the left wing tip outside x=0, so the
+    # Moderately wide wing + a 90-degree final heading: the direct shortest
+    # Reeds–Shepp shot sweeps the left wing tip outside x=0, so the
     # search must maneuver. Geometry chosen so plan_path resolves within budget
     # (span=6 in a 14m hangar; the 10m-span/18m-hangar original is physically
     # infeasible for any heading-change path — see Task 3 report).
@@ -226,7 +228,7 @@ def test_plan_path_canary_pins_a_known_maneuver() -> None:
     kinds = "".join(s.kind for s in arc.segments)
     gears = [s.gear for s in arc.segments]
     # Values pinned from first green run on the Reeds–Shepp motion model
-    # (ADR-0010, 2026-05-26). The path now closes in a single LRL Reeds–Shepp
+    # (ADR-0010, 2026-05-27). The path now closes in a single LRL Reeds–Shepp
     # analytic shot whose final arc is driven in REVERSE (gear −1) — the
     # back-up-to-reorient maneuver Reeds–Shepp unlocks, far shorter than the
     # forward-only Dubins SSSRSL it replaced (16.82 m → 6.60 m). If this
