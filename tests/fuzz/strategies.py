@@ -3,8 +3,9 @@
 Shared by the pytest property suite (``test_loader_fuzz.py``) and the Atheris
 bridge harness (``atheris_loader_harness.py``) so input construction lives in
 exactly one place. Each ``run_*`` helper encodes the loader contract: the
-loader must either return a model or raise ``LoaderError``; any other
-exception propagates and is reported as a fuzz finding.
+loader must either return normally (a model object or a fleet dict) or raise
+``LoaderError``; any other exception propagates and is reported as a fuzz
+finding.
 """
 
 from __future__ import annotations
@@ -102,6 +103,190 @@ def _maybe_drop_keys(draw: Any, doc_strategy: st.SearchStrategy[Any]) -> Any:
     return doc
 
 
+# --- valid-biased primitives + well-formed generators ---
+# The adversarial branches above test the loader's perimeter guards (type
+# coercion, missing keys). These well-formed branches exist so the fuzzer
+# also REACHES the deep logic — strut expansion and the model constructors
+# (where model __post_init__ invariants + the loader's ValueError->LoaderError
+# wrap live), which the all-noise distribution reaches ~0% of the time.
+_finite = st.floats(min_value=-1e4, max_value=1e4, allow_nan=False, allow_infinity=False)
+_positive = st.floats(min_value=0.1, max_value=1e3, allow_nan=False, allow_infinity=False)
+# Bool fields, including the quoted-string YAML footgun _to_bool() rejects.
+_bool_garbage = st.one_of(
+    st.booleans(),
+    st.sampled_from(["true", "false", "yes", "no", "1", "0"]),
+    st.none(),
+    st.integers(),
+)
+
+
+def _valid_part_doc(kind: str) -> st.SearchStrategy[Any]:
+    """A part dict that satisfies Part.__post_init__ (positive dims, z_top>z_bottom>=0)."""
+    return st.builds(
+        lambda length, width, zb, dz: {
+            "kind": kind,
+            "length_m": length,
+            "width_m": width,
+            "z_bottom_m": zb,
+            "z_top_m": zb + dz,
+        },
+        _positive,
+        _positive,
+        st.floats(min_value=0.0, max_value=5.0, allow_nan=False, allow_infinity=False),
+        _positive,
+    )
+
+
+@st.composite
+def _well_formed_aircraft(draw: Any, *, with_struts: bool) -> dict[str, Any]:
+    """An aircraft dict that builds a valid Aircraft; with_struts also exercises
+    _expand_struts (wing above the fuselage attach, strictly positive span)."""
+    fus_z = draw(st.floats(min_value=0.0, max_value=1.0, allow_nan=False, allow_infinity=False))
+    parts: list[dict[str, Any]] = [draw(_valid_part_doc("fuselage"))]
+    entry: dict[str, Any] = {
+        "id": draw(
+            st.one_of(
+                st.sampled_from(["p1", "p2"]),
+                st.text(st.characters(codec="utf-8"), min_size=1, max_size=8),
+            )
+        ),
+        "name": draw(st.text(st.characters(codec="utf-8"), min_size=1, max_size=10)),
+        "wing_position": draw(st.sampled_from(["high", "mid", "low"])),
+        "gear": draw(st.sampled_from(["tailwheel", "nosewheel", "monowheel"])),
+        "movement_mode": "always_cart",  # avoids the turn_radius requirement
+        "measured": draw(st.booleans()),
+        "parts": parts,
+    }
+    if with_struts:
+        wing_zb = draw(
+            st.floats(
+                min_value=fus_z + 0.5, max_value=fus_z + 3.0, allow_nan=False, allow_infinity=False
+            )
+        )
+        parts.append(
+            {
+                "kind": "wing",
+                "length_m": draw(_positive),
+                "width_m": draw(_positive),
+                "z_bottom_m": wing_zb,  # strictly above fus_z -> passes _expand_struts guard
+                "z_top_m": wing_zb + draw(_positive),
+            }
+        )
+        fus_y = draw(st.floats(min_value=0.0, max_value=0.5, allow_nan=False, allow_infinity=False))
+        wing_y = draw(
+            st.floats(
+                min_value=fus_y + 0.5, max_value=fus_y + 3.0, allow_nan=False, allow_infinity=False
+            )
+        )
+        entry["struts"] = {
+            "fuselage_attach_x_m": draw(_finite),
+            "fuselage_attach_y_m": fus_y,
+            "fuselage_attach_z_m": fus_z,
+            "wing_attach_y_m": wing_y,  # > fus_y -> strictly positive span
+            "width_m": draw(_positive),
+        }
+    return entry
+
+
+def _well_formed_fleet_doc() -> st.SearchStrategy[Any]:
+    return st.builds(
+        lambda planes: {"aircraft": planes},
+        st.lists(
+            st.one_of(
+                _well_formed_aircraft(with_struts=False),
+                _well_formed_aircraft(with_struts=True),
+            ),
+            min_size=1,
+            max_size=3,
+        ),
+    )
+
+
+@st.composite
+def _well_formed_hangar_doc(draw: Any) -> dict[str, Any]:
+    """A hangar dict that builds a valid Hangar (door & bay fit, depth < length)."""
+    width = draw(st.floats(min_value=10.0, max_value=50.0, allow_nan=False, allow_infinity=False))
+    length = draw(st.floats(min_value=10.0, max_value=80.0, allow_nan=False, allow_infinity=False))
+    dw = draw(st.floats(min_value=1.0, max_value=width, allow_nan=False, allow_infinity=False))
+    dcx = draw(
+        st.floats(min_value=dw / 2, max_value=width - dw / 2, allow_nan=False, allow_infinity=False)
+    )
+    bw = draw(st.floats(min_value=1.0, max_value=width, allow_nan=False, allow_infinity=False))
+    bcx = draw(
+        st.floats(min_value=bw / 2, max_value=width - bw / 2, allow_nan=False, allow_infinity=False)
+    )
+    depth = draw(
+        st.floats(min_value=0.5, max_value=length - 0.5, allow_nan=False, allow_infinity=False)
+    )
+    return {
+        "length_m": length,
+        "width_m": width,
+        "door": {"center_x_m": dcx, "width_m": dw},
+        "maintenance_bay": {"center_x_m": bcx, "width_m": bw, "depth_m": depth},
+        "clearance_m": draw(
+            st.floats(min_value=0.0, max_value=2.0, allow_nan=False, allow_infinity=False)
+        ),
+        "wing_layer_clearance_m": draw(
+            st.floats(min_value=0.0, max_value=2.0, allow_nan=False, allow_infinity=False)
+        ),
+    }
+
+
+@st.composite
+def _corrupt_one_field(draw: Any, doc_strategy: st.SearchStrategy[Any]) -> Any:
+    """Take a well-formed dict and replace ONE field with an adversarial scalar,
+    so the doc reaches deep but trips a model invariant -> exercises the
+    loader's ValueError/TypeError -> LoaderError wrap (not just the perimeter)."""
+    doc = draw(doc_strategy)
+    if isinstance(doc, dict) and doc:
+        key = draw(st.sampled_from(sorted(doc)))
+        doc = dict(doc)
+        doc[key] = draw(_scalars)
+    return doc
+
+
+def _well_formed_layout_doc() -> st.SearchStrategy[Any]:
+    """A layout that reaches Layout(...) construction: places real ids (p1/p2)
+    with valid coords and on_carts=True (always_cart consistency). Sometimes
+    names a maintenance plane (placed -> exercises the maintenance-in-placements
+    LoaderError; unplaced -> valid)."""
+    placement = st.builds(
+        lambda pid, x, y, h: {"plane": pid, "x_m": x, "y_m": y, "heading_deg": h, "on_carts": True},
+        st.sampled_from(["p1", "p2"]),
+        _finite,
+        _finite,
+        _finite,
+    )
+    return st.builds(
+        lambda places, maint: (
+            {"placements": places, "maintenance": {"plane": maint}}
+            if maint is not None
+            else {"placements": places}
+        ),
+        st.lists(placement, max_size=2, unique_by=lambda p: p["plane"]),
+        st.one_of(st.none(), st.sampled_from(["p1", "p2"])),
+    )
+
+
+def _well_formed_scenario_doc() -> st.SearchStrategy[Any]:
+    """A scenario that reaches Scenario(...) construction: fleet_in of real ids,
+    optionally a valid pin constraint."""
+    pin = st.builds(
+        lambda x, y, h: {"pin": {"x_m": x, "y_m": y, "heading_deg": h, "on_carts": True}},
+        _finite,
+        _finite,
+        _finite,
+    )
+    return st.builds(
+        lambda fin, cons: {"fleet_in": fin, "constraints": cons} if cons else {"fleet_in": fin},
+        st.lists(st.sampled_from(["p1", "p2"]), min_size=1, max_size=2, unique=True),
+        st.one_of(
+            st.just({}),
+            st.builds(lambda c: {"p1": c}, pin),
+        ),
+    )
+
+
 # --- per-entry-point document strategies ---
 def _part_docs() -> st.SearchStrategy[Any]:
     full = st.fixed_dictionaries(
@@ -142,13 +327,25 @@ def fleet_documents() -> st.SearchStrategy[Any]:
         },
         optional={
             "turn_radius_m": _scalars,
-            "measured": _scalars,
+            "measured": _bool_garbage,
             "struts": _struts_docs(),
             "notes": _safe_text,
         },
     )
     top = st.fixed_dictionaries({"aircraft": st.lists(_maybe_drop_keys(aircraft), max_size=4)})
-    return st.one_of(_maybe_drop_keys(top), st.none(), st.lists(st.integers()), _safe_text)
+    return st.one_of(
+        _maybe_drop_keys(top),
+        _well_formed_fleet_doc(),
+        st.builds(
+            lambda planes: {"aircraft": planes},
+            st.lists(
+                _corrupt_one_field(_well_formed_aircraft(with_struts=True)), min_size=1, max_size=2
+            ),
+        ),
+        st.none(),
+        st.lists(st.integers()),
+        _safe_text,
+    )
 
 
 def hangar_documents() -> st.SearchStrategy[Any]:
@@ -163,13 +360,19 @@ def hangar_documents() -> st.SearchStrategy[Any]:
         },
         optional={"clearance_m": _scalars, "wing_layer_clearance_m": _scalars},
     )
-    return st.one_of(_maybe_drop_keys(top), st.none(), _safe_text)
+    return st.one_of(
+        _maybe_drop_keys(top),
+        _well_formed_hangar_doc(),
+        _corrupt_one_field(_well_formed_hangar_doc()),
+        st.none(),
+        _safe_text,
+    )
 
 
 def layout_documents() -> st.SearchStrategy[Any]:
     placement = st.fixed_dictionaries(
         {"plane": _plane_ids, "x_m": _scalars, "y_m": _scalars, "heading_deg": _scalars},
-        optional={"on_carts": _scalars},
+        optional={"on_carts": _bool_garbage},
     )
     maintenance = st.one_of(
         st.none(),
@@ -180,16 +383,19 @@ def layout_documents() -> st.SearchStrategy[Any]:
         {"placements": st.lists(_maybe_drop_keys(placement), max_size=4)},
         optional={"maintenance": maintenance},
     )
-    return st.one_of(_maybe_drop_keys(top), st.none(), _safe_text)
+    return st.one_of(_maybe_drop_keys(top), _well_formed_layout_doc(), st.none(), _safe_text)
 
 
 def scenario_documents() -> st.SearchStrategy[Any]:
     pin = st.fixed_dictionaries(
-        {"x_m": _scalars, "y_m": _scalars, "heading_deg": _scalars, "on_carts": _scalars}
+        {"x_m": _scalars, "y_m": _scalars, "heading_deg": _scalars, "on_carts": _bool_garbage}
     )
     constraint = st.fixed_dictionaries(
         {},
-        optional={"pin": st.one_of(_maybe_drop_keys(pin), st.none()), "force_on_carts": _scalars},
+        optional={
+            "pin": st.one_of(_maybe_drop_keys(pin), st.none()),
+            "force_on_carts": _bool_garbage,
+        },
     )
     top = st.fixed_dictionaries(
         {"fleet_in": st.lists(_plane_ids, max_size=4)},
@@ -198,12 +404,12 @@ def scenario_documents() -> st.SearchStrategy[Any]:
             "constraints": st.dictionaries(_plane_ids, constraint, max_size=3),
         },
     )
-    return st.one_of(_maybe_drop_keys(top), st.none(), _safe_text)
+    return st.one_of(_maybe_drop_keys(top), _well_formed_scenario_doc(), st.none(), _safe_text)
 
 
 def raw_documents() -> st.SearchStrategy[Any]:
     """Raw parse-layer inputs: arbitrary text/bytes fed straight to a loader,
-    exercising _read_yaml and the top-level-shape guards. st.binary() covers
+    exercising the parse layer and the top-level-shape guards. st.binary() covers
     invalid-UTF-8 (guarded in the loader)."""
     return st.one_of(st.text(st.characters(codec="utf-8"), max_size=200), st.binary(max_size=200))
 
