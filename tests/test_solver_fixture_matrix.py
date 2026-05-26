@@ -20,6 +20,26 @@ from hangarfit.solver import _heading_delta_short_arc, solve
 FIXTURES = "tests/fixtures"
 
 
+@pytest.fixture(autouse=True)
+def _stub_towplanning(monkeypatch):
+    """Keep these fixture-matrix tests fast by stubbing tow-planning.
+
+    solve() tow-plans every returned layout by default (``plan_paths=True``,
+    #197), and tow-planning runs a bounded Hybrid-A* search per plane —
+    seconds on a multi-plane fill. These tests assert the user-facing
+    *layout* contract (status, validity, pins, cart locks), never on
+    ``plans``, so a trivial ``plan_fill`` stub preserves the default code
+    path while removing the cost. The real planner↔solver integration lives
+    in ``tests/test_solver_towplanner.py``.
+    """
+    import hangarfit.solver as solver_mod
+    from hangarfit.towplanner import MovesPlan
+
+    monkeypatch.setattr(
+        solver_mod, "plan_fill", lambda target: MovesPlan(target_layout=target, moves=())
+    )
+
+
 def _assert_universal_properties(r: SolveResult, max_wall_time_s: float | None = None) -> None:
     """Apply spec §6.2 property assertions that every fixture test
     shares: status enum, every layout independently valid, seed populated,

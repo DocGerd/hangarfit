@@ -178,11 +178,9 @@ class MovesPlan:
     """A full entry plan: the target layout plus the moves in execution order.
 
     Deliberately carries no sequence-level cart-usage tally (ADR-0007
-    open question). The ``target_layout`` type is ``Layout`` at runtime; kept as
-    ``object`` to avoid tightening the bundled-output public API until #197
-    locks its shape."""
+    open question)."""
 
-    target_layout: object
+    target_layout: Layout
     moves: tuple[Move, ...]
 
 

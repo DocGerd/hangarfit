@@ -2,6 +2,28 @@
 
 from __future__ import annotations
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _stub_towplanning(monkeypatch):
+    """Keep these infeasibility/smoke tests fast by stubbing tow-planning.
+
+    solve() tow-plans every returned layout by default (``plan_paths=True``,
+    #197), and tow-planning runs a bounded Hybrid-A* search per plane —
+    seconds on a multi-plane fill. These tests assert on status/seed/diagnostics,
+    never on ``plans``, so a trivial ``plan_fill`` stub preserves the default
+    code path while removing the cost (the trivially-infeasible cases never
+    reach tow-planning anyway). The real planner↔solver integration lives in
+    ``tests/test_solver_towplanner.py``.
+    """
+    import hangarfit.solver as solver_mod
+    from hangarfit.towplanner import MovesPlan
+
+    monkeypatch.setattr(
+        solver_mod, "plan_fill", lambda target: MovesPlan(target_layout=target, moves=())
+    )
+
 
 def test_solve_resolves_none_seed_to_entropy():
     """seed=None resolves to a random int and is recorded in diagnostics."""

@@ -5,6 +5,26 @@ from __future__ import annotations
 import pytest
 
 
+@pytest.fixture(autouse=True)
+def _stub_towplanning(monkeypatch):
+    """Keep these search/spread tests fast by stubbing tow-planning.
+
+    solve() tow-plans every returned layout by default (``plan_paths=True``,
+    #197), and tow-planning runs a bounded Hybrid-A* search per plane —
+    seconds on a multi-plane fill. These tests assert on the *layouts*
+    (placements, gaps, determinism), never on ``plans``, so a trivial
+    ``plan_fill`` stub preserves the default code path while removing the
+    cost. The real planner↔solver integration lives in
+    ``tests/test_solver_towplanner.py``.
+    """
+    import hangarfit.solver as solver_mod
+    from hangarfit.towplanner import MovesPlan
+
+    monkeypatch.setattr(
+        solver_mod, "plan_fill", lambda target: MovesPlan(target_layout=target, moves=())
+    )
+
+
 def _min_pairwise_gap(layout, scenario) -> float:
     """Smallest plan-view edge-to-edge gap between any two planes in a layout."""
     from hangarfit.geometry import aircraft_parts_world
