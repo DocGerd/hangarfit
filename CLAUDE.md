@@ -192,6 +192,20 @@ pip-compile --generate-hashes --no-strip-extras --extra dev -o requirements-dev.
 # pip-tools 7.5.3 on Python 3.12.
 pip-compile --generate-hashes --no-strip-extras --allow-unsafe -o requirements-build.txt requirements-build.in
 
+# Regenerate the hash-pinned PIP-TOOLS bootstrap lockfile. Source is
+# `requirements-pip-tools.in` (a single `pip-tools==7.5.3` pin). This is
+# the toolchain the two lockfile-drift guard jobs install to regenerate
+# the dev + build lockfiles above — hash-pinning it closes the residual
+# `pipCommand not pinned by hash` Scorecard finding on the bare
+# `pip install pip-tools==7.5.3` the guards used to run (#224). Required
+# after bumping the pip-tools pin (do that here AND in the `.in`, in
+# lockstep with the version named in the two regeneration commands
+# above). `--allow-unsafe` is REQUIRED — pip-tools depends on
+# setuptools/wheel, which pip-tools comments out by default; `--require-
+# hashes` is all-or-nothing, so an un-pinned transitive dep would make
+# the guard-job install fail. Same toolchain: pip-tools 7.5.3 / Python 3.12.
+pip-compile --generate-hashes --no-strip-extras --allow-unsafe -o requirements-pip-tools.txt requirements-pip-tools.in
+
 # CI: GitHub Actions runs `pytest` on Python 3.12 for PRs into
 # develop/main (see .github/workflows/ci.yml). CI installs dev deps
 # from the hash-pinned `requirements-dev.txt` with `--require-hashes`,
