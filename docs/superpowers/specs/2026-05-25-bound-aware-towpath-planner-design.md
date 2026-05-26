@@ -4,6 +4,19 @@
 > spike's v2 obstacle/bound-aware path planning ([docs/spikes/tow-path-planning.md](../../spikes/tow-path-planning.md) Q3)
 > because the shipped v1 single-Dubins planner cannot tow the real fleet.
 > Next step: `superpowers:writing-plans` → implementation plan.
+>
+> **⚠️ Updated by #197 implementation (2026-05-26).** Two assumptions in this
+> spec proved false and were revised: (1) **"Decision-3 / fail-whole-solve"**
+> (referenced in §1, §4 failure semantics, §6 Tasks 4–5) was **reversed to
+> best-effort enrichment** — `solve()` keeps every valid layout and sets
+> `plans[i] = None` where the planner can't route it; the `no_feasible_plan`
+> status was dropped. (2) The §5 acceptance expectation that the bound-aware
+> planner would return the fixture matrix to `found` **with populated plans** was
+> too optimistic: even Hybrid-A* cannot route dense multi-plane fills in v1
+> (the 6-plane fixtures and `layouts/example.yaml` are un-towable), so the matrix
+> returns `found` with best-effort **`None`** plans. The planner is a real
+> improvement (it routes cases single-Dubins could not), but dense-fill routing
+> remains v2 (RRT-Connect). See the #197 PR for the shipped behaviour.
 
 ## 1. Problem & motivation
 
