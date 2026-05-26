@@ -262,3 +262,52 @@ jobs:
             echo "::error::requirements-build.txt is out of sync. Regenerate on Python 3.12 with pip-tools==7.5.3: pip-compile --generate-hashes --no-strip-extras --allow-unsafe -o requirements-build.txt requirements-build.in"
             exit 1
           fi
+
+  fuzz-lockfile-drift:
+    # Sibling of build-lockfile-drift, for requirements-fuzz.txt (the
+    # hash-pinned Atheris toolchain consumed only by the nightly fuzz
+    # workflow). Source is requirements-fuzz.in, which constrains shared
+    # transitives to requirements-dev.txt via `-c`. Guards two silent-drift
+    # paths: (1) requirements-fuzz.in edited but the lockfile not regenerated;
+    # (2) a constrained transitive bumped in requirements-dev.txt without
+    # regenerating here.
+    name: fuzz lockfile drift check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install pip-tools (hash-pinned)
+        run: pip install --require-hashes -r requirements-pip-tools.txt
+
+      - name: Regenerate fuzz lockfile against existing pins
+        run: |
+          cp requirements-fuzz.txt /tmp/expected-fuzz.txt
+          pip-compile --quiet --generate-hashes --no-strip-extras -o /tmp/expected-fuzz.txt requirements-fuzz.in
+
+      - name: Compare package==version sets
+        run: |
+          extract() {
+            { grep -E '^[A-Za-z0-9][A-Za-z0-9._-]*(\[[A-Za-z0-9._,-]+\])?==' "$1" || true; } \
+              | sed 's/ *\\$//' | sort
+          }
+          extract requirements-fuzz.txt > /tmp/committed-fuzz.set
+          extract /tmp/expected-fuzz.txt > /tmp/regenerated-fuzz.set
+          if [ ! -s /tmp/committed-fuzz.set ] || [ ! -s /tmp/regenerated-fuzz.set ]; then
+            echo "::error::extract() produced an empty package set — the regex in .github/workflows/ci.yml no longer matches the lockfile format. Update the guard."
+            exit 1
+          fi
+          for pkg in atheris; do
+            grep -qE "^${pkg}==" /tmp/regenerated-fuzz.set || {
+              echo "::error::fuzz lockfile regeneration dropped a declared dependency: ${pkg} — pip-compile may have produced partial output."
+              exit 1
+            }
+          done
+          if ! diff -u /tmp/committed-fuzz.set /tmp/regenerated-fuzz.set; then
+            echo "::error::requirements-fuzz.txt is out of sync. Regenerate on Python 3.12 with pip-tools==7.5.3: pip-compile --generate-hashes --no-strip-extras -o requirements-fuzz.txt requirements-fuzz.in"
+            exit 1
+          fi
