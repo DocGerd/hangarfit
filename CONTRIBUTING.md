@@ -9,6 +9,17 @@ review.
 
 ---
 
+## Code of Conduct
+
+This project adopts the [Contributor Covenant](CODE_OF_CONDUCT.md). By taking
+part — issues, pull requests, discussions — you agree to uphold it. Report
+unacceptable behaviour via a
+[private security advisory](https://github.com/DocGerd/hangarfit/security/advisories/new)
+or a direct message to [@DocGerd](https://github.com/DocGerd), as described in
+[`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md).
+
+---
+
 ## First-time setup
 
 1. Install dev dependencies:
@@ -107,6 +118,12 @@ Before the PR can merge:
 ---
 
 ## Code review
+
+**Every change is reviewed before it is released.** No commit reaches `develop`
+or `main` except through a pull request that has been reviewed and had its
+findings resolved — the maintainer does not merge unreviewed changes. This is
+enforced socially by the process below and structurally by branch protection
+(direct pushes to `develop`/`main` are blocked).
 
 The project uses the `pr-review-toolkit` — invoke it with `/pr-review` in
 the Claude Code CLI. Reviewers file findings as **review threads on the diff**,
