@@ -35,6 +35,7 @@ from hangarfit.models import (
     SolveResult,
     SolveStatus,
 )
+from hangarfit.towplanner import MovesPlan, NoFeasiblePlanError, plan_fill
 
 _logger = logging.getLogger(__name__)
 
@@ -47,10 +48,24 @@ def solve(
     seed: int | None = None,
     diversity: DiversityConfig | None = None,
     search: SearchConfig | None = None,
+    plan_paths: bool = True,
 ) -> SolveResult:
     """Solve a Scenario into up to ``alternatives`` diverse valid Layouts.
 
     See spec §3.3 for the contract.
+
+    When ``plan_paths`` is ``True`` (the default), each returned layout is
+    also tow-planned (#197): ``result.plans[i]`` is the
+    :class:`~hangarfit.towplanner.MovesPlan` for ``result.layouts[i]``, or
+    ``None`` where the v1 planner could not route it (best-effort
+    enrichment — a ``None`` plan never discards an otherwise-valid layout;
+    see ADR-0007 and :class:`~hangarfit.models.SolveResult`). Pass
+    ``plan_paths=False`` to skip tow-planning entirely — useful when only
+    the static layout is needed, since tow-planning runs a bounded
+    Hybrid-A* search per plane and is the dominant cost on multi-plane
+    fills. With it off, ``plans`` is all-``None`` (still index-aligned).
+    Tow-planning is RNG-free, so it preserves the seeded determinism
+    contract (ADR-0003) end-to-end through the bundle.
     """
     if diversity is None:
         diversity = DiversityConfig()
@@ -259,9 +274,42 @@ def solve(
         # is one driver, but any K>1 run that runs out of budget mid-fill
         # also lands here).
         status: SolveStatus = "found" if len(accepted_layouts) >= alternatives else "found_partial"
+        # Tow-plan every returned layout (best-effort enrichment, #197). The
+        # v1 planner (Dubins-only + bounded Hybrid-A* — #222 under ADR-0007)
+        # cannot route dense multi-plane fills and has documented
+        # false-negatives, so an un-routable layout is recorded as plans[i]=None
+        # rather than discarding the otherwise-valid static arrangement — the
+        # layout is the headline answer; the tow plan is advisory (spike
+        # Risk #8). The `status` stays search-driven: tow-planning never changes
+        # found/found_partial.
+        plans: tuple[MovesPlan | None, ...]
+        unroutable: list[str] = []
+        if plan_paths:
+            built: list[MovesPlan | None] = []
+            for layout in accepted_layouts:
+                try:
+                    built.append(plan_fill(layout))
+                except NoFeasiblePlanError as e:
+                    built.append(None)
+                    unroutable.append(e.plane_id)
+                    # Log the conflict kind/detail too, not just the plane: it
+                    # distinguishes a genuinely-boxed-in plane from a Hybrid-A*
+                    # budget exhaustion (a known false-negative class), which
+                    # call for different operator responses.
+                    _logger.warning(
+                        "layout not tow-routable by the v1 planner: plane %r blocked "
+                        "(%s: %s); returning the valid static layout without a tow plan",
+                        e.plane_id,
+                        e.conflict.kind,
+                        e.conflict.detail,
+                    )
+            plans = tuple(built)
+        else:
+            plans = (None,) * len(accepted_layouts)
         return SolveResult(
             status=status,
             layouts=tuple(accepted_layouts),
+            plans=plans,
             diagnostics=SolverDiagnostics(
                 restarts_attempted=restart_index,
                 wall_time_s=elapsed,
@@ -270,6 +318,7 @@ def solve(
                 seed=resolved_seed,
                 diversity_impossible=diversity_impossible,
                 diversity_rejected_count=diversity_rejected_count,
+                unroutable_planes=tuple(unroutable),
             ),
         )
     bp = check_layout(best_partial_layout) if best_partial_layout is not None else None
