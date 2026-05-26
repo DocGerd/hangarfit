@@ -695,6 +695,14 @@ class SolverDiagnostics:
     (Dubins-only + bounded Hybrid-A* — #222 under ADR-0007) has documented
     false-negatives, so an un-routable layout is still a valid static
     arrangement — the entry flags a planning gap, not an invalid layout.
+
+    ``min_pairwise_gap_m`` is index-aligned with :attr:`SolveResult.layouts`:
+    the achieved minimum plan-view gap (m) between any two planes in that
+    returned layout — the quality the best-of-all-basins spread selection
+    maximizes (#267, ADR-0008). ``math.inf`` for a layout with <2 planes
+    (no pairs). ``valid_basins_found`` is the number of valid spread-polished
+    basins the search collected before selection — how much choice best-of-all
+    had. Both are advisory.
     """
 
     restarts_attempted: int
@@ -705,6 +713,8 @@ class SolverDiagnostics:
     diversity_impossible: bool = False
     diversity_rejected_count: int = 0
     unroutable_planes: tuple[str, ...] = ()
+    min_pairwise_gap_m: tuple[float, ...] = ()
+    valid_basins_found: int = 0
 
     def __post_init__(self) -> None:
         if (self.best_partial is None) != (self.best_partial_layout is None):
@@ -724,6 +734,10 @@ class SolverDiagnostics:
             raise ValueError(
                 f"SolverDiagnostics.diversity_rejected_count must be >= 0, "
                 f"got {self.diversity_rejected_count}"
+            )
+        if self.valid_basins_found < 0:
+            raise ValueError(
+                f"SolverDiagnostics.valid_basins_found must be >= 0, got {self.valid_basins_found}"
             )
 
 

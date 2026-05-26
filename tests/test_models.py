@@ -1057,3 +1057,41 @@ class TestSolveResultPlans:
         stray = MovesPlan(target_layout=_make_valid_layout(), moves=())
         with pytest.raises(ValueError, match="plans"):
             SolveResult(status="exhausted_budget", layouts=(), plans=(stray,), diagnostics=diag)
+
+
+def test_solver_diagnostics_spread_fields_default_and_validate():
+    from hangarfit.models import SolverDiagnostics
+
+    d = SolverDiagnostics(
+        restarts_attempted=3,
+        wall_time_s=1.0,
+        best_partial=None,
+        best_partial_layout=None,
+        seed=7,
+    )
+    assert d.min_pairwise_gap_m == ()
+    assert d.valid_basins_found == 0
+
+    d2 = SolverDiagnostics(
+        restarts_attempted=3,
+        wall_time_s=1.0,
+        best_partial=None,
+        best_partial_layout=None,
+        seed=7,
+        min_pairwise_gap_m=(2.5,),
+        valid_basins_found=12,
+    )
+    assert d2.min_pairwise_gap_m == (2.5,)
+    assert d2.valid_basins_found == 12
+
+    import pytest
+
+    with pytest.raises(ValueError, match="valid_basins_found"):
+        SolverDiagnostics(
+            restarts_attempted=0,
+            wall_time_s=0.0,
+            best_partial=None,
+            best_partial_layout=None,
+            seed=0,
+            valid_basins_found=-1,
+        )
