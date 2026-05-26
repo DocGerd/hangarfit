@@ -17,7 +17,10 @@ import typing
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from hangarfit.towplanner import MovesPlan
 
 WingPosition = Literal["high", "mid", "low"]
 Gear = Literal["tailwheel", "nosewheel", "monowheel"]
@@ -679,6 +682,16 @@ class SolverDiagnostics:
     decisions; that's ``status``'s job. They exist so dashboards and
     tests can read the same signals as the logger without scraping log
     records.
+
+    ``unroutable_planes`` records, in returned-layout order, the plane
+    the v1 tow-path planner could not route for each layout it failed to
+    plan (one entry per ``None`` in :attr:`SolveResult.plans`). Empty
+    when every returned layout was tow-planned, or when tow-planning was
+    not attempted (``solve(..., plan_paths=False)``). It is **advisory**:
+    the v1 planner (Dubins-only + bounded Hybrid-A*, ADR-0007) has
+    documented false-negatives, so an un-routable layout is still a valid
+    static arrangement — the entry flags a planning gap, not an invalid
+    layout.
     """
 
     restarts_attempted: int
@@ -688,6 +701,7 @@ class SolverDiagnostics:
     seed: int
     diversity_impossible: bool = False
     diversity_rejected_count: int = 0
+    unroutable_planes: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if (self.best_partial is None) != (self.best_partial_layout is None):
@@ -720,19 +734,41 @@ class SolveResult:
 
     - ``"found"`` / ``"found_partial"`` → at least one layout
     - ``"exhausted_budget"`` / ``"trivially_infeasible"`` → zero layouts
+
+    ``plans`` is index-aligned with ``layouts``: ``plans[i]`` is the
+    :class:`~hangarfit.towplanner.MovesPlan` for ``layouts[i]``, or
+    ``None`` when the v1 tow-path planner could not route that layout
+    (best-effort enrichment — see ADR-0007). It is also all-``None`` when
+    tow-planning was skipped (``solve(..., plan_paths=False)``). A ``None``
+    entry does **not** invalidate the corresponding layout: the static
+    arrangement remains valid; only its tow plan is unavailable. For
+    statuses with empty ``layouts`` the field is always ``()``.
     """
 
     status: SolveStatus
     layouts: tuple[Layout, ...]
     diagnostics: SolverDiagnostics
+    plans: tuple[MovesPlan | None, ...] = ()
 
     def __post_init__(self) -> None:
         if self.status in ("found", "found_partial") and not self.layouts:
             raise ValueError(f"SolveResult.status={self.status!r} requires at least one layout")
-        if self.status in ("exhausted_budget", "trivially_infeasible") and self.layouts:
+        _empty_statuses = ("exhausted_budget", "trivially_infeasible")
+        if self.status in _empty_statuses and self.layouts:
             raise ValueError(
                 f"SolveResult.status={self.status!r} must have empty layouts, "
                 f"got {len(self.layouts)}"
+            )
+        # plans is index-aligned with layouts for EVERY status: empty-layout
+        # statuses therefore require empty plans too, and this subsumes the
+        # found/found_partial cardinality check (layouts is already forced
+        # non-empty for those by the first guard). Entries may be None
+        # (best-effort: the v1 planner couldn't route that layout), but the
+        # length must still match.
+        if len(self.plans) != len(self.layouts):
+            raise ValueError(
+                f"SolveResult.plans length ({len(self.plans)}) must equal "
+                f"layouts length ({len(self.layouts)}) (status={self.status!r})"
             )
 
 
