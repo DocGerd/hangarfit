@@ -17,21 +17,29 @@ from hangarfit.towplanner import (
 )
 
 
-def test_primitives_own_gear_are_left_straight_right_in_order() -> None:
+def test_primitives_own_gear_are_six_in_lf_sf_rf_lr_sr_rr_order() -> None:
+    # ADR-0010: six primitives — forward L/S/R then reverse L/S/R, in that
+    # fixed deterministic order (the order the tie-break depends on).
     segs = _primitives(turn_radius_m=4.0)
-    assert [s.kind for s in segs] == ["L", "S", "R"]
+    assert [s.kind for s in segs] == ["L", "S", "R", "L", "S", "R"]
+    assert [s.gear for s in segs] == [1, 1, 1, -1, -1, -1]
     # Each is a positive-length short step.
     assert all(s.length_m > 0.0 for s in segs)
 
 
-def test_primitives_cart_are_pivot_straight_pivot_in_order() -> None:
+def test_primitives_cart_are_four_pivot_straight_in_order() -> None:
+    # Cart (r == 0): four primitives Lf, Sf, Rf, Sr. Pivots encode one heading
+    # cell in radians; the straights encode metres. The reverse STRAIGHT is the
+    # genuinely-new cart move (ADR-0010); reverse pivots are omitted because a
+    # reverse pivot rotates heading the same way as the opposite forward pivot
+    # (an exact duplicate that always loses the best_g race — pure dead work).
     segs = _primitives(turn_radius_m=0.0)
-    assert [s.kind for s in segs] == ["L", "S", "R"]
-    # Pivots encode one heading cell in radians; the straight encodes metres.
-    # Pin both so a length/unit swap between the two is caught.
+    assert [s.kind for s in segs] == ["L", "S", "R", "S"]
+    assert [s.gear for s in segs] == [1, 1, 1, -1]
     assert segs[0].length_m == pytest.approx(math.radians(15.0))
     assert segs[1].length_m == pytest.approx(0.5)
     assert segs[2].length_m == pytest.approx(math.radians(15.0))
+    assert segs[3].length_m == pytest.approx(0.5)  # reverse straight, metres
 
 
 def test_step_pose_straight_advances_along_heading() -> None:
@@ -121,8 +129,8 @@ def _winged_plane(pid: str, *, span_m: float = 10.0, turn_radius_m: float = 5.0)
 
 
 def test_plan_path_clear_straight_is_a_single_analytic_shot() -> None:
-    # Slot straight ahead, same heading: the start node's analytic Dubins shot
-    # is clear, so the search returns immediately with that arc's endpoint.
+    # Slot straight ahead, same heading: the start node's analytic Reeds–Shepp
+    # shot is clear, so the search returns immediately with that arc's endpoint.
     h = _hangar()
     plane = _winged_plane("A", span_m=6.0)
     placed = Layout(fleet={"A": plane}, hangar=h, placements=())
@@ -136,8 +144,8 @@ def test_plan_path_clear_straight_is_a_single_analytic_shot() -> None:
 
 
 def test_plan_path_finds_inbounds_path_when_direct_shot_sweeps_a_wing_out() -> None:
-    # Moderately wide wing + a 90-degree final heading: the direct shortest Dubins
-    # shot picks a long R-S-L arc that sweeps the left wing tip outside x=0, so the
+    # Moderately wide wing + a 90-degree final heading: the direct shortest
+    # Reeds–Shepp shot sweeps the left wing tip outside x=0, so the
     # search must maneuver. Geometry chosen so plan_path resolves within budget
     # (span=6 in a 14m hangar; the 10m-span/18m-hangar original is physically
     # infeasible for any heading-change path — see Task 3 report).
@@ -167,18 +175,36 @@ def test_plan_path_is_deterministic() -> None:
 
 
 def test_plan_path_bails_when_boxed_in() -> None:
-    # A goal whose slot is itself jammed against a wall such that no in-bounds
-    # approach exists within the budget -> NoFeasiblePlanError naming the mover.
-    # span=11.8 fills nearly the full 12m hangar width; ANY heading-change path
-    # is blocked (wing always clips a wall). Adapted from span=11.0 — span bumped
-    # to 11.8 to ensure genuine infeasibility within _MAX_EXPANSIONS.
+    # The mover must reach a heading-90 goal, but two parked planes flank the
+    # turn region so closely that NO maneuver — forward OR reverse (ADR-0010) —
+    # can reorient the wide wing without clipping a neighbour. The goal slot
+    # itself IS a valid static placement; only the *approach* is impossible, so
+    # the planner bails with NoFeasiblePlanError naming the mover.
+    #
+    # Note (Reeds–Shepp v2): the earlier span-11.8 "fills the hangar" framing no
+    # longer guarantees infeasibility — reverse legs let a wide plane shuffle to
+    # reorient even in a tight box. Genuine infeasibility now requires obstacles
+    # that block every gear, not just a tight wall fit. A modest expansion
+    # budget keeps the test fast while still proving the bail.
     h = _hangar(width_m=12.0, length_m=12.0)
-    plane = _winged_plane("A", span_m=11.8, turn_radius_m=5.0)
-    placed = Layout(fleet={"A": plane}, hangar=h, placements=())
+    mover = _winged_plane("A", span_m=8.0, turn_radius_m=5.0)
+    obs_left = _winged_plane("L", span_m=2.0)
+    obs_right = _winged_plane("R", span_m=2.0)
+    fleet = {"A": mover, "L": obs_left, "R": obs_right}
+    placed = Layout(
+        fleet=fleet,
+        hangar=h,
+        placements=(
+            Placement("L", 1.5, 6.0, 0.0, on_carts=False),
+            Placement("R", 10.5, 6.0, 0.0, on_carts=False),
+        ),
+    )
     entry = Pose(6.0, 0.0, 0.0)
-    goal = Pose(6.0, 6.0, 90.0)  # wing along x spans nearly the whole width while turning
+    goal = Pose(6.0, 6.0, 90.0)
     with pytest.raises(NoFeasiblePlanError) as ei:
-        plan_path(plane, entry, goal, hangar=h, placed=placed, mover_on_carts=False)
+        plan_path(
+            mover, entry, goal, hangar=h, placed=placed, mover_on_carts=False, max_expansions=100
+        )
     assert ei.value.plane_id == "A"
 
 
@@ -200,9 +226,17 @@ def test_plan_path_canary_pins_a_known_maneuver() -> None:
         mover_on_carts=False,
     )
     kinds = "".join(s.kind for s in arc.segments)
-    # Values pinned from first green run (2026-05-26).
-    assert kinds == "SSSRSL"
-    assert arc.length_m == pytest.approx(16.81759168818229, abs=1e-6)
+    gears = [s.gear for s in arc.segments]
+    # Values pinned from first green run on the Reeds–Shepp motion model
+    # (ADR-0010, 2026-05-27). The path now closes in a single LRL Reeds–Shepp
+    # analytic shot whose final arc is driven in REVERSE (gear −1) — the
+    # back-up-to-reorient maneuver Reeds–Shepp unlocks, far shorter than the
+    # forward-only Dubins SSSRSL it replaced (16.82 m → 6.60 m). If this
+    # changes, a tie-break or primitive-order regression is the likely cause —
+    # investigate before updating the expected values.
+    assert kinds == "LRL"
+    assert gears == [1, 1, -1]
+    assert arc.length_m == pytest.approx(6.601662791609364, abs=1e-6)
 
 
 # ---------------------------------------------------------------------------
@@ -512,20 +546,36 @@ def test_motion_clear_zero_wing_layer_clearance_skips_non_overlapping_z() -> Non
 
 
 def test_plan_path_budget_exhaustion_breaks_and_raises_no_feasible_path() -> None:
-    # A small expansion budget on a proven-infeasible wide-wing/turned-goal case
-    # forces the budget `break` and the `no_feasible_path` raise, and the
-    # multi-node exploration of the constrained space exercises the
-    # stale-heap-entry skip — all without the cost of a full-budget search.
-    # (span 9 in an 14 m hangar with r=5 needs r+half_span=9.5 m of clearance
-    # each side: the valid turn interval is empty, so the goal is unreachable.)
-    h = _hangar(width_m=14.0, length_m=18.0)
-    plane = _winged_plane("A", span_m=9.0, turn_radius_m=5.0)
-    placed = Layout(fleet={"A": plane}, hangar=h, placements=())
+    # A small expansion budget on a boxed-in, turned-goal case forces the budget
+    # `break` and the `no_feasible_path` raise, and the multi-node exploration of
+    # the constrained space exercises the stale-heap-entry skip — all without the
+    # cost of a full-budget search. Two parked planes flank the heading-90 goal
+    # so neither forward nor reverse (ADR-0010) can reorient the wide wing; the
+    # goal slot itself is a valid placement, so the failure is "no reachable
+    # approach within budget", surfaced as `no_feasible_path`.
+    #
+    # (Reeds–Shepp v2 note: the earlier open-hangar "empty turn interval"
+    # framing no longer holds — reverse arcs reach turned goals a forward-only
+    # Dubins car could not. Genuine infeasibility now needs gear-blocking
+    # obstacles, not just a wall fit.)
+    h = _hangar(width_m=12.0, length_m=12.0)
+    mover = _winged_plane("A", span_m=8.0, turn_radius_m=5.0)
+    obs_left = _winged_plane("L", span_m=2.0)
+    obs_right = _winged_plane("R", span_m=2.0)
+    fleet = {"A": mover, "L": obs_left, "R": obs_right}
+    placed = Layout(
+        fleet=fleet,
+        hangar=h,
+        placements=(
+            Placement("L", 1.5, 6.0, 0.0, on_carts=False),
+            Placement("R", 10.5, 6.0, 0.0, on_carts=False),
+        ),
+    )
     with pytest.raises(NoFeasiblePlanError) as ei:
         plan_path(
-            plane,
+            mover,
             Pose(6.0, 0.0, 0.0),
-            Pose(6.0, 8.0, 234.0),
+            Pose(6.0, 6.0, 90.0),
             hangar=h,
             placed=placed,
             mover_on_carts=False,

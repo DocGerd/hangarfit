@@ -84,6 +84,7 @@ manual workflow above is canonical.
 | 0004 | [Diversity metric for K alternatives (edit count with per-plane thresholds)](0004-diversity-metric.md) | Accepted |
 | 0005 | [Maintenance bay rule — fuselage centroid in back strip](0005-maintenance-bay-rule.md)                 | Superseded by [ADR-0006](0006-bay-intrusion-maintenance-rule.md) |
 | 0006 | [Maintenance bay rule — `bay_intrusion` on any non-occupant vertex strictly inside the bay rectangle](0006-bay-intrusion-maintenance-rule.md) | Accepted |
-| 0007 | [Tow-path planner v1 — empty-hangar fill, Dubins-only, cart-as-own-gear](0007-tow-path-planner-v1-scope.md) | Accepted |
+| 0007 | [Tow-path planner v1 — empty-hangar fill, Dubins-only, cart-as-own-gear](0007-tow-path-planner-v1-scope.md) | Accepted (fork-2 "Dubins-only" superseded by [ADR-0010](0010-reeds-shepp-motion-model.md)) |
 | 0008 | [Inter-plane spread soft preference (repulsion-energy surrogate for maximin)](0008-inter-plane-spread-soft-preference.md) | Accepted |
-| 0009 | [Single supported Python — 3.12, anchored to the distro LTS](0009-single-supported-python-version.md) | Proposed |
+| 0009 | [Single supported Python — 3.12, anchored to the distro LTS](0009-single-supported-python-version.md) | Accepted |
+| 0010 | [Reeds–Shepp motion model — towplanner v2](0010-reeds-shepp-motion-model.md) | Accepted |

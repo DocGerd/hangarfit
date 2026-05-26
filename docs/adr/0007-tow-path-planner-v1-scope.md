@@ -1,9 +1,21 @@
 # ADR-0007: Tow-path planner v1 — empty-hangar fill, Dubins-only, cart-as-own-gear
 
-- **Status:** Accepted
+- **Status:** Accepted (fork 2 "Dubins-only" **superseded by [ADR-0010](0010-reeds-shepp-motion-model.md)**)
 
 - **Date:** 2026-05-25
 - **Deciders:** Patrick Kuhn (DocGerd)
+
+> **Update (2026-05-27, ADR-0010):** Fork 2 below ("Motion model: Dubins-only")
+> is **superseded by [ADR-0010 — Reeds–Shepp motion model](0010-reeds-shepp-motion-model.md)**.
+> The towplanner now uses a closed-form **Reeds–Shepp** vocabulary (Dubins +
+> reverse arcs/straights) so a plane can back up to reorient instead of driving
+> a full turning-circle loop; the move stays closed-form and deterministic, so
+> this ADR's determinism driver is unaffected. Everything else in this ADR
+> (empty-hangar-fill scope, cart = own-gear with `turn_radius_m = 0`, the
+> `effective_turn_radius_m()` accessor, the door-as-motion-gate, the bounded
+> greedy-order retry) **still stands**. The "Why not RRT-Connect" reasoning in
+> fork 2 also stands — RRT-Connect remains deferred; ADR-0010 chose reverse arcs,
+> not sampling.
 
 ## Context & Problem Statement
 

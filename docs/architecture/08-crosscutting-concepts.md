@@ -77,16 +77,24 @@ and collision checker remain deliberately **motion-agnostic** — they
 describe where a plane *is*, never how it got there.
 
 Motion behaviour now lives in the `towplanner` module (Phase 3a), which
-uses a **single Dubins motion primitive** for every plane: a cart-borne
-plane is treated as own-gear with `turn_radius_m = 0` (a pivot-in-place),
-supplied through `Aircraft.effective_turn_radius_m()`. This **retires the
-earlier "holonomic on carts; Dubins-path-style on own gear" two-mode
-framing** — there is one primitive, not two (ADR-0007, forks 2–3). A
-consequence: `turn_radius_m` is now **load-bearing**. It was an unused
-placeholder through Phase 1/2a and is consumed by the planner's Dubins
-arithmetic and its bound-aware Hybrid-A\* path search ([#222](https://github.com/DocGerd/hangarfit/issues/222)).
-Cart planes keep `turn_radius_m: null` in `fleet.yaml`; the zero radius
-is supplied by the accessor, not baked into the data (ADR-0007, fork 4).
+uses a **single closed-form motion model** for every plane —
+**Reeds–Shepp** (Dubins forward arc-line-arc *plus reverse* arcs and
+straights, [ADR-0010](../adr/0010-reeds-shepp-motion-model.md)): a plane
+can back up to reorient instead of driving a full turning-circle loop,
+and reverse legs cost 1.5× their length so forward motion is preferred. A
+cart-borne plane is treated as own-gear with `turn_radius_m = 0` (a
+pivot-in-place, and now a back-straight-out option too), supplied through
+`Aircraft.effective_turn_radius_m()`. This **retires the earlier
+"holonomic on carts; Dubins-path-style on own gear" two-mode framing** —
+there is one motion model, not two (ADR-0007, forks 2–3; ADR-0010
+supersedes fork 2's *Dubins-only* choice with Reeds–Shepp, still
+closed-form and deterministic). A consequence: `turn_radius_m` is now
+**load-bearing**. It was an unused placeholder through Phase 1/2a and is
+consumed by the planner's Reeds–Shepp arithmetic and its bound-aware
+Hybrid-A\* path search ([#222](https://github.com/DocGerd/hangarfit/issues/222),
+[#261](https://github.com/DocGerd/hangarfit/issues/261)). Cart planes keep
+`turn_radius_m: null` in `fleet.yaml`; the zero radius is supplied by the
+accessor, not baked into the data (ADR-0007, fork 4).
 
 ### The door is a visual marker only
 
@@ -102,10 +110,11 @@ At the `collisions.check` level the door stays a **visual marker only** —
 the static checker cares solely about the hangar-bounds rectangle. The
 `towplanner` (Phase 3a) is the first consumer to treat the door as a
 **motion gate**: a plane enters from a **searched door-cone** and is towed
-to its slot along a Dubins path, with the front gap exempted during motion
-(a mover may straddle `y < 0` in front of the door mid-tow). That door
-semantics lives entirely in the planner and changes no `collisions.check`
-verdict (ADR-0007).
+to its slot along a Reeds–Shepp path, with the front gap exempted during
+motion (a mover may straddle `y < 0` in front of the door mid-tow — and may
+*back out* through it, the front-gap exemption being pose-only and
+gear-agnostic). That door semantics lives entirely in the planner and changes
+no `collisions.check` verdict (ADR-0007).
 
 **The door-cone** (`entry_poses`, #262) is a deterministic 3 × 5 grid of
 start poses: three x-samples within the door interval (door centre, clamped

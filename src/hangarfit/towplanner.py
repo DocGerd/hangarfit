@@ -1,12 +1,19 @@
-"""Tow-path planner — empty-hangar fill (Phase 3a).
+"""Tow-path planner — empty-hangar fill (Phase 3a; Reeds–Shepp motion, v2).
 
 Answers *how* each plane reaches its target slot: a deterministic entry order
 (:func:`back_first_order`) plus an in-bounds, obstacle-free tow path per plane
-found by a deterministic Hybrid-A* search (:func:`plan_path`, #222) over Dubins
-motion primitives — emitted as a single :class:`DubinsArc`. An unobstructed
-plane still finishes in one closed-form Dubins shot (the search's analytic
-expansion). See ADR-0002 (heading convention), ADR-0007 (cart = own-gear, r=0),
-and docs/spikes/tow-path-planning.md.
+found by a deterministic Hybrid-A* search (:func:`plan_path`, #222) over
+**Reeds–Shepp** motion primitives — emitted as a single :class:`DubinsArc`
+(the historical container name; its segments now carry a ``gear``). An
+unobstructed plane finishes in one closed-form Reeds–Shepp shot (the search's
+analytic expansion). Reeds–Shepp = Dubins (forward arc-line-arc) **plus reverse
+arcs/straights** (:func:`plan_reeds_shepp`, #261), so a plane can back up to
+reorient instead of driving a full turning-circle loop; reverse legs cost
+:data:`_REVERSE_COST_FACTOR`× their length so forward motion is preferred. The
+closed form is still deterministic, preserving the ADR-0003 byte-identical-plan
+contract. See ADR-0002 (heading convention), ADR-0010 (Reeds–Shepp motion model,
+supersedes ADR-0007 fork-2 "Dubins-only"), ADR-0007 (cart = own-gear, r=0), and
+docs/spikes/tow-path-planning.md.
 """
 
 from __future__ import annotations
@@ -54,12 +61,18 @@ class Pose:
 
 @dataclass(frozen=True, slots=True)
 class Segment:
-    """One leg of a Dubins path. ``kind`` is ``L`` (left turn), ``S``
-    (straight), or ``R`` (right turn). ``length_m`` is the arc length of
-    the leg in metres (always >= 0)."""
+    """One leg of a Reeds–Shepp path. ``kind`` is the *steering*: ``L`` (left),
+    ``S`` (straight), or ``R`` (right). ``gear`` is the *travel direction*:
+    ``+1`` forward (default), ``-1`` reverse — steering and gear are
+    independent (a reverse-L backs up while the wheels steer left). ``length_m``
+    is the leg's arc length in metres (always ``>= 0``); the integrator applies
+    ``gear`` to the translation step. Defaulting ``gear`` to ``+1`` keeps every
+    forward-only (Dubins-era) ``Segment(kind, length_m)`` call valid (ADR-0010
+    supersedes ADR-0007 fork-2 "Dubins-only")."""
 
     kind: SegmentKind
     length_m: float
+    gear: Literal[1, -1] = 1
 
     def __post_init__(self) -> None:
         if self.kind not in _VALID_SEGMENT_KINDS:
@@ -68,13 +81,18 @@ class Segment:
             )
         if self.length_m < 0.0 or not math.isfinite(self.length_m):
             raise ValueError(f"Segment.length_m must be finite and >= 0, got {self.length_m}")
+        if self.gear not in (1, -1):
+            raise ValueError(f"Segment.gear must be 1 (forward) or -1 (reverse), got {self.gear!r}")
 
 
 @dataclass(frozen=True, slots=True)
 class DubinsArc:
-    """Closed-form shortest path between two oriented poses under a minimum
+    """Closed-form path container between two oriented poses under a minimum
     turn radius. ``turn_radius_m = 0`` denotes a cart-borne pivot-in-place
-    (ADR-0007). ``segments`` is the ordered leg decomposition."""
+    (ADR-0007). ``segments`` is the ordered leg decomposition; a segment may
+    carry ``gear = -1`` for a **reverse** leg (the Reeds–Shepp extension,
+    ADR-0010), so this now holds Reeds–Shepp paths too — the ``Dubins`` in the
+    name is historical (forward-only Dubins was the v1 motion model)."""
 
     start: Pose
     end: Pose
@@ -101,7 +119,8 @@ class DubinsArc:
         angle from ``+x``) and returns a compass-convention :class:`Pose`.
         For a turn segment, ``s_m`` consumed is metres of arc length when
         ``turn_radius_m > 0`` and **radians of pivot** when it is ``0``
-        (the cart pivot-in-place encoding — see :func:`plan_dubins`).
+        (the cart pivot-in-place encoding — see :func:`_plan_cart`, shared by
+        :func:`plan_dubins` and :func:`plan_reeds_shepp`).
         """
         x = self.start.x_m
         y = self.start.y_m
@@ -110,18 +129,30 @@ class DubinsArc:
         remaining = s_m
         for seg in self.segments:
             step = min(seg.length_m, remaining)
+            gear = float(seg.gear)  # +1 forward, -1 reverse (ADR-0010)
             if seg.kind == "S":
-                x += step * math.cos(theta)
-                y += step * math.sin(theta)
+                # Reverse negates the translation step (drive −cos/−sin).
+                x += gear * step * math.cos(theta)
+                y += gear * step * math.sin(theta)
             else:  # "L"/"R": arc of radius r; r == 0 => cart pivot in place
                 sign = 1.0 if seg.kind == "L" else -1.0
                 if r == 0.0:
-                    # pivot: position fixed; `step` is radians of turn.
+                    # Pivot: position fixed; `step` is radians of turn. A
+                    # pivot-in-place has no travel direction, so gear is left
+                    # at the +1 default for the L/R-encoded cart pivot and the
+                    # `sign` alone sets the rotation direction.
                     theta += sign * step
                 else:
+                    # The turning CENTRE is set by STEERING alone (left/right of
+                    # the car), independent of gear. Forward advances around it,
+                    # reverse retreats: scale the heading sweep AND the position
+                    # update by `gear`. (Equivalently, signed arc-length
+                    # ds = gear·step, dtheta = sign·ds/r.) The roundtrip grid is
+                    # the proof; the sign here is pinned by the reverse 45°
+                    # canary so a CW/CCW flip fails loudly (ADR-0002 trap).
                     cx = x - sign * r * math.sin(theta)
                     cy = y + sign * r * math.cos(theta)
-                    theta += sign * step / r
+                    theta += sign * gear * step / r
                     x = cx + sign * r * math.sin(theta)
                     y = cy - sign * r * math.cos(theta)
             remaining -= step
@@ -137,6 +168,11 @@ class DubinsArc:
         still get angular resolution. The final pose is ``pose_at(length)`` —
         the INTEGRATED endpoint, NOT the stored ``self.end`` — so a wrong
         closed form surfaces as a mismatch instead of being masked.
+
+        Density is **gear-agnostic** (ADR-0010): the accounting below uses
+        ``length_m``, which is the un-signed leg distance (``>= 0`` by the
+        :class:`Segment` invariant, i.e. ``abs(length)``), so a reverse leg
+        gets exactly the density of the equivalent forward leg.
         """
         total = self.length_m  # the "progress" parameter pose_at walks
         trans_len = 0.0  # true translation distance (excludes pivots)
@@ -351,36 +387,7 @@ def plan_dubins(start: Pose, end: Pose, *, turn_radius_m: float) -> DubinsArc:
         raise ValueError(f"turn_radius_m must be finite and >= 0, got {turn_radius_m}")
 
     if turn_radius_m == 0.0:
-        dx = end.x_m - start.x_m
-        dy = end.y_m - start.y_m
-        dist = math.hypot(dx, dy)
-        if dist <= 1e-9:
-            # Pure pivot-in-place (positions coincide): a single turn segment
-            # whose length_m encodes the short-arc heading change in radians.
-            # Compass is CW-positive, so a positive delta is a right turn ("R")
-            # in the math frame the integrator walks; the sign is pinned by
-            # test_zero_radius_is_pivot_in_place.
-            dtheta_deg = (end.heading_deg - start.heading_deg + 180.0) % 360.0 - 180.0
-            pivot_kind: SegmentKind = "R" if dtheta_deg >= 0.0 else "L"
-            return DubinsArc(start, end, 0.0, (Segment(pivot_kind, abs(math.radians(dtheta_deg))),))
-        # Cart translation (ADR-0007 r->0 limit): a cart is own-gear with a zero
-        # turn radius, so the shortest path is pivot to the goal bearing, drive
-        # straight, then pivot to the final heading. All three legs live in one
-        # turn_radius_m=0 DubinsArc; pose_at already integrates an r=0 turn as a
-        # pivot-in-place (position held) and an "S" leg as translation. The goal
-        # bearing as a compass heading: math angle atan2(dy, dx) -> compass.
-        bearing_deg = math_rad_to_compass(math.atan2(dy, dx))
-        cart_segs: list[Segment] = []
-        seg1_deg = (bearing_deg - start.heading_deg + 180.0) % 360.0 - 180.0
-        if abs(seg1_deg) > 1e-9:
-            k1: SegmentKind = "R" if seg1_deg >= 0.0 else "L"
-            cart_segs.append(Segment(k1, abs(math.radians(seg1_deg))))
-        cart_segs.append(Segment("S", dist))
-        seg3_deg = (end.heading_deg - bearing_deg + 180.0) % 360.0 - 180.0
-        if abs(seg3_deg) > 1e-9:
-            k3: SegmentKind = "R" if seg3_deg >= 0.0 else "L"
-            cart_segs.append(Segment(k3, abs(math.radians(seg3_deg))))
-        return DubinsArc(start, end, 0.0, tuple(cart_segs))
+        return _plan_cart(start, end, allow_reverse=False)
 
     word, (t, p, q) = _dubins_shortest(start, end, turn_radius_m)
     r = turn_radius_m
@@ -393,6 +400,441 @@ def plan_dubins(start: Pose, end: Pose, *, turn_radius_m: float) -> DubinsArc:
     # (turn 0, "S", turn 0); drop the zeros so it is ("S",) and the ["S"]
     # segment-kind assertions hold. Keep at least one segment.
     segs = tuple(s for s in raw if s.length_m > 1e-9) or (Segment("S", 0.0),)
+    return DubinsArc(start, end, r, segs)
+
+
+# ---------------------------------------------------------------------------
+# Cart (r == 0) planner — shared by Dubins (forward-only) and Reeds–Shepp.
+#
+# A carted plane pivots in place and translates with a zero turn radius
+# (ADR-0007). The pivot-in-place case is identical for both motion models. The
+# translation case differs only in whether the straight leg may be driven in
+# REVERSE: Reeds–Shepp lets a cart back straight out of a slot (gear −1) when
+# that is cheaper under the reverse cost weighting, which a forward-only Dubins
+# cart cannot. ``length_m`` of a pivot segment encodes RADIANS (ADR-0007); the
+# "S" leg is metres of translation.
+# ---------------------------------------------------------------------------
+
+
+def _plan_cart(start: Pose, end: Pose, *, allow_reverse: bool) -> DubinsArc:
+    """Cart path (``turn_radius_m == 0``): pivot-in-place, or pivot-straight-pivot.
+
+    With ``allow_reverse`` (Reeds–Shepp), the straight leg may be driven in
+    reverse — pivot to the *reverse* bearing, back straight, pivot to the final
+    heading — and the cheaper of the forward/reverse option is returned under
+    the reverse cost weighting (:data:`_REVERSE_COST_FACTOR`). Without it
+    (Dubins) only the forward option is considered, preserving the exact
+    forward-only behaviour ``plan_dubins`` shipped.
+    """
+    dx = end.x_m - start.x_m
+    dy = end.y_m - start.y_m
+    dist = math.hypot(dx, dy)
+    if dist <= 1e-9:
+        # Pure pivot-in-place (positions coincide): a single turn segment whose
+        # length_m encodes the short-arc heading change in radians. Compass is
+        # CW-positive, so a positive delta is a right turn ("R") in the math
+        # frame the integrator walks; the sign is pinned by
+        # test_zero_radius_is_pivot_in_place. Gear is irrelevant for a pivot
+        # (no translation), so it stays at the +1 default.
+        dtheta_deg = (end.heading_deg - start.heading_deg + 180.0) % 360.0 - 180.0
+        pivot_kind: SegmentKind = "R" if dtheta_deg >= 0.0 else "L"
+        return DubinsArc(start, end, 0.0, (Segment(pivot_kind, abs(math.radians(dtheta_deg))),))
+
+    def _pivot_straight_pivot(*, reverse: bool) -> tuple[Segment, ...]:
+        # Bearing the NOSE points along while translating: the goal bearing for
+        # a forward leg, its opposite for a reverse leg (the nose faces away
+        # from the direction of travel when backing up).
+        travel_bearing_deg = math_rad_to_compass(math.atan2(dy, dx))
+        nose_bearing_deg = (travel_bearing_deg + 180.0) % 360.0 if reverse else travel_bearing_deg
+        gear: Literal[1, -1] = -1 if reverse else 1
+        segs: list[Segment] = []
+        seg1_deg = (nose_bearing_deg - start.heading_deg + 180.0) % 360.0 - 180.0
+        if abs(seg1_deg) > 1e-9:
+            k1: SegmentKind = "R" if seg1_deg >= 0.0 else "L"
+            segs.append(Segment(k1, abs(math.radians(seg1_deg))))
+        segs.append(Segment("S", dist, gear=gear))
+        seg3_deg = (end.heading_deg - nose_bearing_deg + 180.0) % 360.0 - 180.0
+        if abs(seg3_deg) > 1e-9:
+            k3: SegmentKind = "R" if seg3_deg >= 0.0 else "L"
+            segs.append(Segment(k3, abs(math.radians(seg3_deg))))
+        return tuple(segs)
+
+    forward = _pivot_straight_pivot(reverse=False)
+    if not allow_reverse:
+        return DubinsArc(start, end, 0.0, forward)
+    reverse = _pivot_straight_pivot(reverse=True)
+    # Weighted cost: pivots are cheap angular moves; the straight leg's metres
+    # carry the reverse factor when backing. Strict < keeps forward on an exact
+    # tie (determinism, ADR-0003) — and forward is the earlier-listed option.
+    best = min(
+        (forward, reverse),
+        key=lambda segs: math.fsum(_cart_seg_weight(s) for s in segs),
+    )
+    # Tie-break must prefer forward on EXACT equality; min() returns the first
+    # argument on a tie, and `forward` is first, so this is already correct.
+    return DubinsArc(start, end, 0.0, best)
+
+
+def _cart_seg_weight(seg: Segment) -> float:
+    """Weighted cost of one cart segment for the forward-vs-reverse choice: a
+    pivot's radians (cheap, gear-agnostic) or a straight's metres scaled by the
+    reverse factor when backing."""
+    if seg.kind != "S":
+        return seg.length_m  # pivot: length_m is radians
+    return seg.length_m * (_REVERSE_COST_FACTOR if seg.gear == -1 else 1.0)
+
+
+# ---------------------------------------------------------------------------
+# Closed-form Reeds–Shepp set (ADR-0010, towplanner v2; supersedes ADR-0007
+# fork-2 "Dubins-only"). Reeds–Shepp = Dubins + reverse arcs/straights, so a
+# car can back up to reorient instead of driving a full turning-circle loop.
+#
+# Built by the textbook **base-formula + symmetry-generation** method: a small
+# set of base word-solvers (CSC, CCC, CCCC, CCSC, CCSCC) in the NORMALISED math
+# frame, then two Reeds–Shepp goal symmetries — TIMEFLIP (reverse all gears;
+# the word for the time-reversed goal (-x, y, -phi)) and REFLECT (swap L↔R
+# steering; the word for the x-axis-mirrored goal (x, -y, -phi)) — each base
+# solver evaluated under the four combinations (identity, timeflip, reflect,
+# timeflip+reflect) to enumerate the full word family. This is the standard
+# `reeds_shepp` construction; the base formulas follow Reeds & Shepp (1990) /
+# the OMPL/PythonRobotics presentation.
+#
+# Each base solver works on a normalised relative goal ``(x, y, phi)``: the goal
+# expressed in the start frame and scaled by ``1/r`` (so the turn radius is 1).
+# It returns a list of ``_RSElement(steering, gear, t)`` legs with t a normalised
+# length (radians for a turn, units of r for a straight), or ``None`` if
+# infeasible. The integrator ``DubinsArc.pose_at`` walks the scaled-back
+# ``Segment``s, so a correct word reproduces the goal pose — enforced
+# exhaustively by ``test_reeds_shepp_roundtrip_grid``.
+# ---------------------------------------------------------------------------
+
+
+# Reverse legs cost 1.5× their length. Justification (a measured nose-out case):
+# 18 m reverse vs 32 m forward. At 1.5× the reverse weighs 27 m, still beating
+# the 32 m forward loop, so the reverse win is kept — while a gratuitous short
+# reverse is discouraged. At 2.0× the reverse would weigh 36 m and be SUPPRESSED
+# in favour of the longer forward path, defeating the whole point of Reeds–Shepp.
+# Pinned by test_reverse_cost_factor_value; changing it requires an ADR-0010 update.
+_REVERSE_COST_FACTOR = 1.5
+
+
+@dataclass(frozen=True, slots=True)
+class _RSElement:
+    """One normalised Reeds–Shepp leg: steering ``L``/``S``/``R``, ``gear``
+    ``+1``/``-1``, and ``t`` the normalised length (radians for a turn, units
+    of the turn radius for a straight). Always ``t >= 0``."""
+
+    steering: SegmentKind
+    gear: Literal[1, -1]
+    t: float
+
+
+_RSWord = list[_RSElement]
+
+
+def _rs_polar(x: float, y: float) -> tuple[float, float]:
+    """``(r, theta)`` of the vector ``(x, y)`` — magnitude and math-angle."""
+    return math.hypot(x, y), math.atan2(y, x)
+
+
+def _rs_mod2pi(theta: float) -> float:
+    """Normalise to ``(-pi, pi]`` — the branch the RS base formulas assume."""
+    v = _mod2pi(theta)
+    if v > math.pi:
+        v -= 2.0 * math.pi
+    return v
+
+
+# ── Base word solvers (normalised frame, turn radius 1) ─────────────────────
+# Each returns the leg lengths for ONE canonical word shape, or None. The
+# symmetry transforms below generate the remaining words from these bases. The
+# formulas are the OMPL/PythonRobotics presentation of Reeds & Shepp (1990).
+
+
+# A "signed-length leg": steering, the word's nominal gear, and a SIGNED length.
+# Reeds–Shepp word formulas naturally yield signed leg lengths; a negative length
+# means "traverse |length| in the OPPOSITE gear" (the standard sign-flips-gear
+# trick). :func:`_rs_signed_to_word` converts a list of signed legs into an
+# ``_RSWord`` with non-negative ``t`` and the gear resolved from the sign, then
+# the universal :func:`_rs_word_reaches` gate verifies the result actually lands
+# on the goal — so a per-formula feasibility guard is unnecessary (and would be a
+# transcription-error hiding place); the re-integration is the single oracle.
+_SignedLeg = tuple[SegmentKind, "Literal[1, -1]", float]
+
+
+def _rs_signed_to_word(legs: list[_SignedLeg]) -> _RSWord:
+    out: _RSWord = []
+    for steering, gear, length in legs:
+        g: Literal[1, -1] = gear if length >= 0.0 else (-gear)
+        out.append(_RSElement(steering, g, abs(length)))
+    return out
+
+
+def _rs_lsl(x: float, y: float, phi: float) -> _RSWord | None:
+    """Base CSC word L S L (Reeds & Shepp 8.1 / PythonRobotics)."""
+    u, t = _rs_polar(x - math.sin(phi), y - 1.0 + math.cos(phi))
+    v = _rs_mod2pi(phi - t)
+    return _rs_signed_to_word([("L", 1, t), ("S", 1, u), ("L", 1, v)])
+
+
+def _rs_lsr(x: float, y: float, phi: float) -> _RSWord | None:
+    """Base CSC word L S R (Reeds & Shepp 8.2 / PythonRobotics)."""
+    u1, t1 = _rs_polar(x + math.sin(phi), y - 1.0 - math.cos(phi))
+    u1 = u1 * u1
+    if u1 < 4.0:
+        return None
+    u = math.sqrt(u1 - 4.0)
+    theta = math.atan2(2.0, u)
+    t = _rs_mod2pi(t1 + theta)
+    v = _rs_mod2pi(t - phi)
+    return _rs_signed_to_word([("L", 1, t), ("S", 1, u), ("R", 1, v)])
+
+
+def _rs_lrl(x: float, y: float, phi: float) -> _RSWord | None:
+    """Base CCC word L R L (Reeds & Shepp 8.3 / PythonRobotics)."""
+    u1, t1 = _rs_polar(x - math.sin(phi), y - 1.0 + math.cos(phi))
+    if u1 > 4.0:
+        return None
+    u = -2.0 * math.asin(0.25 * u1)
+    t = _rs_mod2pi(t1 + 0.5 * u + math.pi)
+    v = _rs_mod2pi(phi - t + u)
+    return _rs_signed_to_word([("L", 1, t), ("R", 1, u), ("L", 1, v)])
+
+
+def _rs_lrlrn(x: float, y: float, phi: float) -> _RSWord | None:
+    """Base CCCC word L R L R (Reeds & Shepp 8.7 / PythonRobotics ``CCCC`` n)."""
+    xi = x + math.sin(phi)
+    eta = y - 1.0 - math.cos(phi)
+    rho = 0.25 * (2.0 + math.hypot(xi, eta))
+    if rho > 1.0 or rho < 0.0:
+        return None
+    u = math.acos(rho)
+    t, v = _rs_tau_omega(u, -u, xi, eta, phi)
+    return _rs_signed_to_word([("L", 1, t), ("R", 1, u), ("L", 1, -u), ("R", 1, v)])
+
+
+def _rs_lrlrp(x: float, y: float, phi: float) -> _RSWord | None:
+    """Base CCCC word L R L R (Reeds & Shepp 8.8 / PythonRobotics ``CCCC`` p)."""
+    xi = x + math.sin(phi)
+    eta = y - 1.0 - math.cos(phi)
+    rho = (20.0 - xi * xi - eta * eta) / 16.0
+    if rho > 1.0 or rho < 0.0:
+        return None
+    u = -math.acos(rho)
+    if u < -0.5 * math.pi:
+        return None
+    t, v = _rs_tau_omega(u, u, xi, eta, phi)
+    return _rs_signed_to_word([("L", 1, t), ("R", 1, u), ("L", 1, u), ("R", 1, v)])
+
+
+def _rs_tau_omega(u: float, v: float, xi: float, eta: float, phi: float) -> tuple[float, float]:
+    """The (tau, omega) leg pair shared by the CCCC words (PythonRobotics)."""
+    delta = _rs_mod2pi(u - v)
+    a = math.sin(u) - math.sin(delta)
+    b = math.cos(u) - math.cos(delta) - 1.0
+    t1 = math.atan2(eta * a - xi * b, xi * a + eta * b)
+    t2 = 2.0 * (math.cos(delta) - math.cos(v) - math.cos(u)) + 3.0
+    tau = _rs_mod2pi(t1 + math.pi) if t2 < 0.0 else _rs_mod2pi(t1)
+    omega = _rs_mod2pi(tau - u + v - phi)
+    return tau, omega
+
+
+def _rs_lrsr(x: float, y: float, phi: float) -> _RSWord | None:
+    """Base CCSC word L R(−π/2) S R (Reeds & Shepp 8.9 / PythonRobotics)."""
+    xi = x + math.sin(phi)
+    eta = y - 1.0 - math.cos(phi)
+    rho, theta = _rs_polar(-eta, xi)
+    if rho < 2.0:
+        return None
+    t = theta
+    u = 2.0 - rho
+    v = _rs_mod2pi(t + 0.5 * math.pi - phi)
+    return _rs_signed_to_word([("L", 1, t), ("R", 1, -0.5 * math.pi), ("S", 1, u), ("R", 1, v)])
+
+
+def _rs_lrsl(x: float, y: float, phi: float) -> _RSWord | None:
+    """Base CCSC word L R(−π/2) S L (Reeds & Shepp 8.10 / PythonRobotics)."""
+    xi = x - math.sin(phi)
+    eta = y - 1.0 + math.cos(phi)
+    rho, theta = _rs_polar(xi, eta)
+    if rho < 2.0:
+        return None
+    r = math.sqrt(rho * rho - 4.0)
+    u = 2.0 - r
+    t = _rs_mod2pi(theta + math.atan2(r, -2.0))
+    v = _rs_mod2pi(phi - 0.5 * math.pi - t)
+    return _rs_signed_to_word([("L", 1, t), ("R", 1, -0.5 * math.pi), ("S", 1, u), ("L", 1, v)])
+
+
+def _rs_lrslr(x: float, y: float, phi: float) -> _RSWord | None:
+    """Base CCSCC word L R(−π/2) S L(−π/2) R (Reeds & Shepp 8.11 / PythonRobotics)."""
+    xi = x + math.sin(phi)
+    eta = y - 1.0 - math.cos(phi)
+    rho, _theta = _rs_polar(xi, eta)
+    if rho < 2.0:
+        return None
+    u = 4.0 - math.sqrt(rho * rho - 4.0)
+    if u > 0.0:
+        return None
+    t = _rs_mod2pi(math.atan2((4.0 - u) * xi - 2.0 * eta, -2.0 * xi + (u - 4.0) * eta))
+    v = _rs_mod2pi(t - phi)
+    return _rs_signed_to_word(
+        [
+            ("L", 1, t),
+            ("R", 1, -0.5 * math.pi),
+            ("S", 1, u),
+            ("L", 1, -0.5 * math.pi),
+            ("R", 1, v),
+        ]
+    )
+
+
+# ── Symmetry transforms (operate on a base solver) ──────────────────────────
+
+
+def _rs_timeflip(word: _RSWord | None) -> _RSWord | None:
+    """TIMEFLIP: negate every gear (a base solved for the time-reversed goal
+    ``(-x, y, -phi)`` becomes the reverse-gear word for the original goal)."""
+    if word is None:
+        return None
+    return [_RSElement(e.steering, -e.gear, e.t) for e in word]
+
+
+def _rs_reflect(word: _RSWord | None) -> _RSWord | None:
+    """REFLECT: swap L↔R steering (a base solved for the x-axis-reflected goal
+    ``(x, -y, -phi)`` becomes the word for the original goal)."""
+    if word is None:
+        return None
+    swap: dict[SegmentKind, SegmentKind] = {"L": "R", "R": "L", "S": "S"}
+    return [_RSElement(swap[e.steering], e.gear, e.t) for e in word]
+
+
+# The base word solvers. Each canonical word shape is enumerated under the four
+# (timeflip × reflect) goal symmetries below, which together generate the
+# classical Reeds–Shepp 48-word family from this handful of base formulas
+# (Reeds & Shepp 1990; the formulas follow the widely-used PythonRobotics
+# presentation). The roundtrip grid proves the family is complete — every
+# (x, y, phi) is reached by at least one generated word.
+_RS_BASE_SOLVERS: tuple[Callable[[float, float, float], _RSWord | None], ...] = (
+    _rs_lsl,
+    _rs_lsr,
+    _rs_lrl,
+    _rs_lrlrn,
+    _rs_lrlrp,
+    _rs_lrsr,
+    _rs_lrsl,
+    _rs_lrslr,
+)
+
+
+def _rs_solve_normalised(x: float, y: float, phi: float) -> _RSWord:
+    """Shortest feasible Reeds–Shepp word for a normalised goal ``(x, y, phi)``.
+
+    Enumerates :data:`_RS_BASE_SOLVERS` under the timeflip / reflect goal
+    symmetries (the standard mechanical generation of the classical word
+    family), scoring each feasible word by weighted normalised length (reverse
+    legs ×:data:`_REVERSE_COST_FACTOR`) and returning the minimum with a
+    strict-``<`` tie-break so an exact tie deterministically keeps the
+    earliest-enumerated word (determinism, ADR-0003). A Reeds–Shepp path always
+    exists between any two poses, so some word is always feasible — proven
+    exhaustively by ``test_reeds_shepp_roundtrip_grid``.
+
+    Every generated word is gated by :func:`_rs_word_reaches` (an independent
+    re-integration) before it can be chosen: a base-formula sign error then
+    surfaces as a *missing* candidate, never as a *wrong path that ships*. The
+    deterministic enumeration order (base list × the fixed four symmetries) is
+    the iteration order the tie-break relies on.
+    """
+
+    def _candidates_for(base: Callable[[float, float, float], _RSWord | None]) -> list[_RSWord]:
+        out: list[_RSWord | None] = [
+            base(x, y, phi),  # identity
+            _rs_timeflip(base(-x, y, -phi)),  # timeflip
+            _rs_reflect(base(x, -y, -phi)),  # reflect
+            _rs_reflect(_rs_timeflip(base(-x, -y, phi))),  # timeflip + reflect
+        ]
+        return [w for w in out if w is not None]
+
+    best: tuple[float, _RSWord] | None = None
+    for base in _RS_BASE_SOLVERS:
+        for word in _candidates_for(base):
+            if not _rs_word_reaches(word, x, y, phi):
+                continue
+            cost = math.fsum(e.t * (_REVERSE_COST_FACTOR if e.gear == -1 else 1.0) for e in word)
+            if best is None or cost < best[0]:
+                best = (cost, word)
+    if best is None:  # pragma: no cover - a Reeds–Shepp path always exists
+        raise ValueError(f"no feasible Reeds–Shepp path for normalised goal ({x}, {y}, {phi})")
+    return best[1]
+
+
+def _rs_word_reaches(word: _RSWord, x: float, y: float, phi: float) -> bool:
+    """``True`` iff integrating ``word`` in the normalised frame (unit radius,
+    start at the origin heading ``+x``) lands on ``(x, y, phi)``.
+
+    A closed-form-independent check using the SAME unicycle integration the
+    production :meth:`DubinsArc.pose_at` performs, so a base-formula sign error
+    is caught here rather than shipping a wrong path."""
+    px, py, pth = 0.0, 0.0, 0.0
+    for e in word:
+        g = float(e.gear)
+        if e.steering == "S":
+            px += g * e.t * math.cos(pth)
+            py += g * e.t * math.sin(pth)
+        else:
+            sign = 1.0 if e.steering == "L" else -1.0
+            cx = px - sign * math.sin(pth)
+            cy = py + sign * math.cos(pth)
+            pth += sign * g * e.t
+            px = cx + sign * math.sin(pth)
+            py = cy - sign * math.cos(pth)
+    return (
+        abs(px - x) < 1e-6
+        and abs(py - y) < 1e-6
+        and abs((pth - phi + math.pi) % (2.0 * math.pi) - math.pi) < 1e-6
+    )
+
+
+def plan_reeds_shepp(start: Pose, end: Pose, *, turn_radius_m: float) -> DubinsArc:
+    """Closed-form shortest Reeds–Shepp path from ``start`` to ``end`` (ADR-0010).
+
+    Reeds–Shepp extends Dubins with reverse arcs and straights, so a plane can
+    back up to reorient rather than driving a full turning-circle loop. Word
+    selection minimises Σ(``|leg|`` × factor) with reverse legs weighted by
+    :data:`_REVERSE_COST_FACTOR` (prefer forward). Still closed-form and RNG-free,
+    so the ADR-0003 byte-identical-plan contract holds. ``turn_radius_m == 0`` is
+    the cart case and delegates to :func:`_plan_cart` with reverse enabled (a
+    carted plane may back straight out of a slot).
+
+    Works in the standard math frame: positions pass through unchanged; headings
+    convert via :func:`compass_to_math_rad`. The integrated endpoint
+    (:meth:`DubinsArc.pose_at`) reaches the goal — the property
+    ``test_reeds_shepp_roundtrip_grid`` enforces across a pose/radius grid.
+    """
+    if turn_radius_m < 0.0 or not math.isfinite(turn_radius_m):
+        raise ValueError(f"turn_radius_m must be finite and >= 0, got {turn_radius_m}")
+
+    if turn_radius_m == 0.0:
+        return _plan_cart(start, end, allow_reverse=True)
+
+    r = turn_radius_m
+    # Express the goal in the start frame, scaled to unit turn radius. The math
+    # frame: theta0 = compass_to_math_rad(start heading); rotate the world
+    # displacement into the start-aligned frame and normalise by r.
+    theta0 = compass_to_math_rad(start.heading_deg)
+    theta1 = compass_to_math_rad(end.heading_deg)
+    dx = (end.x_m - start.x_m) / r
+    dy = (end.y_m - start.y_m) / r
+    c, s = math.cos(theta0), math.sin(theta0)
+    x = c * dx + s * dy
+    y = -s * dx + c * dy
+    phi = _rs_mod2pi(theta1 - theta0)
+
+    word = _rs_solve_normalised(x, y, phi)
+    raw = tuple(Segment(e.steering, e.t * r, gear=e.gear) for e in word)
+    # Collapse zero-length legs (a collinear same-heading path degenerates to a
+    # single straight); keep at least one segment.
+    segs = tuple(seg for seg in raw if seg.length_m > 1e-9) or (Segment("S", 0.0),)
     return DubinsArc(start, end, r, segs)
 
 
@@ -711,8 +1153,8 @@ def plan_fill(target: Layout) -> MovesPlan:
 
 
 # ── Hybrid-A* tow-path search (spike Q3 v2, #222) ───────────────────────────
-# Deterministic search over Dubins motion primitives. Tuning constants; see the
-# design spec. All RNG-free (ADR-0003).
+# Deterministic search over Reeds–Shepp motion primitives (ADR-0010). Tuning
+# constants; see the design spec. All RNG-free (ADR-0003).
 _GRID_XY_M = 0.5  # (x, y) cell size for state binning
 _GRID_DEG = 15.0  # heading cell size; 360 / 15 = 24 heading bins
 _HEADING_BINS = round(360.0 / _GRID_DEG)
@@ -737,20 +1179,43 @@ _SEARCH_STEP_DEG = 5.0
 
 
 def _primitives(turn_radius_m: float) -> tuple[Segment, ...]:
-    """The fixed motion-primitive fan, in deterministic order (L, S, R).
+    """The fixed motion-primitive fan, in deterministic order (ADR-0010 v2).
 
-    Own-gear (``r > 0``): a left arc, a straight, and a right arc, each of
-    length ``step`` (metres) chosen so a turn changes heading by ~one heading
-    cell. Cart (``r == 0``): a left pivot, a straight of ``_GRID_XY_M`` metres,
-    and a right pivot — the same (L, S, R) order; each pivot is
-    ``math.radians(_GRID_DEG)`` radians (one heading cell; ``length_m`` encodes
-    radians for the pivot segments, ADR-0007).
+    Own-gear (``r > 0``): **six primitives** in fixed order ``Lf, Sf, Rf, Lr,
+    Sr, Rr`` — the three forward steerings (left arc, straight, right arc) then
+    the same three in reverse (gear ``-1``). The reverse primitives are the
+    Reeds–Shepp extension: the search can now back up to reorient instead of
+    driving a full turning-circle loop. Fixed order ⇒ deterministic expansion
+    (ADR-0003).
+
+    Own-gear (``r > 0``): each arc/straight is ``step`` metres, chosen so a turn
+    changes heading by ~one heading cell. Cart (``r == 0``): a reverse PIVOT
+    rotates heading the same way as the forward pivot of the *opposite* steering
+    (``pose_at`` holds position fixed and flips the heading delta for a reverse
+    leg), so ``Lr``/``Rr`` are exact duplicates of ``Rf``/``Lf`` and would only
+    ever lose the ``best_g`` race to their cheaper forward twin — pure dead work
+    (an extra ``_motion_clear`` sweep per expansion that can never win). They are
+    therefore omitted: the cart fan is the four useful moves ``Lf, Sf, Rf, Sr``
+    (forward pivots + straight, plus the genuinely-new **reverse straight** that
+    backs the cart up). Fixed order ⇒ deterministic expansion (ADR-0003).
     """
     if turn_radius_m == 0.0:
         dtheta = math.radians(_GRID_DEG)
-        return (Segment("L", dtheta), Segment("S", _GRID_XY_M), Segment("R", dtheta))
+        return (
+            Segment("L", dtheta),
+            Segment("S", _GRID_XY_M),
+            Segment("R", dtheta),
+            Segment("S", _GRID_XY_M, gear=-1),
+        )
     step = max(_GRID_XY_M, turn_radius_m * math.radians(_GRID_DEG))
-    return (Segment("L", step), Segment("S", step), Segment("R", step))
+    return (
+        Segment("L", step),
+        Segment("S", step),
+        Segment("R", step),
+        Segment("L", step, gear=-1),
+        Segment("S", step, gear=-1),
+        Segment("R", step, gear=-1),
+    )
 
 
 def _step_pose(pose: Pose, seg: Segment, turn_radius_m: float) -> Pose:
@@ -768,12 +1233,21 @@ def _seg_cost(seg: Segment, turn_radius_m: float) -> float:
     Straight: ``length_m`` metres, no turn. Turn ``r > 0``: arc length
     ``length_m`` metres plus penalty over ``length_m / r`` radians. Pivot
     ``r == 0``: no translation, penalty over ``length_m`` radians.
+
+    A **reverse** leg (``gear == -1``) multiplies the cost by
+    :data:`_REVERSE_COST_FACTOR` (ADR-0010), so the search prefers forward
+    motion and only backs up when it is genuinely cheaper (the nose-out win).
+    The factor scales the whole leg cost — translation and turn penalty alike —
+    so a reverse arc is penalised consistently with a reverse straight. (The
+    cart fan no longer emits reverse pivots — see :func:`_primitives` — so for
+    ``r == 0`` the factor only ever applies to the reverse straight.)
     """
+    factor = _REVERSE_COST_FACTOR if seg.gear == -1 else 1.0
     if seg.kind == "S":
-        return seg.length_m
+        return factor * seg.length_m
     if turn_radius_m > 0.0:
-        return seg.length_m + _TURN_PENALTY * (seg.length_m / turn_radius_m)
-    return _TURN_PENALTY * seg.length_m  # cart pivot: length_m is radians
+        return factor * (seg.length_m + _TURN_PENALTY * (seg.length_m / turn_radius_m))
+    return factor * _TURN_PENALTY * seg.length_m  # cart pivot: length_m is radians
 
 
 def _cell(pose: Pose) -> tuple[int, int, int]:
@@ -1021,11 +1495,12 @@ def plan_path(
     ``DubinsArc.start`` of the returned arc is the cone pose that *won* (from
     :func:`_root_pose`), not necessarily ``entry``.
 
-    Searches continuous ``(x, y, heading)`` with the fixed primitive fan
-    (:func:`_primitives`), grid-binned via :func:`_cell`, an admissible Euclidean
-    heuristic, and an analytic-expansion shortcut: at every popped node a direct
-    ``plan_dubins`` shot to ``goal`` is tried first, so an unobstructed plane
-    finishes in one arc. Per-edge and analytic-shot validity during search use
+    Searches continuous ``(x, y, heading)`` with the fixed six-primitive fan
+    (:func:`_primitives` — forward L/S/R then reverse L/S/R, ADR-0010),
+    grid-binned via :func:`_cell`, an admissible Euclidean heuristic, and an
+    analytic-expansion shortcut: at every popped node a direct
+    :func:`plan_reeds_shepp` shot to ``goal`` is tried first, so an unobstructed
+    plane finishes in one arc. Per-edge and analytic-shot validity during search use
     the FAST per-pose checker :func:`_motion_clear` (against an obstacle set
     precomputed once via :func:`_build_obstacles`) — an edge/shot is valid iff
     every sampled pose is clear. Before the analytic shot is RETURNED it is
@@ -1037,12 +1512,6 @@ def plan_path(
     in-bounds path is found within ``max_expansions``. RNG-free (ADR-0003):
     fixed primitive order + a monotonic counter tie-break; ``_motion_clear`` is
     pure and deterministic, so determinism is preserved.
-
-    **Merge-conflict note for #261 (Reeds–Shepp / reverse entry):** this
-    function's start-seeding region (the code between ``r = ...`` and ``while
-    open_heap``) was changed by #262.  The analytic-expansion region (the
-    ``final_arc = plan_dubins(...)`` block) is **untouched** here and is owned
-    by #261.  Keep that invariant when merging.
 
     ``hangar`` is consumed directly by :func:`_motion_clear` (bounds, clearances,
     bay rectangle); ``placed.hangar`` is the same object and also reaches the
@@ -1114,15 +1583,14 @@ def plan_path(
         # path is exact-oracle-clean no matter what the fast checker accepted
         # during search. The `and` short-circuits left-to-right, so the cheap
         # `_motion_clear` screen always runs before the costly oracle.
-        # NOTE: do NOT modify this block — it is owned by #261 (Reeds–Shepp).
-        final_arc = plan_dubins(node.pose, goal, turn_radius_m=r)
+        final_arc = plan_reeds_shepp(node.pose, goal, turn_radius_m=r)
         if all(
             _motion_clear(mover, p, obstacles, hangar)
             for p in final_arc.sample(step_m=_SEARCH_STEP_M, step_deg=_SEARCH_STEP_DEG)
         ):
             segs = tuple(_reconstruct_segments(node)) + final_arc.segments
-            # ``final_arc.segments`` is always non-empty (plan_dubins guarantees
-            # it), so ``segs`` is non-empty by construction. Assert it loudly
+            # ``final_arc.segments`` is always non-empty (plan_reeds_shepp
+            # guarantees it), so ``segs`` is non-empty by construction. Assert it
             # rather than silently substituting a zero-length straight: a future
             # regression that produced empty segs would otherwise return a
             # do-nothing arc that the safety net (sampling only the start pose of
