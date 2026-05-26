@@ -104,6 +104,22 @@ def test_heading_45_path_advances_into_plus_x_plus_y() -> None:
     assert mid.x_m > 0.0 and mid.y_m > 0.0
 
 
+def test_heading_45_reverse_path_advances_into_minus_x_minus_y() -> None:
+    """🔬 Reverse 45° canary (ADR-0010, towplanner v2 Reeds–Shepp).
+
+    Forward heading-45 drives into (+x, +y) (the test above). A reverse leg is
+    the exact negation: backing while heading 45° must move into (−x, −y). A
+    CW/CCW sign flip in :func:`compass_to_math_rad` would send the reverse leg
+    into the wrong quadrant — the symmetric word matrix would pass it silently,
+    so this geometric assert is the real guard for the reverse direction."""
+    from hangarfit.towplanner import DubinsArc, Segment
+
+    start = Pose(0.0, 0.0, 45.0)
+    arc = DubinsArc(start, start, 5.0, (Segment("S", 2.0, gear=-1),))
+    mid = list(arc.sample(step_m=0.25, step_deg=5.0))[1]
+    assert mid.x_m < 0.0 and mid.y_m < 0.0
+
+
 def test_pose_heading_45_right_wingtip_lands_in_plus_x_minus_y() -> None:
     """🔬 The definitive det−1 guard, driven through a planner Pose.
 
