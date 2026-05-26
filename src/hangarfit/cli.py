@@ -425,18 +425,24 @@ def _warn_unroutable(result: SolveResult) -> None:
     valid and rendered, just without a path overlay — ADR-0007 / #197).
 
     ``diagnostics.unroutable_planes`` is a *compacted* list (one entry per
-    ``None`` plan, in returned-layout order), so the k-th ``None`` aligns with
-    the k-th blocking plane — consumed here as an in-order iterator.
+    ``None`` plan, in returned-layout order), so the j-th ``None`` plan pairs
+    with the j-th blocking plane. The solver builds both in one pass (one
+    plane appended per ``None``), so the lengths must match; we assert that
+    rather than papering over a desync with a misleading placeholder name (a
+    mismatch is a producer bug, not a user condition).
     """
-    blocked = iter(result.diagnostics.unroutable_planes)
-    for i, plan in enumerate(result.plans, start=1):
-        if plan is None:
-            plane = next(blocked, "<unknown>")
-            print(
-                f"warning: layout {i}: no feasible tow path "
-                f"(plane {plane!r} could not be routed); rendered without paths",
-                file=sys.stderr,
-            )
+    unrouted_layouts = [i for i, plan in enumerate(result.plans, start=1) if plan is None]
+    planes = result.diagnostics.unroutable_planes
+    assert len(planes) == len(unrouted_layouts), (
+        f"unroutable_planes ({len(planes)}) out of sync with None plans "
+        f"({len(unrouted_layouts)}) — solver bug"
+    )
+    for layout_index, plane in zip(unrouted_layouts, planes, strict=True):
+        print(
+            f"warning: layout {layout_index}: no feasible tow path "
+            f"(plane {plane!r} could not be routed); rendered without paths",
+            file=sys.stderr,
+        )
 
 
 def _resolve_fleet_hangar_refs(args: argparse.Namespace) -> tuple[str, str]:

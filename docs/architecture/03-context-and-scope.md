@@ -53,7 +53,8 @@ The tool runs entirely on the user's local machine:
   `--render`. Exit-code semantics differ between `hangarfit check` and
   `hangarfit solve` (e.g., `solve` reports `1` for both
   "no layout found" and, under `--strict-k`, "fewer than K alternatives
-  found"); the canonical tables live in the root
+  found", and `3` under `--render-paths` when no candidate is
+  tow-routable); the canonical tables live in the root
   [`README.md`](../../README.md#exit-codes-check).
 - **No external systems.** The CLI does not call any network service,
   read any database, write to any shared state, or read environment

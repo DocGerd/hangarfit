@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from hangarfit.cli import build_parser, main
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
@@ -752,3 +754,100 @@ class TestSolveRenderPaths:
         assert rc == 3
         payload = json.loads(capsys.readouterr().out)
         assert payload["diagnostics"]["unroutable_planes"] == ["husky"]
+
+    def test_multi_none_warnings_name_planes_in_order(self, tmp_path, monkeypatch, capsys):
+        # Three layouts, the 1st and 3rd un-routable: the compacted
+        # unroutable_planes (["alpha","gamma"]) must pair with the 1st and 3rd
+        # None positions in order — guards the zip/correspondence in
+        # _warn_unroutable that a single-None test cannot.
+        layout = self._layout()
+        plan = self._plan(layout)
+        self._patch_solve(
+            monkeypatch,
+            self._result(
+                "found",
+                (layout, layout, layout),
+                (None, plan, None),
+                unroutable=("alpha", "gamma"),
+            ),
+        )
+        rc = main(
+            [
+                "solve",
+                SMOKE_FIXTURE,
+                "--alternatives",
+                "3",
+                "--render",
+                str(tmp_path / "p_{i}.png"),
+                "--render-paths",
+                "--seed",
+                "42",
+            ]
+        )
+        assert rc == 0  # layout 2 routable
+        err = capsys.readouterr().err
+        assert "layout 1" in err and "alpha" in err
+        assert "layout 3" in err and "gamma" in err
+        assert "layout 2" not in err
+        # Order: layout 1's warning (alpha) precedes layout 3's (gamma).
+        assert err.index("alpha") < err.index("gamma")
+
+    def test_unroutable_planes_desync_is_loud(self, tmp_path, monkeypatch):
+        # A None plan with an empty unroutable_planes is a producer-side
+        # invariant violation (solver appends one plane per None). _warn_unroutable
+        # must surface it loudly, not paper over it with a placeholder name.
+        layout = self._layout()
+        self._patch_solve(monkeypatch, self._result("found", (layout,), (None,), unroutable=()))
+        with pytest.raises(AssertionError, match="out of sync"):
+            main(
+                [
+                    "solve",
+                    SMOKE_FIXTURE,
+                    "--render",
+                    str(tmp_path / "p.png"),
+                    "--render-paths",
+                    "--seed",
+                    "42",
+                ]
+            )
+
+    def test_empty_layouts_exits_1_not_3(self, tmp_path, monkeypatch):
+        # No layouts (exhausted_budget): exit 1 wins over the exit-3 check even
+        # under --render-paths (the all-None test would otherwise be vacuously
+        # true on empty plans). Pins the "no layouts > no-tow-order" precedence.
+        self._patch_solve(monkeypatch, self._result("exhausted_budget", (), ()))
+        rc = main(
+            [
+                "solve",
+                SMOKE_FIXTURE,
+                "--render",
+                str(tmp_path / "p.png"),
+                "--render-paths",
+                "--seed",
+                "42",
+            ]
+        )
+        assert rc == 1
+
+    @pytest.mark.slow
+    def test_real_solve_render_paths_end_to_end(self, tmp_path):
+        # Real solve -> plan_fill -> render_layout(moves_plan=...), no monkeypatch:
+        # guards the live integration the monkeypatched tests can't (the single
+        # smoke-fixture plane is towable). rc 0 (routable) or 3 (if not); either
+        # way the pipeline must run and write a PNG.
+        out = tmp_path / "real.png"
+        rc = main(
+            [
+                "solve",
+                SMOKE_FIXTURE,
+                "--budget",
+                "5.0",
+                "--seed",
+                "42",
+                "--render",
+                str(out),
+                "--render-paths",
+            ]
+        )
+        assert rc in (0, 3)
+        assert out.exists() and out.stat().st_size > 0
