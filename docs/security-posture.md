@@ -183,6 +183,40 @@ A -1 here is the correct answer for a deliberately unpublished tool.
 
 ---
 
+## Two-factor authentication (OSPS-AC-01.01)
+
+**What the control requires.** OSPS Baseline L1 control OSPS-AC-01.01 requires
+that multi-factor authentication (MFA) is enabled for all accounts that can
+perform sensitive repository actions — including pushing commits, merging pull
+requests, and changing branch-protection settings.
+
+**Status: enabled.** The sole maintainer account (@DocGerd) has two-factor
+authentication enabled at the GitHub account level. Every sensitive repository
+action — commit pushes, PR merges, branch-protection changes — is gated behind
+this factor.
+
+**Why this is a self-attestation.** Account-level 2FA on a *personal* GitHub
+account is not externally verifiable via the GitHub REST API. The
+`GET /users/{username}` endpoint returns `"two_factor_authentication": null`
+for all callers, including the authenticated account holder. There is no
+API surface that exposes this field to outside observers.
+
+A GitHub *organisation* can enforce "require 2FA for all members" as a policy
+and expose that enforcement status via `GET /orgs/{org}`; but `hangarfit` is
+hosted under a personal account, not an organisation, so no equivalent
+enforcement object exists.
+
+This attestation therefore mirrors the posture already used for the structural
+Scorecard zeros above: an honest written statement in-tree, with the
+verifiability limit stated explicitly, rather than a claimed machine-checkable
+signal that does not exist.
+
+**Will it change?** Only if the repository moves under a GitHub organisation,
+at which point organisation-level 2FA enforcement can be turned on and would
+become externally verifiable.
+
+---
+
 ## Alternatives considered
 
 For completeness — these were considered for the Code-Review zero and
