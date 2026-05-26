@@ -543,13 +543,15 @@ class NoFeasiblePlanError(Exception):
 def plan_fill(target: Layout) -> MovesPlan:
     """Plan a collision-free entry order + per-plane path for an empty fill.
 
-    Walks :func:`back_first_order` (deepest slot first); for each plane computes
-    the door-cone entry pose (:func:`entry_pose`) and the Dubins path to its slot
-    (cart-borne planes have ``effective_turn_radius_m() == 0`` ⇒ a
-    pivot-straight-pivot arc). Each iteration scans the not-yet-placed planes in
-    order and commits the first whose path is conflict-free against the
-    already-placed subset (the spike's "swap with the next-feasible plane" as a
-    deterministic scan). If a whole scan finds none feasible the greedy is stuck
+    Walks :func:`back_first_order` (deepest slot first); for each plane searches
+    for an in-bounds path from the door-cone entry pose (:func:`entry_pose`) to
+    its target slot via :func:`plan_path` (a deterministic Hybrid-A* search).
+    Cart-borne planes have ``effective_turn_radius_m() == 0`` and are handled by
+    the same search with zero-radius pivot primitives. Each iteration scans the
+    not-yet-placed planes in order and commits the first for which :func:`plan_path`
+    succeeds (i.e. finds an in-bounds, collision-free arc) against the
+    already-placed subset — the spike's "swap with the next-feasible plane" as a
+    deterministic scan. If a whole scan finds none feasible the greedy is stuck
     (spike Risk #1) and the plan bails with :class:`NoFeasiblePlanError` naming
     the deepest unplaceable plane.
 
@@ -557,8 +559,8 @@ def plan_fill(target: Layout) -> MovesPlan:
     obstacle, so a plane infeasible against the current obstacles can never
     become feasible later — the scan therefore makes monotonic progress (one
     plane committed per iteration) and cannot spin. Deterministic (ADR-0003):
-    the order, the Dubins primitive, and the next-feasible scan are all RNG-free,
-    so a given ``target`` always yields the same :class:`MovesPlan`.
+    the order, the Hybrid-A* primitive fan, and the next-feasible scan are all
+    RNG-free, so a given ``target`` always yields the same :class:`MovesPlan`.
     """
     ordered = list(back_first_order(target.placements))
     fleet = target.fleet
@@ -573,29 +575,35 @@ def plan_fill(target: Layout) -> MovesPlan:
         # The deepest unplaced plane is scanned first, so its conflict (if it
         # is rejected) is the one reported when the whole scan finds nothing.
         deepest_conflict: Conflict | None = None
+        # `placed` does not change within a scan pass, so the obstacle layout is
+        # constant across candidates. Only the already-committed planes are
+        # obstacles; plan_path adds the candidate mover per sample via its
+        # internal path_first_conflict check.
+        placed_layout = Layout(
+            fleet=fleet,
+            hangar=hangar,
+            placements=tuple(placed),
+            maintenance_plane=target.maintenance_plane,
+        )
         for idx, slot in enumerate(ordered):
             plane = fleet[slot.plane_id]
-            arc = plan_dubins(
-                entry_pose(slot, hangar),
-                Pose.from_placement(slot),
-                turn_radius_m=plane.effective_turn_radius_m(),
-            )
-            # Only the already-committed planes are obstacles; the candidate
-            # mover is added by path_first_conflict per sample.
-            placed_layout = Layout(
-                fleet=fleet,
-                hangar=hangar,
-                placements=tuple(placed),
-                maintenance_plane=target.maintenance_plane,
-            )
-            conflict = path_first_conflict(
-                arc, plane, mover_on_carts=slot.on_carts, placed=placed_layout
-            )
-            if conflict is None:
-                chosen, chosen_arc = idx, arc
-                break
-            if deepest_conflict is None:
-                deepest_conflict = conflict
+            try:
+                arc = plan_path(
+                    plane,
+                    entry_pose(slot, hangar),
+                    Pose.from_placement(slot),
+                    hangar=hangar,
+                    placed=placed_layout,
+                    mover_on_carts=slot.on_carts,
+                )
+            except NoFeasiblePlanError as exc:
+                # This plane cannot be routed against the current obstacles; try
+                # the next candidate. Remember its conflict for the bail message.
+                if deepest_conflict is None:
+                    deepest_conflict = exc.conflict
+                continue
+            chosen, chosen_arc = idx, arc
+            break
         if chosen is None:
             # Every remaining plane conflicts: greedy back-first is stuck. The
             # deepest plane (ordered[0], scanned first) is the one we most

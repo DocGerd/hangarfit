@@ -3,8 +3,9 @@
 The entry-pose tests pin the door as a motion gate (spike Q6 / ADR-0007);
 the plan_fill tests pin the deterministic back-first order, the cart
 pivot-straight-pivot path, the bounded order-retry swap, and the structured
-bail. Retry/bail tests monkeypatch ``path_first_conflict`` so the loop logic
-is exercised independently of Dubins geometry.
+bail. Retry/bail tests monkeypatch ``path_first_conflict`` (which plan_fill now
+reaches via ``plan_path``'s internal calls) so the loop logic is exercised
+independently of the real geometry search.
 """
 
 import pytest
@@ -208,3 +209,88 @@ def test_plan_fill_succeeds_when_only_last_scanned_is_feasible(
     monkeypatch.setattr(tp, "path_first_conflict", fake_conflict)
     plan = plan_fill(target)
     assert [m.plane_id for m in plan.moves] == ["F", "E", "D", "C", "B", "A"]
+
+
+def test_plan_fill_routes_origin_spanning_planes() -> None:
+    """plan_fill must succeed for origin-spanning planes whose Dubins arc clips bounds.
+
+    The forward-mounted-box fixture (offset_x_m=0.5) keeps all vertices at y>=0
+    from the entry pose, masking out-of-bounds sweeps. An origin-spanning fuselage
+    (offset_x_m=0.0) means the rear half extends behind the nose pose. When the
+    target slot is at heading=90 (pointing west) near the left wall, the shortest
+    Dubins arc swings the fuselage outside the left hangar wall — single-shot
+    plan_dubins raises a bounds conflict, but Hybrid-A* (plan_path) finds an
+    in-bounds detour. This test is the primary integration regression guard for
+    the plan_fill → plan_path wiring: it FAILS with the old plan_dubins-only code
+    (NoFeasiblePlanError) and PASSES after the plan_path integration.
+    """
+    from hangarfit.towplanner import path_first_conflict
+
+    def span_plane(pid: str) -> Aircraft:
+        """Origin-spanning plane: fuselage centred at the nose pose (offset_x_m=0).
+
+        Defined locally rather than reusing ``_box_plane``/``_fuselage_box``: the
+        zero x-offset (vs their 0.5) is the whole point — it makes the fuselage
+        straddle the entry pose, the case the forward-mounted fixtures mask.
+        """
+        return Aircraft(
+            id=pid,
+            name=pid,
+            wing_position="high",
+            gear="tailwheel",
+            movement_mode="always_own_gear",
+            turn_radius_m=5.0,
+            measured=False,
+            parts=(
+                Part(
+                    kind="fuselage",
+                    length_m=2.0,
+                    width_m=1.5,
+                    offset_x_m=0.0,
+                    offset_y_m=0.0,
+                    angle_deg=0.0,
+                    z_bottom_m=0.0,
+                    z_top_m=1.0,
+                ),
+            ),
+        )
+
+    # 30 × 30 m hangar so both slots are well inside the back wall.
+    h = Hangar(
+        length_m=30.0,
+        width_m=30.0,
+        door=Door(center_x_m=15.0, width_m=8.0),
+        maintenance_bay=MaintenanceBay(center_x_m=15.0, width_m=2.0, depth_m=2.0),
+        clearance_m=0.3,
+        wing_layer_clearance_m=0.3,
+    )
+    fleet = {"A": span_plane("A"), "B": span_plane("B")}
+    # A: heading=90 (west), y=10 — shallower; single-shot Dubins clips the left wall.
+    # B: heading=0 (north), y=20 — deeper; committed first by back_first_order, no bounds issue.
+    target = Layout(
+        fleet=fleet,
+        hangar=h,
+        placements=(
+            Placement(plane_id="A", x_m=8.0, y_m=10.0, heading_deg=90.0, on_carts=False),
+            Placement(plane_id="B", x_m=15.0, y_m=20.0, heading_deg=0.0, on_carts=False),
+        ),
+    )
+    plan = plan_fill(target)
+    assert {m.plane_id for m in plan.moves} == {"A", "B"}
+    # Deepest (B, y=20) is towed first.
+    assert plan.moves[0].plane_id == "B"
+    # Every move's path is exact-oracle clean against the planes placed before it.
+    placed: list = []
+    for m in plan.moves:
+        pl = Layout(
+            fleet=fleet,
+            hangar=h,
+            placements=tuple(placed),
+            maintenance_plane=target.maintenance_plane,
+        )
+        slot = next(p for p in target.placements if p.plane_id == m.plane_id)
+        assert (
+            path_first_conflict(m.path, fleet[m.plane_id], mover_on_carts=slot.on_carts, placed=pl)
+            is None
+        )
+        placed.append(slot)
