@@ -1,8 +1,12 @@
 """Tow-path planner — empty-hangar fill (Phase 3a).
 
-Answers *how* each plane reaches its target slot: a deterministic entry
-order plus a closed-form Dubins arc per plane. See ADR-0007 and
-docs/spikes/tow-path-planning.md. Wave 1 = the leaf primitives only.
+Answers *how* each plane reaches its target slot: a deterministic entry order
+(:func:`back_first_order`) plus an in-bounds, obstacle-free tow path per plane
+found by a deterministic Hybrid-A* search (:func:`plan_path`, #222) over Dubins
+motion primitives — emitted as a single :class:`DubinsArc`. An unobstructed
+plane still finishes in one closed-form Dubins shot (the search's analytic
+expansion). See ADR-0002 (heading convention), ADR-0007 (cart = own-gear, r=0),
+and docs/spikes/tow-path-planning.md.
 """
 
 from __future__ import annotations
@@ -632,7 +636,12 @@ _GRID_XY_M = 0.5  # (x, y) cell size for state binning
 _GRID_DEG = 15.0  # heading cell size; 360 / 15 = 24 heading bins
 _HEADING_BINS = round(360.0 / _GRID_DEG)
 _TURN_PENALTY = 0.1  # per-radian g-cost penalty to prefer straighter paths
-_MAX_EXPANSIONS = 700  # node-expansion budget per plane before bailing
+_MAX_EXPANSIONS = 700  # node-expansion budget per plane before bailing.
+# Deterministic (machine-independent) bound on worst-case search cost. The flip
+# side: budget exhaustion can also report a genuinely-feasible-but-hard layout
+# as NoFeasiblePlanError (a false negative). Accepted v1 tradeoff — see the
+# design spec's failure semantics; retune once #197 exercises the planner
+# through solve() on real (measured) hangar geometry.
 # Sampling resolution for the FAST in-search `_motion_clear` validity checks
 # (edges + the analytic-shot screen). Coarser than the exact oracle's default
 # (0.05 m / 1°) to keep the search tractable: the worst case is a plane that can
@@ -909,6 +918,11 @@ def plan_path(
     obstacles = _build_obstacles(placed, mover_id=mover.id)
     start = _SearchNode(entry, 0.0, None, None)
     counter = 0
+    # Heuristic: straight-line Euclidean distance. Deliberately looser than the
+    # spec's Dubins-distance suggestion — Euclidean ≤ Dubins length ≤ true cost
+    # and the g-cost turn penalty is ≥ 0, so it stays admissible (it may expand a
+    # few more nodes, never fewer; do NOT "tighten" it to the Dubins shot without
+    # re-checking admissibility and the determinism canary).
     open_heap: list[tuple[float, int, _SearchNode]] = [
         (math.hypot(goal.x_m - entry.x_m, goal.y_m - entry.y_m), counter, start)
     ]
@@ -936,9 +950,13 @@ def plan_path(
         ):
             segs = tuple(_reconstruct_segments(node)) + final_arc.segments
             # ``final_arc.segments`` is always non-empty (plan_dubins guarantees
-            # it), so ``segs`` cannot be empty; the fallback is belt-and-braces
-            # for DubinsArc's non-empty-segments invariant and never fires.
-            candidate = DubinsArc(entry, goal, r, segs or (Segment("S", 0.0),))
+            # it), so ``segs`` is non-empty by construction. Assert it loudly
+            # rather than silently substituting a zero-length straight: a future
+            # regression that produced empty segs would otherwise return a
+            # do-nothing arc that the safety net (sampling only the start pose of
+            # a zero-length arc) could not catch.
+            assert segs, "plan_path: reconstructed + analytic segments are empty"
+            candidate = DubinsArc(entry, goal, r, segs)
             # Safety net: validate the WHOLE candidate path (coarse-sampled
             # primitive prefix + analytic suffix) with the EXACT oracle at fine
             # resolution. Returning only on agreement makes the result
@@ -977,16 +995,18 @@ def plan_path(
                     (child_g + h, counter, _SearchNode(child_pose, child_g, seg, node)),
                 )
 
-    # The per-edge / analytic validity checks now use the fast `_motion_clear`,
-    # which returns a boolean rather than a specific :class:`Conflict`, so no
-    # per-edge conflict object is available to surface here. Report a generic
-    # "no in-bounds tow path found" naming the mover — sufficient for the caller
-    # (plan_fill / the Wave 3 CLI) to identify the offender.
+    # The per-edge / analytic validity checks use the fast `_motion_clear`, which
+    # returns a boolean rather than a specific :class:`Conflict`, so no per-edge
+    # conflict object is available to surface here — and budget exhaustion is not
+    # any single named constraint (the blocker is "no path within the budget").
+    # Report the honest ``no_feasible_path`` kind rather than mis-labelling it
+    # ``hangar_bounds``, so a caller keying on ``conflict.kind`` (plan_fill / the
+    # Wave 3 CLI) is not misled about the cause; the mover is still named.
     raise NoFeasiblePlanError(
         mover.id,
         Conflict.single(
-            kind="hangar_bounds",
+            kind="no_feasible_path",
             plane=mover.id,
-            detail="no in-bounds tow path found",
+            detail=f"no in-bounds tow path found within {max_expansions} expansions",
         ),
     )
