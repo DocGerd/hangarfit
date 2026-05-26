@@ -632,7 +632,18 @@ _GRID_XY_M = 0.5  # (x, y) cell size for state binning
 _GRID_DEG = 15.0  # heading cell size; 360 / 15 = 24 heading bins
 _HEADING_BINS = round(360.0 / _GRID_DEG)
 _TURN_PENALTY = 0.1  # per-radian g-cost penalty to prefer straighter paths
-_MAX_EXPANSIONS = 8000  # node-expansion budget per plane before bailing
+_MAX_EXPANSIONS = 700  # node-expansion budget per plane before bailing
+# Sampling resolution for the FAST in-search `_motion_clear` validity checks
+# (edges + the analytic-shot screen). Coarser than the exact oracle's default
+# (0.05 m / 1°) to keep the search tractable: the worst case is a plane that can
+# maneuver freely but cannot reach the goal, which explores the whole budget,
+# and the analytic shot is screened at every node. Coarse sampling can only make
+# the screen MORE lenient (accept a marginally-clipping pose), never reject a
+# valid one — and the full returned path is re-validated by the exact oracle at
+# fine resolution before it is returned (the safety net), so coarsening trades a
+# little extra search, never correctness.
+_SEARCH_STEP_M = 0.25
+_SEARCH_STEP_DEG = 5.0
 
 
 def _primitives(turn_radius_m: float) -> tuple[Segment, ...]:
@@ -919,17 +930,27 @@ def plan_path(
         # during search. The `and` short-circuits left-to-right, so the cheap
         # `_motion_clear` screen always runs before the costly oracle.
         final_arc = plan_dubins(node.pose, goal, turn_radius_m=r)
-        if all(_motion_clear(mover, p, obstacles, hangar) for p in final_arc.sample()) and (
-            path_first_conflict(final_arc, mover, mover_on_carts=mover_on_carts, placed=placed)
-            is None
+        if all(
+            _motion_clear(mover, p, obstacles, hangar)
+            for p in final_arc.sample(step_m=_SEARCH_STEP_M, step_deg=_SEARCH_STEP_DEG)
         ):
             segs = tuple(_reconstruct_segments(node)) + final_arc.segments
             # ``final_arc.segments`` is always non-empty (plan_dubins guarantees
             # it), so ``segs`` cannot be empty; the fallback is belt-and-braces
             # for DubinsArc's non-empty-segments invariant and never fires.
-            return DubinsArc(entry, goal, r, segs or (Segment("S", 0.0),))
-        # else (fast screen failed, OR fast passed but the exact oracle rejected):
-        # do not ship; fall through to primitive expansion.
+            candidate = DubinsArc(entry, goal, r, segs or (Segment("S", 0.0),))
+            # Safety net: validate the WHOLE candidate path (coarse-sampled
+            # primitive prefix + analytic suffix) with the EXACT oracle at fine
+            # resolution. Returning only on agreement makes the result
+            # exact-oracle-clean regardless of any fast-vs-exact divergence the
+            # coarse in-search sampling allowed.
+            if (
+                path_first_conflict(candidate, mover, mover_on_carts=mover_on_carts, placed=placed)
+                is None
+            ):
+                return candidate
+        # else (fast screen failed, OR fast passed but the exact oracle rejected
+        # the full path): do not ship; fall through to primitive expansion.
 
         if expansions >= max_expansions:
             break
@@ -940,7 +961,10 @@ def plan_path(
         for seg in _primitives(r):
             child_pose = _step_pose(node.pose, seg, r)
             edge = DubinsArc(node.pose, child_pose, r, (seg,))
-            if not all(_motion_clear(mover, p, obstacles, hangar) for p in edge.sample()):
+            if not all(
+                _motion_clear(mover, p, obstacles, hangar)
+                for p in edge.sample(step_m=_SEARCH_STEP_M, step_deg=_SEARCH_STEP_DEG)
+            ):
                 continue
             child_g = node.g + _seg_cost(seg, r)
             child_key = _cell(child_pose)
