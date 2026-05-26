@@ -607,3 +607,62 @@ def plan_fill(target: Layout) -> MovesPlan:
         placed.append(slot)
 
     return MovesPlan(target_layout=target, moves=tuple(moves))
+
+
+# ── Hybrid-A* tow-path search (spike Q3 v2, #222) ───────────────────────────
+# Deterministic search over Dubins motion primitives. Tuning constants; see the
+# design spec. All RNG-free (ADR-0003).
+_GRID_XY_M = 0.5  # (x, y) cell size for state binning
+_GRID_DEG = 15.0  # heading cell size; 360 / 15 = 24 heading bins
+_HEADING_BINS = round(360.0 / _GRID_DEG)
+_TURN_PENALTY = 0.1  # per-radian g-cost penalty to prefer straighter paths
+_MAX_EXPANSIONS = 8000  # node-expansion budget per plane before bailing
+
+
+def _primitives(turn_radius_m: float) -> tuple[Segment, ...]:
+    """The fixed motion-primitive fan, in deterministic order (L, S, R).
+
+    Own-gear (``r > 0``): a left arc, a straight, and a right arc, each of
+    length ``step`` (metres) chosen so a turn changes heading by ~one heading
+    cell. Cart (``r == 0``): a left pivot and a right pivot of
+    ``math.radians(_GRID_DEG)`` radians (one heading cell; ``length_m`` encodes
+    radians, ADR-0007), plus a straight of ``_GRID_XY_M`` metres.
+    """
+    if turn_radius_m == 0.0:
+        dtheta = math.radians(_GRID_DEG)
+        return (Segment("L", dtheta), Segment("S", _GRID_XY_M), Segment("R", dtheta))
+    step = max(_GRID_XY_M, turn_radius_m * math.radians(_GRID_DEG))
+    return (Segment("L", step), Segment("S", step), Segment("R", step))
+
+
+def _step_pose(pose: Pose, seg: Segment, turn_radius_m: float) -> Pose:
+    """Integrate one primitive segment from ``pose`` (reuses ``DubinsArc.pose_at``).
+
+    The temporary arc's ``end`` is a placeholder — ``pose_at`` integrates from
+    ``start`` and never reads ``end``.
+    """
+    return DubinsArc(pose, pose, turn_radius_m, (seg,)).pose_at(seg.length_m)
+
+
+def _seg_cost(seg: Segment, turn_radius_m: float) -> float:
+    """g-cost of one segment: translation metres + a small per-radian turn penalty.
+
+    Straight: ``length_m`` metres, no turn. Turn ``r > 0``: arc length
+    ``length_m`` metres plus penalty over ``length_m / r`` radians. Pivot
+    ``r == 0``: no translation, penalty over ``length_m`` radians.
+    """
+    if seg.kind == "S":
+        return seg.length_m
+    if turn_radius_m > 0.0:
+        return seg.length_m + _TURN_PENALTY * (seg.length_m / turn_radius_m)
+    return _TURN_PENALTY * seg.length_m  # cart pivot: length_m is radians
+
+
+def _cell(pose: Pose) -> tuple[int, int, int]:
+    """Bin a pose into the search grid: ``(x, y)`` rounded to ``_GRID_XY_M`` and
+    heading rounded to ``_GRID_DEG`` (wrapped into ``_HEADING_BINS``)."""
+    return (
+        round(pose.x_m / _GRID_XY_M),
+        round(pose.y_m / _GRID_XY_M),
+        round(pose.heading_deg / _GRID_DEG) % _HEADING_BINS,
+    )
