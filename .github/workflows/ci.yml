@@ -171,7 +171,7 @@ jobs:
           # A count-floor would add nothing — a regen-vs-committed shortfall
           # is already an asymmetric diff failure; only this absolute check
           # covers the symmetric-degradation case.
-          for pkg in pyyaml shapely matplotlib pytest pytest-cov ruff mypy types-pyyaml types-shapely; do
+          for pkg in pyyaml shapely matplotlib pytest pytest-cov ruff mypy types-pyyaml types-shapely hypothesis; do
             grep -qE "^${pkg}==" /tmp/regenerated.set || {
               echo "::error::dev lockfile regeneration dropped a declared dependency: ${pkg} — pip-compile may have produced partial output."
               exit 1

@@ -277,6 +277,10 @@ fonttools==4.63.0 \
     --hash=sha256:ef3048ef05dbb552b89817713d9cac912e00d0fde4a3105c00d29e52e10c89af \
     --hash=sha256:fd1e3094f42d806d3d7c79162fc59e5910fcbe3a7360c385b8da969bc4493745
     # via matplotlib
+hypothesis==6.153.0 \
+    --hash=sha256:11616e5158fc485d62bae19d9cc69333237faa8050ad44a45218254a1ef272bb \
+    --hash=sha256:2aeda9bbb44ae0ee0bfa67ef744a25be05c1f804dca4eb6479c63518dc9f2900
+    # via hangarfit (pyproject.toml)
 iniconfig==2.3.0 \
     --hash=sha256:c76315c77db068650d49c5b56314774a7804df16fee4402c1f19d6d15d8c4730 \
     --hash=sha256:f631c04d2c48c52b84d0d0549c99ff3859c98df65b3101406327ecc7d53fbf12
@@ -966,6 +970,10 @@ six==1.17.0 \
     --hash=sha256:4721f391ed90541fddacab5acf947aa0d3dc7d27b2e1e8eda2be8970586c3274 \
     --hash=sha256:ff70335d468e7eb6ec65b95b99d3a2836546063f63acc5171de367e834932a81
     # via python-dateutil
+sortedcontainers==2.4.0 \
+    --hash=sha256:25caa5a06cc30b6b83d11423433f65d1f9d76c4c6a0c90e3379eaa43b9bfdb88 \
+    --hash=sha256:a163dcaede0f1c021485e957a39245190e74249897e2ae4b2aa38595db237ee0
+    # via hypothesis
 types-pyyaml==6.0.12.20260518 \
     --hash=sha256:d2150f75a231c9fe9c7463bd29487d93e60bac90400287351384bc2284eba7cd \
     --hash=sha256:d917f83fb38462550338c1297faedd860b3ec83912b96b1e3d73255f7473e466

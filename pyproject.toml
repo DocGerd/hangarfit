@@ -18,7 +18,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.4", "pytest-cov>=4.0", "ruff>=0.7.0", "mypy>=1.0", "types-PyYAML", "types-shapely"]
+dev = ["pytest>=7.4", "pytest-cov>=4.0", "ruff>=0.7.0", "mypy>=1.0", "types-PyYAML", "types-shapely", "hypothesis>=6.100"]
 
 [project.scripts]
 hangarfit = "hangarfit.cli:main"
