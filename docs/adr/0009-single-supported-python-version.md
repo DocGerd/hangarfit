@@ -1,7 +1,6 @@
 # ADR-0009: Single supported Python — 3.12, anchored to the distro LTS
 
-- **Status:** Proposed
-  <!-- Flips to Accepted when the implementing PR (#213) merges. -->
+- **Status:** Accepted
 
 - **Date:** 2026-05-25
 - **Deciders:** Patrick Kuhn (DocGerd)
