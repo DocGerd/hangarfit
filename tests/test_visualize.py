@@ -405,3 +405,122 @@ class TestDrawPartHandlesTailKind:
         ax = MagicMock()
         _draw_part(ax, tail_part, "#3498db")
         ax.add_patch.assert_called_once()
+
+
+class TestDrawTowPaths:
+    """`_draw_tow_paths` overlays each plane's tow path as a polyline, one
+    colour per plane, at the conflict-overlay z-tier (#192). Companion to
+    ``_draw_conflict_overlay``.
+    """
+
+    @staticmethod
+    def _vertical_move(plane_id: str, x0: float, y0: float, length: float):
+        """A trivial straight (S-leg) move from (x0,y0) heading +y, so the
+        sampled polyline is the vertical segment (x0, y0)→(x0, y0+length)."""
+        from hangarfit.towplanner import DubinsArc, Move, Pose, Segment
+
+        start = Pose(x_m=x0, y_m=y0, heading_deg=0.0)
+        end = Pose(x_m=x0, y_m=y0 + length, heading_deg=0.0)
+        arc = DubinsArc(start=start, end=end, turn_radius_m=1.0, segments=(Segment("S", length),))
+        return Move(plane_id=plane_id, target_slot=end, path=arc)
+
+    def _plan(self, *moves):
+        from hangarfit.towplanner import MovesPlan
+
+        return MovesPlan(target_layout=MagicMock(), moves=tuple(moves))
+
+    def test_draws_one_polyline_per_move(self) -> None:
+        from hangarfit.visualize import _draw_tow_paths
+
+        plan = self._plan(
+            self._vertical_move("a", 0.0, 0.0, 5.0),
+            self._vertical_move("b", 2.0, 0.0, 4.0),
+        )
+        ax = MagicMock()
+        _draw_tow_paths(ax, plan)
+        assert ax.plot.call_count == 2
+
+    def test_one_colour_per_distinct_plane(self) -> None:
+        from hangarfit.visualize import _draw_tow_paths
+
+        plan = self._plan(
+            self._vertical_move("a", 0.0, 0.0, 5.0),
+            self._vertical_move("b", 2.0, 0.0, 4.0),
+        )
+        ax = MagicMock()
+        _draw_tow_paths(ax, plan)
+        colours = [c.kwargs["color"] for c in ax.plot.call_args_list]
+        assert len(set(colours)) == 2, f"distinct planes must get distinct colours, got {colours}"
+
+    def test_same_plane_keeps_one_colour(self) -> None:
+        # "one colour per plane": two moves for the same plane id share a colour.
+        from hangarfit.visualize import _draw_tow_paths
+
+        plan = self._plan(
+            self._vertical_move("a", 0.0, 0.0, 5.0),
+            self._vertical_move("a", 1.0, 0.0, 3.0),
+        )
+        ax = MagicMock()
+        _draw_tow_paths(ax, plan)
+        colours = [c.kwargs["color"] for c in ax.plot.call_args_list]
+        assert colours[0] == colours[1]
+
+    def test_colour_assignment_is_order_independent(self) -> None:
+        # Sorting plane ids before assigning colours makes the mapping
+        # deterministic regardless of move order (ADR-0003 spirit).
+        from hangarfit.visualize import _draw_tow_paths
+
+        ax1, ax2 = MagicMock(), MagicMock()
+        _draw_tow_paths(
+            ax1,
+            self._plan(
+                self._vertical_move("a", 0.0, 0.0, 5.0),
+                self._vertical_move("b", 2.0, 0.0, 4.0),
+            ),
+        )
+        _draw_tow_paths(
+            ax2,
+            self._plan(
+                self._vertical_move("b", 2.0, 0.0, 4.0),
+                self._vertical_move("a", 0.0, 0.0, 5.0),
+            ),
+        )
+        # Map plane->colour via the per-call label, then compare the mappings.
+        m1 = {c.kwargs["label"]: c.kwargs["color"] for c in ax1.plot.call_args_list}
+        m2 = {c.kwargs["label"]: c.kwargs["color"] for c in ax2.plot.call_args_list}
+        assert m1 == m2
+
+    def test_empty_plan_is_noop(self) -> None:
+        from hangarfit.visualize import _draw_tow_paths
+
+        ax = MagicMock()
+        _draw_tow_paths(ax, self._plan())
+        ax.plot.assert_not_called()
+
+    def test_polyline_traces_sampled_path_endpoints(self) -> None:
+        from hangarfit.visualize import _draw_tow_paths
+
+        ax = MagicMock()
+        _draw_tow_paths(ax, self._plan(self._vertical_move("a", 0.0, 0.0, 5.0)))
+        xs, ys = ax.plot.call_args.args[0], ax.plot.call_args.args[1]
+        assert (xs[0], ys[0]) == pytest.approx((0.0, 0.0))
+        assert (xs[-1], ys[-1]) == pytest.approx((0.0, 5.0))
+
+    def test_paths_sit_at_overlay_z_tier(self) -> None:
+        # Same z-tier as the conflict overlay (zorder 5) so paths read on top
+        # of aircraft (zorder 1-4) per spike Q7.
+        from hangarfit.visualize import _draw_tow_paths
+
+        ax = MagicMock()
+        _draw_tow_paths(ax, self._plan(self._vertical_move("a", 0.0, 0.0, 5.0)))
+        assert ax.plot.call_args.kwargs["zorder"] >= 5
+
+    def test_render_layout_with_moves_plan_produces_valid_png(self, tmp_path: Path) -> None:
+        layout = _load("valid_two_separated")
+        plan = self._plan(
+            self._vertical_move("a", 3.0, 1.0, 6.0),
+            self._vertical_move("b", 8.0, 1.0, 5.0),
+        )
+        out = tmp_path / "with_paths.png"
+        render_layout(layout, out, moves_plan=plan)
+        _assert_valid_png(out)
