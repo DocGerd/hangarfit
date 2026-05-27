@@ -13,6 +13,30 @@ a new ADR (ADR-0012), and a note on ADR-0001.
 
 ---
 
+## Ratified decisions — 2026-05-27 (user review)
+
+The user reviewed this design and chose:
+
+| Decision | Choice | Note |
+|---|---|---|
+| **D1 — `wing × fuselage_front` height** (§4) | **(a) hard conflict, `z` ignored** | A wing over a cockpit conflicts at any nesting height. **No `cockpit_clearance_m` knob.** |
+| **D2 — migration** (§5) | **No new field — derive the break from wing geometry** | *Refines the §5 recommendation.* The loader auto-splits a legacy `kind: fuselage` at the wing **trailing-edge** station (`wing.offset_x_m − wing.length_m/2`, the #282 wing-spar precedent) with **no `wing_root_x_m` field**. Explicit `fuselage_front`/`fuselage_aft` parts remain the only override. |
+| **Q3 — break field default/required** | **Moot** | No field exists; the break is always derived. |
+| **Q4 — front shade** | Darker tint of the fuselage fill | |
+| **Q5 — `tail` kind** | Stays a separate, unused kind; empennage folds into `fuselage_aft` | |
+| **Q6 — example #1 coupling** | **Separate** issue | |
+
+**Scope consequences of D2 (no field) — these override the §6 impact map where they conflict:**
+- `data/fleet.yaml`: **no per-plane change** — only the header comment gains a fuselage-split note. Zero data diff.
+- `models.py`: **no new `Part` field**; `PartKind` drops `fuselage` from the *constructed* set (transient YAML keyword only).
+- `loader.py`: new `_split_fuselage` derives the break from the aircraft's `wing` part (no station argument); area-conservation invariant tested end-to-end like `_expand_struts`.
+- **Must-fix during implementation:** `visualize._draw_gear_glyph` finds the fuselage by `kind == "fuselage"` and *silently* stops drawing wheels after the split — re-anchor it to `fuselage_front`/`fuselage_aft`; `valid_gear_glyph_smoke` is the regression guard.
+- A new **ADR-0012** records D1 + the no-field migration (with the rejected options) before code lands.
+
+The rest of this document is the reasoning that produced these choices; the options it weighs are retained as the decision record.
+
+---
+
 ## 1. Problem statement
 
 The Phase-1 parts model ([ADR-0001](../adr/0001-aircraft-parts-model.md))
