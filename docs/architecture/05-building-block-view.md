@@ -14,7 +14,7 @@ flowchart TD
     geometry["geometry.py<br/>plane-local → world transform<br/>(determinant −1)"]
     collisions["collisions.py<br/>check(layout) entry<br/>hangar bounds + maintenance + part overlaps"]
     solver["solver.py<br/>RR-MC search<br/>deterministic RNG"]
-    towplanner["towplanner.py<br/>tow-path planning<br/>Dubins + bound-aware Hybrid-A*"]
+    towplanner["towplanner.py<br/>tow-path planning<br/>Reeds–Shepp + bound-aware Hybrid-A*"]
     visualize["visualize.py<br/>top-down PNG renderer<br/>headless matplotlib"]
 
     cli --> loader
@@ -204,19 +204,26 @@ Answers *how* the planes get to a layout, where `solver.py` answers
 *where* they go. Given a target `Layout`, `plan_fill` computes a
 collision-free entry **order** (deepest slot first) and a per-plane
 **path** from the door-cone entry pose to the target slot, returning a
-`MovesPlan` (a tuple of `Move`s, each carrying a `DubinsArc`). Scope is
+`MovesPlan` (a tuple of `Move`s, each carrying a `DubinsArc` — the
+historical container name; its segments now carry a `gear`). Scope is
 the **empty-hangar fill** case — every plane enters once (ADR-0007).
 
-- **Single motion primitive** — every plane is routed as a Dubins path;
-  a cart-borne plane is own-gear with `turn_radius_m = 0` (pivot-in-place),
-  via `Aircraft.effective_turn_radius_m()`. No two-mode (holonomic/Dubins)
-  branch — see §8 *Movement modes*.
+- **Single motion model — Reeds–Shepp** ([ADR-0010](../adr/0010-reeds-shepp-motion-model.md),
+  [#261](https://github.com/DocGerd/hangarfit/issues/261)): every plane is
+  routed as a closed-form Reeds–Shepp path (Dubins + reverse arcs/straights),
+  so it can back up to reorient instead of looping; reverse legs cost 1.5×
+  their length so forward is preferred. A cart-borne plane is own-gear with
+  `turn_radius_m = 0` (pivot-in-place, plus back-straight-out), via
+  `Aircraft.effective_turn_radius_m()`. No two-mode (holonomic/Dubins) branch
+  — see §8 *Movement modes*. Supersedes the Dubins-only fork of ADR-0007;
+  still closed-form and deterministic.
 - **Bound-aware Hybrid-A\*** (`plan_path`, [#222](https://github.com/DocGerd/hangarfit/issues/222))
-  — a deterministic search over Dubins motion primitives finds an
-  in-bounds, obstacle-free multi-segment path when a single shortest-arc
-  would clip a wall or an already-placed plane. Bounded by a
-  node-expansion budget; the full returned path is re-validated by the
-  exact `collisions.check`-based oracle (`path_first_conflict`).
+  — a deterministic search over the six Reeds–Shepp motion primitives
+  (forward L/S/R then reverse L/S/R) finds an in-bounds, obstacle-free
+  multi-segment path when a single shortest-arc would clip a wall or an
+  already-placed plane. Bounded by a node-expansion budget; the full returned
+  path is re-validated by the exact `collisions.check`-based oracle
+  (`path_first_conflict`).
 - **Collision-during-motion** reuses the static checker: each sampled
   pose along an arc is checked against the already-placed subset, so
   parts / hangar-bounds / bay rules are honoured *during* the tow, not

@@ -223,6 +223,39 @@ def test_front_door_protrusion_is_exempt_for_mover(simple_hangar: Hangar) -> Non
     assert path_first_conflict(arc, fleet["B"], mover_on_carts=False, placed=placed) is None
 
 
+def test_reverse_through_door_is_front_gap_exempt(simple_hangar: Hangar) -> None:
+    """A plane backing OUT through the door (gear −1) straddles y < 0 just like
+    one being towed in. The front-gap exemption (#222) is pose-only and
+    gear-agnostic, so the reverse maneuver is exempt on the front wall too. A
+    spanning plane reverses from y = 4 to y = 0 (rear vertex reaches y = −2) up
+    the middle: no hangar_bounds conflict (ADR-0010 reverse motion)."""
+    from hangarfit.towplanner import DubinsArc, Segment
+
+    fleet = {"B": _spanning_plane("B")}
+    placed = Layout(fleet=fleet, hangar=simple_hangar, placements=())
+    # Back straight from (10, 4) to (10, 0) heading 0: a single reverse "S".
+    arc = DubinsArc(Pose(10.0, 4.0, 0.0), Pose(10.0, 0.0, 0.0), 4.0, (Segment("S", 4.0, gear=-1),))
+    assert path_first_conflict(arc, fleet["B"], mover_on_carts=False, placed=placed) is None
+
+
+def test_reverse_into_side_wall_still_bounded(simple_hangar: Hangar) -> None:
+    """The reverse front-gap exemption removes ONLY the y < 0 front wall. A
+    plane backing into a SIDE wall (x < 0) while inside (y ≥ 0) still conflicts
+    — bounds are pose-only, so reverse motion is bounded on side/back walls
+    exactly as forward motion is."""
+    from hangarfit.towplanner import DubinsArc, Segment
+
+    fleet = {"B": _spanning_plane("B")}
+    placed = Layout(fleet=fleet, hangar=simple_hangar, placements=())
+    # Heading 90 (nose +x); reverse drives toward −x. From (2, 5) backing to
+    # (0, 5): the 4 m fuselage rear vertex reaches x = −2 < 0 at y ≈ 5 ≥ 0.
+    arc = DubinsArc(Pose(2.0, 5.0, 90.0), Pose(0.0, 5.0, 90.0), 4.0, (Segment("S", 2.0, gear=-1),))
+    conflict = path_first_conflict(arc, fleet["B"], mover_on_carts=False, placed=placed)
+    assert conflict is not None
+    assert conflict.kind == "hangar_bounds"
+    assert "B" in conflict.planes
+
+
 def test_side_wall_still_enforced_for_mover_during_motion(simple_hangar: Hangar) -> None:
     # Front-gap exemption removes ONLY the front (y < 0) boundary. A mover whose
     # part pokes past a side wall (x < 0) while inside (y >= 0) still conflicts:

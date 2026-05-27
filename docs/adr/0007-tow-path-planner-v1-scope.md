@@ -1,9 +1,21 @@
 # ADR-0007: Tow-path planner v1 — empty-hangar fill, Dubins-only, cart-as-own-gear
 
-- **Status:** Accepted
+- **Status:** Accepted (fork 2 "Dubins-only" **superseded by [ADR-0010](0010-reeds-shepp-motion-model.md)**)
 
 - **Date:** 2026-05-25
 - **Deciders:** Patrick Kuhn (DocGerd)
+
+> **Update (2026-05-27, ADR-0010):** Fork 2 below ("Motion model: Dubins-only")
+> is **superseded by [ADR-0010 — Reeds–Shepp motion model](0010-reeds-shepp-motion-model.md)**.
+> The towplanner now uses a closed-form **Reeds–Shepp** vocabulary (Dubins +
+> reverse arcs/straights) so a plane can back up to reorient instead of driving
+> a full turning-circle loop; the move stays closed-form and deterministic, so
+> this ADR's determinism driver is unaffected. Everything else in this ADR
+> (empty-hangar-fill scope, cart = own-gear with `turn_radius_m = 0`, the
+> `effective_turn_radius_m()` accessor, the door-as-motion-gate, the bounded
+> greedy-order retry) **still stands**. The "Why not RRT-Connect" reasoning in
+> fork 2 also stands — RRT-Connect remains deferred; ADR-0010 chose reverse arcs,
+> not sampling.
 
 ## Context & Problem Statement
 
@@ -155,6 +167,8 @@ meaning: *this carted plane has no own-gear taxi radius.*
   gate** (entry pose constrained to the door interval, heading into the hangar).
   `collisions.check` semantics are untouched — nothing in the layout checker now
   cares about the door beyond the hangar-bounds rule it already enforces.
+  *(The single-ray entry pose described here was later replaced by a searched
+  cone — see the [#262 amendment](#2026-05-27--door-entry-cone-searched-262).)*
 
 ## Open question (deferred, not decided here)
 
@@ -194,6 +208,28 @@ non-breaking. The natural place to revisit both is the v2 true cart-lift primiti
   validates with `null` for the cart planes (no schema change leaked in).
 - Determinism is verified by the existing seeded-reproducibility tests extended to
   the bundled `(Layout, MovesPlan)` output.
+
+## Amendments
+
+### 2026-05-27 — door entry cone searched (#262)
+
+The Consequences (Neutral) section above describes the door as a motion gate
+with the **entry pose constrained to the door interval, heading into the
+hangar** — i.e. a single deterministic straight-in pose (one clamped `x`,
+`heading_deg = 0`). Spike Q6 had called this the "door-*cone*" but the v1
+implementation collapsed the cone to a single ray for simplicity.
+
+[#262](https://github.com/DocGerd/hangarfit/issues/262) restores the cone as a
+**searched set**: `entry_poses` now emits a fixed deterministic grid (3 x-samples
+along the door interval × 5 forward-admissible headings), the Hybrid-A* search
+seeds every wall-clearing candidate at `g = 0`, and the best total path across
+the cone wins. This shortens paths to off-to-the-side / angled slots while
+preserving the ADR-0003 determinism contract (fixed grid order + the existing
+monotonic-counter heap tie-break). The door remains a towplanner-level motion
+gate; `collisions.check` semantics are still untouched. See the updated
+[arc42 §8 door-cone description](../architecture/08-crosscutting-concepts.md)
+for the live behaviour. This is a refinement *within* this ADR's framing, not a
+reversal of any decision recorded here.
 
 ## More Information
 
