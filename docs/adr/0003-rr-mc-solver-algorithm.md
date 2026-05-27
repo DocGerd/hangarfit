@@ -331,11 +331,17 @@ Therefore:
   selected layout. The `tests/test_solver_canaries.py` determinism canaries
   remain meaningful on any `max_restarts`-bounded solve call.
 - A run bounded by a pure wall-clock `budget_s` allows a *variable* number of
-  restarts depending on machine speed and load. When basins are near-tied on
-  maximin gap the selected layout can differ between machines (or the same
-  machine under different load) — the pool size varies and a near-tie may
-  resolve differently. Same seed on the same machine under the same load
-  remains reproducible.
+  restarts depending on machine speed and load — **but only on the spread-ON
+  best-of-all path.** When basins are near-tied on maximin gap the selected
+  layout can differ between machines (or the same machine under different load)
+  — the pool size varies and a near-tie may resolve differently. Same seed on
+  the same machine under the same load remains reproducible.
+
+- With `spread=False` the wall-clock timing-dependence does **not** apply: the
+  loop keeps the pre-#267 first-valid early exit and terminates at a
+  seed-deterministic restart (once `alternatives` diverse valid layouts are
+  found), independent of `budget_s` / machine speed. That mode is therefore
+  reproducible across runs and machines regardless of the wall-clock bound.
 
 **Guidance.** For guaranteed cross-machine reproducibility, bound the search by
 `max_restarts` rather than (or in addition to) wall-clock `budget_s`. The

@@ -166,6 +166,12 @@ deterministic final key) subject to the existing diversity gate (ADR-0004).
 basins, not from a smarter climb. Returned alternatives are ordered
 best-spread-first (`layouts[0]` is the roomiest).
 
+Best-of-all engages **only when spread is enabled**: with `spread=False` there
+is nothing to optimize, so `solve()` retains the pre-#267 first-valid fast path
+(`--no-spread` / `SearchConfig.spread=False`) — the restart loop stops as soon
+as `alternatives` diverse valid layouts have been found rather than running to
+budget.
+
 **Observability.** The achieved minimum pairwise plan-view gap per returned
 layout is reported in `SolverDiagnostics.min_pairwise_gap_m` (index-aligned with
 `layouts`; `math.inf` / `null` for <2 planes), in the human CLI summary, and in

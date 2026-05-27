@@ -33,7 +33,7 @@ inconsistently emitting the well-spread layout it is already capable of producin
 
 | Axis | Decision |
 |---|---|
-| **Cost model** | Full budget, best-of-all. `alternatives=1` now uses the whole `budget_s` / `max_restarts` to find the best-spread valid layout (accepted wall-clock change for the common case; layout quality > latency for an on-demand exception tool). |
+| **Cost model** | Full budget, best-of-all — **when spread is enabled.** `alternatives=1` now uses the whole `budget_s` / `max_restarts` to find the best-spread valid layout (accepted wall-clock change for the common case; layout quality > latency for an on-demand exception tool). With `spread=False` there is nothing to optimize, so the loop keeps the pre-#267 first-valid early exit (the `--no-spread` fast path). |
 | **Selection metric** | Maximin gap, energy tiebreak. Primary key = maximize the minimum pairwise plan-view gap (the acceptance metric); near-ties broken by lower `_inter_plane_energy`. |
 | **Scope** | All alternatives (K>1 too) — unified collect-then-select pool. |
 | **Diagnostic** | Surface achieved min-gap in `SolverDiagnostics` + human CLI + `--json`. |
@@ -54,10 +54,13 @@ same selection.
 ### Data flow
 
 1. **Restart loop** (`solver.py:155-264`): remove the early break on first
-   valid-accept and on `len(accepted) >= alternatives`. The loop runs to
-   `budget_s` / `max_restarts`. Each time a restart's descent reaches a valid
-   layout (`score == (0, 0.0)`), run `_spread` as today, compute
-   `(min_gap, energy)`, append a pool entry
+   valid-accept and on `len(accepted) >= alternatives` **when spread is
+   enabled**; with spread disabled the loop keeps the first-valid early exit
+   (stops once `alternatives` diverse valid layouts are found — best-of-all is a
+   spread-quality feature and adds nothing when there is no separation to
+   optimize). On the spread-ON path the loop runs to `budget_s` / `max_restarts`.
+   Each time a restart's descent reaches a valid layout (`score == (0, 0.0)`),
+   run `_spread` as today, compute `(min_gap, energy)`, append a pool entry
    `(layout, min_gap, energy, restart_index)`, and restart — instead of
    accept-and-stop.
 2. **Selection** (new `_select_spread_diverse`): sort the pool by
@@ -109,11 +112,14 @@ Partially preserved — the scope depends on the termination gate:
   `max_restarts` → byte-identical output. The canary tests in
   `tests/test_solver_canaries.py` use this path and remain the
   cross-machine determinism canaries.
-- **Pure wall-clock `budget_s`-bounded:** the number of restarts that complete
-  before the timer fires depends on machine speed and load. Pool size therefore
-  varies between machines (or runs under different load). When two basins are
-  near-tied on maximin gap the selected layout can differ — same seed does NOT
-  guarantee byte-identical output across machines in this mode.
+- **Pure wall-clock `budget_s`-bounded (spread ON):** the number of restarts that
+  complete before the timer fires depends on machine speed and load. Pool size
+  therefore varies between machines (or runs under different load). When two
+  basins are near-tied on maximin gap the selected layout can differ — same seed
+  does NOT guarantee byte-identical output across machines in this mode. This
+  timing-dependence applies **only with spread enabled**: with `spread=False`
+  the loop keeps the first-valid early exit and terminates at a seed-deterministic
+  restart regardless of wall-clock, so it stays reproducible across machines.
 
 The default CLI path uses `budget_s` for responsiveness. This timing-dependence
 is an accepted tradeoff; see the ADR-0003 amendment dated 2026-05-27 for the

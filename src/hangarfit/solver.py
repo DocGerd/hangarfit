@@ -57,13 +57,16 @@ def solve(
 
     Returns the **best-spread** valid layout(s) found across *all* restarts
     within budget (best-of-all-basins, #267) — NOT the first valid one. The
-    restart loop always runs to ``budget_s`` / ``search.max_restarts`` (no
-    break-on-first-valid, including under ``search.spread=False``), recording
-    every valid basin (spread-polished when ``search.spread=True``, measured
-    as-found otherwise) into a pool; the returned layouts are
-    then chosen from that pool by maximin plan-view gap subject to the
-    diversity gate (ADR-0004). Consequently the returned ``alternatives`` are
-    ordered **best-spread-first**, not in discovery order, and
+    restart loop runs to ``budget_s`` / ``search.max_restarts`` only when
+    ``search.spread`` is enabled (the default); recording every valid basin
+    (spread-polished) into a pool, the returned layouts are then chosen from
+    that pool by maximin plan-view gap subject to the diversity gate
+    (ADR-0004). With ``search.spread=False`` there is nothing to optimize, so
+    the loop keeps the pre-#267 first-valid early exit — it stops as soon as
+    ``alternatives`` diverse valid layouts have been found (a seed-deterministic
+    termination, independent of wall-clock; preserves the ``--no-spread`` fast
+    path). Consequently the returned ``alternatives`` are ordered
+    **best-spread-first**, not in discovery order, and
     ``diagnostics.min_pairwise_gap_m`` / ``diagnostics.valid_basins_found``
     surface the selected gaps and the size of the explored basin pool.
 
@@ -263,6 +266,18 @@ def solve(
                 break  # stall — restart
 
         restart_index += 1
+
+        # Best-of-all-basins selection (#267) only adds value when the spread
+        # post-pass can reorder basins by separation quality. With spread
+        # disabled there is nothing to optimize, so continuing past
+        # `alternatives` diverse valid layouts cannot improve the result —
+        # restore the pre-#267 early exit. This keeps the `--no-spread` fast
+        # path (the speed escape hatch) and gives a seed-deterministic
+        # termination for that mode (independent of wall-clock).
+        if not search.spread:
+            selected_so_far, _ = _select_spread_diverse(pool, alternatives, diversity)
+            if len(selected_so_far) >= alternatives:
+                break
 
     elapsed = time.monotonic() - start
 
