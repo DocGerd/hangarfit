@@ -95,8 +95,8 @@ workflow exception called out below (up-to-date-before-merge on `develop`):
 - **Admin enforcement** — the rules apply to the maintainer too
   (`enforce_admins`), so protection cannot be silently bypassed.
 - **Required status checks** — PRs must pass the configured CI gate (the
-  test suite on every supported Python and both lockfile-drift guards, plus
-  CodeQL on `develop`) before merge. On `main` this is **strict** (the branch
+  test suite on every supported Python and all three lockfile-drift guards,
+  plus CodeQL on `develop`) before merge. On `main` this is **strict** (the branch
   must also be up to date with the base before merge). On `develop` the
   up-to-date / `strict` requirement is **deliberately disabled**: with it on,
   merging any PR forced every *other* open PR to "Update branch" and re-run the
