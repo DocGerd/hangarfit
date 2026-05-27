@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from typing import TYPE_CHECKING
 
@@ -245,7 +246,8 @@ def _emit_solve_human(result: SolveResult, *, alternatives: int) -> None:
             f"{d.wall_time_s:.1f}s (seed={d.seed}, {d.restarts_attempted} restarts)."
         )
     for i, layout in enumerate(result.layouts, start=1):
-        line = f"  #{i}: {len(layout.placements)} planes placed; 0 conflicts; score=(0, 0.0)"
+        gap = d.min_pairwise_gap_m[i - 1] if i - 1 < len(d.min_pairwise_gap_m) else math.inf
+        gap_str = f"{gap:.2f} m" if math.isfinite(gap) else "n/a (single plane)"
         if i > 1:
             parts = []
             for j in range(i - 1):
@@ -254,7 +256,12 @@ def _emit_solve_human(result: SolveResult, *, alternatives: int) -> None:
                 parts.append(
                     f"{moved} of {total} planes shifted vs #{j + 1} (avg shift {avg_shift:.1f} m)"
                 )
-            line = f"  #{i}: {'; '.join(parts)}"
+            line = f"  #{i}: {'; '.join(parts)}; min gap {gap_str}"
+        else:
+            line = (
+                f"  #{i}: {len(layout.placements)} planes placed; 0 conflicts; "
+                f"score=(0, 0.0); min gap {gap_str}"
+            )
         print(line)
 
 

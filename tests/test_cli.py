@@ -226,3 +226,14 @@ class TestFleetHangarOverrides:
         captured = capsys.readouterr()
         assert captured.out == ""
         assert "error:" in captured.err
+
+
+def test_solve_human_output_shows_min_gap(capsys):
+    from hangarfit.cli import main
+
+    rc = main(
+        ["solve", "tests/fixtures/solve_fresh_six_planes.yaml", "--seed", "7", "--budget", "5"]
+    )
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "min gap" in out  # per-layout spread quality line
