@@ -37,7 +37,7 @@ VALID_HANGAR = Hangar(
     wing_layer_clearance_m=0.2,
 )
 _FUSELAGE = Part(
-    kind="fuselage",
+    kind="fuselage_aft",
     length_m=6.0,
     width_m=1.2,
     offset_x_m=0.0,

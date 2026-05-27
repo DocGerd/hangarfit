@@ -24,7 +24,7 @@ from hangarfit.models import (
 
 
 def _ok_part(
-    kind: str = "fuselage",
+    kind: str = "fuselage_aft",
     *,
     length_m: float = 7.0,
     width_m: float = 0.8,
@@ -76,15 +76,18 @@ def _ok_hangar(max_carts: int = 1) -> Hangar:
 class TestPart:
     def test_valid_construction(self) -> None:
         p = _ok_part()
-        assert p.kind == "fuselage"
+        assert p.kind == "fuselage_aft"
         assert p.z_top_m > p.z_bottom_m
 
-    @pytest.mark.parametrize("kind", ["", "fueslage", "Wing", "engine", "rotor"])
+    @pytest.mark.parametrize("kind", ["", "fueslage", "Wing", "engine", "rotor", "fuselage"])
     def test_invalid_kind_rejected(self, kind: str) -> None:
+        # "fuselage" is NOT a constructed kind (#50/ADR-0012): it survives only
+        # as a transient YAML keyword the loader auto-splits into front/aft, so
+        # constructing a Part with it must be rejected like any unknown kind.
         with pytest.raises(ValueError, match="Part.kind must be one of"):
             _ok_part(kind=kind)  # type: ignore[arg-type]
 
-    @pytest.mark.parametrize("kind", ["fuselage", "wing", "strut", "tail"])
+    @pytest.mark.parametrize("kind", ["fuselage_front", "fuselage_aft", "wing", "strut", "tail"])
     def test_all_valid_kinds_accepted(self, kind: str) -> None:
         p = _ok_part(kind=kind)  # type: ignore[arg-type]
         assert p.kind == kind

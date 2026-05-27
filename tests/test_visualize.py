@@ -622,14 +622,33 @@ class TestGearGlyph:
 
     @staticmethod
     def _aircraft(gear: str, movement_mode: str = "always_own_gear") -> Aircraft:
-        """Minimal synthetic Aircraft with one fuselage part."""
+        """Minimal synthetic Aircraft with a split front/aft fuselage.
+
+        The fuselage is the 7 m box (x ∈ [-3.5, 3.5]) split at x = 0.5 into a
+        ``fuselage_front`` (x ∈ [0.5, 3.5]) and ``fuselage_aft``
+        (x ∈ [-3.5, 0.5]) pair, exactly as the loader does (#50/ADR-0012). This
+        exercises ``_draw_gear_glyph``'s full-span reconstruction from BOTH
+        segments — the must-fix breakage where the old glyph looked for a
+        single ``kind == "fuselage"`` part and silently stopped drawing wheels
+        after the split.
+        """
         from hangarfit.models import Part  # Part not used elsewhere in this file
 
-        fuselage = Part(
-            kind="fuselage",
-            length_m=7.0,
+        fuselage_front = Part(
+            kind="fuselage_front",
+            length_m=3.0,  # x ∈ [0.5, 3.5]
             width_m=1.0,
-            offset_x_m=0.0,
+            offset_x_m=2.0,
+            offset_y_m=0.0,
+            angle_deg=0.0,
+            z_bottom_m=0.0,
+            z_top_m=1.5,
+        )
+        fuselage_aft = Part(
+            kind="fuselage_aft",
+            length_m=4.0,  # x ∈ [-3.5, 0.5]
+            width_m=1.0,
+            offset_x_m=-1.5,
             offset_y_m=0.0,
             angle_deg=0.0,
             z_bottom_m=0.0,
@@ -644,7 +663,7 @@ class TestGearGlyph:
             movement_mode=movement_mode,  # type: ignore[arg-type]
             turn_radius_m=turn_radius,
             measured=False,
-            parts=(fuselage,),
+            parts=(fuselage_front, fuselage_aft),
         )
 
     # ── end-to-end smoke ───────────────────────────────────────────────────────

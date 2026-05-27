@@ -205,6 +205,13 @@ predicate; the upgrade path is additive.
 
 ## More Information
 
+- [ADR-0012: Split the fuselage into front/aft](0012-fuselage-front-aft-split.md)
+  — refines this parts model: the single `fuselage` kind is replaced by
+  `fuselage_front` + `fuselage_aft` so a wing may overhang another plane's
+  tail but not its cockpit. ADR-0001 stays **Accepted** — the split is a
+  refinement *within* the parts model (still oriented-rectangle Parts with
+  height ranges, still the two-clause predicate plus one cockpit exception),
+  not a supersession of the parts-not-bbox decision.
 - [ADR-0002: Coordinate transform with determinant −1](0002-determinant-minus-one-transform.md)
   — the plane-local → world transform that makes Parts addressable in
   the hangar frame. The parts model and the transform are

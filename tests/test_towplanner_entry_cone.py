@@ -70,7 +70,7 @@ def _box_plane(pid: str, *, turn_radius_m: float = 4.0) -> Aircraft:
         measured=False,
         parts=(
             Part(
-                kind="fuselage",
+                kind="fuselage_aft",
                 length_m=1.0,
                 width_m=0.6,
                 offset_x_m=0.5,
@@ -95,7 +95,7 @@ def _wide_plane(pid: str, *, span_m: float = 6.0, turn_radius_m: float = 3.0) ->
         measured=False,
         parts=(
             Part(
-                kind="fuselage",
+                kind="fuselage_aft",
                 length_m=2.0,
                 width_m=1.0,
                 offset_x_m=0.0,

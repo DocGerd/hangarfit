@@ -209,7 +209,7 @@ def _point_part(
 ) -> Part:
     """A tiny rectangle approximating a point at (offset_x, offset_y) plane-local."""
     return Part(
-        kind="fuselage",
+        kind="fuselage_aft",
         length_m=length_m,
         width_m=width_m,
         offset_x_m=offset_x_m,
@@ -466,7 +466,7 @@ class TestWorldPartMetadata:
     def test_kind_z_range_and_plane_id_preserved(self) -> None:
         parts = (
             Part(
-                kind="fuselage",
+                kind="fuselage_aft",
                 length_m=7.0,
                 width_m=0.8,
                 offset_x_m=0,
@@ -533,14 +533,21 @@ class TestAircraftPartsWorldOnRealAircraft:
         husky = fleet["aviat_husky"]
         pl = Placement(plane_id="aviat_husky", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False)
         worlds = aircraft_parts_world(husky, pl)
-        # 4 parts: fuselage + wing + 2 struts
+        # 5 parts: fuselage_front + fuselage_aft + wing + 2 struts (the loader
+        # splits the single YAML fuselage front/aft — #50/ADR-0012).
         kinds = [w.kind for w in worlds]
-        assert kinds.count("fuselage") == 1
+        assert kinds.count("fuselage_front") == 1
+        assert kinds.count("fuselage_aft") == 1
         assert kinds.count("wing") == 1
         assert kinds.count("strut") == 2
-        # Fuselage at heading 0: long axis (length_m=7.0) runs along world y.
-        fuselage = next(w for w in worlds if w.kind == "fuselage")
-        minx, miny, maxx, maxy = fuselage.polygon.bounds
+        # Full fuselage at heading 0: long axis (length_m=6.88) runs along
+        # world y. Reconstruct the full span from the front+aft segments
+        # (their union is the original fuselage box).
+        fuselage_segs = [w for w in worlds if w.kind in ("fuselage_front", "fuselage_aft")]
+        miny = min(w.polygon.bounds[1] for w in fuselage_segs)
+        maxy = max(w.polygon.bounds[3] for w in fuselage_segs)
+        minx = min(w.polygon.bounds[0] for w in fuselage_segs)
+        maxx = max(w.polygon.bounds[2] for w in fuselage_segs)
         # length 6.88 → spans ≈ 6.88m along y; width 0.85 → spans ≈ 0.85m along x.
         assert _almost_equal(maxy - miny, 6.88, tol=1e-6)
         assert _almost_equal(maxx - minx, 0.85, tol=1e-6)

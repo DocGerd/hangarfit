@@ -418,6 +418,11 @@ aircraft:
         width_m: 0.8
         z_bottom_m: 0.0
         z_top_m: 1.5
+      - kind: wing
+        length_m: 1.4
+        width_m: 9.0
+        z_bottom_m: 2.0
+        z_top_m: 2.3
 """,
         )
         with pytest.raises(LoaderError, match="'measured': expected boolean"):
@@ -442,6 +447,11 @@ aircraft:
         width_m: 0.8
         z_bottom_m: 0.0
         z_top_m: 1.5
+      - kind: wing
+        length_m: 1.4
+        width_m: 9.0
+        z_bottom_m: 2.0
+        z_top_m: 2.3
 """,
         )
         with pytest.raises(LoaderError, match="movement_mode must be one of"):
@@ -466,6 +476,11 @@ aircraft:
         width_m: 0.8
         z_bottom_m: 0.0
         z_top_m: 1.5
+      - kind: wing
+        length_m: 1.4
+        width_m: 9.0
+        z_bottom_m: 2.0
+        z_top_m: 2.3
 """,
         )
         with pytest.raises(LoaderError, match="aircraft 'bad_husky'.*turn_radius_m is required"):
@@ -736,6 +751,189 @@ aircraft:
         )
         with pytest.raises(LoaderError, match="zero outboard span"):
             load_fleet(path)
+
+
+# ----------------------------------------------------------------------------
+# Fuselage front/aft auto-split (#50 / ADR-0012).
+# ----------------------------------------------------------------------------
+
+
+class TestFuselageSplit:
+    """A legacy ``kind: fuselage`` part is auto-split into a
+    ``fuselage_front`` + ``fuselage_aft`` pair at the wing trailing-edge
+    station; no constructed ``fuselage`` kind survives. Mirrors the
+    ``struts:`` expansion's end-to-end coverage."""
+
+    @staticmethod
+    def _fuselage_wing_yaml(
+        *,
+        fus_length: float = 8.0,
+        fus_offset_x: float = -0.5,
+        wing_length: float = 1.6,
+        wing_offset_x: float = 0.5,
+        fus_width: float = 0.9,
+        angle_deg: float = 0.0,
+        offset_y: float = 0.0,
+    ) -> str:
+        return f"""
+aircraft:
+  - id: splitme
+    name: Split Me
+    wing_position: high
+    gear: tailwheel
+    movement_mode: always_own_gear
+    turn_radius_m: 5.0
+    measured: false
+    parts:
+      - kind: fuselage
+        length_m: {fus_length}
+        width_m: {fus_width}
+        offset_x_m: {fus_offset_x}
+        offset_y_m: {offset_y}
+        angle_deg: {angle_deg}
+        z_bottom_m: 0.0
+        z_top_m: 1.5
+      - kind: wing
+        length_m: {wing_length}
+        width_m: 9.0
+        offset_x_m: {wing_offset_x}
+        z_bottom_m: 2.0
+        z_top_m: 2.3
+"""
+
+    def test_fuselage_splits_into_one_front_one_aft(self, tmp_path: Path) -> None:
+        path = _write(tmp_path / "f.yaml", self._fuselage_wing_yaml())
+        a = load_fleet(path)["splitme"]
+        fronts = [p for p in a.parts if p.kind == "fuselage_front"]
+        afts = [p for p in a.parts if p.kind == "fuselage_aft"]
+        assert len(fronts) == 1, f"expected exactly one fuselage_front, got {a.parts!r}"
+        assert len(afts) == 1, f"expected exactly one fuselage_aft, got {a.parts!r}"
+        # No constructed 'fuselage' kind survives the load.
+        assert all(p.kind != "fuselage" for p in a.parts)
+
+    def test_split_is_area_conserving_and_abuts_at_break(self, tmp_path: Path) -> None:
+        """front ∪ aft == the original fuselage box: the two segments abut at
+        ``x_break = wing.offset_x_m − wing.length_m/2`` and their union spans
+        exactly the original fuselage longitudinally, with width / z / angle /
+        offset_y inherited unchanged (the §3.1 invariant)."""
+        fus_length, fus_offset_x = 8.0, -0.5
+        wing_length, wing_offset_x = 1.6, 0.5
+        fus_width = 0.9
+        path = _write(
+            tmp_path / "f.yaml",
+            self._fuselage_wing_yaml(
+                fus_length=fus_length,
+                fus_offset_x=fus_offset_x,
+                wing_length=wing_length,
+                wing_offset_x=wing_offset_x,
+                fus_width=fus_width,
+            ),
+        )
+        a = load_fleet(path)["splitme"]
+        front = next(p for p in a.parts if p.kind == "fuselage_front")
+        aft = next(p for p in a.parts if p.kind == "fuselage_aft")
+
+        x_break = wing_offset_x - wing_length / 2.0  # -0.3
+        orig_nose = fus_offset_x + fus_length / 2.0  # 3.5
+        orig_tail = fus_offset_x - fus_length / 2.0  # -4.5
+
+        front_lo = front.offset_x_m - front.length_m / 2.0
+        front_hi = front.offset_x_m + front.length_m / 2.0
+        aft_lo = aft.offset_x_m - aft.length_m / 2.0
+        aft_hi = aft.offset_x_m + aft.length_m / 2.0
+
+        # Segments abut at x_break (front low edge == aft high edge == break).
+        assert front_lo == pytest.approx(x_break)
+        assert aft_hi == pytest.approx(x_break)
+        # Union reconstitutes the original span exactly (nose & tail tips).
+        assert front_hi == pytest.approx(orig_nose)
+        assert aft_lo == pytest.approx(orig_tail)
+        # Lengths sum to the original (area-conserving along x).
+        assert front.length_m + aft.length_m == pytest.approx(fus_length)
+        # Width / z / angle / offset_y inherited unchanged on BOTH segments.
+        for seg in (front, aft):
+            assert seg.width_m == pytest.approx(fus_width)
+            assert seg.z_bottom_m == pytest.approx(0.0)
+            assert seg.z_top_m == pytest.approx(1.5)
+            assert seg.angle_deg == pytest.approx(0.0)
+            assert seg.offset_y_m == pytest.approx(0.0)
+
+    def test_fuselage_without_wing_rejected(self, tmp_path: Path) -> None:
+        """A ``kind: fuselage`` part with no ``wing`` part has nothing to
+        derive the break from — LoaderError (mirrors the struts no-wing rule)."""
+        path = _write(
+            tmp_path / "f.yaml",
+            """
+aircraft:
+  - id: nowing
+    name: No Wing
+    wing_position: high
+    gear: tailwheel
+    movement_mode: always_own_gear
+    turn_radius_m: 5.0
+    measured: false
+    parts:
+      - kind: fuselage
+        length_m: 8.0
+        width_m: 0.9
+        z_bottom_m: 0.0
+        z_top_m: 1.5
+""",
+        )
+        with pytest.raises(LoaderError, match=r"kind 'fuselage' requires a part of kind 'wing'"):
+            load_fleet(path)
+
+    def test_break_outside_fuselage_span_rejected(self, tmp_path: Path) -> None:
+        """If the wing trailing edge falls forward of the nose (wing way ahead
+        of the fuselage), the derived break is outside the span — a degenerate
+        split that would produce a non-positive-length segment. Reject it."""
+        path = _write(
+            tmp_path / "f.yaml",
+            self._fuselage_wing_yaml(
+                fus_length=4.0,
+                fus_offset_x=0.0,  # fuselage span x ∈ [-2, 2]
+                wing_length=1.0,
+                wing_offset_x=5.0,  # wing trailing edge x = 4.5, way past the nose
+            ),
+        )
+        with pytest.raises(LoaderError, match="must lie strictly inside the fuselage span"):
+            load_fleet(path)
+
+    def test_explicit_front_aft_parts_not_re_split(self, tmp_path: Path) -> None:
+        """Explicit ``fuselage_front`` / ``fuselage_aft`` parts in YAML are a
+        valid override — the loader does NOT auto-split them, and accepts the
+        aircraft with no ``wing`` (the split derivation never runs)."""
+        path = _write(
+            tmp_path / "f.yaml",
+            """
+aircraft:
+  - id: explicit
+    name: Explicit
+    wing_position: high
+    gear: monowheel
+    movement_mode: always_cart
+    turn_radius_m: null
+    measured: false
+    parts:
+      - kind: fuselage_front
+        length_m: 3.0
+        width_m: 0.9
+        offset_x_m: 2.0
+        z_bottom_m: 0.0
+        z_top_m: 1.5
+      - kind: fuselage_aft
+        length_m: 5.0
+        width_m: 0.9
+        offset_x_m: -2.5
+        z_bottom_m: 0.0
+        z_top_m: 1.5
+""",
+        )
+        a = load_fleet(path)["explicit"]
+        kinds = sorted(p.kind for p in a.parts)
+        assert kinds == ["fuselage_aft", "fuselage_front"], (
+            f"explicit segments must pass through unchanged, got {a.parts!r}"
+        )
 
 
 # ----------------------------------------------------------------------------
