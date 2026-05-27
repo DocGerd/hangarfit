@@ -97,9 +97,11 @@ The `.claude/` directory holds team-shared Claude Code settings (currently: a Pr
 | Server | Transport | Purpose |
 |---|---|---|
 | `github` | HTTP (`https://api.githubcopilot.com/mcp/`) | Issue / PR / release inspection from Claude; complements the existing `gh` CLI. |
+| `context7` | HTTP (`https://mcp.context7.com/mcp`) | Live, version-correct library docs (shapely, matplotlib & other deps) pulled into context on demand, so doc lookups reflect the installed version rather than stale training data. |
 
 **Canonical upstream references (verify before editing `.mcp.json`):**
 - GitHub MCP: https://github.com/github/github-mcp-server
+- Context7 MCP: https://github.com/upstash/context7
 
 If a URL or env-var name in `.mcp.json` ever stops working, check these first.
 
@@ -108,10 +110,11 @@ If a URL or env-var name in `.mcp.json` ever stops working, check these first.
 - **GitHub MCP** — Requires `GITHUB_PERSONAL_ACCESS_TOKEN` in your shell environment. Minimum permissions depend on which PAT type you create:
   - **Classic PAT:** `repo` + `read:org` scopes are sufficient for read operations; add `write:discussion` if you want Claude to create issues or PRs via the MCP server rather than `gh`.
   - **Fine-grained PAT:** Repository permissions `Contents: Read`, `Issues: Read`, `Pull requests: Read`; plus Organization permissions `Members: Read` for org-level lookups. Add the corresponding `Write` levels for create operations. Fine-grained PATs use different UI checkboxes from classic — the scope names above are classic-only.
+- **Context7 MCP** — **Works keyless out of the box; no env var required.** The checked-in `.mcp.json` entry carries no auth header on purpose, so a fresh clone connects under Context7's anonymous rate limits with zero setup. A `${CONTEXT7_API_KEY}` header is deliberately *not* committed: Claude Code does not expand `${VAR}` in HTTP `headers` for an unset variable, so an unresolved placeholder would be sent literally and break the keyless default. To raise rate limits, get a free key at context7.com/dashboard and add it locally (not committed) via your own client config or a gitignored override — Context7 reads it from the `CONTEXT7_API_KEY` request header.
 
 ### Verifying the servers loaded
 
-After cloning and running `claude`, use the `/mcp` command. The `github` server should appear with status **connected**. If it shows **failed**, check that `GITHUB_PERSONAL_ACCESS_TOKEN` is set in your shell environment.
+After cloning and running `claude`, use the `/mcp` command. The `github` and `context7` servers should appear with status **connected**. If `github` shows **failed**, check that `GITHUB_PERSONAL_ACCESS_TOKEN` is set in your shell environment; `context7` needs no env var and should connect keyless.
 
 ---
 
