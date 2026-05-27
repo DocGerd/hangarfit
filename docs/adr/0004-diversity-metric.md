@@ -74,11 +74,16 @@ feature could ship. Diversity-by-what is the question this ADR answers.
 
 **Chosen option: edit count with per-plane thresholds**, with defaults
 `min_planes_moved = 2`, `position_threshold_m = 0.5 m`, and
-`heading_threshold_deg = 30°`. The filter is applied between RR-MC
-acceptance and the final `SolveResult` return, in
-[`_is_diverse_enough()`](../../src/hangarfit/solver.py); rejected
-candidates increment `SolverDiagnostics.diversity_rejected_count` so
-inefficient runs are observable.
+`heading_threshold_deg = 30°`. Since the best-of-all-basins change
+(#267), the filter is applied at *selection* time — after the restart
+loop has collected every valid spread-polished basin into a pool — in
+[`_select_spread_diverse()`](../../src/hangarfit/solver.py), which sorts
+the pool by separation quality and greedily admits layouts using the
+[`_is_diverse_enough()`](../../src/hangarfit/solver.py) predicate. Pool
+candidates the gate turns away (examined in best-spread order until the
+`alternatives` quota is met) increment
+`SolverDiagnostics.diversity_rejected_count` so inefficient runs are
+observable; the count is always `0` for `alternatives == 1`.
 
 Concretely: a plane is considered "moved" iff its position differs by
 ≥ 0.5 m *or* its heading differs by ≥ 30° (short-arc — so 359° and 0°
@@ -181,7 +186,7 @@ coexist as alternative filter strategies.
   defaults without changing the solver source.
 - **Observable.** `SolverDiagnostics.diversity_rejected_count` surfaces
   filter activity: a high reject count signals a tight scenario where
-  the solver keeps re-finding the same minimum, suggesting either
+  the basin pool holds many near-identical layouts, suggesting either
   loosening `DiversityConfig` or raising `budget_s`.
 
 ### Negative
