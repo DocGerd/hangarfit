@@ -88,3 +88,4 @@ manual workflow above is canonical.
 | 0008 | [Inter-plane spread soft preference (repulsion-energy surrogate for maximin)](0008-inter-plane-spread-soft-preference.md) | Accepted |
 | 0009 | [Single supported Python — 3.12, anchored to the distro LTS](0009-single-supported-python-version.md) | Accepted |
 | 0010 | [Reeds–Shepp motion model — towplanner v2](0010-reeds-shepp-motion-model.md) | Accepted |
+| 0011 | [Linear history strategy under GitFlow — squash feature merges, accept release merge commits, target a clean first-parent mainline](0011-linear-history-strategy-under-gitflow.md) | Proposed |
