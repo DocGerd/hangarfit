@@ -7,7 +7,7 @@ document is the checklist the releaser runs through. It is not aspirational; it
 is a gate. A release that skips this checklist is not a valid release.
 
 The assessment exists as a mandatory gate rather than a best-effort reminder
-because Best Practices Gold criterion [security_review] requires that a
+because Best Practices Gold criterion `security_review` requires that a
 documented security review be performed and its results recorded for each release.
 
 ---
@@ -20,9 +20,9 @@ Run it after:
    planned commits are in.
 2. CI is green on the `release/*` branch (test suite, lockfile-drift guards,
    CodeQL on the open PR).
-3. **Before** pushing the `v*` tag that triggers [`.github/workflows/release.yml`]
-   (../.github/workflows/release.yml) (which builds, signs, and publishes the
-   GitHub Release).
+3. **Before** pushing the `v*` tag that triggers
+   [`.github/workflows/release.yml`](../.github/workflows/release.yml) (which
+   builds, signs, and publishes the GitHub Release).
 
 If the checklist reveals a finding, cut a fix commit on the `release/*` branch,
 re-run CI, and run the checklist again from the top before pushing the tag.
@@ -120,7 +120,7 @@ mechanism used by `release.yml` pulls the tag annotation, so you may also put it
 there).
 
 This recorded statement is the artifact that satisfies the Best Practices Gold
-[security_review] criterion.
+`security_review` criterion.
 
 ---
 
