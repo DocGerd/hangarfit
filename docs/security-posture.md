@@ -112,8 +112,9 @@ second-person-gated — the cap this section describes.
 **A note on linear history.** `required_linear_history` is intentionally
 **off**. Enabling it would forbid the merge commits the GitFlow release
 flow depends on (`release/*` → `main`, and the back-merge to `develop`).
-The trade-off was explored in spike [#202]; do not "fix" this to chase a
-Scorecard point.
+The trade-off was explored in spike [#202] and the decision is recorded in
+[ADR-0011](adr/0011-linear-history-strategy-under-gitflow.md); do not "fix"
+this to chase a Scorecard point.
 
 **Will it move?** Only with an external co-maintainer — exactly as for
 [Code-Review](#code-review-score-0). The non-human protections are already
