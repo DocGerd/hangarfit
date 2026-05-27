@@ -1060,6 +1060,71 @@ class TestSolveRenderPathsSpreadFallback:
         payload = json.loads(capsys.readouterr().out)
         assert payload["diagnostics"]["spread_fallback_applied"] is False
 
+    def test_write_yaml_carries_provenance_header_after_swap(self, tmp_path, monkeypatch, capsys):
+        # #280 — a human reading the written .yaml later must see that it is the
+        # tighter no-spread arrangement, not what a plain spread solve yields.
+        # When --render-paths swaps in the no-spread fallback, --write-yaml emits
+        # a leading `# note:` provenance comment. Paired with the no-swap case
+        # below, this covers both branches of the `spread_fallback_applied`
+        # guard in `_write_yamls`.
+        layout = self._layout()
+        plan = self._plan(layout)
+        self._patch_solve_sequence(
+            monkeypatch,
+            [
+                self._result("found", (layout,), (None,), unroutable=("fuji",)),
+                self._result("found", (layout,), (plan,)),
+            ],
+        )
+        out_png = tmp_path / "p.png"
+        out_yaml = tmp_path / "fallback.yaml"
+        rc = main(
+            [
+                "solve",
+                SMOKE_FIXTURE,
+                "--render",
+                str(out_png),
+                "--render-paths",
+                "--write-yaml",
+                str(out_yaml),
+                "--seed",
+                "5",
+            ]
+        )
+        assert rc == 0, f"expected fallback to route; stderr={capsys.readouterr().err}"
+        assert out_yaml.exists()
+        contents = out_yaml.read_text()
+        assert (
+            "# note: produced with inter-plane spread disabled (auto-fallback, see #280)"
+            in contents
+        )
+
+    def test_write_yaml_no_provenance_header_when_no_swap(self, tmp_path, monkeypatch, capsys):
+        # The normal no-swap path: the spread layout routes on the first try, so
+        # the written .yaml must NOT carry the fallback provenance header (False
+        # branch of the `spread_fallback_applied` guard).
+        layout = self._layout()
+        plan = self._plan(layout)
+        self._patch_solve_sequence(monkeypatch, [self._result("found", (layout,), (plan,))])
+        out_png = tmp_path / "p.png"
+        out_yaml = tmp_path / "no_swap.yaml"
+        rc = main(
+            [
+                "solve",
+                SMOKE_FIXTURE,
+                "--render",
+                str(out_png),
+                "--render-paths",
+                "--write-yaml",
+                str(out_yaml),
+                "--seed",
+                "5",
+            ]
+        )
+        assert rc == 0
+        assert out_yaml.exists()
+        assert "auto-fallback, see #280" not in out_yaml.read_text()
+
     @pytest.mark.slow
     def test_real_solve_spread_fallback_end_to_end(self, tmp_path, capsys):
         # Real, un-monkeypatched regression for #280. seed=5 on the 3-plane
