@@ -592,6 +592,11 @@ def _emit_solve_json(scenario_path: str, result: SolveResult) -> None:
             # route, in returned-layout order. Empty unless --render-paths ran
             # the planner. Backward-compatible — no schema bump.
             "unroutable_planes": list(d.unroutable_planes),
+            # Additive (#267): achieved min plan-view gap per returned layout
+            # (null where <2 planes, i.e. math.inf) + basins the search had to
+            # choose from. Backward-compatible — no schema bump.
+            "min_pairwise_gap_m": [g if math.isfinite(g) else None for g in d.min_pairwise_gap_m],
+            "valid_basins_found": d.valid_basins_found,
         },
     }
     print(json.dumps(payload, indent=2))

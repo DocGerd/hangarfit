@@ -237,3 +237,29 @@ def test_solve_human_output_shows_min_gap(capsys):
     out = capsys.readouterr().out
     assert rc == 0
     assert "min gap" in out  # per-layout spread quality line
+
+
+def test_solve_json_output_has_spread_diagnostics(capsys):
+    import json
+
+    from hangarfit.cli import main
+
+    rc = main(
+        [
+            "solve",
+            "tests/fixtures/solve_fresh_six_planes.yaml",
+            "--seed",
+            "7",
+            "--budget",
+            "5",
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    diag = payload["diagnostics"]
+    assert "min_pairwise_gap_m" in diag
+    assert "valid_basins_found" in diag
+    assert len(diag["min_pairwise_gap_m"]) == len(payload["layouts"])
+    # finite floats stay numbers; single-plane inf becomes null
+    assert all(g is None or isinstance(g, (int, float)) for g in diag["min_pairwise_gap_m"])
