@@ -107,6 +107,17 @@ class TestCheckLoadErrors:
         assert "error:" in captured.err
         assert "cart" in captured.err.lower()
 
+    def test_check_max_carts_override_loosens_cart_rule(self, capsys):
+        # --max-carts 2 replaces the cap on the loaded hangar before the Layout
+        # is built, so the two-cart_eligible layout that exits 2 above now loads
+        # — the load-time cart-rule rejection is gone.
+        exit_code = main(
+            ["check", str(FIXTURES_DIR / "invalid_cart_rule.yaml"), "--max-carts", "2"]
+        )
+        captured = capsys.readouterr()
+        assert "At most" not in captured.err  # the cart-rule load error is gone
+        assert exit_code != 2  # load succeeded; a non-zero would be a geometry verdict
+
 
 class TestCheckJsonOutput:
     """--json emits the hangarfit.check/v1 schema on stdout."""

@@ -231,6 +231,42 @@ gate; `collisions.check` semantics are still untouched. See the updated
 for the live behaviour. This is a refinement *within* this ADR's framing, not a
 reversal of any decision recorded here.
 
+### 2026-05-27 — cart inventory configurable, per-layout binding (#210)
+
+The *Open question* above ("Cart inventory for `cart_eligible` planes") is now
+resolved. The resolution **agrees with** this ADR's framing — carts are a finite
+resource for the eligible pool only, `always_cart` planes stay outside the
+accounting, and `MovesPlan` still carries no cart-usage tally — so it is recorded
+here rather than as a new ADR.
+
+1. **Configurable size — resolved: yes.** The hard-coded single-cart limit
+   becomes `Hangar.max_carts` (a new site scalar on `data/hangar.yaml`, default
+   `1`, so absence reproduces today's behaviour byte-for-byte). A cart is
+   site equipment in the same category as `clearance_m`, so it lives on the
+   hangar floor plan, not on the (hangar-portable) fleet. A `--max-carts N` CLI
+   flag overrides the loaded value for what-if exploration; the override mutates
+   the resolved `Hangar` before any `Layout` is built, reaching the cap check via
+   the same `self.hangar.max_carts` read. `max_carts = 0` means "no spare carts
+   for the eligible pool" (any `cart_eligible`-on-cart is rejected; `always_cart`
+   planes are unaffected).
+
+2. **Per-layout vs per-sequence — resolved: per-layout (unchanged).** The cap
+   stays bound per `Layout`. The K alternatives a `solve` returns are a
+   mutually-exclusive *menu* — the hangar ends up in exactly one — so binding the
+   inventory across never-coexisting alternatives would reject a perfectly
+   buildable layout because a different, never-built one also wanted the cart.
+   `MovesPlan` stays tally-free; if a future multi-layout *rearrangement* feature
+   ever needs cross-layout cart accounting, it belongs on a new additive
+   diagnostic, never folded into `MovesPlan`.
+
+This rests on the **dolly** reading of carts (a carted plane *rests* on its cart
+in the final layout, consistent with `Placement.on_carts` being a resting-state
+field and `always_cart` planes occupying their carts permanently), under which the
+per-layout *count* is exactly the right invariant. The alternative *tug* reading
+(one cart towed out and reused serially) would make the count the wrong invariant
+and is explicitly **not** adopted here; it would warrant its own ADR. Full
+reasoning: the [cart-inventory design doc](../superpowers/specs/2026-05-27-cart-inventory-design.md).
+
 ## More Information
 
 - Related spike: [Tow-path planning (#180)](../spikes/tow-path-planning.md) — the

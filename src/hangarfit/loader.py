@@ -23,6 +23,7 @@ a mis-cased id slip through to a late, generic model-invariant error.
 
 from __future__ import annotations
 
+import dataclasses
 import difflib
 import math
 from collections.abc import Collection, Iterable
@@ -81,6 +82,19 @@ def _to_bool(value: Any, field_name: str) -> bool:
         raise LoaderError(
             f"{field_name!r}: expected boolean (unquoted true/false), "
             f"got {value!r} ({type(value).__name__})"
+        )
+    return value
+
+
+def _to_int(value: Any, field_name: str) -> int:
+    """Coerce a YAML scalar to ``int`` strictly. Rejects ``bool`` (it is an
+    ``int`` subclass, so ``True`` would silently read as ``1``) and any
+    non-int value (floats, strings) so a fractional or mistyped count fails
+    loudly with the field name rather than silently truncating
+    (``int(1.5) == 1``)."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise LoaderError(
+            f"{field_name!r}: expected integer, got {value!r} ({type(value).__name__})"
         )
     return value
 
@@ -162,6 +176,7 @@ def load_hangar(path: Path | str) -> Hangar:
             wing_layer_clearance_m=_to_float(
                 raw.get("wing_layer_clearance_m", 0.2), "wing_layer_clearance_m"
             ),
+            max_carts=_to_int(raw.get("max_carts", 1), "max_carts"),
         )
     except (ValueError, TypeError) as e:
         raise LoaderError(f"{path}: {e}") from e
@@ -172,6 +187,7 @@ def load_layout(
     *,
     fleet: dict[str, Aircraft] | None = None,
     hangar: Hangar | None = None,
+    max_carts: int | None = None,
 ) -> Layout:
     """Load a layout YAML.
 
@@ -217,6 +233,14 @@ def load_layout(
             f"{path}: 'hangar' field is set in YAML but a hangar override was also "
             f"provided programmatically; remove one to disambiguate"
         )
+
+    # A ``--max-carts`` override (CLI) reaches ``Layout.__post_init__`` via the
+    # hangar it reads. Apply it to the resolved hangar *before* the Layout is
+    # built, so a loosening override is honoured instead of being rejected at
+    # construction against the data-file cap. See ADR-0007 (cart-inventory
+    # amendment) / #210.
+    if max_carts is not None:
+        hangar = dataclasses.replace(hangar, max_carts=max_carts)
 
     placements_data = raw.get("placements", [])
     if not isinstance(placements_data, list):
@@ -267,6 +291,7 @@ def load_scenario(
     *,
     fleet: dict[str, Aircraft] | None = None,
     hangar: Hangar | None = None,
+    max_carts: int | None = None,
 ) -> Scenario:
     """Load a scenario YAML into a validated :class:`Scenario`.
 
@@ -328,6 +353,13 @@ def load_scenario(
             f"{path}: 'hangar' field is set in YAML but a hangar override was also "
             f"provided programmatically; remove one to disambiguate"
         )
+
+    # A ``--max-carts`` override (CLI) is applied to the resolved hangar here;
+    # the solver builds every candidate Layout from ``scenario.hangar``, so the
+    # cart cap each Layout enforces is this overridden value. See ADR-0007
+    # (cart-inventory amendment) / #210.
+    if max_carts is not None:
+        hangar = dataclasses.replace(hangar, max_carts=max_carts)
 
     for pid in fleet_in:
         _resolve_known_plane_id(pid, fleet, role="fleet_in entry", path=path)

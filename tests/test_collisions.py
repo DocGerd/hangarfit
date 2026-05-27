@@ -147,7 +147,7 @@ class TestCartRule:
     """
 
     def test_case_10_two_cart_eligible_on_carts_rejected_at_load(self) -> None:
-        with pytest.raises(LoaderError, match="At most one cart_eligible"):
+        with pytest.raises(LoaderError, match=r"At most 1 cart_eligible"):
             _load("invalid_cart_rule")
 
 
