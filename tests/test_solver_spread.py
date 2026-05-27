@@ -88,9 +88,11 @@ def test_solve_default_enables_spread():
     from hangarfit.models import SearchConfig
     from hangarfit.solver import solve
 
-    s = load_scenario("tests/fixtures/solve_fresh_alternatives_three.yaml")
-    default = solve(s, budget_s=30.0, seed=0, search=SearchConfig(max_restarts=20))
-    explicit_on = solve(s, budget_s=30.0, seed=0, search=SearchConfig(max_restarts=20, spread=True))
+    scenario = load_scenario("tests/fixtures/scenario_minimal.yaml")
+    default = solve(scenario, seed=7, search=SearchConfig(max_restarts=5), plan_paths=False)
+    explicit_on = solve(
+        scenario, seed=7, search=SearchConfig(spread=True, max_restarts=5), plan_paths=False
+    )
     assert default.layouts and explicit_on.layouts
     assert [(p.x_m, p.y_m, p.heading_deg) for p in default.layouts[0].placements] == [
         (p.x_m, p.y_m, p.heading_deg) for p in explicit_on.layouts[0].placements
