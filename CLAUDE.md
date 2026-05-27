@@ -8,7 +8,7 @@ This file is the durable **operational** context for the project: how we work, w
 
 `hangarfit` is an **on-demand exception tool** for a flying club: when the standard hangar parking layout breaks (delayed return, surprise maintenance, etc.), it helps find *a* valid alternative arrangement. The tool checks whether a hand-authored candidate layout is physically valid and renders a top-down PNG so a human can eyeball it; the solver searches for one when no candidate is in hand.
 
-**Status:** Phase 1 (substrate), Phase 2a (static layout solver, `hangarfit solve`), Phase 2c (spread/diversity polish), Phase 3a (tow-path planning, `hangarfit solve --render-paths`), and Phase 3b (Reeds–Shepp reverse-capable tow motion) have all shipped. Live milestone status lives in auto-memory and GitHub milestones, not here.
+**Status:** Phase 1 (substrate), Phase 2a (static layout solver, `hangarfit solve`), Phase 2b–2c (solver realism + spread/diversity polish), Phase 3a (tow-path planning, `hangarfit solve --render-paths`), and Phase 3b (Reeds–Shepp reverse-capable tow motion) have all shipped. Live milestone status lives in auto-memory and GitHub milestones, not here.
 
 ---
 
@@ -86,7 +86,7 @@ Most coding goes direct in-session. Subagent dispatch is for review work and iso
 
 ## Project-local Claude Code config
 
-The `.claude/` directory holds team-shared Claude Code settings (currently: a PostToolUse hook that runs ruff + pytest after edits under `src/hangarfit/` or `tests/`, plus a PreToolUse guard that blocks hand-edits to the hash-pinned `requirements-*.txt` lockfiles). See [.claude/README.md](.claude/README.md) for what's there and how to disable per-contributor via a gitignored `.claude/settings.local.json`.
+The `.claude/` directory holds team-shared Claude Code settings (currently: a PreToolUse guard that blocks hand-edits to the hash-pinned `requirements-*.txt` lockfiles, plus a PostToolUse hook that runs ruff + pytest after edits under `src/hangarfit/` or `tests/`). See [.claude/README.md](.claude/README.md) for what's there and how to disable per-contributor via a gitignored `.claude/settings.local.json`.
 
 ---
 
