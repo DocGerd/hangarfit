@@ -16,6 +16,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import secrets
 import sys
 from typing import TYPE_CHECKING
 
@@ -350,14 +351,57 @@ def cmd_solve(args: argparse.Namespace) -> int:
     # plan_paths=False: the library bundle (SolveResult.plans) is available to
     # callers, but the CLI would just pay the per-plane Hybrid-A* search cost
     # for output it never draws.
+    #
+    # Resolve the seed ONCE here (rather than letting each solve() call draw its
+    # own from system entropy when --seed is omitted) so the spread run and any
+    # no-spread fallback share an identical, reproducible seed. This keeps the
+    # ADR-0003 determinism contract intact across the two-pass fallback: a given
+    # --seed (or a given resolved entropy seed) yields the same fallback result.
+    resolved_seed = args.seed if args.seed is not None else secrets.randbits(32)
+
     result = solve(
         scenario,
         budget_s=args.budget,
         alternatives=args.alternatives,
-        seed=args.seed,
+        seed=resolved_seed,
         search=SearchConfig(spread=args.spread),
         plan_paths=args.render_paths,
     )
+
+    # #280 — spread-vs-towability fallback. The ADR-0008 spread post-pass
+    # (default ON) maximizes inter-plane gaps, which can push planes into
+    # positions the bounded tow planner (towplanner._MAX_EXPANSIONS) can no
+    # longer thread from the door cone: every plan comes back None and
+    # --render-paths would return a bare exit 3 ("untowable") — even though the
+    # SAME fleet+hangar routes cleanly with spread off. When the user did NOT
+    # explicitly pass --no-spread, automatically RE-SOLVE with spread disabled,
+    # tow-plan that, and — only if it actually routes at least one candidate —
+    # render the routable (tighter) arrangement instead. The swap is always
+    # reported on stderr (never silent: the user gets a different, tighter
+    # layout than a plain spread solve would yield). If the no-spread re-solve
+    # also routes nothing (genuinely too tight, e.g. the placeholder hangar),
+    # keep the original spread result so exit 3 stands unchanged.
+    if (
+        args.render_paths
+        and args.spread
+        and result.layouts
+        and all(plan is None for plan in result.plans)
+    ):
+        fallback = solve(
+            scenario,
+            budget_s=args.budget,
+            alternatives=args.alternatives,
+            seed=resolved_seed,
+            search=SearchConfig(spread=False),
+            plan_paths=True,
+        )
+        if fallback.layouts and any(plan is not None for plan in fallback.plans):
+            print(
+                "note: layout un-routable with inter-plane spread; re-solved "
+                "with spread disabled to produce tow paths",
+                file=sys.stderr,
+            )
+            result = fallback
 
     if args.json:
         _emit_solve_json(args.scenario, result)

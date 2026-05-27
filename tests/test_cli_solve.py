@@ -851,3 +851,181 @@ class TestSolveRenderPaths:
         )
         assert rc in (0, 3)
         assert out.exists() and out.stat().st_size > 0
+
+
+class TestSolveRenderPathsSpreadFallback:
+    """`--render-paths` auto-falls-back to no-spread when the spread layout is
+    un-routable (#280). Two individually-correct features (ADR-0008 spread,
+    bounded tow planner) compose into a worse default: spread pushes planes into
+    positions the bounded Hybrid-A* can no longer thread, so every plan is None
+    and the CLI returns a bare exit 3 — even though the same fleet+hangar routes
+    cleanly with spread off. The CLI re-solves with spread disabled, reports the
+    swap on stderr, and renders the routable arrangement instead.
+    """
+
+    @staticmethod
+    def _layout():
+        from hangarfit.loader import load_layout
+
+        return load_layout(FIXTURES_DIR / "valid_two_separated.yaml")
+
+    @staticmethod
+    def _plan(layout):
+        from hangarfit.towplanner import DubinsArc, Move, MovesPlan, Pose, Segment
+
+        start = Pose(x_m=2.0, y_m=0.0, heading_deg=0.0)
+        end = Pose(x_m=2.0, y_m=5.0, heading_deg=0.0)
+        arc = DubinsArc(start=start, end=end, turn_radius_m=1.0, segments=(Segment("S", 5.0),))
+        return MovesPlan(
+            target_layout=layout, moves=(Move(plane_id="a", target_slot=end, path=arc),)
+        )
+
+    @staticmethod
+    def _result(status, layouts, plans, unroutable=()):
+        from hangarfit.models import SolverDiagnostics, SolveResult
+
+        diag = SolverDiagnostics(
+            restarts_attempted=1,
+            wall_time_s=0.1,
+            best_partial=None,
+            best_partial_layout=None,
+            seed=42,
+            unroutable_planes=unroutable,
+        )
+        return SolveResult(status=status, layouts=layouts, plans=plans, diagnostics=diag)
+
+    @staticmethod
+    def _patch_solve_sequence(monkeypatch, results):
+        """Patch ``solve`` to return ``results[i]`` on the i-th call.
+
+        Records every call's ``search`` SearchConfig + ``seed`` so a test can
+        assert the fallback re-solve disabled spread while keeping the seed
+        (determinism). Calling more than ``len(results)`` times is a test-setup
+        error and raises.
+        """
+        import hangarfit.solver as solver_mod
+
+        calls: list[dict] = []
+        seq = list(results)
+
+        def fake_solve(scenario, **kwargs):
+            calls.append(kwargs)
+            if not seq:
+                raise AssertionError("solve() called more times than results provided")
+            return seq.pop(0)
+
+        monkeypatch.setattr(solver_mod, "solve", fake_solve)
+        return calls
+
+    def test_spread_unroutable_falls_back_to_no_spread_and_routes(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        # Spread layout un-routable (all-None) -> re-solve with spread off,
+        # which routes -> exit 0, paths rendered, swap reported on stderr.
+        from hangarfit.models import SearchConfig
+
+        layout = self._layout()
+        plan = self._plan(layout)
+        calls = self._patch_solve_sequence(
+            monkeypatch,
+            [
+                self._result("found", (layout,), (None,), unroutable=("fuji",)),
+                self._result("found", (layout,), (plan,)),
+            ],
+        )
+        out = tmp_path / "p.png"
+        rc = main(["solve", SMOKE_FIXTURE, "--render", str(out), "--render-paths", "--seed", "5"])
+        assert rc == 0
+        err = capsys.readouterr().err
+        # The swap is reported, never silent (#280 acceptance).
+        assert "spread" in err and "re-solved" in err
+        # Two solve() calls: spread ON, then the fallback with spread OFF.
+        assert len(calls) == 2
+        assert isinstance(calls[0]["search"], SearchConfig) and calls[0]["search"].spread is True
+        assert calls[1]["search"].spread is False
+        # Determinism: the fallback re-solve reuses the same resolved seed.
+        assert calls[0]["seed"] == calls[1]["seed"] == 5
+        assert out.exists()
+
+    def test_explicit_no_spread_does_not_retry(self, tmp_path, monkeypatch, capsys):
+        # The user already asked for --no-spread; there is nothing to fall back
+        # FROM. One solve() call, exit 3 stands, no swap note.
+        layout = self._layout()
+        calls = self._patch_solve_sequence(
+            monkeypatch, [self._result("found", (layout,), (None,), unroutable=("fuji",))]
+        )
+        out = tmp_path / "p.png"
+        rc = main(
+            [
+                "solve",
+                SMOKE_FIXTURE,
+                "--render",
+                str(out),
+                "--render-paths",
+                "--no-spread",
+                "--seed",
+                "5",
+            ]
+        )
+        assert rc == 3
+        assert len(calls) == 1
+        assert calls[0]["search"].spread is False
+        assert "re-solved" not in capsys.readouterr().err
+
+    def test_fallback_also_unroutable_keeps_exit_3_no_misleading_note(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        # Genuinely too tight (e.g. placeholder hangar): both spread and
+        # no-spread route nothing. The fallback ran but did not help, so we keep
+        # the original spread result and exit 3 — and must NOT claim a swap that
+        # did not happen.
+        layout = self._layout()
+        calls = self._patch_solve_sequence(
+            monkeypatch,
+            [
+                self._result("found", (layout,), (None,), unroutable=("fuji",)),
+                self._result("found", (layout,), (None,), unroutable=("fuji",)),
+            ],
+        )
+        out = tmp_path / "p.png"
+        rc = main(["solve", SMOKE_FIXTURE, "--render", str(out), "--render-paths", "--seed", "5"])
+        assert rc == 3
+        assert len(calls) == 2  # the fallback was attempted
+        assert "re-solved" not in capsys.readouterr().err  # but not claimed
+
+    def test_spread_routable_does_not_retry(self, tmp_path, monkeypatch, capsys):
+        # Spread layout is already routable -> no fallback, no note, exit 0,
+        # spread arrangement preserved.
+        layout = self._layout()
+        plan = self._plan(layout)
+        calls = self._patch_solve_sequence(monkeypatch, [self._result("found", (layout,), (plan,))])
+        out = tmp_path / "p.png"
+        rc = main(["solve", SMOKE_FIXTURE, "--render", str(out), "--render-paths", "--seed", "5"])
+        assert rc == 0
+        assert len(calls) == 1  # no re-solve
+        assert "re-solved" not in capsys.readouterr().err
+
+    @pytest.mark.slow
+    def test_real_solve_spread_fallback_end_to_end(self, tmp_path, capsys):
+        # Real, un-monkeypatched regression for #280. seed=5 on the 3-plane
+        # 30x25 test hangar is exit-3-WITH-spread (fuji blocked) / exit-0-WITHOUT
+        # on develop. The fallback must turn that bare exit 3 into a routed exit 0
+        # with the swap reported on stderr.
+        out = tmp_path / "real.png"
+        rc = main(
+            [
+                "solve",
+                str(FIXTURES_DIR / "solve_fresh_alternatives_three.yaml"),
+                "--budget",
+                "15.0",
+                "--seed",
+                "5",
+                "--render",
+                str(out),
+                "--render-paths",
+            ]
+        )
+        assert rc == 0, f"expected fallback to route; stderr={capsys.readouterr().err}"
+        err = capsys.readouterr().err
+        assert "spread" in err and "re-solved" in err
+        assert out.exists() and out.stat().st_size > 0
