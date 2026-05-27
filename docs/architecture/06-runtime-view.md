@@ -79,7 +79,7 @@ sequenceDiagram
     alt trivially infeasible
         Solver-->>CLI: SolveResult(status=trivially_infeasible)
     else feasible
-        loop until K accepted or budget exhausted
+        loop restart until budget_s / max_restarts
             Note over Solver: Random initial placement
             loop descent (min-conflicts)
                 Solver->>Coll: check(candidate)
@@ -87,26 +87,22 @@ sequenceDiagram
                 alt zero conflicts
                     Note over Solver: candidate is valid
                     Note over Solver: Spread (if SearchConfig.spread, default on):<br/>_spread maximizes inter-plane separation, only valid moves
+                    Note over Solver: append valid (spread-polished) basin to pool
                 else conflicts > 0
                     Note over Solver: perturb plane with max<br/>penetration contribution
                 end
             end
-            Note over Solver: Diversity filter:<br/>compare candidate to<br/>already-accepted layouts
-            alt diverse enough
-                Note over Solver: append to accepted
-            else too similar
-                Note over Solver: increment<br/>diversity_rejected_count
-            end
         end
+        Note over Solver: Select (best-of-all, #267):<br/>sort pool by min plan-view gap (energy tiebreak),<br/>greedily pick K diverse — rejects increment diversity_rejected_count
         opt plan_paths (default on) — applies to found & found_partial
             Solver->>Tow: plan_fill(layout) per accepted layout
             Tow-->>Solver: MovesPlan or None (best-effort)
         end
-        alt K accepted before budget
+        alt K selected from pool
             Solver-->>CLI: SolveResult(status=found, layouts, plans, diagnostics, seed)
-        else some-but-fewer-than-K accepted, budget exhausted
+        else fewer than K selected (diversity-limited or budget exhausted)
             Solver-->>CLI: SolveResult(status=found_partial, layouts, plans, diagnostics, seed)
-        else zero accepted, budget exhausted
+        else pool empty (no valid basin found)
             Solver-->>CLI: SolveResult(status=exhausted_budget, layouts=[], plans=[], diagnostics, seed)
         end
     end
