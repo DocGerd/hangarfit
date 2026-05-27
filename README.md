@@ -4,6 +4,7 @@
 [![codecov](https://codecov.io/gh/DocGerd/hangarfit/branch/develop/graph/badge.svg)](https://codecov.io/gh/DocGerd/hangarfit)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/DocGerd/hangarfit/badge)](https://securityscorecards.dev/viewer/?uri=github.com/DocGerd/hangarfit)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/12987/badge)](https://www.bestpractices.dev/projects/12987)
+[![License: Apache-2.0](https://img.shields.io/github/license/DocGerd/hangarfit)](LICENSE)
 
 An on-demand exception tool for a flying club's hangar parking.
 
