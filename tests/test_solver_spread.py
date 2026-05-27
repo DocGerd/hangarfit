@@ -277,3 +277,44 @@ def _layout_key(layout):
         (p.plane_id, round(p.x_m, 6), round(p.y_m, 6), round(p.heading_deg, 6))
         for p in layout.placements
     )
+
+
+@pytest.mark.slow
+def test_best_of_all_never_worse_than_first_basin_over_sweep():
+    """End-to-end confidence for #267: with the same seed, best-of-all (a
+    larger restart budget) selects from a pool that is a *superset* of the
+    single-restart pool, so its achieved min plan-view gap is never worse than
+    the first-found basin (max_restarts=1 ≈ the old first-valid behavior) — and
+    on this nesting-prone 6-plane fill it is strictly better for several seeds,
+    demonstrating the fix reduces nested pairs.
+
+    It does NOT (and cannot) eliminate nesting on a space-tight fill: when every
+    reachable basin nests, best-of-all still returns 0.0 — the roomiest available.
+    The pure ``_select_spread_diverse`` tests are the deterministic regression;
+    this is end-to-end wiring confidence. Excluded from the default run (slow).
+    """
+    scenario = load_scenario("tests/fixtures/solve_fresh_six_planes.yaml")
+    improved = 0
+    checked = 0
+    for seed in range(1, 10):
+        first = solve(scenario, seed=seed, search=SearchConfig(max_restarts=1), plan_paths=False)
+        best = solve(scenario, seed=seed, search=SearchConfig(max_restarts=8), plan_paths=False)
+        if first.status not in ("found", "found_partial") or best.status not in (
+            "found",
+            "found_partial",
+        ):
+            continue
+        checked += 1
+        first_gap = min(first.diagnostics.min_pairwise_gap_m, default=math.inf)
+        best_gap = min(best.diagnostics.min_pairwise_gap_m, default=math.inf)
+        assert best_gap >= first_gap - 1e-9, (
+            f"seed {seed}: best-of-all min gap {best_gap} is worse than "
+            f"first-basin {first_gap} — selection should never regress"
+        )
+        if best_gap > first_gap + 1e-9:
+            improved += 1
+    assert checked >= 4, f"too few seeds reached a layout ({checked}); fixture/budget issue"
+    assert improved > 0, (
+        "best-of-all improved no seed over first-basin — the fix is not being "
+        "exercised on this fixture (expected several nesting-prone seeds to improve)"
+    )
