@@ -36,7 +36,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.patches import Circle as MplCircle  # noqa: E402
 from matplotlib.patches import Polygon as MplPolygon  # noqa: E402
 
-from .geometry import WorldPart, aircraft_parts_world  # noqa: E402
+from .geometry import WorldPart, aircraft_parts_world, local_to_world  # noqa: E402
 from .models import Aircraft, CheckResult, Layout, Placement, WingPosition  # noqa: E402
 
 if TYPE_CHECKING:
@@ -386,32 +386,6 @@ def _draw_part(ax: Any, part: WorldPart, color: str) -> None:
     ax.add_patch(patch)
 
 
-def _local_to_world(
-    u: float,
-    v: float,
-    placement: Placement,
-) -> tuple[float, float]:
-    """Apply the plane-local-to-world transform to a single point ``(u, v)``.
-
-    Mirrors the per-vertex formula in :func:`hangarfit.geometry.aircraft_parts_world`
-    (the same determinant-``-1`` compass transform):
-
-    .. code-block::
-
-        world_x = px + u·sin(h) + v·cos(h)
-        world_y = py + u·cos(h) − v·sin(h)
-
-    Used here so gear/cart glyphs rotate with the aircraft exactly as the
-    part polygons do, without having to build a full :class:`WorldPart`.
-    """
-    h = math.radians(placement.heading_deg)
-    sin_h = math.sin(h)
-    cos_h = math.cos(h)
-    wx = placement.x_m + u * sin_h + v * cos_h
-    wy = placement.y_m + u * cos_h - v * sin_h
-    return wx, wy
-
-
 def _add_wheel(ax: Any, wx: float, wy: float) -> MplCircle:
     """Add a single wheel-disc circle at world coordinates ``(wx, wy)``."""
     circle = MplCircle(
@@ -468,28 +442,28 @@ def _draw_gear_glyph(ax: Any, placement: Placement, aircraft: Aircraft) -> None:
     elif aircraft.gear == "nosewheel":
         # Nose wheel — near the nose tip
         nose_u = fus_cx + fus_half_len * _NOSE_GEAR_FRAC
-        wx, wy = _local_to_world(nose_u, 0.0, placement)
+        wx, wy = local_to_world(nose_u, 0.0, placement)
         _add_wheel(ax, wx, wy)
         # Main gear pair — slightly aft of CG (behind the wing root)
         main_u = fus_cx - fus_half_len * _MAIN_GEAR_FWD_FRAC
         lateral = fus_half_wid * _MAIN_GEAR_LATERAL_FRAC
         for v in (+lateral, -lateral):
-            wx, wy = _local_to_world(main_u, v, placement)
+            wx, wy = local_to_world(main_u, v, placement)
             _add_wheel(ax, wx, wy)
     elif aircraft.gear == "tailwheel":
         # Main gear pair — forward of CG, ahead of the wing root
         main_u = fus_cx + fus_half_len * _MAIN_GEAR_TAILDRAGGER_FWD_FRAC
         lateral = fus_half_wid * _MAIN_GEAR_LATERAL_FRAC
         for v in (+lateral, -lateral):
-            wx, wy = _local_to_world(main_u, v, placement)
+            wx, wy = local_to_world(main_u, v, placement)
             _add_wheel(ax, wx, wy)
         # Tailwheel — near the aft tip
         tail_u = fus_aft_x + fus_half_len * (1.0 - _NOSE_GEAR_FRAC)
-        wx, wy = _local_to_world(tail_u, 0.0, placement)
+        wx, wy = local_to_world(tail_u, 0.0, placement)
         _add_wheel(ax, wx, wy)
     elif aircraft.gear == "monowheel":
         # Single centred main wheel at the gear/cart origin
-        wx, wy = _local_to_world(0.0, 0.0, placement)
+        wx, wy = local_to_world(0.0, 0.0, placement)
         _add_wheel(ax, wx, wy)
     # No else needed — Gear is a closed Literal; mypy and the model guard all values.
 
@@ -512,7 +486,7 @@ def _draw_cart_glyph(ax: Any, placement: Placement) -> None:
         (-hl, -hw),
         (-hl, +hw),
     ]
-    deck_world = [_local_to_world(u, v, placement) for u, v in corner_locals]
+    deck_world = [local_to_world(u, v, placement) for u, v in corner_locals]
     deck_patch = MplPolygon(
         deck_world,
         closed=True,
@@ -526,7 +500,7 @@ def _draw_cart_glyph(ax: Any, placement: Placement) -> None:
 
     # Four corner wheel discs.
     for u, v in corner_locals:
-        wx, wy = _local_to_world(u, v, placement)
+        wx, wy = local_to_world(u, v, placement)
         _add_wheel(ax, wx, wy)
 
 
