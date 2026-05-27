@@ -24,6 +24,7 @@ a mis-cased id slip through to a late, generic model-invariant error.
 from __future__ import annotations
 
 import difflib
+import math
 from collections.abc import Collection, Iterable
 from pathlib import Path
 from typing import Any
@@ -51,15 +52,25 @@ class LoaderError(Exception):
 def _to_float(value: Any, field_name: str) -> float:
     """Coerce a YAML scalar to ``float``, raising ``LoaderError`` with the
     field name on failure (rather than a bare ``TypeError`` from
-    ``float(None)`` or ``ValueError`` from ``float("abc")``)."""
+    ``float(None)`` or ``ValueError`` from ``float("abc")``).
+
+    Non-finite results (NaN, ±inf) are also rejected: ``yaml.safe_load``
+    parses ``.nan``/``.inf``/``-.inf`` into real Python floats, and
+    downstream consumers (e.g. ``_wing_spar_x``) silently propagate them
+    into geometry calculations, where NaN comparisons always return False
+    and inf values produce nonsensical coordinates.
+    """
     if value is None:
         raise LoaderError(f"{field_name!r}: expected number, got null")
     try:
-        return float(value)
+        result = float(value)
     except (TypeError, ValueError) as e:
         raise LoaderError(
             f"{field_name!r}: expected number, got {value!r} ({type(value).__name__})"
         ) from e
+    if not math.isfinite(result):
+        raise LoaderError(f"{field_name!r}: expected a finite number, got {value!r}")
+    return result
 
 
 def _to_bool(value: Any, field_name: str) -> bool:
@@ -615,6 +626,9 @@ def _build_struts_spec(data: dict[str, Any]) -> StrutsSpec:
 # A lift strut on a strut-braced high-wing foots to the front/main spar, which
 # on a typical light aircraft is near the quarter-chord. See issue #282.
 _SPAR_CHORD_FRACTION = 0.25
+assert 0.0 < _SPAR_CHORD_FRACTION < 1.0, (
+    "spar chord fraction must lie strictly inside the chord (0,1)"
+)
 
 
 def _wing_spar_x(wing: Part) -> float:
