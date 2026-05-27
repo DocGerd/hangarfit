@@ -6,11 +6,13 @@
 # in our placeholder geometry is which side of the fuselage the smaller
 # plane approaches from — both must be valid.
 #
-# Positions:
+# Positions (struts anchored to the wing-spar axis — quarter-chord — per
+# issue #282; the left strut keeps its world-x span [7.2, 8.55] and now
+# sits at y [6.12, 6.17]):
 #   cessna_150 at (9, 5, 0, false): left strut x [7.2, 8.55].
-#   fuji at (5, 10, 90, false): wing x [4.75, 6.25], y [5.3, 14.7].
-#     Fuji's wing is 0.95 m clear of the left strut in x and 2.65 m
-#     clear of cessna's wing y-range for fuselage interactions.
+#   fuji at (5, 10, 90, false): wing x [4.35, 5.85], y [5.29, 14.71].
+#     Fuji's wing clears the left strut by 1.35 m in plan view and is
+#     well clear of cessna's wing y-range for fuselage interactions.
 #
 # Together with case 7, this case shows that the checker is symmetric
 # under reflection — if either case fails, something is wrong with the
