@@ -143,3 +143,49 @@ stream is byte-identical to the pre-spread solver).
 - External references: Kuby, M. J. (1987). "Programming models for facility
   dispersion: the *p*-dispersion and maxisum dispersion problems."
   *Geographical Analysis* 19(4): 315–329.
+
+## Amendments
+
+### 2026-05-27 — best-of-all-basins spread selection (issue #267)
+
+**Background.** ADR-0008's `_spread` post-pass is a greedy single-plane
+hill-climb. It can only polish whichever basin the restart loop handed it — a
+single-plane nudge cannot cross a validity barrier out of a nested pair (e.g. a
+low fuselage legally tucked under a high wing, producing a 0.0 m plan-view gap).
+Because `solve()` originally accepted the **first** valid basin, spread quality
+was seed-luck: a seed sweep on a representative 5-plane fill showed ~1/3 of
+seeds settled with a nested pair (0.0 m gap) while the rest spread to 1.7–2.5 m
+— same scenario, same fleet, same hangar, only the restart seed different.
+
+**Change.** Since [#267](https://github.com/DocGerd/hangarfit/issues/267),
+`solve()` runs all restarts within budget to their termination gate, appends
+every valid spread-polished basin to a pool, and **selects the layout(s) with
+the largest minimum plan-view gap** (energy tiebreak, then restart index as the
+deterministic final key) subject to the existing diversity gate (ADR-0004).
+`_spread` itself is unchanged — the robustness gain comes from choosing among
+basins, not from a smarter climb. Returned alternatives are ordered
+best-spread-first (`layouts[0]` is the roomiest).
+
+Best-of-all engages **only when spread is enabled**: with `spread=False` there
+is nothing to optimize, so `solve()` retains the pre-#267 first-valid fast path
+(`--no-spread` / `SearchConfig.spread=False`) — the restart loop stops as soon
+as `alternatives` diverse valid layouts have been found rather than running to
+budget.
+
+**Observability.** The achieved minimum pairwise plan-view gap per returned
+layout is reported in `SolverDiagnostics.min_pairwise_gap_m` (index-aligned with
+`layouts`; `math.inf` / `null` for <2 planes), in the human CLI summary, and in
+`--json`. `SolverDiagnostics.valid_basins_found` records the pool size — how
+many spread-polished basins the selection had to choose from.
+
+**Space-bound limitation (best-effort, not a guarantee).** Best-of-all returns
+the roomiest *available* basin; it cannot eliminate nesting when the fill is
+space-tight and every reachable basin nests. Empirically, on the tight 6-plane
+default fixture some seeds still return a 0.0 m nested pair because no
+non-nested arrangement is reachable within the budget. Spread is a soft
+preference (see ADR-0008's design drivers), not a guarantee of positive
+separation.
+
+**Determinism.** See the ADR-0003 amendment dated 2026-05-27 for the precise
+scoping: reproducible under a `max_restarts` bound; timing-dependent under a
+pure wall-clock `budget_s` bound.

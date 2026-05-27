@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import sys
 from typing import TYPE_CHECKING
 
@@ -87,7 +88,13 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         metavar="S",
-        help="RNG seed (default: None -> resolved from system entropy).",
+        help=(
+            "RNG seed (default: None -> resolved from system entropy). "
+            "Under a wall-clock --budget, results are reproducible on the same "
+            "machine but not guaranteed identical across machines, because the "
+            "best-of-all basin selection (#267) depends on how many restarts "
+            "fit the budget."
+        ),
     )
     solve.add_argument(
         "--render",
@@ -245,7 +252,8 @@ def _emit_solve_human(result: SolveResult, *, alternatives: int) -> None:
             f"{d.wall_time_s:.1f}s (seed={d.seed}, {d.restarts_attempted} restarts)."
         )
     for i, layout in enumerate(result.layouts, start=1):
-        line = f"  #{i}: {len(layout.placements)} planes placed; 0 conflicts; score=(0, 0.0)"
+        gap = d.min_pairwise_gap_m[i - 1] if i - 1 < len(d.min_pairwise_gap_m) else math.inf
+        gap_str = f"{gap:.2f} m" if math.isfinite(gap) else "n/a (single plane)"
         if i > 1:
             parts = []
             for j in range(i - 1):
@@ -254,7 +262,12 @@ def _emit_solve_human(result: SolveResult, *, alternatives: int) -> None:
                 parts.append(
                     f"{moved} of {total} planes shifted vs #{j + 1} (avg shift {avg_shift:.1f} m)"
                 )
-            line = f"  #{i}: {'; '.join(parts)}"
+            line = f"  #{i}: {'; '.join(parts)}; min gap {gap_str}"
+        else:
+            line = (
+                f"  #{i}: {len(layout.placements)} planes placed; 0 conflicts; "
+                f"score=(0, 0.0); min gap {gap_str}"
+            )
         print(line)
 
 
@@ -585,6 +598,11 @@ def _emit_solve_json(scenario_path: str, result: SolveResult) -> None:
             # route, in returned-layout order. Empty unless --render-paths ran
             # the planner. Backward-compatible — no schema bump.
             "unroutable_planes": list(d.unroutable_planes),
+            # Additive (#267): achieved min plan-view gap per returned layout
+            # (null where <2 planes, i.e. math.inf) + basins the search had to
+            # choose from. Backward-compatible — no schema bump.
+            "min_pairwise_gap_m": [g if math.isfinite(g) else None for g in d.min_pairwise_gap_m],
+            "valid_basins_found": d.valid_basins_found,
         },
     }
     print(json.dumps(payload, indent=2))

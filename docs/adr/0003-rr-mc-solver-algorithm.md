@@ -312,6 +312,51 @@ silently rejected at scoring time). Rejected.
 
 ## Amendments
 
+### 2026-05-27 — best-of-all-basins selection and determinism scoping (issue #267)
+
+Since [#267](https://github.com/DocGerd/hangarfit/issues/267), `solve()` no
+longer breaks on the first valid layout. The restart loop runs to its
+termination gate, appends every valid spread-polished basin to a pool, and calls
+`_select_spread_diverse` to pick the best-spread layout(s) subject to the
+diversity gate (ADR-0004). See the ADR-0008 amendment (2026-05-27) for the
+spread-selection rationale.
+
+**Consequence for the determinism contract.** The seed still fixes the complete
+RNG sequence, and `_select_spread_diverse` is a fully-ordered pure sort
+(`restart_index` is the final tiebreak, so no two pool entries compare equal).
+Therefore:
+
+- A run bounded by `max_restarts` (a deterministic restart count) is **fully
+  reproducible across runs and machines** — same seed → same pool → same
+  selected layout. The `tests/test_solver_canaries.py` determinism canaries
+  remain meaningful on any `max_restarts`-bounded solve call.
+- A run bounded by a pure wall-clock `budget_s` allows a *variable* number of
+  restarts depending on machine speed and load — **but only on the spread-ON
+  best-of-all path.** When basins are near-tied on maximin gap the selected
+  layout can differ between machines (or the same machine under different load)
+  — the pool size varies and a near-tie may resolve differently. Same seed on
+  the same machine under the same load remains reproducible.
+
+- With `spread=False` the wall-clock timing-dependence does **not** apply: the
+  loop keeps the pre-#267 first-valid early exit and terminates at a
+  seed-deterministic restart (once `alternatives` diverse valid layouts are
+  found), independent of `budget_s` / machine speed. That mode is therefore
+  reproducible across runs and machines regardless of the wall-clock bound.
+
+**Guidance.** For guaranteed cross-machine reproducibility, bound the search by
+`max_restarts` rather than (or in addition to) wall-clock `budget_s`. The
+default CLI path uses `budget_s` for responsiveness; this is an accepted,
+deliberate tradeoff — spread robustness was chosen over wall-clock-independent
+determinism for the interactive use case.
+
+The RR-MC algorithm itself (descent step, scoring, diversity filter, status
+taxonomy) is unchanged by this amendment. The amendment block above under
+*Consequences → Positive* ("Reproducibility is bit-identical under a seed")
+remains accurate for the `max_restarts`-bounded path; under a pure `budget_s`
+bound it is timing-scoped as described above.
+
+---
+
 ### 2026-05-23 — maintenance-plane handling, post-milestone-#9
 
 Two passages in the body above describe how RR-MC handles the

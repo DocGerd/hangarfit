@@ -19,6 +19,7 @@ import random as _random_module
 import secrets
 import sys
 import time
+from typing import NamedTuple
 
 from hangarfit.collisions import check as check_layout
 from hangarfit.geometry import WorldPart, aircraft_parts_world
@@ -53,6 +54,21 @@ def solve(
     """Solve a Scenario into up to ``alternatives`` diverse valid Layouts.
 
     See spec §3.3 for the contract.
+
+    Returns the **best-spread** valid layout(s) found across *all* restarts
+    within budget (best-of-all-basins, #267) — NOT the first valid one. The
+    restart loop runs to ``budget_s`` / ``search.max_restarts`` only when
+    ``search.spread`` is enabled (the default); recording every valid basin
+    (spread-polished) into a pool, the returned layouts are then chosen from
+    that pool by maximin plan-view gap subject to the diversity gate
+    (ADR-0004). With ``search.spread=False`` there is nothing to optimize, so
+    the loop keeps the pre-#267 first-valid early exit — it stops as soon as
+    ``alternatives`` diverse valid layouts have been found (a seed-deterministic
+    termination, independent of wall-clock; preserves the ``--no-spread`` fast
+    path). Consequently the returned ``alternatives`` are ordered
+    **best-spread-first**, not in discovery order, and
+    ``diagnostics.min_pairwise_gap_m`` / ``diagnostics.valid_basins_found``
+    surface the selected gaps and the size of the explored basin pool.
 
     When ``plan_paths`` is ``True`` (the default), each returned layout is
     also tow-planned (#197): ``result.plans[i]`` is the
@@ -139,9 +155,9 @@ def solve(
     # natural tuple lex-compare unambiguous.
     best_partial_score: tuple[int, float] = (sys.maxsize, float("inf"))
     best_partial_layout: Layout | None = None
-    accepted_layouts: list[Layout] = []
-    diversity_rejected_count = 0
+    pool: list[_SpreadCandidate] = []
     restart_index = 0
+    spread_scale = _resolve_spread_scale(scenario, search)
 
     # Outer restart loop. Two independent termination gates; first to
     # trip wins:
@@ -150,8 +166,8 @@ def solve(
     #      SearchConfig field (spec §4.2). `None` preserves the
     #      pre-v0.6.0 wall-clock-only behavior. Useful for
     #      cross-machine-deterministic exhaustion canaries.
-    # Inside the loop, the K-diverse termination at the bottom is the
-    # third gate ("found enough alternatives") — independent of these.
+    # Selection of the K best basins happens after the loop completes;
+    # the loop itself runs only to budget / max_restarts.
     while time.monotonic() - start < budget_s and (
         search.max_restarts is None or restart_index < search.max_restarts
     ):
@@ -192,12 +208,6 @@ def solve(
             if time.monotonic() - start >= budget_s:
                 break
             if current_score == (0, 0.0):
-                # Valid! Apply the K-diversity filter (spec §4.6). When
-                # accepted_layouts is empty, _is_diverse_enough is vacuously
-                # True — the first valid layout is always accepted (and the
-                # alternatives=1 path never re-enters this branch). For K>1
-                # subsequent valid layouts are gated on pairwise diversity vs
-                # everything already accepted.
                 if search.spread:
                     placements = _spread(
                         placements,
@@ -208,28 +218,24 @@ def solve(
                         budget_s=budget_s,
                         pinned_planes=pinned_planes,
                     )
-                # No try/except: _spread returns placements preserving every Layout invariant
-                # (on_carts unchanged, no dup/fleet drift), so any ValueError here is a
-                # structural bug and should propagate.
+                # _spread preserves every Layout invariant; a ValueError here
+                # would be a structural bug, so let it propagate.
                 candidate_layout = Layout(
                     fleet=scenario.fleet,
                     hangar=scenario.hangar,
                     placements=tuple(placements.values()),
                     maintenance_plane=scenario.maintenance_plane,
                 )
-                if _is_diverse_enough(candidate_layout, accepted_layouts, diversity):
-                    accepted_layouts.append(candidate_layout)
-                else:
-                    # The candidate is valid (score (0, 0.0)) but too
-                    # similar to an already-accepted layout. Count it
-                    # so callers can see how much search work was lost
-                    # to the diversity gate (spec §4.1 of the v0.6.0
-                    # solver-polish release design).
-                    diversity_rejected_count += 1
-                # Whether accepted or not, restart to try for a different
-                # basin. Continuing to descend from a valid state would just
-                # walk in place (already at score (0, 0.0)).
-                break
+                min_gap, energy = _spread_quality(placements, scenario, spread_scale)
+                pool.append(
+                    _SpreadCandidate(
+                        layout=candidate_layout,
+                        min_gap=min_gap,
+                        energy=energy,
+                        restart_index=restart_index,
+                    )
+                )
+                break  # restart to seek a different basin
 
             step_result = _descent_step(
                 placements=placements,
@@ -260,19 +266,26 @@ def solve(
                 break  # stall — restart
 
         restart_index += 1
-        if len(accepted_layouts) >= alternatives:
-            break
+
+        # Best-of-all-basins selection (#267) only adds value when the spread
+        # post-pass can reorder basins by separation quality. With spread
+        # disabled there is nothing to optimize, so continuing past
+        # `alternatives` diverse valid layouts cannot improve the result —
+        # restore the pre-#267 early exit. This keeps the `--no-spread` fast
+        # path (the speed escape hatch) and gives a seed-deterministic
+        # termination for that mode (independent of wall-clock).
+        if not search.spread:
+            selected_so_far, _ = _select_spread_diverse(pool, alternatives, diversity)
+            if len(selected_so_far) >= alternatives:
+                break
 
     elapsed = time.monotonic() - start
 
-    if accepted_layouts:
-        # `found` fires when the outer loop broke via the
-        # `len(accepted_layouts) >= alternatives` check above (so the count
-        # is exactly `alternatives` — Chunk D path and Chunk E happy path).
-        # `found_partial` fires when budget exhausted with `0 < n < K`
-        # — reachable in Chunk E for K>1 (the diversity-impossible scenario
-        # is one driver, but any K>1 run that runs out of budget mid-fill
-        # also lands here).
+    selected, diversity_rejected_count = _select_spread_diverse(pool, alternatives, diversity)
+
+    if selected:
+        accepted_layouts = [c.layout for c in selected]
+        min_gaps = tuple(c.min_gap for c in selected)
         status: SolveStatus = "found" if len(accepted_layouts) >= alternatives else "found_partial"
         # Tow-plan every returned layout (best-effort enrichment, #197). The
         # v1 planner (Dubins-only + bounded Hybrid-A* — #222 under ADR-0007)
@@ -319,6 +332,8 @@ def solve(
                 diversity_impossible=diversity_impossible,
                 diversity_rejected_count=diversity_rejected_count,
                 unroutable_planes=tuple(unroutable),
+                min_pairwise_gap_m=min_gaps,
+                valid_basins_found=len(pool),
             ),
         )
     bp = check_layout(best_partial_layout) if best_partial_layout is not None else None
@@ -333,6 +348,7 @@ def solve(
             seed=resolved_seed,
             diversity_impossible=diversity_impossible,
             diversity_rejected_count=diversity_rejected_count,
+            valid_basins_found=len(pool),
         ),
     )
 
@@ -596,6 +612,48 @@ def _inter_plane_energy(
     return energy
 
 
+def _resolve_spread_scale(scenario: Scenario, search: SearchConfig) -> float:
+    """Repulsion length-scale for spread (spec §4): explicit override or
+    20% of the smaller hangar dimension. Single source so ``_spread`` and
+    ``_spread_quality`` always agree."""
+    if search.spread_scale_m is not None:
+        return search.spread_scale_m
+    return 0.2 * min(scenario.hangar.width_m, scenario.hangar.length_m)
+
+
+def _spread_quality(
+    placements: dict[str, Placement],
+    scenario: Scenario,
+    scale: float,
+) -> tuple[float, float]:
+    """Return ``(min_gap, energy)`` for a layout in one pass over plane-pairs.
+
+    ``min_gap`` is the minimum plan-view edge-to-edge distance between any two
+    planes' world parts (``math.inf`` when <2 planes — no pairs). ``energy``
+    is the same ``Σ exp(−gap/scale)`` repulsion :func:`_inter_plane_energy`
+    computes; returning both from one pairwise sweep avoids paying the
+    (expensive) shapely distances twice when scoring a candidate basin. The
+    hot ``_spread`` loop keeps using the energy-only :func:`_inter_plane_energy`
+    — this is called once per accepted basin, not per perturbation.
+    """
+    ids = sorted(placements)
+    if len(ids) < 2:
+        return (math.inf, 0.0)
+    world: dict[str, list[WorldPart]] = {
+        pid: aircraft_parts_world(scenario.fleet[pid], placements[pid]) for pid in ids
+    }
+    min_gap = math.inf
+    energy = 0.0
+    for i in range(len(ids)):
+        for j in range(i + 1, len(ids)):
+            gap = min(
+                pa.polygon.distance(pb.polygon) for pa in world[ids[i]] for pb in world[ids[j]]
+            )
+            min_gap = min(min_gap, gap)
+            energy += math.exp(-gap / scale)
+    return (min_gap, energy)
+
+
 def _spread(
     placements: dict[str, Placement],
     scenario: Scenario,
@@ -617,11 +675,7 @@ def _spread(
 
     See ADR-0008 and spec §5.
     """
-    scale = (
-        search.spread_scale_m
-        if search.spread_scale_m is not None
-        else 0.2 * min(scenario.hangar.width_m, scenario.hangar.length_m)
-    )
+    scale = _resolve_spread_scale(scenario, search)
 
     movable = sorted(pid for pid in placements if pid not in pinned_planes)
     if not movable or len(placements) < 2:
@@ -1067,6 +1121,46 @@ def _heading_delta_short_arc(a: float, b: float) -> float:
     """
     d = abs(a - b) % 360.0
     return min(d, 360.0 - d)
+
+
+class _SpreadCandidate(NamedTuple):
+    """A valid, spread-polished basin found during search, with its quality."""
+
+    layout: Layout
+    min_gap: float
+    energy: float
+    restart_index: int
+
+
+def _select_spread_diverse(
+    pool: list[_SpreadCandidate],
+    alternatives: int,
+    diversity: DiversityConfig,
+) -> tuple[list[_SpreadCandidate], int]:
+    """Select up to ``alternatives`` best-spread, pairwise-diverse candidates.
+
+    Order the pool by ``(−min_gap, energy, restart_index)``: largest minimum
+    plan-view gap first, ties broken by lower repulsion energy, then by restart
+    order for a *total* (so deterministic — ADR-0003) ordering. Greedily accept
+    a candidate iff it is diverse enough (ADR-0004) against everything already
+    selected; the first pick is always accepted (diversity is vacuous on the
+    empty selection). Returns ``(selected, diversity_rejected)`` in best-spread
+    order, where ``diversity_rejected`` counts candidates *examined* (before the
+    ``alternatives`` quota was met) that the diversity gate turned away. For
+    ``alternatives == 1`` this is always 0 — selection stops after the first,
+    vacuous pick.
+    """
+    ordered = sorted(pool, key=lambda c: (-c.min_gap, c.energy, c.restart_index))
+    selected: list[_SpreadCandidate] = []
+    diversity_rejected = 0
+    for cand in ordered:
+        if _is_diverse_enough(cand.layout, [c.layout for c in selected], diversity):
+            selected.append(cand)
+            if len(selected) >= alternatives:
+                break
+        else:
+            diversity_rejected += 1
+    return selected, diversity_rejected
 
 
 def _is_diverse_enough(
