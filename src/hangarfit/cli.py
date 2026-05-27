@@ -88,7 +88,13 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         metavar="S",
-        help="RNG seed (default: None -> resolved from system entropy).",
+        help=(
+            "RNG seed (default: None -> resolved from system entropy). "
+            "Under a wall-clock --budget, results are reproducible on the same "
+            "machine but not guaranteed identical across machines, because the "
+            "best-of-all basin selection (#267) depends on how many restarts "
+            "fit the budget."
+        ),
     )
     solve.add_argument(
         "--render",

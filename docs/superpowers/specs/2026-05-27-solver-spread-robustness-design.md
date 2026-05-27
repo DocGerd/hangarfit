@@ -100,11 +100,25 @@ same selection.
 
 ## Determinism (ADR-0003)
 
-Preserved by construction: the same single `rng`, same restart order, pool built in
-restart order, and a fully-ordered selection sort (`restart_index` is the final
-tiebreak so no two entries compare equal). Tow-planning is RNG-free. Same seed →
-byte-identical output. The bounded-`max_restarts` path stays the cross-machine
-deterministic canary it already is.
+Partially preserved — the scope depends on the termination gate:
+
+- **`max_restarts`-bounded:** fully reproducible across runs and machines. The
+  same single `rng`, same restart order, pool built in restart order, and a
+  fully-ordered selection sort (`restart_index` is the final tiebreak so no two
+  entries compare equal). Tow-planning is RNG-free. Same seed + same
+  `max_restarts` → byte-identical output. The canary tests in
+  `tests/test_solver_canaries.py` use this path and remain the
+  cross-machine determinism canaries.
+- **Pure wall-clock `budget_s`-bounded:** the number of restarts that complete
+  before the timer fires depends on machine speed and load. Pool size therefore
+  varies between machines (or runs under different load). When two basins are
+  near-tied on maximin gap the selected layout can differ — same seed does NOT
+  guarantee byte-identical output across machines in this mode.
+
+The default CLI path uses `budget_s` for responsiveness. This timing-dependence
+is an accepted tradeoff; see the ADR-0003 amendment dated 2026-05-27 for the
+full rationale. For guaranteed cross-machine reproducibility, bound by
+`max_restarts`.
 
 ## Testing strategy
 
