@@ -205,6 +205,17 @@ collision checker reads them once per `check()` call from
 `layout.hangar`; changing them at runtime means editing the YAML
 file. Hard-coding them anywhere outside `data/hangar.yaml` is a bug.
 
+`data/hangar.yaml` carries one more defaulted site scalar that is *not*
+a clearance: `max_carts` (default `1`). It is the number of spare carts
+available to the `cart_eligible` pool and is enforced by
+`Layout.__post_init__` (not the collision checker) — at most `max_carts`
+`cart_eligible` planes may sit on carts in one layout, while `always_cart`
+planes get their own carts and never draw from this pool. It is
+overridable per-invocation with the `--max-carts` CLI flag, which
+replaces the value on the loaded `Hangar` before any layout is built. See
+[ADR-0007](../adr/0007-tow-path-planner-v1-scope.md) (cart-inventory
+amendment).
+
 The two-clause predicate is symmetric in the two clearances: a
 collision requires *both* the plan-view and the height-gap thresholds
 to be violated simultaneously. This is what lets a high-wing's

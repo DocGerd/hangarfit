@@ -61,7 +61,7 @@ def _ok_aircraft(
     )
 
 
-def _ok_hangar() -> Hangar:
+def _ok_hangar(max_carts: int = 1) -> Hangar:
     return Hangar(
         length_m=25.0,
         width_m=18.0,
@@ -69,6 +69,7 @@ def _ok_hangar() -> Hangar:
         maintenance_bay=MaintenanceBay(center_x_m=9.0, width_m=4.0, depth_m=9.0),
         clearance_m=0.3,
         wing_layer_clearance_m=0.2,
+        max_carts=max_carts,
     )
 
 
@@ -669,7 +670,7 @@ class TestLayout:
     def test_cart_rule_rejects_two_cart_eligible_on_carts(self) -> None:
         a = _ok_aircraft("foo", movement_mode="cart_eligible", turn_radius_m=4.0)
         b = _ok_aircraft("bar", movement_mode="cart_eligible", turn_radius_m=4.0)
-        with pytest.raises(ValueError, match="At most one cart_eligible"):
+        with pytest.raises(ValueError, match=r"At most 1 cart_eligible"):
             Layout(
                 fleet=self._fleet_of(a, b),
                 hangar=_ok_hangar(),
@@ -678,6 +679,105 @@ class TestLayout:
                     Placement(plane_id="bar", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=True),
                 ),
             )
+
+    def test_max_carts_default_is_one(self) -> None:
+        """A hangar built without max_carts defaults to 1, reproducing the
+        original single-cart rule (the backward-compat anchor)."""
+        assert _ok_hangar().max_carts == 1
+
+    def test_max_carts_two_allows_two_eligible_on_carts(self) -> None:
+        a = _ok_aircraft("foo", movement_mode="cart_eligible", turn_radius_m=4.0)
+        b = _ok_aircraft("bar", movement_mode="cart_eligible", turn_radius_m=4.0)
+        layout = Layout(
+            fleet=self._fleet_of(a, b),
+            hangar=_ok_hangar(max_carts=2),
+            placements=(
+                Placement(plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=True),
+                Placement(plane_id="bar", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=True),
+            ),
+        )
+        assert len(layout.placements) == 2
+
+    @pytest.mark.parametrize("n", [1, 2, 3])
+    def test_max_carts_n_allows_n_rejects_n_plus_one(self, n: int) -> None:
+        fleet = self._fleet_of(
+            *(
+                _ok_aircraft(f"p{i}", movement_mode="cart_eligible", turn_radius_m=4.0)
+                for i in range(n + 1)
+            )
+        )
+        # N eligible planes on carts: valid.
+        ok = tuple(
+            Placement(plane_id=f"p{i}", x_m=float(i), y_m=0.0, heading_deg=0.0, on_carts=True)
+            for i in range(n)
+        )
+        built = Layout(fleet=fleet, hangar=_ok_hangar(max_carts=n), placements=ok)
+        assert len(built.placements) == n
+        # N+1 eligible planes on carts: rejected, naming the limit N.
+        too_many = ok + (
+            Placement(plane_id=f"p{n}", x_m=float(n), y_m=0.0, heading_deg=0.0, on_carts=True),
+        )
+        with pytest.raises(ValueError, match=rf"At most {n} cart_eligible"):
+            Layout(fleet=fleet, hangar=_ok_hangar(max_carts=n), placements=too_many)
+
+    def test_always_cart_excluded_from_inventory(self) -> None:
+        """always_cart planes get their own carts and never draw from the
+        cart_eligible pool — so any number of them on carts plus max_carts
+        eligible planes is valid; one more eligible plane is not."""
+        g1 = _ok_aircraft("g1", movement_mode="always_cart", turn_radius_m=None)
+        g2 = _ok_aircraft("g2", movement_mode="always_cart", turn_radius_m=None)
+        e1 = _ok_aircraft("e1", movement_mode="cart_eligible", turn_radius_m=4.0)
+        e2 = _ok_aircraft("e2", movement_mode="cart_eligible", turn_radius_m=4.0)
+        # Two always_cart on carts + one cart_eligible on a cart, max_carts=1: valid.
+        layout = Layout(
+            fleet=self._fleet_of(g1, g2, e1, e2),
+            hangar=_ok_hangar(max_carts=1),
+            placements=(
+                Placement(plane_id="g1", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=True),
+                Placement(plane_id="g2", x_m=2.0, y_m=0.0, heading_deg=0.0, on_carts=True),
+                Placement(plane_id="e1", x_m=4.0, y_m=0.0, heading_deg=0.0, on_carts=True),
+                Placement(plane_id="e2", x_m=6.0, y_m=0.0, heading_deg=0.0, on_carts=False),
+            ),
+        )
+        assert len(layout.placements) == 4
+        # A second cart_eligible on a cart exceeds the pool of 1.
+        with pytest.raises(ValueError, match=r"At most 1 cart_eligible"):
+            Layout(
+                fleet=self._fleet_of(g1, g2, e1, e2),
+                hangar=_ok_hangar(max_carts=1),
+                placements=(
+                    Placement(plane_id="g1", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=True),
+                    Placement(plane_id="g2", x_m=2.0, y_m=0.0, heading_deg=0.0, on_carts=True),
+                    Placement(plane_id="e1", x_m=4.0, y_m=0.0, heading_deg=0.0, on_carts=True),
+                    Placement(plane_id="e2", x_m=6.0, y_m=0.0, heading_deg=0.0, on_carts=True),
+                ),
+            )
+
+    def test_max_carts_zero_forbids_eligible_carts_but_not_always_cart(self) -> None:
+        g1 = _ok_aircraft("g1", movement_mode="always_cart", turn_radius_m=None)
+        e1 = _ok_aircraft("e1", movement_mode="cart_eligible", turn_radius_m=4.0)
+        # always_cart on a cart is fine even at max_carts=0 (it's exempt).
+        layout = Layout(
+            fleet=self._fleet_of(g1),
+            hangar=_ok_hangar(max_carts=0),
+            placements=(
+                Placement(plane_id="g1", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=True),
+            ),
+        )
+        assert len(layout.placements) == 1
+        # A cart_eligible on a cart is rejected at max_carts=0.
+        with pytest.raises(ValueError, match=r"At most 0 cart_eligible"):
+            Layout(
+                fleet=self._fleet_of(e1),
+                hangar=_ok_hangar(max_carts=0),
+                placements=(
+                    Placement(plane_id="e1", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=True),
+                ),
+            )
+
+    def test_hangar_max_carts_negative_rejected(self) -> None:
+        with pytest.raises(ValueError, match="max_carts must be non-negative"):
+            _ok_hangar(max_carts=-1)
 
     def test_maintenance_plane_must_be_in_fleet(self) -> None:
         a = _ok_aircraft("foo", movement_mode="always_own_gear", turn_radius_m=5.0)

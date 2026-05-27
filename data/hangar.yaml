@@ -25,3 +25,9 @@ maintenance_bay:
 
 clearance_m: 0.3        # minimum horizontal gap between any two aircraft parts
 wing_layer_clearance_m: 0.2  # minimum vertical gap between two parts at the same XY
+
+# Spare carts available to the cart_eligible pool. Bounds how many
+# cart_eligible planes may sit on carts in one layout; always_cart planes
+# get their own carts and do not draw from this pool. Absent => 1 (the
+# original single-cart rule). Overridable per-invocation with --max-carts.
+max_carts: 1

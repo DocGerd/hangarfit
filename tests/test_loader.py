@@ -18,6 +18,7 @@ from hangarfit.loader import (
     load_fleet,
     load_hangar,
     load_layout,
+    load_scenario,
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -29,6 +30,16 @@ EXAMPLE_LAYOUT = REPO_ROOT / "layouts" / "example.yaml"
 def _write(path: Path, text: str) -> Path:
     path.write_text(text, encoding="utf-8")
     return path
+
+
+# A minimal, otherwise-valid hangar YAML body. Tests append a `max_carts:`
+# line (or omit it) to exercise the loader's coercion + default.
+_MIN_HANGAR = (
+    "length_m: 25.0\n"
+    "width_m: 18.0\n"
+    "door: {center_x_m: 9.0, width_m: 12.0}\n"
+    "maintenance_bay: {center_x_m: 13.5, width_m: 9.0, depth_m: 9.0}\n"
+)
 
 
 # ----------------------------------------------------------------------------
@@ -150,6 +161,7 @@ class TestRealDataFiles:
         assert hangar.maintenance_bay.center_x_m == 13.5
         assert hangar.maintenance_bay.width_m == 9.0
         assert hangar.maintenance_bay.depth_m == 9.0
+        assert hangar.max_carts == 1  # bundled data/hangar.yaml sets it explicitly
 
     def test_load_example_layout(self) -> None:
         layout = load_layout(EXAMPLE_LAYOUT)
@@ -160,6 +172,60 @@ class TestRealDataFiles:
         assert len(layout.placements) == 5
         assert layout.maintenance_plane == "scheibe_falke"
         assert "scheibe_falke" not in {p.plane_id for p in layout.placements}
+
+
+class TestHangarMaxCarts:
+    """Loader handling of the optional `max_carts` site scalar (#210)."""
+
+    def test_absent_defaults_to_one(self, tmp_path: Path) -> None:
+        """A hangar.yaml with no max_carts loads as 1 — the backward-compat
+        guarantee (absence reproduces the original single-cart rule)."""
+        path = _write(tmp_path / "h.yaml", _MIN_HANGAR)
+        assert load_hangar(path).max_carts == 1
+
+    def test_explicit_value(self, tmp_path: Path) -> None:
+        path = _write(tmp_path / "h.yaml", _MIN_HANGAR + "max_carts: 3\n")
+        assert load_hangar(path).max_carts == 3
+
+    @pytest.mark.parametrize("bad", ['"two"', "1.5", "true"])
+    def test_non_int_rejected(self, tmp_path: Path, bad: str) -> None:
+        """Strings, floats, and bools are rejected (no silent truncation or
+        the bool-is-int footgun) with the field named."""
+        path = _write(tmp_path / "h.yaml", _MIN_HANGAR + f"max_carts: {bad}\n")
+        with pytest.raises(LoaderError, match="max_carts"):
+            load_hangar(path)
+
+    def test_negative_rejected(self, tmp_path: Path) -> None:
+        """A negative count is rejected — the loader wraps the Hangar
+        __post_init__ ValueError into a LoaderError."""
+        path = _write(tmp_path / "h.yaml", _MIN_HANGAR + "max_carts: -1\n")
+        with pytest.raises(LoaderError, match="max_carts must be non-negative"):
+            load_hangar(path)
+
+    def test_load_layout_override_loosens_cap_before_build(self) -> None:
+        """The load_layout(max_carts=…) override is applied to the resolved
+        hangar before the Layout is built, so a layout the data-file cap (1)
+        would reject now loads — the path the CLI --max-carts flag uses."""
+        fixture = REPO_ROOT / "tests" / "fixtures" / "invalid_cart_rule.yaml"
+        # Two cart_eligible planes on carts: rejected under the default cap.
+        with pytest.raises(LoaderError, match="cart_eligible"):
+            load_layout(fixture)
+        # With the override the Layout constructs and carries the new cap.
+        layout = load_layout(fixture, max_carts=2)
+        assert layout.hangar.max_carts == 2
+        assert len(layout.placements) == 2
+
+    def test_load_layout_negative_override_raises_loader_error(self) -> None:
+        """A negative override is rejected as a LoaderError (not a raw
+        ValueError from dataclasses.replace), preserving the exit-2 contract."""
+        fixture = REPO_ROOT / "tests" / "fixtures" / "invalid_cart_rule.yaml"
+        with pytest.raises(LoaderError, match="max_carts must be non-negative"):
+            load_layout(fixture, max_carts=-1)
+
+    def test_load_scenario_negative_override_raises_loader_error(self) -> None:
+        fixture = REPO_ROOT / "tests" / "fixtures" / "solve_infeasible_two_cart_pins.yaml"
+        with pytest.raises(LoaderError, match="max_carts must be non-negative"):
+            load_scenario(fixture, max_carts=-1)
 
 
 # ----------------------------------------------------------------------------
@@ -909,7 +975,7 @@ placements:
   - {plane: b, x_m: 10, y_m: 5, heading_deg: 0, on_carts: true}
 """,
         )
-        with pytest.raises(LoaderError, match="At most one cart_eligible"):
+        with pytest.raises(LoaderError, match=r"At most 1 cart_eligible"):
             load_layout(layout_path)
 
     def test_fleet_and_hangar_overrides(self, tmp_path: Path) -> None:

@@ -63,6 +63,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override the hangar data file. Cannot be combined with a layout that already embeds a hangar path.",  # noqa: E501
     )
     check.add_argument(
+        "--max-carts",
+        type=int,
+        metavar="N",
+        default=None,
+        dest="max_carts",
+        help="Override the hangar's spare-cart count for the cart_eligible pool (default: the hangar.yaml value, or 1 if unset).",  # noqa: E501
+    )
+    check.add_argument(
         "--json",
         action="store_true",
         help=f"Emit JSON on stdout (schema: {_JSON_SCHEMA}).",
@@ -148,6 +156,14 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override the hangar data file (refused if scenario YAML also sets 'hangar').",
     )
     solve.add_argument(
+        "--max-carts",
+        type=int,
+        metavar="N",
+        default=None,
+        dest="max_carts",
+        help="Override the hangar's spare-cart count for the cart_eligible pool (default: the hangar.yaml value, or 1 if unset).",  # noqa: E501
+    )
+    solve.add_argument(
         "--no-spread",
         action="store_false",
         dest="spread",
@@ -195,7 +211,12 @@ def cmd_check(args: argparse.Namespace) -> int:
     try:
         fleet_override = load_fleet(args.fleet) if args.fleet is not None else None
         hangar_override = load_hangar(args.hangar) if args.hangar is not None else None
-        layout = load_layout(args.layout, fleet=fleet_override, hangar=hangar_override)
+        layout = load_layout(
+            args.layout,
+            fleet=fleet_override,
+            hangar=hangar_override,
+            max_carts=args.max_carts,
+        )
     except LoaderError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
@@ -344,7 +365,12 @@ def cmd_solve(args: argparse.Namespace) -> int:
     try:
         fleet_override = load_fleet(args.fleet) if args.fleet is not None else None
         hangar_override = load_hangar(args.hangar) if args.hangar is not None else None
-        scenario = load_scenario(args.scenario, fleet=fleet_override, hangar=hangar_override)
+        scenario = load_scenario(
+            args.scenario,
+            fleet=fleet_override,
+            hangar=hangar_override,
+            max_carts=args.max_carts,
+        )
     except LoaderError as e:
         print(f"error: {e}", file=sys.stderr)
         return 2
