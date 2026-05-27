@@ -106,8 +106,10 @@ _HANGAR_EDGE = "#2c3e50"  # near-black
 _DOOR_EDGE = "#bdc3c7"  # light gray — visually "open"
 
 # ── Wheel / cart glyph constants ────────────────────────────────────────────
-# All drawn just *under* the fuselage patch (zorder=1.5) so the wheels peek
-# out at the nose/tail/sides without obscuring aircraft body colours.
+# All drawn at zorder=1.5, strictly between the wing/floor layer (zorder=1)
+# and the fuselage patch (zorder=2), so the wheels peek out at the
+# nose/tail/sides without obscuring aircraft body colours.
+_GLYPH_ZORDER = 1.5  # between wings (1) and fuselage (2)
 #
 # COLOUR: neutral dark-gray that reads on the off-white floor, stays clear of
 # the wing-position palette (#3498db/#e67e22/#f4d03f), the conflict-red
@@ -122,9 +124,9 @@ _CART_DECK_ALPHA = 0.85
 _WHEEL_RADIUS_M = 0.18
 
 # Cart deck half-dimensions in meters. The deck rectangle is drawn under the
-# fuselage centroid. Width is wider than the fuselage (~0.9× typical fuselage
-# width) so it reads as "something underneath"; length is shorter (~40% of a
-# typical 6.5 m fuselage) so it is clearly not the fuselage itself.
+# fuselage centroid. Full width is 2 × 0.55 = 1.1 m, which is ~1.3× a typical
+# 0.85 m fuselage width, so it reads as "something underneath"; length is
+# shorter (~40% of a typical 6.5 m fuselage) so it is clearly not the fuselage.
 _CART_DECK_HALF_LENGTH_M = 1.3
 _CART_DECK_HALF_WIDTH_M = 0.55
 
@@ -137,7 +139,7 @@ _CART_DECK_HALF_WIDTH_M = 0.55
 # visually convincing top-down silhouette.
 _NOSE_GEAR_FRAC = 0.85  # fraction of forward half-fuselage for nose wheel
 _MAIN_GEAR_FWD_FRAC = 0.30  # fraction of forward half for nosewheel mains
-_MAIN_GEAR_AFT_FRAC = 0.45  # fraction of aft half for tailwheel mains
+_MAIN_GEAR_TAILDRAGGER_FWD_FRAC = 0.45  # fraction of forward half for tailwheel mains
 # Main-gear lateral offset as a multiple of fuselage half-width.
 _MAIN_GEAR_LATERAL_FRAC = 1.6
 
@@ -418,7 +420,7 @@ def _add_wheel(ax: Any, wx: float, wy: float) -> MplCircle:
         facecolor=_WHEEL_COLOR,
         edgecolor=_WHEEL_COLOR,
         lw=0.4,
-        zorder=1,  # just below fuselage (zorder=2) — wheel peeks under body
+        zorder=_GLYPH_ZORDER,
     )
     ax.add_patch(circle)
     return circle
@@ -476,7 +478,7 @@ def _draw_gear_glyph(ax: Any, placement: Placement, aircraft: Aircraft) -> None:
             _add_wheel(ax, wx, wy)
     elif aircraft.gear == "tailwheel":
         # Main gear pair — forward of CG, ahead of the wing root
-        main_u = fus_cx + fus_half_len * _MAIN_GEAR_AFT_FRAC
+        main_u = fus_cx + fus_half_len * _MAIN_GEAR_TAILDRAGGER_FWD_FRAC
         lateral = fus_half_wid * _MAIN_GEAR_LATERAL_FRAC
         for v in (+lateral, -lateral):
             wx, wy = _local_to_world(main_u, v, placement)
@@ -518,7 +520,7 @@ def _draw_cart_glyph(ax: Any, placement: Placement) -> None:
         edgecolor=_WHEEL_COLOR,
         alpha=_CART_DECK_ALPHA,
         lw=0.8,
-        zorder=1,
+        zorder=_GLYPH_ZORDER,
     )
     ax.add_patch(deck_patch)
 

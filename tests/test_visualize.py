@@ -31,6 +31,7 @@ from hangarfit.models import Aircraft, Placement
 from hangarfit.visualize import (
     _BAY_WALL_FACE,
     _CART_DECK_COLOR,
+    _GLYPH_ZORDER,
     _WHEEL_COLOR,
     _draw_gear_glyph,
     _draw_maintenance_bay,
@@ -819,6 +820,39 @@ class TestGearGlyph:
         )
         assert ax.add_patch.call_count == 5, (
             f"cart glyph expects 5 patches total; got {ax.add_patch.call_count}"
+        )
+
+    def test_glyph_zorder_above_wing_layer(self) -> None:
+        """All gear/cart patches must have zorder > 1 (the wing layer) so wings
+        cannot paint over the glyph.  This guards the regression where wheel
+        and cart-deck patches were erroneously set to zorder=1 (same as wings),
+        letting the wing overwrite the cart deck centered at the fuselage origin.
+        """
+        from matplotlib.patches import Circle
+        from matplotlib.patches import Polygon as MplPolygon
+
+        # Test both own-gear (wheels) and cart paths.
+        for gear, on_carts, movement_mode in [
+            ("nosewheel", False, "always_own_gear"),
+            ("tailwheel", True, "always_cart"),
+        ]:
+            aircraft = self._aircraft(gear, movement_mode=movement_mode)
+            placement = self._placement(on_carts=on_carts)
+            ax = MagicMock()
+
+            _draw_gear_glyph(ax, placement, aircraft)
+
+            for call in ax.add_patch.call_args_list:
+                patch = call.args[0]
+                assert isinstance(patch, (Circle, MplPolygon))
+                assert patch.get_zorder() > 1, (
+                    f"{type(patch).__name__} zorder={patch.get_zorder()} "
+                    f"must be > 1 (wing layer) — gear glyphs must not be "
+                    f"painted over by wings"
+                )
+        # Also verify the constant itself sits at the documented 1.5.
+        assert _GLYPH_ZORDER == 1.5, (
+            f"_GLYPH_ZORDER must be 1.5 (between wings=1 and fuselage=2); got {_GLYPH_ZORDER}"
         )
 
     def test_cart_glyph_rotates_with_heading(self) -> None:
