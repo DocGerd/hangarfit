@@ -59,7 +59,8 @@ def solve(
     within budget (best-of-all-basins, #267) — NOT the first valid one. The
     restart loop always runs to ``budget_s`` / ``search.max_restarts`` (no
     break-on-first-valid, including under ``search.spread=False``), recording
-    every valid (spread-polished) basin into a pool; the returned layouts are
+    every valid basin (spread-polished when ``search.spread=True``, measured
+    as-found otherwise) into a pool; the returned layouts are
     then chosen from that pool by maximin plan-view gap subject to the
     diversity gate (ADR-0004). Consequently the returned ``alternatives`` are
     ordered **best-spread-first**, not in discovery order, and
@@ -162,8 +163,8 @@ def solve(
     #      SearchConfig field (spec §4.2). `None` preserves the
     #      pre-v0.6.0 wall-clock-only behavior. Useful for
     #      cross-machine-deterministic exhaustion canaries.
-    # Inside the loop, the K-diverse termination at the bottom is the
-    # third gate ("found enough alternatives") — independent of these.
+    # Selection of the K best basins happens after the loop completes;
+    # the loop itself runs only to budget / max_restarts.
     while time.monotonic() - start < budget_s and (
         search.max_restarts is None or restart_index < search.max_restarts
     ):
