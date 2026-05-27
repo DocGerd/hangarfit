@@ -670,11 +670,14 @@ class SolverDiagnostics:
     warning as a structured, machine-readable signal so callers don't
     have to scrape log records.
 
-    ``diversity_rejected_count`` is the number of valid layouts the
-    diversity filter rejected during the run. ``0`` is the healthy
-    default; a non-zero value means search produced more valid layouts
-    than the K-diversity gate accepted (informative when K>1 returns
-    ``found_partial``).
+    ``diversity_rejected_count`` is the number of pool candidates the
+    diversity gate turned away during best-of-all selection (#267) —
+    examined in best-spread order until ``alternatives`` were chosen, so
+    candidates beyond the quota are never examined or counted. ``0`` is
+    the healthy default and is always the value for ``alternatives == 1``
+    (selection stops after the first, vacuous pick). When ``K>1`` returns
+    ``found_partial`` a non-zero value shows the diversity gate turned
+    away otherwise-valid basins.
 
     ``diversity_impossible`` and ``diversity_rejected_count`` are
     **advisory**: structured mirrors of log warnings / search
@@ -739,6 +742,11 @@ class SolverDiagnostics:
             raise ValueError(
                 f"SolverDiagnostics.valid_basins_found must be >= 0, got {self.valid_basins_found}"
             )
+        if any(math.isnan(g) or g < 0.0 for g in self.min_pairwise_gap_m):
+            raise ValueError(
+                "SolverDiagnostics.min_pairwise_gap_m entries must be non-negative "
+                f"(math.inf allowed for <2-plane layouts), got {self.min_pairwise_gap_m!r}"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -786,6 +794,14 @@ class SolveResult:
             raise ValueError(
                 f"SolveResult.plans length ({len(self.plans)}) must equal "
                 f"layouts length ({len(self.layouts)}) (status={self.status!r})"
+            )
+        if self.diagnostics.min_pairwise_gap_m and len(self.diagnostics.min_pairwise_gap_m) != len(
+            self.layouts
+        ):
+            raise ValueError(
+                "SolveResult.diagnostics.min_pairwise_gap_m, when populated, must be "
+                f"index-aligned with layouts: got {len(self.diagnostics.min_pairwise_gap_m)} "
+                f"gaps for {len(self.layouts)} layouts"
             )
 
 

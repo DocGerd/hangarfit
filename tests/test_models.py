@@ -1095,3 +1095,65 @@ def test_solver_diagnostics_spread_fields_default_and_validate():
             seed=0,
             valid_basins_found=-1,
         )
+
+
+def test_solver_diagnostics_rejects_negative_or_nan_gap():
+    import math
+
+    import pytest
+
+    from hangarfit.models import SolverDiagnostics
+
+    with pytest.raises(ValueError, match="min_pairwise_gap_m"):
+        SolverDiagnostics(
+            restarts_attempted=1,
+            wall_time_s=0.0,
+            best_partial=None,
+            best_partial_layout=None,
+            seed=0,
+            min_pairwise_gap_m=(-1.0,),
+        )
+    with pytest.raises(ValueError, match="min_pairwise_gap_m"):
+        SolverDiagnostics(
+            restarts_attempted=1,
+            wall_time_s=0.0,
+            best_partial=None,
+            best_partial_layout=None,
+            seed=0,
+            min_pairwise_gap_m=(math.nan,),
+        )
+    # math.inf is allowed (single-plane sentinel) — must NOT raise:
+    SolverDiagnostics(
+        restarts_attempted=1,
+        wall_time_s=0.0,
+        best_partial=None,
+        best_partial_layout=None,
+        seed=0,
+        min_pairwise_gap_m=(math.inf,),
+    )
+
+
+def test_solve_result_rejects_misaligned_min_pairwise_gap_m():
+    """SolveResult.__post_init__ rejects non-empty min_pairwise_gap_m whose
+    length differs from layouts (the parity guard added in #267)."""
+    import pytest
+
+    from hangarfit.models import SolverDiagnostics, SolveResult
+
+    layout = _make_valid_layout()
+    # diagnostics carries 2 gap entries but SolveResult has 1 layout — mismatch.
+    diag = SolverDiagnostics(
+        restarts_attempted=1,
+        wall_time_s=0.1,
+        best_partial=None,
+        best_partial_layout=None,
+        seed=42,
+        min_pairwise_gap_m=(1.0, 2.0),
+    )
+    with pytest.raises(ValueError, match="min_pairwise_gap_m"):
+        SolveResult(
+            status="found",
+            layouts=(layout,),
+            plans=(None,),
+            diagnostics=diag,
+        )
