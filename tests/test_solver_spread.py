@@ -299,11 +299,22 @@ def test_best_of_all_never_worse_than_first_basin_over_sweep():
     reachable basin nests, best-of-all still returns 0.0 — the roomiest available.
     The pure ``_select_spread_diverse`` tests are the deterministic regression;
     this is end-to-end wiring confidence. Excluded from the default run (slow).
+
+    Seed sweep widened from ``range(1, 10)`` to ``range(1, 20)`` for #282: the
+    wing-strut spar-axis fix shifts each strut ~0.97 m forward (off the wing
+    trailing edge onto the quarter-chord spar), which tightens this
+    nesting-prone fill. Under that geometry only 3 of seeds 1–9 reach a layout
+    on a single restart and all three nest at gap 0.0, so the old range no
+    longer carried enough reaching-and-improving seeds to satisfy the
+    ``checked``/``improved`` floors below. The wider sweep restores a healthy
+    sample (≈7 reach, ≥2 improve) without touching the actual invariant
+    assertions (best-of-all never regresses; the fix is exercised). Verified by
+    sweep, not flakiness: see issue #282.
     """
     scenario = load_scenario("tests/fixtures/solve_fresh_six_planes.yaml")
     improved = 0
     checked = 0
-    for seed in range(1, 10):
+    for seed in range(1, 20):
         first = solve(scenario, seed=seed, search=SearchConfig(max_restarts=1), plan_paths=False)
         best = solve(scenario, seed=seed, search=SearchConfig(max_restarts=8), plan_paths=False)
         if first.status not in ("found", "found_partial") or best.status not in (
