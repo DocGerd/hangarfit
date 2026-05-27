@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-`hangarfit` is a Phase 1 project. Only the `main` branch (current release) receives security updates. Older tagged versions do not receive backports.
+`hangarfit` is a single-maintainer hobby project. Only the latest release (the `main` branch) receives security updates; older tagged versions do not receive backports.
 
 | Version | Status |
 |---------|--------|
