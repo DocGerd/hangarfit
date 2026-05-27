@@ -1,0 +1,38 @@
+# Four-plane layout for the landing-gear / cart-glyph smoke test.
+#
+# Covers three own-gear types and one cart-borne plane:
+#   ctsl         — nosewheel, on_carts: false  (tricycle glyph)
+#   aviat_husky  — tailwheel, on_carts: false  (taildragger glyph)
+#   fuji         — nosewheel, on_carts: false  (tricycle glyph; low-wing for variety)
+#   cessna_140   — tailwheel, on_carts: true   (cart / dolly glyph)
+#
+# Placement positions spread across the hangar with generous gaps so the
+# layout is valid and the smoke test doesn't need a CheckResult.
+
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
+
+placements:
+  - plane: ctsl
+    x_m: 4.0
+    y_m: 4.0
+    heading_deg: 0.0
+    on_carts: false
+
+  - plane: aviat_husky
+    x_m: 13.0
+    y_m: 4.0
+    heading_deg: 0.0
+    on_carts: false
+
+  - plane: fuji
+    x_m: 4.0
+    y_m: 14.0
+    heading_deg: 0.0
+    on_carts: false
+
+  - plane: cessna_140
+    x_m: 13.0
+    y_m: 14.0
+    heading_deg: 45.0
+    on_carts: true

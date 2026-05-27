@@ -33,10 +33,11 @@ import matplotlib
 matplotlib.use("Agg", force=True)
 
 import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.patches import Circle as MplCircle  # noqa: E402
 from matplotlib.patches import Polygon as MplPolygon  # noqa: E402
 
 from .geometry import WorldPart, aircraft_parts_world  # noqa: E402
-from .models import CheckResult, Layout, Placement, WingPosition  # noqa: E402
+from .models import Aircraft, CheckResult, Layout, Placement, WingPosition  # noqa: E402
 
 if TYPE_CHECKING:
     # Annotation-only import: the runtime code in _draw_tow_paths is duck-typed
@@ -103,6 +104,44 @@ _BAY_WALL_HATCH = "///"
 _BAY_LABEL_COLOR = "#ffffff"
 _HANGAR_EDGE = "#2c3e50"  # near-black
 _DOOR_EDGE = "#bdc3c7"  # light gray — visually "open"
+
+# ── Wheel / cart glyph constants ────────────────────────────────────────────
+# All drawn at zorder=1.5, strictly between the wing/floor layer (zorder=1)
+# and the fuselage patch (zorder=2), so the wheels peek out at the
+# nose/tail/sides without obscuring aircraft body colours.
+_GLYPH_ZORDER = 1.5  # between wings (1) and fuselage (2)
+#
+# COLOUR: neutral dark-gray that reads on the off-white floor, stays clear of
+# the wing-position palette (#3498db/#e67e22/#f4d03f), the conflict-red
+# (#e74c3c), and the tow-path colours. A second shade is used for the cart
+# deck so the dolly rectangle is distinct from its wheel circles.
+_WHEEL_COLOR = "#566573"  # dark slate-gray — individual wheel discs
+_CART_DECK_COLOR = "#aab7b8"  # lighter gray — cart/dolly deck rectangle
+_CART_DECK_ALPHA = 0.85
+
+# Wheel disc radius in meters. Visually "a tyre" at ~6–9 m fuselage scale
+# inside an 18–30 m hangar. Mirror the _NOSE_ARROW_LENGTH_M tuning idiom.
+_WHEEL_RADIUS_M = 0.18
+
+# Cart deck half-dimensions in meters. The deck rectangle is drawn under the
+# fuselage centroid. Full width is 2 × 0.55 = 1.1 m, which is ~1.3× a typical
+# 0.85 m fuselage width, so it reads as "something underneath"; length is
+# shorter (~40% of a typical 6.5 m fuselage) so it is clearly not the fuselage.
+_CART_DECK_HALF_LENGTH_M = 1.3
+_CART_DECK_HALF_WIDTH_M = 0.55
+
+# Fraction of fuselage forward half where nose-wheel / main-gear land.
+# Nose wheel: near the fuselage nose tip. Main-gear (nosewheel config):
+# placed at ~35% back from nose toward CG. Main-gear (tailwheel config):
+# placed at ~40% forward from origin (CG). Tailwheel: at aft tip.
+# These are intentionally approximate — real gear positions are unknown
+# (fleet.yaml has measured:false everywhere) and these fractions give a
+# visually convincing top-down silhouette.
+_NOSE_GEAR_FRAC = 0.85  # fraction of forward half-fuselage for nose wheel
+_MAIN_GEAR_FWD_FRAC = 0.30  # fraction of forward half for nosewheel mains
+_MAIN_GEAR_TAILDRAGGER_FWD_FRAC = 0.45  # fraction of forward half for tailwheel mains
+# Main-gear lateral offset as a multiple of fuselage half-width.
+_MAIN_GEAR_LATERAL_FRAC = 1.6
 
 
 def render_layout(
@@ -288,6 +327,9 @@ def _draw_aircraft(ax: Any, layout: Layout) -> None:
         aircraft = layout.fleet[placement.plane_id]
         color = _WING_COLORS.get(aircraft.wing_position, _FALLBACK_COLOR)
         world_parts = aircraft_parts_world(aircraft, placement)
+        # Gear/cart glyph drawn before parts so the fuselage patch (zorder=2)
+        # sits on top — wheels peek out at nose/tail/sides.
+        _draw_gear_glyph(ax, placement, aircraft)
         for part in world_parts:
             _draw_part(ax, part, color)
         _annotate_plane(ax, placement, aircraft.id)
@@ -342,6 +384,150 @@ def _draw_part(ax: Any, part: WorldPart, color: str) -> None:
             f"visualize.py must be updated when PartKind grows."
         )
     ax.add_patch(patch)
+
+
+def _local_to_world(
+    u: float,
+    v: float,
+    placement: Placement,
+) -> tuple[float, float]:
+    """Apply the plane-local-to-world transform to a single point ``(u, v)``.
+
+    Mirrors the per-vertex formula in :func:`hangarfit.geometry.aircraft_parts_world`
+    (the same determinant-``-1`` compass transform):
+
+    .. code-block::
+
+        world_x = px + u·sin(h) + v·cos(h)
+        world_y = py + u·cos(h) − v·sin(h)
+
+    Used here so gear/cart glyphs rotate with the aircraft exactly as the
+    part polygons do, without having to build a full :class:`WorldPart`.
+    """
+    h = math.radians(placement.heading_deg)
+    sin_h = math.sin(h)
+    cos_h = math.cos(h)
+    wx = placement.x_m + u * sin_h + v * cos_h
+    wy = placement.y_m + u * cos_h - v * sin_h
+    return wx, wy
+
+
+def _add_wheel(ax: Any, wx: float, wy: float) -> MplCircle:
+    """Add a single wheel-disc circle at world coordinates ``(wx, wy)``."""
+    circle = MplCircle(
+        (wx, wy),
+        radius=_WHEEL_RADIUS_M,
+        facecolor=_WHEEL_COLOR,
+        edgecolor=_WHEEL_COLOR,
+        lw=0.4,
+        zorder=_GLYPH_ZORDER,
+    )
+    ax.add_patch(circle)
+    return circle
+
+
+def _draw_gear_glyph(ax: Any, placement: Placement, aircraft: Aircraft) -> None:
+    """Draw landing-gear wheels or a cart glyph depending on ``placement.on_carts``.
+
+    Geometry is approximated from the fuselage part's ``offset_x_m`` and
+    ``length_m`` — no model changes are required.  The fuselage part is
+    identified as the first ``kind == "fuselage"`` part; every fleet entry
+    has exactly one fuselage as its first part, so this is safe.
+
+    **Own-gear (``on_carts=False``):** wheel positions per ``aircraft.gear``:
+
+    - ``nosewheel`` (tricycle): one nose wheel near the fuselage nose tip, two
+      main wheels behind the CG at ±lateral offset.
+    - ``tailwheel``: two main wheels ahead of the CG, one tailwheel near the
+      fuselage aft tip.
+    - ``monowheel``: a single centred main wheel at the CG origin.
+
+    **Cart-borne (``on_carts=True``):** a dolly-deck rectangle (lighter gray,
+    translucent) centred at the origin with four small corner wheel circles,
+    drawn in the same world-transform path as parts so it rotates with the
+    aircraft heading.
+    """
+    # Locate the fuselage part for dimensional reference.
+    fuselage_part = next(
+        (p for p in aircraft.parts if p.kind == "fuselage"),
+        None,
+    )
+    if fuselage_part is None:
+        # No fuselage found — skip silently.  This is defensive; every fleet
+        # entry today has a fuselage, but we should not crash on novel entries.
+        return
+
+    fus_cx = fuselage_part.offset_x_m  # local +x centre of fuselage
+    fus_half_len = fuselage_part.length_m / 2.0
+    fus_half_wid = fuselage_part.width_m / 2.0
+
+    fus_aft_x = fus_cx - fus_half_len  # local +x: aft/tail tip
+
+    if placement.on_carts:
+        _draw_cart_glyph(ax, placement)
+    elif aircraft.gear == "nosewheel":
+        # Nose wheel — near the nose tip
+        nose_u = fus_cx + fus_half_len * _NOSE_GEAR_FRAC
+        wx, wy = _local_to_world(nose_u, 0.0, placement)
+        _add_wheel(ax, wx, wy)
+        # Main gear pair — slightly aft of CG (behind the wing root)
+        main_u = fus_cx - fus_half_len * _MAIN_GEAR_FWD_FRAC
+        lateral = fus_half_wid * _MAIN_GEAR_LATERAL_FRAC
+        for v in (+lateral, -lateral):
+            wx, wy = _local_to_world(main_u, v, placement)
+            _add_wheel(ax, wx, wy)
+    elif aircraft.gear == "tailwheel":
+        # Main gear pair — forward of CG, ahead of the wing root
+        main_u = fus_cx + fus_half_len * _MAIN_GEAR_TAILDRAGGER_FWD_FRAC
+        lateral = fus_half_wid * _MAIN_GEAR_LATERAL_FRAC
+        for v in (+lateral, -lateral):
+            wx, wy = _local_to_world(main_u, v, placement)
+            _add_wheel(ax, wx, wy)
+        # Tailwheel — near the aft tip
+        tail_u = fus_aft_x + fus_half_len * (1.0 - _NOSE_GEAR_FRAC)
+        wx, wy = _local_to_world(tail_u, 0.0, placement)
+        _add_wheel(ax, wx, wy)
+    elif aircraft.gear == "monowheel":
+        # Single centred main wheel at the gear/cart origin
+        wx, wy = _local_to_world(0.0, 0.0, placement)
+        _add_wheel(ax, wx, wy)
+    # No else needed — Gear is a closed Literal; mypy and the model guard all values.
+
+
+def _draw_cart_glyph(ax: Any, placement: Placement) -> None:
+    """Draw a four-wheel dolly/cart glyph centred at the gear origin.
+
+    The deck rectangle is sized by the module constants
+    ``_CART_DECK_HALF_LENGTH_M`` / ``_CART_DECK_HALF_WIDTH_M`` and rotated
+    with ``placement.heading_deg`` via the standard world-transform.  Four
+    small wheel discs sit at the deck corners so the glyph reads as a
+    wheeled dolly rather than a coloured rectangle.
+    """
+    # Deck corners in plane-local coordinates (centred at origin, ±L, ±W).
+    hl = _CART_DECK_HALF_LENGTH_M
+    hw = _CART_DECK_HALF_WIDTH_M
+    corner_locals = [
+        (+hl, +hw),
+        (+hl, -hw),
+        (-hl, -hw),
+        (-hl, +hw),
+    ]
+    deck_world = [_local_to_world(u, v, placement) for u, v in corner_locals]
+    deck_patch = MplPolygon(
+        deck_world,
+        closed=True,
+        facecolor=_CART_DECK_COLOR,
+        edgecolor=_WHEEL_COLOR,
+        alpha=_CART_DECK_ALPHA,
+        lw=0.8,
+        zorder=_GLYPH_ZORDER,
+    )
+    ax.add_patch(deck_patch)
+
+    # Four corner wheel discs.
+    for u, v in corner_locals:
+        wx, wy = _local_to_world(u, v, placement)
+        _add_wheel(ax, wx, wy)
 
 
 def _annotate_plane(ax: Any, placement: Placement, plane_id: str) -> None:
