@@ -13,6 +13,8 @@ import pytest
 
 from hangarfit.loader import (
     LoaderError,
+    _resolve_known_plane_id,
+    _suggest_plane_id,
     load_fleet,
     load_hangar,
     load_layout,
@@ -145,14 +147,19 @@ class TestRealDataFiles:
         assert hangar.length_m == 25.0
         assert hangar.width_m == 18.0
         assert hangar.door.center_x_m == 9.0
+        assert hangar.maintenance_bay.center_x_m == 13.5
+        assert hangar.maintenance_bay.width_m == 9.0
         assert hangar.maintenance_bay.depth_m == 9.0
 
     def test_load_example_layout(self) -> None:
         layout = load_layout(EXAMPLE_LAYOUT)
-        # The default example is the Saturday-morning scenario: 6 planes
-        # at home, 3 out flying. See layouts/example.yaml for context.
-        assert len(layout.placements) == 6
+        # Saturday-morning scenario: 3 planes out flying; scheibe_falke
+        # in the (walled) maintenance bay so 5 planes appear in placements.
+        # The bay occupant is named in ``maintenance.plane`` but excluded
+        # from ``placements`` by Layout invariant.
+        assert len(layout.placements) == 5
         assert layout.maintenance_plane == "scheibe_falke"
+        assert "scheibe_falke" not in {p.plane_id for p in layout.placements}
 
 
 # ----------------------------------------------------------------------------
@@ -561,7 +568,7 @@ class TestHangarLoaderErrors:
             """
 width_m: 18.0
 door: {center_x_m: 9, width_m: 12}
-maintenance_bay: {depth_m: 9}
+maintenance_bay: {center_x_m: 13.5, width_m: 9, depth_m: 9}
 """,
         )
         with pytest.raises(LoaderError, match="missing required field 'length_m'"):
@@ -573,7 +580,7 @@ maintenance_bay: {depth_m: 9}
             """
 length_m: 25.0
 width_m: 18.0
-maintenance_bay: {depth_m: 9}
+maintenance_bay: {center_x_m: 13.5, width_m: 9, depth_m: 9}
 """,
         )
         with pytest.raises(LoaderError, match="'door' must be a mapping"):
@@ -586,7 +593,7 @@ maintenance_bay: {depth_m: 9}
 length_m: 25.0
 width_m: 18.0
 door: {width_m: 12}
-maintenance_bay: {depth_m: 9}
+maintenance_bay: {center_x_m: 13.5, width_m: 9, depth_m: 9}
 """,
         )
         with pytest.raises(LoaderError, match="missing required field 'door.center_x_m'"):
@@ -599,10 +606,54 @@ maintenance_bay: {depth_m: 9}
 length_m: 25.0
 width_m: 18.0
 door: {center_x_m: 1.0, width_m: 12.0}
-maintenance_bay: {depth_m: 9}
+maintenance_bay: {center_x_m: 13.5, width_m: 9, depth_m: 9}
 """,
         )
         with pytest.raises(LoaderError, match="doesn't fit in hangar width"):
+            load_hangar(path)
+
+    @pytest.mark.parametrize(
+        ("bay_yaml", "expected_match"),
+        [
+            # Right-wall overflow: center_x_m + width_m/2 = 15.0 + 4.5 = 19.5 > width_m=18.0.
+            (
+                "{center_x_m: 15.0, width_m: 9, depth_m: 9}",
+                r"MaintenanceBay.*doesn't fit in hangar width",
+            ),
+            # Left-wall overflow: center_x_m - width_m/2 = 2.0 - 4.5 = -2.5 < 0.
+            (
+                "{center_x_m: 2.0, width_m: 9, depth_m: 9}",
+                r"MaintenanceBay.*doesn't fit in hangar width",
+            ),
+            # Depth equals length: leaves no non-bay parking. Hangar.__post_init__
+            # raises a *different* ValueError than the width-overflow branch.
+            (
+                "{center_x_m: 13.5, width_m: 9, depth_m: 25}",
+                r"MaintenanceBay\.depth_m.*must be strictly less than Hangar\.length_m",
+            ),
+        ],
+        ids=["right_wall_overflow", "left_wall_overflow", "depth_equals_length"],
+    )
+    def test_maintenance_bay_invariant_propagates_from_model(
+        self, tmp_path: Path, bay_yaml: str, expected_match: str
+    ) -> None:
+        """Each ``Hangar.__post_init__`` invariant on the maintenance bay
+        must wrap as ``LoaderError`` at the loader boundary (mirror of
+        ``test_door_does_not_fit_propagates_from_model`` but parametrized
+        over the two ``bay_left < 0 or bay_right > width_m`` cases plus
+        the ``depth_m >= length_m`` branch — three failure modes from
+        three distinct model-level ``raise ValueError`` sites).
+        """
+        path = _write(
+            tmp_path / "h.yaml",
+            f"""
+length_m: 25.0
+width_m: 18.0
+door: {{center_x_m: 9.0, width_m: 12.0}}
+maintenance_bay: {bay_yaml}
+""",
+        )
+        with pytest.raises(LoaderError, match=expected_match):
             load_hangar(path)
 
     def test_top_level_not_a_mapping(self, tmp_path: Path) -> None:
@@ -622,17 +673,23 @@ door: {center_x_m: 9, width_m: 12}
         with pytest.raises(LoaderError, match="'maintenance_bay' must be a mapping"):
             load_hangar(path)
 
-    def test_missing_maintenance_bay_depth(self, tmp_path: Path) -> None:
+    @pytest.mark.parametrize("missing_key", ["center_x_m", "width_m", "depth_m"])
+    def test_missing_maintenance_bay_field(self, tmp_path: Path, missing_key: str) -> None:
+        all_fields = {"center_x_m": 13.5, "width_m": 9, "depth_m": 9}
+        del all_fields[missing_key]
+        bay_yaml = ", ".join(f"{k}: {v}" for k, v in all_fields.items())
         path = _write(
             tmp_path / "h.yaml",
-            """
+            f"""
 length_m: 25.0
 width_m: 18.0
-door: {center_x_m: 9, width_m: 12}
-maintenance_bay: {}
+door: {{center_x_m: 9, width_m: 12}}
+maintenance_bay: {{{bay_yaml}}}
 """,
         )
-        with pytest.raises(LoaderError, match="missing required field 'maintenance_bay.depth_m'"):
+        with pytest.raises(
+            LoaderError, match=f"missing required field 'maintenance_bay.{missing_key}'"
+        ):
             load_hangar(path)
 
     def test_clearance_defaults_applied(self, tmp_path: Path) -> None:
@@ -642,7 +699,7 @@ maintenance_bay: {}
 length_m: 25.0
 width_m: 18.0
 door: {center_x_m: 9.0, width_m: 12.0}
-maintenance_bay: {depth_m: 9}
+maintenance_bay: {center_x_m: 13.5, width_m: 9, depth_m: 9}
 """,
         )
         h = load_hangar(path)
@@ -667,7 +724,7 @@ class TestLayoutLoader:
 length_m: 25.0
 width_m: 18.0
 door: {center_x_m: 9.0, width_m: 12.0}
-maintenance_bay: {depth_m: 9}
+maintenance_bay: {center_x_m: 13.5, width_m: 9, depth_m: 9}
 """,
         )
         return fleet, hangar
@@ -705,7 +762,7 @@ placements:
     heading_deg: 0
 """,
         )
-        with pytest.raises(LoaderError, match="unknown plane_id 'ghost'"):
+        with pytest.raises(LoaderError, match="unknown plane id 'ghost'"):
             load_layout(layout_path)
 
     def test_cart_rule_violation_propagates(self, tmp_path: Path) -> None:
@@ -723,7 +780,7 @@ placements:
 length_m: 25.0
 width_m: 18.0
 door: {center_x_m: 9.0, width_m: 12.0}
-maintenance_bay: {depth_m: 9}
+maintenance_bay: {center_x_m: 13.5, width_m: 9, depth_m: 9}
 """,
         )
         layout_path = _write(
@@ -881,6 +938,150 @@ maintenance:
         ):
             load_layout(layout_path)
 
+    def test_maintenance_occupant_also_in_placements_rejected_with_actionable_error(
+        self, tmp_path: Path
+    ) -> None:
+        """A layout YAML that names a ``maintenance.plane`` and also lists
+        that plane under ``placements`` is rejected at load time with an
+        actionable error.
+
+        The bay occupant is treated as away — absent from ``placements`` by
+        Layout invariant (#103). The loader catches this combination
+        explicitly so YAML authors get a directly-actionable message
+        ("Remove it from placements") rather than the bubbled Layout
+        invariant text. Layout's invariant remains the programmatic
+        backstop for non-loader callers.
+
+        The parenthetical "(or fix the plane id if it doesn't match an
+        aircraft in the fleet)" steers users toward the right root cause
+        in the typo'd-id case, where naive "remove the row" advice would
+        be a two-step debug (remove row → hit "not in fleet" → realise
+        the id was wrong all along).
+        """
+        self._minimal_fleet_and_hangar(tmp_path)
+        layout_path = _write(
+            tmp_path / "layout.yaml",
+            """
+fleet: fleet.yaml
+hangar: hangar.yaml
+maintenance: {plane: foo}
+placements:
+  - {plane: foo, x_m: 5, y_m: 5, heading_deg: 0, on_carts: false}
+""",
+        )
+        with pytest.raises(LoaderError) as exc_info:
+            load_layout(layout_path)
+        msg = str(exc_info.value)
+        assert "'foo'" in msg, f"error must name the offending plane: {msg}"
+        assert "placements" in msg, f"error must point at placements: {msg}"
+        assert "Remove it from placements" in msg, (
+            f"error must include actionable suffix; got: {msg}"
+        )
+        assert "fix the plane id" in msg, f"error must include the typo'd-id hint; got: {msg}"
+
+    def test_maintenance_occupant_appearing_among_other_placements_rejected(
+        self, tmp_path: Path
+    ) -> None:
+        """The loop-not-just-first-row form of the check: when the
+        occupant appears alongside *other* valid placements, the loader
+        still catches it. Guards against a buggy short-circuit like
+        ``placements[0].plane_id == maintenance_plane`` that would happen
+        to pass the single-plane fixture above.
+        """
+        _write(
+            tmp_path / "fleet.yaml",
+            _fleet_yaml(
+                _aircraft_entry("foo", movement_mode="always_own_gear", turn_radius_m=5.0),
+                _aircraft_entry("bar", movement_mode="always_own_gear", turn_radius_m=5.0),
+            ),
+        )
+        _write(
+            tmp_path / "hangar.yaml",
+            """
+length_m: 25.0
+width_m: 18.0
+door: {center_x_m: 9.0, width_m: 12.0}
+maintenance_bay: {center_x_m: 13.5, width_m: 9, depth_m: 9}
+""",
+        )
+        # `bar` is the maintenance occupant. The realistic real-world bug
+        # shape: user has a valid layout for `foo` and accidentally adds a
+        # row for the maintenance plane as the second placement.
+        layout_path = _write(
+            tmp_path / "layout.yaml",
+            """
+fleet: fleet.yaml
+hangar: hangar.yaml
+maintenance: {plane: bar}
+placements:
+  - {plane: foo, x_m: 5, y_m: 5, heading_deg: 0, on_carts: false}
+  - {plane: bar, x_m: 10, y_m: 10, heading_deg: 0, on_carts: false}
+""",
+        )
+        with pytest.raises(LoaderError, match="maintenance_plane 'bar' is named in placements"):
+            load_layout(layout_path)
+
+    def test_maintenance_plane_null_rejected(self, tmp_path: Path) -> None:
+        """`maintenance: {plane: ~}` used to silently return None, disabling
+        the maintenance feature.  It should raise with an actionable message."""
+        self._minimal_fleet_and_hangar(tmp_path)
+        layout_path = _write(
+            tmp_path / "layout.yaml",
+            """
+fleet: fleet.yaml
+hangar: hangar.yaml
+placements:
+  - {plane: foo, x_m: 5, y_m: 5, heading_deg: 0, on_carts: false}
+maintenance:
+  plane: ~
+""",
+        )
+        with pytest.raises(LoaderError, match="'maintenance.plane' is null"):
+            load_layout(layout_path)
+
+    def test_maintenance_plane_non_string_rejected(self, tmp_path: Path) -> None:
+        """`maintenance: {plane: 42}` (int) used to pass through silently,
+        then fail with a confusing 'not in fleet' message at Layout construction."""
+        self._minimal_fleet_and_hangar(tmp_path)
+        layout_path = _write(
+            tmp_path / "layout.yaml",
+            """
+fleet: fleet.yaml
+hangar: hangar.yaml
+placements:
+  - {plane: foo, x_m: 5, y_m: 5, heading_deg: 0, on_carts: false}
+maintenance:
+  plane: 42
+""",
+        )
+        with pytest.raises(LoaderError) as exc_info:
+            load_layout(layout_path)
+        msg = str(exc_info.value)
+        assert "must be a string aircraft id" in msg
+        assert "42" in msg
+        assert "int" in msg
+
+    def test_maintenance_plane_empty_string_rejected(self, tmp_path: Path) -> None:
+        """`maintenance: {plane: ""}` used to slip through silently."""
+        self._minimal_fleet_and_hangar(tmp_path)
+        layout_path = _write(
+            tmp_path / "layout.yaml",
+            """
+fleet: fleet.yaml
+hangar: hangar.yaml
+placements:
+  - {plane: foo, x_m: 5, y_m: 5, heading_deg: 0, on_carts: false}
+maintenance:
+  plane: ""
+""",
+        )
+        with pytest.raises(LoaderError) as exc_info:
+            load_layout(layout_path)
+        msg = str(exc_info.value)
+        assert "must be non-empty" in msg
+        assert "either remove the 'maintenance' block entirely" in msg
+        assert "supply a valid aircraft id" in msg
+
     def test_override_and_yaml_ref_conflict_for_fleet(self, tmp_path: Path) -> None:
         """If the layout YAML has `fleet:` AND the caller passes a fleet
         override, the loader refuses to silently shadow one with the other."""
@@ -979,3 +1180,235 @@ def _minimal_aircraft_yaml(
     return _fleet_yaml(
         _aircraft_entry(plane_id, movement_mode=movement_mode, turn_radius_m=turn_radius_m)
     )
+
+
+# ----------------------------------------------------------------------------
+# _suggest_plane_id helper.
+# ----------------------------------------------------------------------------
+
+
+class TestPlaneIdSuggestion:
+    """Unit tests for the _suggest_plane_id near-match helper."""
+
+    def test_casefold_match_suggests_canonical_with_note(self) -> None:
+        assert _suggest_plane_id("Foo", ["foo"]) == (
+            "; did you mean 'foo'? (plane ids are case-sensitive)"
+        )
+
+    def test_all_caps_case_diff_still_suggests(self) -> None:
+        # difflib alone scores 'FOO' vs 'foo' at 0.0 (SequenceMatcher is
+        # case-sensitive); the casefold pass is what rescues this.
+        assert "did you mean 'foo'?" in _suggest_plane_id("FOO", ["foo"])
+
+    def test_typo_suggests_difflib_match(self) -> None:
+        assert _suggest_plane_id("cesna_150", ["cessna_150", "cessna_140"]) == (
+            "; did you mean 'cessna_150'?"
+        )
+
+    def test_novel_id_no_suggestion(self) -> None:
+        assert _suggest_plane_id("zzz", ["foo", "bar"]) == ""
+
+    def test_ambiguous_casefold_falls_through_to_no_suggestion(self) -> None:
+        # Two reasons combine to yield "" for THIS input: (1) 'foo' and 'Foo'
+        # share a casefold so the casefold pass is ambiguous and skipped;
+        # (2) difflib then also misses, because 'FOO' differs from both only
+        # by case across all three chars, scoring 0.0 — below the 0.6 cutoff.
+        # A *smaller* case diff can still get a difflib hit after an ambiguous
+        # casefold — see test_ambiguous_casefold_can_still_difflib_suggest.
+        assert _suggest_plane_id("FOO", ["foo", "Foo"]) == ""
+
+    def test_ambiguous_casefold_can_still_difflib_suggest(self) -> None:
+        # 'bar' and 'BAR' both fold to 'bar' → casefold pass ambiguous, skipped.
+        # But 'Bar' vs 'bar' differs in only one of three chars (ratio 0.667 >
+        # 0.6), so difflib still suggests — without the case-sensitivity note.
+        result = _suggest_plane_id("Bar", ["bar", "BAR"])
+        assert "did you mean 'bar'?" in result
+        assert "case-sensitive" not in result
+
+    def test_non_str_valid_members_do_not_crash(self) -> None:
+        # A malformed fleet.yaml can carry unquoted numeric/bool ids (int/bool
+        # fleet keys). The helper must degrade to "" — never AttributeError on
+        # .casefold(). (#176 silent-failure regression guard.)
+        assert _suggest_plane_id("ghost", [1, 2.5, True]) == ""
+
+    def test_non_str_candidate_does_not_crash(self) -> None:
+        assert _suggest_plane_id(1, ["foo", "bar"]) == ""  # type: ignore[arg-type]
+
+    def test_exact_match_returns_empty(self) -> None:
+        assert _suggest_plane_id("foo", ["foo", "bar"]) == ""
+
+
+# ----------------------------------------------------------------------------
+# _resolve_known_plane_id gate.
+# ----------------------------------------------------------------------------
+
+
+class TestResolveKnownPlaneId:
+    """Unit tests for the _resolve_known_plane_id loader gate."""
+
+    def test_known_id_does_not_raise(self) -> None:
+        assert (
+            _resolve_known_plane_id("foo", ["foo", "bar"], role="placement", path=Path("x.yaml"))
+            is None
+        )
+
+    def test_case_mismatch_raises_with_suggestion(self) -> None:
+        with pytest.raises(LoaderError) as exc:
+            _resolve_known_plane_id("Foo", ["foo"], role="placement", path=Path("x.yaml"))
+        msg = str(exc.value)
+        assert "x.yaml" in msg
+        assert "placement references unknown plane id 'Foo'" in msg
+        assert "did you mean 'foo'?" in msg
+        assert "case-sensitive" in msg
+
+    def test_novel_id_with_fix_hint_shows_hint(self) -> None:
+        with pytest.raises(LoaderError) as exc:
+            _resolve_known_plane_id(
+                "ghost",
+                ["foo"],
+                role="maintenance.plane",
+                path=Path("s.yaml"),
+                fix_hint="either add it to fleet_in ['foo'] or fix the plane id",
+            )
+        msg = str(exc.value)
+        assert "maintenance.plane references unknown plane id 'ghost'" in msg
+        assert "either add it to fleet_in ['foo'] or fix the plane id" in msg
+        assert "did you mean" not in msg
+
+    def test_novel_id_no_hint_is_bare(self) -> None:
+        with pytest.raises(LoaderError) as exc:
+            _resolve_known_plane_id("zzz", ["foo"], role="placement", path=Path("x.yaml"))
+        msg = str(exc.value)
+        assert "unknown plane id 'zzz'" in msg
+        assert "did you mean" not in msg
+        assert msg.rstrip().endswith("'zzz'")
+
+    def test_near_match_suggestion_beats_fix_hint(self) -> None:
+        # Docstring invariant: when there IS a near match, the suggestion
+        # wins and the (generic) fix_hint is suppressed.
+        with pytest.raises(LoaderError) as exc:
+            _resolve_known_plane_id(
+                "Foo",
+                ["foo"],
+                role="maintenance.plane",
+                path=Path("s.yaml"),
+                fix_hint="either add it to fleet_in ['foo'] or fix the plane id",
+            )
+        msg = str(exc.value)
+        assert "did you mean 'foo'?" in msg
+        assert "either add it to fleet_in" not in msg
+
+
+# ----------------------------------------------------------------------------
+# load_layout unknown/mis-cased plane id integration tests.
+# ----------------------------------------------------------------------------
+
+
+class TestUnknownPlaneIdLayout:
+    """Loader-boundary unknown/mis-cased plane id rejection for layouts."""
+
+    def _fleet_and_hangar(self, dir_: Path) -> None:
+        _write(
+            dir_ / "fleet.yaml",
+            _minimal_aircraft_yaml("foo", movement_mode="always_own_gear", turn_radius_m=5.0),
+        )
+        _write(
+            dir_ / "hangar.yaml",
+            """
+length_m: 25.0
+width_m: 18.0
+door: {center_x_m: 9.0, width_m: 12.0}
+maintenance_bay: {center_x_m: 13.5, width_m: 9, depth_m: 9}
+""",
+        )
+
+    def test_miscased_placement_id_suggests_canonical(self, tmp_path: Path) -> None:
+        self._fleet_and_hangar(tmp_path)
+        layout = _write(
+            tmp_path / "layout.yaml",
+            """
+fleet: fleet.yaml
+hangar: hangar.yaml
+placements:
+  - {plane: Foo, x_m: 5, y_m: 5, heading_deg: 0, on_carts: false}
+""",
+        )
+        with pytest.raises(LoaderError) as exc:
+            load_layout(layout)
+        msg = str(exc.value)
+        assert "placement references unknown plane id 'Foo'" in msg
+        assert "did you mean 'foo'?" in msg
+        assert "case-sensitive" in msg
+
+    def test_miscased_maintenance_id_suggests_canonical(self, tmp_path: Path) -> None:
+        self._fleet_and_hangar(tmp_path)
+        layout = _write(
+            tmp_path / "layout.yaml",
+            """
+fleet: fleet.yaml
+hangar: hangar.yaml
+placements: []
+maintenance: {plane: Foo}
+""",
+        )
+        with pytest.raises(LoaderError) as exc:
+            load_layout(layout)
+        msg = str(exc.value)
+        assert "maintenance.plane references unknown plane id 'Foo'" in msg
+        assert "did you mean 'foo'?" in msg
+
+    def test_novel_placement_id_no_false_suggestion(self, tmp_path: Path) -> None:
+        self._fleet_and_hangar(tmp_path)
+        layout = _write(
+            tmp_path / "layout.yaml",
+            """
+fleet: fleet.yaml
+hangar: hangar.yaml
+placements:
+  - {plane: zzz, x_m: 5, y_m: 5, heading_deg: 0, on_carts: false}
+""",
+        )
+        with pytest.raises(LoaderError) as exc:
+            load_layout(layout)
+        msg = str(exc.value)
+        assert "unknown plane id 'zzz'" in msg
+        assert "did you mean" not in msg
+
+    def test_non_str_fleet_id_unknown_ref_is_clean_loadererror(self, tmp_path: Path) -> None:
+        # Regression (#176): an unquoted numeric fleet id (`id: 1` → int fleet
+        # key) plus an unknown *string* placement id must raise a clean
+        # LoaderError, not an AttributeError from .casefold() in the suggester.
+        # (The "1" passed here round-trips through YAML to an int key.)
+        _write(
+            tmp_path / "fleet.yaml",
+            _minimal_aircraft_yaml("1", movement_mode="always_own_gear", turn_radius_m=5.0),
+        )
+        _write(
+            tmp_path / "hangar.yaml",
+            """
+length_m: 25.0
+width_m: 18.0
+door: {center_x_m: 9.0, width_m: 12.0}
+maintenance_bay: {center_x_m: 13.5, width_m: 9, depth_m: 9}
+""",
+        )
+        layout = _write(
+            tmp_path / "layout.yaml",
+            """
+fleet: fleet.yaml
+hangar: hangar.yaml
+placements:
+  - {plane: ghost, x_m: 5, y_m: 5, heading_deg: 0, on_carts: false}
+""",
+        )
+        with pytest.raises(LoaderError, match="unknown plane id 'ghost'"):
+            load_layout(layout)
+
+
+def test_load_fleet_rejects_non_utf8_file(tmp_path: Path) -> None:
+    """A file with invalid UTF-8 bytes must surface as LoaderError, not a
+    bare UnicodeDecodeError leaking out of _read_yaml."""
+    bad = tmp_path / "fleet.yaml"
+    bad.write_bytes(b"\xff\xfe\x00bad bytes not utf-8")
+    with pytest.raises(LoaderError, match="UTF-8"):
+        load_fleet(bad)

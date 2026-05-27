@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
+
 from hangarfit.cli import build_parser, main
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
@@ -417,6 +419,7 @@ class TestSolveRender:
                 "2.0",
                 "--seed",
                 "42",
+                "--no-spread",
             ]
         )
         assert rc == 0
@@ -433,6 +436,7 @@ class TestSolveRender:
                 "--seed",
                 "42",
                 "--strict-k",
+                "--no-spread",
             ]
         )
         assert rc_strict == 1
@@ -548,6 +552,7 @@ class TestSolveRender:
                 render_pattern,
                 "--write-yaml",
                 yaml_pattern,
+                "--no-spread",
             ]
         )
         assert rc == 0, f"K>1 solve failed (rc={rc}); stderr={capsys.readouterr().err}"
@@ -556,3 +561,293 @@ class TestSolveRender:
         assert (tmp_path / "out_2.png").exists()
         assert (tmp_path / "out_1.yaml").exists()
         assert (tmp_path / "out_2.yaml").exists()
+
+
+def test_solve_no_spread_flag_accepted_and_runs(tmp_path):
+    """`--no-spread` is accepted on `solve` and drives a successful no-spread run."""
+    from hangarfit.cli import main
+
+    out = tmp_path / "layout.yaml"
+    rc = main(
+        [
+            "solve",
+            "tests/fixtures/solve_all_nine_large_hangar.yaml",
+            "--seed",
+            "42",
+            "--budget",
+            "10",
+            "--no-spread",
+            "--write-yaml",
+            str(out),
+        ]
+    )
+    assert rc == 0
+    assert out.exists()
+
+
+class TestSolveRenderPaths:
+    """`--render-paths` flag: tow-path overlay rendering + exit-3 semantics (#193).
+
+    Uses a monkeypatched ``solve`` so exit-code / overlay behaviour is tested
+    deterministically and fast, without paying for a real Hybrid-A* search.
+    ``load_scenario`` still runs on the real fixture (validation), then the
+    fake ``solve`` returns a controlled bundle.
+    """
+
+    @staticmethod
+    def _layout():
+        from hangarfit.loader import load_layout
+
+        return load_layout(FIXTURES_DIR / "valid_two_separated.yaml")
+
+    @staticmethod
+    def _plan(layout):
+        from hangarfit.towplanner import DubinsArc, Move, MovesPlan, Pose, Segment
+
+        start = Pose(x_m=2.0, y_m=0.0, heading_deg=0.0)
+        end = Pose(x_m=2.0, y_m=5.0, heading_deg=0.0)
+        arc = DubinsArc(start=start, end=end, turn_radius_m=1.0, segments=(Segment("S", 5.0),))
+        return MovesPlan(
+            target_layout=layout, moves=(Move(plane_id="a", target_slot=end, path=arc),)
+        )
+
+    @staticmethod
+    def _result(status, layouts, plans, unroutable=()):
+        from hangarfit.models import SolverDiagnostics, SolveResult
+
+        diag = SolverDiagnostics(
+            restarts_attempted=1,
+            wall_time_s=0.1,
+            best_partial=None,
+            best_partial_layout=None,
+            seed=42,
+            unroutable_planes=unroutable,
+        )
+        return SolveResult(status=status, layouts=layouts, plans=plans, diagnostics=diag)
+
+    @staticmethod
+    def _patch_solve(monkeypatch, result):
+        import hangarfit.solver as solver_mod
+
+        captured = {}
+
+        def fake_solve(scenario, **kwargs):
+            captured.update(kwargs)
+            return result
+
+        monkeypatch.setattr(solver_mod, "solve", fake_solve)
+        return captured
+
+    def test_flag_defaults_false_and_parses(self):
+        parser = build_parser()
+        assert parser.parse_args(["solve", SMOKE_FIXTURE]).render_paths is False
+        parsed = parser.parse_args(["solve", SMOKE_FIXTURE, "--render", "x.png", "--render-paths"])
+        assert parsed.render_paths is True
+
+    def test_render_paths_requires_render(self, capsys):
+        rc = main(["solve", SMOKE_FIXTURE, "--render-paths"])
+        assert rc == 2
+        assert "requires --render" in capsys.readouterr().err
+
+    def test_without_flag_solve_is_not_asked_to_plan(self, tmp_path, monkeypatch):
+        captured = self._patch_solve(monkeypatch, self._result("found", (self._layout(),), (None,)))
+        rc = main(["solve", SMOKE_FIXTURE, "--render", str(tmp_path / "p.png"), "--seed", "42"])
+        assert rc == 0
+        assert captured["plan_paths"] is False
+
+    def test_routable_exit_0_and_overlay_passed_to_renderer(self, tmp_path, monkeypatch):
+        from hangarfit import visualize
+
+        layout = self._layout()
+        plan = self._plan(layout)
+        self._patch_solve(monkeypatch, self._result("found", (layout,), (plan,)))
+        seen = []
+        real = visualize.render_layout
+
+        def spy(lay, path, **kw):
+            seen.append(kw.get("moves_plan"))
+            return real(lay, path, **kw)
+
+        monkeypatch.setattr(visualize, "render_layout", spy)
+        out = tmp_path / "p.png"
+        rc = main(["solve", SMOKE_FIXTURE, "--render", str(out), "--render-paths", "--seed", "42"])
+        assert rc == 0
+        assert seen == [plan]  # the per-layout MovesPlan was threaded through
+        assert out.exists() and out.stat().st_size > 0
+
+    def test_all_unroutable_exits_3_warns_and_renders_plain(self, tmp_path, monkeypatch, capsys):
+        layout = self._layout()
+        self._patch_solve(
+            monkeypatch, self._result("found", (layout,), (None,), unroutable=("husky",))
+        )
+        out = tmp_path / "p.png"
+        rc = main(["solve", SMOKE_FIXTURE, "--render", str(out), "--render-paths", "--seed", "42"])
+        assert rc == 3
+        err = capsys.readouterr().err
+        assert "no feasible tow path" in err and "husky" in err
+        assert out.exists()  # the valid layout is still rendered, just plain
+
+    def test_partial_mix_exit_0_warns_only_the_unroutable(self, tmp_path, monkeypatch, capsys):
+        layout = self._layout()
+        plan = self._plan(layout)
+        self._patch_solve(
+            monkeypatch,
+            self._result("found", (layout, layout), (plan, None), unroutable=("b",)),
+        )
+        pattern = str(tmp_path / "p_{i}.png")
+        rc = main(
+            [
+                "solve",
+                SMOKE_FIXTURE,
+                "--alternatives",
+                "2",
+                "--render",
+                pattern,
+                "--render-paths",
+                "--seed",
+                "42",
+            ]
+        )
+        assert rc == 0  # >=1 routable candidate
+        err = capsys.readouterr().err
+        assert "layout 2" in err and "b" in err
+        assert "layout 1" not in err
+        assert (tmp_path / "p_1.png").exists() and (tmp_path / "p_2.png").exists()
+
+    def test_exit_3_precedes_strict_k(self, tmp_path, monkeypatch):
+        layout = self._layout()
+        self._patch_solve(
+            monkeypatch,
+            self._result("found_partial", (layout,), (None,), unroutable=("z",)),
+        )
+        rc = main(
+            [
+                "solve",
+                SMOKE_FIXTURE,
+                "--render",
+                str(tmp_path / "p.png"),
+                "--render-paths",
+                "--strict-k",
+                "--seed",
+                "42",
+            ]
+        )
+        assert rc == 3  # all-un-routable wins over found_partial+strict-k
+
+    def test_json_surfaces_unroutable_planes(self, tmp_path, monkeypatch, capsys):
+        layout = self._layout()
+        self._patch_solve(
+            monkeypatch, self._result("found", (layout,), (None,), unroutable=("husky",))
+        )
+        rc = main(
+            [
+                "solve",
+                SMOKE_FIXTURE,
+                "--render",
+                str(tmp_path / "p.png"),
+                "--render-paths",
+                "--json",
+                "--seed",
+                "42",
+            ]
+        )
+        assert rc == 3
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["diagnostics"]["unroutable_planes"] == ["husky"]
+
+    def test_multi_none_warnings_name_planes_in_order(self, tmp_path, monkeypatch, capsys):
+        # Three layouts, the 1st and 3rd un-routable: the compacted
+        # unroutable_planes (["alpha","gamma"]) must pair with the 1st and 3rd
+        # None positions in order — guards the zip/correspondence in
+        # _warn_unroutable that a single-None test cannot.
+        layout = self._layout()
+        plan = self._plan(layout)
+        self._patch_solve(
+            monkeypatch,
+            self._result(
+                "found",
+                (layout, layout, layout),
+                (None, plan, None),
+                unroutable=("alpha", "gamma"),
+            ),
+        )
+        rc = main(
+            [
+                "solve",
+                SMOKE_FIXTURE,
+                "--alternatives",
+                "3",
+                "--render",
+                str(tmp_path / "p_{i}.png"),
+                "--render-paths",
+                "--seed",
+                "42",
+            ]
+        )
+        assert rc == 0  # layout 2 routable
+        err = capsys.readouterr().err
+        assert "layout 1" in err and "alpha" in err
+        assert "layout 3" in err and "gamma" in err
+        assert "layout 2" not in err
+        # Order: layout 1's warning (alpha) precedes layout 3's (gamma).
+        assert err.index("alpha") < err.index("gamma")
+
+    def test_unroutable_planes_desync_is_loud(self, tmp_path, monkeypatch):
+        # A None plan with an empty unroutable_planes is a producer-side
+        # invariant violation (solver appends one plane per None). _warn_unroutable
+        # must surface it loudly, not paper over it with a placeholder name.
+        layout = self._layout()
+        self._patch_solve(monkeypatch, self._result("found", (layout,), (None,), unroutable=()))
+        with pytest.raises(AssertionError, match="out of sync"):
+            main(
+                [
+                    "solve",
+                    SMOKE_FIXTURE,
+                    "--render",
+                    str(tmp_path / "p.png"),
+                    "--render-paths",
+                    "--seed",
+                    "42",
+                ]
+            )
+
+    def test_empty_layouts_exits_1_not_3(self, tmp_path, monkeypatch):
+        # No layouts (exhausted_budget): exit 1 wins over the exit-3 check even
+        # under --render-paths (the all-None test would otherwise be vacuously
+        # true on empty plans). Pins the "no layouts > no-tow-order" precedence.
+        self._patch_solve(monkeypatch, self._result("exhausted_budget", (), ()))
+        rc = main(
+            [
+                "solve",
+                SMOKE_FIXTURE,
+                "--render",
+                str(tmp_path / "p.png"),
+                "--render-paths",
+                "--seed",
+                "42",
+            ]
+        )
+        assert rc == 1
+
+    @pytest.mark.slow
+    def test_real_solve_render_paths_end_to_end(self, tmp_path):
+        # Real solve -> plan_fill -> render_layout(moves_plan=...), no monkeypatch:
+        # guards the live integration the monkeypatched tests can't (the single
+        # smoke-fixture plane is towable). rc 0 (routable) or 3 (if not); either
+        # way the pipeline must run and write a PNG.
+        out = tmp_path / "real.png"
+        rc = main(
+            [
+                "solve",
+                SMOKE_FIXTURE,
+                "--budget",
+                "5.0",
+                "--seed",
+                "42",
+                "--render",
+                str(out),
+                "--render-paths",
+            ]
+        )
+        assert rc in (0, 3)
+        assert out.exists() and out.stat().st_size > 0

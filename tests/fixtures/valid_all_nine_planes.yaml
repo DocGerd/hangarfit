@@ -25,8 +25,9 @@
 #     under the high wings (z-disjoint nesting allowed by the parts model).
 #     Its 9.42 m wingspan exactly clears the middle column's left/right
 #     neighbours in y at this placement.
-#   - Maintenance: scheibe_falke at py = 25 (fuselage centroid in the
-#     back-most 9 m bay, which starts at y = 21 for this hangar).
+#   - Maintenance bay is OPEN (no plane in maintenance) — the bay
+#     rectangle is just normal floor; scheibe_falke parks at the back
+#     where the bay strip would be when closed.
 #
 # Cart rule: 3 always_cart planes (scheibe, wild_thing, zlin) carry
 # on_carts=true mandatorily. Of the 4 cart_eligible planes, only
@@ -35,9 +36,6 @@
 
 fleet: ../../data/fleet.yaml
 hangar: test_hangar_large.yaml
-
-maintenance:
-  plane: scheibe_falke
 
 placements:
   # Left column (px = 5) — small strut-braced
@@ -89,4 +87,4 @@ placements:
     x_m: 12.5
     y_m: 25.0
     heading_deg: 0.0
-    on_carts: true            # always_cart; maintenance plane in bay
+    on_carts: true            # always_cart

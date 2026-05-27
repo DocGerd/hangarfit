@@ -27,6 +27,8 @@ door:
   width_m: 16.0
 
 maintenance_bay:
+  center_x_m: 20.0
+  width_m: 10.0
   depth_m: 9.0
 
 clearance_m: 0.3

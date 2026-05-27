@@ -17,6 +17,8 @@ from hangarfit.models import (
     Part,
     Placement,
     SearchConfig,
+    SolverDiagnostics,
+    SolveResult,
     StrutsSpec,
 )
 
@@ -64,7 +66,7 @@ def _ok_hangar() -> Hangar:
         length_m=25.0,
         width_m=18.0,
         door=Door(center_x_m=9.0, width_m=12.0),
-        maintenance_bay=MaintenanceBay(depth_m=9.0),
+        maintenance_bay=MaintenanceBay(center_x_m=9.0, width_m=4.0, depth_m=9.0),
         clearance_m=0.3,
         wing_layer_clearance_m=0.2,
     )
@@ -268,6 +270,19 @@ class TestAircraft:
         with pytest.raises(AssertionError, match="turn_radius_m is None"):
             a.required_turn_radius_m()
 
+    def test_effective_turn_radius_zero_for_always_cart(self) -> None:
+        a = _ok_aircraft(movement_mode="always_cart", turn_radius_m=None)
+        assert a.effective_turn_radius_m() == 0.0
+
+    def test_effective_turn_radius_delegates_for_own_gear(self) -> None:
+        a = _ok_aircraft(movement_mode="always_own_gear", turn_radius_m=7.0)
+        assert a.effective_turn_radius_m() == 7.0
+        assert a.effective_turn_radius_m() == a.required_turn_radius_m()
+
+    def test_effective_turn_radius_delegates_for_cart_eligible(self) -> None:
+        a = _ok_aircraft(movement_mode="cart_eligible", turn_radius_m=9.5)
+        assert a.effective_turn_radius_m() == 9.5
+
     @pytest.mark.parametrize("wing_position", ["", "middle", "High", "MID", "bottom"])
     def test_invalid_wing_position_rejected(self, wing_position: str) -> None:
         with pytest.raises(ValueError, match="wing_position must be one of"):
@@ -329,13 +344,32 @@ class TestDoor:
 
 class TestMaintenanceBay:
     def test_valid_construction(self) -> None:
-        m = MaintenanceBay(depth_m=9.0)
+        m = MaintenanceBay(center_x_m=13.5, width_m=9.0, depth_m=9.0)
         assert m.depth_m == 9.0
+        assert m.center_x_m == 13.5
+        assert m.width_m == 9.0
 
     @pytest.mark.parametrize("depth_m", [0.0, -1.0])
     def test_non_positive_depth_rejected(self, depth_m: float) -> None:
         with pytest.raises(ValueError, match="depth_m must be positive"):
-            MaintenanceBay(depth_m=depth_m)
+            MaintenanceBay(center_x_m=9.0, width_m=4.0, depth_m=depth_m)
+
+    def test_zero_center_x_allowed(self) -> None:
+        """``center_x_m == 0`` is locally valid (mirrors :class:`Door`'s
+        non-negative convention). The bay-fits-in-hangar interval check
+        on :class:`Hangar` rejects the degenerate left-edge-negative
+        case it produces with any positive width."""
+        m = MaintenanceBay(center_x_m=0.0, width_m=4.0, depth_m=9.0)
+        assert m.center_x_m == 0.0
+
+    def test_negative_center_x_rejected(self) -> None:
+        with pytest.raises(ValueError, match="center_x_m must be non-negative"):
+            MaintenanceBay(center_x_m=-1.0, width_m=4.0, depth_m=9.0)
+
+    @pytest.mark.parametrize("width_m", [0.0, -2.0])
+    def test_non_positive_width_rejected(self, width_m: float) -> None:
+        with pytest.raises(ValueError, match="width_m must be positive"):
+            MaintenanceBay(center_x_m=9.0, width_m=width_m, depth_m=9.0)
 
 
 class TestHangar:
@@ -350,7 +384,7 @@ class TestHangar:
                 length_m=length_m,
                 width_m=18.0,
                 door=Door(center_x_m=9.0, width_m=12.0),
-                maintenance_bay=MaintenanceBay(depth_m=9.0),
+                maintenance_bay=MaintenanceBay(center_x_m=9.0, width_m=4.0, depth_m=9.0),
                 clearance_m=0.3,
                 wing_layer_clearance_m=0.2,
             )
@@ -364,7 +398,7 @@ class TestHangar:
                 door=Door(center_x_m=9.0, width_m=12.0)
                 if width_m > 12
                 else Door(center_x_m=1.0, width_m=0.5),
-                maintenance_bay=MaintenanceBay(depth_m=9.0),
+                maintenance_bay=MaintenanceBay(center_x_m=9.0, width_m=4.0, depth_m=9.0),
                 clearance_m=0.3,
                 wing_layer_clearance_m=0.2,
             )
@@ -375,7 +409,7 @@ class TestHangar:
                 length_m=25.0,
                 width_m=18.0,
                 door=Door(center_x_m=9.0, width_m=12.0),
-                maintenance_bay=MaintenanceBay(depth_m=9.0),
+                maintenance_bay=MaintenanceBay(center_x_m=9.0, width_m=4.0, depth_m=9.0),
                 clearance_m=-0.1,
                 wing_layer_clearance_m=0.2,
             )
@@ -385,7 +419,7 @@ class TestHangar:
             length_m=25.0,
             width_m=18.0,
             door=Door(center_x_m=9.0, width_m=12.0),
-            maintenance_bay=MaintenanceBay(depth_m=9.0),
+            maintenance_bay=MaintenanceBay(center_x_m=9.0, width_m=4.0, depth_m=9.0),
             clearance_m=0.0,
             wing_layer_clearance_m=0.0,
         )
@@ -397,7 +431,7 @@ class TestHangar:
                 length_m=25.0,
                 width_m=18.0,
                 door=Door(center_x_m=4.0, width_m=12.0),  # left edge at -2
-                maintenance_bay=MaintenanceBay(depth_m=9.0),
+                maintenance_bay=MaintenanceBay(center_x_m=9.0, width_m=4.0, depth_m=9.0),
                 clearance_m=0.3,
                 wing_layer_clearance_m=0.2,
             )
@@ -408,7 +442,7 @@ class TestHangar:
                 length_m=25.0,
                 width_m=18.0,
                 door=Door(center_x_m=15.0, width_m=12.0),  # right edge at 21
-                maintenance_bay=MaintenanceBay(depth_m=9.0),
+                maintenance_bay=MaintenanceBay(center_x_m=9.0, width_m=4.0, depth_m=9.0),
                 clearance_m=0.3,
                 wing_layer_clearance_m=0.2,
             )
@@ -419,7 +453,7 @@ class TestHangar:
                 length_m=25.0,
                 width_m=18.0,
                 door=Door(center_x_m=9.0, width_m=12.0),
-                maintenance_bay=MaintenanceBay(depth_m=30.0),
+                maintenance_bay=MaintenanceBay(center_x_m=9.0, width_m=4.0, depth_m=30.0),
                 clearance_m=0.3,
                 wing_layer_clearance_m=0.2,
             )
@@ -431,7 +465,7 @@ class TestHangar:
                 length_m=25.0,
                 width_m=18.0,
                 door=Door(center_x_m=9.0, width_m=12.0),
-                maintenance_bay=MaintenanceBay(depth_m=25.0),
+                maintenance_bay=MaintenanceBay(center_x_m=9.0, width_m=4.0, depth_m=25.0),
                 clearance_m=0.3,
                 wing_layer_clearance_m=0.2,
             )
@@ -442,7 +476,7 @@ class TestHangar:
             length_m=25.0,
             width_m=18.0,
             door=Door(center_x_m=6.0, width_m=12.0),
-            maintenance_bay=MaintenanceBay(depth_m=9.0),
+            maintenance_bay=MaintenanceBay(center_x_m=9.0, width_m=4.0, depth_m=9.0),
             clearance_m=0.3,
             wing_layer_clearance_m=0.2,
         )
@@ -454,11 +488,74 @@ class TestHangar:
             length_m=25.0,
             width_m=18.0,
             door=Door(center_x_m=12.0, width_m=12.0),
-            maintenance_bay=MaintenanceBay(depth_m=9.0),
+            maintenance_bay=MaintenanceBay(center_x_m=9.0, width_m=4.0, depth_m=9.0),
             clearance_m=0.3,
             wing_layer_clearance_m=0.2,
         )
         assert h.door.center_x_m == 12.0
+
+    def test_maintenance_bay_overflows_left(self) -> None:
+        with pytest.raises(ValueError, match="MaintenanceBay.*doesn't fit in hangar width"):
+            Hangar(
+                length_m=25.0,
+                width_m=18.0,
+                door=Door(center_x_m=9.0, width_m=12.0),
+                # bay center at 4, width 10 → left edge at -1
+                maintenance_bay=MaintenanceBay(center_x_m=4.0, width_m=10.0, depth_m=9.0),
+                clearance_m=0.3,
+                wing_layer_clearance_m=0.2,
+            )
+
+    def test_maintenance_bay_overflows_right(self) -> None:
+        with pytest.raises(ValueError, match="MaintenanceBay.*doesn't fit in hangar width"):
+            Hangar(
+                length_m=25.0,
+                width_m=18.0,
+                door=Door(center_x_m=9.0, width_m=12.0),
+                # bay center at 15, width 10 → right edge at 20 > width=18
+                maintenance_bay=MaintenanceBay(center_x_m=15.0, width_m=10.0, depth_m=9.0),
+                clearance_m=0.3,
+                wing_layer_clearance_m=0.2,
+            )
+
+    def test_maintenance_bay_sub_epsilon_overflow_rejected(self) -> None:
+        """Just one µm past the wall must still trip the bounds check;
+        guards against a future flip of strict ``>`` to ``>=`` (which
+        the flush tests alone would not catch)."""
+        with pytest.raises(ValueError, match="MaintenanceBay.*doesn't fit in hangar width"):
+            Hangar(
+                length_m=25.0,
+                width_m=18.0,
+                door=Door(center_x_m=9.0, width_m=12.0),
+                # right edge at 18.000001 — strictly outside [0, 18]
+                maintenance_bay=MaintenanceBay(center_x_m=14.000001, width_m=8.0, depth_m=9.0),
+                clearance_m=0.3,
+                wing_layer_clearance_m=0.2,
+            )
+
+    def test_maintenance_bay_flush_with_left_wall_allowed(self) -> None:
+        """Bay's left edge exactly at x=0 is a legal boundary."""
+        h = Hangar(
+            length_m=25.0,
+            width_m=18.0,
+            door=Door(center_x_m=9.0, width_m=12.0),
+            maintenance_bay=MaintenanceBay(center_x_m=4.0, width_m=8.0, depth_m=9.0),
+            clearance_m=0.3,
+            wing_layer_clearance_m=0.2,
+        )
+        assert h.maintenance_bay.center_x_m == 4.0
+
+    def test_maintenance_bay_flush_with_right_wall_allowed(self) -> None:
+        """Bay's right edge exactly at x=width_m is a legal boundary."""
+        h = Hangar(
+            length_m=25.0,
+            width_m=18.0,
+            door=Door(center_x_m=9.0, width_m=12.0),
+            maintenance_bay=MaintenanceBay(center_x_m=14.0, width_m=8.0, depth_m=9.0),
+            clearance_m=0.3,
+            wing_layer_clearance_m=0.2,
+        )
+        assert h.maintenance_bay.center_x_m == 14.0
 
 
 class TestPlacement:
@@ -600,10 +697,12 @@ class TestLayout:
                 maintenance_plane="ghost",
             )
 
-    def test_maintenance_plane_must_be_placed(self) -> None:
+    def test_maintenance_plane_must_NOT_be_in_placements(self) -> None:
+        """maintenance_plane and placements are disjoint — the occupant is
+        treated as away (the bay is walled keep-out)."""
         a = _ok_aircraft("foo", movement_mode="always_own_gear", turn_radius_m=5.0)
         b = _ok_aircraft("bar", movement_mode="always_own_gear", turn_radius_m=5.0)
-        with pytest.raises(ValueError, match="is not placed"):
+        with pytest.raises(ValueError, match="must NOT be in placements"):
             Layout(
                 fleet=self._fleet_of(a, b),
                 hangar=_ok_hangar(),
@@ -615,21 +714,46 @@ class TestLayout:
                         heading_deg=0.0,
                         on_carts=False,
                     ),
+                    Placement(
+                        plane_id="bar",
+                        x_m=5.0,
+                        y_m=5.0,
+                        heading_deg=0.0,
+                        on_carts=False,
+                    ),
                 ),
                 maintenance_plane="bar",
             )
 
     def test_maintenance_plane_happy_path(self) -> None:
+        """maintenance_plane in fleet, absent from placements — the valid shape."""
         a = _ok_aircraft("foo", movement_mode="always_own_gear", turn_radius_m=5.0)
+        b = _ok_aircraft("bar", movement_mode="always_own_gear", turn_radius_m=5.0)
         layout = Layout(
-            fleet=self._fleet_of(a),
+            fleet=self._fleet_of(a, b),
             hangar=_ok_hangar(),
             placements=(
                 Placement(plane_id="foo", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False),
             ),
+            maintenance_plane="bar",
+        )
+        assert layout.maintenance_plane == "bar"
+
+    def test_maintenance_plane_with_empty_placements_allowed(self) -> None:
+        """The entire fleet may be out flying while one plane is in
+        maintenance — placements is empty, maintenance_plane is set,
+        Layout still constructs (the maintenance plane is in fleet but
+        absent from placements, which trivially satisfies the
+        disjoint-set invariant)."""
+        a = _ok_aircraft("foo", movement_mode="always_own_gear", turn_radius_m=5.0)
+        layout = Layout(
+            fleet=self._fleet_of(a),
+            hangar=_ok_hangar(),
+            placements=(),
             maintenance_plane="foo",
         )
         assert layout.maintenance_plane == "foo"
+        assert layout.placements == ()
 
     def test_fleet_key_must_match_aircraft_id(self) -> None:
         a = _ok_aircraft("real_id", movement_mode="always_own_gear", turn_radius_m=5.0)
@@ -711,7 +835,7 @@ class TestLayout:
 
 class TestConflict:
     def test_one_plane_conflict(self) -> None:
-        c = Conflict(kind="maintenance_position", planes=("foo",), detail="not in back zone")
+        c = Conflict(kind="hangar_bounds", planes=("foo",), detail="vertex past wall")
         assert len(c.planes) == 1
 
     def test_two_plane_conflict(self) -> None:
@@ -744,8 +868,8 @@ class TestConflict:
             Conflict(kind="x", planes=("foo", "foo"), detail="x")
 
     def test_single_factory(self) -> None:
-        c = Conflict.single(kind="maintenance_position", plane="foo", detail="x")
-        assert c.kind == "maintenance_position"
+        c = Conflict.single(kind="bay_intrusion", plane="foo", detail="x")
+        assert c.kind == "bay_intrusion"
         assert c.planes == ("foo",)
 
     def test_pair_factory(self) -> None:
@@ -851,3 +975,185 @@ class TestSearchConfig:
     def test_max_restarts_negative_rejected(self) -> None:
         with pytest.raises(ValueError, match="max_restarts"):
             SearchConfig(max_restarts=-1)
+
+    def test_search_config_spread_defaults_on(self) -> None:
+        cfg = SearchConfig()
+        assert cfg.spread is True
+        assert cfg.spread_scale_m is None
+
+    def test_search_config_spread_scale_must_be_positive_when_set(self) -> None:
+        with pytest.raises(ValueError, match="spread_scale_m"):
+            SearchConfig(spread_scale_m=0.0)
+        with pytest.raises(ValueError, match="spread_scale_m"):
+            SearchConfig(spread_scale_m=-2.0)
+        # None (adaptive) and positive are accepted
+        assert SearchConfig(spread_scale_m=None).spread_scale_m is None
+        assert SearchConfig(spread_scale_m=3.5).spread_scale_m == 3.5
+
+
+# ---------------------------------------------------------------------------
+# SolveResult.plans — best-effort tow-plan bundle (#197)
+# ---------------------------------------------------------------------------
+
+
+def _make_diag() -> SolverDiagnostics:
+    """Minimal valid SolverDiagnostics with all required fields set."""
+    return SolverDiagnostics(
+        restarts_attempted=0,
+        wall_time_s=0.1,
+        best_partial=None,
+        best_partial_layout=None,
+        seed=42,
+    )
+
+
+def _make_valid_layout() -> Layout:
+    """A minimal valid Layout (one plane, empty placements)."""
+    a = _ok_aircraft("p1", movement_mode="always_own_gear", turn_radius_m=5.0)
+    return Layout(
+        fleet={a.id: a},
+        hangar=_ok_hangar(),
+        placements=(Placement(plane_id="p1", x_m=5.0, y_m=10.0, heading_deg=0.0, on_carts=False),),
+    )
+
+
+class TestSolveResultPlans:
+    """Invariant tests for the SolveResult.plans best-effort tow-plan bundle."""
+
+    def test_solveresult_plans_must_align_with_layouts(self) -> None:
+        # found/found_partial: len(plans) must equal len(layouts).
+        diag = _make_diag()
+        layout = _make_valid_layout()
+        with pytest.raises(ValueError, match="plans"):
+            SolveResult(status="found", layouts=(layout,), plans=(), diagnostics=diag)
+
+    def test_solveresult_plans_allows_none_entries(self) -> None:
+        # Best-effort: a returned layout whose tow plan the tow planner could
+        # not compute is recorded as plans[i]=None — still aligned, still valid.
+        from hangarfit.towplanner import MovesPlan
+
+        diag = _make_diag()
+        layout = _make_valid_layout()
+        plan = MovesPlan(target_layout=layout, moves=())
+        sr = SolveResult(
+            status="found", layouts=(layout, layout), plans=(plan, None), diagnostics=diag
+        )
+        assert sr.plans == (plan, None)
+
+    def test_solveresult_plans_defaults_empty_for_backward_compat(self) -> None:
+        # Existing callers that build exhausted_budget/trivially_infeasible
+        # results without plans keep working.
+        diag = _make_diag()
+        sr = SolveResult(status="exhausted_budget", layouts=(), diagnostics=diag)
+        assert sr.plans == ()
+
+    def test_solveresult_empty_layout_status_rejects_stray_plans(self) -> None:
+        # plans is index-aligned with layouts for EVERY status, so an
+        # empty-layout status with a non-empty plans tuple is rejected too
+        # (not just the found/found_partial cardinality mismatch).
+        from hangarfit.towplanner import MovesPlan
+
+        diag = _make_diag()
+        stray = MovesPlan(target_layout=_make_valid_layout(), moves=())
+        with pytest.raises(ValueError, match="plans"):
+            SolveResult(status="exhausted_budget", layouts=(), plans=(stray,), diagnostics=diag)
+
+
+def test_solver_diagnostics_spread_fields_default_and_validate():
+    from hangarfit.models import SolverDiagnostics
+
+    d = SolverDiagnostics(
+        restarts_attempted=3,
+        wall_time_s=1.0,
+        best_partial=None,
+        best_partial_layout=None,
+        seed=7,
+    )
+    assert d.min_pairwise_gap_m == ()
+    assert d.valid_basins_found == 0
+
+    d2 = SolverDiagnostics(
+        restarts_attempted=3,
+        wall_time_s=1.0,
+        best_partial=None,
+        best_partial_layout=None,
+        seed=7,
+        min_pairwise_gap_m=(2.5,),
+        valid_basins_found=12,
+    )
+    assert d2.min_pairwise_gap_m == (2.5,)
+    assert d2.valid_basins_found == 12
+
+    import pytest
+
+    with pytest.raises(ValueError, match="valid_basins_found"):
+        SolverDiagnostics(
+            restarts_attempted=0,
+            wall_time_s=0.0,
+            best_partial=None,
+            best_partial_layout=None,
+            seed=0,
+            valid_basins_found=-1,
+        )
+
+
+def test_solver_diagnostics_rejects_negative_or_nan_gap():
+    import math
+
+    import pytest
+
+    from hangarfit.models import SolverDiagnostics
+
+    with pytest.raises(ValueError, match="min_pairwise_gap_m"):
+        SolverDiagnostics(
+            restarts_attempted=1,
+            wall_time_s=0.0,
+            best_partial=None,
+            best_partial_layout=None,
+            seed=0,
+            min_pairwise_gap_m=(-1.0,),
+        )
+    with pytest.raises(ValueError, match="min_pairwise_gap_m"):
+        SolverDiagnostics(
+            restarts_attempted=1,
+            wall_time_s=0.0,
+            best_partial=None,
+            best_partial_layout=None,
+            seed=0,
+            min_pairwise_gap_m=(math.nan,),
+        )
+    # math.inf is allowed (single-plane sentinel) — must NOT raise:
+    SolverDiagnostics(
+        restarts_attempted=1,
+        wall_time_s=0.0,
+        best_partial=None,
+        best_partial_layout=None,
+        seed=0,
+        min_pairwise_gap_m=(math.inf,),
+    )
+
+
+def test_solve_result_rejects_misaligned_min_pairwise_gap_m():
+    """SolveResult.__post_init__ rejects non-empty min_pairwise_gap_m whose
+    length differs from layouts (the parity guard added in #267)."""
+    import pytest
+
+    from hangarfit.models import SolverDiagnostics, SolveResult
+
+    layout = _make_valid_layout()
+    # diagnostics carries 2 gap entries but SolveResult has 1 layout — mismatch.
+    diag = SolverDiagnostics(
+        restarts_attempted=1,
+        wall_time_s=0.1,
+        best_partial=None,
+        best_partial_layout=None,
+        seed=42,
+        min_pairwise_gap_m=(1.0, 2.0),
+    )
+    with pytest.raises(ValueError, match="min_pairwise_gap_m"):
+        SolveResult(
+            status="found",
+            layouts=(layout,),
+            plans=(None,),
+            diagnostics=diag,
+        )

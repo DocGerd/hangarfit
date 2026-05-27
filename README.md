@@ -3,6 +3,7 @@
 ![CI](https://github.com/DocGerd/hangarfit/actions/workflows/ci.yml/badge.svg?branch=develop)
 [![codecov](https://codecov.io/gh/DocGerd/hangarfit/branch/develop/graph/badge.svg)](https://codecov.io/gh/DocGerd/hangarfit)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/DocGerd/hangarfit/badge)](https://securityscorecards.dev/viewer/?uri=github.com/DocGerd/hangarfit)
+[![OpenSSF Best Practices](https://www.bestpractices.dev/projects/12987/badge)](https://www.bestpractices.dev/projects/12987)
 
 An on-demand exception tool for a flying club's hangar parking.
 
@@ -36,7 +37,7 @@ Follow progress in [GitHub Issues](https://github.com/DocGerd/hangarfit/issues) 
 
 ## Install
 
-Requires Python 3.11 or newer.
+Requires Python 3.12 or newer.
 
 ```bash
 pip install -e ".[dev]"
@@ -108,7 +109,10 @@ A scenario YAML carries `fleet:` / `hangar:` refs plus a `fleet_in:` list (which
 |---|---|
 | 0 | Found at least one valid layout (`status` = `found` or `found_partial`) |
 | 1 | No valid layout found (`status` = `exhausted_budget` or `trivially_infeasible`); with `--strict-k`, also fires for `found_partial` |
-| 2 | Could not solve (file not found, bad YAML, invariant violation, IO error during render/write) |
+| 2 | Could not solve (file not found, bad YAML, invariant violation, IO error during render/write, or `--render-paths` without `--render`) |
+| 3 | `--render-paths` only: valid layout(s) found but the v1 tow planner could not route **any** of them. The layouts still render (without path overlays); each blocked layout gets a stderr warning naming the plane. Distinct from code 1 (no layout at all). |
+
+`--render-paths` overlays each plane's tow path on the `--render` PNG(s) (one colour per plane). It tow-plans every returned layout; a layout the v1 planner cannot route is rendered without paths. If **at least one** candidate is routable the exit code is 0 (un-routable ones still warn); code 3 fires only when none are routable.
 
 ### JSON schemas
 
@@ -128,15 +132,22 @@ The test suite includes a strut-aware golden set for the collision checker cover
 ## Project layout
 
 ```
-src/hangarfit/      # models, loader, geometry, collisions, visualize, cli
+src/hangarfit/      # models, loader, geometry, collisions, solver, towplanner, visualize, cli
 data/               # fleet.yaml, hangar.yaml — placeholder measurements
 layouts/            # hand-authored candidate layouts, one YAML per scenario
 tests/              # pytest suite, including strut-aware collision golden tests
 ```
 
+## Documentation
+
+- [`docs/architecture/`](docs/architecture/) — the project's architecture documentation, in a slim subset of the [Arc42](https://arc42.org/) template. Read [§1 Introduction & Goals](docs/architecture/01-introduction-and-goals.md) and [§3 Context & Scope](docs/architecture/03-context-and-scope.md) first.
+- [`docs/adr/`](docs/adr/) — Architecture Decision Records (the *why* behind the architecture). Start with [ADR-0000](docs/adr/0000-record-architecture-decisions.md), then read individual records as their topics come up.
+- **Community & governance** — [`CONTRIBUTING.md`](CONTRIBUTING.md) (how to contribute), [`CODE_OF_CONDUCT.md`](CODE_OF_CONDUCT.md) (Contributor Covenant), and [`GOVERNANCE.md`](GOVERNANCE.md) (decision-making model and key roles).
+- **Security & standards** — [`docs/security-posture.md`](docs/security-posture.md) (OpenSSF Scorecard structural zeros, explained), [`docs/openssf-best-practices-badge.md`](docs/openssf-best-practices-badge.md) (Best Practices Badge — Passing answer script), [`docs/openssf-best-practices-badge-silver.md`](docs/openssf-best-practices-badge-silver.md) (Best Practices Badge — Silver answer script), and [`docs/osps-baseline-L1.md`](docs/osps-baseline-L1.md) (OpenSSF Baseline Level-1 self-attestation).
+
 ## More depth
 
-[`CLAUDE.md`](CLAUDE.md) is the durable project spec: the fleet (nine aircraft, mostly high-wing, with one low-wing), the parts-based collision rule, the coordinate convention (including the non-obvious heading transform), and the Phase 1 deliverables list. Read it before contributing anything geometric.
+Architecture lives in [`docs/architecture/`](docs/architecture/) and [`docs/adr/`](docs/adr/) — start with [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md) for the parts-based collision rule, the coordinate convention (including the non-obvious heading transform), and the testing posture; the matching ADRs ([ADR-0001](docs/adr/0001-aircraft-parts-model.md), [ADR-0002](docs/adr/0002-determinant-minus-one-transform.md)) record *why* each decision has the shape it does. Read those before contributing anything geometric. [`CLAUDE.md`](CLAUDE.md) is the operational guide — workflow, subagents, project-local config — not the architectural canon.
 
 ## License
 

@@ -1,0 +1,27 @@
+# Strict-inequality boundary: a part vertex landing exactly on a bay
+# edge counts as outside.
+#
+# Bay (data/hangar.yaml placeholder): x ∈ (9, 18), y > 16. The
+# `_bay_intrusion_conflicts` test predicate is
+# `x_min < x < x_max and y > y_min` — strict on all three interior
+# edges. A vertex with `x == x_min` (= 9) falls in the closed-open
+# gap and must NOT trip the rule.
+#
+# ctsl at (4.705, 20, 0) — wing world x = [0.41, 9.0], y = [19.97,
+# 21.37]. The wing's right-rear and right-front vertices both land
+# at x = 9.0 exactly (the left edge of the bay). x_min < 9.0 is
+# False, so neither vertex is "strictly inside". → no intrusion,
+# valid layout. Guards against a future tightening of `<` to `<=`.
+
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
+
+maintenance:
+  plane: scheibe_falke
+
+placements:
+  - plane: ctsl
+    x_m: 4.705
+    y_m: 20.0
+    heading_deg: 0.0
+    on_carts: false

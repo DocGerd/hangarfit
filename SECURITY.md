@@ -2,7 +2,7 @@
 
 ## Supported Versions
 
-`hangarfit` is a Phase 1 project. Only the `main` branch (current release) receives security updates. Older tagged versions do not receive backports.
+`hangarfit` is a single-maintainer hobby project. Only the latest release (the `main` branch) receives security updates; older tagged versions do not receive backports.
 
 | Version | Status |
 |---------|--------|
@@ -27,3 +27,9 @@ The following areas have non-zero attack surface and merit scrutiny:
 - **Visualizer** (`src/hangarfit/visualize.py`): renders user-supplied aircraft placements and conflict data
 
 We welcome reports of resource exhaustion, parsing edge cases, or rendering defects that could affect the tool's reliability or the user's system.
+
+## Project security posture
+
+`hangarfit` runs an [OpenSSF Scorecard](https://securityscorecards.dev/) workflow on every push to `develop` and on a weekly schedule (see [`.github/workflows/scorecard.yml`](.github/workflows/scorecard.yml)). Several of the checks score 0 for structural reasons specific to this project — single maintainer, single deployment site, deliberately unpublished — rather than because the underlying concern is unaddressed.
+
+The rationale for each structural zero, plus what we *do* in lieu of the standard remediation (e.g. the `/pr-review` workflow substituting for formal `APPROVED` reviews), is documented in [`docs/security-posture.md`](docs/security-posture.md). Read that before drawing conclusions from the aggregate Scorecard number.

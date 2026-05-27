@@ -1,0 +1,254 @@
+name: Release
+
+# Builds an sdist and wheel from a v* tag, signs each with Sigstore
+# keyless cosign (the workflow's GitHub OIDC identity is exchanged for
+# a short-lived Fulcio certificate — no long-lived signing key is
+# stored anywhere), and publishes the artifacts plus their Sigstore
+# bundles to the matching GitHub Release.
+#
+# Verification model
+#   Each release artifact ships with a `.sigstore.json` bundle that
+#   packs the signature, the Fulcio certificate, and the Rekor
+#   transparency-log inclusion proof. A verifier downloads the
+#   artifact + bundle and runs:
+#       cosign verify-blob \
+#           --bundle <artifact>.sigstore.json \
+#           --certificate-identity-regexp 'github.com/DocGerd/hangarfit/.github/workflows/release.yml@.*' \
+#           --certificate-oidc-issuer 'https://token.actions.githubusercontent.com' \
+#           <artifact>
+#   The cert chains to Sigstore's root, and the identity check pins
+#   the signature to *this workflow path* on *this repository*. No
+#   long-lived key material to compromise.
+#
+# Why artifact signing rather than `git tag -s` (GPG-signed tags)
+#   Scorecard's `Signed-Releases` check inspects *Release artifacts*,
+#   not tag objects (https://github.com/ossf/scorecard/blob/main/docs/checks.md#signed-releases).
+#   GPG-signed tags are fine on their own merits but do not move this
+#   check. Keyless cosign also avoids the operational tax of
+#   maintaining a GPG key for a single-maintainer project.
+#
+# Triggers
+#   - `push: tags: ['v*']` — automatic for new releases.
+#   - `workflow_dispatch` with `tag` input — manual re-run on an
+#     existing tag, used for backfilling pre-existing releases or
+#     re-signing after a transient failure.
+#
+# Refs: closes #138 (raises the Scorecard Signed-Releases score).
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing tag to build and (re-)release (e.g. v0.6.0).'
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  # `github.ref_name` returns the bare tag name for tag pushes, which
+  # matches the shape of the dispatch input. Using the same key for
+  # both triggers prevents a push and a dispatch of the same tag from
+  # racing.
+  group: release-${{ inputs.tag || github.ref_name }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    name: Build, sign, and publish release artifacts
+    runs-on: ubuntu-latest
+    permissions:
+      # `gh release create` / `gh release upload` mutate Release
+      # objects, which live under the `contents` scope of GITHUB_TOKEN.
+      contents: write
+      # Required for Sigstore keyless signing — cosign reads the
+      # `ACTIONS_ID_TOKEN_REQUEST_TOKEN` / `ACTIONS_ID_TOKEN_REQUEST_URL`
+      # env vars that `id-token: write` makes available, exchanges the
+      # OIDC token for a short-lived Fulcio certificate, and uses it
+      # to sign.
+      id-token: write
+
+    steps:
+      - name: Resolve tag (push event or dispatch input)
+        id: tag
+        # User-controllable workflow_dispatch input is laundered via
+        # env: so it can never end up inside the run: script as a
+        # template-interpolated shell fragment. (See
+        # https://github.blog/security/vulnerability-research/how-to-catch-github-actions-workflow-injections-before-attackers-do/)
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          DISPATCH_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "name=$DISPATCH_TAG" >> "$GITHUB_OUTPUT"
+          else
+            echo "name=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Check out the tag's commit
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          ref: ${{ steps.tag.outputs.name }}
+          persist-credentials: false
+
+      - name: Log resolved tag → commit binding
+        # Makes the resolved commit SHA visible in the run log so an
+        # attentive operator can spot a force-pushed tag pointing at a
+        # different commit than was originally released. Tag/branch
+        # protection (#141) is the proper defence; this log is the
+        # cheap "we'd notice" signal.
+        env:
+          TAG: ${{ steps.tag.outputs.name }}
+        run: |
+          set -euo pipefail
+          sha=$(git rev-parse HEAD)
+          echo "Building tag $TAG at commit $sha"
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install the build toolchain (hash-pinned)
+        # The signing workflow must build from a hash-verified toolchain.
+        # An unpinned `build` frontend — or the isolated, unpinned backend
+        # fetch that `python -m build` performs by default — would let a
+        # `build`/`setuptools`/`wheel`/`packaging` package compromised on
+        # PyPI taint the artifacts that this workflow then signs with its
+        # legitimate Fulcio identity. The Sigstore signatures would still
+        # verify; nothing would look broken. requirements-build.txt pins
+        # build + setuptools + wheel (+ transitive pyproject-hooks,
+        # packaging) with hashes. Addresses #168 and the release-side
+        # backend gap (sibling of #162) — the PR body carries the
+        # auto-closing `Closes`.
+        run: pip install --require-hashes -r requirements-build.txt
+
+      - name: Build sdist and wheel
+        # --no-isolation builds with the hash-verified host toolchain
+        # installed above instead of letting `build` create an isolated
+        # env that re-fetches the PEP-517 backend (setuptools/wheel)
+        # unpinned.
+        run: python -m build --no-isolation
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6  # v4.1.2
+
+      - name: Sign each artifact with keyless cosign
+        # `--yes` is the CI-safe non-interactive flag (replaces the
+        # removed `--force` from cosign v2); on the SHA-256 / new-bundle
+        # path it's effectively a no-op but is the documented form.
+        #
+        # `--bundle` writes a single self-contained Sigstore bundle
+        # per artifact: it packs the signature, the Fulcio certificate,
+        # and the Rekor transparency-log inclusion proof into one JSON
+        # file. Verifiers run `cosign verify-blob --bundle <file>`.
+        # (The deprecated `--output-signature`/`--output-certificate`
+        # two-file form was rejected in favour of `--bundle` because
+        # cosign v3 marks those flags deprecated.)
+        run: |
+          set -euo pipefail
+          shopt -s failglob
+
+          # Assert the build produced exactly the expected outputs.
+          # Surfacing the error here rather than three steps later
+          # when cosign can't open a literal "*.tar.gz" or "*.whl".
+          sdist_count=$(find dist -maxdepth 1 -name '*.tar.gz' | wc -l)
+          wheel_count=$(find dist -maxdepth 1 -name '*.whl' | wc -l)
+          if [ "$sdist_count" -ne 1 ] || [ "$wheel_count" -ne 1 ]; then
+            echo "Expected exactly 1 sdist + 1 wheel in dist/; got sdist=$sdist_count wheel=$wheel_count" >&2
+            ls -la dist/ >&2
+            exit 1
+          fi
+
+          for artifact in dist/*.tar.gz dist/*.whl; do
+            cosign sign-blob --yes \
+              --bundle "${artifact}.sigstore.json" \
+              "${artifact}"
+          done
+
+          # Post-sign invariant: each artifact must have a bundle.
+          # Makes the no-partial-signing rule load-bearing so a future
+          # refactor (e.g. splitting sign + upload across jobs) can't
+          # silently propagate half-signed state.
+          for artifact in dist/*.tar.gz dist/*.whl; do
+            [ -f "${artifact}.sigstore.json" ] || {
+              echo "Missing .sigstore.json bundle for $artifact" >&2
+              exit 1
+            }
+          done
+
+          ls -la dist/
+
+      - name: Create the GitHub Release if it doesn't exist yet
+        # `gh release view` returns exit code 1 for *all* of:
+        # release-not-found, auth failure, network error, 5xx,
+        # rate-limit. Swallowing stderr would conflate them and a
+        # transient API blip would silently push us into a confusing
+        # `release already exists` error from `gh release create`
+        # downstream. Capture stderr; only treat literal
+        # "release not found" as the create signal.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.name }}
+        run: |
+          set -euo pipefail
+          view_out=$(gh release view "$TAG" 2>&1) && view_rc=0 || view_rc=$?
+          if [ "$view_rc" -eq 0 ]; then
+            echo "Release for $TAG already exists; skipping create."
+          elif echo "$view_out" | grep -qxF "release not found"; then
+            gh release create "$TAG" \
+              --title "$TAG" \
+              --notes-from-tag
+          else
+            echo "gh release view failed (rc=$view_rc) with unexpected output:" >&2
+            echo "$view_out" >&2
+            exit "$view_rc"
+          fi
+
+      - name: Upload signed artifacts to the Release
+        # `--clobber` lets a re-run on the same tag overwrite the prior
+        # upload — important for retry semantics (Fulcio outage, etc.)
+        # but it *silently* replaces the prior Fulcio certificate with
+        # a fresh one. The pre-flight WARNING below makes the
+        # cert-rotation visible in the workflow log so external
+        # verifiers caching the original cert know to refresh.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.name }}
+        run: |
+          set -euo pipefail
+          shopt -s failglob
+
+          assets=( dist/*.tar.gz dist/*.tar.gz.sigstore.json
+                   dist/*.whl    dist/*.whl.sigstore.json )
+
+          # Explicit existence check converts "missing upstream output"
+          # from an opaque `gh release upload` error into a clear
+          # "missing expected asset" failure attributed to the right
+          # upstream step.
+          for a in "${assets[@]}"; do
+            [ -f "$a" ] || { echo "Missing expected asset: $a" >&2; exit 1; }
+          done
+
+          # Visibility for the clobber case — fresh Fulcio cert
+          # replacing the original. The `|| true` covers both the
+          # first-time-release path (the create step above just made
+          # an empty release; no assets to warn about) and transient
+          # API blips here (the upload below will fail loudly on a
+          # real outage, so we don't lose the error). `-F` on the
+          # grep makes the asset-name match a fixed string — wheel
+          # filenames contain `.` which would otherwise be a regex
+          # wildcard.
+          existing=$(gh release view "$TAG" --json assets --jq '.assets[].name' 2>/dev/null || true)
+          for a in "${assets[@]}"; do
+            name=$(basename "$a")
+            if echo "$existing" | grep -qxF "$name"; then
+              echo "WARNING: about to clobber existing asset $name on $TAG (fresh Fulcio cert replaces the original)" >&2
+            fi
+          done
+
+          gh release upload "$TAG" "${assets[@]}" --clobber

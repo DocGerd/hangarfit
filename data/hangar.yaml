@@ -5,7 +5,8 @@
 #
 # Coordinates: (0, 0) at the front-left corner of the hangar floor,
 # looking down. +x runs right along the door wall, +y runs deeper
-# into the hangar. See CLAUDE.md for the full convention.
+# into the hangar. See `docs/architecture/08-crosscutting-concepts.md`
+# "The coordinate convention" for the full convention.
 
 length_m: 25.0          # depth from front wall (door side) to back wall
 width_m: 18.0           # left-to-right span
@@ -15,7 +16,12 @@ door:
   width_m: 12.0         # door opening width
 
 maintenance_bay:
-  depth_m: 9.0          # back-most strip that doubles as the maintenance bay
+  # Partial-width, back-anchored rectangle. PLACEHOLDER values — real
+  # measurements will reset all three. Right-corner bay so the partial-width
+  # path is exercised by the canonical layout.
+  center_x_m: 13.5      # right side of the 18 m hangar (placeholder)
+  width_m: 9.0          # right half (placeholder)
+  depth_m: 9.0          # back nine meters (placeholder)
 
 clearance_m: 0.3        # minimum horizontal gap between any two aircraft parts
 wing_layer_clearance_m: 0.2  # minimum vertical gap between two parts at the same XY

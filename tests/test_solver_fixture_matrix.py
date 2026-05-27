@@ -20,6 +20,26 @@ from hangarfit.solver import _heading_delta_short_arc, solve
 FIXTURES = "tests/fixtures"
 
 
+@pytest.fixture(autouse=True)
+def _stub_towplanning(monkeypatch):
+    """Keep these fixture-matrix tests fast by stubbing tow-planning.
+
+    solve() tow-plans every returned layout by default (``plan_paths=True``,
+    #197), and tow-planning runs a bounded Hybrid-A* search per plane —
+    seconds on a multi-plane fill. These tests assert the user-facing
+    *layout* contract (status, validity, pins, cart locks), never on
+    ``plans``, so a trivial ``plan_fill`` stub preserves the default code
+    path while removing the cost. The real planner↔solver integration lives
+    in ``tests/test_solver_towplanner.py``.
+    """
+    import hangarfit.solver as solver_mod
+    from hangarfit.towplanner import MovesPlan
+
+    monkeypatch.setattr(
+        solver_mod, "plan_fill", lambda target: MovesPlan(target_layout=target, moves=())
+    )
+
+
 def _assert_universal_properties(r: SolveResult, max_wall_time_s: float | None = None) -> None:
     """Apply spec §6.2 property assertions that every fixture test
     shares: status enum, every layout independently valid, seed populated,
@@ -115,7 +135,7 @@ def test_solve_pinned_one_plane_honors_pin():
         budget_s=5.0,
         alternatives=1,
         seed=42,
-        search=SearchConfig(max_restarts=5),
+        search=SearchConfig(max_restarts=5, spread=False),
     )
 
     assert r.status == "found", (
@@ -162,7 +182,7 @@ def test_solve_repair_minimal_edit_honors_all_pins():
         budget_s=5.0,
         alternatives=1,
         seed=42,
-        search=SearchConfig(max_restarts=5),
+        search=SearchConfig(max_restarts=5, spread=False),
     )
 
     assert r.status == "found", (
@@ -212,7 +232,7 @@ def test_solve_force_carts_lock_respects_lock():
         budget_s=5.0,
         alternatives=1,
         seed=42,
-        search=SearchConfig(max_restarts=5),
+        search=SearchConfig(max_restarts=5, spread=False),
     )
 
     assert r.status == "found", (
@@ -264,62 +284,37 @@ def test_solve_force_no_carts_conflict_raises_loader_error():
 # ── G.5: solve_maintenance_bay_required ─────────────────────────────────
 
 
-def test_solve_maintenance_bay_required_places_maintenance_in_bay():
-    """The maintenance plane's fuselage centroid must lie in the back
-    strip when the scenario sets it without pinning. Spec §6.5: `found`,
-    centroid in bay strip.
-
-    Direct geometric assertion via aircraft_parts_world rather than
-    re-running collisions.check (the universal-properties helper already
-    runs check). This isolates the maintenance-bay invariant under test
-    from the rest of the validity surface.
+def test_solve_maintenance_bay_required_excludes_occupant_from_placements():
+    """A scenario naming a maintenance plane must produce a layout where
+    that plane is absent from ``placements`` (the bay is closed; the
+    occupant is treated as away) — and the remaining N−1 planes form a
+    valid layout. The bay-perimeter intrusion rule itself is exercised
+    by separate goldens once it ships.
     """
-    from hangarfit.geometry import aircraft_parts_world
-
     s = load_scenario(f"{FIXTURES}/solve_maintenance_bay_required.yaml")
-    # Calibration (spec §4.3, ``K = max(observed × 2, 5)`` under ``seed=42``):
-    # observed restarts_attempted = 1 (deterministic across 3 trials); K = 5.
-    # A regression that pushes this beyond 5 restarts trips the assert below
-    # instead of silently skipping.
-    #
-    # wall_time_s bounded below 1.0s (#122); calibrated as
-    # ``min(budget * 0.5, max(observed * 4, 1.0))`` with observed ≈ 0.001s
-    # (1.0s floor dominates — prevents flake when observed × 4 << 0.01s).
     r = solve(
         s,
         budget_s=5.0,
         alternatives=1,
         seed=42,
-        search=SearchConfig(max_restarts=5),
+        search=SearchConfig(max_restarts=5, spread=False),
     )
 
     assert r.status == "found", (
         f"Fixture 'solve_maintenance_bay_required.yaml' exhausted within max_restarts=5 "
-        f"(restarts_attempted={r.diagnostics.restarts_attempted}); a regression "
-        f"is likely (was previously found within 1 restart under seed=42)."
+        f"(restarts_attempted={r.diagnostics.restarts_attempted})."
     )
 
     _assert_universal_properties(r, max_wall_time_s=1.0)
     layout = r.layouts[0]
     assert layout.maintenance_plane == "wild_thing"
-
-    maint_placement = next(p for p in layout.placements if p.plane_id == "wild_thing")
-    fuselage_parts = [
-        wp
-        for wp in aircraft_parts_world(layout.fleet["wild_thing"], maint_placement)
-        if wp.kind == "fuselage"
-    ]
-    assert fuselage_parts, "wild_thing has no fuselage parts (fixture-data bug)"
-    # Mirror collisions.py:147-148's area-weighted union centroid; a
-    # plain mean of part centroids would silently diverge from production
-    # the moment any aircraft gained a second fuselage part.
-    from shapely.ops import unary_union
-
-    cy = unary_union([wp.polygon for wp in fuselage_parts]).centroid.y
-    bay_start_y = layout.hangar.length_m - layout.hangar.maintenance_bay.depth_m
-    assert cy >= bay_start_y, (
-        f"maintenance plane fuselage centroid y={cy:.2f} < bay_start_y={bay_start_y:.2f}"
+    placed_ids = {p.plane_id for p in layout.placements}
+    assert "wild_thing" not in placed_ids, (
+        f"maintenance occupant must be absent from placements, got {placed_ids}"
     )
+    # Every other plane in fleet_in is placed.
+    expected_placed = set(s.fleet_in) - {"wild_thing"}
+    assert placed_ids == expected_placed
 
 
 # ── G.6: solve_all_nine_large_hangar ────────────────────────────────────
@@ -350,7 +345,7 @@ def test_solve_all_nine_large_hangar_finds_layout():
         budget_s=30.0,
         alternatives=1,
         seed=42,
-        search=SearchConfig(max_restarts=5),
+        search=SearchConfig(max_restarts=5, spread=False),
     )
 
     assert r.status == "found", (
@@ -361,8 +356,11 @@ def test_solve_all_nine_large_hangar_finds_layout():
 
     _assert_universal_properties(r, max_wall_time_s=15.0)
     assert len(r.layouts) == 1
-    assert len(r.layouts[0].placements) == 9
+    # 9-plane fleet with one in maintenance → 8 placed planes. The Layout
+    # invariant (#103) forbids the occupant from appearing in placements.
+    assert len(r.layouts[0].placements) == 8
     # Maintenance plane survival: a regression where the solver dropped
-    # `maintenance_plane=None` would still produce a valid 9-plane layout
-    # because the bay rule no-ops when no maintenance plane is set.
+    # ``maintenance_plane=None`` would still produce a valid 8-plane layout
+    # (the bay rule no-ops when no maintenance plane is set), so we pin the
+    # field explicitly to catch that case.
     assert r.layouts[0].maintenance_plane == "scheibe_falke"

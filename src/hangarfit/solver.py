@@ -7,17 +7,22 @@ the current implementation supports:
 - pre-search infeasibility detection (§4.1)  [Chunk C]
 - random-restart hill climb with min-conflicts descent (§4.2-§4.4)  [Chunk D]
 - K-diverse alternatives + termination (§4.5-§4.7)  [Chunk E]
+- inter-plane spread post-pass (``_spread`` / ``_inter_plane_energy``; ADR-0008,
+  default on via ``SearchConfig.spread``)
 """
 
 from __future__ import annotations
 
 import logging
+import math
 import random as _random_module
 import secrets
 import sys
 import time
+from typing import NamedTuple
 
 from hangarfit.collisions import check as check_layout
+from hangarfit.geometry import WorldPart, aircraft_parts_world
 from hangarfit.models import (
     Aircraft,
     CheckResult,
@@ -31,6 +36,7 @@ from hangarfit.models import (
     SolveResult,
     SolveStatus,
 )
+from hangarfit.towplanner import MovesPlan, NoFeasiblePlanError, plan_fill
 
 _logger = logging.getLogger(__name__)
 
@@ -43,10 +49,39 @@ def solve(
     seed: int | None = None,
     diversity: DiversityConfig | None = None,
     search: SearchConfig | None = None,
+    plan_paths: bool = True,
 ) -> SolveResult:
     """Solve a Scenario into up to ``alternatives`` diverse valid Layouts.
 
     See spec §3.3 for the contract.
+
+    Returns the **best-spread** valid layout(s) found across *all* restarts
+    within budget (best-of-all-basins, #267) — NOT the first valid one. The
+    restart loop runs to ``budget_s`` / ``search.max_restarts`` only when
+    ``search.spread`` is enabled (the default); recording every valid basin
+    (spread-polished) into a pool, the returned layouts are then chosen from
+    that pool by maximin plan-view gap subject to the diversity gate
+    (ADR-0004). With ``search.spread=False`` there is nothing to optimize, so
+    the loop keeps the pre-#267 first-valid early exit — it stops as soon as
+    ``alternatives`` diverse valid layouts have been found (a seed-deterministic
+    termination, independent of wall-clock; preserves the ``--no-spread`` fast
+    path). Consequently the returned ``alternatives`` are ordered
+    **best-spread-first**, not in discovery order, and
+    ``diagnostics.min_pairwise_gap_m`` / ``diagnostics.valid_basins_found``
+    surface the selected gaps and the size of the explored basin pool.
+
+    When ``plan_paths`` is ``True`` (the default), each returned layout is
+    also tow-planned (#197): ``result.plans[i]`` is the
+    :class:`~hangarfit.towplanner.MovesPlan` for ``result.layouts[i]``, or
+    ``None`` where the v1 planner could not route it (best-effort
+    enrichment — a ``None`` plan never discards an otherwise-valid layout;
+    see ADR-0007 and :class:`~hangarfit.models.SolveResult`). Pass
+    ``plan_paths=False`` to skip tow-planning entirely — useful when only
+    the static layout is needed, since tow-planning runs a bounded
+    Hybrid-A* search per plane and is the dominant cost on multi-plane
+    fills. With it off, ``plans`` is all-``None`` (still index-aligned).
+    Tow-planning is RNG-free, so it preserves the seeded determinism
+    contract (ADR-0003) end-to-end through the bundle.
     """
     if diversity is None:
         diversity = DiversityConfig()
@@ -120,9 +155,9 @@ def solve(
     # natural tuple lex-compare unambiguous.
     best_partial_score: tuple[int, float] = (sys.maxsize, float("inf"))
     best_partial_layout: Layout | None = None
-    accepted_layouts: list[Layout] = []
-    diversity_rejected_count = 0
+    pool: list[_SpreadCandidate] = []
     restart_index = 0
+    spread_scale = _resolve_spread_scale(scenario, search)
 
     # Outer restart loop. Two independent termination gates; first to
     # trip wins:
@@ -131,8 +166,8 @@ def solve(
     #      SearchConfig field (spec §4.2). `None` preserves the
     #      pre-v0.6.0 wall-clock-only behavior. Useful for
     #      cross-machine-deterministic exhaustion canaries.
-    # Inside the loop, the K-diverse termination at the bottom is the
-    # third gate ("found enough alternatives") — independent of these.
+    # Selection of the K best basins happens after the loop completes;
+    # the loop itself runs only to budget / max_restarts.
     while time.monotonic() - start < budget_s and (
         search.max_restarts is None or restart_index < search.max_restarts
     ):
@@ -149,14 +184,16 @@ def solve(
         # ValueError is reachable here. `_enumerate_cart_buckets` already
         # filters bucket assignments that would violate the cart rule;
         # Scenario invariants enforce pin/on_carts/movement_mode consistency;
-        # placements are over `scenario.fleet_in` (no duplicates, all in
-        # fleet); the maintenance plane is in placements by construction.
-        # Any ValueError here would mean a real bug — let it propagate as
-        # one rather than burn the budget on silent restart absorption.
+        # `_initial_placements` skips the maintenance plane so the
+        # bay-occupant invariant holds; remaining placements are over
+        # ``scenario.fleet_in − {maintenance_plane}`` (no duplicates, all in
+        # fleet). Any ValueError here would mean a real bug — let it
+        # propagate as one rather than burn the budget on silent restart
+        # absorption.
         initial_layout = Layout(
             fleet=scenario.fleet,
             hangar=scenario.hangar,
-            placements=tuple(placements[pid] for pid in scenario.fleet_in),
+            placements=tuple(placements.values()),
             maintenance_plane=scenario.maintenance_plane,
         )
         current_score = _score(initial_layout)
@@ -171,31 +208,34 @@ def solve(
             if time.monotonic() - start >= budget_s:
                 break
             if current_score == (0, 0.0):
-                # Valid! Apply the K-diversity filter (spec §4.6). When
-                # accepted_layouts is empty, _is_diverse_enough is vacuously
-                # True — the first valid layout is always accepted (and the
-                # alternatives=1 path never re-enters this branch). For K>1
-                # subsequent valid layouts are gated on pairwise diversity vs
-                # everything already accepted.
+                if search.spread:
+                    placements = _spread(
+                        placements,
+                        scenario,
+                        rng,
+                        search,
+                        start=start,
+                        budget_s=budget_s,
+                        pinned_planes=pinned_planes,
+                    )
+                # _spread preserves every Layout invariant; a ValueError here
+                # would be a structural bug, so let it propagate.
                 candidate_layout = Layout(
                     fleet=scenario.fleet,
                     hangar=scenario.hangar,
-                    placements=tuple(placements[pid] for pid in scenario.fleet_in),
+                    placements=tuple(placements.values()),
                     maintenance_plane=scenario.maintenance_plane,
                 )
-                if _is_diverse_enough(candidate_layout, accepted_layouts, diversity):
-                    accepted_layouts.append(candidate_layout)
-                else:
-                    # The candidate is valid (score (0, 0.0)) but too
-                    # similar to an already-accepted layout. Count it
-                    # so callers can see how much search work was lost
-                    # to the diversity gate (spec §4.1 of the v0.6.0
-                    # solver-polish release design).
-                    diversity_rejected_count += 1
-                # Whether accepted or not, restart to try for a different
-                # basin. Continuing to descend from a valid state would just
-                # walk in place (already at score (0, 0.0)).
-                break
+                min_gap, energy = _spread_quality(placements, scenario, spread_scale)
+                pool.append(
+                    _SpreadCandidate(
+                        layout=candidate_layout,
+                        min_gap=min_gap,
+                        energy=energy,
+                        restart_index=restart_index,
+                    )
+                )
+                break  # restart to seek a different basin
 
             step_result = _descent_step(
                 placements=placements,
@@ -218,7 +258,7 @@ def solve(
                 best_partial_layout = Layout(
                     fleet=scenario.fleet,
                     hangar=scenario.hangar,
-                    placements=tuple(placements[pid] for pid in scenario.fleet_in),
+                    placements=tuple(placements.values()),
                     maintenance_plane=scenario.maintenance_plane,
                 )
 
@@ -226,23 +266,63 @@ def solve(
                 break  # stall — restart
 
         restart_index += 1
-        if len(accepted_layouts) >= alternatives:
-            break
+
+        # Best-of-all-basins selection (#267) only adds value when the spread
+        # post-pass can reorder basins by separation quality. With spread
+        # disabled there is nothing to optimize, so continuing past
+        # `alternatives` diverse valid layouts cannot improve the result —
+        # restore the pre-#267 early exit. This keeps the `--no-spread` fast
+        # path (the speed escape hatch) and gives a seed-deterministic
+        # termination for that mode (independent of wall-clock).
+        if not search.spread:
+            selected_so_far, _ = _select_spread_diverse(pool, alternatives, diversity)
+            if len(selected_so_far) >= alternatives:
+                break
 
     elapsed = time.monotonic() - start
 
-    if accepted_layouts:
-        # `found` fires when the outer loop broke via the
-        # `len(accepted_layouts) >= alternatives` check above (so the count
-        # is exactly `alternatives` — Chunk D path and Chunk E happy path).
-        # `found_partial` fires when budget exhausted with `0 < n < K`
-        # — reachable in Chunk E for K>1 (the diversity-impossible scenario
-        # is one driver, but any K>1 run that runs out of budget mid-fill
-        # also lands here).
+    selected, diversity_rejected_count = _select_spread_diverse(pool, alternatives, diversity)
+
+    if selected:
+        accepted_layouts = [c.layout for c in selected]
+        min_gaps = tuple(c.min_gap for c in selected)
         status: SolveStatus = "found" if len(accepted_layouts) >= alternatives else "found_partial"
+        # Tow-plan every returned layout (best-effort enrichment, #197). The
+        # v2 planner (Reeds–Shepp arcs + bounded Hybrid-A* — #222/#261 under
+        # ADR-0007 + ADR-0010) cannot route dense multi-plane fills and has
+        # documented false-negatives, so an un-routable layout is recorded as
+        # plans[i]=None rather than discarding the otherwise-valid static
+        # arrangement — the layout is the headline answer; the tow plan is
+        # advisory (spike Risk #8). The `status` stays search-driven:
+        # tow-planning never changes found/found_partial.
+        plans: tuple[MovesPlan | None, ...]
+        unroutable: list[str] = []
+        if plan_paths:
+            built: list[MovesPlan | None] = []
+            for layout in accepted_layouts:
+                try:
+                    built.append(plan_fill(layout))
+                except NoFeasiblePlanError as e:
+                    built.append(None)
+                    unroutable.append(e.plane_id)
+                    # Log the conflict kind/detail too, not just the plane: it
+                    # distinguishes a genuinely-boxed-in plane from a Hybrid-A*
+                    # budget exhaustion (a known false-negative class), which
+                    # call for different operator responses.
+                    _logger.warning(
+                        "layout not tow-routable by the tow-path planner: plane %r blocked "
+                        "(%s: %s); returning the valid static layout without a tow plan",
+                        e.plane_id,
+                        e.conflict.kind,
+                        e.conflict.detail,
+                    )
+            plans = tuple(built)
+        else:
+            plans = (None,) * len(accepted_layouts)
         return SolveResult(
             status=status,
             layouts=tuple(accepted_layouts),
+            plans=plans,
             diagnostics=SolverDiagnostics(
                 restarts_attempted=restart_index,
                 wall_time_s=elapsed,
@@ -251,6 +331,9 @@ def solve(
                 seed=resolved_seed,
                 diversity_impossible=diversity_impossible,
                 diversity_rejected_count=diversity_rejected_count,
+                unroutable_planes=tuple(unroutable),
+                min_pairwise_gap_m=min_gaps,
+                valid_basins_found=len(pool),
             ),
         )
     bp = check_layout(best_partial_layout) if best_partial_layout is not None else None
@@ -265,6 +348,7 @@ def solve(
             seed=resolved_seed,
             diversity_impossible=diversity_impossible,
             diversity_rejected_count=diversity_rejected_count,
+            valid_basins_found=len(pool),
         ),
     )
 
@@ -373,18 +457,15 @@ def _check_trivially_infeasible(
 
         # Build a Layout containing ONLY the pinned planes.
         #
-        # ``maintenance_plane`` is set on the pin-only Layout iff the
-        # maintenance plane is itself pinned. This lets `collisions.check()`
-        # fire the maintenance_position rule on a pinned-out-of-bay
-        # maintenance plane — without it, that case would silently slip
-        # past pre-search and burn the entire solve() budget in the
-        # trajectory loop (every restart would hit the same conflict on
-        # the pinned plane, `_descent_step` would return None, restart
-        # again, ad infinitum until budget).
+        # ``maintenance_plane`` is forwarded to the pin-only Layout so that
+        # ``collisions.check()`` can fire the maintenance_position rule if the
+        # pins collectively leave the maintenance area occupied by another plane
+        # or violated (detected early, before burning the full solve() budget
+        # on a restart loop that can never escape a pinned conflict).
         #
-        # If the maintenance plane is NOT pinned, we leave maintenance
-        # off the pin-only Layout — its position will be sampled freely
-        # during search, so pre-search has nothing to check.
+        # Scenario.__post_init__ guarantees that the maintenance_plane cannot
+        # carry a pin (raises ValueError if it does), so ``pinned_placements``
+        # is provably free of the maintenance occupant — no filter is needed.
         #
         # No try/except: every remaining Layout invariant that could fire
         # here is either structurally impossible given pin-only construction
@@ -392,17 +473,11 @@ def _check_trivially_infeasible(
         # pin.on_carts vs movement_mode). A genuinely unexpected ValueError
         # should propagate as a bug, not get silently re-wrapped as a pin
         # infeasibility.
-        maintenance_pinned = (
-            scenario.maintenance_plane is not None
-            and scenario.maintenance_plane in scenario.constraints
-            and scenario.constraints[scenario.maintenance_plane].pin is not None
-        )
-        maint_for_check = scenario.maintenance_plane if maintenance_pinned else None
         pin_only_layout = Layout(
             fleet=scenario.fleet,
             hangar=scenario.hangar,
             placements=tuple(pinned_placements),
-            maintenance_plane=maint_for_check,
+            maintenance_plane=scenario.maintenance_plane,
         )
 
         pin_check = check_layout(pin_only_layout)
@@ -457,12 +532,10 @@ def _initial_placement_for_plane(
     scenario: Scenario,
     rng: _random_module.Random,
     on_carts: bool,
-    bias_to_maintenance_bay: bool = False,
 ) -> Placement:
     """Sample an initial :class:`Placement` for one plane (spec §4.2).
 
     - If pinned → return the pin verbatim.
-    - If ``bias_to_maintenance_bay`` → ``(x, y)`` uniform in the back bay strip.
     - Otherwise → ``(x, y)`` uniform inside hangar (with bbox-derived margin),
       ``heading_deg`` uniform on ``[0, 360°)``.
 
@@ -483,13 +556,8 @@ def _initial_placement_for_plane(
     margin_x = max(max_length, max_width) / 2
     margin_y = margin_x
 
-    if bias_to_maintenance_bay:
-        bay_depth = hangar.maintenance_bay.depth_m
-        y_lo = max(margin_y, hangar.length_m - bay_depth)
-        y_hi = hangar.length_m - margin_y
-    else:
-        y_lo = margin_y
-        y_hi = hangar.length_m - margin_y
+    y_lo = margin_y
+    y_hi = hangar.length_m - margin_y
 
     x_lo = margin_x
     x_hi = hangar.width_m - margin_x
@@ -512,6 +580,195 @@ def _initial_placement_for_plane(
         heading_deg=heading,
         on_carts=on_carts,
     )
+
+
+def _inter_plane_energy(
+    placements: dict[str, Placement],
+    scenario: Scenario,
+    scale: float,
+) -> float:
+    """Smooth repulsion energy ``E = Σ_{i<j} exp(−gap_ij / scale)`` (spec §4).
+
+    ``gap_ij`` is the minimum plan-view edge-to-edge distance between plane
+    ``i``'s and plane ``j``'s world parts (shapely ``polygon.distance``).
+    Lower ``E`` ⇒ planes further apart; close pairs dominate the sum, so
+    minimizing it maximizes the *minimum* gap (a smooth maximin surrogate).
+    Returns ``0.0`` when fewer than two planes are present. Ignores z
+    (plan-view only) — see ADR-0008 for the nesting limitation.
+    """
+    ids = sorted(placements)
+    if len(ids) < 2:
+        return 0.0
+    world: dict[str, list[WorldPart]] = {
+        pid: aircraft_parts_world(scenario.fleet[pid], placements[pid]) for pid in ids
+    }
+    energy = 0.0
+    for i in range(len(ids)):
+        for j in range(i + 1, len(ids)):
+            gap = min(
+                pa.polygon.distance(pb.polygon) for pa in world[ids[i]] for pb in world[ids[j]]
+            )
+            energy += math.exp(-gap / scale)
+    return energy
+
+
+def _resolve_spread_scale(scenario: Scenario, search: SearchConfig) -> float:
+    """Repulsion length-scale for spread (spec §4): explicit override or
+    20% of the smaller hangar dimension. Single source so ``_spread`` and
+    ``_spread_quality`` always agree."""
+    if search.spread_scale_m is not None:
+        return search.spread_scale_m
+    return 0.2 * min(scenario.hangar.width_m, scenario.hangar.length_m)
+
+
+def _spread_quality(
+    placements: dict[str, Placement],
+    scenario: Scenario,
+    scale: float,
+) -> tuple[float, float]:
+    """Return ``(min_gap, energy)`` for a layout in one pass over plane-pairs.
+
+    ``min_gap`` is the minimum plan-view edge-to-edge distance between any two
+    planes' world parts (``math.inf`` when <2 planes — no pairs). ``energy``
+    is the same ``Σ exp(−gap/scale)`` repulsion :func:`_inter_plane_energy`
+    computes; returning both from one pairwise sweep avoids paying the
+    (expensive) shapely distances twice when scoring a candidate basin. The
+    hot ``_spread`` loop keeps using the energy-only :func:`_inter_plane_energy`
+    — this is called once per accepted basin, not per perturbation.
+    """
+    ids = sorted(placements)
+    if len(ids) < 2:
+        return (math.inf, 0.0)
+    world: dict[str, list[WorldPart]] = {
+        pid: aircraft_parts_world(scenario.fleet[pid], placements[pid]) for pid in ids
+    }
+    min_gap = math.inf
+    energy = 0.0
+    for i in range(len(ids)):
+        for j in range(i + 1, len(ids)):
+            gap = min(
+                pa.polygon.distance(pb.polygon) for pa in world[ids[i]] for pb in world[ids[j]]
+            )
+            min_gap = min(min_gap, gap)
+            energy += math.exp(-gap / scale)
+    return (min_gap, energy)
+
+
+def _spread(
+    placements: dict[str, Placement],
+    scenario: Scenario,
+    rng: _random_module.Random,
+    search: SearchConfig,
+    *,
+    start: float,
+    budget_s: float,
+    pinned_planes: frozenset[str],
+) -> dict[str, Placement]:
+    """Post-pass spread: maximize inter-plane separation on a VALID layout.
+
+    Greedy seeded hill-climb that minimizes :func:`_inter_plane_energy`,
+    accepting only candidates that stay valid (score ``(0, 0.0)``). Input
+    must already be valid; output is therefore always valid — this can only
+    improve separation or no-op. Pinned planes are fixed obstacles: they
+    contribute to pair distances but are never moved. Shares the global
+    wall-clock budget; returns the best (lowest-energy) placements found.
+
+    See ADR-0008 and spec §5.
+    """
+    scale = _resolve_spread_scale(scenario, search)
+
+    movable = sorted(pid for pid in placements if pid not in pinned_planes)
+    if not movable or len(placements) < 2:
+        # Nothing to optimize: all planes pinned (no movable target) or
+        # <2 planes (energy is identically 0.0).
+        return placements
+
+    current_energy = _inter_plane_energy(placements, scenario, scale)
+    last_improved = 0
+
+    for iter_count in range(10000):  # large cap; real exit via stall/budget
+        if time.monotonic() - start >= budget_s:
+            break
+
+        target = rng.choice(movable)
+
+        # Same candidate mix as _descent_step: (N-2) small nudges + 1 large + 1 flip.
+        candidates: list[Placement] = []
+        n_small = max(0, search.candidates_per_iter - 2)
+        for _ in range(n_small):
+            candidates.append(
+                _perturb_plane(
+                    current=placements[target],
+                    scenario=scenario,
+                    rng=rng,
+                    search=search,
+                    large_jump=False,
+                )
+            )
+        candidates.append(
+            _perturb_plane(
+                current=placements[target],
+                scenario=scenario,
+                rng=rng,
+                search=search,
+                large_jump=True,
+            )
+        )
+        candidates.append(
+            Placement(
+                plane_id=target,
+                x_m=placements[target].x_m,
+                y_m=placements[target].y_m,
+                heading_deg=(placements[target].heading_deg + 180.0) % 360.0,
+                on_carts=placements[target].on_carts,
+            )
+        )
+
+        # Pick the lowest-(energy, displacement) VALID candidate. Adopt it
+        # only if its energy is strictly below current (so the stall counter
+        # advances on non-improving iterations — no plateau-wander livelock).
+        best_key: tuple[float, float] | None = None
+        best_placements = placements
+        for cand in candidates:
+            trial = dict(placements)
+            trial[target] = cand
+            try:
+                trial_layout = Layout(
+                    fleet=scenario.fleet,
+                    hangar=scenario.hangar,
+                    placements=tuple(trial.values()),
+                    maintenance_plane=scenario.maintenance_plane,
+                )
+            except ValueError:
+                # Mirrors _descent_step's defensive catch. The only routinely-reachable
+                # trigger is the cart rule, but _perturb_plane and the 180° flip both
+                # preserve on_carts, so in practice no perturbation changes the cart
+                # configuration and this branch is never exercised in the current fleet.
+                # The catch remains as a defensive guard consistent with _descent_step;
+                # a ValueError here would indicate a structural bug, which is acceptable
+                # to skip-and-continue because the spread output is independently validated
+                # by the `_score == (0, 0.0)` gate and the whole pass is bounded.
+                continue
+            if _score(trial_layout) != (0, 0.0):
+                continue  # must STAY valid
+            e = _inter_plane_energy(trial, scenario, scale)
+            disp = (
+                (cand.x_m - placements[target].x_m) ** 2 + (cand.y_m - placements[target].y_m) ** 2
+            ) ** 0.5
+            key = (e, disp)
+            if best_key is None or key < best_key:
+                best_key = key
+                best_placements = trial
+
+        if best_key is not None and best_key[0] < current_energy:
+            placements = best_placements
+            current_energy = best_key[0]
+            last_improved = iter_count
+
+        if iter_count - last_improved >= search.k_stall:
+            break
+
+    return placements
 
 
 def _score(layout: Layout) -> tuple[int, float]:
@@ -546,12 +803,17 @@ def _initial_placements(
     3. Plane's ``movement_mode`` for always_cart / always_own_gear.
     4. Membership in ``cart_bucket`` for cart_eligible planes.
 
-    The maintenance plane gets the bay-bias unless it's pinned (a pin
-    already fixes its position; biasing would be a no-op since the pin
-    is returned verbatim).
+    The maintenance plane (if any) is skipped entirely — under the
+    ``bay_intrusion`` semantics (see ``docs/architecture/08-crosscutting-concepts.md``
+    "The maintenance bay rule") the occupant is treated as away (absent
+    from the Layout's placements). The bay rectangle is a hard obstacle
+    via the collision rule, so no surrogate sample is needed.
     """
     placements: dict[str, Placement] = {}
     for pid in scenario.fleet_in:
+        if pid == scenario.maintenance_plane:
+            continue
+
         plane = scenario.fleet[pid]
         constraint = scenario.constraints.get(pid)
 
@@ -567,14 +829,11 @@ def _initial_placements(
         else:  # cart_eligible
             on_carts = pid in cart_bucket
 
-        bias = scenario.maintenance_plane == pid and (constraint is None or constraint.pin is None)
-
         placements[pid] = _initial_placement_for_plane(
             plane_id=pid,
             scenario=scenario,
             rng=rng,
             on_carts=on_carts,
-            bias_to_maintenance_bay=bias,
         )
 
     return placements
@@ -609,6 +868,11 @@ def _enumerate_cart_buckets(scenario: Scenario) -> list[frozenset[str]]:
     free_cart_eligibles: list[str] = []
     has_committed_cart_eligible_on_carts = False
     for pid in scenario.fleet_in:
+        if pid == scenario.maintenance_plane:
+            # Occupant is treated as away — it never enters the layout, so
+            # round-robining a singleton cart bucket for it would be a no-op
+            # restart that wastes one slot of the C+1 rotation.
+            continue
         plane = scenario.fleet[pid]
         if not plane.is_cart_eligible:
             continue
@@ -738,11 +1002,11 @@ def _descent_step(
     (e.g. cart rule) raise ``ValueError`` from
     ``Layout.__post_init__`` and are skipped.
     """
-    # Build current Layout from placements (uses Layout invariants — free check)
+    # Build current Layout from placements (uses Layout invariants — free check).
     current_layout = Layout(
         fleet=scenario.fleet,
         hangar=scenario.hangar,
-        placements=tuple(placements[pid] for pid in scenario.fleet_in),
+        placements=tuple(placements.values()),
         maintenance_plane=scenario.maintenance_plane,
     )
 
@@ -813,7 +1077,7 @@ def _descent_step(
             trial_layout = Layout(
                 fleet=scenario.fleet,
                 hangar=scenario.hangar,
-                placements=tuple(trial[pid] for pid in scenario.fleet_in),
+                placements=tuple(trial.values()),
                 maintenance_plane=scenario.maintenance_plane,
             )
         except ValueError:
@@ -857,6 +1121,46 @@ def _heading_delta_short_arc(a: float, b: float) -> float:
     """
     d = abs(a - b) % 360.0
     return min(d, 360.0 - d)
+
+
+class _SpreadCandidate(NamedTuple):
+    """A valid, spread-polished basin found during search, with its quality."""
+
+    layout: Layout
+    min_gap: float
+    energy: float
+    restart_index: int
+
+
+def _select_spread_diverse(
+    pool: list[_SpreadCandidate],
+    alternatives: int,
+    diversity: DiversityConfig,
+) -> tuple[list[_SpreadCandidate], int]:
+    """Select up to ``alternatives`` best-spread, pairwise-diverse candidates.
+
+    Order the pool by ``(−min_gap, energy, restart_index)``: largest minimum
+    plan-view gap first, ties broken by lower repulsion energy, then by restart
+    order for a *total* (so deterministic — ADR-0003) ordering. Greedily accept
+    a candidate iff it is diverse enough (ADR-0004) against everything already
+    selected; the first pick is always accepted (diversity is vacuous on the
+    empty selection). Returns ``(selected, diversity_rejected)`` in best-spread
+    order, where ``diversity_rejected`` counts candidates *examined* (before the
+    ``alternatives`` quota was met) that the diversity gate turned away. For
+    ``alternatives == 1`` this is always 0 — selection stops after the first,
+    vacuous pick.
+    """
+    ordered = sorted(pool, key=lambda c: (-c.min_gap, c.energy, c.restart_index))
+    selected: list[_SpreadCandidate] = []
+    diversity_rejected = 0
+    for cand in ordered:
+        if _is_diverse_enough(cand.layout, [c.layout for c in selected], diversity):
+            selected.append(cand)
+            if len(selected) >= alternatives:
+                break
+        else:
+            diversity_rejected += 1
+    return selected, diversity_rejected
 
 
 def _is_diverse_enough(

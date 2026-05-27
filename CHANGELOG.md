@@ -10,6 +10,79 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Fixed
 
+## [0.7.0] — 2026-05-27
+
+The first release with tow-path planning: `hangarfit` can now plan how each aircraft is towed in and out, not just whether a static layout is collision-free. Also lands the full Arc42 architecture documentation set, the maintenance-bay walling rule, a spread-aware solver, and an OpenSSF supply-chain hardening pass.
+
+### Added
+
+- Tow-path planner (`towplanner` module): `hangarfit solve --render-paths` renders a per-plane tow path overlay plus a tow order. Best-effort — a layout the planner can't fully route still renders (blocking plane named on stderr); exit code `3` only when no candidate layout is tow-routable ([ADR-0007](docs/adr/0007-tow-path-planner-v1-scope.md), #188, #189, #190, #191, #196, #222, #197, #192, #193).
+- Reeds–Shepp motion model — reverse arcs eliminate the reorientation loops of the Dubins-only first cut — and door **entry-cone** search over heading × offset (planner v2, [ADR-0010](docs/adr/0010-reeds-shepp-motion-model.md), #261, #262, #271).
+- `bay_intrusion` maintenance-bay perimeter collision rule with partial-width, back-anchored geometry, replacing the legacy maintenance check ([ADR-0006](docs/adr/0006-bay-intrusion-maintenance-rule.md), #103, #104, #106, #107).
+- Spread-aware solver: a best-of-all-basins post-pass maximizes the minimum inter-plane gap, surfacing `min_pairwise_gap_m` and `valid_basins_found` ([ADR-0008](docs/adr/0008-inter-plane-spread-soft-preference.md), #145, #267).
+- Full Arc42 architecture documentation under `docs/architecture/` and an Architecture Decision Records system (ADR-0001 … ADR-0010) under `docs/adr/` (#132, #133, #134, #135, #136).
+- Loader validates plane ids and `maintenance.plane` at the load boundary with did-you-mean suggestions (#221, #171, #175, #177).
+- Nightly polyglot YAML-loader fuzzing (Hypothesis + Atheris); OpenSSF Scorecard Fuzzing 0→10 (#143, #253).
+- OpenSSF Baseline L1 self-attestation and Best Practices **Silver** badge, with GOVERNANCE.md and Code-of-Conduct links (#232, #256, #259).
+- Sigstore keyless cosign signing workflow for releases (#167).
+
+### Changed
+
+- Raised the supported Python floor to **3.12** (was 3.11) and collapsed the CI test matrix to a single 3.12 job; both hash-pinned lockfiles are now resolved on 3.12. **Breaking change** for 3.11 users ([ADR-0009](docs/adr/0009-single-supported-python-version.md), #213).
+- Hash-pinned every lockfile end-to-end — dev deps, build toolchain, fuzz toolchain, and the pip-tools bootstrap — each guarded by a CI drift check (#140, #198, #199, #224).
+- Solver determinism is now scoped to `max_restarts` ([ADR-0003](docs/adr/0003-rr-mc-solver-algorithm.md) amended, #267).
+- Slimmed CLAUDE.md to operational guidance; migrated domain content to Arc42 (#137).
+- LICENSE now ships in the sdist and wheel (#230).
+
+### Removed
+
+- Python 3.11 support and the multi-version CI matrix (#213).
+- Legacy maintenance-bay collision check, superseded by `bay_intrusion` (#104).
+
+### Security
+
+- Added a security-posture document explaining the structural-zero OpenSSF Scorecard checks; made SECURITY.md phase-agnostic; documented the branch-protection residual cap (#142, #260, #225).
+
+## [0.6.1] — 2026-05-23
+
+Solver-polish follow-ups.
+
+### Changed
+
+- Broadened the `diversity_impossible` precondition wording in the solver spec (#119).
+
+### Fixed
+
+- Bounded `wall_time_s` in the fixture-matrix tests to stop time-sensitive flakes (#122).
+- Fixed the OpenSSF Scorecard workflow push trigger to fire on the default branch and added `workflow_dispatch` (#126).
+- Wired `CODECOV_TOKEN` so non-`main` coverage uploads succeed (#127).
+
+## [0.6.0] — 2026-05-23
+
+A large cut bundling the "going public" repository-hardening pass and the Phase 2a static layout solver. (There were no 0.2.0–0.5.0 release tags; that work shipped here.)
+
+### Added
+
+- `hangarfit solve` — a Random-Restart Monte-Carlo static layout solver that finds a valid arrangement when no hand-authored candidate exists, with pinning, minimal-edit repair, and forced-cart modes ([ADR-0003](docs/adr/0003-rr-mc-solver-algorithm.md)).
+- Diversity metric for alternative layouts (`--alternatives`, edit-count thresholds) ([ADR-0004](docs/adr/0004-diversity-metric.md)).
+- `SearchConfig.max_restarts` to bound the outer search loop (#111).
+- Scenario types and penetration-depth reporting in `CheckResult`.
+
+### Changed
+
+- Default `layouts/example.yaml` is now a valid 6-plane layout.
+- Corrected the placeholder dimensions in `fleet.yaml`.
+
+### Security
+
+- Added SECURITY.md, CONTRIBUTING.md, GitHub issue/PR templates, and Dependabot config (going-public milestone).
+- Added CodeQL scanning and the OpenSSF Scorecard workflow + README badge; pinned all GitHub Actions to commit SHAs.
+- Adopted ruff (lint + format), mypy, pre-commit, and pytest-cov → Codecov coverage in CI.
+
+### Fixed
+
+- Fixed a solver-determinism flake and added fail-loud regression canaries across the solver fixtures (#98).
+
 ## [0.1.0] — 2026-05-21
 
 First Phase 1 cut — substrate for arranging the flying club fleet in a stack-style hangar.
@@ -25,5 +98,8 @@ First Phase 1 cut — substrate for arranging the flying club fleet in a stack-s
 - Apache-2.0 license, public-audience README, CI matrix (Python 3.11 + 3.12), branch protection on develop + main (#13, #14, #15, #16).
 - Strut-aware golden tests + all-9-planes fixture using larger test-only hangar to accommodate strut-bracing geometry on placeholder dimensions (#5).
 
-[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.7.0...HEAD
+[0.7.0]: https://github.com/DocGerd/hangarfit/compare/v0.6.1...v0.7.0
+[0.6.1]: https://github.com/DocGerd/hangarfit/compare/v0.6.0...v0.6.1
+[0.6.0]: https://github.com/DocGerd/hangarfit/compare/v0.1.0...v0.6.0
 [0.1.0]: https://github.com/DocGerd/hangarfit/releases/tag/v0.1.0

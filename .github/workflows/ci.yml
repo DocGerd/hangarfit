@@ -21,7 +21,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12"]
+        python-version: ["3.12"]
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
@@ -30,10 +30,32 @@ jobs:
         with:
           python-version: ${{ matrix.python-version }}
           cache: pip
-          cache-dependency-path: pyproject.toml
+          cache-dependency-path: |
+            pyproject.toml
+            requirements-dev.txt
+            requirements-build.txt
 
-      - name: Install
-        run: pip install -e ".[dev]"
+      - name: Install dev deps (hash-pinned)
+        run: pip install --require-hashes -r requirements-dev.txt
+
+      - name: Install build toolchain (hash-pinned)
+        # Hash-pinned setuptools/wheel for the --no-build-isolation
+        # editable install below, closing the residual PEP-517 gap (#162)
+        # where pip's isolated build env re-fetched the build-system
+        # requires from PyPI unpinned. packaging is constrained (via
+        # `-c requirements-dev.txt` inside requirements-build.in) to the
+        # dev-lockfile version, so this install introduces no version skew
+        # with the dev deps above.
+        run: pip install --require-hashes -r requirements-build.txt
+
+      - name: Install project (editable, no deps)
+        # MUST run after the build-toolchain install above:
+        # --no-build-isolation reuses the hash-verified host setuptools/
+        # wheel from that step instead of letting pip spin up an isolated
+        # build env that re-fetches them unpinned. Reordering or dropping
+        # that step makes this one fail with an opaque PEP-517 backend
+        # error.
+        run: pip install -e . --no-deps --no-build-isolation
 
       - name: Lint with ruff
         run: ruff check src/ tests/
@@ -52,8 +74,240 @@ jobs:
 
       - name: Upload coverage to Codecov
         if: always()
-        uses: codecov/codecov-action@75cd11691c0faa626561e295848008c8a7dddffe  # v5.5.4
+        uses: codecov/codecov-action@e79a6962e0d4c0c17b229090214935d2e33f8354  # v6.0.1
         with:
           files: ./coverage.xml
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  lockfile-drift:
+    # Guards the silent-failure path created by `pip install -e . --no-deps`
+    # in the test job: a runtime dep added to pyproject.toml but missing from
+    # requirements-dev.txt would install successfully and only surface as an
+    # ImportError at test-collection time. This job regenerates the lockfile
+    # against the current pyproject.toml and fails if the resolved
+    # `package==version` set diverges from what is checked in. See issue #161.
+    name: lockfile drift check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Set up Python 3.12
+        # Match the regeneration instruction in CLAUDE.md: the single
+        # supported Python (3.12) — the interpreter the lockfiles are
+        # resolved against and the only version the test job runs.
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install pip-tools (hash-pinned)
+        # Hash-pinned via requirements-pip-tools.txt so the guard that
+        # enforces lockfile integrity is itself installed with verified
+        # integrity — closes the `pipCommand not pinned by hash` Scorecard
+        # finding the bare `pip install pip-tools==7.5.3` triggered (#224).
+        # The lockfile pins pip-tools==7.5.3, the version CLAUDE.md mandates
+        # for regeneration; bump it deliberately, in lockstep with the
+        # build-lockfile guard and the regeneration commands in CLAUDE.md.
+        run: pip install --require-hashes -r requirements-pip-tools.txt
+
+      - name: Regenerate lockfile against existing pins
+        # Copy first so pip-compile honors the committed lockfile as a pin
+        # source. Without the copy, pip-compile would freshly resolve every
+        # transitive dep against the latest PyPI versions, producing false
+        # drift whenever an unrelated transitive package had a new release.
+        # With it, the comparison only diverges when pyproject.toml actually
+        # demands a different package set.
+        #
+        # `--no-strip-extras` is explicit so this stays correct across the
+        # pip-tools 8.0 default flip (which inverts the strip-extras default
+        # and would otherwise silently prune transitive extras the day
+        # someone bumps the pin).
+        run: |
+          cp requirements-dev.txt /tmp/expected.txt
+          pip-compile --quiet --generate-hashes --no-strip-extras --extra dev -o /tmp/expected.txt pyproject.toml
+
+      - name: Compare package==version sets
+        # A textual diff of the two files is flaky: pip-compile output is not
+        # bit-stable across pip-tools versions (hash ordering, comment
+        # placement). The actual install-time invariant is the *set* of
+        # `package==version` pairs, so extract and compare just that.
+        #
+        # The extracts are written to real files (not `<(...)` process
+        # substitution) so that a `grep` returning zero matches — which
+        # would otherwise silently produce two empty streams that diff sees
+        # as identical — is caught by the explicit non-empty sanity check.
+        # The `|| true` wrap on grep is load-bearing: under GitHub Actions'
+        # default `bash -eo pipefail` shell, a no-match grep exits 1, the
+        # pipeline exits 1 via pipefail, and `set -e` would kill the step
+        # *before* the sanity check could run — meaning the helpful
+        # `::error::` annotation below would never reach the operator. The
+        # regex starts with [A-Za-z0-9] because PEP 503 allows package
+        # names that begin with a digit (e.g., `2to3`); the optional
+        # `(\[...\])?` group matches extras-decorated names like
+        # `coverage[toml]==X` that `--no-strip-extras` emits — without it,
+        # extras would be silently dropped from both sides of the
+        # comparison, re-introducing the same silent-skip class.
+        run: |
+          extract() {
+            { grep -E '^[A-Za-z0-9][A-Za-z0-9._-]*(\[[A-Za-z0-9._,-]+\])?==' "$1" || true; } \
+              | sed 's/ *\\$//' | sort
+          }
+          extract requirements-dev.txt > /tmp/committed.set
+          extract /tmp/expected.txt    > /tmp/regenerated.set
+          if [ ! -s /tmp/committed.set ] || [ ! -s /tmp/regenerated.set ]; then
+            echo "::error::extract() produced an empty package set — the regex in .github/workflows/ci.yml no longer matches the lockfile format. Update the guard."
+            exit 1
+          fi
+          # Defense-in-depth (issue #199): the non-empty check above
+          # catches a *fully* empty extract, but not a pip-compile run that
+          # exits 0 while emitting a *partial* lockfile — if the committed
+          # and regenerated files are degraded identically, the diff below
+          # passes and a dropped pin goes unnoticed. Assert that every
+          # *directly-declared* dependency (pyproject [project.dependencies]
+          # + [project.optional-dependencies] dev) survived regeneration.
+          # The declaration boundary is the principled line: transitives are
+          # pip-compile's concern, and a dropped transitive surfaces via the
+          # diff (asymmetric drop) or as an ImportError at test collection.
+          # A count-floor would add nothing — a regen-vs-committed shortfall
+          # is already an asymmetric diff failure; only this absolute check
+          # covers the symmetric-degradation case.
+          for pkg in pyyaml shapely matplotlib pytest pytest-cov ruff mypy types-pyyaml types-shapely hypothesis; do
+            grep -qE "^${pkg}==" /tmp/regenerated.set || {
+              echo "::error::dev lockfile regeneration dropped a declared dependency: ${pkg} — pip-compile may have produced partial output."
+              exit 1
+            }
+          done
+          if ! diff -u /tmp/committed.set /tmp/regenerated.set; then
+            echo "::error::requirements-dev.txt is out of sync with pyproject.toml. Regenerate on Python 3.12 with pip-tools==7.5.3: pip-compile --generate-hashes --no-strip-extras --extra dev -o requirements-dev.txt pyproject.toml"
+            exit 1
+          fi
+
+  build-lockfile-drift:
+    # Sibling of lockfile-drift, for requirements-build.txt (the
+    # hash-pinned build toolchain consumed by the editable install in the
+    # test job and by `python -m build` in release.yml). The build
+    # lockfile is generated from requirements-build.in, which constrains
+    # shared transitive deps (packaging) to requirements-dev.txt via `-c`.
+    # Two silent-drift paths this guards:
+    #   1. requirements-build.in edited but requirements-build.txt not
+    #      regenerated.
+    #   2. packaging bumped in requirements-dev.txt but the build lockfile
+    #      not regenerated — the test job would then install two different
+    #      packaging versions across its dev/build install steps.
+    name: build lockfile drift check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Set up Python 3.12
+        # The single supported Python (3.12), matching the dev-lockfile guard
+        # and the regeneration command documented in CLAUDE.md.
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install pip-tools (hash-pinned)
+        # Same hash-pinned bootstrap as the dev-lockfile guard
+        # (requirements-pip-tools.txt) — see that step for the full
+        # rationale. Kept in lockstep so both guards install the identical
+        # pip-tools 7.5.3 with verified integrity.
+        run: pip install --require-hashes -r requirements-pip-tools.txt
+
+      - name: Regenerate build lockfile against existing pins
+        # Same copy-first rationale as the dev-lockfile guard: seeding with
+        # the committed lockfile makes pip-compile honor the existing pins
+        # so only a genuine change in requirements-build.in (or in the
+        # `-c requirements-dev.txt` constraint it reads) produces drift.
+        # --allow-unsafe and --no-strip-extras match the documented
+        # regeneration command so setuptools/wheel stay pinned and extras
+        # are not pruned.
+        run: |
+          cp requirements-build.txt /tmp/expected-build.txt
+          pip-compile --quiet --generate-hashes --no-strip-extras --allow-unsafe -o /tmp/expected-build.txt requirements-build.in
+
+      - name: Compare package==version sets
+        # Identical set-comparison strategy to the dev-lockfile guard (see
+        # its comment for the full rationale on why a textual diff is too
+        # flaky). Inlined here so it survives independent edits to the
+        # sibling job: the `{ grep ... || true; }` wrap is load-bearing
+        # under GitHub Actions' default `bash -eo pipefail` — a zero-match
+        # grep exits 1 and would abort the step before the non-empty
+        # sanity check below could emit its diagnostic.
+        run: |
+          extract() {
+            { grep -E '^[A-Za-z0-9][A-Za-z0-9._-]*(\[[A-Za-z0-9._,-]+\])?==' "$1" || true; } \
+              | sed 's/ *\\$//' | sort
+          }
+          extract requirements-build.txt   > /tmp/committed-build.set
+          extract /tmp/expected-build.txt   > /tmp/regenerated-build.set
+          if [ ! -s /tmp/committed-build.set ] || [ ! -s /tmp/regenerated-build.set ]; then
+            echo "::error::extract() produced an empty package set — the regex in .github/workflows/ci.yml no longer matches the lockfile format. Update the guard."
+            exit 1
+          fi
+          # Defense-in-depth (issue #199): same partial-output guard as the
+          # dev-lockfile job, inlined here so it survives independent edits.
+          # Asserts the directly-declared build deps (requirements-build.in:
+          # build, setuptools, wheel) plus `packaging` — the cross-lockfile
+          # skew anchor constrained via `-c requirements-dev.txt`.
+          # Transitives (e.g. pyproject-hooks) are out of scope for the same
+          # reason as the dev job: their loss surfaces via the diff or a
+          # build failure.
+          for pkg in build setuptools wheel packaging; do
+            grep -qE "^${pkg}==" /tmp/regenerated-build.set || {
+              echo "::error::build lockfile regeneration dropped a declared dependency: ${pkg} — pip-compile may have produced partial output."
+              exit 1
+            }
+          done
+          if ! diff -u /tmp/committed-build.set /tmp/regenerated-build.set; then
+            echo "::error::requirements-build.txt is out of sync. Regenerate on Python 3.12 with pip-tools==7.5.3: pip-compile --generate-hashes --no-strip-extras --allow-unsafe -o requirements-build.txt requirements-build.in"
+            exit 1
+          fi
+
+  fuzz-lockfile-drift:
+    # Sibling of build-lockfile-drift, for requirements-fuzz.txt (the
+    # hash-pinned Atheris toolchain consumed only by the nightly fuzz
+    # workflow). Source is requirements-fuzz.in, which constrains shared
+    # transitives to requirements-dev.txt via `-c`. Guards two silent-drift
+    # paths: (1) requirements-fuzz.in edited but the lockfile not regenerated;
+    # (2) a constrained transitive bumped in requirements-dev.txt without
+    # regenerating here.
+    name: fuzz lockfile drift check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+
+      - name: Install pip-tools (hash-pinned)
+        run: pip install --require-hashes -r requirements-pip-tools.txt
+
+      - name: Regenerate fuzz lockfile against existing pins
+        run: |
+          cp requirements-fuzz.txt /tmp/expected-fuzz.txt
+          pip-compile --quiet --generate-hashes --no-strip-extras -o /tmp/expected-fuzz.txt requirements-fuzz.in
+
+      - name: Compare package==version sets
+        run: |
+          extract() {
+            { grep -E '^[A-Za-z0-9][A-Za-z0-9._-]*(\[[A-Za-z0-9._,-]+\])?==' "$1" || true; } \
+              | sed 's/ *\\$//' | sort
+          }
+          extract requirements-fuzz.txt > /tmp/committed-fuzz.set
+          extract /tmp/expected-fuzz.txt > /tmp/regenerated-fuzz.set
+          if [ ! -s /tmp/committed-fuzz.set ] || [ ! -s /tmp/regenerated-fuzz.set ]; then
+            echo "::error::extract() produced an empty package set — the regex in .github/workflows/ci.yml no longer matches the lockfile format. Update the guard."
+            exit 1
+          fi
+          for pkg in atheris; do
+            grep -qE "^${pkg}==" /tmp/regenerated-fuzz.set || {
+              echo "::error::fuzz lockfile regeneration dropped a declared dependency: ${pkg} — pip-compile may have produced partial output."
+              exit 1
+            }
+          done
+          if ! diff -u /tmp/committed-fuzz.set /tmp/regenerated-fuzz.set; then
+            echo "::error::requirements-fuzz.txt is out of sync. Regenerate on Python 3.12 with pip-tools==7.5.3: pip-compile --generate-hashes --no-strip-extras -o requirements-fuzz.txt requirements-fuzz.in"
+            exit 1
+          fi

@@ -2,8 +2,9 @@
 #
 # Scenario: Saturday morning. Three of the club's nine aircraft are out
 # (Cessna 140 and 150 doing training flights, FK9 on a pleasure flight),
-# six are home in non-standard positions. Scheibe Falke is in the back
-# for scheduled maintenance.
+# five are home in non-standard positions. Scheibe Falke is in the
+# walled maintenance bay (the occupant is treated as physically absent
+# from the parking problem; the bay rectangle is a hard keep-out).
 #
 # This is the canonical smoke test from CLAUDE.md:
 #
@@ -14,10 +15,11 @@
 # of the visualiser, use ``layouts/example_invalid.yaml`` (a deliberately
 # bad layout shipped alongside this file for that purpose).
 #
-# Hangar: 18 m wide × 25 m deep (data/hangar.yaml). Bay = back 9 m
-# (y >= 16). Coordinate convention (CLAUDE.md): world (0, 0) at front-left,
-# +x right along door wall, +y deeper into hangar. heading 0 = nose
-# into hangar.
+# Hangar: 18 m wide × 25 m deep (data/hangar.yaml). Maintenance bay
+# is the right-rear corner: x ∈ (9, 18), y > 16 (a 9 × 9 m walled
+# keep-out while scheibe_falke is in maintenance). Coordinate
+# convention (CLAUDE.md): world (0, 0) at front-left, +x right along
+# door wall, +y deeper into hangar. heading 0 = nose into hangar.
 #
 # Cart usage: only the three ``always_cart`` planes (scheibe, zlin,
 # wild_thing) are on carts; CTSL is ``cart_eligible`` but parked on its
@@ -56,25 +58,23 @@ placements:
                            # neighbouring high wings (z-disjoint nesting)
     on_carts: false        # always_own_gear
 
-  # Mid-center: wild_thing
+  # Mid-center: wild_thing — sits between the fuji y-band at 8 and
+  # the husky y-band at 15.5, with enough clearance on both sides
+  # (its 9.15 m wing-band is centered on (py + 0.67))
   - plane: wild_thing
     x_m: 9.0
-    y_m: 13.0
+    y_m: 12.5
     heading_deg: 0.0
     on_carts: true         # always_cart
 
-  # Just forward of the maintenance bay: husky tucked against the
-  # left wall (its 10.82 m wingspan reaches across to mid-hangar)
+  # Just forward of the maintenance bay: husky tucked left of centre
+  # with its 10.82 m wing fully clear of the bay's front edge at y=16
   - plane: aviat_husky
     x_m: 6.0
-    y_m: 16.0
+    y_m: 15.5
     heading_deg: 0.0
     on_carts: false        # always_own_gear
 
-  # Maintenance bay (back): the motorglider sits along the back wall,
-  # its 18 m wingspan exactly spanning the hangar width
-  - plane: scheibe_falke
-    x_m: 9.0
-    y_m: 20.5
-    heading_deg: 0.0
-    on_carts: true         # always_cart
+  # scheibe_falke is in the maintenance bay (declared above under
+  # ``maintenance.plane``) — by Layout invariant it must NOT appear in
+  # placements while the bay is closed.

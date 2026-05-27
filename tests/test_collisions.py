@@ -187,31 +187,24 @@ class TestStrutCanary:
         )
 
 
-class TestMaintenancePosition:
-    """Case 9 — the maintenance plane's fuselage centroid must lie in the
-    back-most strip of the hangar (``y >= length_m − bay.depth_m``)."""
+class TestBayIntrusion:
+    """The ``bay_intrusion`` perimeter rule fires when the bay is closed
+    (``layout.maintenance_plane is not None``) and any non-occupant part
+    has a vertex strictly inside the bay rectangle. Strict ``<`` on the
+    left, right, and front edges; the back edge coincides with the
+    hangar wall and uses the same inclusive convention as
+    :func:`_hangar_bounds_conflicts`.
+    """
 
-    def test_case_9_maintenance_plane_parked_near_door(self) -> None:
-        result = check(_load("invalid_maintenance_position"))
-        assert not result.valid
-        assert "maintenance_position" in _conflict_kinds(result), (
-            f"expected maintenance_position conflict, got {result.conflicts!r}"
-        )
-
-    def test_maintenance_centroid_exactly_at_bay_boundary_is_valid(self) -> None:
-        """The bay-start threshold is strict ``<`` — a centroid exactly
-        on the boundary line counts as parked in the bay (see the
-        ``_maintenance_conflicts`` docstring for rationale). Guards
-        against a future tightening to ``<=``."""
-        result = check(_load("valid_maintenance_at_bay_boundary"))
-        assert result.valid, (
-            f"maintenance centroid at bay-start y must pass, got conflicts: {result.conflicts!r}"
-        )
-
-    def test_maintenance_plane_without_fuselage_emits_conflict(self) -> None:
-        """The :class:`Aircraft` model permits aircraft without fuselages.
-        Designating such a plane as ``maintenance_plane`` must surface a
-        ``maintenance_no_fuselage`` conflict, not silently pass."""
+    def _build_layout(
+        self,
+        *,
+        bay_open: bool,
+        intruder_offset_x_m: float = 0.0,
+        intruder_offset_y_m: float = 0.0,
+    ):
+        """Construct a minimal 1-plane layout with one wing-only intruder
+        positioned by `intruder_offset_*` relative to a known reference."""
         from hangarfit.models import (
             Aircraft,
             Door,
@@ -222,7 +215,9 @@ class TestMaintenancePosition:
             Placement,
         )
 
-        wing_only = Aircraft(
+        # 1×1 m wing at z=2..2.3 — a single-rectangle part lets us reason
+        # about its world vertices directly.
+        small_wing = Aircraft(
             id="probe",
             name="Probe",
             wing_position="high",
@@ -234,7 +229,7 @@ class TestMaintenancePosition:
                 Part(
                     kind="wing",
                     length_m=1.0,
-                    width_m=2.0,
+                    width_m=1.0,
                     offset_x_m=0.0,
                     offset_y_m=0.0,
                     angle_deg=0.0,
@@ -243,31 +238,282 @@ class TestMaintenancePosition:
                 ),
             ),
         )
+        # Bay: x ∈ (10, 18), y ∈ (16, 25].
         hangar = Hangar(
             length_m=25.0,
             width_m=18.0,
-            door=Door(center_x_m=9.0, width_m=10.0),
-            maintenance_bay=MaintenanceBay(depth_m=9.0),
+            door=Door(center_x_m=9.0, width_m=12.0),
+            maintenance_bay=MaintenanceBay(center_x_m=14.0, width_m=8.0, depth_m=9.0),
             clearance_m=0.3,
             wing_layer_clearance_m=0.2,
         )
-        layout = Layout(
-            fleet={"probe": wing_only},
-            hangar=hangar,
-            placements=(
-                Placement(
-                    plane_id="probe",
-                    x_m=9.0,
-                    y_m=20.0,
-                    heading_deg=0.0,
-                    on_carts=False,
+        # Anchor: bay's deepest-interior point (x=14, y=20). The intruder
+        # is centered there; callers shift via the offset args.
+        probe = Placement(
+            plane_id="probe",
+            x_m=14.0 + intruder_offset_x_m,
+            y_m=20.0 + intruder_offset_y_m,
+            heading_deg=0.0,
+            on_carts=False,
+        )
+        # Add an "occupant" aircraft to the fleet so a non-None
+        # maintenance_plane is legal. It is NEVER in placements — the
+        # Layout invariant + our test reads exclusively on bay rule.
+        occupant = Aircraft(
+            id="occupant",
+            name="Occupant",
+            wing_position="high",
+            gear="monowheel",
+            movement_mode="always_cart",
+            turn_radius_m=None,
+            measured=False,
+            parts=(
+                Part(
+                    kind="fuselage",
+                    length_m=1.0,
+                    width_m=1.0,
+                    offset_x_m=0.0,
+                    offset_y_m=0.0,
+                    angle_deg=0.0,
+                    z_bottom_m=0.0,
+                    z_top_m=1.0,
                 ),
             ),
-            maintenance_plane="probe",
+        )
+        return Layout(
+            fleet={"probe": small_wing, "occupant": occupant},
+            hangar=hangar,
+            placements=(probe,),
+            maintenance_plane=None if bay_open else "occupant",
+        )
+
+    def test_open_bay_never_fires(self) -> None:
+        """When ``maintenance_plane is None``, the bay rectangle is just
+        floor; a part centered deep in the would-be bay must pass."""
+        layout = self._build_layout(bay_open=True)
+        result = check(layout)
+        assert "bay_intrusion" not in _conflict_kinds(result), (
+            f"open bay must not fire bay_intrusion, got {result.conflicts!r}"
+        )
+
+    def test_closed_bay_flags_deep_intrusion(self) -> None:
+        layout = self._build_layout(bay_open=False)
+        result = check(layout)
+        assert "bay_intrusion" in _conflict_kinds(result), (
+            f"part centered inside closed bay must fire bay_intrusion, got {result.conflicts!r}"
+        )
+
+    def test_left_edge_vertex_strictly_outside_passes(self) -> None:
+        """Bay x_min=10. A 1×1 wing centered at (9.5, 20) has its
+        right edge at x=10 exactly — on the boundary, not strictly
+        inside. Must pass."""
+        layout = self._build_layout(
+            bay_open=False, intruder_offset_x_m=-4.5
+        )  # center at x=9.5, right vertex at x=10
+        result = check(layout)
+        assert "bay_intrusion" not in _conflict_kinds(result), (
+            f"vertex on x_min edge counts as outside; got {result.conflicts!r}"
+        )
+
+    def test_left_edge_sub_epsilon_inside_fires(self) -> None:
+        """One µm past the left edge must trip; locks in strict ``<``."""
+        layout = self._build_layout(
+            bay_open=False, intruder_offset_x_m=-4.499999
+        )  # right vertex at x = 10.000001 (just inside)
+        result = check(layout)
+        assert "bay_intrusion" in _conflict_kinds(result), (
+            f"vertex 1 µm inside left edge must fire; got {result.conflicts!r}"
+        )
+
+    def test_front_edge_vertex_on_boundary_passes(self) -> None:
+        """Bay y_min=16. A 1×1 wing centered at (14, 15.5) has its
+        rear edge at y=16 exactly — on the boundary, not strictly
+        inside. Must pass."""
+        layout = self._build_layout(bay_open=False, intruder_offset_y_m=-4.5)  # rear vertex at y=16
+        result = check(layout)
+        assert "bay_intrusion" not in _conflict_kinds(result), (
+            f"vertex on y_min edge counts as outside; got {result.conflicts!r}"
+        )
+
+    def test_front_edge_sub_epsilon_inside_fires(self) -> None:
+        """One µm past the front edge must trip; locks in strict ``<``."""
+        layout = self._build_layout(
+            bay_open=False, intruder_offset_y_m=-4.499999
+        )  # rear vertex at y = 16.000001
+        result = check(layout)
+        assert "bay_intrusion" in _conflict_kinds(result), (
+            f"vertex 1 µm inside front edge must fire; got {result.conflicts!r}"
+        )
+
+    def test_back_edge_at_hangar_wall_counts_as_inside(self) -> None:
+        """The bay's back edge coincides with the hangar's outer wall.
+        A vertex at y=length_m=25 sits on the hangar boundary
+        (inclusive per hangar_bounds) AND must be treated as inside
+        the closed bay (no separate back-edge test)."""
+        # Wing centered at (14, 24.5) → rear-most vertex at y=25
+        # (exactly on the hangar back wall), front vertex at y=24.
+        # Both are strictly inside the bay (y > 16 and within x range).
+        layout = self._build_layout(bay_open=False, intruder_offset_y_m=4.5)
+        result = check(layout)
+        assert "bay_intrusion" in _conflict_kinds(result), (
+            f"vertex on the hangar back wall must count as inside the "
+            f"closed bay; got {result.conflicts!r}"
+        )
+
+    def test_corner_vertex_strictly_inside_fires(self) -> None:
+        """An intruder straddling the bay's front-left corner: the
+        center is at (11, 16.5), so the part's front-left vertex
+        (10.5, 16) sits exactly on the front edge (passes the strict
+        check) while the rear-left vertex (10.5, 17) is strictly
+        inside both ``x_min < x < x_max`` and ``y > y_min``. The
+        per-part check must find the strictly-inside vertex even when
+        another vertex of the same part is tangent.
+        """
+        layout = self._build_layout(
+            bay_open=False, intruder_offset_x_m=-3.0, intruder_offset_y_m=-3.5
         )
         result = check(layout)
-        assert "maintenance_no_fuselage" in _conflict_kinds(result), (
-            f"expected maintenance_no_fuselage conflict, got {result.conflicts!r}"
+        assert "bay_intrusion" in _conflict_kinds(result)
+
+    def test_retired_conflict_kinds_never_emitted(self) -> None:
+        """The legacy ``maintenance_position`` and
+        ``maintenance_no_fuselage`` kinds are retired. The new rule
+        must never emit them."""
+        layout = self._build_layout(bay_open=False)
+        result = check(layout)
+        kinds = _conflict_kinds(result)
+        assert "maintenance_position" not in kinds
+        assert "maintenance_no_fuselage" not in kinds
+
+    # ── End-to-end fixture goldens (loader → checker contract) ──────────
+
+    def test_fixture_bay_closed_no_intruder_valid(self) -> None:
+        """Closed bay, all placed planes well clear of the bay rectangle."""
+        result = check(_load("valid_bay_closed_no_intruder"))
+        assert result.valid, f"clear layout must pass with closed bay, got {result.conflicts!r}"
+
+    def test_fixture_bay_open_planes_in_back_strip_valid(self) -> None:
+        """Open bay (maintenance_plane=None) — a plane parked inside the
+        area that WOULD be the bay must still pass; the rule is a no-op."""
+        layout = _load("valid_bay_open_planes_in_back_strip")
+        assert layout.maintenance_plane is None
+        result = check(layout)
+        assert result.valid, (
+            f"open bay must not fire bay_intrusion against a plane in "
+            f"the back strip, got {result.conflicts!r}"
+        )
+
+    def test_fixture_partial_width_bay_plane_in_side_aisle_valid(self) -> None:
+        """Closed bay, plane parked in the side aisle (back strip, but
+        outside the bay x range). Asserts partial-width semantics — the
+        side aisle remains usable even when the bay is closed.
+
+        Beyond ``result.valid``, this also pins the geometric intent:
+        at least one part must have a vertex with ``y > y_min`` (i.e.
+        in the back strip) AND ``x < x_min`` (in the side aisle). A
+        future fixture drift that pushed the plane forward of the
+        back strip would still pass ``result.valid`` but would no
+        longer exercise the partial-width path.
+        """
+        from hangarfit.geometry import aircraft_parts_world
+
+        layout = _load("valid_partial_width_bay_plane_in_side_aisle")
+        result = check(layout)
+        assert result.valid, (
+            f"side-aisle layout must pass with closed partial-width bay, got {result.conflicts!r}"
+        )
+        bay = layout.hangar.maintenance_bay
+        x_min = bay.center_x_m - bay.width_m / 2
+        y_min = layout.hangar.length_m - bay.depth_m
+        in_side_aisle = any(
+            vx < x_min and vy > y_min
+            for placement in layout.placements
+            for wp in aircraft_parts_world(layout.fleet[placement.plane_id], placement)
+            for vx, vy in list(wp.polygon.exterior.coords)[:-1]
+        )
+        assert in_side_aisle, (
+            "fixture must place at least one vertex in the side aisle "
+            "(x < x_min and y > y_min); otherwise it no longer exercises "
+            "the partial-width semantics it documents"
+        )
+
+    def test_fixture_bay_intrusion_wingtip_invalid(self) -> None:
+        """A wingtip vertex strictly inside the closed bay must trip
+        exactly one ``bay_intrusion`` conflict."""
+        result = check(_load("invalid_bay_intrusion_wingtip"))
+        assert not result.valid
+        assert _conflict_kinds(result) == {"bay_intrusion"}, (
+            f"expected exactly bay_intrusion, got {result.conflicts!r}"
+        )
+        assert len(result.conflicts) == 1, (
+            f"expected exactly one offending part, got {result.conflicts!r}"
+        )
+
+    def test_fixture_part_vertex_on_bay_edge_valid(self) -> None:
+        """A vertex landing exactly on a bay edge (``x == x_min``) must
+        NOT trip the rule. Guards the strict-inequality semantics at
+        the fixture level (the synthetic unit tests do the same at the
+        function level).
+
+        Beyond ``result.valid``, this also pins the on-edge property:
+        at least one part must have a vertex with ``abs(x - x_min)``
+        below floating-point tolerance. If a future fixture drift
+        moved the plane off the edge by a few cm, ``result.valid``
+        would still hold but the fixture would no longer guard the
+        strict-vs-non-strict boundary case.
+        """
+        import math
+
+        from hangarfit.geometry import aircraft_parts_world
+
+        layout = _load("valid_part_vertex_on_bay_edge")
+        result = check(layout)
+        assert result.valid, f"vertex on bay edge must count as outside; got {result.conflicts!r}"
+        bay = layout.hangar.maintenance_bay
+        x_min = bay.center_x_m - bay.width_m / 2
+        on_edge = any(
+            math.isclose(vx, x_min, abs_tol=1e-9)
+            for placement in layout.placements
+            for wp in aircraft_parts_world(layout.fleet[placement.plane_id], placement)
+            for vx, _vy in list(wp.polygon.exterior.coords)[:-1]
+        )
+        assert on_edge, (
+            "fixture must place at least one part vertex at x = x_min "
+            "exactly; otherwise it no longer exercises the strict-< edge "
+            "case it documents"
+        )
+
+    def test_defensive_skip_protects_against_occupant_leak(self) -> None:
+        """If the maintenance occupant ever leaks into ``world_parts``
+        (would require a Layout-invariant bypass), the rule must skip
+        it rather than emit "occupant intrudes into its own bay"
+        nonsense. Exercises the defensive ``if plane_id ==
+        layout.maintenance_plane: continue`` guard by calling the
+        private rule with a hand-built world_parts dict whose key is
+        the maintenance plane id.
+        """
+        from hangarfit.collisions import _bay_intrusion_conflicts
+        from hangarfit.geometry import aircraft_parts_world
+        from hangarfit.models import Placement
+
+        # A valid (occupant-absent) Layout to supply the bay geometry
+        # and maintenance_plane name.
+        layout = self._build_layout(bay_open=False)
+        # Hand-build world_parts WITH the occupant — bypassing the
+        # Layout invariant that would normally make this state
+        # unreachable. Place the occupant deep inside the bay so its
+        # fuselage vertex would trigger an intrusion if the skip
+        # weren't there.
+        occupant_placement = Placement(
+            plane_id="occupant", x_m=14.0, y_m=20.0, heading_deg=0.0, on_carts=True
+        )
+        leaked_world_parts = {
+            "occupant": aircraft_parts_world(layout.fleet["occupant"], occupant_placement)
+        }
+        conflicts = _bay_intrusion_conflicts(leaked_world_parts, layout)
+        assert conflicts == [], (
+            f"defensive skip failed: occupant emitted bay_intrusion against "
+            f"its own bay; got {conflicts!r}"
         )
 
 

@@ -5,7 +5,8 @@
 # entry has `measured: false` as a grep handle so you can audit what
 # still needs real numbers.
 #
-# Conventions (see CLAUDE.md for the full version):
+# Conventions (see `docs/architecture/08-crosscutting-concepts.md`
+# "The coordinate convention" and "The parts model" for the full version):
 # - Plane-local coords: +x = forward (toward nose), +y = right (toward right wingtip)
 # - Origin of plane-local frame = main-gear / cart centroid
 # - Each Part is an oriented rectangle: length_m runs along plane +x,
@@ -13,6 +14,13 @@
 # - Heights z_bottom_m / z_top_m are above-ground in world coords
 # - struts block (optional) is expanded by the loader into two mirrored
 #   strut Parts; cantilever aircraft omit the block entirely
+# - turn_radius_m: own-gear minimum taxi turn radius (m). LOAD-BEARING since
+#   Phase 3a — consumed by the `towplanner` module's Dubins / Hybrid-A*
+#   path planning (it was an unused placeholder through Phase 1/2a). `null`
+#   on always_cart planes: they have no own-gear taxi radius, so the
+#   towplanner substitutes 0 (pivot-in-place on the cart) via
+#   `Aircraft.effective_turn_radius_m()` rather than baking 0 into the data
+#   (ADR-0007, fork 4).
 
 aircraft:
   # ----------------------------------------------------------------------------
@@ -23,7 +31,7 @@ aircraft:
     wing_position: high
     gear: monowheel
     movement_mode: always_cart
-    turn_radius_m: null
+    turn_radius_m: null  # always_cart → towplanner uses 0 (pivot); see header + ADR-0007
     measured: false
     notes: "Cantilever wing; outriggers folded into wing footprint at the tips"
     parts:
@@ -109,7 +117,7 @@ aircraft:
     wing_position: high
     gear: nosewheel
     movement_mode: always_cart
-    turn_radius_m: null
+    turn_radius_m: null  # always_cart → towplanner uses 0 (pivot); see header + ADR-0007
     measured: false
     parts:
       - kind: fuselage
@@ -141,7 +149,7 @@ aircraft:
     wing_position: high
     gear: tailwheel
     movement_mode: always_cart
-    turn_radius_m: null
+    turn_radius_m: null  # always_cart → towplanner uses 0 (pivot); see header + ADR-0007
     measured: false
     parts:
       - kind: fuselage

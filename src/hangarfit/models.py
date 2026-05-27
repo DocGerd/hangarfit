@@ -6,7 +6,8 @@ instead of lists where collections appear (so the whole graph is
 effectively immutable after construction).
 
 The full coordinate convention and parts-model collision rule live in
-``CLAUDE.md`` at the repo root — this module just encodes the types.
+``docs/architecture/08-crosscutting-concepts.md`` — this module just
+encodes the types.
 """
 
 from __future__ import annotations
@@ -16,7 +17,10 @@ import typing
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
+
+if TYPE_CHECKING:
+    from hangarfit.towplanner import MovesPlan
 
 WingPosition = Literal["high", "mid", "low"]
 Gear = Literal["tailwheel", "nosewheel", "monowheel"]
@@ -34,8 +38,9 @@ class Part:
     """One oriented rectangle in plane-local coordinates with a height range.
 
     The universal collision unit. Fuselage, wing, and each strut are all
-    represented as ``Part`` instances. See ``CLAUDE.md`` for the
-    plane-local coordinate convention (``+x`` forward, ``+y`` right).
+    represented as ``Part`` instances. See
+    ``docs/architecture/08-crosscutting-concepts.md`` "The coordinate
+    convention" for plane-local coordinates (``+x`` forward, ``+y`` right).
 
     ``kind`` is closed: ``"fuselage" | "wing" | "strut" | "tail"``. New
     kinds must be added to ``PartKind`` and the matching ``_VALID_PART_KINDS``
@@ -200,6 +205,19 @@ class Aircraft:
             )
         return self.turn_radius_m
 
+    def effective_turn_radius_m(self) -> float:
+        """Turn radius for path planning: ``0.0`` for cart-borne planes
+        (a pivot-in-place), else the own-gear ``required_turn_radius_m()``.
+
+        This is the accessor the tow-path planner consumes (ADR-0007): a
+        cart-borne plane is modelled as own-gear with a zero turn radius.
+        Unlike :meth:`required_turn_radius_m`, this never raises — callers
+        that legitimately handle carts (the Dubins planner) use this one.
+        """
+        if self.movement_mode == "always_cart":
+            return 0.0
+        return self.required_turn_radius_m()
+
 
 @dataclass(frozen=True, slots=True)
 class Door:
@@ -215,11 +233,33 @@ class Door:
 
 @dataclass(frozen=True, slots=True)
 class MaintenanceBay:
-    """The back-most strip of the hangar that doubles as the maintenance bay."""
+    """A back-anchored partial-width rectangle reserved for maintenance.
 
+    The bay always touches the hangar's back wall; its y-extent is
+    ``[hangar.length_m - depth_m, hangar.length_m]``. Its x-extent is
+    centered on ``center_x_m`` with width ``width_m`` (same idiom as
+    :class:`Door`). The bay-fits-in-hangar check
+    (``center_x_m ± width_m/2 ∈ [0, hangar.width_m]``) lives in
+    :class:`Hangar` because it needs the hangar width.
+    """
+
+    center_x_m: float
+    width_m: float
     depth_m: float
 
     def __post_init__(self) -> None:
+        # ``center_x_m`` follows :class:`Door`'s precedent (non-negative);
+        # the spec interval ``center_x_m ± width_m/2 ∈ [0, hangar.width_m]``
+        # admits ``center_x_m == width_m/2`` (left edge flush with x=0),
+        # so the local guard is non-negativity, not strict positivity.
+        # The bay-fits-in-hangar check on :class:`Hangar` enforces the
+        # full interval.
+        if self.center_x_m < 0:
+            raise ValueError(
+                f"MaintenanceBay.center_x_m must be non-negative, got {self.center_x_m}"
+            )
+        if self.width_m <= 0:
+            raise ValueError(f"MaintenanceBay.width_m must be positive, got {self.width_m}")
         if self.depth_m <= 0:
             raise ValueError(f"MaintenanceBay.depth_m must be positive, got {self.depth_m}")
 
@@ -229,7 +269,9 @@ class Hangar:
     """The hangar floor plan.
 
     Coordinates: ``(0, 0)`` at the front-left corner, ``+x`` along the
-    door wall, ``+y`` deeper into the hangar. See ``CLAUDE.md``.
+    door wall, ``+y`` deeper into the hangar. See
+    ``docs/architecture/08-crosscutting-concepts.md`` "The coordinate
+    convention".
     """
 
     length_m: float
@@ -256,6 +298,14 @@ class Hangar:
         if door_left < 0 or door_right > self.width_m:
             raise ValueError(
                 f"Door (center={self.door.center_x_m}, width={self.door.width_m}) "
+                f"doesn't fit in hangar width {self.width_m}"
+            )
+        bay_left = self.maintenance_bay.center_x_m - self.maintenance_bay.width_m / 2
+        bay_right = self.maintenance_bay.center_x_m + self.maintenance_bay.width_m / 2
+        if bay_left < 0 or bay_right > self.width_m:
+            raise ValueError(
+                f"MaintenanceBay (center={self.maintenance_bay.center_x_m}, "
+                f"width={self.maintenance_bay.width_m}) "
                 f"doesn't fit in hangar width {self.width_m}"
             )
         if self.maintenance_bay.depth_m >= self.length_m:
@@ -294,13 +344,13 @@ class Layout:
     - the cart rule (at most one ``cart_eligible`` plane on carts),
     - ``always_cart`` ↔ ``on_carts=True`` consistency,
     - ``always_own_gear`` ↔ ``on_carts=False`` consistency,
-    - the maintenance plane (if set) is in the fleet and is placed.
+    - the maintenance plane (if set) is in the fleet **and is NOT in
+      placements** (the occupant is treated as "away" — physically
+      absent from the parking problem).
 
-    The maintenance plane's **position** rule ("must be parked in the
-    back-most strip of the hangar") is *not* enforced here — it depends
-    on placement geometry and the hangar's maintenance-bay depth, so it
-    lives in the collision checker (#5) alongside the other geometric
-    rules.
+    The bay-closure rule (no other plane's parts may cross into the
+    closed bay rectangle) is a geometric check; it lives in the
+    collision checker alongside the other geometric rules.
 
     On construction, ``fleet`` is wrapped in ``MappingProxyType`` so
     that the cross-reference invariants stay valid for the lifetime of
@@ -357,8 +407,11 @@ class Layout:
         if self.maintenance_plane is not None:
             if self.maintenance_plane not in self.fleet:
                 raise ValueError(f"maintenance_plane {self.maintenance_plane!r} not in fleet")
-            if self.maintenance_plane not in seen:
-                raise ValueError(f"maintenance_plane {self.maintenance_plane!r} is not placed")
+            if self.maintenance_plane in seen:
+                raise ValueError(
+                    f"maintenance_plane {self.maintenance_plane!r} must NOT be in "
+                    f"placements when in maintenance (occupant is treated as away)"
+                )
 
         object.__setattr__(self, "fleet", MappingProxyType(dict(self.fleet)))
 
@@ -368,10 +421,11 @@ class Conflict:
     """One reason a layout is invalid.
 
     ``planes`` carries 1 or 2 *distinct, non-empty* aircraft IDs
-    depending on the rule that fired (layout-wide rules like
-    ``maintenance_position`` cite one plane; pairwise rules like
-    ``wing_strut_overlap`` cite two). Use ``Conflict.single()`` /
-    ``Conflict.pair()`` at call sites to make the arity explicit.
+    depending on the rule that fired (single-plane rules like
+    ``hangar_bounds`` or ``bay_intrusion`` cite one plane; pairwise
+    rules like ``wing_strut_overlap`` cite two). Use
+    ``Conflict.single()`` / ``Conflict.pair()`` at call sites to make
+    the arity explicit.
     """
 
     kind: str
@@ -392,7 +446,7 @@ class Conflict:
 
     @classmethod
     def single(cls, kind: str, plane: str, detail: str) -> Conflict:
-        """Factory for a single-aircraft conflict (e.g. ``maintenance_position``)."""
+        """Factory for a single-aircraft conflict (e.g. ``hangar_bounds`` or ``bay_intrusion``)."""
         return cls(kind=kind, planes=(plane,), detail=detail)
 
     @classmethod
@@ -412,9 +466,9 @@ class CheckResult:
     across pairwise conflicts (length-2 ``Conflict.planes``) — used by
     the Phase 2a solver as a smooth secondary scoring key to break
     plateaus in the integer ``len(conflicts)`` metric. Single-plane
-    conflicts (``maintenance_position``, ``maintenance_no_fuselage``,
-    ``hangar_bounds``) contribute 0. The validity contract is unchanged:
-    ``valid`` is still derived from ``conflicts`` only.
+    conflicts (``hangar_bounds``, ``bay_intrusion``) contribute 0. The
+    validity contract is unchanged: ``valid`` is still derived from
+    ``conflicts`` only.
     """
 
     conflicts: tuple[Conflict, ...] = ()
@@ -465,6 +519,9 @@ class Scenario:
         force_on_carts=False → plane must NOT be always_cart
     - pin.on_carts is consistent with movement_mode (same rules)
     - if both a pin and force_on_carts are set, their on_carts must agree
+    - maintenance_plane (if set) must not also carry a pin or force_on_carts in
+      constraints (the occupant is treated as away — those constraints would be
+      incoherent and would be silently ignored by the solver)
     - fleet and constraints are wrapped in MappingProxyType (same pattern as Layout)
 
     See spec §3.2 for the rationale.
@@ -508,6 +565,25 @@ class Scenario:
         for key in self.constraints:
             if key not in fleet_in_set:
                 raise ValueError(f"Scenario.constraints has key {key!r} not in fleet_in")
+
+        # maintenance_plane cannot carry a pin or force_on_carts constraint.
+        # The maintenance occupant is treated as away (absent from placements),
+        # so any pin or force_on_carts on it would be silently ignored by the
+        # solver.  Reject early so the user gets a clear error rather than a
+        # layout that ignored their constraint.
+        if (
+            self.maintenance_plane is not None
+            and self.maintenance_plane in self.constraints
+            and (
+                self.constraints[self.maintenance_plane].pin is not None
+                or self.constraints[self.maintenance_plane].force_on_carts is not None
+            )
+        ):
+            raise ValueError(
+                f"Scenario.maintenance_plane {self.maintenance_plane!r} cannot also "
+                f"carry a pin or force_on_carts constraint — the maintenance occupant "
+                f"is treated as away (absent from placements)."
+            )
 
         # per-constraint validation
         for plane_id, constraint in self.constraints.items():
@@ -594,11 +670,14 @@ class SolverDiagnostics:
     warning as a structured, machine-readable signal so callers don't
     have to scrape log records.
 
-    ``diversity_rejected_count`` is the number of valid layouts the
-    diversity filter rejected during the run. ``0`` is the healthy
-    default; a non-zero value means search produced more valid layouts
-    than the K-diversity gate accepted (informative when K>1 returns
-    ``found_partial``).
+    ``diversity_rejected_count`` is the number of pool candidates the
+    diversity gate turned away during best-of-all selection (#267) —
+    examined in best-spread order until ``alternatives`` were chosen, so
+    candidates beyond the quota are never examined or counted. ``0`` is
+    the healthy default and is always the value for ``alternatives == 1``
+    (selection stops after the first, vacuous pick). When ``K>1`` returns
+    ``found_partial`` a non-zero value shows the diversity gate turned
+    away otherwise-valid basins.
 
     ``diversity_impossible`` and ``diversity_rejected_count`` are
     **advisory**: structured mirrors of log warnings / search
@@ -606,6 +685,28 @@ class SolverDiagnostics:
     decisions; that's ``status``'s job. They exist so dashboards and
     tests can read the same signals as the logger without scraping log
     records.
+
+    ``unroutable_planes`` is a flat, advisory list of the blocking plane
+    ids for the layouts the tow planner could not route, in
+    returned-layout order. There is one entry per ``None`` in
+    :attr:`SolveResult.plans`, but the tuple is **compacted** (only the
+    failing layouts contribute) — it is *not* positionally indexable to
+    ``plans``/``layouts``; to attribute a failure to a specific layout,
+    read the ``None`` positions in ``plans``. Empty when every returned
+    layout was tow-planned, or when tow-planning was not attempted
+    (``solve(..., plan_paths=False)``). Advisory: the v2 planner
+    (Reeds–Shepp arcs + bounded Hybrid-A* — #222/#261 under ADR-0007 +
+    ADR-0010) has documented false-negatives, so an un-routable layout is
+    still a valid static arrangement — the entry flags a planning gap, not
+    an invalid layout.
+
+    ``min_pairwise_gap_m`` is index-aligned with :attr:`SolveResult.layouts`:
+    the achieved minimum plan-view gap (m) between any two planes in that
+    returned layout — the quality the best-of-all-basins spread selection
+    maximizes (#267, ADR-0008). ``math.inf`` for a layout with <2 planes
+    (no pairs). ``valid_basins_found`` is the number of valid spread-polished
+    basins the search collected before selection — how much choice best-of-all
+    had. Both are advisory.
     """
 
     restarts_attempted: int
@@ -615,6 +716,9 @@ class SolverDiagnostics:
     seed: int
     diversity_impossible: bool = False
     diversity_rejected_count: int = 0
+    unroutable_planes: tuple[str, ...] = ()
+    min_pairwise_gap_m: tuple[float, ...] = ()
+    valid_basins_found: int = 0
 
     def __post_init__(self) -> None:
         if (self.best_partial is None) != (self.best_partial_layout is None):
@@ -635,6 +739,15 @@ class SolverDiagnostics:
                 f"SolverDiagnostics.diversity_rejected_count must be >= 0, "
                 f"got {self.diversity_rejected_count}"
             )
+        if self.valid_basins_found < 0:
+            raise ValueError(
+                f"SolverDiagnostics.valid_basins_found must be >= 0, got {self.valid_basins_found}"
+            )
+        if any(math.isnan(g) or g < 0.0 for g in self.min_pairwise_gap_m):
+            raise ValueError(
+                "SolverDiagnostics.min_pairwise_gap_m entries must be non-negative "
+                f"(math.inf allowed for <2-plane layouts), got {self.min_pairwise_gap_m!r}"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -647,19 +760,50 @@ class SolveResult:
 
     - ``"found"`` / ``"found_partial"`` → at least one layout
     - ``"exhausted_budget"`` / ``"trivially_infeasible"`` → zero layouts
+
+    ``plans`` is index-aligned with ``layouts``: ``plans[i]`` is the
+    :class:`~hangarfit.towplanner.MovesPlan` for ``layouts[i]``, or
+    ``None`` when the tow planner could not route that layout
+    (best-effort enrichment — see ADR-0007 + ADR-0010). It is also
+    all-``None`` when tow-planning was skipped
+    (``solve(..., plan_paths=False)``). A ``None`` entry does **not**
+    invalidate the corresponding layout: the static arrangement remains
+    valid; only its tow plan is unavailable. For statuses with empty
+    ``layouts`` the field is always ``()``.
     """
 
     status: SolveStatus
     layouts: tuple[Layout, ...]
     diagnostics: SolverDiagnostics
+    plans: tuple[MovesPlan | None, ...] = ()
 
     def __post_init__(self) -> None:
         if self.status in ("found", "found_partial") and not self.layouts:
             raise ValueError(f"SolveResult.status={self.status!r} requires at least one layout")
-        if self.status in ("exhausted_budget", "trivially_infeasible") and self.layouts:
+        _empty_statuses = ("exhausted_budget", "trivially_infeasible")
+        if self.status in _empty_statuses and self.layouts:
             raise ValueError(
                 f"SolveResult.status={self.status!r} must have empty layouts, "
                 f"got {len(self.layouts)}"
+            )
+        # plans is index-aligned with layouts for EVERY status: empty-layout
+        # statuses therefore require empty plans too, and this subsumes the
+        # found/found_partial cardinality check (layouts is already forced
+        # non-empty for those by the first guard). Entries may be None
+        # (best-effort: the tow planner couldn't route that layout), but the
+        # length must still match.
+        if len(self.plans) != len(self.layouts):
+            raise ValueError(
+                f"SolveResult.plans length ({len(self.plans)}) must equal "
+                f"layouts length ({len(self.layouts)}) (status={self.status!r})"
+            )
+        if self.diagnostics.min_pairwise_gap_m and len(self.diagnostics.min_pairwise_gap_m) != len(
+            self.layouts
+        ):
+            raise ValueError(
+                "SolveResult.diagnostics.min_pairwise_gap_m, when populated, must be "
+                f"index-aligned with layouts: got {len(self.diagnostics.min_pairwise_gap_m)} "
+                f"gaps for {len(self.layouts)} layouts"
             )
 
 
@@ -722,6 +866,21 @@ class SearchConfig:
     explicitly to disable the cap; passing ``0`` is rejected (it would
     skip the search loop entirely)."""
 
+    spread: bool = True
+    """When True (default), ``solve()`` runs a post-pass spread phase on each
+    valid layout that maximizes inter-plane separation (minimizes the
+    repulsion energy ``Σ exp(−gap/scale)``) while preserving validity. Set
+    False to skip it entirely — the RNG stream is then byte-identical to the
+    pre-spread solver, so determinism goldens written before this feature
+    still hold. See ADR-0008 and
+    ``docs/superpowers/specs/2026-05-24-inter-plane-spread-design.md``."""
+
+    spread_scale_m: float | None = None
+    """Length scale (metres) of the spread repulsion kernel ``exp(−gap/scale)``.
+    ``None`` (default) ⇒ adaptive ``0.2 × min(hangar.width_m, hangar.length_m)``,
+    keeping the kernel sensitive across hangar sizes. When set explicitly,
+    must be ``> 0``."""
+
     def __post_init__(self) -> None:
         if self.candidates_per_iter < 1:
             raise ValueError(
@@ -747,4 +906,9 @@ class SearchConfig:
                 f"SearchConfig.max_restarts must be >= 1 when set "
                 f"(pass ``None`` to disable the restart cap; ``0`` would "
                 f"skip the search loop entirely), got {self.max_restarts}"
+            )
+        if self.spread_scale_m is not None and self.spread_scale_m <= 0.0:
+            raise ValueError(
+                f"SearchConfig.spread_scale_m must be positive when set "
+                f"(pass None for the adaptive default), got {self.spread_scale_m}"
             )

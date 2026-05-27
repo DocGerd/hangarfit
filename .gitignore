@@ -38,9 +38,22 @@ coverage.xml
 .DS_Store
 
 # Project artifacts
+# Root-anchored guard for any PNG dropped at the repo root by
+# `hangarfit check --render <name>.png` (OSPS-QA-05, issue #231).
+# The leading slash restricts the rule to the repo root so that
+# legitimate subdir images (e.g. docs/diagram.png) remain track-able.
+/*.png
+# Keep explicit pattern for visibility — contributors grepping "out.png"
+# immediately see it is intentionally ignored.
 out*.png
 *.local.*
 
 # Explicit even though *.local.* already matches — keeps the intent
 # visible to contributors grepping for ".claude" (issue #35).
 .claude/settings.local.json
+
+# Per-agent isolation worktrees created by Claude Code's Agent tool when
+# invoked with `isolation: "worktree"`. The tool writes to
+# `.claude/worktrees/agent-<hash>/`; nothing in there is ever meant to be
+# committed (issue #148).
+.claude/worktrees/

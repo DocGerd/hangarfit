@@ -2,6 +2,28 @@
 
 from __future__ import annotations
 
+import pytest
+
+
+@pytest.fixture(autouse=True)
+def _stub_towplanning(monkeypatch):
+    """Keep these infeasibility/smoke tests fast by stubbing tow-planning.
+
+    solve() tow-plans every returned layout by default (``plan_paths=True``,
+    #197), and tow-planning runs a bounded Hybrid-A* search per plane —
+    seconds on a multi-plane fill. These tests assert on status/seed/diagnostics,
+    never on ``plans``, so a trivial ``plan_fill`` stub preserves the default
+    code path while removing the cost (the trivially-infeasible cases never
+    reach tow-planning anyway). The real planner↔solver integration lives in
+    ``tests/test_solver_towplanner.py``.
+    """
+    import hangarfit.solver as solver_mod
+    from hangarfit.towplanner import MovesPlan
+
+    monkeypatch.setattr(
+        solver_mod, "plan_fill", lambda target: MovesPlan(target_layout=target, moves=())
+    )
+
 
 def test_solve_resolves_none_seed_to_entropy():
     """seed=None resolves to a random int and is recorded in diagnostics."""
@@ -171,24 +193,35 @@ def test_solve_trivially_infeasible_alternatives_1_clears_diversity_impossible()
     assert r.diagnostics.diversity_rejected_count == 0
 
 
-def test_solve_trivially_infeasible_when_maintenance_pin_outside_bay():
-    """Maintenance plane pinned outside the back maintenance bay.
+# Note: the legacy ``test_solve_trivially_infeasible_when_maintenance_pin_outside_bay``
+# (and its fixture ``solve_infeasible_maint_pin_outside_bay.yaml``) was removed
+# along with the ``maintenance_position`` collision rule. Pinning the
+# maintenance plane is incoherent under the new "occupant is away"
+# semantics — the bay-closure rule operates on the perimeter, not on the
+# occupant's geometry, so there is nothing to pin against.
 
-    Regression test for the silent-failure path identified in PR #89:
-    pre-search check #3 now includes the maintenance_position rule when
-    the maintenance plane is itself pinned. Without the fix, this case
-    would slip past pre-search and burn the entire solve() budget on
-    infinite restarts.
+
+def test_solve_trivially_infeasible_when_pinned_plane_intrudes_into_closed_bay():
+    """Pinning a non-maintenance plane such that its geometry intrudes
+    into the closed bay must be caught pre-search.
+
+    Pre-search check #3 builds a pin-only Layout from the pinned
+    placements (with the maintenance occupant filtered out per the
+    invariant) and runs ``collisions.check()`` on it. A pinned wingtip
+    strictly inside the closed bay triggers ``bay_intrusion`` on that
+    Layout — and the solver short-circuits to trivially_infeasible
+    instead of burning the budget on restarts where every iteration
+    hits the same conflict on a pinned plane.
     """
     from hangarfit.loader import load_scenario
     from hangarfit.solver import solve
 
-    s = load_scenario("tests/fixtures/solve_infeasible_maint_pin_outside_bay.yaml")
+    s = load_scenario("tests/fixtures/solve_infeasible_bay_closes_floor.yaml")
     r = solve(s, budget_s=5.0, seed=42)
 
     # Must fire trivially_infeasible (pre-search), NOT exhausted_budget.
     assert r.status == "trivially_infeasible", (
-        f"Expected pre-search rejection; got {r.status} after "
+        f"expected pre-search rejection; got {r.status} after "
         f"{r.diagnostics.restarts_attempted} restarts (silent-failure regression?)"
     )
     # Wall time should be ~zero — no real search ran.
@@ -196,11 +229,7 @@ def test_solve_trivially_infeasible_when_maintenance_pin_outside_bay():
     assert r.diagnostics.restarts_attempted == 0
     bp = r.diagnostics.best_partial
     assert bp is not None
-    # The fired conflict is maintenance_position (one of collisions.py's
-    # standard kinds), not one of the solver's synthetic
-    # "trivially_infeasible_*" kinds. That's fine — what matters is that
-    # the user gets a SHARP signal pre-search rather than a generic
-    # exhausted_budget.
-    assert any("maintenance" in c.kind for c in bp.conflicts), (
-        f"Expected a maintenance-related conflict, got {[c.kind for c in bp.conflicts]}"
+    assert any(c.kind == "bay_intrusion" for c in bp.conflicts), (
+        f"expected a bay_intrusion conflict on the pin-only Layout, "
+        f"got {[c.kind for c in bp.conflicts]}"
     )

@@ -10,13 +10,16 @@ upstream:
 1. **Hangar bounds** (checked here) — every world part vertex lies
    inside the hangar rectangle ``0 ≤ x ≤ hangar.width_m``,
    ``0 ≤ y ≤ hangar.length_m``.
-2. **Maintenance bay** (checked here) — if ``layout.maintenance_plane``
-   is set, the union of that plane's fuselage parts must have its
-   centroid at ``y ≥ hangar.length_m − hangar.maintenance_bay.depth_m``.
-   If the designated plane has no fuselage parts at all (model permits
-   this; the loader doesn't require a fuselage), an explicit
-   ``maintenance_no_fuselage`` conflict is emitted rather than silently
-   passing — we don't want "rule unevaluatable" to look like "rule satisfied".
+2. **Maintenance bay intrusion** (checked here) — when
+   ``layout.maintenance_plane`` is set, the bay rectangle becomes a
+   hard keep-out for every other plane's parts. The bay is the
+   axis-aligned rectangle anchored to the back wall:
+   ``x ∈ (center_x_m − width_m/2, center_x_m + width_m/2)``,
+   ``y ∈ (length_m − depth_m, length_m]``. A vertex strictly inside
+   that rectangle is a ``bay_intrusion`` conflict on the owning plane.
+   The occupant has no entry in ``world_parts`` (absent from
+   placements by Layout invariant), so it never appears as the
+   subject of an intrusion conflict against itself.
 3. **Pairwise parts overlap** (checked here) — for every two parts from
    *different* aircraft, conflict iff both (a) their polygons are within
    ``hangar.clearance_m`` in plan view AND (b) their z-ranges are within
@@ -36,8 +39,6 @@ is iterated first.
 
 from __future__ import annotations
 
-from shapely.ops import unary_union
-
 from .geometry import WorldPart, aircraft_parts_world, polygon_overlap, polygon_overlap_area
 from .models import CheckResult, Conflict, Hangar, Layout
 
@@ -49,7 +50,7 @@ def check(layout: Layout) -> CheckResult:
     }
     conflicts: list[Conflict] = []
     conflicts.extend(_hangar_bounds_conflicts(world_parts, layout.hangar))
-    conflicts.extend(_maintenance_conflicts(world_parts, layout))
+    conflicts.extend(_bay_intrusion_conflicts(world_parts, layout))
     pairwise, total_penetration_m2 = _pairwise_conflicts(world_parts, layout.hangar)
     conflicts.extend(pairwise)
     return CheckResult(
@@ -104,60 +105,81 @@ def _first_out_of_bounds_vertex(part: WorldPart, hangar: Hangar) -> tuple[float,
     return None
 
 
-def _maintenance_conflicts(
+def _bay_intrusion_conflicts(
     world_parts: dict[str, list[WorldPart]], layout: Layout
 ) -> list[Conflict]:
-    """If the layout designates a maintenance plane, its fuselage centroid
-    must lie in the back-most strip of the hangar.
+    """When the bay is closed (``layout.maintenance_plane is not None``),
+    flag any non-occupant part with a vertex strictly inside the bay
+    rectangle.
 
-    We union the fuselage *parts* (an aircraft has exactly one fuselage in
-    practice, but the model permits multiple — taking the union keeps the
-    centroid well-defined either way) and take the y of that union's
-    centroid. The bay starts at ``y = hangar.length_m − bay.depth_m``;
-    a centroid south of that line (closer to the door) is a violation.
+    The bay is the axis-aligned rectangle anchored to the back wall:
 
-    The threshold is strict ``<`` (not ``<=``): a fuselage centroid
-    exactly on the bay boundary counts as parked in the bay. This
-    matches the wording in ``CLAUDE.md`` ("must be parked in the back-most
-    strip") and prevents a measurement-noise flake when the fuselage is
-    tangent to the boundary.
+    - ``x ∈ (center_x_m − width_m/2, center_x_m + width_m/2)``
+    - ``y ∈ (length_m − depth_m, length_m]``
+
+    The three interior edges (left, right, front) use strict ``<``: a
+    vertex sitting on any of those edges counts as outside. The bay's
+    back edge coincides with the hangar's back wall, which is why
+    there is no separate ``y < length_m`` test — a vertex at
+    ``y = length_m`` sits on the hangar's outer wall (still inside the
+    hangar per :func:`_hangar_bounds_conflicts`) and is correctly
+    treated as inside the closed bay. This mirrors the convention in
+    :func:`_first_out_of_bounds_vertex` where the hangar boundary is
+    inclusive.
+
+    The maintenance occupant is absent from placements by Layout
+    invariant, so it should not appear in ``world_parts``. A defensive
+    ``continue`` still skips it explicitly — if a future bug ever
+    let the occupant leak in (a hand-built Layout that bypassed
+    construction, a solver regression), the silent nonsense conflict
+    "the occupant intrudes into its own bay" would otherwise be
+    indistinguishable from a real intrusion.
+
+    Emits one ``bay_intrusion`` conflict per offending **part**, with
+    the first-violating vertex (matches the per-part granularity of
+    :func:`_hangar_bounds_conflicts`).
     """
     if layout.maintenance_plane is None:
         return []
-    fuselage_parts = [p for p in world_parts[layout.maintenance_plane] if p.kind == "fuselage"]
-    if not fuselage_parts:
-        # The :class:`Aircraft` model permits parts of any kind, including
-        # zero fuselages. If the designated maintenance plane has no fuselage,
-        # the maintenance-bay rule has no fuselage centroid to evaluate against —
-        # but silently returning "no conflict" would let the bay invariant
-        # slip through unverified. Emit a distinct conflict so the user sees
-        # "this maintenance plane is structurally unevaluatable" instead.
-        return [
-            Conflict.single(
-                kind="maintenance_no_fuselage",
-                plane=layout.maintenance_plane,
-                detail=(
-                    f"designated maintenance plane {layout.maintenance_plane!r} "
-                    f"has no parts of kind 'fuselage'; maintenance bay rule "
-                    f"cannot be evaluated against a fuselage centroid"
-                ),
+    bay = layout.hangar.maintenance_bay
+    x_min = bay.center_x_m - bay.width_m / 2
+    x_max = bay.center_x_m + bay.width_m / 2
+    y_min = layout.hangar.length_m - bay.depth_m
+    out: list[Conflict] = []
+    for plane_id, parts in world_parts.items():
+        if plane_id == layout.maintenance_plane:
+            continue
+        for part in parts:
+            bad = _first_vertex_in_bay(part, x_min, x_max, y_min)
+            if bad is None:
+                continue
+            x, y = bad
+            out.append(
+                Conflict.single(
+                    kind="bay_intrusion",
+                    plane=plane_id,
+                    detail=(
+                        f"part {part.kind!r} vertex ({x:.3f}, {y:.3f}) inside "
+                        f"closed maintenance bay (x ∈ ({x_min:g}, {x_max:g}), "
+                        f"y ∈ ({y_min:g}, {layout.hangar.length_m:g}); "
+                        f"occupant={layout.maintenance_plane!r})"
+                    ),
+                )
             )
-        ]
-    fuselage_union = unary_union([p.polygon for p in fuselage_parts])
-    bay_start_y = layout.hangar.length_m - layout.hangar.maintenance_bay.depth_m
-    centroid_y = fuselage_union.centroid.y
-    if centroid_y < bay_start_y:
-        return [
-            Conflict.single(
-                kind="maintenance_position",
-                plane=layout.maintenance_plane,
-                detail=(
-                    f"fuselage centroid y={centroid_y:.3f} is forward of the "
-                    f"maintenance bay (starts at y={bay_start_y:.3f})"
-                ),
-            )
-        ]
-    return []
+    return out
+
+
+def _first_vertex_in_bay(
+    part: WorldPart, x_min: float, x_max: float, y_min: float
+) -> tuple[float, float] | None:
+    """Return ``(x, y)`` of the first vertex of ``part`` strictly inside
+    the bay rectangle, or ``None`` if every vertex is outside. Strict
+    ``<`` on left/right/front edges; no back-edge test (back edge is
+    the hangar's outer wall — see :func:`_bay_intrusion_conflicts`)."""
+    for x, y in list(part.polygon.exterior.coords)[:-1]:
+        if x_min < x < x_max and y > y_min:
+            return x, y
+    return None
 
 
 def _pairwise_conflicts(
