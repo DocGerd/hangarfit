@@ -24,6 +24,7 @@ a mis-cased id slip through to a late, generic model-invariant error.
 from __future__ import annotations
 
 import difflib
+import math
 from collections.abc import Collection, Iterable
 from pathlib import Path
 from typing import Any
@@ -51,15 +52,25 @@ class LoaderError(Exception):
 def _to_float(value: Any, field_name: str) -> float:
     """Coerce a YAML scalar to ``float``, raising ``LoaderError`` with the
     field name on failure (rather than a bare ``TypeError`` from
-    ``float(None)`` or ``ValueError`` from ``float("abc")``)."""
+    ``float(None)`` or ``ValueError`` from ``float("abc")``).
+
+    Non-finite results (NaN, ±inf) are also rejected: ``yaml.safe_load``
+    parses ``.nan``/``.inf``/``-.inf`` into real Python floats, and
+    downstream consumers (e.g. ``_wing_spar_x``) silently propagate them
+    into geometry calculations, where NaN comparisons always return False
+    and inf values produce nonsensical coordinates.
+    """
     if value is None:
         raise LoaderError(f"{field_name!r}: expected number, got null")
     try:
-        return float(value)
+        result = float(value)
     except (TypeError, ValueError) as e:
         raise LoaderError(
             f"{field_name!r}: expected number, got {value!r} ({type(value).__name__})"
         ) from e
+    if not math.isfinite(result):
+        raise LoaderError(f"{field_name!r}: expected a finite number, got {value!r}")
+    return result
 
 
 def _to_bool(value: Any, field_name: str) -> bool:
@@ -610,15 +621,50 @@ def _build_struts_spec(data: dict[str, Any]) -> StrutsSpec:
     )
 
 
+# Fraction of the wing chord, measured aft of the leading edge, at which the
+# main (front) wing spar — and therefore the strut's wing attachment — sits.
+# A lift strut on a strut-braced high-wing foots to the front/main spar, which
+# on a typical light aircraft is near the quarter-chord. See issue #282.
+_SPAR_CHORD_FRACTION = 0.25
+assert 0.0 < _SPAR_CHORD_FRACTION < 1.0, (
+    "spar chord fraction must lie strictly inside the chord (0,1)"
+)
+
+
+def _wing_spar_x(wing: Part) -> float:
+    """Longitudinal (plane-local x) station of the wing's main spar.
+
+    In plane-local coords ``+x`` is forward (toward the nose), so the wing's
+    chord runs along x: it spans ``[offset_x_m - length_m/2, offset_x_m +
+    length_m/2]`` with the **leading edge** at the forward (``+x``) end
+    (``offset_x_m + length_m/2``) and the **trailing edge** aft
+    (``offset_x_m - length_m/2``). The main spar sits ``_SPAR_CHORD_FRACTION``
+    of the chord aft of the leading edge:
+
+        spar_x = leading_edge − fraction·chord
+               = (offset_x_m + length_m/2) − fraction·length_m
+               = offset_x_m + (0.5 − fraction)·length_m
+
+    With the default quarter-chord fraction this is ``offset_x_m +
+    length_m/4`` — forward of the wing centre, never at the trailing edge.
+    """
+    return wing.offset_x_m + (0.5 - _SPAR_CHORD_FRACTION) * wing.length_m
+
+
 def _expand_struts(spec: StrutsSpec, wing: Part) -> list[Part]:
     """Build two mirrored strut Parts from a StrutsSpec + wing.
 
     Each strut is modelled in plan view as a thin oriented rectangle
     running outboard from the fuselage attach (y = ``fuselage_attach_y_m``)
-    to the wing attach (y = ``wing_attach_y_m``), at the same x as the
-    fuselage attach point. The strut's z-range is
-    ``[fuselage_attach_z_m, wing.z_bottom_m]`` — i.e. from the lower
-    fuselage attach point up to the wing underside.
+    to the wing attach (y = ``wing_attach_y_m``). Its longitudinal (x)
+    station is anchored to the **wing spar axis** (:func:`_wing_spar_x`),
+    NOT to ``spec.fuselage_attach_x_m`` — in the placeholder fleet the
+    latter sits at the wing trailing edge, ~0.6–0.7 m aft of the spar,
+    which mis-places the strut keep-out the collision checker consumes
+    (issue #282). The strut stays spanwise (``angle_deg=0``); the
+    fix does not rake it (that is the heavier fix option 2). The strut's
+    z-range is ``[fuselage_attach_z_m, wing.z_bottom_m]`` — i.e. from the
+    lower fuselage attach point up to the wing underside.
     """
     if wing.z_bottom_m <= spec.fuselage_attach_z_m:
         raise LoaderError(
@@ -635,12 +681,13 @@ def _expand_struts(spec: StrutsSpec, wing: Part) -> list[Part]:
             f"loader requires a strictly positive span"
         )
     midpoint = (spec.fuselage_attach_y_m + spec.wing_attach_y_m) / 2.0
+    spar_x = _wing_spar_x(wing)
     return [
         Part(  # right side
             kind="strut",
             length_m=spec.width_m,
             width_m=strut_span,
-            offset_x_m=spec.fuselage_attach_x_m,
+            offset_x_m=spar_x,
             offset_y_m=midpoint,
             angle_deg=0.0,
             z_bottom_m=spec.fuselage_attach_z_m,
@@ -650,7 +697,7 @@ def _expand_struts(spec: StrutsSpec, wing: Part) -> list[Part]:
             kind="strut",
             length_m=spec.width_m,
             width_m=strut_span,
-            offset_x_m=spec.fuselage_attach_x_m,
+            offset_x_m=spar_x,
             offset_y_m=-midpoint,
             angle_deg=0.0,
             z_bottom_m=spec.fuselage_attach_z_m,

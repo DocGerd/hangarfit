@@ -540,14 +540,22 @@ class TestTotalPenetration:
 
     def test_sums_across_multiple_pair_conflicts(self) -> None:
         """3 pairwise conflicts in ``invalid_strut_blocks_nesting`` should
-        sum to the deterministic 1.4305 m² total — pins the ``+=``
+        sum to the deterministic 1.35 m² total — pins the ``+=``
         accumulator semantic against future refactors to ``=``, ``max``,
-        or ``mean``."""
+        or ``mean``.
+
+        Golden re-baselined from 1.4305 → 1.35 m² for issue #282: the
+        struts now sit on the wing-spar axis (quarter-chord) instead of at
+        the wing trailing edge, which shifts each strut ~0.97 m forward and
+        changes its plan-view overlap footprint with the intruding fuji
+        wing. The conflict *set* is unchanged — still 1 fuselage_wing +
+        2 strut_wing — so the canary's intent (struts block the nesting)
+        is preserved; only the summed intersection area moves."""
         layout = _load("invalid_strut_blocks_nesting")
         result = check(layout)
 
         assert len(result.conflicts) == 3
-        assert result.total_penetration_m2 == pytest.approx(1.4305, abs=1e-4)
+        assert result.total_penetration_m2 == pytest.approx(1.35, abs=1e-4)
 
     def test_zero_for_valid_layout(self) -> None:
         layout = _load("valid_two_separated")

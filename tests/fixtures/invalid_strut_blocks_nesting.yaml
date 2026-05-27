@@ -6,11 +6,14 @@
 # plan-view overlap with a Cessna 150 strut, the checker must emit
 # `strut_wing_overlap`.
 #
-# Positions:
-#   cessna_150 at (9, 5, 0, false): wing x [3.95, 14.05], left strut
-#     at x [7.2, 8.55] / y [5.475, 5.525], right strut at x [9.45, 10.8]
-#     / y [5.475, 5.525].
-#   fuji at (5, 5, 0, false): wing x [0.3, 9.7], y [4.75, 6.25], z
+# Positions (struts anchored to the wing-spar axis — quarter-chord — per
+# issue #282, so they sit ~0.97 m forward of the old trailing-edge x; in
+# this heading-0 placement "forward" maps to world +y, so the strut y is
+# now 6.12–6.17, was ~5.17):
+#   cessna_150 at (9, 5, 0, false): wing x [3.92, 14.08], left strut
+#     at x [7.2, 8.55] / y [6.12, 6.17], right strut at x [9.45, 10.8]
+#     / y [6.12, 6.17].
+#   fuji at (5, 5, 0, false): wing x [0.29, 9.71], y [4.35, 5.85], z
 #     [0.8, 1.1]. Wing plan-view overlaps BOTH cessna struts.
 #
 # A bbox-style implementation would just emit a generic wing/fuselage

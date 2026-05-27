@@ -407,6 +407,60 @@ aircraft:
 
 
 # ----------------------------------------------------------------------------
+# Non-finite numeric field guard (_to_float rejects NaN / ±inf).
+# ----------------------------------------------------------------------------
+
+
+class TestNonFiniteNumericFields:
+    """yaml.safe_load parses .nan/.inf/-.inf into real Python floats.
+    _to_float must reject them so they never reach geometry calculations
+    (e.g. _wing_spar_x) where NaN comparisons silently return False."""
+
+    def _fleet_with_wing_length(self, value_str: str) -> str:
+        """Build a minimal fleet YAML with the given wing length_m literal."""
+        return f"""\
+aircraft:
+  - id: foo
+    name: Foo
+    wing_position: high
+    gear: tailwheel
+    movement_mode: always_own_gear
+    turn_radius_m: 5.0
+    measured: false
+    parts:
+      - kind: fuselage
+        length_m: 7.0
+        width_m: 0.8
+        z_bottom_m: 0.0
+        z_top_m: 1.5
+      - kind: wing
+        length_m: {value_str}
+        width_m: 9.0
+        z_bottom_m: 2.0
+        z_top_m: 2.3
+"""
+
+    def test_nan_wing_length_raises_loader_error(self, tmp_path: Path) -> None:
+        """`length_m: .nan` parses to float('nan'); must not silently produce
+        a NaN strut keep-out coordinate — LoaderError is required."""
+        path = _write(tmp_path / "f.yaml", self._fleet_with_wing_length(".nan"))
+        with pytest.raises(LoaderError, match="expected a finite number"):
+            load_fleet(path)
+
+    def test_inf_wing_length_raises_loader_error(self, tmp_path: Path) -> None:
+        """`length_m: .inf` parses to float('inf'); must be rejected."""
+        path = _write(tmp_path / "f.yaml", self._fleet_with_wing_length(".inf"))
+        with pytest.raises(LoaderError, match="expected a finite number"):
+            load_fleet(path)
+
+    def test_neg_inf_wing_length_raises_loader_error(self, tmp_path: Path) -> None:
+        """`length_m: -.inf` parses to float('-inf'); must be rejected."""
+        path = _write(tmp_path / "f.yaml", self._fleet_with_wing_length("-.inf"))
+        with pytest.raises(LoaderError, match="expected a finite number"):
+            load_fleet(path)
+
+
+# ----------------------------------------------------------------------------
 # Strut expansion.
 # ----------------------------------------------------------------------------
 
@@ -519,6 +573,68 @@ aircraft:
         assert len(struts) == 2
         # First wing (z_bottom=2.0) wins, NOT the second wing (z_bottom=2.5).
         assert all(s.z_top_m == 2.0 for s in struts)
+
+    def test_strut_x_anchored_to_wing_spar_not_trailing_edge(self, tmp_path: Path) -> None:
+        """Issue #282 — struts must sit on the wing-spar axis, NOT at the
+        wing trailing edge (≈ the old ``fuselage_attach_x_m`` placeholder).
+
+        The spar rule (fix option 1) anchors the strut's longitudinal
+        station to the wing geometry: the front/main spar of a strut-braced
+        high-wing sits near the quarter-chord, i.e. one quarter of the chord
+        aft of the leading edge. In plane-local coords ``+x`` is forward, so
+        the wing's leading edge is at ``offset_x_m + length_m/2`` and the
+        spar at ``offset_x_m + length_m/4``.
+
+        ``fuselage_attach_x_m`` is set here at the wing trailing edge
+        (``offset_x_m - length_m/2``) to mirror the placeholder fleet data;
+        the strut must NOT land there.
+        """
+        wing_offset_x = 0.5
+        wing_chord = 1.6
+        trailing_edge_x = wing_offset_x - wing_chord / 2.0  # -0.3
+        expected_spar_x = wing_offset_x + wing_chord / 4.0  # +0.9
+        path = _write(
+            tmp_path / "f.yaml",
+            f"""
+aircraft:
+  - id: braced
+    name: Braced
+    wing_position: high
+    gear: tailwheel
+    movement_mode: always_own_gear
+    turn_radius_m: 5.0
+    parts:
+      - kind: fuselage
+        length_m: 7.0
+        width_m: 0.8
+        z_bottom_m: 0.0
+        z_top_m: 1.5
+      - kind: wing
+        length_m: {wing_chord}
+        width_m: 9.0
+        offset_x_m: {wing_offset_x}
+        z_bottom_m: 2.0
+        z_top_m: 2.3
+    struts:
+      fuselage_attach_x_m: {trailing_edge_x}
+      fuselage_attach_y_m: 0.4
+      fuselage_attach_z_m: 0.5
+      wing_attach_y_m: 1.8
+      width_m: 0.05
+""",
+        )
+        fleet = load_fleet(path)
+        struts = [p for p in fleet["braced"].parts if p.kind == "strut"]
+        assert len(struts) == 2
+        for s in struts:
+            assert s.offset_x_m == pytest.approx(expected_spar_x), (
+                f"strut x={s.offset_x_m} should sit on the wing spar "
+                f"(quarter-chord = {expected_spar_x}), not at the wing "
+                f"trailing edge / fuselage_attach_x_m ({trailing_edge_x})"
+            )
+            assert s.offset_x_m != pytest.approx(trailing_edge_x), (
+                f"strut x={s.offset_x_m} still at the wing trailing edge"
+            )
 
     def test_strut_span_must_be_positive(self, tmp_path: Path) -> None:
         """StrutsSpec allows wing_attach_y_m == fuselage_attach_y_m (degenerate
