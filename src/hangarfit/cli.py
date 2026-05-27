@@ -111,7 +111,9 @@ def build_parser() -> argparse.ArgumentParser:
             "Overlay each plane's tow path on the --render PNG(s), one colour per "
             "plane (requires --render). Tow-plans every returned layout; a layout "
             "the tow planner cannot route is rendered without paths and a warning "
-            "names the blocking plane. Exit 3 if NO candidate is tow-routable."
+            "names the blocking plane. Exit 3 if NO candidate is tow-routable. "
+            "May run a second solve with inter-plane spread disabled if the "
+            "spread layout can't be routed, up to ~2x the --budget."
         ),
     )
     solve.add_argument(
@@ -381,6 +383,12 @@ def cmd_solve(args: argparse.Namespace) -> int:
     # layout than a plain spread solve would yield). If the no-spread re-solve
     # also routes nothing (genuinely too tight, e.g. the placeholder hangar),
     # keep the original spread result so exit 3 stands unchanged.
+    #
+    # ``spread_fallback_applied`` records whether the swap actually executed.
+    # Non-interactive consumers (--json, --write-yaml) need a durable signal
+    # that a tighter no-spread arrangement was substituted (#280 "never silently
+    # swapped" for machines, not just the human stderr note).
+    spread_fallback_applied = False
     if (
         args.render_paths
         and args.spread
@@ -402,9 +410,10 @@ def cmd_solve(args: argparse.Namespace) -> int:
                 file=sys.stderr,
             )
             result = fallback
+            spread_fallback_applied = True
 
     if args.json:
-        _emit_solve_json(args.scenario, result)
+        _emit_solve_json(args.scenario, result, spread_fallback_applied=spread_fallback_applied)
     else:
         _emit_solve_human(result, alternatives=args.alternatives)
 
@@ -426,7 +435,13 @@ def cmd_solve(args: argparse.Namespace) -> int:
                 )
             if args.write_yaml is not None:
                 fleet_ref, hangar_ref = _resolve_fleet_hangar_refs(args)
-                _write_yamls(result.layouts, args.write_yaml, fleet_ref, hangar_ref)
+                _write_yamls(
+                    result.layouts,
+                    args.write_yaml,
+                    fleet_ref,
+                    hangar_ref,
+                    spread_fallback_applied=spread_fallback_applied,
+                )
         except OSError as e:
             print(f"error: write failed: {e}", file=sys.stderr)
             return 2
@@ -561,6 +576,8 @@ def _write_yamls(
     pattern: str,
     fleet_ref: str,
     hangar_ref: str,
+    *,
+    spread_fallback_applied: bool = False,
 ) -> None:
     """Write each layout to PATTERN with ``{i}`` substituted.
 
@@ -568,6 +585,13 @@ def _write_yamls(
     round-trips through ``hangarfit check``. Fleet/hangar refs are
     embedded as absolute paths so the written file is location-
     independent.
+
+    When ``spread_fallback_applied`` is True the written layout is the tighter
+    no-spread arrangement substituted by the --render-paths fallback (#280); a
+    leading ``# note:`` comment marks that provenance. The comment is a YAML
+    comment line, so the file still round-trips through ``hangarfit check``
+    (the structured ``spread_fallback_applied`` JSON field carries the same
+    signal for parsers; this header is for a human reading the .yaml later).
     """
     import yaml
 
@@ -590,6 +614,10 @@ def _write_yamls(
         ]
         path = _expand_pattern(pattern, i)
         with open(path, "w") as f:
+            if spread_fallback_applied:
+                f.write(
+                    "# note: produced with inter-plane spread disabled (auto-fallback, see #280)\n"
+                )
             yaml.safe_dump(payload, f, sort_keys=False)
 
 
@@ -618,8 +646,20 @@ def _check_result_to_dict(result: CheckResult) -> dict:
     }
 
 
-def _emit_solve_json(scenario_path: str, result: SolveResult) -> None:
-    """Write the hangarfit.solve/v1 payload to stdout."""
+def _emit_solve_json(
+    scenario_path: str,
+    result: SolveResult,
+    *,
+    spread_fallback_applied: bool = False,
+) -> None:
+    """Write the hangarfit.solve/v1 payload to stdout.
+
+    ``spread_fallback_applied`` is threaded in from ``cmd_solve`` rather than
+    read off ``SolverDiagnostics`` — the swap is a CLI-level decision (#280),
+    not a solver fact, so it does not belong on ``SolverDiagnostics``. It is
+    emitted as an always-present (default False) additive diagnostics field so
+    non-interactive consumers can rely on it without a schema bump.
+    """
     d = result.diagnostics
     payload = {
         "schema": _SOLVE_JSON_SCHEMA,
@@ -647,6 +687,11 @@ def _emit_solve_json(scenario_path: str, result: SolveResult) -> None:
             # choose from. Backward-compatible — no schema bump.
             "min_pairwise_gap_m": [g if math.isfinite(g) else None for g in d.min_pairwise_gap_m],
             "valid_basins_found": d.valid_basins_found,
+            # Additive (#280): True when --render-paths re-solved with spread
+            # disabled and substituted that tighter, tow-routable arrangement.
+            # Always present (False in the normal no-swap case) so consumers can
+            # rely on it. Backward-compatible — no schema bump.
+            "spread_fallback_applied": spread_fallback_applied,
         },
     }
     print(json.dumps(payload, indent=2))

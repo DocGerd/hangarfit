@@ -1005,6 +1005,61 @@ class TestSolveRenderPathsSpreadFallback:
         assert len(calls) == 1  # no re-solve
         assert "re-solved" not in capsys.readouterr().err
 
+    def test_json_surfaces_spread_fallback_applied_true_after_swap(
+        self, tmp_path, monkeypatch, capsys
+    ):
+        # #280 — non-interactive consumers must get a structured signal that the
+        # tighter no-spread layout was substituted, not just the human stderr
+        # note. After a successful fallback swap, --json carries True.
+        layout = self._layout()
+        plan = self._plan(layout)
+        self._patch_solve_sequence(
+            monkeypatch,
+            [
+                self._result("found", (layout,), (None,), unroutable=("fuji",)),
+                self._result("found", (layout,), (plan,)),
+            ],
+        )
+        out = tmp_path / "p.png"
+        rc = main(
+            [
+                "solve",
+                SMOKE_FIXTURE,
+                "--render",
+                str(out),
+                "--render-paths",
+                "--json",
+                "--seed",
+                "5",
+            ]
+        )
+        assert rc == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["diagnostics"]["spread_fallback_applied"] is True
+
+    def test_json_spread_fallback_applied_false_when_no_swap(self, tmp_path, monkeypatch, capsys):
+        # The normal --render-paths --json case (spread layout routes on the
+        # first try): the field is present and False so consumers can rely on it.
+        layout = self._layout()
+        plan = self._plan(layout)
+        self._patch_solve_sequence(monkeypatch, [self._result("found", (layout,), (plan,))])
+        out = tmp_path / "p.png"
+        rc = main(
+            [
+                "solve",
+                SMOKE_FIXTURE,
+                "--render",
+                str(out),
+                "--render-paths",
+                "--json",
+                "--seed",
+                "5",
+            ]
+        )
+        assert rc == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["diagnostics"]["spread_fallback_applied"] is False
+
     @pytest.mark.slow
     def test_real_solve_spread_fallback_end_to_end(self, tmp_path, capsys):
         # Real, un-monkeypatched regression for #280. seed=5 on the 3-plane
