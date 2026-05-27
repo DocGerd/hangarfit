@@ -23,6 +23,17 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -n \"$HANGARFIT_SKIP_MYPY_HOOK\" ]; then cat > /dev/null; exit 0; fi; cat > /dev/null; echo \"[hangarfit hook] mypy after turn\"; mypy src/hangarfit 2>&1 | tail -20; exit 0",
+            "timeout": 120
+          }
+        ]
+      }
     ]
   }
 }
