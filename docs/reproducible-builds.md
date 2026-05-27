@@ -44,6 +44,28 @@ This value is the committer timestamp of the tagged commit. Any verifier who
 has a clone of the repository can derive the same integer from the same tag,
 with no out-of-band communication.
 
+### Caveat: the compressed `.tar.gz` digest also depends on zlib
+
+`normalize-sdist.py` makes the **tar payload** (member order, names, contents,
+and metadata) deterministic. But the released artifact is that tar *gzip-
+compressed*, and the gzip payload is a DEFLATE stream produced by the
+interpreter's linked `zlib`. Different `zlib` versions/implementations
+(e.g. zlib 1.2.x vs 1.3, or the `zlib-ng` fork several distros now ship) can
+emit a **different compressed byte stream from identical input**. So the
+SHA-256 of the final `.tar.gz` is reproducible only for a verifier whose
+`zlib` matches the release runner's (CPython 3.12 on `ubuntu-latest`).
+
+To compare *independently of compression*, `gunzip` both artifacts and compare
+the inner `.tar` SHA-256 — that digest is reproducible regardless of zlib:
+
+```bash
+gunzip -c released.tar.gz   | sha256sum
+gunzip -c dist/rebuilt.tar.gz | sha256sum   # must match
+```
+
+You can record the release runner's zlib with
+`python3 -c "import zlib; print(zlib.ZLIB_RUNTIME_VERSION)"`.
+
 ### Proof of reproducibility (local experiment)
 
 The following proof was run during development (branch `feature/reproducible-sdist-244`):
@@ -101,6 +123,10 @@ To verify that a published sdist matches a fresh build from the tagged source:
 - The exact build toolchain: `pip install --require-hashes -r requirements-build.txt`
   (installs `build==1.5.0`, `setuptools==82.0.1`, `wheel==0.47.0` — the same
   versions used by the release workflow)
+- To match the **compressed `.tar.gz`** digest, the same `zlib` as the release
+  runner (CPython 3.12 on `ubuntu-latest`). If your `zlib` differs, compare the
+  decompressed inner `.tar` instead (see the zlib caveat above) — that digest is
+  zlib-independent.
 
 ### Steps
 
@@ -142,6 +168,10 @@ A mismatch can indicate:
   to the commit SHA logged by the release workflow run).
 - The build toolchain was not pinned correctly (different `setuptools`/`wheel`
   versions can produce different `PKG-INFO` metadata or entry ordering).
+- Your `zlib` differs from the release runner's, changing only the gzip
+  compression of an otherwise-identical tar. Rule this out by comparing the
+  decompressed inner `.tar` digests (see the zlib caveat above) before
+  suspecting tampering.
 
 The Sigstore signature (`.sigstore.json` bundle next to each artifact)
 independently verifies that the artifact was produced by
@@ -181,7 +211,7 @@ removed.
 - **Sigstore signing** — every release artifact (sdist and wheel) is
   signed with keyless cosign. Verification instructions live in
   [`docs/security-posture.md`](security-posture.md) and in the release
-  workflow ([`.github/workflows/release.yml`](.github/workflows/release.yml)).
+  workflow ([`.github/workflows/release.yml`](../.github/workflows/release.yml)).
 - **Supply-chain hardening** — the build toolchain is hash-pinned in
   `requirements-build.txt`; the rationale is in
   [`docs/security-posture.md`](security-posture.md).
