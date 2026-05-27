@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hangarfit"
-version = "0.6.1"
+version = "0.7.0"
 description = "Helper tool for arranging the flying club fleet in a stack-style hangar — collision checker + visualizer (Phase 1)."
 readme = "README.md"
 requires-python = ">=3.12"
