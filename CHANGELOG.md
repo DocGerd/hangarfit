@@ -10,6 +10,14 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Fixed
 
+## [0.7.1] — 2026-05-27
+
+First published release of the 0.7.x line. v0.7.0 was tagged on `main` but its GitHub Release could not be published — the tag was consumed by an immutable release during the release cut and is permanently reserved — so v0.7.1 supersedes it with identical features plus the release-workflow fix below.
+
+### Fixed
+
+- Release workflow is now compatible with GitHub immutable releases: it creates the release as a draft, uploads the Sigstore-signed artifacts while the draft is still mutable, then publishes — replacing the create-published-then-upload sequence that failed to attach assets to a sealed release (#285).
+
 ## [0.7.0] — 2026-05-27
 
 The first release with tow-path planning: `hangarfit` can now plan how each aircraft is towed in and out, not just whether a static layout is collision-free. Also lands the full Arc42 architecture documentation set, the maintenance-bay walling rule, a spread-aware solver, and an OpenSSF supply-chain hardening pass.
@@ -98,7 +106,8 @@ First Phase 1 cut — substrate for arranging the flying club fleet in a stack-s
 - Apache-2.0 license, public-audience README, CI matrix (Python 3.11 + 3.12), branch protection on develop + main (#13, #14, #15, #16).
 - Strut-aware golden tests + all-9-planes fixture using larger test-only hangar to accommodate strut-bracing geometry on placeholder dimensions (#5).
 
-[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.7.0...HEAD
+[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.7.1...HEAD
+[0.7.1]: https://github.com/DocGerd/hangarfit/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/DocGerd/hangarfit/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/DocGerd/hangarfit/compare/v0.6.0...v0.6.1
 [0.6.0]: https://github.com/DocGerd/hangarfit/compare/v0.1.0...v0.6.0

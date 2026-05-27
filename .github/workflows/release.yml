@@ -183,7 +183,14 @@ jobs:
 
           ls -la dist/
 
-      - name: Create the GitHub Release if it doesn't exist yet
+      - name: Create or reuse a draft GitHub Release
+        # Immutable-releases contract: a PUBLISHED release is sealed — its
+        # assets can no longer be uploaded (the upload step would 422).
+        # So we create the release as a DRAFT, attach the signed artifacts
+        # while it is still mutable (next step), then flip it to published
+        # in the final step. Notes stay editable even after publish; only
+        # assets are sealed.
+        #
         # `gh release view` returns exit code 1 for *all* of:
         # release-not-found, auth failure, network error, 5xx,
         # rate-limit. Swallowing stderr would conflate them and a
@@ -198,9 +205,34 @@ jobs:
           set -euo pipefail
           view_out=$(gh release view "$TAG" 2>&1) && view_rc=0 || view_rc=$?
           if [ "$view_rc" -eq 0 ]; then
-            echo "Release for $TAG already exists; skipping create."
+            # Already exists. A draft is fine to reuse (a prior run may
+            # have created it then failed before publishing). A published
+            # release is immutable — its assets cannot be replaced — so
+            # bail with an actionable message instead of a raw 422 from
+            # the upload step.
+            # The probe above told us the release exists; this second
+            # call distinguishes a reusable draft from a sealed published
+            # release. Capture its exit status explicitly — a bare command
+            # substitution under `set -e` does NOT abort inside `[ ... ]`,
+            # so a transient failure here would otherwise compare an empty
+            # string, misclassify a draft as published, and emit the wrong
+            # hard-fail (the same conflation the primary probe avoids).
+            is_draft=$(gh release view "$TAG" --json isDraft --jq '.isDraft') || {
+              echo "gh release view --json isDraft failed for existing release $TAG" >&2
+              exit 1
+            }
+            if [ "$is_draft" = "true" ]; then
+              echo "Draft release for $TAG already exists; reusing it."
+            else
+              echo "A PUBLISHED (immutable) release for $TAG already exists;" >&2
+              echo "its assets cannot be modified. Delete it first, then re-run" >&2
+              echo "this workflow via workflow_dispatch (tag=$TAG):" >&2
+              echo "  gh release delete $TAG --yes   # the tag is preserved" >&2
+              exit 1
+            fi
           elif echo "$view_out" | grep -qxF "release not found"; then
             gh release create "$TAG" \
+              --draft \
               --title "$TAG" \
               --notes-from-tag
           else
@@ -236,13 +268,12 @@ jobs:
 
           # Visibility for the clobber case — fresh Fulcio cert
           # replacing the original. The `|| true` covers both the
-          # first-time-release path (the create step above just made
-          # an empty release; no assets to warn about) and transient
-          # API blips here (the upload below will fail loudly on a
-          # real outage, so we don't lose the error). `-F` on the
-          # grep makes the asset-name match a fixed string — wheel
-          # filenames contain `.` which would otherwise be a regex
-          # wildcard.
+          # first-time-release path (the create step above just made an
+          # empty draft; no assets to warn about) and transient API blips
+          # here (the upload below will fail loudly on a real outage, so
+          # we don't lose the error). `-F` on the grep makes the
+          # asset-name match a fixed string — wheel filenames contain `.`
+          # which would otherwise be a regex wildcard.
           existing=$(gh release view "$TAG" --json assets --jq '.assets[].name' 2>/dev/null || true)
           for a in "${assets[@]}"; do
             name=$(basename "$a")
@@ -252,3 +283,16 @@ jobs:
           done
 
           gh release upload "$TAG" "${assets[@]}" --clobber
+
+      - name: Publish the release (seals it immutably with assets attached)
+        # The release was created as a draft and the signed assets were
+        # uploaded above while it was still mutable. Flipping --draft=false
+        # publishes it; under immutable releases this seals the assets in
+        # place. Notes remain editable afterward, so a richer description
+        # can still be set post-publish.
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.name }}
+        run: |
+          set -euo pipefail
+          gh release edit "$TAG" --draft=false
