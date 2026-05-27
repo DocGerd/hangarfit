@@ -27,7 +27,16 @@ from PIL import Image
 
 from hangarfit.collisions import check
 from hangarfit.loader import load_layout
-from hangarfit.visualize import _BAY_WALL_FACE, _draw_maintenance_bay, nose_direction, render_layout
+from hangarfit.models import Aircraft, Placement
+from hangarfit.visualize import (
+    _BAY_WALL_FACE,
+    _CART_DECK_COLOR,
+    _WHEEL_COLOR,
+    _draw_gear_glyph,
+    _draw_maintenance_bay,
+    nose_direction,
+    render_layout,
+)
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -580,3 +589,294 @@ class TestDrawTowPaths:
         out = tmp_path / "both_overlays.png"
         render_layout(layout, out, check_result=result, moves_plan=plan)
         _assert_valid_png(out)
+
+
+class TestGearGlyph:
+    """Tests for the landing-gear wheel and cart/dolly glyph added in #281.
+
+    Strategy:
+    - End-to-end smoke: render the four-plane fixture and assert a valid PNG.
+    - Unit: call ``_draw_gear_glyph`` on a mock axis and assert the correct
+      number and type of patches are added for each gear configuration:
+        * ``nosewheel`` + ``on_carts=False`` → 3 wheel circles (1 nose + 2 mains)
+        * ``tailwheel`` + ``on_carts=False`` → 3 wheel circles (2 mains + 1 tail)
+        * ``monowheel`` + ``on_carts=False`` → 1 wheel circle
+        * ``on_carts=True`` (any gear) → 1 deck Polygon + 4 corner wheel circles
+
+    Patch counting is feasible here (unlike pixel tests) because the glyph
+    functions make a bounded, deterministic number of ``ax.add_patch`` calls.
+    """
+
+    # ── helpers ────────────────────────────────────────────────────────────────
+
+    @staticmethod
+    def _placement(*, on_carts: bool, heading_deg: float = 0.0) -> Placement:
+        return Placement(
+            plane_id="probe",
+            x_m=5.0,
+            y_m=5.0,
+            heading_deg=heading_deg,
+            on_carts=on_carts,
+        )
+
+    @staticmethod
+    def _aircraft(gear: str, movement_mode: str = "always_own_gear") -> Aircraft:
+        """Minimal synthetic Aircraft with one fuselage part."""
+        from hangarfit.models import Part  # Part not used elsewhere in this file
+
+        fuselage = Part(
+            kind="fuselage",
+            length_m=7.0,
+            width_m=1.0,
+            offset_x_m=0.0,
+            offset_y_m=0.0,
+            angle_deg=0.0,
+            z_bottom_m=0.0,
+            z_top_m=1.5,
+        )
+        turn_radius = None if movement_mode == "always_cart" else 5.0
+        return Aircraft(
+            id="probe",
+            name="Probe",
+            wing_position="high",
+            gear=gear,  # type: ignore[arg-type]
+            movement_mode=movement_mode,  # type: ignore[arg-type]
+            turn_radius_m=turn_radius,
+            measured=False,
+            parts=(fuselage,),
+        )
+
+    # ── end-to-end smoke ───────────────────────────────────────────────────────
+
+    def test_gear_glyph_smoke_produces_valid_png(self, tmp_path: Path) -> None:
+        """Render the four-plane gear-glyph fixture and assert a valid PNG.
+
+        The fixture covers: nosewheel own-gear (ctsl), tailwheel own-gear
+        (aviat_husky), nosewheel own-gear low-wing (fuji), and tailwheel
+        on-carts (cessna_140 at 45° heading to exercise the rotation path).
+        """
+        layout = _load("valid_gear_glyph_smoke")
+        out = tmp_path / "gear_glyph_smoke.png"
+        render_layout(layout, out)
+        _assert_valid_png(out)
+
+    # ── nosewheel own-gear ──────────────────────────────────────────────────────
+
+    def test_nosewheel_own_gear_adds_three_wheel_patches(self) -> None:
+        """Tricycle gear: 1 nose wheel + 2 main wheels = 3 Circle patches."""
+        from matplotlib.patches import Circle
+
+        aircraft = self._aircraft("nosewheel")
+        placement = self._placement(on_carts=False)
+        ax = MagicMock()
+
+        _draw_gear_glyph(ax, placement, aircraft)
+
+        assert ax.add_patch.call_count == 3, (
+            f"nosewheel gear expects 3 patches; got {ax.add_patch.call_count}"
+        )
+        for call in ax.add_patch.call_args_list:
+            assert isinstance(call.args[0], Circle), (
+                f"nosewheel patches must all be Circle; got {type(call.args[0])!r}"
+            )
+
+    def test_nosewheel_wheel_color_is_wheel_constant(self) -> None:
+        """All nosewheel discs must use _WHEEL_COLOR."""
+        aircraft = self._aircraft("nosewheel")
+        placement = self._placement(on_carts=False)
+        ax = MagicMock()
+
+        _draw_gear_glyph(ax, placement, aircraft)
+
+        for call in ax.add_patch.call_args_list:
+            patch = call.args[0]
+            assert patch.get_facecolor() is not None  # trivially true; guards future None-return
+            # We compare the string passed at construction time via the Circle's
+            # internal storage — use get_edgecolor which we set == facecolor.
+            # The simplest check: reconstruct what the code set.
+            import matplotlib.colors
+
+            expected = matplotlib.colors.to_rgba(_WHEEL_COLOR)
+            assert patch.get_facecolor() == pytest.approx(expected, abs=1e-3), (
+                f"wheel facecolor mismatch: {patch.get_facecolor()} vs {expected}"
+            )
+
+    # ── tailwheel own-gear ─────────────────────────────────────────────────────
+
+    def test_tailwheel_own_gear_adds_three_wheel_patches(self) -> None:
+        """Taildragger: 2 main wheels + 1 tailwheel = 3 Circle patches."""
+        from matplotlib.patches import Circle
+
+        aircraft = self._aircraft("tailwheel")
+        placement = self._placement(on_carts=False)
+        ax = MagicMock()
+
+        _draw_gear_glyph(ax, placement, aircraft)
+
+        assert ax.add_patch.call_count == 3, (
+            f"tailwheel gear expects 3 patches; got {ax.add_patch.call_count}"
+        )
+        for call in ax.add_patch.call_args_list:
+            assert isinstance(call.args[0], Circle), (
+                f"tailwheel patches must all be Circle; got {type(call.args[0])!r}"
+            )
+
+    # ── monowheel own-gear ─────────────────────────────────────────────────────
+
+    def test_monowheel_own_gear_adds_one_wheel_patch(self) -> None:
+        """Monowheel: single centred main wheel = 1 Circle patch."""
+        from matplotlib.patches import Circle
+
+        aircraft = self._aircraft("monowheel")
+        placement = self._placement(on_carts=False)
+        ax = MagicMock()
+
+        _draw_gear_glyph(ax, placement, aircraft)
+
+        assert ax.add_patch.call_count == 1, (
+            f"monowheel gear expects 1 patch; got {ax.add_patch.call_count}"
+        )
+        assert isinstance(ax.add_patch.call_args.args[0], Circle)
+
+    def test_monowheel_wheel_placed_at_gear_origin(self) -> None:
+        """Monowheel disc must be centred on the gear/cart origin (placement x, y)."""
+        aircraft = self._aircraft("monowheel")
+        placement = self._placement(on_carts=False, heading_deg=0.0)
+        ax = MagicMock()
+
+        _draw_gear_glyph(ax, placement, aircraft)
+
+        circle = ax.add_patch.call_args.args[0]
+        cx, cy = circle.center
+        assert cx == pytest.approx(placement.x_m, abs=1e-6)
+        assert cy == pytest.approx(placement.y_m, abs=1e-6)
+
+    # ── cart glyph ─────────────────────────────────────────────────────────────
+
+    def test_on_carts_adds_deck_polygon_plus_four_wheel_circles(self) -> None:
+        """Cart glyph: 1 deck Polygon + 4 corner Circle patches = 5 total."""
+        from matplotlib.patches import Circle
+        from matplotlib.patches import Polygon as MplPolygon
+
+        aircraft = self._aircraft("tailwheel", movement_mode="always_cart")
+        placement = self._placement(on_carts=True)
+        ax = MagicMock()
+
+        _draw_gear_glyph(ax, placement, aircraft)
+
+        assert ax.add_patch.call_count == 5, (
+            f"cart glyph expects 5 patches (1 deck + 4 wheels); got {ax.add_patch.call_count}"
+        )
+        patches = [c.args[0] for c in ax.add_patch.call_args_list]
+        polygon_count = sum(1 for p in patches if isinstance(p, MplPolygon))
+        circle_count = sum(1 for p in patches if isinstance(p, Circle))
+        assert polygon_count == 1, f"expected 1 deck Polygon; got {polygon_count}"
+        assert circle_count == 4, f"expected 4 corner Circle wheels; got {circle_count}"
+
+    def test_on_carts_deck_uses_cart_deck_color(self) -> None:
+        """The cart deck Polygon must use _CART_DECK_COLOR as its facecolor (RGB channels).
+
+        The alpha channel is set independently via the ``alpha`` kwarg, so
+        ``get_facecolor()`` returns ``(r, g, b, alpha)`` — we compare only
+        the RGB triplet to avoid brittleness against the exact alpha value.
+        """
+        import matplotlib.colors
+        from matplotlib.patches import Polygon as MplPolygon
+
+        aircraft = self._aircraft("nosewheel", movement_mode="always_cart")
+        placement = self._placement(on_carts=True)
+        ax = MagicMock()
+
+        _draw_gear_glyph(ax, placement, aircraft)
+
+        deck = next(
+            c.args[0] for c in ax.add_patch.call_args_list if isinstance(c.args[0], MplPolygon)
+        )
+        expected_rgb = matplotlib.colors.to_rgba(_CART_DECK_COLOR)[:3]
+        actual_rgb = deck.get_facecolor()[:3]
+        assert actual_rgb == pytest.approx(expected_rgb, abs=1e-3), (
+            f"cart deck RGB must match _CART_DECK_COLOR; got {actual_rgb!r} vs {expected_rgb!r}"
+        )
+
+    def test_on_carts_suppresses_own_gear_wheels(self) -> None:
+        """``on_carts=True`` must draw the cart glyph, not own-gear wheels.
+
+        For a nosewheel plane: own-gear would add 3 circles, cart adds 1
+        polygon + 4 circles.  The distinguishing check is the polygon count.
+        """
+        from matplotlib.patches import Polygon as MplPolygon
+
+        aircraft = self._aircraft("nosewheel", movement_mode="cart_eligible")
+        placement = self._placement(on_carts=True)
+        ax = MagicMock()
+
+        _draw_gear_glyph(ax, placement, aircraft)
+
+        patches = [c.args[0] for c in ax.add_patch.call_args_list]
+        polygon_count = sum(1 for p in patches if isinstance(p, MplPolygon))
+        assert polygon_count == 1, (
+            f"on_carts=True must use cart glyph (1 deck polygon); got {polygon_count} polygons"
+        )
+        assert ax.add_patch.call_count == 5, (
+            f"cart glyph expects 5 patches total; got {ax.add_patch.call_count}"
+        )
+
+    def test_cart_glyph_rotates_with_heading(self) -> None:
+        """Cart deck corners must rotate with the heading via the world transform.
+
+        At heading 90°, the local +x (forward) axis maps to world +x.  The
+        deck's forward-half corner (positive local-u) must have a world-x
+        coordinate greater than the placement's x — confirming the rotation
+        applied rather than a static axis-aligned rectangle.
+        """
+        from matplotlib.patches import Polygon as MplPolygon
+
+        aircraft = self._aircraft("nosewheel", movement_mode="always_cart")
+        placement = self._placement(on_carts=True, heading_deg=90.0)
+        ax = MagicMock()
+
+        _draw_gear_glyph(ax, placement, aircraft)
+
+        deck = next(
+            c.args[0] for c in ax.add_patch.call_args_list if isinstance(c.args[0], MplPolygon)
+        )
+        # At heading 90° the forward (+u) axis maps to world +x.
+        # Some deck corners have +u > 0 → their world-x must exceed placement.x_m.
+        xs = [v[0] for v in deck.get_xy()]
+        assert max(xs) > placement.x_m, (
+            f"cart deck must extend in +x at heading 90°; "
+            f"max x={max(xs)}, placement.x={placement.x_m}"
+        )
+
+    # ── no fuselage defensive path ─────────────────────────────────────────────
+
+    def test_no_fuselage_part_is_a_noop(self) -> None:
+        """If an aircraft has no fuselage part (defensive path), no patches are added."""
+        from hangarfit.models import Aircraft, Part
+
+        wing = Part(
+            kind="wing",
+            length_m=10.0,
+            width_m=1.5,
+            offset_x_m=0.0,
+            offset_y_m=0.0,
+            angle_deg=0.0,
+            z_bottom_m=1.5,
+            z_top_m=2.0,
+        )
+        aircraft = Aircraft(
+            id="probe",
+            name="Probe",
+            wing_position="high",
+            gear="nosewheel",
+            movement_mode="always_own_gear",
+            turn_radius_m=5.0,
+            measured=False,
+            parts=(wing,),
+        )
+        placement = self._placement(on_carts=False)
+        ax = MagicMock()
+
+        _draw_gear_glyph(ax, placement, aircraft)
+
+        ax.add_patch.assert_not_called()
