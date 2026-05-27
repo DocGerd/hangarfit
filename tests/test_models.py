@@ -1028,7 +1028,7 @@ class TestSolveResultPlans:
             SolveResult(status="found", layouts=(layout,), plans=(), diagnostics=diag)
 
     def test_solveresult_plans_allows_none_entries(self) -> None:
-        # Best-effort: a returned layout whose tow plan the v1 planner could
+        # Best-effort: a returned layout whose tow plan the tow planner could
         # not compute is recorded as plans[i]=None — still aligned, still valid.
         from hangarfit.towplanner import MovesPlan
 

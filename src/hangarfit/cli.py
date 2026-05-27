@@ -109,7 +109,7 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Overlay each plane's tow path on the --render PNG(s), one colour per "
             "plane (requires --render). Tow-plans every returned layout; a layout "
-            "the v1 planner cannot route is rendered without paths and a warning "
+            "the tow planner cannot route is rendered without paths and a warning "
             "names the blocking plane. Exit 3 if NO candidate is tow-routable."
         ),
     )
@@ -365,8 +365,8 @@ def cmd_solve(args: argparse.Namespace) -> int:
         _emit_solve_human(result, alternatives=args.alternatives)
 
     # Structured tow-path warnings: name the plane that blocked each layout the
-    # v1 planner could not route (best-effort — the layout is still valid and is
-    # rendered, just without a path overlay; ADR-0007 / #197).
+    # tow planner could not route (best-effort — the layout is still valid and
+    # is rendered, just without a path overlay; ADR-0007 + ADR-0010 / #197).
     if args.render_paths:
         _warn_unroutable(result)
 
@@ -390,7 +390,7 @@ def cmd_solve(args: argparse.Namespace) -> int:
     # Exit code (spec §5.2). Precedence: no layouts > no-tow-order > strict-k.
     if not result.layouts:
         return 1
-    # --render-paths only: exit 3 when the v1 planner could route NO candidate
+    # --render-paths only: exit 3 when the tow planner could route NO candidate
     # (spike Q8/Q2 "no feasible order for any candidate"). A valid layout still
     # rendered, so this is distinct from exit 1 (no layout at all). Checked
     # before --strict-k: "can't tow anything" is the more actionable failure.
@@ -433,9 +433,9 @@ def _write_renders(
 
 
 def _warn_unroutable(result: SolveResult) -> None:
-    """Emit one stderr warning per returned layout the v1 planner could not
+    """Emit one stderr warning per returned layout the tow planner could not
     tow-route, naming the blocking plane (best-effort; the layout is still
-    valid and rendered, just without a path overlay — ADR-0007 / #197).
+    valid and rendered, just without a path overlay — ADR-0007 + ADR-0010 / #197).
 
     ``diagnostics.unroutable_planes`` is a *compacted* list (one entry per
     ``None`` plan, in returned-layout order), so the j-th ``None`` plan pairs

@@ -2,10 +2,11 @@
 
 Verifies that ``solve()`` returns a ``MovesPlan`` (or ``None``) per accepted
 layout (index-aligned in ``SolveResult.plans``) and that the **best-effort**
-behaviour is correct: a layout the v1 planner cannot route is recorded as
+behaviour is correct: a layout the tow planner cannot route is recorded as
 ``plans[i] is None`` (with the blocking plane in
 ``diagnostics.unroutable_planes``) and the valid static layout is still
-returned — the tow plan is advisory enrichment, never a gate (ADR-0007).
+returned — the tow plan is advisory enrichment, never a gate (ADR-0007 +
+ADR-0010).
 """
 
 from __future__ import annotations
@@ -98,14 +99,14 @@ def test_solve_plan_paths_false_skips_planning(solvable_scenario, monkeypatch):
 
 @pytest.mark.slow
 def test_solve_best_effort_real_planner_on_untowable_fill():
-    """End-to-end: the real v1 planner on a dense fill it cannot route.
+    """End-to-end: the real tow planner on a dense fill it cannot route.
 
     ``solve_fresh_six_planes`` packs six planes into the tight placeholder
-    hangar — a valid static layout the Dubins-only + bounded Hybrid-A*
-    planner cannot fully route in v1 (spike Risk #1). Best-effort must
-    still return the layout(s) with a ``None`` plan and name the blocking
-    plane, rather than failing the whole solve. Slow (real per-plane
-    search), so excluded from the default suite.
+    hangar — a valid static layout the Reeds–Shepp + bounded Hybrid-A*
+    planner cannot fully route (spike Risk #1). Best-effort must still
+    return the layout(s) with a ``None`` plan and name the blocking plane,
+    rather than failing the whole solve. Slow (real per-plane search), so
+    excluded from the default suite.
     """
     from hangarfit.loader import load_scenario
     from hangarfit.solver import solve
@@ -116,8 +117,8 @@ def test_solve_best_effort_real_planner_on_untowable_fill():
     assert result.status in ("found", "found_partial")
     assert len(result.layouts) >= 1
     assert len(result.plans) == len(result.layouts)
-    # The dense fill is un-routable in v1, so the plan is None and the
-    # blocking plane is recorded — but the valid layout is preserved.
+    # The dense fill is un-routable, so the plan is None and the blocking
+    # plane is recorded — but the valid layout is preserved.
     assert any(p is None for p in result.plans)
     assert len(result.diagnostics.unroutable_planes) == sum(1 for p in result.plans if p is None)
     assert result.diagnostics.unroutable_planes  # non-empty

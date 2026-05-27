@@ -687,17 +687,18 @@ class SolverDiagnostics:
     records.
 
     ``unroutable_planes`` is a flat, advisory list of the blocking plane
-    ids for the layouts the v1 tow-path planner could not route, in
+    ids for the layouts the tow planner could not route, in
     returned-layout order. There is one entry per ``None`` in
     :attr:`SolveResult.plans`, but the tuple is **compacted** (only the
     failing layouts contribute) — it is *not* positionally indexable to
     ``plans``/``layouts``; to attribute a failure to a specific layout,
     read the ``None`` positions in ``plans``. Empty when every returned
     layout was tow-planned, or when tow-planning was not attempted
-    (``solve(..., plan_paths=False)``). Advisory: the v1 planner
-    (Dubins-only + bounded Hybrid-A* — #222 under ADR-0007) has documented
-    false-negatives, so an un-routable layout is still a valid static
-    arrangement — the entry flags a planning gap, not an invalid layout.
+    (``solve(..., plan_paths=False)``). Advisory: the v2 planner
+    (Reeds–Shepp arcs + bounded Hybrid-A* — #222/#261 under ADR-0007 +
+    ADR-0010) has documented false-negatives, so an un-routable layout is
+    still a valid static arrangement — the entry flags a planning gap, not
+    an invalid layout.
 
     ``min_pairwise_gap_m`` is index-aligned with :attr:`SolveResult.layouts`:
     the achieved minimum plan-view gap (m) between any two planes in that
@@ -762,12 +763,13 @@ class SolveResult:
 
     ``plans`` is index-aligned with ``layouts``: ``plans[i]`` is the
     :class:`~hangarfit.towplanner.MovesPlan` for ``layouts[i]``, or
-    ``None`` when the v1 tow-path planner could not route that layout
-    (best-effort enrichment — see ADR-0007). It is also all-``None`` when
-    tow-planning was skipped (``solve(..., plan_paths=False)``). A ``None``
-    entry does **not** invalidate the corresponding layout: the static
-    arrangement remains valid; only its tow plan is unavailable. For
-    statuses with empty ``layouts`` the field is always ``()``.
+    ``None`` when the tow planner could not route that layout
+    (best-effort enrichment — see ADR-0007 + ADR-0010). It is also
+    all-``None`` when tow-planning was skipped
+    (``solve(..., plan_paths=False)``). A ``None`` entry does **not**
+    invalidate the corresponding layout: the static arrangement remains
+    valid; only its tow plan is unavailable. For statuses with empty
+    ``layouts`` the field is always ``()``.
     """
 
     status: SolveStatus
@@ -788,7 +790,7 @@ class SolveResult:
         # statuses therefore require empty plans too, and this subsumes the
         # found/found_partial cardinality check (layouts is already forced
         # non-empty for those by the first guard). Entries may be None
-        # (best-effort: the v1 planner couldn't route that layout), but the
+        # (best-effort: the tow planner couldn't route that layout), but the
         # length must still match.
         if len(self.plans) != len(self.layouts):
             raise ValueError(
