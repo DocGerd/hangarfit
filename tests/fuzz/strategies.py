@@ -1143,14 +1143,25 @@ def fleet_struts_missing_key_documents() -> st.SearchStrategy[Any]:
 
 
 def fleet_strut_invalid_geometry_documents() -> st.SearchStrategy[Any]:
-    """Aircraft with a 'struts' block that violates the geometry guards:
-    - wing.z_bottom_m <= fuselage_attach_z_m  → line 624 in _expand_struts
-    - wing_attach_y_m <= fuselage_attach_y_m  → line 631 in _expand_struts
+    """Aircraft with a 'struts' block that violates the geometry guards in _expand_struts:
+
+    - _z_guard_violation:    wing.z_bottom_m <= fuselage_attach_z_m → _expand_struts L624
+    - _span_guard_violation: wing_attach_y_m == fuselage_attach_y_m (span == 0) → L631
+
+    The two variants are kept separate so each deterministically targets its own branch.
+
+    Span-guard design note:
+        StrutsSpec.__post_init__ (models.py L113) rejects wing_attach_y_m <= 0, and
+        L118 rejects wing_attach_y_m < fuselage_attach_y_m.  L631 is therefore only
+        reachable when wing_attach_y_m == fuselage_attach_y_m > 0 (span == 0 but both
+        values pass the model pre-checks).  Drawing a single y value and assigning it
+        to BOTH fields makes this deterministic — every draw reaches L631, not only the
+        boundary case where Hypothesis happens to pick the inclusive upper-bound float.
     """
 
     @st.composite
     def _z_guard_violation(draw: Any) -> dict[str, Any]:
-        """wing.z_bottom_m <= fuselage_attach_z_m."""
+        """wing.z_bottom_m <= fuselage_attach_z_m → _expand_struts L624."""
         z = draw(st.floats(min_value=0.5, max_value=5.0, allow_nan=False, allow_infinity=False))
         return {
             "aircraft": [
@@ -1183,11 +1194,15 @@ def fleet_strut_invalid_geometry_documents() -> st.SearchStrategy[Any]:
 
     @st.composite
     def _span_guard_violation(draw: Any) -> dict[str, Any]:
-        """wing_attach_y_m <= fuselage_attach_y_m (non-positive span)."""
-        fus_y = draw(st.floats(min_value=0.5, max_value=3.0, allow_nan=False, allow_infinity=False))
-        wing_y = draw(
-            st.floats(min_value=-1.0, max_value=fus_y, allow_nan=False, allow_infinity=False)
-        )
+        """wing_attach_y_m == fuselage_attach_y_m (zero span) → _expand_struts L631.
+
+        Both y values are drawn as the SAME float so the span is always exactly 0.
+        This bypasses StrutsSpec.__post_init__ (which only rejects wing_attach_y_m < 0
+        or wing_attach_y_m < fuselage_attach_y_m) and deterministically reaches L631
+        on every invocation rather than only when Hypothesis happens to pick the
+        inclusive upper bound.
+        """
+        y = draw(st.floats(min_value=0.1, max_value=3.0, allow_nan=False, allow_infinity=False))
         return {
             "aircraft": [
                 {
@@ -1208,9 +1223,9 @@ def fleet_strut_invalid_geometry_documents() -> st.SearchStrategy[Any]:
                     ],
                     "struts": {
                         "fuselage_attach_x_m": 0.0,
-                        "fuselage_attach_y_m": fus_y,
+                        "fuselage_attach_y_m": y,  # same value as wing_attach_y_m
                         "fuselage_attach_z_m": 0.5,
-                        "wing_attach_y_m": wing_y,  # <= fus_y → non-positive span
+                        "wing_attach_y_m": y,  # == fuselage_attach_y_m → span == 0 → L631
                         "width_m": 0.05,
                     },
                 }

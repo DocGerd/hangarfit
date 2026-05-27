@@ -32,18 +32,23 @@ Targeted properties (#253 — closes rare loader error branches):
   test_fleet_aircraft_entry_not_mapping_…      → load_fleet L95
   test_fleet_strut_without_wing_…              → _build_aircraft L555
   test_fleet_struts_missing_key_…              → _build_struts_spec L603
-  test_fleet_strut_invalid_geometry_…          → _expand_struts L624/L631
+  test_fleet_strut_invalid_geometry_…          → _expand_struts L624 (z-guard) / L631 (span-guard)
+                                                  @example anchor pins L631 deterministically
   test_layout_placement_not_mapping_…          → _build_placement L664
   test_layout_maintenance_shape_…              → _extract_maintenance_plane L448-L465
   test_scenario_fleet_in_not_list_…            → load_scenario L291
   test_scenario_constraints_not_mapping_…      → load_scenario L352/L354
   test_scenario_constraint_non_dict_data_…     → _build_plane_constraint L411
   test_scenario_pin_shape_…                    → _build_plane_constraint L417/L423/L434
+
+@example anchors (follow-up — deterministic CI coverage for probabilistically-rare branches):
+  test_load_scenario_never_crashes   → load_scenario L337 (maintenance plane not in fleet_in)
+  test_fleet_strut_invalid_geometry… → _expand_struts L631 (span-guard, zero-span case)
 """
 
 from __future__ import annotations
 
-from hypothesis import given
+from hypothesis import example, given
 
 from tests.fuzz import strategies as s
 
@@ -67,6 +72,15 @@ def test_load_layout_never_crashes(doc):
     s.run_layout(doc)
 
 
+@example(
+    # Deterministic anchor for load_scenario L337:
+    # maintenance_plane is not None AND its id is not in fleet_in, so
+    # _resolve_known_plane_id raises LoaderError at L337 every run.
+    {
+        "fleet_in": ["p1"],
+        "maintenance": {"plane": "unknown_plane"},
+    }
+)
 @given(s.scenario_documents())
 def test_load_scenario_never_crashes(doc):
     s.run_scenario(doc)
@@ -262,6 +276,41 @@ def test_fleet_struts_missing_key_never_crashes(doc):
     s.run_fleet(doc)
 
 
+@example(
+    # Deterministic anchor for _expand_struts L631 (zero-span guard):
+    # wing_attach_y_m == fuselage_attach_y_m == 1.0 → strut_span == 0.
+    # StrutsSpec.__post_init__ passes (both > 0, neither < the other),
+    # so _expand_struts L623 passes (wing z_bottom=2.0 > fus_attach_z=0.5)
+    # and execution reaches L631 where strut_span <= 0 raises LoaderError.
+    {
+        "aircraft": [
+            {
+                "id": "p1",
+                "name": "Span-guard-violation",
+                "wing_position": "high",
+                "gear": "nosewheel",
+                "movement_mode": "always_cart",
+                "measured": False,
+                "parts": [
+                    {
+                        "kind": "wing",
+                        "length_m": 8.0,
+                        "width_m": 1.0,
+                        "z_bottom_m": 2.0,
+                        "z_top_m": 2.5,
+                    }
+                ],
+                "struts": {
+                    "fuselage_attach_x_m": 0.0,
+                    "fuselage_attach_y_m": 1.0,
+                    "fuselage_attach_z_m": 0.5,
+                    "wing_attach_y_m": 1.0,
+                    "width_m": 0.05,
+                },
+            }
+        ]
+    }
+)
 @given(s.fleet_strut_invalid_geometry_documents())
 def test_fleet_strut_invalid_geometry_never_crashes(doc):
     """Strut geometry violates z-ordering or positive-span guards → _expand_struts L624/L631."""
