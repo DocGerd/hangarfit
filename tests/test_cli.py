@@ -263,3 +263,30 @@ def test_solve_json_output_has_spread_diagnostics(capsys):
     assert len(diag["min_pairwise_gap_m"]) == len(payload["layouts"])
     # finite floats stay numbers; single-plane inf becomes null
     assert all(g is None or isinstance(g, (int, float)) for g in diag["min_pairwise_gap_m"])
+
+
+def test_solve_json_single_plane_min_gap_is_null(capsys):
+    """A single-plane layout has no plane pairs → min_pairwise_gap_m is
+    math.inf internally, which MUST serialize as JSON null (not the invalid
+    token `Infinity`). Guards the inf→null mapping in _emit_solve_json."""
+    import json
+
+    from hangarfit.cli import main
+
+    rc = main(
+        [
+            "solve",
+            "tests/fixtures/solve_trivial_single_plane.yaml",
+            "--seed",
+            "7",
+            "--budget",
+            "5",
+            "--json",
+        ]
+    )
+    raw = capsys.readouterr().out
+    assert rc == 0
+    assert "Infinity" not in raw  # would be invalid JSON
+    payload = json.loads(raw)  # must parse
+    gaps = payload["diagnostics"]["min_pairwise_gap_m"]
+    assert gaps == [None]
