@@ -62,14 +62,21 @@ several ways that matter here:
   December 2023, unresolved as of October 2025):** The rulesets implementation of
   "Require linear history" checks *all* commits in the repository's history, not
   only new commits. This means enabling it on a repo that already has merge commits
-  (as this repo does — 77 two-parent feature-merge commits in the pre-v0.7.0 era,
-  plus all release back-merges) would immediately block all pushes until the entire
-  history is rewritten.
+  (as this repo does — 107 two-parent merge commits excluding the 12 release/back-merge
+  commits, 119 total; reproducible with `git rev-list --merges --min-parents=2 --count HEAD`)
+  would immediately block all pushes until the entire history is rewritten.
 
 **The critical new capability (GA March 2025): the "Pull request merge method"
 ruleset rule.** Announced in public preview December 2024 and GA on 2025-03-24,
 this rule lets you restrict which merge methods (merge commit, squash, rebase) are
 allowed when PRs land on a targeted branch. Crucially:
+
+> **Note:** The GitHub-behavior claims in this section (bypass-actor scope, the
+> historical-commits behavior of "Require linear history", and the PR-merge-method
+> rule GA date) were verified against GitHub documentation and community reports as
+> of 2026-05-27 (research date for this ADR). Re-verify against current GitHub docs
+> before moving this ADR from Proposed to Accepted.
+
 - It is a *positive allowlist*, not a linear-history prohibition — it says which
   methods are permitted, not that merge commits are forbidden.
 - You can create **two separate rulesets with different branch targets and different
@@ -107,8 +114,14 @@ This repo's actual release history (inspected with `git log --merges --all`):
 | v0.1.0  | `20cf741` (Merge PR #46) | `7b7ca73` (Merge PR #47) |
 | v0.6.0  | `9117a72` (Merge PR #123) | `685886d` (Merge PR #124) |
 | v0.6.1  | `3813b85` (Merge PR #146) | `1d18b36` (Merge PR #147) |
-| v0.7.0  | `a0c0934` (Merge PR #284) | (absorbed into v0.7.1 release) |
+| v0.7.0  | `b5179f5` (Merge PR #283)¹ | `a0c0934` (Merge PR #284) |
 | v0.7.1  | `0d5de57` (Merge PR #288) | (HEAD of develop) |
+
+¹ The annotated `v0.7.0` git tag exists and points to `b5179f5`. The GitHub
+Release page for v0.7.0 was permanently tombstoned (immutable-release collision
+during the release cascade), so v0.7.1 became the publicly visible release; the
+git tag itself is intact. This is why both v0.7.0 and v0.7.1 show the same
+2026-05-27 date.
 
 Five releases in the repo's ~6-day history (2026-05-21 to 2026-05-27). At that
 cadence, back-merges are not rare events — they happen at every release cut,
@@ -297,12 +310,13 @@ the audit trail.
   - [About rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/about-rulesets)
   - [Available rules for rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets)
   - [PR merge method rule — GA announcement, 2025-03-24](https://github.blog/changelog/2025-03-24-enterprise-custom-properties-enterprise-rulesets-and-pull-request-merge-method-rule-are-all-now-generally-available/)
-- GitHub community discussion: [#80952 — Require Linear History Only for New Commits in Rulesets](https://github.com/orgs/community/discussions/80952) (unresolved as of 2025-10-xx)
+- GitHub community discussion: [#80952 — Require Linear History Only for New Commits in Rulesets](https://github.com/orgs/community/discussions/80952) (unresolved as of 2025-10; status verified 2026-05-27)
 - Repo history commands used in this research:
   ```
   git log --first-parent --oneline develop
   git log --merges --oneline --all | grep release
   git cat-file -p <sha>   # to verify parent count
+  git rev-list --merges --min-parents=2 --count HEAD  # total two-parent merges (119)
   ```
 
 ---
