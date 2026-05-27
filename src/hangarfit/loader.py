@@ -237,10 +237,16 @@ def load_layout(
     # A ``--max-carts`` override (CLI) reaches ``Layout.__post_init__`` via the
     # hangar it reads. Apply it to the resolved hangar *before* the Layout is
     # built, so a loosening override is honoured instead of being rejected at
-    # construction against the data-file cap. See ADR-0007 (cart-inventory
-    # amendment) / #210.
+    # construction against the data-file cap. ``replace`` re-runs
+    # ``Hangar.__post_init__``, so a negative override is rejected — wrap that
+    # ValueError into a LoaderError to keep the exit-2 contract (a raw
+    # ValueError would crash the CLI with a traceback). See ADR-0007
+    # (cart-inventory amendment) / #210.
     if max_carts is not None:
-        hangar = dataclasses.replace(hangar, max_carts=max_carts)
+        try:
+            hangar = dataclasses.replace(hangar, max_carts=max_carts)
+        except ValueError as e:
+            raise LoaderError(f"{path}: {e}") from e
 
     placements_data = raw.get("placements", [])
     if not isinstance(placements_data, list):
@@ -356,10 +362,15 @@ def load_scenario(
 
     # A ``--max-carts`` override (CLI) is applied to the resolved hangar here;
     # the solver builds every candidate Layout from ``scenario.hangar``, so the
-    # cart cap each Layout enforces is this overridden value. See ADR-0007
-    # (cart-inventory amendment) / #210.
+    # cart cap each Layout enforces is this overridden value. ``replace``
+    # re-runs ``Hangar.__post_init__``; wrap a negative-value ValueError into a
+    # LoaderError to keep the exit-2 contract. See ADR-0007 (cart-inventory
+    # amendment) / #210.
     if max_carts is not None:
-        hangar = dataclasses.replace(hangar, max_carts=max_carts)
+        try:
+            hangar = dataclasses.replace(hangar, max_carts=max_carts)
+        except ValueError as e:
+            raise LoaderError(f"{path}: {e}") from e
 
     for pid in fleet_in:
         _resolve_known_plane_id(pid, fleet, role="fleet_in entry", path=path)

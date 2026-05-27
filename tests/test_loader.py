@@ -18,6 +18,7 @@ from hangarfit.loader import (
     load_fleet,
     load_hangar,
     load_layout,
+    load_scenario,
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -213,6 +214,18 @@ class TestHangarMaxCarts:
         layout = load_layout(fixture, max_carts=2)
         assert layout.hangar.max_carts == 2
         assert len(layout.placements) == 2
+
+    def test_load_layout_negative_override_raises_loader_error(self) -> None:
+        """A negative override is rejected as a LoaderError (not a raw
+        ValueError from dataclasses.replace), preserving the exit-2 contract."""
+        fixture = REPO_ROOT / "tests" / "fixtures" / "invalid_cart_rule.yaml"
+        with pytest.raises(LoaderError, match="max_carts must be non-negative"):
+            load_layout(fixture, max_carts=-1)
+
+    def test_load_scenario_negative_override_raises_loader_error(self) -> None:
+        fixture = REPO_ROOT / "tests" / "fixtures" / "solve_infeasible_two_cart_pins.yaml"
+        with pytest.raises(LoaderError, match="max_carts must be non-negative"):
+            load_scenario(fixture, max_carts=-1)
 
 
 # ----------------------------------------------------------------------------

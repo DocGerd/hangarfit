@@ -118,6 +118,16 @@ class TestCheckLoadErrors:
         assert "At most" not in captured.err  # the cart-rule load error is gone
         assert exit_code != 2  # load succeeded; a non-zero would be a geometry verdict
 
+    def test_check_max_carts_negative_is_clean_exit_2(self, capsys):
+        # A negative --max-carts must surface as a clean exit-2 LoaderError,
+        # not a raw ValueError traceback from dataclasses.replace.
+        exit_code = main(["check", str(FIXTURES_DIR / "invalid_cart_rule.yaml"), "--max-carts=-1"])
+        assert exit_code == 2
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "error:" in captured.err
+        assert "max_carts" in captured.err
+
 
 class TestCheckJsonOutput:
     """--json emits the hangarfit.check/v1 schema on stdout."""

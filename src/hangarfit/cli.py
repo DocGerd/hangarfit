@@ -67,6 +67,7 @@ def build_parser() -> argparse.ArgumentParser:
         type=int,
         metavar="N",
         default=None,
+        dest="max_carts",
         help="Override the hangar's spare-cart count for the cart_eligible pool (default: the hangar.yaml value, or 1 if unset).",  # noqa: E501
     )
     check.add_argument(

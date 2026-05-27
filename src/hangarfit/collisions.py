@@ -24,10 +24,10 @@ upstream:
    *different* aircraft, conflict iff both (a) their polygons are within
    ``hangar.clearance_m`` in plan view AND (b) their z-ranges are within
    ``hangar.wing_layer_clearance_m`` in height.
-4. **Cart rule** (upstream, *not here*) — at most one ``cart_eligible``
-   plane has ``on_carts=True``. :class:`Layout.__post_init__` rejects
-   violations at construction, so by the time a Layout reaches the
-   checker this rule has been satisfied.
+4. **Cart rule** (upstream, *not here*) — at most ``hangar.max_carts``
+   ``cart_eligible`` planes have ``on_carts=True``.
+   :class:`Layout.__post_init__` rejects violations at construction, so by
+   the time a Layout reaches the checker this rule has been satisfied.
 
 Conflict ``kind`` taxonomy for pairwise rules is the two part kinds
 sorted alphabetically and joined by ``"_"`` with the ``"_overlap"``

@@ -127,6 +127,70 @@ def test_cart_buckets_enumerates_unlocked_cart_eligibles_plus_none():
         assert frozenset({pid}) in buckets
 
 
+def test_cart_buckets_enumerate_combinations_when_max_carts_gt_one():
+    """With max_carts=N the enumeration emits every subset of the unlocked
+    cart_eligible planes up to size N — so the search can actually reach
+    multi-cart layouts (#210). For the default max_carts=1 it stays the
+    empty set plus singletons (covered by the test above)."""
+    from hangarfit.loader import load_scenario
+    from hangarfit.solver import _enumerate_cart_buckets
+
+    # 3 unlocked cart_eligibles. max_carts=1 ⇒ 4 buckets (∅ + 3 singletons);
+    # max_carts=2 ⇒ + C(3,2)=3 pairs = 7; max_carts=3 ⇒ + 1 triple = 8.
+    s1 = load_scenario("tests/fixtures/solve_fresh_six_planes.yaml")
+    assert len(_enumerate_cart_buckets(s1)) == 4  # default unchanged
+
+    s2 = load_scenario("tests/fixtures/solve_fresh_six_planes.yaml", max_carts=2)
+    buckets2 = _enumerate_cart_buckets(s2)
+    assert len(buckets2) == 7
+    pairs = [b for b in buckets2 if len(b) == 2]
+    assert len(pairs) == 3
+
+    s3 = load_scenario("tests/fixtures/solve_fresh_six_planes.yaml", max_carts=3)
+    buckets3 = _enumerate_cart_buckets(s3)
+    assert len(buckets3) == 8
+    assert any(len(b) == 3 for b in buckets3)
+
+
+def test_cart_buckets_committed_pin_reduces_remaining_budget():
+    """A cart_eligible already committed on_carts (force/pin) consumes one
+    unit of max_carts. At max_carts=1 that leaves only the empty bucket;
+    bumping to max_carts=2 re-opens a slot for the other unlocked plane."""
+    from hangarfit.loader import load_scenario
+    from hangarfit.solver import _enumerate_cart_buckets
+
+    # cessna_140 is force_on_carts=True (1 committed); ctsl unlocked.
+    s1 = load_scenario("tests/fixtures/scenario_with_force_carts.yaml")
+    assert _enumerate_cart_buckets(s1) == [frozenset()]  # remaining 1-1=0
+
+    s2 = load_scenario("tests/fixtures/scenario_with_force_carts.yaml", max_carts=2)
+    buckets2 = _enumerate_cart_buckets(s2)  # remaining 2-1=1
+    assert len(buckets2) > 1
+    assert frozenset({"ctsl"}) in buckets2
+
+
+def test_pin_cart_rule_check_honors_max_carts():
+    """The solver's pin pre-check counts against hangar.max_carts, not a
+    hard-coded 1. Two cart_eligible planes pinned on carts is trivially
+    infeasible at the default cap but admissible at max_carts=2 (#210)."""
+    from hangarfit.loader import load_scenario
+    from hangarfit.solver import solve
+
+    fixture = "tests/fixtures/solve_infeasible_two_cart_pins.yaml"
+    # Default cap: the pin pre-check fires with the cart-rule conflict kind.
+    r1 = solve(load_scenario(fixture), budget_s=5.0, seed=42)
+    assert r1.status == "trivially_infeasible"
+    assert r1.diagnostics.best_partial.conflicts[0].kind == "trivially_infeasible_pin_cart_rule"
+    # max_carts=2: the pin cart-rule pre-check no longer fires. (These two
+    # planes pinned 5 m apart still collide, so the pinned-layout check fails
+    # with a *geometric* conflict — but never the cart-rule one. That kind
+    # disappearing is the proof the cap is now read from hangar.max_carts.)
+    r2 = solve(load_scenario(fixture, max_carts=2), budget_s=5.0, seed=42)
+    partial = r2.diagnostics.best_partial
+    kinds = {c.kind for c in partial.conflicts} if partial is not None else set()
+    assert "trivially_infeasible_pin_cart_rule" not in kinds
+
+
 def test_cart_bucket_for_restart_is_deterministic_round_robin():
     """Restart index R selects bucket R % len(buckets)."""
     from hangarfit.loader import load_scenario
