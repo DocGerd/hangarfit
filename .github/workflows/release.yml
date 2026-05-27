@@ -210,12 +210,24 @@ jobs:
             # release is immutable — its assets cannot be replaced — so
             # bail with an actionable message instead of a raw 422 from
             # the upload step.
-            if [ "$(gh release view "$TAG" --json isDraft --jq '.isDraft')" = "true" ]; then
+            # The probe above told us the release exists; this second
+            # call distinguishes a reusable draft from a sealed published
+            # release. Capture its exit status explicitly — a bare command
+            # substitution under `set -e` does NOT abort inside `[ ... ]`,
+            # so a transient failure here would otherwise compare an empty
+            # string, misclassify a draft as published, and emit the wrong
+            # hard-fail (the same conflation the primary probe avoids).
+            is_draft=$(gh release view "$TAG" --json isDraft --jq '.isDraft') || {
+              echo "gh release view --json isDraft failed for existing release $TAG" >&2
+              exit 1
+            }
+            if [ "$is_draft" = "true" ]; then
               echo "Draft release for $TAG already exists; reusing it."
             else
               echo "A PUBLISHED (immutable) release for $TAG already exists;" >&2
-              echo "its assets cannot be modified. Delete it first to re-release" >&2
-              echo "(the tag is preserved):  gh release delete $TAG --yes" >&2
+              echo "its assets cannot be modified. Delete it first, then re-run" >&2
+              echo "this workflow via workflow_dispatch (tag=$TAG):" >&2
+              echo "  gh release delete $TAG --yes   # the tag is preserved" >&2
               exit 1
             fi
           elif echo "$view_out" | grep -qxF "release not found"; then
