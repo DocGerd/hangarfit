@@ -10,6 +10,26 @@ This document is a **design proposal only**. It recommends decisions but commits
 
 ---
 
+## Ratified decisions — 2026-05-27 (user review)
+
+The user reviewed this design and chose:
+
+| Decision | Choice | Note |
+|---|---|---|
+| **§2.4 dolly vs tug** (load-bearing) | **Dolly** — a carted plane rests on its cart in the final layout | The per-layout *count* is the correct invariant; #210 reduces to "make the `1` configurable." No tug re-model. |
+| **Fork A — source of `max_carts`** (§1) | **A1 `data/hangar.yaml`, default 1**, *plus* a **`--max-carts N` CLI override now** | *Extends the §1 recommendation.* Durable truth lives on `Hangar`; the CLI override is **in scope for #210** (not deferred). The override mutates the loaded `Hangar.max_carts` before any `Layout` is built, so it reaches `Layout.__post_init__` via the same `self.hangar.max_carts` read — no separate plumbing. |
+| **Fork B — binding scope** (§2.3) | **Per-layout** (no per-sequence gate) | The K alternatives are a mutually-exclusive menu; `MovesPlan` stays tally-free. |
+| **`max_carts = 0`** | "No spare carts for the eligible pool" — any `cart_eligible`-on-cart rejected; `always_cart` unaffected | |
+| **Governance** (§3.2) | **Amend ADR-0007** (Amendments section) | Dolly + per-layout closes a question ADR-0007 parked; not a new ADR. |
+
+**Scope consequence of the CLI override — add to the §3.1 impact map:**
+- `src/hangarfit/cli.py`: `solve`/`check` gain `--max-carts N`; when given, it overrides `hangar.max_carts` on the loaded `Hangar` (a `dataclasses.replace` on the frozen `Hangar`) before layouts are built. Validation (`>= 0`) reuses `Hangar.__post_init__`.
+- New CLI test: `--max-carts 2` admits two `cart_eligible` planes onto carts; absent ⇒ the data-file value stands.
+
+The rest of this document is the reasoning that produced these choices; the options it weighs are retained as the decision record.
+
+---
+
 ## 0. Problem statement (the two deferred forks)
 
 Today, carts are a finite shared resource **only for `cart_eligible` planes**. `always_cart` planes are guaranteed their own carts and never draw from the limited pool. The current rule is a hard-coded inventory of **one** cart for the eligible pool, enforced in `Layout.__post_init__` (`src/hangarfit/models.py:397-405`):
