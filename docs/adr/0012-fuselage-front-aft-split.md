@@ -163,8 +163,11 @@ at zero (only a header comment) and the break a single derived value.
   the aft *region* includes the tail, so a separate tail segment would add a
   kind with no distinct rule).
 - The visualizer tints `fuselage_front` a darker shade of the wing-position
-  fill so the cockpit boundary reads at a glance; `_draw_gear_glyph`
-  reconstructs the full fuselage span from both segments.
+  fill so the cockpit boundary reads at a glance. (At the time of this ADR
+  `_draw_gear_glyph` reconstructed the full fuselage span from both segments to
+  place the gear heuristically; [ADR-0013](0013-wheels-canonical-data.md) later
+  replaced that with canonical per-aircraft wheel data, so the gear glyph no
+  longer depends on the fuselage segments.)
 
 ## Compliance
 
