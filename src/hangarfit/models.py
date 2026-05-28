@@ -178,7 +178,7 @@ class Wheels:
             )
 
     @property
-    def positions(self) -> list[tuple[float, float]]:
+    def positions(self) -> tuple[tuple[float, float], ...]:
         """Plane-local ``(x, y)`` of every wheel.
 
         Returns 1 entry for monowheel (``(main_offset_x_m, 0)``) or 3 entries
@@ -187,14 +187,16 @@ class Wheels:
         stable: mains first (``+y`` then ``-y``), then the third wheel.
         """
         if self.track_m is None:
-            return [(self.main_offset_x_m, 0.0)]
-        assert self.third_wheel_offset_x_m is not None  # narrowed by __post_init__
+            return ((self.main_offset_x_m, 0.0),)
+        # __post_init__ guarantees third_wheel_offset_x_m is set whenever track_m is set;
+        # re-bind to a local so mypy can narrow float|None → float.
+        third_x: float = self.third_wheel_offset_x_m  # type: ignore[assignment]
         half_track = self.track_m / 2.0
-        return [
+        return (
             (self.main_offset_x_m, half_track),
             (self.main_offset_x_m, -half_track),
-            (self.third_wheel_offset_x_m, 0.0),
-        ]
+            (third_x, 0.0),
+        )
 
     @property
     def wheelbase_m(self) -> float | None:
