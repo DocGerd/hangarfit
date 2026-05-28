@@ -13,7 +13,7 @@ import math
 import pytest
 
 from hangarfit.geometry import aircraft_parts_world
-from hangarfit.models import Aircraft, Part, Placement
+from hangarfit.models import Aircraft, Part, Placement, Wheels
 from hangarfit.towplanner import Pose, _dubins_shortest, compass_to_math_rad, plan_dubins
 
 
@@ -48,6 +48,7 @@ def _canary_aircraft(*, offset_y_m: float, turn_radius_m: float = 5.0) -> Aircra
         turn_radius_m=turn_radius_m,
         measured=False,
         parts=(part,),
+        wheels=Wheels(main_offset_x_m=0.0, track_m=1.8, third_wheel_offset_x_m=-2.0),
     )
 
 

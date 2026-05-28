@@ -655,6 +655,8 @@ class TestGearGlyph:
             z_top_m=1.5,
         )
         turn_radius = None if movement_mode == "always_cart" else 5.0
+        from tests.conftest import default_wheels_for
+
         return Aircraft(
             id="probe",
             name="Probe",
@@ -664,6 +666,7 @@ class TestGearGlyph:
             turn_radius_m=turn_radius,
             measured=False,
             parts=(fuselage_front, fuselage_aft),
+            wheels=default_wheels_for(gear),  # type: ignore[arg-type]
         )
 
     # ── end-to-end smoke ───────────────────────────────────────────────────────
@@ -903,9 +906,11 @@ class TestGearGlyph:
 
     # ── no fuselage defensive path ─────────────────────────────────────────────
 
-    def test_no_fuselage_part_is_a_noop(self) -> None:
-        """If an aircraft has no fuselage part (defensive path), no patches are added."""
-        from hangarfit.models import Aircraft, Part
+    def test_wheels_are_fuselage_independent(self) -> None:
+        """Post-ADR-0013 wheel placement reads ``aircraft.wheels.positions`` and
+        no longer depends on the fuselage parts — an aircraft with only a wing
+        still draws its three gear wheels from the canonical data."""
+        from hangarfit.models import Aircraft, Part, Wheels
 
         wing = Part(
             kind="wing",
@@ -926,10 +931,12 @@ class TestGearGlyph:
             turn_radius_m=5.0,
             measured=False,
             parts=(wing,),
+            wheels=Wheels(main_offset_x_m=0.0, track_m=1.8, third_wheel_offset_x_m=2.0),
         )
         placement = self._placement(on_carts=False)
         ax = MagicMock()
 
         _draw_gear_glyph(ax, placement, aircraft)
 
-        ax.add_patch.assert_not_called()
+        # Three wheels (two mains + nose) drawn from wheels.positions.
+        assert ax.add_patch.call_count == 3

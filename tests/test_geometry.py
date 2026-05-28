@@ -21,7 +21,7 @@ from hangarfit.geometry import (
     polygon_overlap,
     polygon_overlap_area,
 )
-from hangarfit.models import Aircraft, Part, Placement
+from hangarfit.models import Aircraft, Part, Placement, Wheels
 
 SQRT2_2 = math.sqrt(2) / 2  # ≈ 0.7071...
 
@@ -197,6 +197,7 @@ def _aircraft_with_one_part(
         turn_radius_m=turn_radius_m,
         measured=False,
         parts=(part,),
+        wheels=Wheels(main_offset_x_m=0.0, track_m=1.8, third_wheel_offset_x_m=-2.0),
     )
 
 
@@ -505,6 +506,7 @@ class TestWorldPartMetadata:
             turn_radius_m=5.0,
             measured=False,
             parts=parts,
+            wheels=Wheels(main_offset_x_m=0.0, track_m=1.8, third_wheel_offset_x_m=-2.0),
         )
         pl = Placement(plane_id="multipart", x_m=5.0, y_m=10.0, heading_deg=37.0, on_carts=False)
         worlds = aircraft_parts_world(ac, pl)

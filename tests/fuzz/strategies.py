@@ -22,7 +22,7 @@ from hypothesis import strategies as st
 
 from hangarfit import loader
 from hangarfit.loader import LoaderError
-from hangarfit.models import Aircraft, Door, Hangar, MaintenanceBay, Part
+from hangarfit.models import Aircraft, Door, Hangar, MaintenanceBay, Part, Wheels
 
 # --- valid in-memory fixtures used as fleet/hangar overrides for layout/scenario.
 # Built directly with model constructors so they pass __post_init__; this lets
@@ -56,6 +56,7 @@ VALID_FLEET: dict[str, Aircraft] = {
         turn_radius_m=None,
         measured=False,
         parts=(_FUSELAGE,),
+        wheels=Wheels(main_offset_x_m=0.0, track_m=1.8, third_wheel_offset_x_m=2.0),
     ),
     "p2": Aircraft(
         id="p2",
@@ -66,6 +67,7 @@ VALID_FLEET: dict[str, Aircraft] = {
         turn_radius_m=None,
         measured=False,
         parts=(_FUSELAGE,),
+        wheels=Wheels(main_offset_x_m=0.0, track_m=1.8, third_wheel_offset_x_m=-2.0),
     ),
 }
 

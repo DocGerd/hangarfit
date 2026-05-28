@@ -1232,7 +1232,7 @@ def test_plane_footprint_area_does_not_double_count_tail():
     instead of max-of-lengths, or any path that surfaces the duplicate)
     can't silently regress.
     """
-    from hangarfit.models import Aircraft, Part
+    from hangarfit.models import Aircraft, Part, Wheels
     from hangarfit.solver import _plane_footprint_area
 
     # Geometry: post-split fuselage segments + a standalone tail + a wing.
@@ -1287,6 +1287,7 @@ def test_plane_footprint_area_does_not_double_count_tail():
         turn_radius_m=6.0,
         measured=False,
         parts=(fuselage_front, fuselage_aft, tail, wing),
+        wheels=Wheels(main_offset_x_m=0.0, track_m=1.8, third_wheel_offset_x_m=-2.0),
     )
 
     # Expected: reconstructed fuselage span runs from the tail's tail-end

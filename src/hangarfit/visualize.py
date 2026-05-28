@@ -138,19 +138,6 @@ _WHEEL_RADIUS_M = 0.18
 _CART_DECK_HALF_LENGTH_M = 1.3
 _CART_DECK_HALF_WIDTH_M = 0.55
 
-# Fraction of fuselage forward half where nose-wheel / main-gear land.
-# Nose wheel: near the fuselage nose tip. Main-gear (nosewheel config):
-# placed at ~35% back from nose toward CG. Main-gear (tailwheel config):
-# placed at ~40% forward from origin (CG). Tailwheel: at aft tip.
-# These are intentionally approximate — real gear positions are unknown
-# (fleet.yaml has measured:false everywhere) and these fractions give a
-# visually convincing top-down silhouette.
-_NOSE_GEAR_FRAC = 0.85  # fraction of forward half-fuselage for nose wheel
-_MAIN_GEAR_FWD_FRAC = 0.30  # fraction of forward half for nosewheel mains
-_MAIN_GEAR_TAILDRAGGER_FWD_FRAC = 0.45  # fraction of forward half for tailwheel mains
-# Main-gear lateral offset as a multiple of fuselage half-width.
-_MAIN_GEAR_LATERAL_FRAC = 1.6
-
 
 def render_layout(
     layout: Layout,
@@ -432,78 +419,21 @@ def _add_wheel(ax: Any, wx: float, wy: float) -> MplCircle:
 def _draw_gear_glyph(ax: Any, placement: Placement, aircraft: Aircraft) -> None:
     """Draw landing-gear wheels or a cart glyph depending on ``placement.on_carts``.
 
-    Geometry is approximated from the full fuselage's ``offset_x_m`` and
-    ``length_m``, reconstructed from the aircraft's ``fuselage_front`` +
-    ``fuselage_aft`` segments (the fuselage is split front/aft at load time —
-    ADR-0012, so there is no single ``fuselage`` part). The reconstructed span
-    is the union of every fuselage segment: nose tip = max segment
-    ``offset_x_m + length_m/2``, tail tip = min segment ``offset_x_m −
-    length_m/2``. ``tail`` parts are included so an aircraft that declares a
-    separate empennage still anchors its tail wheel correctly.
+    Wheel positions come straight from ``aircraft.wheels.positions`` — the
+    canonical per-aircraft plane-local coordinates (ADR-0013), no longer
+    reconstructed from heuristic fuselage fractions. Each is mapped to world
+    coords through ``local_to_world`` so the gear rotates with the aircraft
+    heading.
 
-    **Own-gear (``on_carts=False``):** wheel positions per ``aircraft.gear``:
-
-    - ``nosewheel`` (tricycle): one nose wheel near the fuselage nose tip, two
-      main wheels behind the CG at ±lateral offset.
-    - ``tailwheel``: two main wheels ahead of the CG, one tailwheel near the
-      fuselage aft tip.
-    - ``monowheel``: a single centred main wheel at the CG origin.
-
-    **Cart-borne (``on_carts=True``):** a dolly-deck rectangle (lighter gray,
-    translucent) centred at the origin with four small corner wheel circles,
-    drawn in the same world-transform path as parts so it rotates with the
-    aircraft heading.
+    When the plane rides on a cart (``placement.on_carts=True``), the cart-deck
+    glyph is drawn instead of the plane's own gear (see ``_draw_cart_glyph``).
     """
-    # Reconstruct the full fuselage span from its front/aft segments (the
-    # fuselage is split at load time — ADR-0012, so there is no single
-    # ``fuselage`` part). ``tail`` is folded in so a separate empennage still
-    # anchors the tail wheel.
-    fuselage_segments = [
-        p for p in aircraft.parts if p.kind in ("fuselage_front", "fuselage_aft", "tail")
-    ]
-    if not fuselage_segments:
-        # No fuselage segment found — skip silently. Defensive: every fleet
-        # entry today has a fuselage, but we should not crash on novel entries.
-        return
-
-    nose_x = max(p.offset_x_m + p.length_m / 2.0 for p in fuselage_segments)  # +x: nose tip
-    fus_aft_x = min(p.offset_x_m - p.length_m / 2.0 for p in fuselage_segments)  # −x: tail tip
-    fus_cx = (nose_x + fus_aft_x) / 2.0  # local +x centre of full fuselage
-    fus_half_len = (nose_x - fus_aft_x) / 2.0
-    # Width is uniform across segments (the split is purely longitudinal); use
-    # the widest segment so a separate narrow tail doesn't shrink the lateral
-    # main-gear offset.
-    fus_half_wid = max(p.width_m for p in fuselage_segments) / 2.0
-
     if placement.on_carts:
         _draw_cart_glyph(ax, placement)
-    elif aircraft.gear == "nosewheel":
-        # Nose wheel — near the nose tip
-        nose_u = fus_cx + fus_half_len * _NOSE_GEAR_FRAC
-        wx, wy = local_to_world(nose_u, 0.0, placement)
+        return
+    for u, v in aircraft.wheels.positions:
+        wx, wy = local_to_world(u, v, placement)
         _add_wheel(ax, wx, wy)
-        # Main gear pair — slightly aft of CG (behind the wing root)
-        main_u = fus_cx - fus_half_len * _MAIN_GEAR_FWD_FRAC
-        lateral = fus_half_wid * _MAIN_GEAR_LATERAL_FRAC
-        for v in (+lateral, -lateral):
-            wx, wy = local_to_world(main_u, v, placement)
-            _add_wheel(ax, wx, wy)
-    elif aircraft.gear == "tailwheel":
-        # Main gear pair — forward of CG, ahead of the wing root
-        main_u = fus_cx + fus_half_len * _MAIN_GEAR_TAILDRAGGER_FWD_FRAC
-        lateral = fus_half_wid * _MAIN_GEAR_LATERAL_FRAC
-        for v in (+lateral, -lateral):
-            wx, wy = local_to_world(main_u, v, placement)
-            _add_wheel(ax, wx, wy)
-        # Tailwheel — near the aft tip
-        tail_u = fus_aft_x + fus_half_len * (1.0 - _NOSE_GEAR_FRAC)
-        wx, wy = local_to_world(tail_u, 0.0, placement)
-        _add_wheel(ax, wx, wy)
-    elif aircraft.gear == "monowheel":
-        # Single centred main wheel at the gear/cart origin
-        wx, wy = local_to_world(0.0, 0.0, placement)
-        _add_wheel(ax, wx, wy)
-    # No else needed — Gear is a closed Literal; mypy and the model guard all values.
 
 
 def _draw_cart_glyph(ax: Any, placement: Placement) -> None:
