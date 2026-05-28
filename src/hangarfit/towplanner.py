@@ -25,7 +25,8 @@ from collections.abc import Callable, Iterator
 from dataclasses import dataclass
 from typing import Literal
 
-from shapely.geometry import Polygon
+from shapely import union_all
+from shapely.geometry import Point, Polygon
 
 # `_parts_conflict` is the exact oracle's per-pair predicate (collisions.py). The
 # fast in-search checker `_motion_clear` reuses it verbatim — rather than
@@ -1064,8 +1065,19 @@ class NoFeasiblePlanError(Exception):
         self.conflict = conflict
 
 
-def plan_fill(target: Layout) -> MovesPlan:
+def plan_fill(
+    target: Layout,
+    *,
+    heuristic: Literal["euclidean", "grid"] = "euclidean",
+    max_expansions: int | None = None,
+) -> MovesPlan:
     """Plan a collision-free entry order + per-plane path for an empty fill.
+
+    ``heuristic`` and ``max_expansions`` are forwarded to :func:`plan_path` for
+    every plane (towplanner-v2 routability spike, #332). The defaults reproduce
+    the shipped planner byte-for-byte (``max_expansions=None`` ⇒ the module
+    ``_MAX_EXPANSIONS`` budget); ``heuristic="grid"`` and/or a raised
+    ``max_expansions`` are the opt-in routability experiments.
 
     Walks :func:`back_first_order` (deepest slot first); for each plane searches
     for an in-bounds path from the door-cone entry poses (:func:`entry_poses`) to
@@ -1089,6 +1101,7 @@ def plan_fill(target: Layout) -> MovesPlan:
     scan are all RNG-free, so a given ``target`` always yields the same
     :class:`MovesPlan`.
     """
+    budget = _MAX_EXPANSIONS if max_expansions is None else max_expansions
     ordered = list(back_first_order(target.placements))
     fleet = target.fleet
     hangar = target.hangar
@@ -1129,6 +1142,8 @@ def plan_fill(target: Layout) -> MovesPlan:
                     placed=placed_layout,
                     mover_on_carts=slot.on_carts,
                     entries=cone,
+                    heuristic=heuristic,
+                    max_expansions=budget,
                 )
             except NoFeasiblePlanError as exc:
                 # This plane cannot be routed against the current obstacles; try
@@ -1467,6 +1482,113 @@ def _motion_clear(mover: Aircraft, pose: Pose, obstacles: _Obstacles, hangar: Ha
     return True
 
 
+# ── Obstacle-aware grid heuristic (towplanner-v2 routability spike, #332) ────
+#
+# A goal-aware cost-to-go field that REPLACES the straight-line Euclidean A*
+# heuristic when ``plan_path(..., heuristic="grid")``. The default planner is
+# UNCHANGED — ``heuristic="euclidean"`` (the default) computes the same
+# ``math.hypot`` heuristic byte-for-byte, so the ADR-0003 determinism canaries
+# are untouched.
+#
+# Motivation (the documented multi-plane-fill un-routability): the Euclidean
+# heuristic ignores obstacles, so when a goal sits behind an already-placed
+# plane the Hybrid-A* search floods the obstacle pocket and exhausts
+# ``_MAX_EXPANSIONS`` before routing around it. This field is the FREE-SPACE
+# GEODESIC distance from every grid cell to the goal, computed by a
+# deterministic Dijkstra over the SAME ``_GRID_XY_M`` occupancy grid the search
+# bins poses into — so the heuristic "knows the way around" and the search
+# beelines along the real corridor instead of flooding the dead pocket.
+#
+# Point-robot, un-inflated obstacles: a point can always take a route the
+# finite-width plane can (never fewer metres), so the field is a LOWER BOUND on
+# the true Reeds–Shepp path cost and stays admissible-leaning; the exact oracle
+# in ``plan_path`` remains the SOLE authority on the returned path's validity
+# (the #332 proposer-verifier contract). Deterministic (ADR-0003): fixed cell
+# iteration order + a monotonic-counter Dijkstra tie-break, RNG-free.
+
+# How far in front of the door (the y<0 apron, open during tow per #222) the
+# field extends, so entry/approach poses at small negative y still get a
+# geodesic value rather than the Euclidean fallback.
+_GRID_H_Y_PAD_M = 6.0
+
+
+def _build_grid_heuristic(
+    goal: Pose, obstacles: _Obstacles, hangar: Hangar
+) -> dict[tuple[int, int], float]:
+    """Free-space geodesic cost-to-go to ``goal`` over the search grid (#332).
+
+    A deterministic Dijkstra (8-connected, true Euclidean edge weights) from the
+    goal cell across every in-bounds, obstacle-free cell. Returns a mapping from
+    ``(ix, iy)`` cell (``round(x/_GRID_XY_M), round(y/_GRID_XY_M)`` — the same xy
+    binning as :func:`_cell`) to metres-to-goal. Cells absent from the map are
+    blocked or unreachable; :func:`plan_path` falls back to the Euclidean
+    heuristic there, so the field only ever RE-PRIORITISES the frontier, it
+    never makes a pose un-expandable.
+
+    Obstacles are the placed planes' footprints (un-inflated, point-robot) plus
+    the closed maintenance bay; the side/back walls bound the grid (the front
+    ``y < 0`` apron is open during tow). RNG-free and pure ⇒ ADR-0003-safe.
+    """
+    ix_max = round(hangar.width_m / _GRID_XY_M)
+    iy_min = -round(_GRID_H_Y_PAD_M / _GRID_XY_M)
+    iy_max = round(hangar.length_m / _GRID_XY_M)
+
+    # Union the static obstacle footprints once for fast point-in-region tests.
+    blocked_geom = (
+        union_all([wp.polygon for wp in obstacles.world_parts]) if (obstacles.world_parts) else None
+    )
+
+    def _cell_free(ix: int, iy: int) -> bool:
+        cx = ix * _GRID_XY_M
+        cy = iy * _GRID_XY_M
+        # Side/back walls (front y<0 is the open apron, #222). Mirrors the
+        # _mover_motion_bounds_conflict spirit: 0<=x<=width, y<=length.
+        if cx < 0.0 or cx > hangar.width_m or cy > hangar.length_m:
+            return False
+        # Closed maintenance-bay keep-out (same predicate as _motion_clear (C)).
+        if obstacles.bay_active and (
+            obstacles.bay_xmin < cx < obstacles.bay_xmax and cy > obstacles.bay_ymin
+        ):
+            return False
+        return blocked_geom is None or not blocked_geom.contains(Point(cx, cy))
+
+    # Seed the goal cell at 0 unconditionally — it is the target (a valid resting
+    # placement clear of obstacles by clearance), so its reference point is free
+    # regardless of how the coarse raster rounds it.
+    goal_cell = (round(goal.x_m / _GRID_XY_M), round(goal.y_m / _GRID_XY_M))
+    dist: dict[tuple[int, int], float] = {goal_cell: 0.0}
+    counter = 0
+    heap: list[tuple[float, int, tuple[int, int]]] = [(0.0, counter, goal_cell)]
+    diag = _GRID_XY_M * math.sqrt(2.0)
+    # 8-neighbour offsets in a FIXED order (determinism, ADR-0003).
+    neighbours = (
+        (1, 0, _GRID_XY_M),
+        (-1, 0, _GRID_XY_M),
+        (0, 1, _GRID_XY_M),
+        (0, -1, _GRID_XY_M),
+        (1, 1, diag),
+        (1, -1, diag),
+        (-1, 1, diag),
+        (-1, -1, diag),
+    )
+    while heap:
+        d, _, (ix, iy) = heapq.heappop(heap)
+        if d > dist.get((ix, iy), math.inf) + 1e-12:
+            continue  # stale heap entry
+        for dx, dy, w in neighbours:
+            nx, ny = ix + dx, iy + dy
+            if nx < 0 or nx > ix_max or ny < iy_min or ny > iy_max:
+                continue
+            if not _cell_free(nx, ny):
+                continue
+            nd = d + w
+            if nd < dist.get((nx, ny), math.inf) - 1e-12:
+                dist[(nx, ny)] = nd
+                counter += 1
+                heapq.heappush(heap, (nd, counter, (nx, ny)))
+    return dist
+
+
 def plan_path(
     mover: Aircraft,
     entry: Pose,
@@ -1477,6 +1599,8 @@ def plan_path(
     mover_on_carts: bool,
     entries: tuple[Pose, ...] | None = None,
     max_expansions: int = _MAX_EXPANSIONS,
+    heuristic: Literal["euclidean", "grid"] = "euclidean",
+    stats: dict[str, object] | None = None,
 ) -> DubinsArc:
     """Deterministic Hybrid-A* tow path from ``entry`` (or ``entries``) to ``goal``.
 
@@ -1516,11 +1640,47 @@ def plan_path(
     ``hangar`` is consumed directly by :func:`_motion_clear` (bounds, clearances,
     bay rectangle); ``placed.hangar`` is the same object and also reaches the
     exact-oracle safety net via :func:`path_first_conflict`.
+
+    ``heuristic`` selects the A* cost-to-go estimate (towplanner-v2 spike, #332):
+    ``"euclidean"`` (default) is the byte-identical straight-line lower bound the
+    planner has always used; ``"grid"`` swaps in the obstacle-aware free-space
+    geodesic field (:func:`_build_grid_heuristic`) that guides the search around
+    placed planes instead of flooding the dead pocket in front of them. Only the
+    node-expansion ORDER changes — the motion primitives, the validity checks,
+    and the exact-oracle safety net are untouched, so a ``"grid"`` path is just
+    as exact-oracle-clean as a ``"euclidean"`` one. Both modes are deterministic
+    (ADR-0003): the grid Dijkstra is RNG-free with a monotonic-counter tie-break.
+
+    ``stats`` is an optional out-parameter (diagnostics only; ``None`` ⇒ no-op,
+    no behaviour change): on return/raise it is populated with ``expansions``,
+    ``found``, ``budget_exhausted`` (hit ``max_expansions``) vs ``space_exhausted``
+    (open heap emptied first ⇒ genuine local infeasibility), ``start_poses``, and
+    the ``heuristic`` used — the #332 routability characterisation harness reads it.
     """
     r = mover.effective_turn_radius_m()
     # Static obstacle set, computed once: placed planes don't move while this one
     # is routed. Drives the fast per-pose `_motion_clear` used during search.
     obstacles = _build_obstacles(placed, mover_id=mover.id)
+
+    # A* heuristic seam (#332). ``euclidean`` (default) is the byte-identical
+    # straight-line lower bound the planner has always used. ``grid`` swaps in
+    # the obstacle-aware free-space geodesic field, falling back to Euclidean on
+    # any cell outside the field (blocked / off-grid). The default branch's
+    # expression is unchanged so the determinism canaries stay byte-identical.
+    if heuristic == "grid":
+        _field = _build_grid_heuristic(goal, obstacles, hangar)
+
+        def _h(p: Pose) -> float:
+            cell = (round(p.x_m / _GRID_XY_M), round(p.y_m / _GRID_XY_M))
+            g = _field.get(cell)
+            if g is None:
+                return math.hypot(goal.x_m - p.x_m, goal.y_m - p.y_m)
+            return g
+    else:
+
+        def _h(p: Pose) -> float:
+            return math.hypot(goal.x_m - p.x_m, goal.y_m - p.y_m)
+
     counter = 0
 
     # ── Build the effective start set ────────────────────────────────────────
@@ -1551,17 +1711,19 @@ def plan_path(
             start_poses = (Pose(x_m=hangar.door.center_x_m, y_m=0.0, heading_deg=0.0),)
 
     # ── Seed the open heap with all surviving start poses ───────────────────
-    # Heuristic: straight-line Euclidean distance. Deliberately looser than the
-    # spec's Dubins-distance suggestion — Euclidean ≤ Dubins length ≤ true cost
-    # and the g-cost turn penalty is ≥ 0, so it stays admissible (it may expand a
-    # few more nodes, never fewer; do NOT "tighten" it to the Dubins shot without
-    # re-checking admissibility and the determinism canary).
+    # Heuristic: ``_h`` — straight-line Euclidean distance by default (deliberately
+    # looser than the spec's Dubins-distance suggestion — Euclidean ≤ Dubins length
+    # ≤ true cost and the g-cost turn penalty is ≥ 0, so it stays admissible; it may
+    # expand a few more nodes, never fewer; do NOT "tighten" it to the Dubins shot
+    # without re-checking admissibility and the determinism canary). The opt-in
+    # ``heuristic="grid"`` seam (#332) swaps in the obstacle-aware free-space
+    # geodesic field (lower-bound, admissible-leaning) without touching the default.
     open_heap: list[tuple[float, int, _SearchNode]] = []
     best_g: dict[tuple[int, int, int], float] = {}
     for start_pose in start_poses:
         start_node = _SearchNode(start_pose, 0.0, None, None)
         start_key = _cell(start_pose)
-        h_start = math.hypot(goal.x_m - start_pose.x_m, goal.y_m - start_pose.y_m)
+        h_start = _h(start_pose)
         # Only seed if not already dominated by a cheaper start in the same cell.
         if best_g.get(start_key, math.inf) - 1e-9 > 0.0:
             best_g[start_key] = 0.0
@@ -1611,6 +1773,15 @@ def plan_path(
                 path_first_conflict(candidate, mover, mover_on_carts=mover_on_carts, placed=placed)
                 is None
             ):
+                if stats is not None:
+                    stats.update(
+                        expansions=expansions,
+                        found=True,
+                        budget_exhausted=False,
+                        space_exhausted=False,
+                        start_poses=len(start_poses),
+                        heuristic=heuristic,
+                    )
                 return candidate
         # else (fast screen failed, OR fast passed but the exact oracle rejected
         # the full path): do not ship; fall through to primitive expansion.
@@ -1634,7 +1805,7 @@ def plan_path(
             if child_g < best_g.get(child_key, math.inf) - 1e-9:
                 best_g[child_key] = child_g
                 counter += 1
-                h = math.hypot(goal.x_m - child_pose.x_m, goal.y_m - child_pose.y_m)
+                h = _h(child_pose)
                 heapq.heappush(
                     open_heap,
                     (child_g + h, counter, _SearchNode(child_pose, child_g, seg, node)),
@@ -1647,6 +1818,20 @@ def plan_path(
     # Report the honest ``no_feasible_path`` kind rather than mis-labelling it
     # ``hangar_bounds``, so a caller keying on ``conflict.kind`` (plan_fill / the
     # Wave 3 CLI) is not misled about the cause; the mover is still named.
+    if stats is not None:
+        # ``budget_exhausted`` (hit the cap) vs ``space_exhausted`` (the open
+        # heap emptied first — every reachable discretised state settled with no
+        # analytic shot closing to goal, i.e. genuine local infeasibility within
+        # the grid/primitive discretisation). The distinction is the whole point
+        # of the #332 failure characterisation.
+        stats.update(
+            expansions=expansions,
+            found=False,
+            budget_exhausted=expansions >= max_expansions,
+            space_exhausted=expansions < max_expansions,
+            start_poses=len(start_poses),
+            heuristic=heuristic,
+        )
     raise NoFeasiblePlanError(
         mover.id,
         Conflict.single(

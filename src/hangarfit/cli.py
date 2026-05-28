@@ -170,6 +170,32 @@ def build_parser() -> argparse.ArgumentParser:
         default=True,
         help="Disable the inter-plane spread post-pass (default: spread enabled).",
     )
+    # ── Experimental tow-planner knobs (towplanner-v2 routability spike, #332) ──
+    # Behind opt-in flags; defaults reproduce the shipped planner byte-for-byte.
+    solve.add_argument(
+        "--tow-heuristic",
+        choices=("euclidean", "grid"),
+        default="euclidean",
+        dest="tow_heuristic",
+        help=(
+            "EXPERIMENTAL (#332): A* tow-path heuristic. 'euclidean' (default) is "
+            "the shipped straight-line heuristic; 'grid' is the obstacle-aware "
+            "free-space geodesic that routes around placed planes (only affects "
+            "--render-paths runs). Deterministic; the path is exact-oracle-validated."
+        ),
+    )
+    solve.add_argument(
+        "--tow-max-expansions",
+        type=int,
+        metavar="N",
+        default=None,
+        dest="tow_max_expansions",
+        help=(
+            "EXPERIMENTAL (#332): per-plane Hybrid-A* expansion budget for tow "
+            "planning (default: the module _MAX_EXPANSIONS=700). Raise to trade "
+            "time for routability on hard fills."
+        ),
+    )
 
     return parser
 
@@ -394,6 +420,8 @@ def cmd_solve(args: argparse.Namespace) -> int:
         seed=resolved_seed,
         search=SearchConfig(spread=args.spread),
         plan_paths=args.render_paths,
+        tow_heuristic=args.tow_heuristic,
+        tow_max_expansions=args.tow_max_expansions,
     )
 
     # #280 — spread-vs-towability fallback. The ADR-0008 spread post-pass
@@ -428,6 +456,8 @@ def cmd_solve(args: argparse.Namespace) -> int:
             seed=resolved_seed,
             search=SearchConfig(spread=False),
             plan_paths=True,
+            tow_heuristic=args.tow_heuristic,
+            tow_max_expansions=args.tow_max_expansions,
         )
         if fallback.layouts and any(plan is not None for plan in fallback.plans):
             print(
