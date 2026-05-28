@@ -23,6 +23,7 @@ from hangarfit.models import (
     MaintenanceBay,
     Part,
     Placement,
+    Wheels,
 )
 from hangarfit.towplanner import (
     Pose,
@@ -80,6 +81,7 @@ def _box_plane(pid: str, *, turn_radius_m: float = 4.0) -> Aircraft:
                 z_top_m=1.0,
             ),
         ),
+        wheels=Wheels(main_offset_x_m=0.0, track_m=1.8, third_wheel_offset_x_m=-2.0),
     )
 
 
@@ -115,6 +117,7 @@ def _wide_plane(pid: str, *, span_m: float = 6.0, turn_radius_m: float = 3.0) ->
                 z_top_m=1.8,
             ),
         ),
+        wheels=Wheels(main_offset_x_m=0.0, track_m=1.8, third_wheel_offset_x_m=-2.0),
     )
 
 

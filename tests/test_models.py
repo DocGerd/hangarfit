@@ -51,6 +51,8 @@ def _ok_aircraft(
     turn_radius_m: float | None = 5.0,
     **overrides: object,
 ) -> Aircraft:
+    if "wheels" not in overrides:
+        overrides["wheels"] = Wheels(main_offset_x_m=0.20, track_m=1.8, third_wheel_offset_x_m=-2.0)
     return Aircraft(
         id=plane_id,
         name=f"Test Plane {plane_id}",
@@ -222,6 +224,7 @@ class TestAircraft:
                 turn_radius_m=None,
                 measured=False,
                 parts=(_ok_part(),),
+                wheels=Wheels(main_offset_x_m=0.0, track_m=1.8, third_wheel_offset_x_m=-2.0),
             )
 
     def test_empty_parts_rejected(self) -> None:
@@ -235,6 +238,7 @@ class TestAircraft:
                 turn_radius_m=None,
                 measured=False,
                 parts=(),
+                wheels=Wheels(main_offset_x_m=0.0, track_m=1.8, third_wheel_offset_x_m=-2.0),
             )
 
     def test_own_gear_requires_turn_radius(self) -> None:
@@ -302,6 +306,7 @@ class TestAircraft:
                 turn_radius_m=None,
                 measured=False,
                 parts=(_ok_part(),),
+                wheels=Wheels(main_offset_x_m=0.0, track_m=1.8, third_wheel_offset_x_m=-2.0),
             )
 
     @pytest.mark.parametrize("gear", ["", "skis", "Tailwheel", "floats", "TRICYCLE"])
@@ -316,6 +321,7 @@ class TestAircraft:
                 turn_radius_m=None,
                 measured=False,
                 parts=(_ok_part(),),
+                wheels=Wheels(main_offset_x_m=0.0, track_m=1.8, third_wheel_offset_x_m=-2.0),
             )
 
     @pytest.mark.parametrize(
@@ -332,6 +338,7 @@ class TestAircraft:
                 turn_radius_m=5.0,
                 measured=False,
                 parts=(_ok_part(),),
+                wheels=Wheels(main_offset_x_m=0.0, track_m=1.8, third_wheel_offset_x_m=-2.0),
             )
 
 
@@ -1309,11 +1316,6 @@ class TestWheels:
 
 
 class TestAircraftWheels:
-    def test_aircraft_wheels_defaults_to_none(self) -> None:
-        """Transitional state: existing Aircraft constructions still work without wheels."""
-        a = _ok_aircraft()
-        assert a.wheels is None
-
     def test_aircraft_accepts_wheels(self) -> None:
         """Aircraft accepts a Wheels instance when supplied."""
         w = Wheels(main_offset_x_m=-0.10, track_m=1.80, third_wheel_offset_x_m=2.50)
