@@ -607,7 +607,6 @@ _WHEELS_KEYS_BY_GEAR: dict[str, frozenset[str]] = {
 def _parse_wheels(
     entry: Mapping[str, Any] | None,
     gear: str,
-    aircraft_id: str,
 ) -> Wheels | None:
     """Parse a ``wheels:`` block into a :class:`Wheels`.
 
@@ -616,6 +615,10 @@ def _parse_wheels(
 
     Validates that the key set exactly matches ``_WHEELS_KEYS_BY_GEAR[gear]``
     and that nose-vs-tail sign rules hold for tricycle/tailwheel gear.
+
+    Errors are raised without an ``aircraft 'id': ...`` prefix — the outer
+    ``load_fleet`` loop wraps every per-aircraft error with that attribution
+    (see :func:`load_fleet`), so adding it here would double-decorate.
     """
     if entry is None:
         return None  # TODO(#322 Task 5): raise LoaderError
@@ -641,29 +644,28 @@ def _parse_wheels(
 
     main_offset_x_m = _to_float(entry["main_offset_x_m"], "wheels.main_offset_x_m")
     if gear == "monowheel":
-        try:
-            return Wheels(
-                main_offset_x_m=main_offset_x_m, track_m=None, third_wheel_offset_x_m=None
-            )
-        except ValueError as exc:
-            raise LoaderError(f"wheels: {exc}") from exc
+        # _to_float already rejects non-finite; Wheels.__post_init__'s only other
+        # ValueError path for monowheel is also a finiteness check, so no wrap needed.
+        return Wheels(main_offset_x_m=main_offset_x_m, track_m=None, third_wheel_offset_x_m=None)
 
     track_m = _to_float(entry["track_m"], "wheels.track_m")
     third = _to_float(entry["third_wheel_offset_x_m"], "wheels.third_wheel_offset_x_m")
     # Sign rule:
     #   nosewheel → third (nose) must be forward of mains (greater x)
     #   tailwheel → third (tail) must be aft of mains    (lesser x)
-    if gear == "nosewheel" and not third > main_offset_x_m:
+    if gear == "nosewheel" and third <= main_offset_x_m:
         raise LoaderError(
             f"wheels: nosewheel third_wheel_offset_x_m must be forward of mains "
             f"(greater than main_offset_x_m={main_offset_x_m}); got {third}"
         )
-    if gear == "tailwheel" and not third < main_offset_x_m:
+    if gear == "tailwheel" and third >= main_offset_x_m:
         raise LoaderError(
             f"wheels: tailwheel third_wheel_offset_x_m must be aft of mains "
             f"(less than main_offset_x_m={main_offset_x_m}); got {third}"
         )
     try:
+        # Wheels.__post_init__ still validates `track_m > 0` — wrap so the loader
+        # surfaces a LoaderError rather than leaking ValueError to the caller.
         return Wheels(
             main_offset_x_m=main_offset_x_m,
             track_m=track_m,
@@ -753,7 +755,7 @@ def _build_aircraft(entry: Any) -> Aircraft:
         measured=_to_bool(entry.get("measured", False), "measured"),
         parts=tuple(parts),
         notes=entry.get("notes", ""),
-        wheels=_parse_wheels(entry.get("wheels"), entry["gear"], entry["id"]),
+        wheels=_parse_wheels(entry.get("wheels"), entry["gear"]),
     )
 
 

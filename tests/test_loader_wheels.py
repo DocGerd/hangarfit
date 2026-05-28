@@ -133,3 +133,39 @@ class TestWheelsLoadingErrorPaths:
         )
         with pytest.raises(LoaderError, match=r"unknown.*bogus_field"):
             load_fleet(_write(tmp_path / "f.yaml", body))
+
+    def test_non_positive_track_wraps_to_loader_error(self, tmp_path: Path) -> None:
+        """Wheels.__post_init__ raises ValueError on track_m<=0; loader wraps it."""
+        body = _with_wheels_block(
+            "    wheels:\n"
+            "      main_offset_x_m: -0.10\n"
+            "      track_m: 0.0\n"
+            "      third_wheel_offset_x_m: 2.50\n"
+        )
+        with pytest.raises(LoaderError, match=r"track_m must be positive"):
+            load_fleet(_write(tmp_path / "f.yaml", body))
+
+
+class TestMonowheelHappyPath:
+    """Monowheel construction path was previously only exercised via error tests."""
+
+    def test_monowheel_loads_with_only_main_offset(self, tmp_path: Path) -> None:
+        body = (
+            _NOSEWHEEL_BODY.replace("gear: nosewheel", "gear: monowheel").replace(
+                "movement_mode: always_own_gear", "movement_mode: always_cart"
+            )
+            + "    turn_radius_m: null\n"  # always_cart requires null
+            + "    wheels:\n"
+            "      main_offset_x_m: 0.0\n"
+        )
+        # Strip the inline turn_radius_m: 4.0 line that came from _NOSEWHEEL_BODY —
+        # we override it above to null for always_cart.
+        body = body.replace("    turn_radius_m: 4.0\n", "")
+        fleet = load_fleet(_write(tmp_path / "f.yaml", body))
+        a = fleet["testplane"]
+        assert a.wheels is not None
+        assert a.wheels.main_offset_x_m == 0.0
+        assert a.wheels.track_m is None
+        assert a.wheels.third_wheel_offset_x_m is None
+        assert a.wheels.positions == ((0.0, 0.0),)
+        assert a.wheels.wheelbase_m is None
