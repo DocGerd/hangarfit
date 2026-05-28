@@ -883,6 +883,21 @@ aircraft:
         with pytest.raises(LoaderError, match=r"kind 'fuselage' requires a part of kind 'wing'"):
             load_fleet(path)
 
+    def test_malformed_fuselage_box_error_names_fuselage_not_placeholder(
+        self, tmp_path: Path
+    ) -> None:
+        """A malformed ``kind: fuselage`` box must report the user-authored
+        kind ``fuselage``, never the internal ``fuselage_aft`` placeholder used
+        for field validation — otherwise the error is a debugging dead-end
+        (the user greps for ``fuselage_aft`` and finds nothing). #50 review."""
+        path = _write(tmp_path / "f.yaml", self._fuselage_wing_yaml(fus_length=-8.0))
+        with pytest.raises(LoaderError) as ei:
+            load_fleet(path)
+        msg = str(ei.value)
+        assert "length_m must be positive" in msg
+        assert "'fuselage'" in msg
+        assert "fuselage_aft" not in msg
+
     def test_break_outside_fuselage_span_rejected(self, tmp_path: Path) -> None:
         """If the wing trailing edge falls forward of the nose (wing way ahead
         of the fuselage), the derived break is outside the span — a degenerate

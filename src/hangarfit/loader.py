@@ -609,19 +609,34 @@ def _build_aircraft(entry: Any) -> Aircraft:
     if not isinstance(parts_data, list) or not parts_data:
         raise LoaderError("'parts' must be a non-empty list")
     # First pass: build every part as a canonical Part. A ``kind: fuselage``
-    # entry is NOT a constructed PartKind (ADR-0012) — it is built (and
-    # FIELD-VALIDATED, so a malformed box fails with the precise
-    # ``parts[i].<field>`` message) under a placeholder kind, then held aside
-    # for the front/aft split below. The placeholder kind is replaced wholesale
-    # by ``_split_fuselage`` and never reaches the constructed Aircraft.
+    # entry is NOT a constructed PartKind (ADR-0012) — it is field-validated
+    # under a placeholder kind (any valid non-fuselage kind works; we use
+    # ``"fuselage_aft"`` so the ordinary z-gap invariants apply), then held
+    # aside for the front/aft split below. The placeholder is replaced
+    # wholesale by ``_split_fuselage`` and never reaches the constructed
+    # Aircraft. If the box is malformed, rename the placeholder back to the
+    # user-authored ``fuselage`` in the message — they never typed
+    # ``"fuselage_aft"``, so naming it would be a debugging dead-end (#50 review).
     parts: list[Part] = []
     fuselage_markers: list[tuple[Part, int]] = []
     for i, p in enumerate(parts_data):
         if isinstance(p, dict) and p.get("kind") == "fuselage":
-            fuselage_markers.append((_build_part({**p, "kind": "fuselage_aft"}, i), i))
+            try:
+                marker = _build_part({**p, "kind": "fuselage_aft"}, i)
+            except ValueError as e:
+                raise ValueError(str(e).replace("'fuselage_aft'", "'fuselage'")) from e
+            fuselage_markers.append((marker, i))
         else:
             parts.append(_build_part(p, i))
 
+    # The fuselage front/aft break and the strut spar axis are both derived
+    # from the wing chord. If an aircraft declares multiple wings (unusual:
+    # split-wing / twin-boom) the FIRST wins — a deliberate, test-pinned
+    # convention (``test_first_wing_part_drives_strut_z_top``) that this split
+    # now also rides on. (#50 review flagged that wing order now also affects
+    # the front/aft cut, hence the collision verdict; first-wins is intentional
+    # and consistent with the existing strut rule — revisit only if a real
+    # multi-wing airframe is ever added.)
     wing = next((p for p in parts if p.kind == "wing"), None)
 
     if "struts" in entry:
@@ -841,9 +856,10 @@ def _split_fuselage(fuselage: Part, wing: Part) -> list[Part]:
         raise LoaderError(
             f"kind 'fuselage': derived front/aft section break x={x_break:g} "
             f"(wing trailing edge) must lie strictly inside the fuselage span "
-            f"[{tail_x:g}, {nose_x:g}]. The wing chord does not overlap the "
-            f"fuselage longitudinally; check the wing offset_x_m / length_m or "
-            f"declare explicit 'fuselage_front'/'fuselage_aft' parts."
+            f"[{tail_x:g}, {nose_x:g}]. The break must be strictly inside the "
+            f"span (a break at or beyond a tip would yield a zero-length "
+            f"segment); check the wing offset_x_m / length_m or declare "
+            f"explicit 'fuselage_front'/'fuselage_aft' parts."
         )
 
     front_len = nose_x - x_break

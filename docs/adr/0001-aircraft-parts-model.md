@@ -49,7 +49,9 @@ wrong would have made every downstream layout wrong.
 1. **A list of oriented-rectangle `Part`s per aircraft, each with a
    `[z_bottom_m, z_top_m]` height range** — the chosen option. The
    closed set of `PartKind` values (`fuselage`, `wing`, `strut`,
-   `tail`) lives in [`src/hangarfit/models.py`](../../src/hangarfit/models.py).
+   `tail`; the fuselage was later refined into `fuselage_front`/`fuselage_aft`,
+   see [ADR-0012](0012-fuselage-front-aft-split.md)) lives in
+   [`src/hangarfit/models.py`](../../src/hangarfit/models.py).
 2. **A single 2D axis-aligned (or oriented) bounding rectangle per
    aircraft** — one footprint, no height.
 3. **A single 3D axis-aligned bounding box per aircraft** — adds a

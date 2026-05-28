@@ -51,9 +51,9 @@ class Part:
     The legacy ``"fuselage"`` keyword is **not** a constructed kind: it
     survives only as a transient YAML keyword the loader auto-splits at the
     wing trailing-edge station (see :func:`hangarfit.loader._split_fuselage`).
-    New kinds must be added to ``PartKind`` and the matching
-    ``_VALID_PART_KINDS`` set above; the collision checker and visualizer
-    key off these values.
+    New kinds need only be added to the ``PartKind`` literal —
+    ``_VALID_PART_KINDS`` is derived from it via ``get_args`` — after which
+    the collision checker and visualizer must learn to key off them.
     """
 
     kind: PartKind
