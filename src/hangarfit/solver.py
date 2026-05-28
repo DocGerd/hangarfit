@@ -539,7 +539,15 @@ def _plane_footprint_area(plane: Aircraft) -> float:
     This helper is consumed only by the infeasibility gate, where no RNG flows.
     """
     fuselage_segs = [p for p in plane.parts if p.kind in ("fuselage_front", "fuselage_aft", "tail")]
-    lengths = [p.length_m for p in plane.parts if p.kind not in ("fuselage_front", "fuselage_aft")]
+    # A standalone ``tail`` part is folded into the reconstructed fuselage span
+    # above, so it must also be excluded from the per-part lengths list — else
+    # an aircraft declaring both fuselage segments and a separate ``tail`` would
+    # have its ``tail`` length counted twice (#317). Dormant today (no fleet/
+    # fixture aircraft has a ``tail`` part) and the direction is fail-safe
+    # (over-count → over-eager rejection), but worth the one-line guard.
+    lengths = [
+        p.length_m for p in plane.parts if p.kind not in ("fuselage_front", "fuselage_aft", "tail")
+    ]
     if fuselage_segs:
         nose = max(p.offset_x_m + p.length_m / 2.0 for p in fuselage_segs)
         tail = min(p.offset_x_m - p.length_m / 2.0 for p in fuselage_segs)
