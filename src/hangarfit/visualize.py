@@ -122,21 +122,23 @@ _GLYPH_ZORDER = 1.5  # between wings (1) and fuselage (2)
 # COLOUR: neutral dark-gray that reads on the off-white floor, stays clear of
 # the wing-position palette (#3498db/#e67e22/#f4d03f), the conflict-red
 # (#e74c3c), and the tow-path colours. A second shade is used for the cart
-# deck so the dolly rectangle is distinct from its wheel circles.
+# pallets so each dolly square is distinct from its wheel disc.
 _WHEEL_COLOR = "#566573"  # dark slate-gray — individual wheel discs
-_CART_DECK_COLOR = "#aab7b8"  # lighter gray — cart/dolly deck rectangle
+_CART_DECK_COLOR = "#aab7b8"  # lighter gray — cart/dolly pallet squares
 _CART_DECK_ALPHA = 0.85
 
 # Wheel disc radius in meters. Visually "a tyre" at ~6–9 m fuselage scale
 # inside an 18–30 m hangar. Mirror the _NOSE_ARROW_LENGTH_M tuning idiom.
 _WHEEL_RADIUS_M = 0.18
 
-# Cart deck half-dimensions in meters. The deck rectangle is drawn under the
-# fuselage centroid. Full width is 2 × 0.55 = 1.1 m, which is ~1.3× a typical
-# 0.85 m fuselage width, so it reads as "something underneath"; length is
-# shorter (~40% of a typical 6.5 m fuselage) so it is clearly not the fuselage.
-_CART_DECK_HALF_LENGTH_M = 1.3
-_CART_DECK_HALF_WIDTH_M = 0.55
+# Cart pallet half-extent in meters (#321). A cart-borne plane no longer draws
+# one body-sized deck rectangle; instead each wheel sits on its own small
+# pallet, drawn as a square centred on the wheel position (from
+# ``aircraft.wheels.positions``) and rotated with the aircraft. At 0.4 m the
+# pallet (0.8 m across) reads as "a pallet under a tyre" — comfortably larger
+# than the 0.18 m wheel disc it backs, yet far smaller than the ~6.5 m
+# fuselage, so it never masquerades as the body.
+_CART_PALLET_HALF_EXTENT_M = 0.4
 
 
 def render_layout(
@@ -425,38 +427,36 @@ def _draw_gear_glyph(ax: Any, placement: Placement, aircraft: Aircraft) -> None:
     coords through ``local_to_world`` so the gear rotates with the aircraft
     heading.
 
-    When the plane rides on a cart (``placement.on_carts=True``), the cart-deck
-    glyph is drawn instead of the plane's own gear (see ``_draw_cart_glyph``).
+    When the plane rides on a cart (``placement.on_carts=True``), a small cart
+    pallet is drawn under each wheel instead of the plane's own bare gear (see
+    ``_draw_cart_glyph``).
     """
     if placement.on_carts:
-        _draw_cart_glyph(ax, placement)
+        _draw_cart_glyph(ax, placement, aircraft)
         return
     for u, v in aircraft.wheels.positions:
         wx, wy = local_to_world(u, v, placement)
         _add_wheel(ax, wx, wy)
 
 
-def _draw_cart_glyph(ax: Any, placement: Placement) -> None:
-    """Draw a four-wheel dolly/cart glyph centred at the gear origin.
+def _add_cart_pallet(ax: Any, u: float, v: float, placement: Placement) -> MplPolygon:
+    """Add one small square cart pallet centred on plane-local wheel ``(u, v)``.
 
-    The deck rectangle is sized by the module constants
-    ``_CART_DECK_HALF_LENGTH_M`` / ``_CART_DECK_HALF_WIDTH_M`` and rotated
-    with ``placement.heading_deg`` via the standard world-transform.  Four
-    small wheel discs sit at the deck corners so the glyph reads as a
-    wheeled dolly rather than a coloured rectangle.
+    The pallet's four corners are offset by ``±_CART_PALLET_HALF_EXTENT_M`` in
+    plane-local space and mapped to world coordinates via ``local_to_world`` so
+    the pallet rotates with ``placement.heading_deg`` — exactly the transform
+    the own-gear wheel loop uses for the disc centres.
     """
-    # Deck corners in plane-local coordinates (centred at origin, ±L, ±W).
-    hl = _CART_DECK_HALF_LENGTH_M
-    hw = _CART_DECK_HALF_WIDTH_M
-    corner_locals = [
-        (+hl, +hw),
-        (+hl, -hw),
-        (-hl, -hw),
-        (-hl, +hw),
-    ]
-    deck_world = [local_to_world(u, v, placement) for u, v in corner_locals]
-    deck_patch = MplPolygon(
-        deck_world,
+    h = _CART_PALLET_HALF_EXTENT_M
+    corner_locals = (
+        (u + h, v + h),
+        (u + h, v - h),
+        (u - h, v - h),
+        (u - h, v + h),
+    )
+    corner_world = [local_to_world(cu, cv, placement) for cu, cv in corner_locals]
+    pallet = MplPolygon(
+        corner_world,
         closed=True,
         facecolor=_CART_DECK_COLOR,
         edgecolor=_WHEEL_COLOR,
@@ -464,10 +464,23 @@ def _draw_cart_glyph(ax: Any, placement: Placement) -> None:
         lw=0.8,
         zorder=_GLYPH_ZORDER,
     )
-    ax.add_patch(deck_patch)
+    ax.add_patch(pallet)
+    return pallet
 
-    # Four corner wheel discs.
-    for u, v in corner_locals:
+
+def _draw_cart_glyph(ax: Any, placement: Placement, aircraft: Aircraft) -> None:
+    """Draw a cart pallet under each wheel of a cart-borne aircraft (#321).
+
+    Physically the cart sits under the wheels: each wheel rides on its own
+    pallet. This draws a small square pallet (``_CART_PALLET_HALF_EXTENT_M``)
+    centred on every wheel position from ``aircraft.wheels.positions`` — the
+    same canonical plane-local coordinates the own-gear path consumes — with a
+    wheel disc on top of each. The number of pallets therefore equals the wheel
+    count: 1 for a monowheel, 3 for a tricycle/tailwheel. The old single
+    body-sized deck rectangle is gone; nothing here spans the fuselage.
+    """
+    for u, v in aircraft.wheels.positions:
+        _add_cart_pallet(ax, u, v, placement)
         wx, wy = local_to_world(u, v, placement)
         _add_wheel(ax, wx, wy)
 
