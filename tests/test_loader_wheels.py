@@ -120,6 +120,14 @@ class TestWheelsLoadingErrorPaths:
         with pytest.raises(LoaderError, match=r"tailwheel.*aft"):
             load_fleet(_write(tmp_path / "f.yaml", body))
 
+    def test_non_mapping_wheels_block_wraps_to_loader_error(self, tmp_path: Path) -> None:
+        """A non-mapping ``wheels:`` value (e.g. a mis-indented string) raises
+        an attributed LoaderError, not a bare AttributeError that escapes
+        load_fleet's per-aircraft catch tuple."""
+        body = _NOSEWHEEL_BODY + '    wheels: "not a mapping"\n'
+        with pytest.raises(LoaderError, match=r"wheels.*must be a mapping"):
+            load_fleet(_write(tmp_path / "f.yaml", body))
+
     def test_unknown_keys_rejected(self, tmp_path: Path) -> None:
         body = _with_wheels_block(
             "    wheels:\n"

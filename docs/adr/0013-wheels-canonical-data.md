@@ -115,10 +115,14 @@ The contract:
   wheel (mains at `(main_offset_x_m, ±track_m/2)`, then the third at
   `(third_wheel_offset_x_m, 0)`); `Wheels.wheelbase_m` is
   `abs(third − main)`, or `None` for monowheel.
-- **Cross-check.** For own-gear, non-monowheel aircraft the loader requires
+- **Cross-check.** For any non-monowheel aircraft carrying a `turn_radius_m`
+  (i.e. `always_own_gear` *and* `cart_eligible`, both of which keep a real
+  radius and wheelbase) the loader requires
   `0.5 × wheelbase ≤ turn_radius_m ≤ 5 × wheelbase`; a violation is a hard
-  `LoaderError`. Skipped for `always_cart` (`turn_radius_m` is `None`) and for
-  monowheel (no wheelbase). The band is deliberately **loose** — a sanity guard
+  `LoaderError`. The skip keys off `turn_radius_m is None` (every `always_cart`
+  entry today) and monowheel (no wheelbase) — not off `movement_mode`, so a
+  stray radius on an `always_cart` plane would still be checked. The band is
+  deliberately **loose** — a sanity guard
   against a fat-fingered radius or coordinate, not a derivation, and wide enough
   not to false-positive on the `measured: false` estimates.
 - **Rendering.** `_draw_gear_glyph` loops over `aircraft.wheels.positions`

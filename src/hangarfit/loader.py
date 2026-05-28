@@ -623,6 +623,13 @@ def _parse_wheels(
     if entry is None:
         raise LoaderError("wheels: block is required (see fleet.yaml header for the schema)")
 
+    if not isinstance(entry, Mapping):
+        # YAML can hand us a list/scalar/string here (e.g. a mis-indented
+        # block). Guard before .keys() so the user gets an attributed
+        # LoaderError, not a bare AttributeError that escapes load_fleet's
+        # catch tuple — mirrors the isinstance(dict) guard on 'struts'.
+        raise LoaderError(f"wheels: block must be a mapping, got {type(entry).__name__}")
+
     if gear not in _WHEELS_KEYS_BY_GEAR:
         raise LoaderError(f"wheels: unsupported gear {gear!r}")
 
@@ -687,8 +694,11 @@ _WHEELBASE_BAND_HIGH = 5.0
 def _validate_wheels_vs_turn_radius(aircraft: Aircraft) -> None:
     """Raise ``LoaderError`` if turn_radius_m is implausible vs the wheelbase.
 
-    Skipped for always_cart (``turn_radius_m`` is ``None``) and for monowheel
-    (no ``wheelbase_m``). The message carries no ``aircraft 'id'`` prefix — the
+    Skipped whenever ``turn_radius_m`` is ``None`` (every always_cart entry
+    today, though the model permits a non-None value there too — which would
+    then be checked) and for monowheel (no ``wheelbase_m``). Cart-eligible
+    planes carry a real radius and wheelbase, so they ARE checked. The message
+    carries no ``aircraft 'id'`` prefix — the
     ``load_fleet`` loop wraps per-aircraft errors with that attribution, so
     adding it here would double-decorate (mirrors :func:`_parse_wheels`).
     See ADR-0013 for the rationale on the loose band.
