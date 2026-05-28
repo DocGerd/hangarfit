@@ -906,8 +906,10 @@ class TestGearGlyph:
 
     # ── no fuselage defensive path ─────────────────────────────────────────────
 
-    def test_no_fuselage_part_is_a_noop(self) -> None:
-        """If an aircraft has no fuselage part (defensive path), no patches are added."""
+    def test_wheels_are_fuselage_independent(self) -> None:
+        """Post-ADR-0013 wheel placement reads ``aircraft.wheels.positions`` and
+        no longer depends on the fuselage parts — an aircraft with only a wing
+        still draws its three gear wheels from the canonical data."""
         from hangarfit.models import Aircraft, Part, Wheels
 
         wing = Part(
@@ -936,4 +938,5 @@ class TestGearGlyph:
 
         _draw_gear_glyph(ax, placement, aircraft)
 
-        ax.add_patch.assert_not_called()
+        # Three wheels (two mains + nose) drawn from wheels.positions.
+        assert ax.add_patch.call_count == 3
