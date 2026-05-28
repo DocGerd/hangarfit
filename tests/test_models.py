@@ -1313,6 +1313,8 @@ class TestWheels:
             Wheels(main_offset_x_m=math.inf, track_m=None, third_wheel_offset_x_m=None)
         with pytest.raises(ValueError, match="must be finite"):
             Wheels(main_offset_x_m=0.0, track_m=math.nan, third_wheel_offset_x_m=2.0)
+        with pytest.raises(ValueError, match="third_wheel_offset_x_m must be finite"):
+            Wheels(main_offset_x_m=0.0, track_m=1.8, third_wheel_offset_x_m=math.inf)
 
 
 class TestAircraftWheels:

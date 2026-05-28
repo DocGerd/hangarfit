@@ -120,6 +120,18 @@ class TestWheelsLoadingErrorPaths:
         with pytest.raises(LoaderError, match=r"tailwheel.*aft"):
             load_fleet(_write(tmp_path / "f.yaml", body))
 
+    def test_unsupported_gear_rejected(self, tmp_path: Path) -> None:
+        """An unknown gear value reaches _parse_wheels (evaluated before
+        Aircraft validates gear) and raises an attributed LoaderError."""
+        body = _NOSEWHEEL_BODY.replace("gear: nosewheel", "gear: skid") + (
+            "    wheels:\n"
+            "      main_offset_x_m: -0.10\n"
+            "      track_m: 1.80\n"
+            "      third_wheel_offset_x_m: 2.50\n"
+        )
+        with pytest.raises(LoaderError, match=r"wheels.*unsupported gear 'skid'"):
+            load_fleet(_write(tmp_path / "f.yaml", body))
+
     def test_non_mapping_wheels_block_wraps_to_loader_error(self, tmp_path: Path) -> None:
         """A non-mapping ``wheels:`` value (e.g. a mis-indented string) raises
         an attributed LoaderError, not a bare AttributeError that escapes
