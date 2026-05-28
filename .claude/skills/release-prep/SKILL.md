@@ -293,7 +293,7 @@ inform the user the prep branch and edits exist locally but are uncommitted.
 
 Look up the milestone so it can be set on the PR:
 ```bash
-gh api repos/DocGerd/hangarfit/milestones?state=open
+gh api repos/DocGerd/hangarfit/milestones?state=all
 ```
 Parse the JSON for a milestone whose `title` contains `v<version>` (e.g.
 `v0.7.3`). If found, store the numeric `number` as `MILESTONE_NUMBER`. If none
