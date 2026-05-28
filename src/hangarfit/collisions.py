@@ -23,7 +23,12 @@ upstream:
 3. **Pairwise parts overlap** (checked here) — for every two parts from
    *different* aircraft, conflict iff both (a) their polygons are within
    ``hangar.clearance_m`` in plan view AND (b) their z-ranges are within
-   ``hangar.wing_layer_clearance_m`` in height.
+   ``hangar.wing_layer_clearance_m`` in height. **One exception:** a
+   ``wing`` within plan-view clearance of another plane's
+   ``fuselage_front`` (cockpit) is a HARD conflict regardless of the
+   height gap — there is no nesting height at which a wing over a cockpit
+   is acceptable (ADR-0012, D1). ``wing × fuselage_aft`` (tail) keeps the
+   uniform two-clause z-gap rule.
 4. **Cart rule** (upstream, *not here*) — at most ``hangar.max_carts``
    ``cart_eligible`` planes have ``on_carts=True``.
    :class:`Layout.__post_init__` rejects violations at construction, so by
@@ -32,9 +37,13 @@ upstream:
 Conflict ``kind`` taxonomy for pairwise rules is the two part kinds
 sorted alphabetically and joined by ``"_"`` with the ``"_overlap"``
 suffix: ``wing + strut`` → ``"strut_wing_overlap"``,
-``fuselage + wing`` → ``"fuselage_wing_overlap"``. The alphabetical
-sort is what makes the kind deterministic regardless of which plane
-is iterated first.
+``fuselage_aft + wing`` → ``"fuselage_aft_wing_overlap"``,
+``fuselage_front + wing`` → ``"fuselage_front_wing_overlap"``,
+``fuselage_aft + fuselage_aft`` → ``"fuselage_aft_fuselage_aft_overlap"``.
+``"fuselage_aft"`` sorts before ``"fuselage_front"`` sorts before
+``"wing"``, so the taxonomy stays deterministic with no special-casing.
+The alphabetical sort is what makes the kind deterministic regardless of
+which plane is iterated first.
 """
 
 from __future__ import annotations
@@ -186,11 +195,12 @@ def _pairwise_conflicts(
     world_parts: dict[str, list[WorldPart]], hangar: Hangar
 ) -> tuple[list[Conflict], float]:
     """For every pair of parts from *different* aircraft, emit a conflict
-    iff both the plan-view-overlap rule and the z-overlap rule fire.
+    per :func:`_parts_conflict` (the uniform two-clause rule, plus the
+    ``wing × fuselage_front`` cockpit exception that drops the height clause).
 
     The conflict ``kind`` is the two part kinds sorted **alphabetically**
     and joined by ``"_"`` with the ``"_overlap"`` suffix
-    (``fuselage + wing`` → ``"fuselage_wing_overlap"``,
+    (``fuselage_front + wing`` → ``"fuselage_front_wing_overlap"``,
     ``strut + wing`` → ``"strut_wing_overlap"``). The sort makes the
     kind deterministic regardless of plane iteration order — without it,
     ``(plane_a.wing, plane_b.strut)`` and ``(plane_b.strut, plane_a.wing)``
@@ -235,23 +245,48 @@ def _pairwise_conflicts(
     return out, total_penetration_m2
 
 
+def _is_wing_over_cockpit(pa: WorldPart, pb: WorldPart) -> bool:
+    """Whether the unordered part pair is ``wing`` × ``fuselage_front``.
+
+    Order-independent so the predicate is symmetric in ``(pa, pb)`` (the
+    pairwise loop iterates one ordering only, but a symmetric helper is
+    robust to a future reorder). This is the one pair whose height clause is
+    dropped — see :func:`_parts_conflict` and ADR-0012 (D1).
+    """
+    kinds = {pa.kind, pb.kind}
+    return kinds == {"wing", "fuselage_front"}
+
+
 def _parts_conflict(pa: WorldPart, pb: WorldPart, hangar: Hangar) -> bool:
-    """Return True iff the two parts conflict per the uniform rule.
+    """Return True iff the two parts conflict.
 
     Plan-view: ``polygon_overlap`` with ``hangar.clearance_m`` (which
     splits semantics at zero — see :func:`hangarfit.geometry.polygon_overlap`).
+    Every conflict requires plan-view overlap; the pairs differ only in the
+    **height clause**.
 
-    Height: the gap between the z-ranges is
-    ``max(za_bottom, zb_bottom) − min(za_top, zb_top)`` — negative if the
-    intervals strictly overlap, zero if they exactly touch, positive if
-    they are separated. With ``clearance > 0`` we conflict on ``gap < clearance``
-    (so a 0.1 m gap below a 0.2 m clearance still trips); with
-    ``clearance == 0`` we conflict only on ``gap < 0`` (strict interior
-    overlap, matching the polygon side's "touches isn't a conflict at
-    zero clearance" rule).
+    **The cockpit exception (ADR-0012, D1).** A ``wing`` within plan-view
+    clearance of another plane's ``fuselage_front`` (cockpit) is a HARD
+    conflict — the height gap is **ignored**. A wing over a cockpit blocks
+    the canopy / prop arc / pilot ingress at *any* nesting height, so there
+    is no z-gap that makes it acceptable. This is the only pair that drops
+    the height clause.
+
+    **Every other pair** (including ``wing × fuselage_aft`` — a wing over
+    the tail) keeps the uniform two-clause rule. Height: the gap between the
+    z-ranges is ``max(za_bottom, zb_bottom) − min(za_top, zb_top)`` —
+    negative if the intervals strictly overlap, zero if they exactly touch,
+    positive if they are separated. With ``clearance > 0`` we conflict on
+    ``gap < clearance`` (so a 0.1 m gap below a 0.2 m clearance still trips);
+    with ``clearance == 0`` we conflict only on ``gap < 0`` (strict interior
+    overlap, matching the polygon side's "touches isn't a conflict at zero
+    clearance" rule).
     """
     if not polygon_overlap(pa.polygon, pb.polygon, clearance=hangar.clearance_m):
         return False
+    if _is_wing_over_cockpit(pa, pb):
+        # z ignored: plan-view overlap alone is the conflict (D1).
+        return True
     gap = max(pa.z_bottom_m, pb.z_bottom_m) - min(pa.z_top_m, pb.z_top_m)
     if hangar.wing_layer_clearance_m > 0:
         return gap < hangar.wing_layer_clearance_m
@@ -264,6 +299,14 @@ def _build_pairwise_conflict(
     kinds_sorted = sorted([pa.kind, pb.kind])
     kind = f"{kinds_sorted[0]}_{kinds_sorted[1]}_overlap"
     gap = max(pa.z_bottom_m, pb.z_bottom_m) - min(pa.z_top_m, pb.z_top_m)
+    if _is_wing_over_cockpit(pa, pb):
+        # Cockpit exception (D1): the conflict fired on plan-view overlap
+        # alone, so the height clause is reported as ignored rather than as a
+        # threshold the z-gap fell under (which would be misleading when the
+        # wing genuinely clears the cockpit in height).
+        height_clause = f"z-gap {gap:g} m IGNORED (wing over fuselage_front / cockpit)"
+    else:
+        height_clause = f"z-gap {gap:g} m (< {hangar.wing_layer_clearance_m:g} m)"
     return Conflict.pair(
         kind=kind,
         plane_a=a_id,
@@ -272,6 +315,6 @@ def _build_pairwise_conflict(
             f"part {pa.kind!r} (z={pa.z_bottom_m:g}..{pa.z_top_m:g}) and "
             f"part {pb.kind!r} (z={pb.z_bottom_m:g}..{pb.z_top_m:g}) "
             f"within horizontal clearance {hangar.clearance_m:g} m "
-            f"and z-gap {gap:g} m (< {hangar.wing_layer_clearance_m:g} m)"
+            f"and {height_clause}"
         ),
     )

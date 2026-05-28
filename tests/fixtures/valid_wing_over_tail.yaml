@@ -1,0 +1,44 @@
+# #50 / ADR-0012 — a wing over another plane's `fuselage_aft` (tail) at a
+# z-disjoint height is VALID: the aft region is empty / walkable, so the
+# uniform two-clause z-gap rule still governs (z-gap 0.3 m > 0.2 m clearance
+# ⇒ no conflict). This is the VALID half of the front/aft pair.
+#
+# Paired with `invalid_wing_over_cockpit.yaml`: the two fixtures use the
+# same two aircraft at the same z-disjoint height and differ only in Fuji's
+# heading (which flips its `fuselage_front` vs `fuselage_aft` to the
+# deeper-y end the ctsl wing crosses). Over the COCKPIT it is a hard
+# conflict; over the TAIL it is valid — the cleanest demonstration of the
+# split (mirrors the case-7/8 left/right-symmetry idiom).
+#
+# Fuji's fuselage split: plane-local fuselage spans x ∈ [-4.39, 3.59];
+# wing trailing edge x_break = 0.10 - 1.5/2 = -0.65 ⇒
+# `fuselage_aft` = plane-local x ∈ [-4.39, -0.65] (cabin-aft + tail).
+#
+# Layout (Fuji at heading 180 ⇒ nose points toward the door / -y, so
+# `fuselage_aft` is at the high-y end where the ctsl wing crosses):
+#   fuji at (5, 9, 180, false):
+#       fuselage_front world x ∈ [4.50, 5.50], y ∈ [5.41,  9.65], z [0, 1.6]
+#       fuselage_aft   world x ∈ [4.50, 5.50], y ∈ [9.65, 13.39], z [0, 1.6]
+#   ctsl at (4, 14.5, 90, false):
+#       wing world x ∈ [3.97, 5.37], y ∈ [10.21, 18.79], z [1.9, 2.2]
+#
+# Plan-view overlap of ctsl wing × fuji `fuselage_aft`: x ∈ [4.50, 5.37],
+# y ∈ [10.21, 13.39]. z-gap = 1.9 - 1.6 = 0.3 m > 0.2 m clearance ⇒ NOT a
+# conflict. The ctsl wing clears fuji's `fuselage_front` (y ≤ 9.65) by
+# 0.555 m in plan view (> 0.3 m clearance), so the hard cockpit rule does
+# NOT fire — zero conflicts.
+
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
+
+placements:
+  - plane: fuji
+    x_m: 5.0
+    y_m: 9.0
+    heading_deg: 180.0
+    on_carts: false
+  - plane: ctsl
+    x_m: 4.0
+    y_m: 14.5
+    heading_deg: 90.0
+    on_carts: false

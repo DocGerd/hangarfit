@@ -14,6 +14,16 @@
 # - Heights z_bottom_m / z_top_m are above-ground in world coords
 # - struts block (optional) is expanded by the loader into two mirrored
 #   strut Parts; cantilever aircraft omit the block entirely
+# - a `kind: fuselage` part is auto-split by the loader into a
+#   `fuselage_front` (cockpit) + `fuselage_aft` (tail) pair at the wing
+#   trailing-edge station (`wing.offset_x_m - wing.length_m/2`); no per-plane
+#   edit is needed and there is NO `wing_root_x_m` field. The split lets the
+#   collision rule allow a wing over another plane's tail but reject a wing
+#   over its cockpit (hard conflict, height ignored). See ADR-0012 +
+#   `docs/architecture/08-crosscutting-concepts.md` "The parts model".
+#   (Explicit `fuselage_front`/`fuselage_aft` parts are a valid override the
+#   loader does not split; an aircraft with a `fuselage` part needs a `wing`
+#   part to derive the break.)
 # - turn_radius_m: own-gear minimum taxi turn radius (m). LOAD-BEARING since
 #   Phase 3a — consumed by the `towplanner` module's Dubins / Hybrid-A*
 #   path planning (it was an unused placeholder through Phase 1/2a). `null`

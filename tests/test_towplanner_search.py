@@ -105,7 +105,7 @@ def _winged_plane(pid: str, *, span_m: float = 10.0, turn_radius_m: float = 5.0)
         measured=False,
         parts=(
             Part(
-                kind="fuselage",
+                kind="fuselage_aft",
                 length_m=6.0,
                 width_m=0.9,
                 offset_x_m=0.0,
@@ -360,7 +360,7 @@ def test_motion_clear_matches_oracle_on_bay_intrusion() -> None:
             measured=False,
             parts=(
                 Part(
-                    kind="fuselage",
+                    kind="fuselage_aft",
                     length_m=1.0,
                     width_m=1.0,
                     offset_x_m=0.0,
@@ -605,7 +605,7 @@ def test_plan_path_routes_around_a_parked_plane() -> None:
             measured=False,
             parts=(
                 Part(
-                    kind="fuselage",
+                    kind="fuselage_aft",
                     length_m=2.0,
                     width_m=1.0,
                     offset_x_m=0.0,

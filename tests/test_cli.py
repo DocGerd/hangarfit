@@ -70,7 +70,10 @@ class TestCheckHappyPath:
         captured = capsys.readouterr()
         assert captured.out.startswith("invalid:")
         # Conflict line uses the spec's format: "  - <kind> [<plane>[, <plane>]]: <detail>"
-        assert "fuselage_wing_overlap" in captured.out
+        # The fuselage front/aft split (#50/ADR-0012) replaced the single
+        # fuselage_wing_overlap kind with the segment-specific kinds; this
+        # fixture's wing crosses both of scheibe's fuselage segments.
+        assert "fuselage_front_wing_overlap" in captured.out
         # Every conflict line starts with the two-space-dash prefix
         for line in captured.out.strip().split("\n")[1:]:
             assert line.startswith("  - ")

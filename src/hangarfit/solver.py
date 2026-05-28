@@ -392,12 +392,14 @@ def _check_trivially_infeasible(
             )
             return check, _empty_layout(scenario)
 
-    # Check 2: Σ bbox areas vs hangar floor area
+    # Check 2: Σ bbox areas vs hangar floor area. Uses the full-fuselage
+    # footprint (not _plane_max_extent) so the fuselage front/aft split
+    # (#50/ADR-0012) doesn't shrink the estimate and let an infeasible fleet
+    # slip the gate.
     total_area = 0.0
     for pid in scenario.fleet_in:
         plane = scenario.fleet[pid]
-        length, width = _plane_max_extent(plane)
-        total_area += length * width
+        total_area += _plane_footprint_area(plane)
     hangar_area = scenario.hangar.length_m * scenario.hangar.width_m
     if total_area > hangar_area:
         check = CheckResult(
@@ -517,6 +519,34 @@ def _plane_max_extent(plane: Aircraft) -> tuple[float, float]:
     max_length = max(p.length_m for p in plane.parts)
     max_width = max(p.width_m for p in plane.parts)
     return max_length, max_width
+
+
+def _plane_footprint_area(plane: Aircraft) -> float:
+    """A bbox-area lower bound for the Σ-areas infeasibility gate (check #2).
+
+    Like :func:`_plane_max_extent` this is a deliberately coarse, offset-
+    ignoring estimate, but it must NOT undercount the fuselage: the loader
+    splits one fuselage box into a ``fuselage_front`` + ``fuselage_aft`` pair
+    (#50/ADR-0012), so a plain ``max(length_m)`` over parts would collapse the
+    fuselage extent to its longer *segment* and shrink the footprint estimate
+    — making a genuinely-infeasible full fleet slip past the gate. Reconstruct
+    the full fuselage span (union of the segments, the same way the area is
+    conserved at load time) before taking the max length.
+
+    Kept separate from :func:`_plane_max_extent` on purpose: that function also
+    feeds the initial-placement spawn margin, and changing its return value
+    would shift the solver's RNG stream and disturb the determinism canaries.
+    This helper is consumed only by the infeasibility gate, where no RNG flows.
+    """
+    fuselage_segs = [p for p in plane.parts if p.kind in ("fuselage_front", "fuselage_aft", "tail")]
+    lengths = [p.length_m for p in plane.parts if p.kind not in ("fuselage_front", "fuselage_aft")]
+    if fuselage_segs:
+        nose = max(p.offset_x_m + p.length_m / 2.0 for p in fuselage_segs)
+        tail = min(p.offset_x_m - p.length_m / 2.0 for p in fuselage_segs)
+        lengths.append(nose - tail)
+    max_length = max(lengths)
+    max_width = max(p.width_m for p in plane.parts)
+    return max_length * max_width
 
 
 class _LayoutBuildFailure(Exception):

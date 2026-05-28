@@ -33,6 +33,12 @@
 # on_carts=true mandatorily. Of the 4 cart_eligible planes, only
 # cessna_140 has on_carts=true (the one spare-cart slot); cessna_150,
 # ctsl, fk9_mkii are on their own gear.
+#
+# Front/aft split audit (#50 / ADR-0012): re-run after the fuselage split
+# landed — this 9-plane layout stays VALID with NO placement nudge. The
+# generous column spacing already keeps every wing-over-fuselage overlap
+# clear of any neighbour's cockpit (fuselage_front), so the split changed no
+# verdict here. It remains the full-fleet acceptance control.
 
 fleet: ../../data/fleet.yaml
 hangar: test_hangar_large.yaml

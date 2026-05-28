@@ -49,7 +49,9 @@ wrong would have made every downstream layout wrong.
 1. **A list of oriented-rectangle `Part`s per aircraft, each with a
    `[z_bottom_m, z_top_m]` height range** — the chosen option. The
    closed set of `PartKind` values (`fuselage`, `wing`, `strut`,
-   `tail`) lives in [`src/hangarfit/models.py`](../../src/hangarfit/models.py).
+   `tail`; the fuselage was later refined into `fuselage_front`/`fuselage_aft`,
+   see [ADR-0012](0012-fuselage-front-aft-split.md)) lives in
+   [`src/hangarfit/models.py`](../../src/hangarfit/models.py).
 2. **A single 2D axis-aligned (or oriented) bounding rectangle per
    aircraft** — one footprint, no height.
 3. **A single 3D axis-aligned bounding box per aircraft** — adds a
@@ -205,6 +207,13 @@ predicate; the upgrade path is additive.
 
 ## More Information
 
+- [ADR-0012: Split the fuselage into front/aft](0012-fuselage-front-aft-split.md)
+  — refines this parts model: the single `fuselage` kind is replaced by
+  `fuselage_front` + `fuselage_aft` so a wing may overhang another plane's
+  tail but not its cockpit. ADR-0001 stays **Accepted** — the split is a
+  refinement *within* the parts model (still oriented-rectangle Parts with
+  height ranges, still the two-clause predicate plus one cockpit exception),
+  not a supersession of the parts-not-bbox decision.
 - [ADR-0002: Coordinate transform with determinant −1](0002-determinant-minus-one-transform.md)
   — the plane-local → world transform that makes Parts addressable in
   the hangar frame. The parts model and the transform are

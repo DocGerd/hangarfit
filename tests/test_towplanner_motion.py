@@ -14,7 +14,7 @@ oracle is already exhaustively tested in ``test_collisions.py``):
 - the mover-only filter: a pre-existing conflict among *other* placed
   planes is never attributed to the mover;
 - each of the three oracle checks fires *during motion* —
-  ``fuselage_fuselage_overlap`` (parts), ``hangar_bounds``, and
+  ``fuselage_aft_fuselage_aft_overlap`` (parts), ``hangar_bounds``, and
   ``bay_intrusion`` — each gated on motion-specific wiring (the per-sample
   ``Placement`` heading/cart-state and the ``maintenance_plane`` thread-through);
 - a *turning* (non-axis-aligned) arc, so the sampled poses' rotated headings
@@ -47,7 +47,7 @@ def _fuselage_box() -> Part:
     (``world_y = py + forward``) keeps a placement at ``y = 0`` inside the
     hangar (``world_y ∈ [0, 1]``)."""
     return Part(
-        kind="fuselage",
+        kind="fuselage_aft",
         length_m=1.0,
         width_m=0.6,
         offset_x_m=0.5,
@@ -93,7 +93,7 @@ def _spanning_fuselage() -> Part:
     line, exactly as a plane being towed *through* the door does. Unlike the
     forward-mounted :func:`_fuselage_box`, this exercises the front-door gap."""
     return Part(
-        kind="fuselage",
+        kind="fuselage_aft",
         length_m=4.0,
         width_m=0.6,
         offset_x_m=0.0,
@@ -301,7 +301,10 @@ def test_turning_arc_to_blocked_slot_names_mover(simple_hangar: Hangar) -> None:
     )
     conflict = path_first_conflict(arc, fleet["B"], mover_on_carts=False, placed=placed)
     assert conflict is not None
-    assert conflict.kind == "fuselage_fuselage_overlap"
+    # The box planes' single fuselage is constructed as fuselage_aft (the
+    # legacy "fuselage" kind is loader-only now — #50/ADR-0012), so two box
+    # fuselages overlapping report the segment-pair kind.
+    assert conflict.kind == "fuselage_aft_fuselage_aft_overlap"
     assert "B" in conflict.planes
 
 

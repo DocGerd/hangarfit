@@ -67,44 +67,120 @@ class TestPairwiseOverlap:
             f"expected wing_wing_overlap, got {result.conflicts!r}"
         )
 
-    def test_case_3_high_wing_over_low_fuselage_z_disjoint_valid(self) -> None:
-        """Plan-view overlap with z-disjoint must NOT trigger a conflict.
+    def test_case_3_high_wing_over_low_fuselage_aft_z_disjoint_valid(self) -> None:
+        """Plan-view overlap with the AFT fuselage at z-disjoint must NOT
+        trigger a conflict.
 
-        A bbox-style implementation would flag this; the parts model
-        rule (clearance in BOTH plan view AND height) lets it pass.
+        Reframed for #50 / ADR-0012: the fuselage front/aft split makes
+        *where* over the fuselage matter. A wing over the AFT fuselage / tail
+        keeps the uniform two-clause rule (clearance in BOTH plan view AND
+        height), so this stays valid — it is the headline positive control
+        for the split. (A wing over the FRONT / cockpit is a hard conflict
+        regardless of z — see ``test_wing_over_cockpit_*`` below.)
+
+        A bbox-style implementation would flag this; the parts model rule
+        lets it pass.
         """
-        result = check(_load("valid_high_over_low_z_disjoint"))
+        result = check(_load("valid_high_over_low_aft_z_disjoint"))
         assert result.valid, f"unexpected conflicts: {result.conflicts}"
 
     def test_case_4_fuselage_wing_overlap_alphabetical_kind(self) -> None:
         """Heterogeneous-kind pair: alphabetical sort must yield
-        ``fuselage_wing_overlap`` (NOT ``wing_fuselage_overlap``) regardless
-        of plane iteration order."""
+        ``fuselage_{aft,front}_wing_overlap`` (NOT ``wing_fuselage_*``)
+        regardless of plane iteration order.
+
+        Re-pinned for #50 / ADR-0012: the fuselage split replaces the old
+        single ``fuselage_wing_overlap`` kind with the two segment-specific
+        kinds. Fuji's low wing overlaps scheibe's fuselage at a colliding
+        height; the overlap now spans both scheibe segments, so both
+        ``fuselage_front_wing_overlap`` and ``fuselage_aft_wing_overlap``
+        fire. Still invalid; the legacy un-split kind must NOT appear."""
         result = check(_load("invalid_fuselage_wing_overlap"))
         assert not result.valid
         kinds = _conflict_kinds(result)
-        assert "fuselage_wing_overlap" in kinds, (
-            f"expected alphabetical fuselage_wing_overlap, got {result.conflicts!r}"
+        assert "fuselage_front_wing_overlap" in kinds, (
+            f"expected fuselage_front_wing_overlap, got {result.conflicts!r}"
         )
-        assert "wing_fuselage_overlap" not in kinds, (
-            f"non-alphabetical kind leaked into conflicts: {result.conflicts!r}"
+        assert "fuselage_aft_wing_overlap" in kinds, (
+            f"expected fuselage_aft_wing_overlap, got {result.conflicts!r}"
+        )
+        # Alphabetical-order guard: no reversed forms, and the retired
+        # un-split kind must never reappear.
+        assert "wing_fuselage_front_overlap" not in kinds
+        assert "wing_fuselage_aft_overlap" not in kinds
+        assert "fuselage_wing_overlap" not in kinds, (
+            f"retired un-split kind leaked into conflicts: {result.conflicts!r}"
         )
 
     def test_case_5_fuselage_fuselage_overlap(self) -> None:
-        """Single-conflict fixture: the *only* conflict expected is the
-        fuselage-fuselage overlap. Asserting on the exact conflict count
-        catches future regressions that emit phantom extras (e.g. a
-        same-aircraft pair leak, or double emission from iteration-order
-        confusion). Other invalid fixtures (case 6 especially) emit
-        multiple legitimate conflicts; this case is engineered to
-        exercise the no-extras property."""
+        """Two fuselages overlapping → still invalid, but the kind set + count
+        change with the front/aft split.
+
+        Re-pinned for #50 / ADR-0012: ctsl and fuji fuselages overlap. The
+        single legacy ``fuselage_fuselage_overlap`` splits into the
+        segment-pair kinds — here the overlap zone spans ctsl's aft × fuji's
+        front and ctsl's aft × fuji's aft, so two conflicts fire
+        (``fuselage_aft_fuselage_aft_overlap`` and
+        ``fuselage_aft_fuselage_front_overlap``). The *verdict* is unchanged
+        (two overlapping fuselages is a conflict regardless of segment, since
+        they share a z-band); only the taxonomy + count move. The retired
+        un-split kind must never reappear."""
         result = check(_load("invalid_fuselage_fuselage"))
         assert not result.valid
-        assert _conflict_kinds(result) == {"fuselage_fuselage_overlap"}, (
-            f"expected exactly fuselage_fuselage_overlap, got {result.conflicts!r}"
+        assert _conflict_kinds(result) == {
+            "fuselage_aft_fuselage_aft_overlap",
+            "fuselage_aft_fuselage_front_overlap",
+        }, f"expected segment-pair fuselage kinds, got {result.conflicts!r}"
+        assert len(result.conflicts) == 2, (
+            f"expected exactly 2 conflicts, got {len(result.conflicts)}: {result.conflicts!r}"
+        )
+        assert "fuselage_fuselage_overlap" not in _conflict_kinds(result), (
+            f"retired un-split kind leaked into conflicts: {result.conflicts!r}"
+        )
+
+
+class TestWingOverFuselageSegment:
+    """#50 / ADR-0012 — the fuselage front/aft split and its D1 rule.
+
+    A wing over another plane's ``fuselage_front`` (cockpit) is a HARD
+    conflict regardless of the height gap (D1: z ignored). A wing over its
+    ``fuselage_aft`` (tail) keeps the uniform two-clause z-gap rule. The two
+    fixtures differ only in which segment the overlap lands on (the cleanest
+    front/aft demonstration), mirroring the case-7/8 left/right idiom.
+    """
+
+    def test_wing_over_cockpit_is_hard_conflict_despite_z_gap(self) -> None:
+        """Wing over ``fuselage_front`` at a z-DISJOINT height (the OLD rule
+        would have passed it) must still fire exactly one
+        ``fuselage_front_wing_overlap`` — the canary that D1 bites."""
+        result = check(_load("invalid_wing_over_cockpit"))
+        assert not result.valid
+        assert _conflict_kinds(result) == {"fuselage_front_wing_overlap"}, (
+            f"expected exactly fuselage_front_wing_overlap, got {result.conflicts!r}"
         )
         assert len(result.conflicts) == 1, (
-            f"expected exactly 1 conflict, got {len(result.conflicts)}: {result.conflicts!r}"
+            f"expected exactly one conflict, got {result.conflicts!r}"
+        )
+
+    def test_wing_over_tail_at_same_height_is_valid(self) -> None:
+        """The same wing over ``fuselage_aft`` at the same z-disjoint height
+        is valid — the aft region keeps the z-gap rule."""
+        result = check(_load("valid_wing_over_tail"))
+        assert result.valid, (
+            f"wing over fuselage_aft at z-disjoint height must be valid, "
+            f"got conflicts: {result.conflicts!r}"
+        )
+
+    def test_fuselage_front_wing_kind_is_alphabetical(self) -> None:
+        """The conflict kind is the two part kinds sorted alphabetically:
+        ``fuselage_front`` < ``wing`` ⇒ ``fuselage_front_wing_overlap``, NOT
+        the reversed ``wing_fuselage_front_overlap`` (mirrors case-4's
+        alphabetical-order guard)."""
+        result = check(_load("invalid_wing_over_cockpit"))
+        kinds = _conflict_kinds(result)
+        assert "fuselage_front_wing_overlap" in kinds
+        assert "wing_fuselage_front_overlap" not in kinds, (
+            f"non-alphabetical kind leaked into conflicts: {result.conflicts!r}"
         )
 
 
@@ -269,7 +345,11 @@ class TestBayIntrusion:
             measured=False,
             parts=(
                 Part(
-                    kind="fuselage",
+                    # fuselage_aft is a valid constructed kind (the legacy
+                    # un-split "fuselage" is loader-only now — #50/ADR-0012);
+                    # this occupant is only used for its bay geometry, so the
+                    # segment kind is immaterial here.
+                    kind="fuselage_aft",
                     length_m=1.0,
                     width_m=1.0,
                     offset_x_m=0.0,
@@ -531,31 +611,46 @@ class TestTotalPenetration:
        :func:`hangarfit.collisions._pairwise_conflicts`'s docstring.
     """
 
-    def test_exact_value_for_single_wing_wing_overlap(self) -> None:
+    def test_exact_value_for_wing_wing_plus_cockpit_overlaps(self) -> None:
+        """Deterministic penetration total for ``invalid_wing_wing_same_height``.
+
+        Golden re-baselined 4.0373 → 5.54045 m² for #50 / ADR-0012. The two
+        close, same-height high-wings overlap wing-to-wing AND each wing now
+        crosses the OTHER plane's ``fuselage_front`` (cockpit) — a hard
+        conflict the split introduced (rule changed by #50 — re-pinned). The
+        old comment "the only conflict is the wing-wing one" no longer holds:
+        when two high-wings' wings cross, at least one passes over the other's
+        cockpit. The accumulator (``+=`` over every pairwise conflict's
+        intersection area) is what this still pins."""
         layout = _load("invalid_wing_wing_same_height")
         result = check(layout)
 
         assert not result.valid
-        assert result.total_penetration_m2 == pytest.approx(4.0373, abs=1e-4)
+        assert result.total_penetration_m2 == pytest.approx(5.54045, abs=1e-4)
 
     def test_sums_across_multiple_pair_conflicts(self) -> None:
-        """3 pairwise conflicts in ``invalid_strut_blocks_nesting`` should
-        sum to the deterministic 1.35 m² total — pins the ``+=``
+        """5 pairwise conflicts in ``invalid_strut_blocks_nesting`` should
+        sum to the deterministic 2.85 m² total — pins the ``+=``
         accumulator semantic against future refactors to ``=``, ``max``,
         or ``mean``.
 
-        Golden re-baselined from 1.4305 → 1.35 m² for issue #282: the
-        struts now sit on the wing-spar axis (quarter-chord) instead of at
-        the wing trailing edge, which shifts each strut ~0.97 m forward and
-        changes its plan-view overlap footprint with the intruding fuji
-        wing. The conflict *set* is unchanged — still 1 fuselage_wing +
-        2 strut_wing — so the canary's intent (struts block the nesting)
-        is preserved; only the summed intersection area moves."""
+        Golden history:
+          - 1.4305 m² originally.
+          - 1.35 m² for issue #282 (struts moved to the wing-spar
+            quarter-chord), 3 conflicts (1 fuselage_wing + 2 strut_wing).
+          - 2.85 m², 5 conflicts for #50 / ADR-0012 (rule changed by #50 —
+            re-pinned): the single ``fuselage_wing_overlap`` splits into
+            ``fuselage_front_wing_overlap`` (×2) + ``fuselage_aft_wing_overlap``
+            (×1) as Fuji's wing crosses both of Cessna's fuselage segments,
+            plus the unchanged 2 strut_wing. The canary's intent (struts block
+            the nesting) is preserved; the summed intersection area grows
+            because the front-segment overlaps now count even though they are
+            z-disjoint (D1)."""
         layout = _load("invalid_strut_blocks_nesting")
         result = check(layout)
 
-        assert len(result.conflicts) == 3
-        assert result.total_penetration_m2 == pytest.approx(1.35, abs=1e-4)
+        assert len(result.conflicts) == 5
+        assert result.total_penetration_m2 == pytest.approx(2.85, abs=1e-4)
 
     def test_zero_for_valid_layout(self) -> None:
         layout = _load("valid_two_separated")
