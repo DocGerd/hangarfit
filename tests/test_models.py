@@ -20,6 +20,7 @@ from hangarfit.models import (
     SolverDiagnostics,
     SolveResult,
     StrutsSpec,
+    Wheels,
 )
 
 
@@ -1260,3 +1261,46 @@ def test_solve_result_rejects_misaligned_min_pairwise_gap_m():
             plans=(None,),
             diagnostics=diag,
         )
+
+
+class TestWheels:
+    def test_monowheel_positions_single(self) -> None:
+        w = Wheels(main_offset_x_m=0.0, track_m=None, third_wheel_offset_x_m=None)
+        assert w.positions == [(0.0, 0.0)]
+        assert w.wheelbase_m is None
+
+    def test_monowheel_offset_non_zero_main(self) -> None:
+        w = Wheels(main_offset_x_m=-0.5, track_m=None, third_wheel_offset_x_m=None)
+        assert w.positions == [(-0.5, 0.0)]
+
+    def test_nosewheel_three_positions_in_order(self) -> None:
+        w = Wheels(main_offset_x_m=-0.10, track_m=1.80, third_wheel_offset_x_m=2.50)
+        assert w.positions == [(-0.10, 0.90), (-0.10, -0.90), (2.50, 0.0)]
+        assert w.wheelbase_m == pytest.approx(2.60)
+
+    def test_tailwheel_three_positions_in_order(self) -> None:
+        w = Wheels(main_offset_x_m=0.20, track_m=1.80, third_wheel_offset_x_m=-3.40)
+        assert w.positions == [(0.20, 0.90), (0.20, -0.90), (-3.40, 0.0)]
+        assert w.wheelbase_m == pytest.approx(3.60)
+
+    def test_rejects_track_without_third_wheel(self) -> None:
+        with pytest.raises(ValueError, match="track_m requires third_wheel_offset_x_m"):
+            Wheels(main_offset_x_m=0.0, track_m=1.5, third_wheel_offset_x_m=None)
+
+    def test_rejects_third_wheel_without_track(self) -> None:
+        with pytest.raises(ValueError, match="third_wheel_offset_x_m requires track_m"):
+            Wheels(main_offset_x_m=0.0, track_m=None, third_wheel_offset_x_m=2.0)
+
+    def test_rejects_non_positive_track(self) -> None:
+        with pytest.raises(ValueError, match="track_m must be positive"):
+            Wheels(main_offset_x_m=0.0, track_m=0.0, third_wheel_offset_x_m=2.0)
+        with pytest.raises(ValueError, match="track_m must be positive"):
+            Wheels(main_offset_x_m=0.0, track_m=-1.0, third_wheel_offset_x_m=2.0)
+
+    def test_rejects_non_finite_values(self) -> None:
+        import math
+
+        with pytest.raises(ValueError, match="must be finite"):
+            Wheels(main_offset_x_m=math.inf, track_m=None, third_wheel_offset_x_m=None)
+        with pytest.raises(ValueError, match="must be finite"):
+            Wheels(main_offset_x_m=0.0, track_m=math.nan, third_wheel_offset_x_m=2.0)
