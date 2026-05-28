@@ -10,6 +10,8 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Fixed
 
+- LICENSE Apache-2.0 copyright line was the unfilled `[yyyy] [name of copyright owner]` template placeholder; now reads `Copyright 2026 DocGerdSoft (Patrick Kuhn)` (#310).
+
 ## [0.7.1] — 2026-05-27
 
 First published release of the 0.7.x line. v0.7.0 was tagged on `main` but its GitHub Release could not be published — the tag was consumed by an immutable release during the release cut and is permanently reserved — so v0.7.1 supersedes it with identical features plus the release-workflow fix below.
