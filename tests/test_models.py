@@ -49,6 +49,7 @@ def _ok_aircraft(
     *,
     movement_mode: str = "always_own_gear",
     turn_radius_m: float | None = 5.0,
+    **overrides: object,
 ) -> Aircraft:
     return Aircraft(
         id=plane_id,
@@ -59,6 +60,7 @@ def _ok_aircraft(
         turn_radius_m=turn_radius_m,
         measured=False,
         parts=(_ok_part(),),
+        **overrides,  # type: ignore[arg-type]
     )
 
 
@@ -1304,3 +1306,16 @@ class TestWheels:
             Wheels(main_offset_x_m=math.inf, track_m=None, third_wheel_offset_x_m=None)
         with pytest.raises(ValueError, match="must be finite"):
             Wheels(main_offset_x_m=0.0, track_m=math.nan, third_wheel_offset_x_m=2.0)
+
+
+class TestAircraftWheels:
+    def test_aircraft_wheels_defaults_to_none(self) -> None:
+        """Transitional state: existing Aircraft constructions still work without wheels."""
+        a = _ok_aircraft()
+        assert a.wheels is None
+
+    def test_aircraft_accepts_wheels(self) -> None:
+        """Aircraft accepts a Wheels instance when supplied."""
+        w = Wheels(main_offset_x_m=-0.10, track_m=1.80, third_wheel_offset_x_m=2.50)
+        a = _ok_aircraft(wheels=w)
+        assert a.wheels is w

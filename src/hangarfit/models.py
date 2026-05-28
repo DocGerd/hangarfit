@@ -234,6 +234,7 @@ class Aircraft:
     measured: bool
     parts: tuple[Part, ...]
     notes: str = ""
+    wheels: Wheels | None = None  # transitional — Task 5 flips to required
 
     def __post_init__(self) -> None:
         if not self.id:
