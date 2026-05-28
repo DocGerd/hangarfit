@@ -66,13 +66,10 @@ class TestWheelsLoadingHappyPath:
         assert a.wheels.track_m == 1.80
         assert a.wheels.third_wheel_offset_x_m == 2.50
 
-    def test_no_wheels_block_yields_none_for_now(self, tmp_path: Path) -> None:
-        """Transitional (Task 3): missing wheels: block leaves Aircraft.wheels == None.
-
-        Task 5 flips this to raise LoaderError.
-        """
-        fleet = load_fleet(_write(tmp_path / "f.yaml", _NOSEWHEEL_BODY))
-        assert fleet["testplane"].wheels is None
+    def test_no_wheels_block_now_raises(self, tmp_path: Path) -> None:
+        """A missing ``wheels:`` block is a hard load error (#322 ADR-0013)."""
+        with pytest.raises(LoaderError, match=r"wheels: block is required"):
+            load_fleet(_write(tmp_path / "f.yaml", _NOSEWHEEL_BODY))
 
 
 class TestWheelsLoadingErrorPaths:

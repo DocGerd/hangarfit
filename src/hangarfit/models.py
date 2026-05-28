@@ -224,9 +224,11 @@ class Aircraft:
     (the future Dubins-path planner needs it for own-gear motion).
     For ``always_cart`` it may be ``None`` (or any value — it is ignored).
 
-    ``wheels`` is transitionally optional (defaults to ``None``) while the
-    #322 series lands in stages; Task 5 of that series flips it to required
-    once the loader populates it from a per-aircraft ``wheels:`` block.
+    ``wheels`` is the canonical source of per-aircraft wheel positions
+    (ADR-0013). The loader populates it from a required per-aircraft
+    ``wheels:`` block in ``fleet.yaml`` and rejects any entry missing it.
+    Consumers (visualize, tow-path planner) read positions exclusively
+    through :meth:`Wheels.positions`.
     """
 
     id: str
@@ -237,8 +239,8 @@ class Aircraft:
     turn_radius_m: float | None
     measured: bool
     parts: tuple[Part, ...]
+    wheels: Wheels
     notes: str = ""
-    wheels: Wheels | None = None  # transitional — Task 5 flips to required
 
     def __post_init__(self) -> None:
         if not self.id:

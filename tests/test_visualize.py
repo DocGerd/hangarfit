@@ -655,6 +655,8 @@ class TestGearGlyph:
             z_top_m=1.5,
         )
         turn_radius = None if movement_mode == "always_cart" else 5.0
+        from tests.conftest import default_wheels_for
+
         return Aircraft(
             id="probe",
             name="Probe",
@@ -664,6 +666,7 @@ class TestGearGlyph:
             turn_radius_m=turn_radius,
             measured=False,
             parts=(fuselage_front, fuselage_aft),
+            wheels=default_wheels_for(gear),  # type: ignore[arg-type]
         )
 
     # ── end-to-end smoke ───────────────────────────────────────────────────────
@@ -905,7 +908,7 @@ class TestGearGlyph:
 
     def test_no_fuselage_part_is_a_noop(self) -> None:
         """If an aircraft has no fuselage part (defensive path), no patches are added."""
-        from hangarfit.models import Aircraft, Part
+        from hangarfit.models import Aircraft, Part, Wheels
 
         wing = Part(
             kind="wing",
@@ -926,6 +929,7 @@ class TestGearGlyph:
             turn_radius_m=5.0,
             measured=False,
             parts=(wing,),
+            wheels=Wheels(main_offset_x_m=0.0, track_m=1.8, third_wheel_offset_x_m=2.0),
         )
         placement = self._placement(on_carts=False)
         ax = MagicMock()

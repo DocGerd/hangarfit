@@ -607,11 +607,11 @@ _WHEELS_KEYS_BY_GEAR: dict[str, frozenset[str]] = {
 def _parse_wheels(
     entry: Mapping[str, Any] | None,
     gear: str,
-) -> Wheels | None:
+) -> Wheels:
     """Parse a ``wheels:`` block into a :class:`Wheels`.
 
-    Returns ``None`` if ``entry`` is ``None`` (transitional — Task 5 flips
-    this to raise ``LoaderError``).
+    Raises ``LoaderError`` when ``entry`` is ``None`` — every aircraft
+    must declare a ``wheels:`` block (ADR-0013).
 
     Validates that the key set exactly matches ``_WHEELS_KEYS_BY_GEAR[gear]``
     and that nose-vs-tail sign rules hold for tricycle/tailwheel gear.
@@ -621,7 +621,7 @@ def _parse_wheels(
     (see :func:`load_fleet`), so adding it here would double-decorate.
     """
     if entry is None:
-        return None  # TODO(#322 Task 5): raise LoaderError
+        raise LoaderError("wheels: block is required (see fleet.yaml header for the schema)")
 
     if gear not in _WHEELS_KEYS_BY_GEAR:
         raise LoaderError(f"wheels: unsupported gear {gear!r}")

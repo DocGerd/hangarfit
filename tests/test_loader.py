@@ -452,6 +452,10 @@ aircraft:
         width_m: 9.0
         z_bottom_m: 2.0
         z_top_m: 2.3
+    wheels:
+      main_offset_x_m: 0.20
+      track_m: 1.8
+      third_wheel_offset_x_m: -2.0
 """,
         )
         with pytest.raises(LoaderError, match="movement_mode must be one of"):
@@ -481,6 +485,10 @@ aircraft:
         width_m: 9.0
         z_bottom_m: 2.0
         z_top_m: 2.3
+    wheels:
+      main_offset_x_m: 0.20
+      track_m: 1.8
+      third_wheel_offset_x_m: -2.0
 """,
         )
         with pytest.raises(LoaderError, match="aircraft 'bad_husky'.*turn_radius_m is required"):
@@ -647,6 +655,10 @@ aircraft:
       fuselage_attach_z_m: 0.5
       wing_attach_y_m: 1.8
       width_m: 0.05
+    wheels:
+      main_offset_x_m: 0.20
+      track_m: 1.8
+      third_wheel_offset_x_m: -2.0
 """,
         )
         fleet = load_fleet(path)
@@ -702,6 +714,10 @@ aircraft:
       fuselage_attach_z_m: 0.5
       wing_attach_y_m: 1.8
       width_m: 0.05
+    wheels:
+      main_offset_x_m: 0.20
+      track_m: 1.8
+      third_wheel_offset_x_m: -2.0
 """,
         )
         fleet = load_fleet(path)
@@ -799,6 +815,10 @@ aircraft:
         offset_x_m: {wing_offset_x}
         z_bottom_m: 2.0
         z_top_m: 2.3
+    wheels:
+      main_offset_x_m: 0.20
+      track_m: 1.8
+      third_wheel_offset_x_m: -2.0
 """
 
     def test_fuselage_splits_into_one_front_one_aft(self, tmp_path: Path) -> None:
@@ -942,6 +962,8 @@ aircraft:
         offset_x_m: -2.5
         z_bottom_m: 0.0
         z_top_m: 1.5
+    wheels:
+      main_offset_x_m: 0.0
 """,
         )
         a = load_fleet(path)["explicit"]
@@ -1557,6 +1579,10 @@ def _aircraft_entry(
         width_m: 9.0
         z_bottom_m: 2.0
         z_top_m: 2.3
+    wheels:
+      main_offset_x_m: 0.20
+      track_m: 1.8
+      third_wheel_offset_x_m: -2.0
 """
 
 

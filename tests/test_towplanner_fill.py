@@ -20,8 +20,11 @@ from hangarfit.models import (
     MaintenanceBay,
     Part,
     Placement,
+    Wheels,
 )
 from hangarfit.towplanner import MovesPlan, NoFeasiblePlanError, Pose, entry_pose, plan_fill
+
+_TAIL_WHEELS = Wheels(main_offset_x_m=0.20, track_m=1.8, third_wheel_offset_x_m=-2.0)
 
 
 def _fuselage_box() -> Part:
@@ -51,6 +54,7 @@ def _box_plane(plane_id: str, *, turn_radius_m: float = 4.0) -> Aircraft:
         turn_radius_m=turn_radius_m,
         measured=False,
         parts=(_fuselage_box(),),
+        wheels=_TAIL_WHEELS,
     )
 
 
@@ -65,6 +69,7 @@ def _always_cart_plane(plane_id: str) -> Aircraft:
         turn_radius_m=None,
         measured=False,
         parts=(_fuselage_box(),),
+        wheels=_TAIL_WHEELS,
     )
 
 
@@ -277,6 +282,7 @@ def test_plan_fill_routes_origin_spanning_planes() -> None:
                     z_top_m=1.0,
                 ),
             ),
+            wheels=_TAIL_WHEELS,
         )
 
     # 30 × 30 m hangar so both slots are well inside the back wall.
