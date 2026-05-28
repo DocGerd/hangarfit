@@ -3,8 +3,14 @@
 from __future__ import annotations
 
 import random
+from pathlib import Path
 
 import pytest
+
+# Anchor fixture/layout paths on the repo root rather than the process cwd, so
+# pytest can be invoked from anywhere and the tests still load the right files
+# (#317). Matches the convention in ``tests/test_loader.py``.
+REPO_ROOT = Path(__file__).resolve().parent.parent
 
 
 @pytest.fixture(autouse=True)
@@ -32,7 +38,7 @@ def test_initial_placement_for_pinned_plane_returns_the_pin():
     from hangarfit.loader import load_scenario
     from hangarfit.solver import _initial_placement_for_plane
 
-    s = load_scenario("tests/fixtures/scenario_with_pin.yaml")
+    s = load_scenario(REPO_ROOT / "tests" / "fixtures" / "scenario_with_pin.yaml")
     rng = random.Random(42)
     pin = s.constraints["aviat_husky"].pin
     assert pin is not None
@@ -51,7 +57,7 @@ def test_initial_placement_for_free_plane_is_within_hangar():
     from hangarfit.loader import load_scenario
     from hangarfit.solver import _initial_placement_for_plane
 
-    s = load_scenario("tests/fixtures/solve_feasible_smoke.yaml")
+    s = load_scenario(REPO_ROOT / "tests" / "fixtures" / "solve_feasible_smoke.yaml")
     rng = random.Random(42)
     p = _initial_placement_for_plane(
         plane_id="aviat_husky",
@@ -80,7 +86,7 @@ def test_initial_placements_skips_maintenance_plane():
     from hangarfit.loader import load_scenario
     from hangarfit.solver import _initial_placements
 
-    s = load_scenario("tests/fixtures/scenario_with_pin.yaml")
+    s = load_scenario(REPO_ROOT / "tests" / "fixtures" / "scenario_with_pin.yaml")
     assert s.maintenance_plane == "fuji", "fixture sanity"
 
     rng = random.Random(42)
@@ -105,7 +111,7 @@ def test_cart_buckets_collapses_when_another_cart_eligible_is_force_locked_on():
     # the singleton bucket pairs ctsl-on-carts WITH cessna_140-already-on-carts,
     # which violates Layout's at-most-one-cart_eligible-on-carts rule.
     # Correct behavior: only the empty bucket is feasible.
-    s = load_scenario("tests/fixtures/scenario_with_force_carts.yaml")
+    s = load_scenario(REPO_ROOT / "tests" / "fixtures" / "scenario_with_force_carts.yaml")
     buckets = _enumerate_cart_buckets(s)
     assert buckets == [frozenset()]
 
@@ -118,7 +124,7 @@ def test_cart_buckets_enumerates_unlocked_cart_eligibles_plus_none():
 
     # solve_fresh_six_planes scenario includes ctsl, cessna_140, fk9_mkii
     # (3 cart_eligibles, none locked). Expected: 4 buckets.
-    s = load_scenario("tests/fixtures/solve_fresh_six_planes.yaml")
+    s = load_scenario(REPO_ROOT / "tests" / "fixtures" / "solve_fresh_six_planes.yaml")
     buckets = _enumerate_cart_buckets(s)
     assert len(buckets) == 4
     assert frozenset() in buckets
@@ -137,16 +143,20 @@ def test_cart_buckets_enumerate_combinations_when_max_carts_gt_one():
 
     # 3 unlocked cart_eligibles. max_carts=1 ⇒ 4 buckets (∅ + 3 singletons);
     # max_carts=2 ⇒ + C(3,2)=3 pairs = 7; max_carts=3 ⇒ + 1 triple = 8.
-    s1 = load_scenario("tests/fixtures/solve_fresh_six_planes.yaml")
+    s1 = load_scenario(REPO_ROOT / "tests" / "fixtures" / "solve_fresh_six_planes.yaml")
     assert len(_enumerate_cart_buckets(s1)) == 4  # default unchanged
 
-    s2 = load_scenario("tests/fixtures/solve_fresh_six_planes.yaml", max_carts=2)
+    s2 = load_scenario(
+        REPO_ROOT / "tests" / "fixtures" / "solve_fresh_six_planes.yaml", max_carts=2
+    )
     buckets2 = _enumerate_cart_buckets(s2)
     assert len(buckets2) == 7
     pairs = [b for b in buckets2 if len(b) == 2]
     assert len(pairs) == 3
 
-    s3 = load_scenario("tests/fixtures/solve_fresh_six_planes.yaml", max_carts=3)
+    s3 = load_scenario(
+        REPO_ROOT / "tests" / "fixtures" / "solve_fresh_six_planes.yaml", max_carts=3
+    )
     buckets3 = _enumerate_cart_buckets(s3)
     assert len(buckets3) == 8
     assert any(len(b) == 3 for b in buckets3)
@@ -160,10 +170,12 @@ def test_cart_buckets_committed_pin_reduces_remaining_budget():
     from hangarfit.solver import _enumerate_cart_buckets
 
     # cessna_140 is force_on_carts=True (1 committed); ctsl unlocked.
-    s1 = load_scenario("tests/fixtures/scenario_with_force_carts.yaml")
+    s1 = load_scenario(REPO_ROOT / "tests" / "fixtures" / "scenario_with_force_carts.yaml")
     assert _enumerate_cart_buckets(s1) == [frozenset()]  # remaining 1-1=0
 
-    s2 = load_scenario("tests/fixtures/scenario_with_force_carts.yaml", max_carts=2)
+    s2 = load_scenario(
+        REPO_ROOT / "tests" / "fixtures" / "scenario_with_force_carts.yaml", max_carts=2
+    )
     buckets2 = _enumerate_cart_buckets(s2)  # remaining 2-1=1
     assert len(buckets2) > 1
     assert frozenset({"ctsl"}) in buckets2
@@ -176,7 +188,7 @@ def test_pin_cart_rule_check_honors_max_carts():
     from hangarfit.loader import load_scenario
     from hangarfit.solver import solve
 
-    fixture = "tests/fixtures/solve_infeasible_two_cart_pins.yaml"
+    fixture = REPO_ROOT / "tests" / "fixtures" / "solve_infeasible_two_cart_pins.yaml"
     # Default cap: the pin pre-check fires with the cart-rule conflict kind.
     r1 = solve(load_scenario(fixture), budget_s=5.0, seed=42)
     assert r1.status == "trivially_infeasible"
@@ -196,7 +208,7 @@ def test_cart_bucket_for_restart_is_deterministic_round_robin():
     from hangarfit.loader import load_scenario
     from hangarfit.solver import _cart_bucket_for_restart, _enumerate_cart_buckets
 
-    s = load_scenario("tests/fixtures/solve_feasible_smoke.yaml")
+    s = load_scenario(REPO_ROOT / "tests" / "fixtures" / "solve_feasible_smoke.yaml")
     buckets = _enumerate_cart_buckets(s)
     if len(buckets) > 0:
         # First few restarts should cycle through buckets
@@ -209,7 +221,7 @@ def test_score_valid_layout_is_zero_zero():
     from hangarfit.loader import load_layout
     from hangarfit.solver import _score
 
-    layout = load_layout("layouts/example.yaml")
+    layout = load_layout(REPO_ROOT / "layouts" / "example.yaml")
     s = _score(layout)
     assert s == (0, 0.0)
 
@@ -224,7 +236,7 @@ def test_score_invalid_layout_is_positive():
     # conflicts produce real overlap area, so penetration is strictly
     # positive — vacuous `>= 0.0` would mask a regression that
     # accidentally returned 0.0 for every conflict.
-    layout = load_layout("layouts/example_invalid.yaml")
+    layout = load_layout(REPO_ROOT / "layouts" / "example_invalid.yaml")
     s = _score(layout)
     count, penetration = s
     assert count >= 3, f"expected ≥3 conflicts in example_invalid; got {count}"
@@ -248,7 +260,7 @@ def test_score_lex_ordering_matches_spec():
     from hangarfit.loader import load_layout
     from hangarfit.solver import _score as score_fn
 
-    score = score_fn(load_layout("layouts/example.yaml"))
+    score = score_fn(load_layout(REPO_ROOT / "layouts" / "example.yaml"))
     assert isinstance(score, tuple)
     assert isinstance(score[0], int)
     assert isinstance(score[1], float)
@@ -260,7 +272,7 @@ def test_perturb_plane_returns_valid_placement_within_hangar():
     from hangarfit.models import Placement
     from hangarfit.solver import SearchConfig, _perturb_plane
 
-    s = load_scenario("tests/fixtures/solve_feasible_smoke.yaml")
+    s = load_scenario(REPO_ROOT / "tests" / "fixtures" / "solve_feasible_smoke.yaml")
     rng = random.Random(42)
     current = Placement(plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
     config = SearchConfig()  # defaults
@@ -291,7 +303,7 @@ def test_perturb_plane_preserves_on_carts():
     from hangarfit.models import Placement
     from hangarfit.solver import SearchConfig, _perturb_plane
 
-    s = load_scenario("tests/fixtures/solve_feasible_smoke.yaml")
+    s = load_scenario(REPO_ROOT / "tests" / "fixtures" / "solve_feasible_smoke.yaml")
     rng = random.Random(42)
     current_off = Placement(
         plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False
@@ -324,7 +336,7 @@ def test_perturb_plane_heading_wraps_modulo_360():
     from hangarfit.models import Placement
     from hangarfit.solver import SearchConfig, _perturb_plane
 
-    s = load_scenario("tests/fixtures/solve_feasible_smoke.yaml")
+    s = load_scenario(REPO_ROOT / "tests" / "fixtures" / "solve_feasible_smoke.yaml")
     rng = random.Random(42)
     current = Placement(plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=359.0, on_carts=False)
     cfg = SearchConfig()  # heading_sigma_deg=10.0
@@ -349,7 +361,7 @@ def test_solve_finds_layout_for_trivial_single_plane():
     from hangarfit.loader import load_scenario
     from hangarfit.solver import solve
 
-    s = load_scenario("tests/fixtures/solve_trivial_single_plane.yaml")
+    s = load_scenario(REPO_ROOT / "tests" / "fixtures" / "solve_trivial_single_plane.yaml")
     r = solve(s, budget_s=5.0, alternatives=1, seed=42)
 
     assert r.status == "found"
@@ -369,7 +381,7 @@ def test_solve_finds_layout_for_fresh_six_planes():
     from hangarfit.models import SearchConfig
     from hangarfit.solver import solve
 
-    s = load_scenario("tests/fixtures/solve_fresh_six_planes.yaml")
+    s = load_scenario(REPO_ROOT / "tests" / "fixtures" / "solve_fresh_six_planes.yaml")
     r = solve(s, budget_s=5.0, alternatives=1, seed=42, search=SearchConfig(spread=False))
 
     if r.status == "exhausted_budget":
@@ -401,7 +413,7 @@ def test_solve_is_deterministic_for_same_seed():
     from hangarfit.loader import load_scenario
     from hangarfit.solver import solve
 
-    s = load_scenario("tests/fixtures/solve_trivial_single_plane.yaml")
+    s = load_scenario(REPO_ROOT / "tests" / "fixtures" / "solve_trivial_single_plane.yaml")
     r1 = solve(s, budget_s=5.0, alternatives=1, seed=42)
     r2 = solve(s, budget_s=5.0, alternatives=1, seed=42)
 
@@ -450,7 +462,7 @@ def test_solve_is_deterministic_through_descent_loop():
     from hangarfit.models import SearchConfig
     from hangarfit.solver import solve
 
-    s = load_scenario("tests/fixtures/solve_fresh_six_planes.yaml")
+    s = load_scenario(REPO_ROOT / "tests" / "fixtures" / "solve_fresh_six_planes.yaml")
     cfg = SearchConfig(spread=False, max_restarts=20)
     r1 = solve(s, budget_s=30.0, alternatives=1, seed=42, search=cfg)
     r2 = solve(s, budget_s=30.0, alternatives=1, seed=42, search=cfg)
@@ -487,7 +499,7 @@ def test_solve_exhausted_budget_reports_best_partial_pair():
     from hangarfit.loader import load_scenario
     from hangarfit.solver import solve
 
-    s = load_scenario("tests/fixtures/solve_fresh_six_planes.yaml")
+    s = load_scenario(REPO_ROOT / "tests" / "fixtures" / "solve_fresh_six_planes.yaml")
     r = solve(s, budget_s=0.05, alternatives=1, seed=42)
     if r.status == "found":
         pytest.skip("seed=42 + 0.05s got lucky; tighten budget if this skips often")
@@ -528,7 +540,7 @@ def test_descent_step_returns_none_when_all_conflicts_are_pinned():
     # solve_infeasible_pins_clash.yaml has two pins at identical coords.
     # Loading and stepping it manually (bypassing solve()'s pre-search)
     # to exercise _descent_step directly.
-    s = load_scenario("tests/fixtures/solve_infeasible_pins_clash.yaml")
+    s = load_scenario(REPO_ROOT / "tests" / "fixtures" / "solve_infeasible_pins_clash.yaml")
     placements = {pid: s.constraints[pid].pin for pid in s.fleet_in}
     pinned = frozenset(s.fleet_in)  # both planes pinned
 
@@ -552,8 +564,8 @@ def test_diversity_filter_rejects_near_duplicate():
     from hangarfit.models import DiversityConfig, Layout, Placement
     from hangarfit.solver import _is_diverse_enough
 
-    fleet = load_fleet("data/fleet.yaml")
-    hangar = load_hangar("data/hangar.yaml")
+    fleet = load_fleet(REPO_ROOT / "data" / "fleet.yaml")
+    hangar = load_hangar(REPO_ROOT / "data" / "hangar.yaml")
     p1 = Placement(plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
     p2 = Placement(plane_id="ctsl", x_m=10.0, y_m=10.0, heading_deg=0.0, on_carts=False)
     L1 = Layout(fleet=fleet, hangar=hangar, placements=(p1, p2))
@@ -574,8 +586,8 @@ def test_diversity_filter_empty_accepted_vacuously_passes():
     from hangarfit.models import DiversityConfig, Layout, Placement
     from hangarfit.solver import _is_diverse_enough
 
-    fleet = load_fleet("data/fleet.yaml")
-    hangar = load_hangar("data/hangar.yaml")
+    fleet = load_fleet(REPO_ROOT / "data" / "fleet.yaml")
+    hangar = load_hangar(REPO_ROOT / "data" / "hangar.yaml")
     p = Placement(plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
     L = Layout(fleet=fleet, hangar=hangar, placements=(p,))
 
@@ -587,8 +599,8 @@ def test_diversity_filter_accepts_meaningfully_different():
     from hangarfit.models import DiversityConfig, Layout, Placement
     from hangarfit.solver import _is_diverse_enough
 
-    fleet = load_fleet("data/fleet.yaml")
-    hangar = load_hangar("data/hangar.yaml")
+    fleet = load_fleet(REPO_ROOT / "data" / "fleet.yaml")
+    hangar = load_hangar(REPO_ROOT / "data" / "hangar.yaml")
     p1 = Placement(plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
     p2 = Placement(plane_id="ctsl", x_m=10.0, y_m=10.0, heading_deg=0.0, on_carts=False)
     L1 = Layout(fleet=fleet, hangar=hangar, placements=(p1, p2))
@@ -614,8 +626,8 @@ def test_diversity_filter_pairwise_not_aggregate():
     from hangarfit.models import DiversityConfig, Layout, Placement
     from hangarfit.solver import _is_diverse_enough
 
-    fleet = load_fleet("data/fleet.yaml")
-    hangar = load_hangar("data/hangar.yaml")
+    fleet = load_fleet(REPO_ROOT / "data" / "fleet.yaml")
+    hangar = load_hangar(REPO_ROOT / "data" / "hangar.yaml")
 
     # L1: husky at (5,5), ctsl at (10,10).
     p1_L1 = Placement(plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
@@ -645,8 +657,8 @@ def test_diversity_heading_uses_short_arc():
     from hangarfit.models import DiversityConfig, Layout, Placement
     from hangarfit.solver import _is_diverse_enough
 
-    fleet = load_fleet("data/fleet.yaml")
-    hangar = load_hangar("data/hangar.yaml")
+    fleet = load_fleet(REPO_ROOT / "data" / "fleet.yaml")
+    hangar = load_hangar(REPO_ROOT / "data" / "hangar.yaml")
     p1 = Placement(plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
     p2 = Placement(plane_id="ctsl", x_m=10.0, y_m=10.0, heading_deg=0.0, on_carts=False)
     L1 = Layout(fleet=fleet, hangar=hangar, placements=(p1, p2))
@@ -666,8 +678,8 @@ def test_diversity_filter_m_equals_one_boundary():
     from hangarfit.models import DiversityConfig, Layout, Placement
     from hangarfit.solver import _is_diverse_enough
 
-    fleet = load_fleet("data/fleet.yaml")
-    hangar = load_hangar("data/hangar.yaml")
+    fleet = load_fleet(REPO_ROOT / "data" / "fleet.yaml")
+    hangar = load_hangar(REPO_ROOT / "data" / "hangar.yaml")
     p1 = Placement(plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
     p2 = Placement(plane_id="ctsl", x_m=10.0, y_m=10.0, heading_deg=0.0, on_carts=False)
     L1 = Layout(fleet=fleet, hangar=hangar, placements=(p1, p2))
@@ -694,8 +706,8 @@ def test_diversity_filter_threshold_exact_boundary():
     from hangarfit.models import DiversityConfig, Layout, Placement
     from hangarfit.solver import _is_diverse_enough
 
-    fleet = load_fleet("data/fleet.yaml")
-    hangar = load_hangar("data/hangar.yaml")
+    fleet = load_fleet(REPO_ROOT / "data" / "fleet.yaml")
+    hangar = load_hangar(REPO_ROOT / "data" / "hangar.yaml")
     p1 = Placement(plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
     p2 = Placement(plane_id="ctsl", x_m=10.0, y_m=10.0, heading_deg=0.0, on_carts=False)
     L1 = Layout(fleet=fleet, hangar=hangar, placements=(p1, p2))
@@ -732,8 +744,8 @@ def test_diversity_filter_heading_threshold_exact_boundary():
     from hangarfit.models import DiversityConfig, Layout, Placement
     from hangarfit.solver import _is_diverse_enough
 
-    fleet = load_fleet("data/fleet.yaml")
-    hangar = load_hangar("data/hangar.yaml")
+    fleet = load_fleet(REPO_ROOT / "data" / "fleet.yaml")
+    hangar = load_hangar(REPO_ROOT / "data" / "hangar.yaml")
     p1 = Placement(plane_id="aviat_husky", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
     p2 = Placement(plane_id="ctsl", x_m=10.0, y_m=10.0, heading_deg=0.0, on_carts=False)
     L1 = Layout(fleet=fleet, hangar=hangar, placements=(p1, p2))
@@ -776,7 +788,7 @@ def test_solve_status_found_when_k_equals_two_both_satisfied():
     from hangarfit.models import DiversityConfig
     from hangarfit.solver import _is_diverse_enough, solve
 
-    s = load_scenario("tests/fixtures/solve_trivial_single_plane.yaml")
+    s = load_scenario(REPO_ROOT / "tests" / "fixtures" / "solve_trivial_single_plane.yaml")
     div = DiversityConfig(min_planes_moved=1)
     r = solve(s, budget_s=10.0, alternatives=2, seed=42, diversity=div)
 
@@ -811,7 +823,7 @@ def test_solve_emits_diversity_impossible_warning(caplog):
     from hangarfit.models import SearchConfig
     from hangarfit.solver import solve
 
-    s = load_scenario("tests/fixtures/solve_diversity_impossible_warn.yaml")
+    s = load_scenario(REPO_ROOT / "tests" / "fixtures" / "solve_diversity_impossible_warn.yaml")
     with caplog.at_level(logging.WARNING):
         r = solve(s, budget_s=5.0, alternatives=3, seed=42, search=SearchConfig(spread=False))
 
@@ -847,7 +859,7 @@ def test_solve_does_not_warn_when_diversity_is_achievable(caplog):
     from hangarfit.solver import solve
 
     # Fresh-six-planes fixture: 6 planes, none pinned → free_planes=6 >= M=2.
-    s = load_scenario("tests/fixtures/solve_fresh_alternatives_three.yaml")
+    s = load_scenario(REPO_ROOT / "tests" / "fixtures" / "solve_fresh_alternatives_three.yaml")
     with caplog.at_level(logging.WARNING):
         r = solve(
             s,
@@ -885,7 +897,7 @@ def test_solve_diversity_rejected_count_increments_on_reject():
     from hangarfit.models import SearchConfig
     from hangarfit.solver import solve
 
-    s = load_scenario("tests/fixtures/solve_diversity_impossible_warn.yaml")
+    s = load_scenario(REPO_ROOT / "tests" / "fixtures" / "solve_diversity_impossible_warn.yaml")
     r = solve(s, budget_s=5.0, alternatives=3, seed=42, search=SearchConfig(spread=False))
 
     # The fixture forces found_partial (see test_solve_emits_diversity_impossible_warning).
@@ -905,7 +917,7 @@ def test_solve_returns_k_diverse_alternatives():
     from hangarfit.models import DiversityConfig, SearchConfig
     from hangarfit.solver import _is_diverse_enough, solve
 
-    s = load_scenario("tests/fixtures/solve_fresh_alternatives_three.yaml")
+    s = load_scenario(REPO_ROOT / "tests" / "fixtures" / "solve_fresh_alternatives_three.yaml")
     r = solve(s, budget_s=10.0, alternatives=3, seed=42, search=SearchConfig(spread=False))
 
     if r.status == "exhausted_budget":
@@ -929,7 +941,7 @@ def test_inter_plane_energy_zero_for_single_plane():
     from hangarfit.models import Placement
     from hangarfit.solver import _inter_plane_energy
 
-    s = load_scenario("tests/fixtures/solve_all_nine_large_hangar.yaml")
+    s = load_scenario(REPO_ROOT / "tests" / "fixtures" / "solve_all_nine_large_hangar.yaml")
     pid = next(p for p in s.fleet_in if p != s.maintenance_plane)
     placements = {pid: Placement(plane_id=pid, x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)}
 
@@ -941,7 +953,7 @@ def test_inter_plane_energy_higher_when_planes_closer():
     from hangarfit.models import Placement
     from hangarfit.solver import _inter_plane_energy
 
-    s = load_scenario("tests/fixtures/solve_all_nine_large_hangar.yaml")
+    s = load_scenario(REPO_ROOT / "tests" / "fixtures" / "solve_all_nine_large_hangar.yaml")
     a, b = [p for p in s.fleet_in if p != s.maintenance_plane][:2]
     scale = 5.0
 
@@ -962,7 +974,7 @@ def test_inter_plane_energy_symmetric_in_plane_order():
     from hangarfit.models import Placement
     from hangarfit.solver import _inter_plane_energy
 
-    s = load_scenario("tests/fixtures/solve_all_nine_large_hangar.yaml")
+    s = load_scenario(REPO_ROOT / "tests" / "fixtures" / "solve_all_nine_large_hangar.yaml")
     a, b = [p for p in s.fleet_in if p != s.maintenance_plane][:2]
     pa = Placement(plane_id=a, x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
     pb = Placement(plane_id=b, x_m=9.0, y_m=11.0, heading_deg=30.0, on_carts=False)
@@ -982,7 +994,7 @@ def _valid_placements(seed: int):
     from hangarfit.models import SearchConfig
     from hangarfit.solver import solve
 
-    s = load_scenario("tests/fixtures/solve_fresh_alternatives_three.yaml")
+    s = load_scenario(REPO_ROOT / "tests" / "fixtures" / "solve_fresh_alternatives_three.yaml")
     r = solve(s, budget_s=5.0, seed=seed, search=SearchConfig(spread=False))
     assert r.layouts, "fixture must be solvable without spread"
     placements = {p.plane_id: p for p in r.layouts[0].placements}
@@ -1148,7 +1160,7 @@ def test_spread_noop_when_single_movable_plane():
     from hangarfit.models import Placement, SearchConfig
     from hangarfit.solver import _spread
 
-    s = load_scenario("tests/fixtures/solve_all_nine_large_hangar.yaml")
+    s = load_scenario(REPO_ROOT / "tests" / "fixtures" / "solve_all_nine_large_hangar.yaml")
     pid = next(p for p in s.fleet_in if p != s.maintenance_plane)
     placements = {pid: Placement(plane_id=pid, x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)}
 
@@ -1202,3 +1214,86 @@ def test_spread_runs_with_single_movable_among_pinned():
     assert _score(layout) == (0, 0.0)
     # Energy not worse (the one movable plane only improves or no-ops).
     assert _inter_plane_energy(out, s, scale) <= e_before
+
+
+def test_plane_footprint_area_does_not_double_count_tail():
+    """Regression guard for #317: a plane with a standalone ``tail`` part
+    must not have its tail length both folded into the reconstructed
+    fuselage span *and* listed separately in the per-part ``lengths`` list.
+
+    No fleet aircraft has a ``tail`` part today (every fuselage box is a
+    single ``kind: fuselage`` that the loader auto-splits into ``fuselage_
+    front`` + ``fuselage_aft``), so this codepath is dormant in real use.
+    The fix is also behaviorally inert under the current helper: because
+    ``tail`` is in ``fuselage_segs`` it always contributes to ``nose`` /
+    ``tail_x``, so ``fuselage_span ≥ tail.length_m`` and ``max(lengths)``
+    absorbs the duplicate either way. This test locks down the expected
+    return value so a future refactor (e.g. a sum-of-lengths estimate
+    instead of max-of-lengths, or any path that surfaces the duplicate)
+    can't silently regress.
+    """
+    from hangarfit.models import Aircraft, Part
+    from hangarfit.solver import _plane_footprint_area
+
+    # Geometry: post-split fuselage segments + a standalone tail + a wing.
+    # Pick numbers so the reconstructed fuselage span dominates every other
+    # length and a hand-computed expected value is unambiguous.
+    fuselage_front = Part(
+        kind="fuselage_front",
+        length_m=2.0,
+        width_m=1.0,
+        offset_x_m=1.0,
+        offset_y_m=0.0,
+        angle_deg=0.0,
+        z_bottom_m=0.0,
+        z_top_m=1.5,
+    )
+    fuselage_aft = Part(
+        kind="fuselage_aft",
+        length_m=2.0,
+        width_m=1.0,
+        offset_x_m=-1.0,
+        offset_y_m=0.0,
+        angle_deg=0.0,
+        z_bottom_m=0.0,
+        z_top_m=1.5,
+    )
+    tail = Part(
+        kind="tail",
+        length_m=1.5,
+        width_m=0.8,
+        offset_x_m=-3.0,
+        offset_y_m=0.0,
+        angle_deg=0.0,
+        z_bottom_m=0.5,
+        z_top_m=1.8,
+    )
+    wing = Part(
+        kind="wing",
+        length_m=1.2,
+        width_m=8.0,
+        offset_x_m=0.5,
+        offset_y_m=0.0,
+        angle_deg=0.0,
+        z_bottom_m=1.5,
+        z_top_m=1.8,
+    )
+    plane = Aircraft(
+        id="test_tail_dummy",
+        name="Test (tail double-count)",
+        wing_position="high",
+        gear="tailwheel",
+        movement_mode="always_own_gear",
+        turn_radius_m=6.0,
+        measured=False,
+        parts=(fuselage_front, fuselage_aft, tail, wing),
+    )
+
+    # Expected: reconstructed fuselage span runs from the tail's tail-end
+    # (offset_x_m − length_m/2 = −3.0 − 0.75 = −3.75) to the front's nose
+    # (offset_x_m + length_m/2 = 1.0 + 1.0 = 2.0), so span = 5.75 m. Max
+    # width across all parts is the wing's 8.0 m. Expected area = 5.75 ×
+    # 8.0 = 46.0 m². Tail must NOT be counted again via ``lengths``; if it
+    # were, the result would still be 46.0 (span >= 1.5), but the test pins
+    # the value so a future refactor can't surface the duplicate path.
+    assert _plane_footprint_area(plane) == pytest.approx(46.0)
