@@ -36,7 +36,7 @@ from __future__ import annotations
 import dataclasses
 import difflib
 import math
-from collections.abc import Collection, Iterable
+from collections.abc import Collection, Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +53,7 @@ from .models import (
     PlaneConstraint,
     Scenario,
     StrutsSpec,
+    Wheels,
 )
 
 
@@ -596,6 +597,82 @@ def _resolve_known_plane_id(
     raise LoaderError(f"{path}: {role} references unknown plane id {candidate!r}{tail}")
 
 
+_WHEELS_KEYS_BY_GEAR: dict[str, frozenset[str]] = {
+    "monowheel": frozenset({"main_offset_x_m"}),
+    "nosewheel": frozenset({"main_offset_x_m", "track_m", "third_wheel_offset_x_m"}),
+    "tailwheel": frozenset({"main_offset_x_m", "track_m", "third_wheel_offset_x_m"}),
+}
+
+
+def _parse_wheels(
+    entry: Mapping[str, Any] | None,
+    gear: str,
+    aircraft_id: str,
+) -> Wheels | None:
+    """Parse a ``wheels:`` block into a :class:`Wheels`.
+
+    Returns ``None`` if ``entry`` is ``None`` (transitional — Task 5 flips
+    this to raise ``LoaderError``).
+
+    Validates that the key set exactly matches ``_WHEELS_KEYS_BY_GEAR[gear]``
+    and that nose-vs-tail sign rules hold for tricycle/tailwheel gear.
+    """
+    if entry is None:
+        return None  # TODO(#322 Task 5): raise LoaderError
+
+    if gear not in _WHEELS_KEYS_BY_GEAR:
+        raise LoaderError(f"wheels: unsupported gear {gear!r}")
+
+    expected = _WHEELS_KEYS_BY_GEAR[gear]
+    seen = frozenset(entry.keys())
+    missing = expected - seen
+    unknown = seen - expected
+    if missing:
+        raise LoaderError(
+            f"wheels: block missing required key(s) for gear={gear!r}: {sorted(missing)}"
+        )
+    if unknown:
+        if gear == "monowheel" and unknown & {"track_m", "third_wheel_offset_x_m"}:
+            raise LoaderError(
+                f"wheels: monowheel block must not set track_m or "
+                f"third_wheel_offset_x_m (got {sorted(unknown)})"
+            )
+        raise LoaderError(f"wheels: block has unknown key(s): {sorted(unknown)}")
+
+    main_offset_x_m = _to_float(entry["main_offset_x_m"], "wheels.main_offset_x_m")
+    if gear == "monowheel":
+        try:
+            return Wheels(
+                main_offset_x_m=main_offset_x_m, track_m=None, third_wheel_offset_x_m=None
+            )
+        except ValueError as exc:
+            raise LoaderError(f"wheels: {exc}") from exc
+
+    track_m = _to_float(entry["track_m"], "wheels.track_m")
+    third = _to_float(entry["third_wheel_offset_x_m"], "wheels.third_wheel_offset_x_m")
+    # Sign rule:
+    #   nosewheel → third (nose) must be forward of mains (greater x)
+    #   tailwheel → third (tail) must be aft of mains    (lesser x)
+    if gear == "nosewheel" and not third > main_offset_x_m:
+        raise LoaderError(
+            f"wheels: nosewheel third_wheel_offset_x_m must be forward of mains "
+            f"(greater than main_offset_x_m={main_offset_x_m}); got {third}"
+        )
+    if gear == "tailwheel" and not third < main_offset_x_m:
+        raise LoaderError(
+            f"wheels: tailwheel third_wheel_offset_x_m must be aft of mains "
+            f"(less than main_offset_x_m={main_offset_x_m}); got {third}"
+        )
+    try:
+        return Wheels(
+            main_offset_x_m=main_offset_x_m,
+            track_m=track_m,
+            third_wheel_offset_x_m=third,
+        )
+    except ValueError as exc:
+        raise LoaderError(f"wheels: {exc}") from exc
+
+
 def _build_aircraft(entry: Any) -> Aircraft:
     if not isinstance(entry, dict):
         raise LoaderError(f"aircraft entry must be a mapping, got {type(entry).__name__}")
@@ -676,6 +753,7 @@ def _build_aircraft(entry: Any) -> Aircraft:
         measured=_to_bool(entry.get("measured", False), "measured"),
         parts=tuple(parts),
         notes=entry.get("notes", ""),
+        wheels=_parse_wheels(entry.get("wheels"), entry["gear"], entry["id"]),
     )
 
 
