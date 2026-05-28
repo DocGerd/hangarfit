@@ -18,6 +18,7 @@ from hangarfit.loader import (
     load_fleet,
     load_hangar,
     load_layout,
+    load_scenario,
 )
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -29,6 +30,16 @@ EXAMPLE_LAYOUT = REPO_ROOT / "layouts" / "example.yaml"
 def _write(path: Path, text: str) -> Path:
     path.write_text(text, encoding="utf-8")
     return path
+
+
+# A minimal, otherwise-valid hangar YAML body. Tests append a `max_carts:`
+# line (or omit it) to exercise the loader's coercion + default.
+_MIN_HANGAR = (
+    "length_m: 25.0\n"
+    "width_m: 18.0\n"
+    "door: {center_x_m: 9.0, width_m: 12.0}\n"
+    "maintenance_bay: {center_x_m: 13.5, width_m: 9.0, depth_m: 9.0}\n"
+)
 
 
 # ----------------------------------------------------------------------------
@@ -150,6 +161,7 @@ class TestRealDataFiles:
         assert hangar.maintenance_bay.center_x_m == 13.5
         assert hangar.maintenance_bay.width_m == 9.0
         assert hangar.maintenance_bay.depth_m == 9.0
+        assert hangar.max_carts == 1  # bundled data/hangar.yaml sets it explicitly
 
     def test_load_example_layout(self) -> None:
         layout = load_layout(EXAMPLE_LAYOUT)
@@ -160,6 +172,60 @@ class TestRealDataFiles:
         assert len(layout.placements) == 5
         assert layout.maintenance_plane == "scheibe_falke"
         assert "scheibe_falke" not in {p.plane_id for p in layout.placements}
+
+
+class TestHangarMaxCarts:
+    """Loader handling of the optional `max_carts` site scalar (#210)."""
+
+    def test_absent_defaults_to_one(self, tmp_path: Path) -> None:
+        """A hangar.yaml with no max_carts loads as 1 — the backward-compat
+        guarantee (absence reproduces the original single-cart rule)."""
+        path = _write(tmp_path / "h.yaml", _MIN_HANGAR)
+        assert load_hangar(path).max_carts == 1
+
+    def test_explicit_value(self, tmp_path: Path) -> None:
+        path = _write(tmp_path / "h.yaml", _MIN_HANGAR + "max_carts: 3\n")
+        assert load_hangar(path).max_carts == 3
+
+    @pytest.mark.parametrize("bad", ['"two"', "1.5", "true"])
+    def test_non_int_rejected(self, tmp_path: Path, bad: str) -> None:
+        """Strings, floats, and bools are rejected (no silent truncation or
+        the bool-is-int footgun) with the field named."""
+        path = _write(tmp_path / "h.yaml", _MIN_HANGAR + f"max_carts: {bad}\n")
+        with pytest.raises(LoaderError, match="max_carts"):
+            load_hangar(path)
+
+    def test_negative_rejected(self, tmp_path: Path) -> None:
+        """A negative count is rejected — the loader wraps the Hangar
+        __post_init__ ValueError into a LoaderError."""
+        path = _write(tmp_path / "h.yaml", _MIN_HANGAR + "max_carts: -1\n")
+        with pytest.raises(LoaderError, match="max_carts must be non-negative"):
+            load_hangar(path)
+
+    def test_load_layout_override_loosens_cap_before_build(self) -> None:
+        """The load_layout(max_carts=…) override is applied to the resolved
+        hangar before the Layout is built, so a layout the data-file cap (1)
+        would reject now loads — the path the CLI --max-carts flag uses."""
+        fixture = REPO_ROOT / "tests" / "fixtures" / "invalid_cart_rule.yaml"
+        # Two cart_eligible planes on carts: rejected under the default cap.
+        with pytest.raises(LoaderError, match="cart_eligible"):
+            load_layout(fixture)
+        # With the override the Layout constructs and carries the new cap.
+        layout = load_layout(fixture, max_carts=2)
+        assert layout.hangar.max_carts == 2
+        assert len(layout.placements) == 2
+
+    def test_load_layout_negative_override_raises_loader_error(self) -> None:
+        """A negative override is rejected as a LoaderError (not a raw
+        ValueError from dataclasses.replace), preserving the exit-2 contract."""
+        fixture = REPO_ROOT / "tests" / "fixtures" / "invalid_cart_rule.yaml"
+        with pytest.raises(LoaderError, match="max_carts must be non-negative"):
+            load_layout(fixture, max_carts=-1)
+
+    def test_load_scenario_negative_override_raises_loader_error(self) -> None:
+        fixture = REPO_ROOT / "tests" / "fixtures" / "solve_infeasible_two_cart_pins.yaml"
+        with pytest.raises(LoaderError, match="max_carts must be non-negative"):
+            load_scenario(fixture, max_carts=-1)
 
 
 # ----------------------------------------------------------------------------
@@ -352,6 +418,11 @@ aircraft:
         width_m: 0.8
         z_bottom_m: 0.0
         z_top_m: 1.5
+      - kind: wing
+        length_m: 1.4
+        width_m: 9.0
+        z_bottom_m: 2.0
+        z_top_m: 2.3
 """,
         )
         with pytest.raises(LoaderError, match="'measured': expected boolean"):
@@ -376,6 +447,11 @@ aircraft:
         width_m: 0.8
         z_bottom_m: 0.0
         z_top_m: 1.5
+      - kind: wing
+        length_m: 1.4
+        width_m: 9.0
+        z_bottom_m: 2.0
+        z_top_m: 2.3
 """,
         )
         with pytest.raises(LoaderError, match="movement_mode must be one of"):
@@ -400,9 +476,68 @@ aircraft:
         width_m: 0.8
         z_bottom_m: 0.0
         z_top_m: 1.5
+      - kind: wing
+        length_m: 1.4
+        width_m: 9.0
+        z_bottom_m: 2.0
+        z_top_m: 2.3
 """,
         )
         with pytest.raises(LoaderError, match="aircraft 'bad_husky'.*turn_radius_m is required"):
+            load_fleet(path)
+
+
+# ----------------------------------------------------------------------------
+# Non-finite numeric field guard (_to_float rejects NaN / ±inf).
+# ----------------------------------------------------------------------------
+
+
+class TestNonFiniteNumericFields:
+    """yaml.safe_load parses .nan/.inf/-.inf into real Python floats.
+    _to_float must reject them so they never reach geometry calculations
+    (e.g. _wing_spar_x) where NaN comparisons silently return False."""
+
+    def _fleet_with_wing_length(self, value_str: str) -> str:
+        """Build a minimal fleet YAML with the given wing length_m literal."""
+        return f"""\
+aircraft:
+  - id: foo
+    name: Foo
+    wing_position: high
+    gear: tailwheel
+    movement_mode: always_own_gear
+    turn_radius_m: 5.0
+    measured: false
+    parts:
+      - kind: fuselage
+        length_m: 7.0
+        width_m: 0.8
+        z_bottom_m: 0.0
+        z_top_m: 1.5
+      - kind: wing
+        length_m: {value_str}
+        width_m: 9.0
+        z_bottom_m: 2.0
+        z_top_m: 2.3
+"""
+
+    def test_nan_wing_length_raises_loader_error(self, tmp_path: Path) -> None:
+        """`length_m: .nan` parses to float('nan'); must not silently produce
+        a NaN strut keep-out coordinate — LoaderError is required."""
+        path = _write(tmp_path / "f.yaml", self._fleet_with_wing_length(".nan"))
+        with pytest.raises(LoaderError, match="expected a finite number"):
+            load_fleet(path)
+
+    def test_inf_wing_length_raises_loader_error(self, tmp_path: Path) -> None:
+        """`length_m: .inf` parses to float('inf'); must be rejected."""
+        path = _write(tmp_path / "f.yaml", self._fleet_with_wing_length(".inf"))
+        with pytest.raises(LoaderError, match="expected a finite number"):
+            load_fleet(path)
+
+    def test_neg_inf_wing_length_raises_loader_error(self, tmp_path: Path) -> None:
+        """`length_m: -.inf` parses to float('-inf'); must be rejected."""
+        path = _write(tmp_path / "f.yaml", self._fleet_with_wing_length("-.inf"))
+        with pytest.raises(LoaderError, match="expected a finite number"):
             load_fleet(path)
 
 
@@ -520,6 +655,68 @@ aircraft:
         # First wing (z_bottom=2.0) wins, NOT the second wing (z_bottom=2.5).
         assert all(s.z_top_m == 2.0 for s in struts)
 
+    def test_strut_x_anchored_to_wing_spar_not_trailing_edge(self, tmp_path: Path) -> None:
+        """Issue #282 — struts must sit on the wing-spar axis, NOT at the
+        wing trailing edge (≈ the old ``fuselage_attach_x_m`` placeholder).
+
+        The spar rule (fix option 1) anchors the strut's longitudinal
+        station to the wing geometry: the front/main spar of a strut-braced
+        high-wing sits near the quarter-chord, i.e. one quarter of the chord
+        aft of the leading edge. In plane-local coords ``+x`` is forward, so
+        the wing's leading edge is at ``offset_x_m + length_m/2`` and the
+        spar at ``offset_x_m + length_m/4``.
+
+        ``fuselage_attach_x_m`` is set here at the wing trailing edge
+        (``offset_x_m - length_m/2``) to mirror the placeholder fleet data;
+        the strut must NOT land there.
+        """
+        wing_offset_x = 0.5
+        wing_chord = 1.6
+        trailing_edge_x = wing_offset_x - wing_chord / 2.0  # -0.3
+        expected_spar_x = wing_offset_x + wing_chord / 4.0  # +0.9
+        path = _write(
+            tmp_path / "f.yaml",
+            f"""
+aircraft:
+  - id: braced
+    name: Braced
+    wing_position: high
+    gear: tailwheel
+    movement_mode: always_own_gear
+    turn_radius_m: 5.0
+    parts:
+      - kind: fuselage
+        length_m: 7.0
+        width_m: 0.8
+        z_bottom_m: 0.0
+        z_top_m: 1.5
+      - kind: wing
+        length_m: {wing_chord}
+        width_m: 9.0
+        offset_x_m: {wing_offset_x}
+        z_bottom_m: 2.0
+        z_top_m: 2.3
+    struts:
+      fuselage_attach_x_m: {trailing_edge_x}
+      fuselage_attach_y_m: 0.4
+      fuselage_attach_z_m: 0.5
+      wing_attach_y_m: 1.8
+      width_m: 0.05
+""",
+        )
+        fleet = load_fleet(path)
+        struts = [p for p in fleet["braced"].parts if p.kind == "strut"]
+        assert len(struts) == 2
+        for s in struts:
+            assert s.offset_x_m == pytest.approx(expected_spar_x), (
+                f"strut x={s.offset_x_m} should sit on the wing spar "
+                f"(quarter-chord = {expected_spar_x}), not at the wing "
+                f"trailing edge / fuselage_attach_x_m ({trailing_edge_x})"
+            )
+            assert s.offset_x_m != pytest.approx(trailing_edge_x), (
+                f"strut x={s.offset_x_m} still at the wing trailing edge"
+            )
+
     def test_strut_span_must_be_positive(self, tmp_path: Path) -> None:
         """StrutsSpec allows wing_attach_y_m == fuselage_attach_y_m (degenerate
         boundary), but the loader requires strict span > 0 to build a usable Part."""
@@ -554,6 +751,204 @@ aircraft:
         )
         with pytest.raises(LoaderError, match="zero outboard span"):
             load_fleet(path)
+
+
+# ----------------------------------------------------------------------------
+# Fuselage front/aft auto-split (#50 / ADR-0012).
+# ----------------------------------------------------------------------------
+
+
+class TestFuselageSplit:
+    """A legacy ``kind: fuselage`` part is auto-split into a
+    ``fuselage_front`` + ``fuselage_aft`` pair at the wing trailing-edge
+    station; no constructed ``fuselage`` kind survives. Mirrors the
+    ``struts:`` expansion's end-to-end coverage."""
+
+    @staticmethod
+    def _fuselage_wing_yaml(
+        *,
+        fus_length: float = 8.0,
+        fus_offset_x: float = -0.5,
+        wing_length: float = 1.6,
+        wing_offset_x: float = 0.5,
+        fus_width: float = 0.9,
+        angle_deg: float = 0.0,
+        offset_y: float = 0.0,
+    ) -> str:
+        return f"""
+aircraft:
+  - id: splitme
+    name: Split Me
+    wing_position: high
+    gear: tailwheel
+    movement_mode: always_own_gear
+    turn_radius_m: 5.0
+    measured: false
+    parts:
+      - kind: fuselage
+        length_m: {fus_length}
+        width_m: {fus_width}
+        offset_x_m: {fus_offset_x}
+        offset_y_m: {offset_y}
+        angle_deg: {angle_deg}
+        z_bottom_m: 0.0
+        z_top_m: 1.5
+      - kind: wing
+        length_m: {wing_length}
+        width_m: 9.0
+        offset_x_m: {wing_offset_x}
+        z_bottom_m: 2.0
+        z_top_m: 2.3
+"""
+
+    def test_fuselage_splits_into_one_front_one_aft(self, tmp_path: Path) -> None:
+        path = _write(tmp_path / "f.yaml", self._fuselage_wing_yaml())
+        a = load_fleet(path)["splitme"]
+        fronts = [p for p in a.parts if p.kind == "fuselage_front"]
+        afts = [p for p in a.parts if p.kind == "fuselage_aft"]
+        assert len(fronts) == 1, f"expected exactly one fuselage_front, got {a.parts!r}"
+        assert len(afts) == 1, f"expected exactly one fuselage_aft, got {a.parts!r}"
+        # No constructed 'fuselage' kind survives the load.
+        assert all(p.kind != "fuselage" for p in a.parts)
+
+    def test_split_is_area_conserving_and_abuts_at_break(self, tmp_path: Path) -> None:
+        """front ∪ aft == the original fuselage box: the two segments abut at
+        ``x_break = wing.offset_x_m − wing.length_m/2`` and their union spans
+        exactly the original fuselage longitudinally, with width / z / angle /
+        offset_y inherited unchanged (the §3.1 invariant)."""
+        fus_length, fus_offset_x = 8.0, -0.5
+        wing_length, wing_offset_x = 1.6, 0.5
+        fus_width = 0.9
+        path = _write(
+            tmp_path / "f.yaml",
+            self._fuselage_wing_yaml(
+                fus_length=fus_length,
+                fus_offset_x=fus_offset_x,
+                wing_length=wing_length,
+                wing_offset_x=wing_offset_x,
+                fus_width=fus_width,
+            ),
+        )
+        a = load_fleet(path)["splitme"]
+        front = next(p for p in a.parts if p.kind == "fuselage_front")
+        aft = next(p for p in a.parts if p.kind == "fuselage_aft")
+
+        x_break = wing_offset_x - wing_length / 2.0  # -0.3
+        orig_nose = fus_offset_x + fus_length / 2.0  # 3.5
+        orig_tail = fus_offset_x - fus_length / 2.0  # -4.5
+
+        front_lo = front.offset_x_m - front.length_m / 2.0
+        front_hi = front.offset_x_m + front.length_m / 2.0
+        aft_lo = aft.offset_x_m - aft.length_m / 2.0
+        aft_hi = aft.offset_x_m + aft.length_m / 2.0
+
+        # Segments abut at x_break (front low edge == aft high edge == break).
+        assert front_lo == pytest.approx(x_break)
+        assert aft_hi == pytest.approx(x_break)
+        # Union reconstitutes the original span exactly (nose & tail tips).
+        assert front_hi == pytest.approx(orig_nose)
+        assert aft_lo == pytest.approx(orig_tail)
+        # Lengths sum to the original (area-conserving along x).
+        assert front.length_m + aft.length_m == pytest.approx(fus_length)
+        # Width / z / angle / offset_y inherited unchanged on BOTH segments.
+        for seg in (front, aft):
+            assert seg.width_m == pytest.approx(fus_width)
+            assert seg.z_bottom_m == pytest.approx(0.0)
+            assert seg.z_top_m == pytest.approx(1.5)
+            assert seg.angle_deg == pytest.approx(0.0)
+            assert seg.offset_y_m == pytest.approx(0.0)
+
+    def test_fuselage_without_wing_rejected(self, tmp_path: Path) -> None:
+        """A ``kind: fuselage`` part with no ``wing`` part has nothing to
+        derive the break from — LoaderError (mirrors the struts no-wing rule)."""
+        path = _write(
+            tmp_path / "f.yaml",
+            """
+aircraft:
+  - id: nowing
+    name: No Wing
+    wing_position: high
+    gear: tailwheel
+    movement_mode: always_own_gear
+    turn_radius_m: 5.0
+    measured: false
+    parts:
+      - kind: fuselage
+        length_m: 8.0
+        width_m: 0.9
+        z_bottom_m: 0.0
+        z_top_m: 1.5
+""",
+        )
+        with pytest.raises(LoaderError, match=r"kind 'fuselage' requires a part of kind 'wing'"):
+            load_fleet(path)
+
+    def test_malformed_fuselage_box_error_names_fuselage_not_placeholder(
+        self, tmp_path: Path
+    ) -> None:
+        """A malformed ``kind: fuselage`` box must report the user-authored
+        kind ``fuselage``, never the internal ``fuselage_aft`` placeholder used
+        for field validation — otherwise the error is a debugging dead-end
+        (the user greps for ``fuselage_aft`` and finds nothing). #50 review."""
+        path = _write(tmp_path / "f.yaml", self._fuselage_wing_yaml(fus_length=-8.0))
+        with pytest.raises(LoaderError) as ei:
+            load_fleet(path)
+        msg = str(ei.value)
+        assert "length_m must be positive" in msg
+        assert "'fuselage'" in msg
+        assert "fuselage_aft" not in msg
+
+    def test_break_outside_fuselage_span_rejected(self, tmp_path: Path) -> None:
+        """If the wing trailing edge falls forward of the nose (wing way ahead
+        of the fuselage), the derived break is outside the span — a degenerate
+        split that would produce a non-positive-length segment. Reject it."""
+        path = _write(
+            tmp_path / "f.yaml",
+            self._fuselage_wing_yaml(
+                fus_length=4.0,
+                fus_offset_x=0.0,  # fuselage span x ∈ [-2, 2]
+                wing_length=1.0,
+                wing_offset_x=5.0,  # wing trailing edge x = 4.5, way past the nose
+            ),
+        )
+        with pytest.raises(LoaderError, match="must lie strictly inside the fuselage span"):
+            load_fleet(path)
+
+    def test_explicit_front_aft_parts_not_re_split(self, tmp_path: Path) -> None:
+        """Explicit ``fuselage_front`` / ``fuselage_aft`` parts in YAML are a
+        valid override — the loader does NOT auto-split them, and accepts the
+        aircraft with no ``wing`` (the split derivation never runs)."""
+        path = _write(
+            tmp_path / "f.yaml",
+            """
+aircraft:
+  - id: explicit
+    name: Explicit
+    wing_position: high
+    gear: monowheel
+    movement_mode: always_cart
+    turn_radius_m: null
+    measured: false
+    parts:
+      - kind: fuselage_front
+        length_m: 3.0
+        width_m: 0.9
+        offset_x_m: 2.0
+        z_bottom_m: 0.0
+        z_top_m: 1.5
+      - kind: fuselage_aft
+        length_m: 5.0
+        width_m: 0.9
+        offset_x_m: -2.5
+        z_bottom_m: 0.0
+        z_top_m: 1.5
+""",
+        )
+        a = load_fleet(path)["explicit"]
+        kinds = sorted(p.kind for p in a.parts)
+        assert kinds == ["fuselage_aft", "fuselage_front"], (
+            f"explicit segments must pass through unchanged, got {a.parts!r}"
+        )
 
 
 # ----------------------------------------------------------------------------
@@ -793,7 +1188,7 @@ placements:
   - {plane: b, x_m: 10, y_m: 5, heading_deg: 0, on_carts: true}
 """,
         )
-        with pytest.raises(LoaderError, match="At most one cart_eligible"):
+        with pytest.raises(LoaderError, match=r"At most 1 cart_eligible"):
             load_layout(layout_path)
 
     def test_fleet_and_hangar_overrides(self, tmp_path: Path) -> None:

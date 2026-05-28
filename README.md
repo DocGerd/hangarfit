@@ -4,6 +4,7 @@
 [![codecov](https://codecov.io/gh/DocGerd/hangarfit/branch/develop/graph/badge.svg)](https://codecov.io/gh/DocGerd/hangarfit)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/DocGerd/hangarfit/badge)](https://securityscorecards.dev/viewer/?uri=github.com/DocGerd/hangarfit)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/12987/badge)](https://www.bestpractices.dev/projects/12987)
+[![License: Apache-2.0](https://img.shields.io/github/license/DocGerd/hangarfit)](LICENSE)
 
 An on-demand exception tool for a flying club's hangar parking.
 
@@ -19,19 +20,23 @@ It also renders a top-down PNG so a human can sanity-check the result by eye.
 
 **Phase 2a — shipped.** Added the static layout solver: `hangarfit solve` takes a scenario YAML (fleet, hangar, constraints, optional pins) and searches for up to K diverse valid layouts using random-restart hill climbing with min-conflicts descent. Acceptance runs through `collisions.check()` as its gate — the solver does not bypass the collision rule.
 
+**Phase 3a — shipped.** Tow-path planner v1: `hangarfit solve --render-paths` plans a per-plane tow path (Dubins) from the door to the parked pose, plus a tow order; the static-layout PNG overlays each plane's path so a human can sanity-check the route. Best-effort: a layout the planner can't fully route still renders (without paths) and a stderr warning names the blocking plane; exit code 3 fires only when no candidate layout is tow-routable. See [ADR-0007](docs/adr/0007-tow-path-planner-v1-scope.md).
+
+**Phase 3b — shipped.** Tow-path planner v2: a Reeds–Shepp motion model (reverse arcs eliminate the reorientation loops Dubins introduced) plus a door entry-cone search over heading × offset. See [ADR-0010](docs/adr/0010-reeds-shepp-motion-model.md).
+
 **Still explicitly out of scope:**
 
-- No movement-sequence planning ("in what order do I roll planes out and back in to reach this layout").
 - No tracking of hangar state across runs — each invocation is stateless.
 - No soft constraints / preferences. Constraints are HARD: pin, force_on_carts, maintenance plane.
 - No GUI or web frontend.
 - No handling of late arrivals as a live event stream.
+- Multi-plane *rearrangement* (move planes around an already-occupied hangar). The tow planner only handles **empty-hangar fill** — every plane enters once. Rearrangement is planner v2+ territory.
 
 These boundaries are deliberate.
 
 ## Status
 
-Pre-release. Phase 1 + Phase 2a are feature-complete (`hangarfit check` and `hangarfit solve`). All dimensions in `data/` are placeholders pending real measurement and are flagged as such in the YAML; checker output on the current data is illustrative, not authoritative — and so are any layouts the solver finds against it.
+All shipped phases are feature-complete: `hangarfit check` (Phase 1), `hangarfit solve` (Phase 2a/b/c), and `hangarfit solve --render-paths` (Phase 3a/b). All dimensions in `data/` are placeholders pending real measurement and are flagged as such in the YAML; checker output on the current data is illustrative, not authoritative — and so are any layouts the solver finds and any tow paths the planner draws against it.
 
 Follow progress in [GitHub Issues](https://github.com/DocGerd/hangarfit/issues) and milestones.
 
@@ -55,7 +60,7 @@ pip install -e .
 hangarfit check layouts/example.yaml
 ```
 
-> Note: against the current placeholder fleet/hangar measurements (see Status), the example layout fails validation. That's expected — Phase 1 ships the substrate; real measurements are tracked separately.
+> Note: `layouts/example.yaml` is a deliberate 6-plane subset that fits inside the current placeholder hangar — running `check` on it returns `valid` (exit code 0). To see a conflict diagnosis (red overlay in the PNG render, exit code 1), point at one of the `tests/fixtures/invalid_*.yaml` fixtures. All dimensions in `data/` remain placeholders pending real measurement (see Status), so any verdict on the current data is illustrative.
 
 ```bash
 # Render the layout (works on invalid layouts too — conflicts highlighted in red)
@@ -99,6 +104,9 @@ hangarfit solve scenario.yaml --alternatives 3 --strict-k
 
 # Budget the search to 5 wall-clock seconds (default 30)
 hangarfit solve scenario.yaml --budget 5
+
+# Plan + overlay each plane's tow path on the rendered PNG (Phase 3a/b)
+hangarfit solve scenario.yaml --render out.png --render-paths
 ```
 
 A scenario YAML carries `fleet:` / `hangar:` refs plus a `fleet_in:` list (which planes are present), an optional `maintenance:` block (which plane is in the back bay), and an optional `constraints:` mapping (per-plane pins or `force_on_carts` locks). See `tests/fixtures/solve_*.yaml` for ready-to-read examples covering each constraint kind.

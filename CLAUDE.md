@@ -8,7 +8,7 @@ This file is the durable **operational** context for the project: how we work, w
 
 `hangarfit` is an **on-demand exception tool** for a flying club: when the standard hangar parking layout breaks (delayed return, surprise maintenance, etc.), it helps find *a* valid alternative arrangement. The tool checks whether a hand-authored candidate layout is physically valid and renders a top-down PNG so a human can eyeball it; the solver searches for one when no candidate is in hand.
 
-**Status:** Phase 1 (substrate), Phase 2a (static layout solver, `hangarfit solve`), and Phase 3a (tow-path planning, `hangarfit solve --render-paths`) have all shipped. Live milestone status lives in auto-memory and GitHub milestones, not here.
+**Status:** Phase 1 (substrate), Phase 2a (static layout solver, `hangarfit solve`), Phase 2b–2c (solver realism + spread/diversity polish), Phase 3a (tow-path planning, `hangarfit solve --render-paths`), and Phase 3b (Reeds–Shepp reverse-capable tow motion) have all shipped. Live milestone status lives in auto-memory and GitHub milestones, not here.
 
 ---
 
@@ -20,7 +20,7 @@ This file is the durable **operational** context for the project: how we work, w
 | What is in / out of scope, the external actors, exit-code semantics pointer | [§3 Context & Scope](docs/architecture/03-context-and-scope.md) |
 | Module map (`cli`, `loader`, `models`, `geometry`, `collisions`, `solver`, `towplanner`, `visualize`) and per-module responsibilities | [§5 Building Block View](docs/architecture/05-building-block-view.md) |
 | Runtime flow of `check` and `solve` invocations | [§6 Runtime View](docs/architecture/06-runtime-view.md) |
-| **The parts model** (collision rule, why parts not bbox, `struts:` block) | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#the-parts-model) + [ADR-0001](docs/adr/0001-aircraft-parts-model.md) |
+| **The parts model** (collision rule, why parts not bbox, `struts:` block, the fuselage front/aft split — a wingtip may overhang a low-winger's *tail* but not its *cockpit*) | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#the-parts-model) + [ADR-0001](docs/adr/0001-aircraft-parts-model.md) + [ADR-0012](docs/adr/0012-fuselage-front-aft-split.md) |
 | **The coordinate convention + the determinant-−1 transform trap** | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#the-coordinate-convention) + [ADR-0002](docs/adr/0002-determinant-minus-one-transform.md) |
 | **The maintenance bay rule** (current `bay_intrusion` semantics) | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#the-maintenance-bay-rule) + [ADR-0006](docs/adr/0006-bay-intrusion-maintenance-rule.md). The Phase 1 predecessor is preserved as [ADR-0005](docs/adr/0005-maintenance-bay-rule.md) (Superseded by ADR-0006). |
 | Fleet composition (per-plane wing type, gear, movement mode, struts) | [`data/fleet.yaml`](data/fleet.yaml) — the source of truth; §8 calls out the strut-braced subset and the only low-wing |
@@ -29,7 +29,7 @@ This file is the durable **operational** context for the project: how we work, w
 | RR-MC solver algorithm and the determinism contract | [ADR-0003](docs/adr/0003-rr-mc-solver-algorithm.md) |
 | Diversity metric (edit-count, thresholds) | [ADR-0004](docs/adr/0004-diversity-metric.md) |
 | **The spread post-pass** (maximize inter-plane gap once valid) | [ADR-0008](docs/adr/0008-inter-plane-spread-soft-preference.md) |
-| **The tow-path planner** (empty-hangar fill, Dubins arcs, `solve --render-paths`, exit-3 tow-routability) | [§5 Building Block View](docs/architecture/05-building-block-view.md) (`towplanner`) + [ADR-0007](docs/adr/0007-tow-path-planner-v1-scope.md) |
+| **The tow-path planner** (empty-hangar fill, Reeds–Shepp arcs, `solve --render-paths`, exit-3 tow-routability) | [§5 Building Block View](docs/architecture/05-building-block-view.md) (`towplanner`) + [ADR-0007](docs/adr/0007-tow-path-planner-v1-scope.md) (v1 scope) + [ADR-0010](docs/adr/0010-reeds-shepp-motion-model.md) (v2 Reeds–Shepp motion) |
 | Why the project targets a single Python (3.12), not a range | [ADR-0009](docs/adr/0009-single-supported-python-version.md) |
 | All architecture decisions, including superseded ones | [`docs/adr/`](docs/adr/) |
 
@@ -78,6 +78,7 @@ Use the best-fitted model for the task. The model class to pick is "as much reas
 - **`pr-review-toolkit:silent-failure-hunter`** — for PRs touching loader or collision code.
 - **`pr-review-toolkit:type-design-analyzer`** — when `models.py` changes.
 - **`geometry-invariant-guard`** — for any PR touching `src/hangarfit/geometry.py` or `src/hangarfit/collisions.py`; guards the coordinate-transform sign-flip trap (see [ADR-0002](docs/adr/0002-determinant-minus-one-transform.md)).
+- **`determinism-guard`** — for any PR touching `src/hangarfit/solver.py` or `src/hangarfit/towplanner.py`; guards the byte-identical-plan determinism contract (same scenario + seed → bit-identical output, `max_restarts`-scoped per the #267 amendment), runs the solver twice on a fixed seed and diffs (see [ADR-0003](docs/adr/0003-rr-mc-solver-algorithm.md)).
 - **`feature-dev:code-architect`** — only for genuinely novel design decisions, not routine implementation.
 
 Most coding goes direct in-session. Subagent dispatch is for review work and isolated heavy lifts.
@@ -86,7 +87,7 @@ Most coding goes direct in-session. Subagent dispatch is for review work and iso
 
 ## Project-local Claude Code config
 
-The `.claude/` directory holds team-shared Claude Code settings (currently: a PostToolUse pytest hook that auto-runs tests after edits under `src/hangarfit/` or `tests/`). See [.claude/README.md](.claude/README.md) for what's there and how to disable per-contributor via a gitignored `.claude/settings.local.json`.
+The `.claude/` directory holds team-shared Claude Code settings (currently: a PreToolUse guard that blocks hand-edits to the hash-pinned `requirements-*.txt` lockfiles, a PostToolUse hook that runs ruff + pytest after edits under `src/hangarfit/` or `tests/`, plus a Stop-event hook that runs mypy once when a turn finishes). See [.claude/README.md](.claude/README.md) for what's there and how to disable per-contributor via a gitignored `.claude/settings.local.json`.
 
 ---
 
@@ -97,9 +98,11 @@ The `.claude/` directory holds team-shared Claude Code settings (currently: a Po
 | Server | Transport | Purpose |
 |---|---|---|
 | `github` | HTTP (`https://api.githubcopilot.com/mcp/`) | Issue / PR / release inspection from Claude; complements the existing `gh` CLI. |
+| `context7` | HTTP (`https://mcp.context7.com/mcp`) | Live, version-correct library docs (shapely, matplotlib & other deps) pulled into context on demand, so doc lookups reflect the installed version rather than stale training data. |
 
 **Canonical upstream references (verify before editing `.mcp.json`):**
 - GitHub MCP: https://github.com/github/github-mcp-server
+- Context7 MCP: https://github.com/upstash/context7
 
 If a URL or env-var name in `.mcp.json` ever stops working, check these first.
 
@@ -108,10 +111,11 @@ If a URL or env-var name in `.mcp.json` ever stops working, check these first.
 - **GitHub MCP** — Requires `GITHUB_PERSONAL_ACCESS_TOKEN` in your shell environment. Minimum permissions depend on which PAT type you create:
   - **Classic PAT:** `repo` + `read:org` scopes are sufficient for read operations; add `write:discussion` if you want Claude to create issues or PRs via the MCP server rather than `gh`.
   - **Fine-grained PAT:** Repository permissions `Contents: Read`, `Issues: Read`, `Pull requests: Read`; plus Organization permissions `Members: Read` for org-level lookups. Add the corresponding `Write` levels for create operations. Fine-grained PATs use different UI checkboxes from classic — the scope names above are classic-only.
+- **Context7 MCP** — **Works keyless out of the box; no env var required.** The checked-in `.mcp.json` entry carries no auth header on purpose, so a fresh clone connects under Context7's anonymous rate limits with zero setup. A `${CONTEXT7_API_KEY}` header is deliberately *not* committed: Claude Code does not expand `${VAR}` in HTTP `headers` for an unset variable, so an unresolved placeholder would be sent literally and break the keyless default. To raise rate limits, get a free key at context7.com/dashboard and add it locally (not committed) via your own client config or a gitignored override — Context7 reads it from the `CONTEXT7_API_KEY` request header.
 
 ### Verifying the servers loaded
 
-After cloning and running `claude`, use the `/mcp` command. The `github` server should appear with status **connected**. If it shows **failed**, check that `GITHUB_PERSONAL_ACCESS_TOKEN` is set in your shell environment.
+After cloning and running `claude`, use the `/mcp` command. The `github` and `context7` servers should appear with status **connected**. If `github` shows **failed**, check that `GITHUB_PERSONAL_ACCESS_TOKEN` is set in your shell environment; `context7` needs no env var and should connect keyless.
 
 ---
 
@@ -229,7 +233,7 @@ pip-compile --generate-hashes --no-strip-extras --allow-unsafe -o requirements-p
 # Phase 1 acceptance smoke test
 hangarfit check layouts/example.yaml --render out.png
 
-# Phase 3a: solve + tow-path overlay. Best-effort: a layout the v1 planner
+# Phase 3a/3b: solve + tow-path overlay. Best-effort: a layout the planner
 # can't fully route renders without paths (blocking plane named on stderr);
 # exit 3 only if NO candidate layout is tow-routable.
 hangarfit solve tests/fixtures/scenario_minimal.yaml --render out.png --render-paths

@@ -16,6 +16,7 @@ from shapely.geometry import Polygon
 
 from hangarfit.geometry import (
     aircraft_parts_world,
+    local_to_world,
     oriented_rect,
     polygon_overlap,
     polygon_overlap_area,
@@ -208,7 +209,7 @@ def _point_part(
 ) -> Part:
     """A tiny rectangle approximating a point at (offset_x, offset_y) plane-local."""
     return Part(
-        kind="fuselage",
+        kind="fuselage_aft",
         length_m=length_m,
         width_m=width_m,
         offset_x_m=offset_x_m,
@@ -374,6 +375,90 @@ class TestAircraftPartsWorld:
         assert _almost_equal(cy, 1.0, tol=1e-6)
 
 
+class TestLocalToWorld:
+    """``local_to_world`` is the single canonical per-point transform (#293).
+
+    ``aircraft_parts_world`` routes every vertex through it and
+    :mod:`hangarfit.visualize` imports it for gear/cart glyphs, so a
+    regression here would surface in both the collision geometry and the
+    renders. These tests pin the determinant-``−1`` sign directly on the
+    primitive (independent of ``aircraft_parts_world``) and assert that the
+    two stay equivalent so the formula can never silently drift apart.
+    """
+
+    def test_heading_45_right_wingtip_is_distinguishing(self) -> None:
+        """🔬 The DEFINITIVE off-by-90° / determinant-sign probe, pinned on
+        the primitive itself.
+
+        Plane-local right wingtip ``(u=0, v=1)`` at heading 45° must land at
+        world ``(+√2/2, −√2/2)`` (right and toward the door). A textbook CCW
+        rotation would send it to ``(−√2/2, +√2/2)`` — upper-left — so this
+        single assertion catches a sign flip in ``local_to_world``.
+        """
+        pl = Placement(plane_id="probe", x_m=0.0, y_m=0.0, heading_deg=45.0, on_carts=False)
+        wx, wy = local_to_world(0.0, 1.0, pl)
+        assert _almost_equal(wx, SQRT2_2, tol=1e-6), f"x expected {SQRT2_2}, got {wx}"
+        assert _almost_equal(wy, -SQRT2_2, tol=1e-6), f"y expected {-SQRT2_2}, got {wy}"
+
+    def test_heading_135_nose_is_distinguishing(self) -> None:
+        """🔬 Redundant guard at 135° where ``sin h ≠ cos h`` makes the nose
+        vector alone distinguish the correct transform from a CCW rotation.
+
+        Nose ``(u=1, v=0)`` → world ``(+√2/2, −√2/2)`` for the correct
+        det=−1 map; a CCW rotation would give ``(−√2/2, +√2/2)``.
+        """
+        pl = Placement(plane_id="probe", x_m=0.0, y_m=0.0, heading_deg=135.0, on_carts=False)
+        wx, wy = local_to_world(1.0, 0.0, pl)
+        assert _almost_equal(wx, SQRT2_2, tol=1e-6), f"x expected {SQRT2_2}, got {wx}"
+        assert _almost_equal(wy, -SQRT2_2, tol=1e-6), f"y expected {-SQRT2_2}, got {wy}"
+
+    def test_placement_offset_applied(self) -> None:
+        """Placement translation is applied after the rotation/reflection."""
+        pl = Placement(plane_id="probe", x_m=10.0, y_m=20.0, heading_deg=0.0, on_carts=False)
+        wx, wy = local_to_world(1.0, 0.0, pl)  # nose forward at heading 0 → world +y
+        assert _almost_equal(wx, 10.0, tol=1e-6)
+        assert _almost_equal(wy, 21.0, tol=1e-6)
+
+    @pytest.mark.parametrize("heading_deg", [0.0, 37.0, 90.0, 135.0, 200.0, -90.0, 360.0])
+    def test_agrees_with_aircraft_parts_world_corners(self, heading_deg: float) -> None:
+        """🔬 Equivalence pin (#293): the per-point primitive must reproduce
+        exactly the corners ``aircraft_parts_world`` produces, at non-axis
+        and axis-aligned headings alike.
+
+        Builds a part, transforms it via ``aircraft_parts_world``, then
+        independently transforms the same plane-local corners via
+        ``local_to_world`` and asserts byte-for-byte agreement. If a future
+        convention change drifts one definition from the other, this fails.
+        """
+        part = Part(
+            kind="wing",
+            length_m=2.0,
+            width_m=8.0,
+            offset_x_m=0.5,
+            offset_y_m=-0.25,
+            angle_deg=20.0,  # non-trivial in-plane rotation
+            z_bottom_m=1.0,
+            z_top_m=2.5,
+        )
+        ac = _aircraft_with_one_part(part)
+        pl = Placement(plane_id="probe", x_m=3.0, y_m=-1.5, heading_deg=heading_deg, on_carts=False)
+        [world] = aircraft_parts_world(ac, pl)
+        world_corners = list(world.polygon.exterior.coords)[:-1]
+
+        # Reconstruct the plane-local corners independently and route them
+        # through the primitive; they must match exactly (no tolerance).
+        local_poly = oriented_rect(
+            cx=part.offset_x_m,
+            cy=part.offset_y_m,
+            length=part.length_m,
+            width=part.width_m,
+            angle_deg=part.angle_deg,
+        )
+        local_corners = list(local_poly.exterior.coords)[:-1]
+        expected = [local_to_world(u, v, pl) for u, v in local_corners]
+        assert world_corners == expected
+
+
 class TestWorldPartMetadata:
     """``aircraft_parts_world`` must preserve every part's metadata
     untouched — kind, z-range, and plane id."""
@@ -381,7 +466,7 @@ class TestWorldPartMetadata:
     def test_kind_z_range_and_plane_id_preserved(self) -> None:
         parts = (
             Part(
-                kind="fuselage",
+                kind="fuselage_aft",
                 length_m=7.0,
                 width_m=0.8,
                 offset_x_m=0,
@@ -448,14 +533,21 @@ class TestAircraftPartsWorldOnRealAircraft:
         husky = fleet["aviat_husky"]
         pl = Placement(plane_id="aviat_husky", x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False)
         worlds = aircraft_parts_world(husky, pl)
-        # 4 parts: fuselage + wing + 2 struts
+        # 5 parts: fuselage_front + fuselage_aft + wing + 2 struts (the loader
+        # splits the single YAML fuselage front/aft — #50/ADR-0012).
         kinds = [w.kind for w in worlds]
-        assert kinds.count("fuselage") == 1
+        assert kinds.count("fuselage_front") == 1
+        assert kinds.count("fuselage_aft") == 1
         assert kinds.count("wing") == 1
         assert kinds.count("strut") == 2
-        # Fuselage at heading 0: long axis (length_m=7.0) runs along world y.
-        fuselage = next(w for w in worlds if w.kind == "fuselage")
-        minx, miny, maxx, maxy = fuselage.polygon.bounds
+        # Full fuselage at heading 0: long axis (length_m=6.88) runs along
+        # world y. Reconstruct the full span from the front+aft segments
+        # (their union is the original fuselage box).
+        fuselage_segs = [w for w in worlds if w.kind in ("fuselage_front", "fuselage_aft")]
+        miny = min(w.polygon.bounds[1] for w in fuselage_segs)
+        maxy = max(w.polygon.bounds[3] for w in fuselage_segs)
+        minx = min(w.polygon.bounds[0] for w in fuselage_segs)
+        maxx = max(w.polygon.bounds[2] for w in fuselage_segs)
         # length 6.88 → spans ≈ 6.88m along y; width 0.85 → spans ≈ 0.85m along x.
         assert _almost_equal(maxy - miny, 6.88, tol=1e-6)
         assert _almost_equal(maxx - minx, 0.85, tol=1e-6)

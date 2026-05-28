@@ -6,13 +6,13 @@ This directory holds **team-shared** [Claude Code](https://docs.claude.com/en/do
 
 | File | Status | Purpose |
 |---|---|---|
-| `settings.json` | committed | Team defaults — a `PreToolUse` guard that blocks hand-edits to the hash-pinned `requirements-*.txt` lockfiles, plus a `PostToolUse` hook that runs `ruff` + `pytest` after edits under `src/hangarfit/` or `tests/`. |
+| `settings.json` | committed | Team defaults — a `PreToolUse` guard that blocks hand-edits to the hash-pinned `requirements-*.txt` lockfiles, a `PostToolUse` hook that runs `ruff` + `pytest` after edits under `src/hangarfit/` or `tests/`, plus a `Stop` hook that runs `mypy` once when a turn finishes. |
 | `settings.local.json` | **gitignored** | Optional per-contributor override (see below). |
 | `README.md` | committed | This file. |
 
-## The on-edit hooks
+## The hooks
 
-`settings.json` registers two hooks on the `Edit` and `Write` tools, both shared with every contributor on clone.
+`settings.json` registers three hooks, all shared with every contributor on clone: two fire on the `Edit` and `Write` tools, and one fires when a turn finishes (`Stop`).
 
 ### PreToolUse — lockfile guard (blocking)
 
@@ -29,13 +29,18 @@ This mirrors three of the gates CI enforces (`ruff check`, `ruff format --check`
 
 Path matching is glob-based (`*/src/hangarfit/*` / `*/tests/*`), anchored with a leading `/` so that sibling directories like `vendor-src/hangarfit/` or `contests/` do not accidentally trigger the hook.
 
+### Stop — mypy (non-blocking)
+
+When a turn finishes, this hook runs `mypy src/hangarfit` once and shows the tail of its output in the transcript. `mypy` is a hard CI gate (`.github/workflows/ci.yml`, "Type-check with mypy") and the *one* gate the on-edit `PostToolUse` hook does not mirror — running a full type-check on every single edit is too slow to be worth it. Amortizing it to once per turn surfaces type errors before a PR reaches CI without paying the cost on each keystroke. Like the `PostToolUse` hook it is **non-blocking**: it always exits `0` even when `mypy` reports errors, so a turn is never aborted — the output is feedback, not a gate.
+
 ## Opting out (per contributor)
 
-Set the env var `HANGARFIT_SKIP_PYTEST_HOOK=1` in your shell init (`~/.bashrc`, `~/.zshrc`, etc.). The **PostToolUse** ruff + pytest hook detects this and exits immediately. Unset (or restart your shell) to re-enable. The PreToolUse lockfile guard is intentionally **not** opt-out-able — it is a cheap safety rail and the legitimate regeneration path (`pip-compile` via Bash) is never blocked anyway.
+Set the env var `HANGARFIT_SKIP_PYTEST_HOOK=1` in your shell init (`~/.bashrc`, `~/.zshrc`, etc.). The **PostToolUse** ruff + pytest hook detects this and exits immediately. The **Stop** mypy hook honours a separate `HANGARFIT_SKIP_MYPY_HOOK=1` so the two can be disabled independently. Unset (or restart your shell) to re-enable. The PreToolUse lockfile guard is intentionally **not** opt-out-able — it is a cheap safety rail and the legitimate regeneration path (`pip-compile` via Bash) is never blocked anyway.
 
 ```bash
 # ~/.bashrc or ~/.zshrc
 export HANGARFIT_SKIP_PYTEST_HOOK=1
+export HANGARFIT_SKIP_MYPY_HOOK=1
 ```
 
 The old `.claude/settings.local.json` opt-out mentioned in earlier drafts of this README does **not** work — Claude Code merges hook arrays across scopes rather than overriding them, so an empty array in local doesn't subtract the project entry. The env-var pattern moves the opt-out into a layer that actually short-circuits.

@@ -6,8 +6,10 @@ diagram in ``docs/architecture/08-crosscutting-concepts.md``),
 maintenance bay rendered conditionally on ``layout.maintenance_plane``
 (see :func:`_draw_maintenance_bay` for the open/closed contract), each
 placed aircraft drawn as its world :class:`Part` polygons (fuselage
-opaque, wing translucent so overlapping wings show their stack, struts
-as thin lines). Aircraft are color-keyed by ``wing_position``. If a
+near-opaque — ``fuselage_front``/cockpit a darker tint than
+``fuselage_aft``/tail — wing translucent so overlapping wings show their
+stack, struts as thin lines). Aircraft are color-keyed by ``wing_position``.
+If a
 :class:`CheckResult` is supplied, the parts of conflicting planes are
 overdrawn in red.
 
@@ -33,10 +35,11 @@ import matplotlib
 matplotlib.use("Agg", force=True)
 
 import matplotlib.pyplot as plt  # noqa: E402
+from matplotlib.patches import Circle as MplCircle  # noqa: E402
 from matplotlib.patches import Polygon as MplPolygon  # noqa: E402
 
-from .geometry import WorldPart, aircraft_parts_world  # noqa: E402
-from .models import CheckResult, Layout, Placement, WingPosition  # noqa: E402
+from .geometry import WorldPart, aircraft_parts_world, local_to_world  # noqa: E402
+from .models import Aircraft, CheckResult, Layout, Placement, WingPosition  # noqa: E402
 
 if TYPE_CHECKING:
     # Annotation-only import: the runtime code in _draw_tow_paths is duck-typed
@@ -77,6 +80,12 @@ _TOW_PATH_LINEWIDTH = 1.6
 
 _FUSELAGE_ALPHA = 0.9  # near-opaque: two fuselages overlapping is always
 # a conflict, no value in seeing through.
+# fuselage_front (cockpit) is drawn a darker tint of the same wing-position
+# fill so the cockpit boundary reads at a glance and the wing-over-cockpit
+# hard-conflict region is legible (ADR-0012). fuselage_aft keeps the plain
+# fill. 0.62 multiplies each RGB channel toward black — dark enough to
+# distinguish, light enough that the wing-position hue is still recognisable.
+_FUSELAGE_FRONT_DARKEN = 0.62
 _WING_ALPHA = 0.4  # translucent so stacked wings (z-disjoint nesting,
 # case 3 / case 7-8) show their plan-view overlap.
 _STRUT_LINEWIDTH = 1.2  # struts are physically thin (~5 cm × ~1.3 m); a
@@ -103,6 +112,44 @@ _BAY_WALL_HATCH = "///"
 _BAY_LABEL_COLOR = "#ffffff"
 _HANGAR_EDGE = "#2c3e50"  # near-black
 _DOOR_EDGE = "#bdc3c7"  # light gray — visually "open"
+
+# ── Wheel / cart glyph constants ────────────────────────────────────────────
+# All drawn at zorder=1.5, strictly between the wing/floor layer (zorder=1)
+# and the fuselage patch (zorder=2), so the wheels peek out at the
+# nose/tail/sides without obscuring aircraft body colours.
+_GLYPH_ZORDER = 1.5  # between wings (1) and fuselage (2)
+#
+# COLOUR: neutral dark-gray that reads on the off-white floor, stays clear of
+# the wing-position palette (#3498db/#e67e22/#f4d03f), the conflict-red
+# (#e74c3c), and the tow-path colours. A second shade is used for the cart
+# deck so the dolly rectangle is distinct from its wheel circles.
+_WHEEL_COLOR = "#566573"  # dark slate-gray — individual wheel discs
+_CART_DECK_COLOR = "#aab7b8"  # lighter gray — cart/dolly deck rectangle
+_CART_DECK_ALPHA = 0.85
+
+# Wheel disc radius in meters. Visually "a tyre" at ~6–9 m fuselage scale
+# inside an 18–30 m hangar. Mirror the _NOSE_ARROW_LENGTH_M tuning idiom.
+_WHEEL_RADIUS_M = 0.18
+
+# Cart deck half-dimensions in meters. The deck rectangle is drawn under the
+# fuselage centroid. Full width is 2 × 0.55 = 1.1 m, which is ~1.3× a typical
+# 0.85 m fuselage width, so it reads as "something underneath"; length is
+# shorter (~40% of a typical 6.5 m fuselage) so it is clearly not the fuselage.
+_CART_DECK_HALF_LENGTH_M = 1.3
+_CART_DECK_HALF_WIDTH_M = 0.55
+
+# Fraction of fuselage forward half where nose-wheel / main-gear land.
+# Nose wheel: near the fuselage nose tip. Main-gear (nosewheel config):
+# placed at ~35% back from nose toward CG. Main-gear (tailwheel config):
+# placed at ~40% forward from origin (CG). Tailwheel: at aft tip.
+# These are intentionally approximate — real gear positions are unknown
+# (fleet.yaml has measured:false everywhere) and these fractions give a
+# visually convincing top-down silhouette.
+_NOSE_GEAR_FRAC = 0.85  # fraction of forward half-fuselage for nose wheel
+_MAIN_GEAR_FWD_FRAC = 0.30  # fraction of forward half for nosewheel mains
+_MAIN_GEAR_TAILDRAGGER_FWD_FRAC = 0.45  # fraction of forward half for tailwheel mains
+# Main-gear lateral offset as a multiple of fuselage half-width.
+_MAIN_GEAR_LATERAL_FRAC = 1.6
 
 
 def render_layout(
@@ -288,18 +335,32 @@ def _draw_aircraft(ax: Any, layout: Layout) -> None:
         aircraft = layout.fleet[placement.plane_id]
         color = _WING_COLORS.get(aircraft.wing_position, _FALLBACK_COLOR)
         world_parts = aircraft_parts_world(aircraft, placement)
+        # Gear/cart glyph drawn before parts so the fuselage patch (zorder=2)
+        # sits on top — wheels peek out at nose/tail/sides.
+        _draw_gear_glyph(ax, placement, aircraft)
         for part in world_parts:
             _draw_part(ax, part, color)
         _annotate_plane(ax, placement, aircraft.id)
 
 
+def _darken(color: str, factor: float = _FUSELAGE_FRONT_DARKEN) -> tuple[float, float, float]:
+    """Return ``color`` with each RGB channel multiplied by ``factor`` (toward
+    black). Used to tint ``fuselage_front`` a darker shade of the plane's
+    wing-position fill so the cockpit boundary is legible (ADR-0012)."""
+    from matplotlib.colors import to_rgb
+
+    r, g, b = to_rgb(color)
+    return (r * factor, g * factor, b * factor)
+
+
 def _draw_part(ax: Any, part: WorldPart, color: str) -> None:
-    """Render a single world part. Fuselage is near-opaque (two fuselages
-    overlapping is always a conflict; no value in seeing through), wing
-    translucent (so stacked wings show their plan-view overlap visually),
-    strut as a thin outlined polygon (struts are physically thin, a fill
-    would be near-invisible), tail rendered like a small fuselage (same
-    z-tier, same conflict semantics).
+    """Render a single world part. Fuselage segments are near-opaque (two
+    fuselages overlapping is always a conflict; no value in seeing through) —
+    ``fuselage_front`` (cockpit) a darker tint of the wing-position fill,
+    ``fuselage_aft`` (tail) the plain fill — wing translucent (so stacked
+    wings show their plan-view overlap visually), strut as a thin outlined
+    polygon (struts are physically thin, a fill would be near-invisible), tail
+    rendered like a small fuselage (same z-tier, same conflict semantics).
 
     Any other ``PartKind`` value raises ``ValueError`` rather than falling
     through to a generic style. ``PartKind`` is closed at the type level,
@@ -307,7 +368,17 @@ def _draw_part(ax: Any, part: WorldPart, color: str) -> None:
     fail loud here.
     """
     coords = list(part.polygon.exterior.coords)[:-1]
-    if part.kind == "fuselage" or part.kind == "tail":
+    if part.kind == "fuselage_front":
+        patch = MplPolygon(
+            coords,
+            closed=True,
+            facecolor=_darken(color),
+            edgecolor=_HANGAR_EDGE,
+            alpha=_FUSELAGE_ALPHA,
+            lw=0.5,
+            zorder=2,
+        )
+    elif part.kind == "fuselage_aft" or part.kind == "tail":
         patch = MplPolygon(
             coords,
             closed=True,
@@ -342,6 +413,133 @@ def _draw_part(ax: Any, part: WorldPart, color: str) -> None:
             f"visualize.py must be updated when PartKind grows."
         )
     ax.add_patch(patch)
+
+
+def _add_wheel(ax: Any, wx: float, wy: float) -> MplCircle:
+    """Add a single wheel-disc circle at world coordinates ``(wx, wy)``."""
+    circle = MplCircle(
+        (wx, wy),
+        radius=_WHEEL_RADIUS_M,
+        facecolor=_WHEEL_COLOR,
+        edgecolor=_WHEEL_COLOR,
+        lw=0.4,
+        zorder=_GLYPH_ZORDER,
+    )
+    ax.add_patch(circle)
+    return circle
+
+
+def _draw_gear_glyph(ax: Any, placement: Placement, aircraft: Aircraft) -> None:
+    """Draw landing-gear wheels or a cart glyph depending on ``placement.on_carts``.
+
+    Geometry is approximated from the full fuselage's ``offset_x_m`` and
+    ``length_m``, reconstructed from the aircraft's ``fuselage_front`` +
+    ``fuselage_aft`` segments (the fuselage is split front/aft at load time —
+    ADR-0012, so there is no single ``fuselage`` part). The reconstructed span
+    is the union of every fuselage segment: nose tip = max segment
+    ``offset_x_m + length_m/2``, tail tip = min segment ``offset_x_m −
+    length_m/2``. ``tail`` parts are included so an aircraft that declares a
+    separate empennage still anchors its tail wheel correctly.
+
+    **Own-gear (``on_carts=False``):** wheel positions per ``aircraft.gear``:
+
+    - ``nosewheel`` (tricycle): one nose wheel near the fuselage nose tip, two
+      main wheels behind the CG at ±lateral offset.
+    - ``tailwheel``: two main wheels ahead of the CG, one tailwheel near the
+      fuselage aft tip.
+    - ``monowheel``: a single centred main wheel at the CG origin.
+
+    **Cart-borne (``on_carts=True``):** a dolly-deck rectangle (lighter gray,
+    translucent) centred at the origin with four small corner wheel circles,
+    drawn in the same world-transform path as parts so it rotates with the
+    aircraft heading.
+    """
+    # Reconstruct the full fuselage span from its front/aft segments (the
+    # fuselage is split at load time — ADR-0012, so there is no single
+    # ``fuselage`` part). ``tail`` is folded in so a separate empennage still
+    # anchors the tail wheel.
+    fuselage_segments = [
+        p for p in aircraft.parts if p.kind in ("fuselage_front", "fuselage_aft", "tail")
+    ]
+    if not fuselage_segments:
+        # No fuselage segment found — skip silently. Defensive: every fleet
+        # entry today has a fuselage, but we should not crash on novel entries.
+        return
+
+    nose_x = max(p.offset_x_m + p.length_m / 2.0 for p in fuselage_segments)  # +x: nose tip
+    fus_aft_x = min(p.offset_x_m - p.length_m / 2.0 for p in fuselage_segments)  # −x: tail tip
+    fus_cx = (nose_x + fus_aft_x) / 2.0  # local +x centre of full fuselage
+    fus_half_len = (nose_x - fus_aft_x) / 2.0
+    # Width is uniform across segments (the split is purely longitudinal); use
+    # the widest segment so a separate narrow tail doesn't shrink the lateral
+    # main-gear offset.
+    fus_half_wid = max(p.width_m for p in fuselage_segments) / 2.0
+
+    if placement.on_carts:
+        _draw_cart_glyph(ax, placement)
+    elif aircraft.gear == "nosewheel":
+        # Nose wheel — near the nose tip
+        nose_u = fus_cx + fus_half_len * _NOSE_GEAR_FRAC
+        wx, wy = local_to_world(nose_u, 0.0, placement)
+        _add_wheel(ax, wx, wy)
+        # Main gear pair — slightly aft of CG (behind the wing root)
+        main_u = fus_cx - fus_half_len * _MAIN_GEAR_FWD_FRAC
+        lateral = fus_half_wid * _MAIN_GEAR_LATERAL_FRAC
+        for v in (+lateral, -lateral):
+            wx, wy = local_to_world(main_u, v, placement)
+            _add_wheel(ax, wx, wy)
+    elif aircraft.gear == "tailwheel":
+        # Main gear pair — forward of CG, ahead of the wing root
+        main_u = fus_cx + fus_half_len * _MAIN_GEAR_TAILDRAGGER_FWD_FRAC
+        lateral = fus_half_wid * _MAIN_GEAR_LATERAL_FRAC
+        for v in (+lateral, -lateral):
+            wx, wy = local_to_world(main_u, v, placement)
+            _add_wheel(ax, wx, wy)
+        # Tailwheel — near the aft tip
+        tail_u = fus_aft_x + fus_half_len * (1.0 - _NOSE_GEAR_FRAC)
+        wx, wy = local_to_world(tail_u, 0.0, placement)
+        _add_wheel(ax, wx, wy)
+    elif aircraft.gear == "monowheel":
+        # Single centred main wheel at the gear/cart origin
+        wx, wy = local_to_world(0.0, 0.0, placement)
+        _add_wheel(ax, wx, wy)
+    # No else needed — Gear is a closed Literal; mypy and the model guard all values.
+
+
+def _draw_cart_glyph(ax: Any, placement: Placement) -> None:
+    """Draw a four-wheel dolly/cart glyph centred at the gear origin.
+
+    The deck rectangle is sized by the module constants
+    ``_CART_DECK_HALF_LENGTH_M`` / ``_CART_DECK_HALF_WIDTH_M`` and rotated
+    with ``placement.heading_deg`` via the standard world-transform.  Four
+    small wheel discs sit at the deck corners so the glyph reads as a
+    wheeled dolly rather than a coloured rectangle.
+    """
+    # Deck corners in plane-local coordinates (centred at origin, ±L, ±W).
+    hl = _CART_DECK_HALF_LENGTH_M
+    hw = _CART_DECK_HALF_WIDTH_M
+    corner_locals = [
+        (+hl, +hw),
+        (+hl, -hw),
+        (-hl, -hw),
+        (-hl, +hw),
+    ]
+    deck_world = [local_to_world(u, v, placement) for u, v in corner_locals]
+    deck_patch = MplPolygon(
+        deck_world,
+        closed=True,
+        facecolor=_CART_DECK_COLOR,
+        edgecolor=_WHEEL_COLOR,
+        alpha=_CART_DECK_ALPHA,
+        lw=0.8,
+        zorder=_GLYPH_ZORDER,
+    )
+    ax.add_patch(deck_patch)
+
+    # Four corner wheel discs.
+    for u, v in corner_locals:
+        wx, wy = local_to_world(u, v, placement)
+        _add_wheel(ax, wx, wy)
 
 
 def _annotate_plane(ax: Any, placement: Placement, plane_id: str) -> None:

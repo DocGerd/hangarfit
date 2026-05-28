@@ -29,7 +29,7 @@ def _fuselage_box() -> Part:
     placement / entry at the front wall (y = 0) keeps every world vertex at
     y >= 0 (mirrors the test_towplanner_motion.py fixture)."""
     return Part(
-        kind="fuselage",
+        kind="fuselage_aft",
         length_m=1.0,
         width_m=0.6,
         offset_x_m=0.5,
@@ -267,7 +267,7 @@ def test_plan_fill_routes_origin_spanning_planes() -> None:
             measured=False,
             parts=(
                 Part(
-                    kind="fuselage",
+                    kind="fuselage_aft",
                     length_m=2.0,
                     width_m=1.5,
                     offset_x_m=0.0,

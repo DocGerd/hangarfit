@@ -10,6 +10,20 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Fixed
 
+## [0.7.2] — 2026-05-28
+
+Housekeeping cut. Two doc/test items left over from the v0.7.0/v0.7.1 release campaign — no behavioural change to `check`, `solve`, or `solve --render-paths` output for any existing scenario.
+
+### Changed
+
+- `tests/test_solver_search.py` now anchors every fixture / layout / data load on `Path(__file__).resolve().parent.parent` rather than process cwd, so pytest can be invoked from any directory and the tests still resolve the right files. Matches the existing convention in `tests/test_loader.py` (#317).
+- README status section updated to reflect Phase 3a (tow-path planner v1) and Phase 3b (Reeds–Shepp v2) having shipped in v0.7.0/v0.7.1; removed the stale "No movement-sequence planning" out-of-scope claim and the stale "the example layout fails validation" parenthetical.
+
+### Fixed
+
+- LICENSE Apache-2.0 copyright line was the unfilled `[yyyy] [name of copyright owner]` template placeholder; now reads `Copyright 2026 DocGerdSoft (Patrick Kuhn)` (#310).
+- `solver._plane_footprint_area` no longer leaves a `tail` part in both the reconstructed-fuselage span *and* the per-part lengths list — a structural double-count for an aircraft declaring both fuselage segments and a separate tail. Dormant in real use today (no fleet aircraft has a `tail` part) and behaviorally inert under the current `max()` reduction, but a regression guard against future helper refactors. Includes a unit test pinning the post-fix value (#317).
+
 ## [0.7.1] — 2026-05-27
 
 First published release of the 0.7.x line. v0.7.0 was tagged on `main` but its GitHub Release could not be published — the tag was consumed by an immutable release during the release cut and is permanently reserved — so v0.7.1 supersedes it with identical features plus the release-workflow fix below.
@@ -106,7 +120,8 @@ First Phase 1 cut — substrate for arranging the flying club fleet in a stack-s
 - Apache-2.0 license, public-audience README, CI matrix (Python 3.11 + 3.12), branch protection on develop + main (#13, #14, #15, #16).
 - Strut-aware golden tests + all-9-planes fixture using larger test-only hangar to accommodate strut-bracing geometry on placeholder dimensions (#5).
 
-[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.7.1...HEAD
+[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.7.2...HEAD
+[0.7.2]: https://github.com/DocGerd/hangarfit/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/DocGerd/hangarfit/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/DocGerd/hangarfit/compare/v0.6.1...v0.7.0
 [0.6.1]: https://github.com/DocGerd/hangarfit/compare/v0.6.0...v0.6.1

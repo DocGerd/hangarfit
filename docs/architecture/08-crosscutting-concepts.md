@@ -22,11 +22,34 @@ their `[z_bottom_m, z_top_m]` ranges is less than
 of the *same* aircraft are never checked against each other — a
 Husky's wing and its own strut share a plan-view column by design.
 
-The closed set of `PartKind` values is `{"fuselage", "wing", "strut",
-"tail"}`. Adding a new structural element (engine nacelle, ventral
-fin) is a code change in `src/hangarfit/models.py`, not just a YAML
-edit — see [ADR-0001](../adr/0001-aircraft-parts-model.md) for the
-full rationale and rejected alternatives.
+**The fuselage front/aft exception.** The fuselage is split into two
+kinds, `fuselage_front` (cockpit / nose) and `fuselage_aft` (cabin-aft
++ tail), so the rule can tell a wing-over-cockpit from a wing-over-tail.
+`wing × fuselage_aft` keeps the two-clause rule above (a wing may
+overhang another plane's tail when the heights are disjoint). But
+`wing × fuselage_front` is a **hard conflict on plan-view overlap
+alone — the height clause (2) is dropped**: a wing over a cockpit blocks
+the canopy / prop arc / pilot ingress at *any* nesting height. This is
+the one pair that ignores `z`; every other pair (including
+`fuselage_* × fuselage_*`, which share a z-band by construction) uses
+the uniform two-clause predicate. See
+[ADR-0012](../adr/0012-fuselage-front-aft-split.md) for the rationale
+and rejected alternatives.
+
+The closed set of `PartKind` values is `{"fuselage_front",
+"fuselage_aft", "wing", "strut", "tail"}`. The legacy `"fuselage"` is
+**not** a constructed kind — it survives only as a transient YAML keyword
+the loader auto-splits at the wing trailing-edge station
+(`wing.offset_x_m − wing.length_m/2`, the #282 wing-spar precedent),
+emitting an area-conserving `fuselage_front` + `fuselage_aft` pair whose
+union is the original box. An aircraft with a `fuselage` part but no
+`wing` part is a load error (nothing to derive the break from); explicit
+`fuselage_front`/`fuselage_aft` parts in YAML are a valid override the
+loader does not split. Adding a new structural element (engine nacelle,
+ventral fin) is a code change in `src/hangarfit/models.py`, not just a
+YAML edit — see [ADR-0001](../adr/0001-aircraft-parts-model.md) for the
+parts-not-bbox rationale and [ADR-0012](../adr/0012-fuselage-front-aft-split.md)
+for the front/aft refinement.
 
 **Fleet composition relevant to the parts model.** Of the nine
 aircraft in `data/fleet.yaml`, six are **strut-braced** (the Aviat
@@ -37,10 +60,12 @@ aircraft is high-wing. These two facts — which planes have struts and
 which plane is low-wing — drive the operationally interesting cases
 of the collision rule: strut-braced planes block another plane's
 wing from nesting through their wing volume, and the only low-wing
-allows a high-wing's wingtip to legally project over its fuselage
-area in plan view (the height-disjoint pass-through case). Per-plane
-dimensions, gear types, and movement modes live in `data/fleet.yaml`
-as the source of truth.
+allows a high-wing's wingtip to legally project over its **aft
+fuselage / tail** in plan view (the height-disjoint pass-through case)
+— but *not* over its **cockpit / front fuselage**, which is a hard
+conflict regardless of height (the front/aft split, ADR-0012).
+Per-plane dimensions, gear types, and movement modes live in
+`data/fleet.yaml` as the source of truth.
 
 ### The maintenance bay rule
 
@@ -205,11 +230,26 @@ collision checker reads them once per `check()` call from
 `layout.hangar`; changing them at runtime means editing the YAML
 file. Hard-coding them anywhere outside `data/hangar.yaml` is a bug.
 
+`data/hangar.yaml` carries one more defaulted site scalar that is *not*
+a clearance: `max_carts` (default `1`). It is the number of spare carts
+available to the `cart_eligible` pool and is enforced by
+`Layout.__post_init__` (not the collision checker) — at most `max_carts`
+`cart_eligible` planes may sit on carts in one layout, while `always_cart`
+planes get their own carts and never draw from this pool. It is
+overridable per-invocation with the `--max-carts` CLI flag, which
+replaces the value on the loaded `Hangar` before any layout is built. See
+[ADR-0007](../adr/0007-tow-path-planner-v1-scope.md) (cart-inventory
+amendment).
+
 The two-clause predicate is symmetric in the two clearances: a
 collision requires *both* the plan-view and the height-gap thresholds
 to be violated simultaneously. This is what lets a high-wing's
-wingtip legally project over a low-wing's fuselage area (close in
-plan view, far in height) — see ADR-0001.
+wingtip legally project over a low-wing's **aft fuselage / tail**
+(close in plan view, far in height) — see ADR-0001. The **one
+exception** is `wing × fuselage_front`: a wing over a cockpit is a hard
+conflict on plan-view overlap alone, with the height clause dropped
+(ADR-0012). `wing_layer_clearance_m` therefore governs every pair
+*except* wing-over-cockpit.
 
 ## Data integrity: frozen dataclasses + `__post_init__` invariants
 
@@ -250,8 +290,10 @@ Two signal channels exist:
   Examples in the current taxonomy: `hangar_bounds` and
   `bay_intrusion` (both single-plane conflicts — `Conflict.planes`
   has one entry), and the pairwise `<kindA>_<kindB>_overlap` family
-  (`fuselage_wing_overlap`, `strut_wing_overlap`, etc., two-plane
-  conflicts with the kind names always alphabetically sorted so the
+  (`fuselage_aft_wing_overlap`, `fuselage_front_wing_overlap`,
+  `fuselage_aft_fuselage_aft_overlap`, `strut_wing_overlap`, etc., two-plane
+  conflicts with the kind names always alphabetically sorted —
+  `"fuselage_aft"` < `"fuselage_front"` < `"strut"` < `"wing"` — so the
   string is deterministic regardless of iteration order). The
   single-vs-pair arity matters downstream: the visualizer highlights
   one plane vs two; `total_penetration_m2` accounting only sums the

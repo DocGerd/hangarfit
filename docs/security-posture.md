@@ -88,17 +88,27 @@ the same reason — even though the repo does ship a
 code-owner for the whole tree (GitHub suppresses the code-owner review
 request on the author's own PR, which here is essentially every PR).
 
-Everything that *can* be enforced without a second human already is, on
-both protected branches (`develop` and `main`):
+Everything that *can* be enforced without a second human is enforced on
+both protected branches (`develop` and `main`), with one deliberate
+workflow exception called out below (up-to-date-before-merge on `develop`):
 
 - **Admin enforcement** — the rules apply to the maintainer too
   (`enforce_admins`), so protection cannot be silently bypassed.
-- **Required status checks, strict** — PRs must pass the configured CI
-  gate (the test suite on every supported Python and both lockfile-drift
-  guards, plus CodeQL on `develop`) and be up to date with the base branch
-  before merge. The exact required-check set is configured per branch and
-  reconciled at each release cut, so `develop` and `main` are not always
-  byte-identical (e.g. CodeQL runs on `develop` PRs only).
+- **Required status checks** — PRs must pass the configured CI gate (the
+  test suite on every supported Python and all three lockfile-drift guards,
+  plus CodeQL on `develop`) before merge. On `main` this is **strict** (the branch
+  must also be up to date with the base before merge). On `develop` the
+  up-to-date / `strict` requirement is **deliberately disabled**: with it on,
+  merging any PR forced every *other* open PR to "Update branch" and re-run the
+  full required-check set before it could merge — pure churn for a
+  single-maintainer flow whose PRs are usually file-disjoint. The
+  `push`-to-`develop` CI run re-validates the integrated result within seconds
+  of each merge, so integration regressions still surface immediately; this
+  trades a small slice of the Scorecard branch-protection tier (up-to-date is
+  one of the credited sub-criteria) for merge throughput. The exact
+  required-check set is otherwise configured per branch and reconciled at each
+  release cut, so `develop` and `main` are not always byte-identical (e.g.
+  CodeQL runs on `develop` PRs only).
 - **Stale-review dismissal** — approvals are dismissed on new pushes (a
   no-op today given the reviewer count, but already correct for the day a
   co-maintainer joins).
@@ -112,8 +122,9 @@ second-person-gated — the cap this section describes.
 **A note on linear history.** `required_linear_history` is intentionally
 **off**. Enabling it would forbid the merge commits the GitFlow release
 flow depends on (`release/*` → `main`, and the back-merge to `develop`).
-The trade-off was explored in spike [#202]; do not "fix" this to chase a
-Scorecard point.
+The trade-off was explored in spike [#202] and the decision is recorded in
+[ADR-0011](adr/0011-linear-history-strategy-under-gitflow.md); do not "fix"
+this to chase a Scorecard point.
 
 **Will it move?** Only with an external co-maintainer — exactly as for
 [Code-Review](#code-review-score-0). The non-human protections are already

@@ -30,7 +30,7 @@ def _canary_aircraft(*, offset_y_m: float, turn_radius_m: float = 5.0) -> Aircra
     det−1 transform can be observed (right wingtip → world (+x, −y)).
     """
     part = Part(
-        kind="fuselage",
+        kind="fuselage_aft",
         length_m=0.001,
         width_m=0.001,
         offset_x_m=0.0,

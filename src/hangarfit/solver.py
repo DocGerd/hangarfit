@@ -13,6 +13,7 @@ the current implementation supports:
 
 from __future__ import annotations
 
+import itertools
 import logging
 import math
 import random as _random_module
@@ -391,12 +392,14 @@ def _check_trivially_infeasible(
             )
             return check, _empty_layout(scenario)
 
-    # Check 2: Σ bbox areas vs hangar floor area
+    # Check 2: Σ bbox areas vs hangar floor area. Uses the full-fuselage
+    # footprint (not _plane_max_extent) so the fuselage front/aft split
+    # (#50/ADR-0012) doesn't shrink the estimate and let an infeasible fleet
+    # slip the gate.
     total_area = 0.0
     for pid in scenario.fleet_in:
         plane = scenario.fleet[pid]
-        length, width = _plane_max_extent(plane)
-        total_area += length * width
+        total_area += _plane_footprint_area(plane)
     hangar_area = scenario.hangar.length_m * scenario.hangar.width_m
     if total_area > hangar_area:
         check = CheckResult(
@@ -426,20 +429,23 @@ def _check_trivially_infeasible(
             pinned_placements.append(constraint.pin)
 
     if pinned_placements:
-        # The cart rule (at most one cart_eligible plane on carts at a
-        # time) is enforced by Layout.__post_init__ but NOT by
+        # The cart rule (at most hangar.max_carts cart_eligible planes on
+        # carts at a time) is enforced by Layout.__post_init__ but NOT by
         # Scenario.__post_init__ — that's a cross-pin invariant Scenario
         # currently doesn't check. Guard explicitly here so we can return
         # a sharp `pin_cart_rule` conflict instead of silently absorbing
         # a generic Layout `ValueError`. Morally this check belongs in
         # Scenario; a follow-up could migrate it to Scenario.__post_init__
-        # so every caller (not just solve()) benefits.
+        # so every caller (not just solve()) benefits. The limit tracks
+        # scenario.hangar.max_carts so it agrees with the Layout invariant
+        # (and with any --max-carts override already applied to the hangar).
+        max_carts = scenario.hangar.max_carts
         cart_eligible_on_carts = sum(
             1
             for p in pinned_placements
             if p.on_carts and scenario.fleet[p.plane_id].movement_mode == "cart_eligible"
         )
-        if cart_eligible_on_carts > 1:
+        if cart_eligible_on_carts > max_carts:
             check = CheckResult(
                 conflicts=(
                     Conflict.single(
@@ -447,7 +453,7 @@ def _check_trivially_infeasible(
                         plane=pinned_placements[0].plane_id,
                         detail=(
                             f"{cart_eligible_on_carts} cart_eligible pins on "
-                            f"carts (cart rule allows at most 1)"
+                            f"carts (cart rule allows at most {max_carts})"
                         ),
                     ),
                 ),
@@ -513,6 +519,42 @@ def _plane_max_extent(plane: Aircraft) -> tuple[float, float]:
     max_length = max(p.length_m for p in plane.parts)
     max_width = max(p.width_m for p in plane.parts)
     return max_length, max_width
+
+
+def _plane_footprint_area(plane: Aircraft) -> float:
+    """A bbox-area lower bound for the Σ-areas infeasibility gate (check #2).
+
+    Like :func:`_plane_max_extent` this is a deliberately coarse, offset-
+    ignoring estimate, but it must NOT undercount the fuselage: the loader
+    splits one fuselage box into a ``fuselage_front`` + ``fuselage_aft`` pair
+    (#50/ADR-0012), so a plain ``max(length_m)`` over parts would collapse the
+    fuselage extent to its longer *segment* and shrink the footprint estimate
+    — making a genuinely-infeasible full fleet slip past the gate. Reconstruct
+    the full fuselage span (union of the segments, the same way the area is
+    conserved at load time) before taking the max length.
+
+    Kept separate from :func:`_plane_max_extent` on purpose: that function also
+    feeds the initial-placement spawn margin, and changing its return value
+    would shift the solver's RNG stream and disturb the determinism canaries.
+    This helper is consumed only by the infeasibility gate, where no RNG flows.
+    """
+    fuselage_segs = [p for p in plane.parts if p.kind in ("fuselage_front", "fuselage_aft", "tail")]
+    # A standalone ``tail`` part is folded into the reconstructed fuselage span
+    # above, so it must also be excluded from the per-part lengths list — else
+    # an aircraft declaring both fuselage segments and a separate ``tail`` would
+    # have its ``tail`` length counted twice (#317). Dormant today (no fleet/
+    # fixture aircraft has a ``tail`` part) and the direction is fail-safe
+    # (over-count → over-eager rejection), but worth the one-line guard.
+    lengths = [
+        p.length_m for p in plane.parts if p.kind not in ("fuselage_front", "fuselage_aft", "tail")
+    ]
+    if fuselage_segs:
+        nose = max(p.offset_x_m + p.length_m / 2.0 for p in fuselage_segs)
+        tail = min(p.offset_x_m - p.length_m / 2.0 for p in fuselage_segs)
+        lengths.append(nose - tail)
+    max_length = max(lengths)
+    max_width = max(p.width_m for p in plane.parts)
+    return max_length * max_width
 
 
 class _LayoutBuildFailure(Exception):
@@ -794,9 +836,9 @@ def _initial_placements(
     """Sample initial placements for every plane in ``fleet_in``.
 
     ``cart_bucket`` is the set of cart_eligible planes that should be
-    ``on_carts=True`` for this restart (at most one element per the
-    enumeration in :func:`_enumerate_cart_buckets`). Per-plane
-    ``on_carts`` resolution:
+    ``on_carts=True`` for this restart (up to ``hangar.max_carts``
+    elements per the enumeration in :func:`_enumerate_cart_buckets`).
+    Per-plane ``on_carts`` resolution:
 
     1. ``constraint.force_on_carts`` (if set) — highest priority.
     2. ``constraint.pin.on_carts`` (if pinned).
@@ -842,36 +884,43 @@ def _initial_placements(
 def _enumerate_cart_buckets(scenario: Scenario) -> list[frozenset[str]]:
     """Enumerate the cart-assignment buckets to round-robin over (spec §4.2).
 
-    Returns ``C + 1`` buckets — the empty set plus a singleton for each
-    unlocked ``cart_eligible`` plane — when no cart_eligible plane is
-    pre-committed to ``on_carts=True``. If one IS pre-committed (by
-    ``force_on_carts=True`` or a pin with ``on_carts=True``), the
-    at-most-one cart-rule slot is already taken; the only feasible
-    bucket is ``[frozenset()]``, because any singleton would put a
-    second cart_eligible plane on carts and violate the rule.
+    A bucket is the set of *free* (unlocked) ``cart_eligible`` planes to
+    put ``on_carts=True`` for one restart. The buckets are every subset of
+    the free ``cart_eligible`` planes of size ``0 .. remaining``, where
+    ``remaining = hangar.max_carts − (cart_eligible planes already
+    committed to on_carts by a pin or force_on_carts)``. With the default
+    ``max_carts = 1`` and nothing pre-committed this is exactly the empty
+    set plus a singleton per free plane — the original behaviour, preserved
+    byte-for-byte (so the ADR-0003 determinism canaries are unaffected). A
+    larger ``max_carts`` additionally enumerates pairs, triples, … up to
+    the inventory size, so the search can actually reach multi-cart
+    layouts (#210).
 
-    Locked cart_eligible planes (any pin, or ``force_on_carts`` set)
+    Locked ``cart_eligible`` planes (any pin, or ``force_on_carts`` set)
     bypass round-robin: their ``on_carts`` state is fixed by the
-    constraint. The cart rule is enforced holistically by
-    ``Layout.__post_init__`` later — this enumeration just avoids
-    wasting restart budget on guaranteed-infeasible configurations.
+    constraint, and a pin/force that puts one on carts consumes one unit of
+    the inventory (shrinking ``remaining``). A pin with ``on_carts=False``
+    locks the plane out of every bucket but consumes no inventory. If
+    commitments already meet ``max_carts``, ``remaining`` is 0 and the only
+    bucket is the empty set; a genuine over-commit is caught earlier as
+    ``trivially_infeasible_pin_cart_rule``.
 
-    Note: a pin with ``on_carts=False`` also locks the plane (so it
-    can't appear in any bucket) but does NOT consume the on-carts slot
-    — other unlocked cart_eligibles can still be enumerated as
-    singletons.
+    The cart rule is still enforced holistically by
+    ``Layout.__post_init__`` later — this enumeration just avoids wasting
+    restart budget on guaranteed-infeasible configurations.
 
     Iteration is over ``scenario.fleet_in`` (a tuple), not
-    ``scenario.fleet`` (a ``MappingProxyType``-wrapped dict view) — so
-    bucket ordering is deterministic by construction.
+    ``scenario.fleet`` (a ``MappingProxyType``-wrapped dict view), and
+    combinations are generated in that order, so bucket ordering is
+    deterministic by construction.
     """
     free_cart_eligibles: list[str] = []
-    has_committed_cart_eligible_on_carts = False
+    committed_on_carts = 0
     for pid in scenario.fleet_in:
         if pid == scenario.maintenance_plane:
             # Occupant is treated as away — it never enters the layout, so
-            # round-robining a singleton cart bucket for it would be a no-op
-            # restart that wastes one slot of the C+1 rotation.
+            # round-robining a cart bucket for it would be a no-op restart
+            # that wastes one slot of the rotation.
             continue
         plane = scenario.fleet[pid]
         if not plane.is_cart_eligible:
@@ -880,21 +929,25 @@ def _enumerate_cart_buckets(scenario: Scenario) -> list[frozenset[str]]:
         if constraint is not None:
             if constraint.pin is not None:
                 # Any pin locks the plane out of round-robin. If the pin
-                # puts it on carts, the on-carts slot is consumed.
+                # puts it on carts, one unit of inventory is consumed.
                 if constraint.pin.on_carts:
-                    has_committed_cart_eligible_on_carts = True
+                    committed_on_carts += 1
                 continue
             if constraint.force_on_carts is not None:
-                # force_on_carts=True consumes the on-carts slot.
+                # force_on_carts=True consumes one unit of inventory.
                 if constraint.force_on_carts:
-                    has_committed_cart_eligible_on_carts = True
+                    committed_on_carts += 1
                 continue
         free_cart_eligibles.append(pid)
 
-    buckets: list[frozenset[str]] = [frozenset()]
-    if not has_committed_cart_eligible_on_carts:
-        for pid in free_cart_eligibles:
-            buckets.append(frozenset({pid}))
+    remaining = min(
+        max(0, scenario.hangar.max_carts - committed_on_carts),
+        len(free_cart_eligibles),
+    )
+    buckets: list[frozenset[str]] = []
+    for size in range(remaining + 1):
+        for combo in itertools.combinations(free_cart_eligibles, size):
+            buckets.append(frozenset(combo))
     return buckets
 
 

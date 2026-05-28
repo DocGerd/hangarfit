@@ -25,7 +25,7 @@ if TYPE_CHECKING:
 WingPosition = Literal["high", "mid", "low"]
 Gear = Literal["tailwheel", "nosewheel", "monowheel"]
 MovementMode = Literal["always_cart", "always_own_gear", "cart_eligible"]
-PartKind = Literal["fuselage", "wing", "strut", "tail"]
+PartKind = Literal["fuselage_front", "fuselage_aft", "wing", "strut", "tail"]
 
 _VALID_PART_KINDS = frozenset(typing.get_args(PartKind))
 _VALID_WING_POSITIONS = frozenset(typing.get_args(WingPosition))
@@ -37,14 +37,23 @@ _VALID_MOVEMENT_MODES = frozenset(typing.get_args(MovementMode))
 class Part:
     """One oriented rectangle in plane-local coordinates with a height range.
 
-    The universal collision unit. Fuselage, wing, and each strut are all
-    represented as ``Part`` instances. See
+    The universal collision unit. Fuselage segments, wing, and each strut
+    are all represented as ``Part`` instances. See
     ``docs/architecture/08-crosscutting-concepts.md`` "The coordinate
     convention" for plane-local coordinates (``+x`` forward, ``+y`` right).
 
-    ``kind`` is closed: ``"fuselage" | "wing" | "strut" | "tail"``. New
-    kinds must be added to ``PartKind`` and the matching ``_VALID_PART_KINDS``
-    set above; the collision checker and visualizer key off these values.
+    ``kind`` is closed: ``"fuselage_front" | "fuselage_aft" | "wing" |
+    "strut" | "tail"``. The fuselage is split front/aft so the collision
+    rule can distinguish a wing over a cockpit (``fuselage_front`` — always
+    a conflict in plan view, height ignored) from a wing over a tail
+    (``fuselage_aft`` — today's two-clause z-gap rule); see ADR-0012 and
+    ``docs/architecture/08-crosscutting-concepts.md`` "The parts model".
+    The legacy ``"fuselage"`` keyword is **not** a constructed kind: it
+    survives only as a transient YAML keyword the loader auto-splits at the
+    wing trailing-edge station (see :func:`hangarfit.loader._split_fuselage`).
+    New kinds need only be added to the ``PartKind`` literal —
+    ``_VALID_PART_KINDS`` is derived from it via ``get_args`` — after which
+    the collision checker and visualizer must learn to key off them.
     """
 
     kind: PartKind
@@ -272,6 +281,13 @@ class Hangar:
     door wall, ``+y`` deeper into the hangar. See
     ``docs/architecture/08-crosscutting-concepts.md`` "The coordinate
     convention".
+
+    ``max_carts`` is the number of spare carts available to the
+    ``cart_eligible`` pool — a property of the site's equipment, not of
+    any airframe. It bounds how many ``cart_eligible`` planes may sit on
+    carts in a single :class:`Layout` (``always_cart`` planes get their
+    own carts and never draw from this pool). Defaults to ``1``, which
+    reproduces the original hard-coded single-cart rule.
     """
 
     length_m: float
@@ -280,6 +296,7 @@ class Hangar:
     maintenance_bay: MaintenanceBay
     clearance_m: float
     wing_layer_clearance_m: float
+    max_carts: int = 1
 
     def __post_init__(self) -> None:
         if self.length_m <= 0:
@@ -293,6 +310,8 @@ class Hangar:
                 f"Hangar.wing_layer_clearance_m must be non-negative, "
                 f"got {self.wing_layer_clearance_m}"
             )
+        if self.max_carts < 0:
+            raise ValueError(f"Hangar.max_carts must be non-negative, got {self.max_carts}")
         door_left = self.door.center_x_m - self.door.width_m / 2
         door_right = self.door.center_x_m + self.door.width_m / 2
         if door_left < 0 or door_right > self.width_m:
@@ -341,7 +360,8 @@ class Layout:
     - every placement's ``plane_id`` exists in ``fleet``,
     - the fleet dict's keys equal their ``Aircraft.id`` (no key/id drift),
     - no duplicate placements,
-    - the cart rule (at most one ``cart_eligible`` plane on carts),
+    - the cart rule (at most ``hangar.max_carts`` ``cart_eligible`` planes
+      on carts; ``always_cart`` planes are exempt from this pool),
     - ``always_cart`` ↔ ``on_carts=True`` consistency,
     - ``always_own_gear`` ↔ ``on_carts=False`` consistency,
     - the maintenance plane (if set) is in the fleet **and is NOT in
@@ -399,9 +419,11 @@ class Layout:
             for p in self.placements
             if p.on_carts and self.fleet[p.plane_id].movement_mode == "cart_eligible"
         )
-        if cart_count > 1:
+        if cart_count > self.hangar.max_carts:
             raise ValueError(
-                f"At most one cart_eligible plane may have on_carts=True (got {cart_count})"
+                f"At most {self.hangar.max_carts} cart_eligible plane(s) may have "
+                f"on_carts=True (got {cart_count}); the cart inventory is set by "
+                f"hangar.max_carts"
             )
 
         if self.maintenance_plane is not None:

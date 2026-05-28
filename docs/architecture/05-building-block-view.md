@@ -70,7 +70,8 @@ neither needs to special-case the occupant.
 
 `__post_init__` enforces all invariants that cannot be expressed via
 the type system — the cart rule (`movement_mode` ↔ `on_carts`
-consistency, at most one cart-eligible plane actually on carts), the
+consistency, at most `hangar.max_carts` cart-eligible planes actually on
+carts), the
 maintenance-plane-is-in-fleet rule, the
 maintenance-plane-is-not-in-placements rule. A constructed instance is
 guaranteed structurally valid; nothing downstream re-checks.

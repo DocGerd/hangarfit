@@ -7,12 +7,22 @@ miserable to debug if errors only say "ValueError on line ?". Every
 exception raised here is a :class:`LoaderError` with the file path
 and (where it makes sense) the aircraft id or field name prepended.
 
-The loader also performs the one piece of build-time geometry that
-makes the parts-model schema readable: it expands each strut-braced
-aircraft's high-level ``struts:`` block into two mirrored strut
-:class:`~hangarfit.models.Part` instances. After loading, the
-aircraft's ``parts`` tuple is the single source of truth for geometry
-— there is no separate ``struts`` field on the :class:`Aircraft`.
+The loader also performs the build-time geometry that makes the
+parts-model schema readable. Two high-level YAML constructs expand into
+canonical low-level :class:`~hangarfit.models.Part` instances before the
+:class:`Aircraft` is constructed:
+
+1. Each strut-braced aircraft's ``struts:`` block expands into two
+   mirrored strut Parts (one per side).
+2. Each ``kind: fuselage`` part auto-splits into a ``fuselage_front`` +
+   ``fuselage_aft`` pair at the wing trailing-edge station (ADR-0012). The
+   constructed ``PartKind`` set has no ``fuselage`` member — it is a
+   transient YAML keyword only. An aircraft with a ``fuselage`` part but no
+   ``wing`` part is rejected: there is nothing to derive the break from.
+
+After loading, the aircraft's ``parts`` tuple is the single source of
+truth for geometry — there is no separate ``struts`` field on the
+:class:`Aircraft`, and no ``fuselage`` kind survives the load.
 
 Plane ids are **case-sensitive** and are not normalised. When a layout or
 scenario names an id that does not match the fleet exactly, the loader
@@ -23,7 +33,9 @@ a mis-cased id slip through to a late, generic model-invariant error.
 
 from __future__ import annotations
 
+import dataclasses
 import difflib
+import math
 from collections.abc import Collection, Iterable
 from pathlib import Path
 from typing import Any
@@ -51,15 +63,25 @@ class LoaderError(Exception):
 def _to_float(value: Any, field_name: str) -> float:
     """Coerce a YAML scalar to ``float``, raising ``LoaderError`` with the
     field name on failure (rather than a bare ``TypeError`` from
-    ``float(None)`` or ``ValueError`` from ``float("abc")``)."""
+    ``float(None)`` or ``ValueError`` from ``float("abc")``).
+
+    Non-finite results (NaN, ±inf) are also rejected: ``yaml.safe_load``
+    parses ``.nan``/``.inf``/``-.inf`` into real Python floats, and
+    downstream consumers (e.g. ``_wing_spar_x``) silently propagate them
+    into geometry calculations, where NaN comparisons always return False
+    and inf values produce nonsensical coordinates.
+    """
     if value is None:
         raise LoaderError(f"{field_name!r}: expected number, got null")
     try:
-        return float(value)
+        result = float(value)
     except (TypeError, ValueError) as e:
         raise LoaderError(
             f"{field_name!r}: expected number, got {value!r} ({type(value).__name__})"
         ) from e
+    if not math.isfinite(result):
+        raise LoaderError(f"{field_name!r}: expected a finite number, got {value!r}")
+    return result
 
 
 def _to_bool(value: Any, field_name: str) -> bool:
@@ -70,6 +92,19 @@ def _to_bool(value: Any, field_name: str) -> bool:
         raise LoaderError(
             f"{field_name!r}: expected boolean (unquoted true/false), "
             f"got {value!r} ({type(value).__name__})"
+        )
+    return value
+
+
+def _to_int(value: Any, field_name: str) -> int:
+    """Coerce a YAML scalar to ``int`` strictly. Rejects ``bool`` (it is an
+    ``int`` subclass, so ``True`` would silently read as ``1``) and any
+    non-int value (floats, strings) so a fractional or mistyped count fails
+    loudly with the field name rather than silently truncating
+    (``int(1.5) == 1``)."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise LoaderError(
+            f"{field_name!r}: expected integer, got {value!r} ({type(value).__name__})"
         )
     return value
 
@@ -151,6 +186,7 @@ def load_hangar(path: Path | str) -> Hangar:
             wing_layer_clearance_m=_to_float(
                 raw.get("wing_layer_clearance_m", 0.2), "wing_layer_clearance_m"
             ),
+            max_carts=_to_int(raw.get("max_carts", 1), "max_carts"),
         )
     except (ValueError, TypeError) as e:
         raise LoaderError(f"{path}: {e}") from e
@@ -161,6 +197,7 @@ def load_layout(
     *,
     fleet: dict[str, Aircraft] | None = None,
     hangar: Hangar | None = None,
+    max_carts: int | None = None,
 ) -> Layout:
     """Load a layout YAML.
 
@@ -206,6 +243,20 @@ def load_layout(
             f"{path}: 'hangar' field is set in YAML but a hangar override was also "
             f"provided programmatically; remove one to disambiguate"
         )
+
+    # A ``--max-carts`` override (CLI) reaches ``Layout.__post_init__`` via the
+    # hangar it reads. Apply it to the resolved hangar *before* the Layout is
+    # built, so a loosening override is honoured instead of being rejected at
+    # construction against the data-file cap. ``replace`` re-runs
+    # ``Hangar.__post_init__``, so a negative override is rejected — wrap that
+    # ValueError into a LoaderError to keep the exit-2 contract (a raw
+    # ValueError would crash the CLI with a traceback). See ADR-0007
+    # (cart-inventory amendment) / #210.
+    if max_carts is not None:
+        try:
+            hangar = dataclasses.replace(hangar, max_carts=max_carts)
+        except ValueError as e:
+            raise LoaderError(f"{path}: {e}") from e
 
     placements_data = raw.get("placements", [])
     if not isinstance(placements_data, list):
@@ -256,6 +307,7 @@ def load_scenario(
     *,
     fleet: dict[str, Aircraft] | None = None,
     hangar: Hangar | None = None,
+    max_carts: int | None = None,
 ) -> Scenario:
     """Load a scenario YAML into a validated :class:`Scenario`.
 
@@ -317,6 +369,18 @@ def load_scenario(
             f"{path}: 'hangar' field is set in YAML but a hangar override was also "
             f"provided programmatically; remove one to disambiguate"
         )
+
+    # A ``--max-carts`` override (CLI) is applied to the resolved hangar here;
+    # the solver builds every candidate Layout from ``scenario.hangar``, so the
+    # cart cap each Layout enforces is this overridden value. ``replace``
+    # re-runs ``Hangar.__post_init__``; wrap a negative-value ValueError into a
+    # LoaderError to keep the exit-2 contract. See ADR-0007 (cart-inventory
+    # amendment) / #210.
+    if max_carts is not None:
+        try:
+            hangar = dataclasses.replace(hangar, max_carts=max_carts)
+        except ValueError as e:
+            raise LoaderError(f"{path}: {e}") from e
 
     for pid in fleet_in:
         _resolve_known_plane_id(pid, fleet, role="fleet_in entry", path=path)
@@ -544,16 +608,60 @@ def _build_aircraft(entry: Any) -> Aircraft:
     parts_data = entry.get("parts")
     if not isinstance(parts_data, list) or not parts_data:
         raise LoaderError("'parts' must be a non-empty list")
-    parts = [_build_part(p, i) for i, p in enumerate(parts_data)]
+    # First pass: build every part as a canonical Part. A ``kind: fuselage``
+    # entry is NOT a constructed PartKind (ADR-0012) — it is field-validated
+    # under a placeholder kind (any valid non-fuselage kind works; we use
+    # ``"fuselage_aft"`` so the ordinary z-gap invariants apply), then held
+    # aside for the front/aft split below. The placeholder is replaced
+    # wholesale by ``_split_fuselage`` and never reaches the constructed
+    # Aircraft. If the box is malformed, rename the placeholder back to the
+    # user-authored ``fuselage`` in the message — they never typed
+    # ``"fuselage_aft"``, so naming it would be a debugging dead-end (#50 review).
+    parts: list[Part] = []
+    fuselage_markers: list[tuple[Part, int]] = []
+    for i, p in enumerate(parts_data):
+        if isinstance(p, dict) and p.get("kind") == "fuselage":
+            try:
+                marker = _build_part({**p, "kind": "fuselage_aft"}, i)
+            except ValueError as e:
+                raise ValueError(str(e).replace("'fuselage_aft'", "'fuselage'")) from e
+            fuselage_markers.append((marker, i))
+        else:
+            parts.append(_build_part(p, i))
+
+    # The fuselage front/aft break and the strut spar axis are both derived
+    # from the wing chord. If an aircraft declares multiple wings (unusual:
+    # split-wing / twin-boom) the FIRST wins — a deliberate, test-pinned
+    # convention (``test_first_wing_part_drives_strut_z_top``) that this split
+    # now also rides on. (#50 review flagged that wing order now also affects
+    # the front/aft cut, hence the collision verdict; first-wins is intentional
+    # and consistent with the existing strut rule — revisit only if a real
+    # multi-wing airframe is ever added.)
+    wing = next((p for p in parts if p.kind == "wing"), None)
 
     if "struts" in entry:
         if not isinstance(entry["struts"], dict):
             raise LoaderError("'struts' must be a mapping")
         spec = _build_struts_spec(entry["struts"])
-        wing = next((p for p in parts if p.kind == "wing"), None)
         if wing is None:
             raise LoaderError("'struts' block requires a part of kind 'wing'")
         parts.extend(_expand_struts(spec, wing))
+
+    # Second pass: auto-split each legacy ``kind: fuselage`` part into a
+    # front/aft pair at the wing trailing-edge station (ADR-0012). Mirrors the
+    # ``struts:`` expansion idiom — a high-level YAML convenience expanded into
+    # canonical Parts, with the parts tuple as the single source of truth. The
+    # no-wing rejection fires only for a well-formed fuselage (field errors
+    # above take precedence) since the break station is derived from the wing.
+    for fuselage_part, findex in fuselage_markers:
+        if wing is None:
+            raise LoaderError(
+                f"parts[{findex}] kind 'fuselage' requires a part of kind 'wing' "
+                f"on the same aircraft: the front/aft section break is derived "
+                f"from the wing trailing-edge station. Either add a wing part or "
+                f"declare explicit 'fuselage_front'/'fuselage_aft' parts."
+            )
+        parts.extend(_split_fuselage(fuselage_part, wing))
 
     turn_radius_raw = entry.get("turn_radius_m")
     turn_radius_m = None if turn_radius_raw is None else _to_float(turn_radius_raw, "turn_radius_m")
@@ -610,15 +718,50 @@ def _build_struts_spec(data: dict[str, Any]) -> StrutsSpec:
     )
 
 
+# Fraction of the wing chord, measured aft of the leading edge, at which the
+# main (front) wing spar — and therefore the strut's wing attachment — sits.
+# A lift strut on a strut-braced high-wing foots to the front/main spar, which
+# on a typical light aircraft is near the quarter-chord. See issue #282.
+_SPAR_CHORD_FRACTION = 0.25
+assert 0.0 < _SPAR_CHORD_FRACTION < 1.0, (
+    "spar chord fraction must lie strictly inside the chord (0,1)"
+)
+
+
+def _wing_spar_x(wing: Part) -> float:
+    """Longitudinal (plane-local x) station of the wing's main spar.
+
+    In plane-local coords ``+x`` is forward (toward the nose), so the wing's
+    chord runs along x: it spans ``[offset_x_m - length_m/2, offset_x_m +
+    length_m/2]`` with the **leading edge** at the forward (``+x``) end
+    (``offset_x_m + length_m/2``) and the **trailing edge** aft
+    (``offset_x_m - length_m/2``). The main spar sits ``_SPAR_CHORD_FRACTION``
+    of the chord aft of the leading edge:
+
+        spar_x = leading_edge − fraction·chord
+               = (offset_x_m + length_m/2) − fraction·length_m
+               = offset_x_m + (0.5 − fraction)·length_m
+
+    With the default quarter-chord fraction this is ``offset_x_m +
+    length_m/4`` — forward of the wing centre, never at the trailing edge.
+    """
+    return wing.offset_x_m + (0.5 - _SPAR_CHORD_FRACTION) * wing.length_m
+
+
 def _expand_struts(spec: StrutsSpec, wing: Part) -> list[Part]:
     """Build two mirrored strut Parts from a StrutsSpec + wing.
 
     Each strut is modelled in plan view as a thin oriented rectangle
     running outboard from the fuselage attach (y = ``fuselage_attach_y_m``)
-    to the wing attach (y = ``wing_attach_y_m``), at the same x as the
-    fuselage attach point. The strut's z-range is
-    ``[fuselage_attach_z_m, wing.z_bottom_m]`` — i.e. from the lower
-    fuselage attach point up to the wing underside.
+    to the wing attach (y = ``wing_attach_y_m``). Its longitudinal (x)
+    station is anchored to the **wing spar axis** (:func:`_wing_spar_x`),
+    NOT to ``spec.fuselage_attach_x_m`` — in the placeholder fleet the
+    latter sits at the wing trailing edge, ~0.6–0.7 m aft of the spar,
+    which mis-places the strut keep-out the collision checker consumes
+    (issue #282). The strut stays spanwise (``angle_deg=0``); the
+    fix does not rake it (that is the heavier fix option 2). The strut's
+    z-range is ``[fuselage_attach_z_m, wing.z_bottom_m]`` — i.e. from the
+    lower fuselage attach point up to the wing underside.
     """
     if wing.z_bottom_m <= spec.fuselage_attach_z_m:
         raise LoaderError(
@@ -635,12 +778,13 @@ def _expand_struts(spec: StrutsSpec, wing: Part) -> list[Part]:
             f"loader requires a strictly positive span"
         )
     midpoint = (spec.fuselage_attach_y_m + spec.wing_attach_y_m) / 2.0
+    spar_x = _wing_spar_x(wing)
     return [
         Part(  # right side
             kind="strut",
             length_m=spec.width_m,
             width_m=strut_span,
-            offset_x_m=spec.fuselage_attach_x_m,
+            offset_x_m=spar_x,
             offset_y_m=midpoint,
             angle_deg=0.0,
             z_bottom_m=spec.fuselage_attach_z_m,
@@ -650,11 +794,96 @@ def _expand_struts(spec: StrutsSpec, wing: Part) -> list[Part]:
             kind="strut",
             length_m=spec.width_m,
             width_m=strut_span,
-            offset_x_m=spec.fuselage_attach_x_m,
+            offset_x_m=spar_x,
             offset_y_m=-midpoint,
             angle_deg=0.0,
             z_bottom_m=spec.fuselage_attach_z_m,
             z_top_m=wing.z_bottom_m,
+        ),
+    ]
+
+
+def _wing_trailing_edge_x(wing: Part) -> float:
+    """Plane-local x station of the wing **trailing** edge.
+
+    In plane-local coords ``+x`` is forward (toward the nose), so the wing
+    chord spans ``[offset_x_m − length_m/2, offset_x_m + length_m/2]`` with the
+    leading edge forward (``+x``) and the trailing edge aft. The fuselage
+    front/aft section break is anchored here (ADR-0012): everything forward of
+    the wing trailing edge — the cockpit and main spar — is ``fuselage_front``;
+    the cabin-aft tube and empennage are ``fuselage_aft``. This is the same
+    "anchor geometry to the wing chord, not a hand-typed station" precedent the
+    strut spar axis uses (:func:`_wing_spar_x`, #282).
+    """
+    return wing.offset_x_m - wing.length_m / 2.0
+
+
+def _split_fuselage(fuselage: Part, wing: Part) -> list[Part]:
+    """Split one full fuselage :class:`Part` into a front/aft pair.
+
+    ``fuselage`` is the already-field-validated full-fuselage box (built from
+    a ``kind: fuselage`` YAML entry under a placeholder kind in
+    :func:`_build_aircraft`). The break station is derived from the aircraft's
+    own ``wing`` part — the wing trailing edge
+    ``x_break = wing.offset_x_m − wing.length_m/2`` (:func:`_wing_trailing_edge_x`,
+    ADR-0012). There is no ``wing_root_x_m`` YAML field; the break is always
+    derived.
+
+    The split is **area-conserving**: both segments inherit the source
+    fuselage's ``width_m``, ``z_bottom_m``, ``z_top_m``, ``angle_deg`` and
+    ``offset_y_m``; they abut at ``x_break`` and their union reconstitutes the
+    original footprint exactly (no gap, no overlap). Let the source fuselage
+    span ``x ∈ [c − L/2, c + L/2]``:
+
+    - ``fuselage_front`` spans ``[x_break, c + L/2]`` (nose side),
+    - ``fuselage_aft`` spans ``[c − L/2, x_break]`` (tail side),
+
+    each with ``offset_x_m`` at the midpoint of its span and ``length_m`` its
+    span width.
+
+    Raises :class:`LoaderError` if the derived break does not lie strictly
+    inside the fuselage span (the wing trailing edge is forward of the nose or
+    aft of the tail) — a degenerate split that would produce a zero- or
+    negative-length segment.
+    """
+    c = fuselage.offset_x_m
+    half_len = fuselage.length_m / 2.0
+    nose_x = c + half_len  # forward tip (+x)
+    tail_x = c - half_len  # aft tip (−x)
+    x_break = _wing_trailing_edge_x(wing)
+
+    if not (tail_x < x_break < nose_x):
+        raise LoaderError(
+            f"kind 'fuselage': derived front/aft section break x={x_break:g} "
+            f"(wing trailing edge) must lie strictly inside the fuselage span "
+            f"[{tail_x:g}, {nose_x:g}]. The break must be strictly inside the "
+            f"span (a break at or beyond a tip would yield a zero-length "
+            f"segment); check the wing offset_x_m / length_m or declare "
+            f"explicit 'fuselage_front'/'fuselage_aft' parts."
+        )
+
+    front_len = nose_x - x_break
+    aft_len = x_break - tail_x
+    return [
+        Part(
+            kind="fuselage_front",
+            length_m=front_len,
+            width_m=fuselage.width_m,
+            offset_x_m=(x_break + nose_x) / 2.0,
+            offset_y_m=fuselage.offset_y_m,
+            angle_deg=fuselage.angle_deg,
+            z_bottom_m=fuselage.z_bottom_m,
+            z_top_m=fuselage.z_top_m,
+        ),
+        Part(
+            kind="fuselage_aft",
+            length_m=aft_len,
+            width_m=fuselage.width_m,
+            offset_x_m=(tail_x + x_break) / 2.0,
+            offset_y_m=fuselage.offset_y_m,
+            angle_deg=fuselage.angle_deg,
+            z_bottom_m=fuselage.z_bottom_m,
+            z_top_m=fuselage.z_top_m,
         ),
     ]
 

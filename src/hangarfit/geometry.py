@@ -116,6 +116,40 @@ def polygon_overlap_area(p1: Polygon, p2: Polygon) -> float:
     return p1.intersection(p2).area
 
 
+def local_to_world(u: float, v: float, placement: Placement) -> tuple[float, float]:
+    """Map a single plane-local point ``(u, v)`` to world coordinates.
+
+    This is the **one canonical definition** of the compass-style
+    plane-local → world transform. ``aircraft_parts_world`` routes every
+    vertex through it, and :mod:`hangarfit.visualize` imports it for its
+    gear/cart glyphs, so the determinant-``−1`` formula lives in exactly
+    one place (#293).
+
+    ``placement.heading_deg`` is the compass-style angle of the nose,
+    measured from world ``+y`` (deeper-into-hangar), CW positive. The
+    linear part of the map is:
+
+    .. code-block::
+
+        world_x = placement.x_m + u·sin(h) + v·cos(h)
+        world_y = placement.y_m + u·cos(h) − v·sin(h)
+
+    where ``h = radians(placement.heading_deg)`` and ``(+u, +v)`` is
+    plane-local ``(forward, right)``. The linear part has determinant
+    ``−1`` (a rotation composed with a reflection), reflecting (a) the
+    CW-positive compass convention vs CCW-positive math, and (b)
+    plane-local ``(forward, right)`` vs world ``(right, deeper)``. This is
+    deliberate — see ADR-0002 and ``CLAUDE.md`` for the full derivation.
+    Do **not** "fix" it to a det = +1 pure rotation.
+    """
+    h = math.radians(placement.heading_deg)
+    sin_h = math.sin(h)
+    cos_h = math.cos(h)
+    world_x = placement.x_m + u * sin_h + v * cos_h
+    world_y = placement.y_m + u * cos_h - v * sin_h
+    return world_x, world_y
+
+
 def aircraft_parts_world(
     aircraft: Aircraft,
     placement: Placement,
@@ -140,13 +174,10 @@ def aircraft_parts_world(
     the (a) CW-positive compass convention vs CCW-positive math, and
     (b) plane-local ``(forward, right)`` vs world ``(right, deeper)``.
     See ``CLAUDE.md`` for the full derivation.
-    """
-    h = math.radians(placement.heading_deg)
-    sin_h = math.sin(h)
-    cos_h = math.cos(h)
-    px = placement.x_m
-    py = placement.y_m
 
+    Each vertex is routed through :func:`local_to_world`, the single
+    canonical definition of this transform (#293).
+    """
     world_parts: list[WorldPart] = []
     for part in aircraft.parts:
         # Build the part's polygon in plane-local coordinates. ``angle_deg``
@@ -163,8 +194,7 @@ def aircraft_parts_world(
         # local_poly.exterior.coords includes the closing-point duplicate;
         # slice it off so Polygon() doesn't have to de-dup.
         world_coords = [
-            (px + u * sin_h + v * cos_h, py + u * cos_h - v * sin_h)
-            for u, v in list(local_poly.exterior.coords)[:-1]
+            local_to_world(u, v, placement) for u, v in list(local_poly.exterior.coords)[:-1]
         ]
         world_poly = Polygon(world_coords)
         world_parts.append(

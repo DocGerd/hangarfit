@@ -70,7 +70,10 @@ class TestCheckHappyPath:
         captured = capsys.readouterr()
         assert captured.out.startswith("invalid:")
         # Conflict line uses the spec's format: "  - <kind> [<plane>[, <plane>]]: <detail>"
-        assert "fuselage_wing_overlap" in captured.out
+        # The fuselage front/aft split (#50/ADR-0012) replaced the single
+        # fuselage_wing_overlap kind with the segment-specific kinds; this
+        # fixture's wing crosses both of scheibe's fuselage segments.
+        assert "fuselage_front_wing_overlap" in captured.out
         # Every conflict line starts with the two-space-dash prefix
         for line in captured.out.strip().split("\n")[1:]:
             assert line.startswith("  - ")
@@ -106,6 +109,27 @@ class TestCheckLoadErrors:
         assert captured.out == ""
         assert "error:" in captured.err
         assert "cart" in captured.err.lower()
+
+    def test_check_max_carts_override_loosens_cart_rule(self, capsys):
+        # --max-carts 2 replaces the cap on the loaded hangar before the Layout
+        # is built, so the two-cart_eligible layout that exits 2 above now loads
+        # — the load-time cart-rule rejection is gone.
+        exit_code = main(
+            ["check", str(FIXTURES_DIR / "invalid_cart_rule.yaml"), "--max-carts", "2"]
+        )
+        captured = capsys.readouterr()
+        assert "At most" not in captured.err  # the cart-rule load error is gone
+        assert exit_code != 2  # load succeeded; a non-zero would be a geometry verdict
+
+    def test_check_max_carts_negative_is_clean_exit_2(self, capsys):
+        # A negative --max-carts must surface as a clean exit-2 LoaderError,
+        # not a raw ValueError traceback from dataclasses.replace.
+        exit_code = main(["check", str(FIXTURES_DIR / "invalid_cart_rule.yaml"), "--max-carts=-1"])
+        assert exit_code == 2
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        assert "error:" in captured.err
+        assert "max_carts" in captured.err
 
 
 class TestCheckJsonOutput:

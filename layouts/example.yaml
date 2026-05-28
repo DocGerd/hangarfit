@@ -36,10 +36,21 @@ hangar: ../data/hangar.yaml
 maintenance:
   plane: scheibe_falke
 
+# Front/aft nudge (#50 / ADR-0012): the fuselage split makes a wing over
+# another plane's COCKPIT (fuselage_front) a hard conflict at any height,
+# where the pre-split layout let high-wing wingtips legally overhang a
+# neighbour's fuselage. Two placements were adjusted so every overhang now
+# lands on an aft fuselage / tail (still valid) rather than a cockpit:
+#   - ctsl shifted right (x 9 → 11) so zlin's wingtip no longer reaches its
+#     cockpit;
+#   - wild_thing rotated to heading 180 (nose toward the door) so the husky
+#     wing crossing it overhangs its aft fuselage, not its cockpit.
+
 placements:
-  # Front-center: small cantilever at the door, easy to roll out first
+  # Front-right: small cantilever near the door, easy to roll out first.
+  # Sits at x=11 so the Zlin's wingtip (to its left) clears its cockpit.
   - plane: ctsl
-    x_m: 9.0
+    x_m: 11.0
     y_m: 4.0
     heading_deg: 0.0
     on_carts: false        # cart_eligible but on own gear
@@ -58,20 +69,20 @@ placements:
                            # neighbouring high wings (z-disjoint nesting)
     on_carts: false        # always_own_gear
 
-  # Mid-center: wild_thing — sits between the fuji y-band at 8 and
-  # the husky y-band at 15.5, with enough clearance on both sides
-  # (its 9.15 m wing-band is centered on (py + 0.67))
+  # Mid-center: wild_thing at heading 180 (nose toward the door) so the
+  # husky wing behind it overhangs its AFT fuselage / tail, not its
+  # cockpit (front/aft split — ADR-0012)
   - plane: wild_thing
     x_m: 9.0
-    y_m: 12.5
-    heading_deg: 0.0
+    y_m: 12.0
+    heading_deg: 180.0
     on_carts: true         # always_cart
 
   # Just forward of the maintenance bay: husky tucked left of centre
   # with its 10.82 m wing fully clear of the bay's front edge at y=16
   - plane: aviat_husky
     x_m: 6.0
-    y_m: 15.5
+    y_m: 15.0
     heading_deg: 0.0
     on_carts: false        # always_own_gear
 
