@@ -75,9 +75,9 @@ class TestOwnGearWheelPositions:
         assert fake_ax == expected
 
 
-class TestCartGlyphUnchanged:
-    def test_on_carts_draws_cart_not_own_gear(self, monkeypatch: pytest.MonkeyPatch) -> None:
-        """Regression guard for #321: on_carts=True takes the cart path."""
+class TestCartGlyphPerWheel:
+    def test_on_carts_takes_cart_path(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """on_carts=True dispatches to the cart path, not the bare own-gear loop."""
         from hangarfit import visualize
 
         called: list[str] = []
@@ -92,6 +92,62 @@ class TestCartGlyphUnchanged:
         placement = Placement(plane_id=a.id, x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=True)
         _draw_gear_glyph(None, placement, a)
 
-        # Cart path taken; own-gear wheels NOT drawn (cart corner wheels are
-        # internal to the patched-out _draw_cart_glyph, so none leak through here).
+        # Cart path taken; bare own-gear wheels NOT drawn directly (the cart
+        # path's per-wheel discs are internal to the patched-out
+        # _draw_cart_glyph, so none leak through here).
         assert called == ["cart"]
+
+    @pytest.mark.parametrize(
+        ("gear", "wheels", "expected"),
+        [
+            (
+                "nosewheel",
+                Wheels(main_offset_x_m=-0.10, track_m=1.80, third_wheel_offset_x_m=2.50),
+                3,
+            ),
+            (
+                "tailwheel",
+                Wheels(main_offset_x_m=0.20, track_m=1.80, third_wheel_offset_x_m=-3.40),
+                3,
+            ),
+            (
+                "monowheel",
+                Wheels(main_offset_x_m=0.0, track_m=None, third_wheel_offset_x_m=None),
+                1,
+            ),
+        ],
+    )
+    def test_one_pallet_per_wheel_position(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        gear: str,
+        wheels: Wheels,
+        expected: int,
+    ) -> None:
+        """#321: the cart glyph draws one pallet per wheel position — equal to
+        ``len(aircraft.wheels.positions)`` — not a single body-sized rectangle."""
+        from hangarfit import visualize
+
+        pallets: list[tuple[float, float]] = []
+        monkeypatch.setattr(
+            visualize,
+            "_add_cart_pallet",
+            lambda ax, u, v, placement: pallets.append((u, v)),
+        )
+        # Wheels are drawn through _add_wheel; stub it to keep this focused.
+        monkeypatch.setattr(visualize, "_add_wheel", lambda *a, **k: None)
+
+        movement_mode = "always_cart" if gear == "monowheel" else "cart_eligible"
+        turn_radius = None if gear == "monowheel" else 4.0
+        a = make_test_aircraft(
+            gear=gear,  # type: ignore[arg-type]
+            movement_mode=movement_mode,
+            turn_radius_m=turn_radius,
+            wheels=wheels,
+        )
+        placement = Placement(plane_id=a.id, x_m=3.0, y_m=2.0, heading_deg=30.0, on_carts=True)
+        _draw_gear_glyph(None, placement, a)
+
+        assert len(pallets) == expected == len(a.wheels.positions)
+        # Pallets are centred on the wheel positions, not on the body origin.
+        assert pallets == list(a.wheels.positions)
