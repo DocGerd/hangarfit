@@ -143,6 +143,114 @@ class TestWheelsLoadingErrorPaths:
             load_fleet(_write(tmp_path / "f.yaml", body))
 
 
+class TestCrossCheck:
+    """Loader cross-check: turn_radius_m must be plausible vs wheel-derived wheelbase.
+
+    Band is 0.5×–5× wheelbase (own-gear, non-monowheel). always_cart
+    (turn_radius_m=None) and monowheel (no wheelbase) are skipped. See ADR-0013.
+    """
+
+    def test_own_gear_within_band_passes(self, tmp_path: Path) -> None:
+        # wheelbase = abs(2.5 - (-0.1)) = 2.6; turn_radius_m=4.0 ∈ [1.3, 13.0]
+        body = _with_wheels_block(
+            "    wheels:\n"
+            "      main_offset_x_m: -0.10\n"
+            "      track_m: 1.80\n"
+            "      third_wheel_offset_x_m: 2.50\n"
+        )
+        load_fleet(_write(tmp_path / "f.yaml", body))  # no raise
+
+    def test_turn_radius_below_band_rejected(self, tmp_path: Path) -> None:
+        # wheelbase = 10.0; band [5.0, 50.0]; turn_radius_m=4.0 too small
+        body = _with_wheels_block(
+            "    wheels:\n"
+            "      main_offset_x_m: -5.0\n"
+            "      track_m: 1.80\n"
+            "      third_wheel_offset_x_m: 5.0\n"
+        )
+        with pytest.raises(LoaderError, match=r"implausible.*wheelbase"):
+            load_fleet(_write(tmp_path / "f.yaml", body))
+
+    def test_turn_radius_above_band_rejected(self, tmp_path: Path) -> None:
+        # wheelbase = 0.4; band [0.2, 2.0]; turn_radius_m=4.0 too big
+        body = _with_wheels_block(
+            "    wheels:\n"
+            "      main_offset_x_m: -0.10\n"
+            "      track_m: 1.80\n"
+            "      third_wheel_offset_x_m: 0.30\n"
+        )
+        with pytest.raises(LoaderError, match=r"implausible.*wheelbase"):
+            load_fleet(_write(tmp_path / "f.yaml", body))
+
+    def test_always_cart_skips_cross_check(self, tmp_path: Path) -> None:
+        """always_cart aircraft (turn_radius_m: null) skip the band check."""
+        body = dedent(
+            """\
+            aircraft:
+              - id: cart_plane
+                name: "Cart Test"
+                wing_position: high
+                gear: nosewheel
+                movement_mode: always_cart
+                turn_radius_m: null
+                measured: false
+                parts:
+                  - kind: fuselage
+                    length_m: 6.0
+                    width_m: 0.8
+                    offset_x_m: 0.0
+                    offset_y_m: 0.0
+                    z_bottom_m: 0.0
+                    z_top_m: 1.4
+                  - kind: wing
+                    length_m: 1.2
+                    width_m: 9.0
+                    offset_x_m: 0.5
+                    offset_y_m: 0.0
+                    z_bottom_m: 2.0
+                    z_top_m: 2.2
+                wheels:
+                  main_offset_x_m: -5.0
+                  track_m: 1.8
+                  third_wheel_offset_x_m: 5.0
+            """
+        )
+        load_fleet(_write(tmp_path / "f.yaml", body))  # no raise: wheelbase=10 vs radius=null
+
+    def test_monowheel_skips_cross_check(self, tmp_path: Path) -> None:
+        """Monowheel aircraft have no wheelbase concept; check is skipped."""
+        body = dedent(
+            """\
+            aircraft:
+              - id: mono_plane
+                name: "Mono Test"
+                wing_position: high
+                gear: monowheel
+                movement_mode: always_own_gear
+                turn_radius_m: 100.0
+                measured: false
+                parts:
+                  - kind: fuselage
+                    length_m: 6.0
+                    width_m: 0.7
+                    offset_x_m: 0.0
+                    offset_y_m: 0.0
+                    z_bottom_m: 0.0
+                    z_top_m: 1.4
+                  - kind: wing
+                    length_m: 1.2
+                    width_m: 18.0
+                    offset_x_m: 1.5
+                    offset_y_m: 0.0
+                    z_bottom_m: 2.0
+                    z_top_m: 2.2
+                wheels:
+                  main_offset_x_m: 0.0
+            """
+        )
+        load_fleet(_write(tmp_path / "f.yaml", body))  # no raise — no wheelbase to check
+
+
 class TestMonowheelHappyPath:
     """Monowheel construction path was previously only exercised via error tests."""
 

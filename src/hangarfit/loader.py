@@ -675,6 +675,40 @@ def _parse_wheels(
         raise LoaderError(f"wheels: {exc}") from exc
 
 
+# Plausibility band for turn_radius_m against the wheel-derived wheelbase.
+# Deliberately loose (0.5×–5×): a sanity guard against a fat-fingered radius or
+# wheel coordinate, NOT a derivation. turn_radius_m stays an empirical value
+# (ADR-0013). Most fleet entries are still ``measured: false`` estimates, so a
+# tight band would produce false positives.
+_WHEELBASE_BAND_LOW = 0.5
+_WHEELBASE_BAND_HIGH = 5.0
+
+
+def _validate_wheels_vs_turn_radius(aircraft: Aircraft) -> None:
+    """Raise ``LoaderError`` if turn_radius_m is implausible vs the wheelbase.
+
+    Skipped for always_cart (``turn_radius_m`` is ``None``) and for monowheel
+    (no ``wheelbase_m``). The message carries no ``aircraft 'id'`` prefix — the
+    ``load_fleet`` loop wraps per-aircraft errors with that attribution, so
+    adding it here would double-decorate (mirrors :func:`_parse_wheels`).
+    See ADR-0013 for the rationale on the loose band.
+    """
+    if aircraft.turn_radius_m is None:
+        return
+    wheelbase = aircraft.wheels.wheelbase_m
+    if wheelbase is None:
+        return
+    low = _WHEELBASE_BAND_LOW * wheelbase
+    high = _WHEELBASE_BAND_HIGH * wheelbase
+    r = aircraft.turn_radius_m
+    if not (low <= r <= high):
+        raise LoaderError(
+            f"turn_radius_m={r} is implausible given wheelbase={wheelbase:.2f}m "
+            f"(expected {low:.2f}..{high:.2f}). Either fix the wheel positions "
+            f"or fix turn_radius_m."
+        )
+
+
 def _build_aircraft(entry: Any) -> Aircraft:
     if not isinstance(entry, dict):
         raise LoaderError(f"aircraft entry must be a mapping, got {type(entry).__name__}")
@@ -745,7 +779,7 @@ def _build_aircraft(entry: Any) -> Aircraft:
     turn_radius_raw = entry.get("turn_radius_m")
     turn_radius_m = None if turn_radius_raw is None else _to_float(turn_radius_raw, "turn_radius_m")
 
-    return Aircraft(
+    aircraft = Aircraft(
         id=entry["id"],
         name=entry["name"],
         wing_position=entry["wing_position"],
@@ -757,6 +791,8 @@ def _build_aircraft(entry: Any) -> Aircraft:
         notes=entry.get("notes", ""),
         wheels=_parse_wheels(entry.get("wheels"), entry["gear"]),
     )
+    _validate_wheels_vs_turn_radius(aircraft)
+    return aircraft
 
 
 def _build_part(data: Any, index: int) -> Part:
