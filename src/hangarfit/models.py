@@ -17,7 +17,7 @@ import typing
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 if TYPE_CHECKING:
     from hangarfit.towplanner import MovesPlan
@@ -188,9 +188,10 @@ class Wheels:
         """
         if self.track_m is None:
             return ((self.main_offset_x_m, 0.0),)
-        # __post_init__ guarantees third_wheel_offset_x_m is set whenever track_m is set;
-        # re-bind to a local so mypy can narrow float|None → float.
-        third_x: float = self.third_wheel_offset_x_m  # type: ignore[assignment]
+        # __post_init__'s XOR rule guarantees third_wheel_offset_x_m is set whenever
+        # track_m is set; cast makes that invariant visible to mypy without an assert
+        # (which would get stripped under -O).
+        third_x = cast(float, self.third_wheel_offset_x_m)
         half_track = self.track_m / 2.0
         return (
             (self.main_offset_x_m, half_track),
