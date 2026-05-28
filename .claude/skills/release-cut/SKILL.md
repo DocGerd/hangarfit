@@ -85,6 +85,27 @@ If the output is non-empty, stop:
 Error: branch 'release/<version>' already exists on origin. Push to an existing branch is not allowed here.
 ```
 
+## Check E — CHANGELOG already promoted
+
+The CHANGELOG promotion and doc-freshness audit happen in `/release-prep`, which
+must run and merge into `develop` *before* the cut. This check enforces that
+ordering — the cut makes **no** CHANGELOG edits itself.
+
+Read `CHANGELOG.md` in the repo root and assert both of the following:
+
+1. A `## [<version>] —` section heading exists (any date after the em-dash). The
+   separator is an em-dash (`—`, U+2014), e.g. `## [0.7.2] — 2026-05-28`.
+2. A bottom-of-file link of the form
+   `[<version>]: …/compare/v…...v<version>` exists.
+
+If **either** is missing, stop with this exact error:
+```
+Error: CHANGELOG.md has no [<version>] section. Run /release-prep version=<version>
+first to promote the [Unreleased] entries and audit the docs.
+```
+
+(Substitute the actual `<version>` into the error before printing.)
+
 ## Step 3 — Determine milestone number
 
 Before printing the plan, look up the correct milestone number via the GitHub API so it can be substituted into the plan shown to the user:
@@ -309,6 +330,7 @@ Every abort condition in one place. In all cases, stop immediately and print the
 6. **Behind `origin/develop`**: print `Error: local 'develop' is behind 'origin/develop' by N commit(s).`
 7. **Release branch already exists locally**: print `Error: branch 'release/<version>' already exists locally.`
 8. **Release branch already exists on remote**: print `Error: branch 'release/<version>' already exists on origin.`
+8a. **CHANGELOG not promoted (Check E)**: a `## [<version>] —` section or the `[<version>]: …/compare/v…...v<version>` link is missing. Print `Error: CHANGELOG.md has no [<version>] section. Run /release-prep version=<version> first to promote the [Unreleased] entries and audit the docs.`
 9. **Milestone not found**: set `MILESTONE_NUMBER` to `<unresolved>` and continue; note in the plan and PR body that milestone must be set by hand.
 10. **User does not confirm (any response other than `YES`)**: print `Aborted. No changes were made.`
 11. **`git switch -c` fails**: print the raw git error.
