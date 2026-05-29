@@ -1,7 +1,6 @@
 # ADR-0014: Merge-commit-only history under GitFlow — squash/rebase disabled as a release-safety guardrail
 
 - **Status:** Proposed
-
 - **Date:** 2026-05-29
 - **Deciders:** Patrick Kuhn (DocGerd)
 
@@ -15,9 +14,11 @@ merge-method ruleset. Its whole "clean first-parent mainline" rationale rests on
 *one squash commit per feature PR*.
 
 After ADR-0011 was drafted, **squash and rebase merging were disabled repo-wide**
-as a guardrail. The trigger was the v0.7.0 release cascade, where a squash-merge
-on #283 contributed to the burned-tag mess (see the v0.7.0 / v0.7.1 release
-history). The repo's current merge-button settings are:
+as a guardrail. The trigger was the v0.7.0 release cascade: a squash-merge was
+mistakenly applied to the #283 release PR and had to be reset and re-merged as a
+proper merge commit, contributing to the burned-tag mess (the squash artifact was
+caught before it reached tagged history; the mechanism is documented in ADR-0011
+Q3's release-table footnote). The repo's current merge-button settings are:
 
 ```
 allow_merge_commit:  true
@@ -25,9 +26,9 @@ allow_squash_merge:  false   ← squash DISABLED
 allow_rebase_merge:  false   ← rebase DISABLED
 ```
 
-So ADR-0011's central premise is now **false**: feature PRs land as **merge
-commits**, not squash merges, and the Option-5 squash-only ruleset is impossible
-to configure (squash is off). This ADR reconciles the documented strategy with
+So ADR-0011's central premise no longer matches reality: feature PRs land as
+**merge commits**, not squash merges, and its Option-5 squash-only ruleset is
+impossible to configure (squash is off). This ADR reconciles the documented strategy with
 the in-effect reality (#344). It supersedes ADR-0011's *decision*; ADR-0011's
 Q1–Q4 research — why `required_linear_history` is incompatible with GitFlow, the
 rulesets community-#80952 historical-commits bug, and the merge-base cost of
@@ -132,7 +133,7 @@ gh api repos/:owner/:repo --jq '{merge: .allow_merge_commit, squash: .allow_squa
 
 Any feature PR that lands as a squash or rebase commit means the guardrail was
 changed — investigate before assuming it was intentional. The human-facing rule is
-documented in [`CLAUDE.md`](../../CLAUDE.md#development-workflow) (Branching).
+documented in [`CLAUDE.md`](../../CLAUDE.md#branching) (Branching).
 
 ## More Information
 
