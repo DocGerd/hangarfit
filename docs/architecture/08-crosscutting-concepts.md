@@ -346,6 +346,36 @@ ADR.
 
 The hard score tuple `(conflict_count, total_penetration_m2)` measures only illegal overlap. The first **soft** preference — inter-plane spread (maximize separation once valid) — ships as an isolated post-pass (`solver._spread`), deliberately *outside* the hard tuple so the conflict-resolution determinism contract ([ADR-0003](../adr/0003-rr-mc-solver-algorithm.md)) is unaffected. See [ADR-0008](../adr/0008-inter-plane-spread-soft-preference.md) for the repulsion-energy metric and why it is a post-pass rather than a third score key.
 
+## Visualizer colour accessibility
+
+The PNG renderer (`src/hangarfit/visualize.py`) must stay usable by
+people with colour vision deficiency (CVD). Roughly 1 in 12 men have
+red–green CVD; a purely red-vs-green signal is the single most common
+accessibility failure in technical diagrams.
+
+**Two invariants that must not regress:**
+
+1. **The tow-path palette (`_TOW_PATH_COLORS`) is the Okabe–Ito 8-colour
+   CVD-safe set** (source: https://jfly.uni-koeln.de/color/). This palette
+   is distinguishable under deuteranopia, protanopia, and tritanopia, and
+   degrades gracefully in greyscale. Any future palette extension or
+   substitution must remain CVD-safe — verify with a simulation tool
+   (e.g., Coblis) before committing.
+
+2. **The conflict overdraw carries a non-colour redundancy channel.** The
+   red edge (`_CONFLICT_COLOR = "#e74c3c"`) is retained as a fast signal
+   for colour-normal viewers, but conflict patches also carry `hatch="xxx"`
+   (dense cross pattern) and `linestyle="--"` (dashed stroke) so "this
+   part is in conflict" reads on a B&W printout and for red-blind viewers.
+   A future refactor that drops the hatch and dashes while keeping only the
+   red edge is a regression, even if the layout looks correct at colour-normal
+   rendering.
+
+The wing-position triad (`_WING_COLORS`) uses `#d55e00` (Okabe–Ito
+vermillion) for mid-wing rather than the original `#e67e22` (orange),
+because orange and the low-wing yellow `#f4d03f` can merge under
+protanopia. The blue (`#3498db`) and yellow are retained.
+
 ## Testing posture
 
 ### Fixture-driven over Python literals
