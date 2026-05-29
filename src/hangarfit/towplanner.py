@@ -1174,12 +1174,31 @@ _GRID_XY_M = 0.5  # (x, y) cell size for state binning
 _GRID_DEG = 15.0  # heading cell size; 360 / 15 = 24 heading bins
 _HEADING_BINS = round(360.0 / _GRID_DEG)
 _TURN_PENALTY = 0.1  # per-radian g-cost penalty to prefer straighter paths
-_MAX_EXPANSIONS = 700  # node-expansion budget per plane before bailing.
+_MAX_EXPANSIONS = 2000  # node-expansion budget per plane before bailing (#335).
+# Raised 700 → 2000 based on a budget sweep over the standard fixtures
+# (placeholder 25×18 hangar, solve_fresh_six_planes seed=1, 5 floor planes):
+#
+#   Budget | Routed (seed=1) | plan_fill wall-clock (seed=7)
+#   -------|-----------------|-----------------------------
+#      700 |  3/5            |  ~108 s
+#     1000 |  3/5 (no gain)  |  ~137 s
+#     1500 |  3/5 (no gain)  |  ~215 s
+#     2000 |  4/5 (+1, KNEE) |  ~271 s
+#     3000 |  4/5 (no gain)  |  ~441 s
+#     4000 |  4/5 (no gain)  |  ~540 s+ (extrapolated)
+#
+# The knee is at 2000: routed count improves from 3→4 and does not improve
+# further at 3000 or 4000.  The aviat_husky (first in back-first order at
+# seed=1) remains un-routable even at budget 4000 — genuine tight-geometry
+# budget exhaustion that a larger budget alone cannot fix, not a false negative.
+#
 # Deterministic (machine-independent) bound on worst-case search cost. The flip
 # side: budget exhaustion can also report a genuinely-feasible-but-hard layout
-# as NoFeasiblePlanError (a false negative). Accepted v1 tradeoff — see the
-# design spec's failure semantics; retune once #197 exercises the planner
-# through solve() on real (measured) hangar geometry.
+# as NoFeasiblePlanError (a false negative). Accepted v2 tradeoff — see the
+# design spec's failure semantics; retune once real (measured) hangar geometry
+# is available, or once issue #336 (RRT-Connect v2) extends the motion model.
+# Overridable per-invocation via the ``--tow-max-expansions`` CLI flag and the
+# ``tow_max_expansions`` param on ``solve()``/``plan_fill()`` (#332).
 # Sampling resolution for the FAST in-search `_motion_clear` validity checks
 # (edges + the analytic-shot screen). Coarser than the exact oracle's default
 # (0.05 m / 1°) to keep the search tractable: the worst case is a plane that can
