@@ -33,7 +33,7 @@ import math
 
 import pytest
 
-from hangarfit.loader import load_layout
+from hangarfit.loader import load_layout, load_scenario
 from hangarfit.models import (
     Aircraft,
     Door,
@@ -44,6 +44,7 @@ from hangarfit.models import (
     Placement,
     Wheels,
 )
+from hangarfit.solver import solve
 from hangarfit.towplanner import (
     DubinsArc,
     NoFeasiblePlanError,
@@ -52,6 +53,7 @@ from hangarfit.towplanner import (
     _build_obstacles,
     entry_poses,
     path_first_conflict,
+    plan_fill,
     plan_path,
 )
 
@@ -298,3 +300,119 @@ def test_stats_records_outcome_on_failure() -> None:
     # Either it hit the cap or it exhausted the reachable space; exactly one.
     assert bool(stats["budget_exhausted"]) != bool(stats["space_exhausted"])
     assert math.isfinite(float(stats["expansions"]))  # type: ignore[arg-type]
+
+
+# ── opt-in plumbing through plan_fill / solve (the #332 flags) ───────────────
+
+
+def test_plan_fill_accepts_grid_heuristic_and_explicit_budget() -> None:
+    """``plan_fill(..., heuristic="grid", max_expansions=N)`` routes a friendly
+    two-plane layout — exercises the grid forward + the explicit-budget path."""
+    h = _hangar(width_m=20.0, length_m=30.0)
+    fleet = {"A": _box_plane("A"), "B": _box_plane("B")}
+    layout = Layout(
+        fleet=fleet,
+        hangar=h,
+        placements=(
+            Placement("A", 8.0, 8.0, 0.0, on_carts=False),  # shallow
+            Placement("B", 12.0, 22.0, 0.0, on_carts=False),  # deep
+        ),
+    )
+    plan = plan_fill(layout, heuristic="grid", max_expansions=400)
+    assert [m.plane_id for m in plan.moves] == ["B", "A"]  # deepest first
+
+
+def test_solve_accepts_grid_tow_heuristic() -> None:
+    """``solve(..., tow_heuristic="grid", tow_max_expansions=N)`` runs the opt-in
+    grid branch in the solver. The plane may or may not route (best-effort); the
+    point is the layout is still returned and the grid code path is exercised."""
+    scenario = load_scenario("tests/fixtures/solve_feasible_smoke.yaml")
+    result = solve(
+        scenario,
+        budget_s=10.0,
+        alternatives=1,
+        seed=1,
+        plan_paths=True,
+        tow_heuristic="grid",
+        tow_max_expansions=80,
+    )
+    assert result.layouts  # a feasible single-plane scenario always yields a layout
+    assert len(result.plans) == len(result.layouts)  # plans index-aligned (None allowed)
+
+
+# ── grid-field branch coverage (bay keep-out, off-grid fallback, edge bounds) ─
+
+
+def _wall_plane(plane_id: str, *, width_m: float) -> Aircraft:
+    return Aircraft(
+        id=plane_id,
+        name=plane_id,
+        wing_position="high",
+        gear="tailwheel",
+        movement_mode="always_own_gear",
+        turn_radius_m=4.0,
+        measured=False,
+        parts=(
+            Part(
+                kind="fuselage_aft",
+                length_m=2.0,
+                width_m=width_m,
+                offset_x_m=0.0,
+                offset_y_m=0.0,
+                angle_deg=0.0,
+                z_bottom_m=0.0,
+                z_top_m=3.0,
+            ),
+        ),
+        wheels=_TAIL_WHEELS,
+    )
+
+
+def test_grid_field_excludes_closed_maintenance_bay_cells() -> None:
+    """With a maintenance occupant set the bay is a keep-out: cells inside it are
+    absent from the field (covers the ``bay_active`` branch of ``_cell_free``)."""
+    h = _hangar(width_m=20.0, length_m=30.0)  # bay center x=10, width 2, depth 2 → x(9,11), y>28
+    fleet = {"A": _box_plane("A"), "M": _box_plane("M")}
+    goal = Pose(x_m=10.0, y_m=20.0, heading_deg=0.0)
+    bay_cell = (round(10.0 / 0.5), round(29.0 / 0.5))  # inside the back-anchored bay
+
+    open_layout = Layout(fleet=fleet, hangar=h, placements=())  # bay OPEN (no occupant)
+    open_field = _build_grid_heuristic(goal, _build_obstacles(open_layout, mover_id="A"), h)
+    assert bay_cell in open_field  # reachable when the bay is just floor
+
+    closed_layout = Layout(fleet=fleet, hangar=h, placements=(), maintenance_plane="M")
+    closed_field = _build_grid_heuristic(goal, _build_obstacles(closed_layout, mover_id="A"), h)
+    assert bay_cell not in closed_field  # the closed bay keeps the mover out
+
+
+def test_grid_search_falls_back_to_euclidean_off_grid() -> None:
+    """When the goal is walled off, the door-side start cells are absent from the
+    field, so the grid ``_h`` returns the Euclidean fallback (``g is None``); the
+    search then exhausts its (tiny) budget — covers the fallback path."""
+    h = _hangar(width_m=8.0, length_m=30.0)
+    wall = _wall_plane("W", width_m=10.0)  # spans the full 8 m width near mid-depth
+    layout = Layout(
+        fleet={"W": wall, "A": _box_plane("A")},
+        hangar=h,
+        placements=(
+            Placement("W", 4.0, 15.0, 0.0, on_carts=False),
+            Placement("A", 4.0, 25.0, 0.0, on_carts=False),  # behind the wall
+        ),
+    )
+    with pytest.raises(NoFeasiblePlanError):
+        _route_one(layout, "A", heuristic="grid", max_expansions=60)
+
+
+def test_grid_field_blocks_cells_past_non_aligned_walls() -> None:
+    """A hangar dimension that is not a multiple of the grid pitch puts an edge
+    cell centre just past the wall; ``_cell_free`` rejects it (covers the
+    side/back-wall bound in the field builder)."""
+    h = _hangar(width_m=8.3, length_m=12.7)  # neither a multiple of 0.5 m
+    empty = Layout(fleet={"A": _box_plane("A")}, hangar=h, placements=())
+    field = _build_grid_heuristic(
+        Pose(x_m=4.0, y_m=10.0, heading_deg=0.0), _build_obstacles(empty, mover_id="A"), h
+    )
+    # No field cell centre may lie outside the side/back walls.
+    assert all(0.0 <= ix * 0.5 <= h.width_m and iy * 0.5 <= h.length_m for (ix, iy) in field)
+    # The cell whose centre (8.5 m) overshoots the 8.3 m wall must be absent.
+    assert (round(8.5 / 0.5), round(10.0 / 0.5)) not in field
