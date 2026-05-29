@@ -1,6 +1,7 @@
 # hangarfit
 
-![CI](https://github.com/DocGerd/hangarfit/actions/workflows/ci.yml/badge.svg?branch=develop)
+[![CI](https://github.com/DocGerd/hangarfit/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/DocGerd/hangarfit/actions/workflows/ci.yml)
+[![CodeQL](https://github.com/DocGerd/hangarfit/actions/workflows/codeql.yml/badge.svg?branch=develop)](https://github.com/DocGerd/hangarfit/actions/workflows/codeql.yml)
 [![codecov](https://codecov.io/gh/DocGerd/hangarfit/branch/develop/graph/badge.svg)](https://codecov.io/gh/DocGerd/hangarfit)
 [![OpenSSF Scorecard](https://api.securityscorecards.dev/projects/github.com/DocGerd/hangarfit/badge)](https://securityscorecards.dev/viewer/?uri=github.com/DocGerd/hangarfit)
 [![OpenSSF Best Practices](https://www.bestpractices.dev/projects/12987/badge)](https://www.bestpractices.dev/projects/12987)
