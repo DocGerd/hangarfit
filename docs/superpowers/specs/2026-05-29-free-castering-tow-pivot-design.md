@@ -107,11 +107,15 @@ documented powered-taxi figure); the planner just stops consulting it.
 
 ### 4.3 Pivot center
 
-The r==0 pivot rotates about the plane's **datum** (local origin, `geometry.py:119`).
+The r==0 pivot rotates about the plane's **datum** (the `Pose` `x_m`/`y_m`, which is the
+plane-local origin). The mechanism is `DubinsArc.pose_at` (`towplanner.py:140-145`): for an `L`/`R`
+segment at `r==0`, position is held fixed and only the heading `theta` advances. (Note:
+`geometry.local_to_world`, `geometry.py:119`, is *unrelated* — it maps part vertices for the
+collision/visualize code, not for path integration.)
 
-- **(a) Pivot about the datum — CHOSEN.** Reuse the machinery verbatim; `towplanner.py` and
-  `geometry.py` untouched → **no geometry-invariant-guard review required**. Faithful here (all
-  flagged planes' main gear is ≤0.5 m from the datum).
+- **(a) Pivot about the datum — CHOSEN.** Reuse the machinery verbatim; the `pose_at` integrator
+  and `geometry.py` are untouched → **no geometry-invariant-guard review required**. Faithful here
+  (all flagged planes' main gear is ≤0.5 m from the datum).
 - **(b) Pivot about `main_offset_x_m` — DEFERRED.** General, but offsetting the pivot inside
   `pose_at` touches motion math → triggers the geometry sign-flip guard + a new canary, for a
   sub-metre gain on the current fleet. ADR records it as the future refinement.
