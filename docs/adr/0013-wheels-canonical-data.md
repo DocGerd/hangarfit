@@ -1,7 +1,6 @@
 # ADR-0013: Wheel positions are canonical per-aircraft data; turn_radius_m stays empirical, cross-checked at load
 
-- **Status:** Proposed
-  <!-- Proposed at PR-open; flip to Accepted at PR-merge. -->
+- **Status:** Accepted
 - **Date:** 2026-05-28
 - **Deciders:** [@DocGerd](https://github.com/DocGerd)
 

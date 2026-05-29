@@ -6,6 +6,14 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [0.8.0] — 2026-05-29
+
+### Added
+
 - **Wheel positions are now canonical per-aircraft data.** A new `Wheels` dataclass carries each aircraft's measured wheel positions in `fleet.yaml`, replacing the renderer's heuristic fuselage-fraction guesses; at load time `turn_radius_m` is cross-checked against the wheelbase (a 0.5×–5× sanity band). Documented in ADR-0013 (#322).
 - Opt-in, default-off obstacle-aware A\* heuristic seam (`heuristic=` / `stats=`) on the tow-path planner, plus a reproducible routability benchmark and the towplanner-v2 spike write-up under `docs/superpowers/specs/`. The spike characterised why tight multi-plane fills are un-routable (budget-exhausted on tight finite-width maneuvering, not obstacle clutter) and found the obstacle-aware grid heuristic buys no extra routability (#332).
 
@@ -132,7 +140,8 @@ First Phase 1 cut — substrate for arranging the flying club fleet in a stack-s
 - Apache-2.0 license, public-audience README, CI matrix (Python 3.11 + 3.12), branch protection on develop + main (#13, #14, #15, #16).
 - Strut-aware golden tests + all-9-planes fixture using larger test-only hangar to accommodate strut-bracing geometry on placeholder dimensions (#5).
 
-[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.7.2...HEAD
+[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.8.0...HEAD
+[0.8.0]: https://github.com/DocGerd/hangarfit/compare/v0.7.2...v0.8.0
 [0.7.2]: https://github.com/DocGerd/hangarfit/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/DocGerd/hangarfit/compare/v0.7.0...v0.7.1
 [0.7.0]: https://github.com/DocGerd/hangarfit/compare/v0.6.1...v0.7.0
