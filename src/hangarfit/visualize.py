@@ -49,8 +49,10 @@ if TYPE_CHECKING:
     from .towplanner import MovesPlan
 
 _WING_COLORS: dict[WingPosition, str] = {
-    "high": "#3498db",  # blue
-    "mid": "#e67e22",  # orange
+    "high": "#3498db",  # blue (retained — good contrast at all positions)
+    "mid": "#d55e00",  # Okabe–Ito vermillion — replaces #e67e22 (orange) for
+    # better luminance separation from the low-wing yellow #f4d03f under
+    # protanopia; #e67e22 and #f4d03f can merge for red-blind viewers.
     "low": "#f4d03f",  # yellow
 }
 # Defensive: ``WingPosition`` is closed at ``Literal["high", "mid", "low"]``
@@ -66,15 +68,21 @@ _CONFLICT_COLOR = "#e74c3c"  # red
 # fallback so a path never blurs into a conflict highlight or a placeholder
 # part. Eight entries cover the fleet (<=9 planes); a 9th plane reuses the
 # first colour — acceptable since each path terminates at its annotated slot.
+#
+# Palette: Okabe–Ito 8-colour CVD-safe set (https://jfly.uni-koeln.de/color/).
+# This palette is distinguishable under deuteranopia, protanopia, and
+# tritanopia simultaneously, and reads in grey-scale. The conflict red
+# (#e74c3c) is excluded from this cycle as noted above; it is not part of
+# the Okabe–Ito set either.
 _TOW_PATH_COLORS = (
-    "#1f77b4",  # blue
-    "#ff7f0e",  # orange
-    "#2ca02c",  # green
-    "#9467bd",  # purple
-    "#8c564b",  # brown
-    "#17becf",  # cyan
-    "#bcbd22",  # olive
-    "#e377c2",  # pink
+    "#000000",  # black
+    "#e69f00",  # orange
+    "#56b4e9",  # sky blue
+    "#009e73",  # bluish green
+    "#f0e442",  # yellow
+    "#0072b2",  # blue
+    "#d55e00",  # vermillion
+    "#cc79a7",  # reddish purple
 )
 _TOW_PATH_LINEWIDTH = 1.6
 
@@ -120,7 +128,7 @@ _DOOR_EDGE = "#bdc3c7"  # light gray — visually "open"
 _GLYPH_ZORDER = 1.5  # between wings (1) and fuselage (2)
 #
 # COLOUR: neutral dark-gray that reads on the off-white floor, stays clear of
-# the wing-position palette (#3498db/#e67e22/#f4d03f), the conflict-red
+# the wing-position palette (#3498db/#d55e00/#f4d03f), the conflict-red
 # (#e74c3c), and the tow-path colours. A second shade is used for the cart
 # pallets so each dolly square is distinct from its wheel disc.
 _WHEEL_COLOR = "#566573"  # dark slate-gray — individual wheel discs
@@ -512,7 +520,15 @@ def _annotate_plane(ax: Any, placement: Placement, plane_id: str) -> None:
 
 def _draw_conflict_overlay(ax: Any, layout: Layout, check_result: CheckResult) -> None:
     """Redraw every part of every plane named in any conflict, in red,
-    with a thicker edge so the conflict reads at a glance."""
+    with a thicker dashed edge and a cross hatch so the conflict reads at
+    a glance — even on a B&W printout or for red-green colour-blind viewers.
+
+    Non-colour redundancy: ``hatch="xxx"`` (dense cross pattern) plus
+    ``linestyle="--"`` (dashed stroke) ensure "this part is in conflict" is
+    legible without relying on the red edge colour alone.  The red edge is
+    *kept* as a fast visual signal for colour-normal viewers — the non-colour
+    signals are additive, not replacements.
+    """
     conflicting_planes: set[str] = set()
     for conflict in check_result.conflicts:
         conflicting_planes.update(conflict.planes)
@@ -528,6 +544,8 @@ def _draw_conflict_overlay(ax: Any, layout: Layout, check_result: CheckResult) -
                 facecolor="none",
                 edgecolor=_CONFLICT_COLOR,
                 lw=2,
+                linestyle="--",
+                hatch="xxx",
                 zorder=5,
             )
             ax.add_patch(patch)
