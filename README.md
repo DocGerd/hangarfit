@@ -28,7 +28,7 @@ It also renders a top-down PNG so a human can sanity-check the result by eye.
 **Still explicitly out of scope:**
 
 - No tracking of hangar state across runs — each invocation is stateless.
-- No soft constraints / preferences. Constraints are HARD: pin, force_on_carts, maintenance plane.
+- No user-defined soft constraints or weighted objectives — user-supplied constraints are HARD only (pin, force_on_carts, maintenance plane). The solver does apply one built-in soft spatial preference, inter-plane spread ([ADR-0008](docs/adr/0008-inter-plane-spread-soft-preference.md), default-on, toggleable with `--no-spread`), but it never overrides a hard constraint.
 - No GUI or web frontend.
 - No handling of late arrivals as a live event stream.
 - Multi-plane *rearrangement* (move planes around an already-occupied hangar). The tow planner only handles **empty-hangar fill** — every plane enters once. Rearrangement is planner v2+ territory.

@@ -51,10 +51,16 @@ is the highest module — it orchestrates everything.
 ### `models.py` — data + invariants
 
 Frozen dataclasses for every domain concept: `Part`, `Aircraft`,
-`Hangar`, `MaintenanceBay`, `Placement`, `Layout`, `Conflict`,
+`Wheels`, `Hangar`, `MaintenanceBay`, `Placement`, `Layout`, `Conflict`,
 `CheckResult`, plus the Phase 2a solver types `Scenario`,
 `PlaneConstraint`, `SolveResult`, `SolverDiagnostics`,
 `DiversityConfig`, `SearchConfig` and the `SolveStatus` literal.
+
+`Aircraft.wheels` is a **required** `Wheels` block carrying canonical
+per-aircraft wheel positions ([ADR-0013](../adr/0013-wheels-canonical-data.md)):
+the loader rejects a missing or malformed block, the visualizer draws wheel
+glyphs straight from it (no fuselage-fraction heuristics), and the loader
+cross-checks each plane's `turn_radius_m` against the canonical wheelbase.
 
 `MaintenanceBay` is a back-anchored partial-width rectangle
 (`center_x_m`, `width_m`, `depth_m`) — `Hangar.__post_init__`
@@ -191,7 +197,7 @@ Internally:
   pre-search literal `trivially_infeasible` returned before the
   search loop runs at all.
 - **Spread post-pass** (`_spread`, `_inter_plane_energy`) — after a layout reaches `(0, 0.0)`, maximizes inter-plane separation by minimizing the repulsion energy `Σ exp(−gap/scale)` while preserving validity. On by default; `--no-spread` / `SearchConfig.spread=False` disables it. See [ADR-0008](../adr/0008-inter-plane-spread-soft-preference.md).
-- **Tow-plan bundling** (`plan_paths=True`, default) — each returned layout is tow-planned via `towplanner.plan_fill`, and the result is index-aligned into `SolveResult.plans`. This is **best-effort**: a layout the v1 planner cannot route gets `plans[i] = None` (and is named in `diagnostics.unroutable_planes`) rather than being discarded — the static layout is the answer, the tow plan is advisory. `status` stays search-driven. See the `towplanner.py` entry below and [ADR-0007](../adr/0007-tow-path-planner-v1-scope.md).
+- **Tow-plan bundling** (`plan_paths=True`, default) — each returned layout is tow-planned via `towplanner.plan_fill`, and the result is index-aligned into `SolveResult.plans`. This is **best-effort**: a layout the planner cannot route gets `plans[i] = None` (and is named in `diagnostics.unroutable_planes`) rather than being discarded — the static layout is the answer, the tow plan is advisory. `status` stays search-driven. See the `towplanner.py` entry below and [ADR-0007](../adr/0007-tow-path-planner-v1-scope.md).
 
 The RNG is single-threaded and seeded for bit-identical reproducibility
 across runs (compliance check:
