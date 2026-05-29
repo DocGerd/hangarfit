@@ -29,10 +29,9 @@ kept as a tested, opt-in PoC and the home for a future clutter/learned heuristic
 
 from __future__ import annotations
 
-import math
-
 import pytest
 
+from hangarfit.cli import build_parser
 from hangarfit.loader import load_layout, load_scenario
 from hangarfit.models import (
     Aircraft,
@@ -166,11 +165,18 @@ def test_grid_heuristic_is_deterministic() -> None:
     """``heuristic="grid"`` is RNG-free ⇒ byte-identical across repeat runs."""
     layout = load_layout("tests/fixtures/valid_all_nine_planes.yaml")
     mover = min(layout.placements, key=lambda p: p.y_m).plane_id  # a shallow, routable plane
-    a = _route_one(layout, mover, heuristic="grid")
+    stats: dict[str, object] = {}
+    a = _route_one(layout, mover, heuristic="grid", stats=stats)
     b = _route_one(layout, mover, heuristic="grid")
     assert a.segments == b.segments
     assert a.start == b.start
     assert a.turn_radius_m == b.turn_radius_m
+    # The stats payload the #332 harness reads is populated on a GRID success too
+    # (the success branch is only asserted on the euclidean path elsewhere).
+    assert stats["found"] is True
+    assert stats["heuristic"] == "grid"
+    assert stats["budget_exhausted"] is False and stats["space_exhausted"] is False
+    assert isinstance(stats["expansions"], int) and isinstance(stats["start_poses"], int)
 
 
 # ── grid path is exact-oracle clean (proposer/verifier) ──────────────────────
@@ -297,9 +303,21 @@ def test_stats_records_outcome_on_failure() -> None:
         _route_one(layout, "A", heuristic="euclidean", max_expansions=50, stats=stats)
     assert stats["found"] is False
     assert isinstance(stats["expansions"], int)
-    # Either it hit the cap or it exhausted the reachable space; exactly one.
-    assert bool(stats["budget_exhausted"]) != bool(stats["space_exhausted"])
-    assert math.isfinite(float(stats["expansions"]))  # type: ignore[arg-type]
+    # A tiny budget against a routable-but-hard goal hits the cap: this pins the
+    # ``budget_exhausted`` arm specifically (the XOR alone would pass either way).
+    assert stats["budget_exhausted"] is True
+    assert stats["space_exhausted"] is False
+    assert stats["expansions"] == 50  # the cap-break sets expansions == max_expansions
+    # NOTE on the OTHER arm: ``space_exhausted=True`` requires the open heap to
+    # drain before the cap — i.e. a FINITE reachable state set. With the #222
+    # front-gap exemption the apron (``y < 0``) is unbounded, so the mover can
+    # always reverse straight out the door onto fresh cells; the frontier never
+    # empties and the cap always fires first. The spike benchmark corroborates
+    # this — *every* un-routed plane exited ``budget_exhausted``, none on space.
+    # ``space_exhausted`` is therefore a latent/defensive branch (it would matter
+    # only if a future change bounded the apron), so there is intentionally no
+    # fixture exercising it: none exists that wouldn't have to fight the planner's
+    # own geometry. See the PR thread on this assertion for the rationale.
 
 
 # ── opt-in plumbing through plan_fill / solve (the #332 flags) ───────────────
@@ -416,3 +434,29 @@ def test_grid_field_blocks_cells_past_non_aligned_walls() -> None:
     assert all(0.0 <= ix * 0.5 <= h.width_m and iy * 0.5 <= h.length_m for (ix, iy) in field)
     # The cell whose centre (8.5 m) overshoots the 8.3 m wall must be absent.
     assert (round(8.5 / 0.5), round(10.0 / 0.5)) not in field
+
+
+# ── CLI flag wiring (the #332 experimental knobs) ────────────────────────────
+
+
+def test_cli_tow_flags_default_to_the_byte_identical_shipped_planner() -> None:
+    """No ``--tow-*`` flags ⇒ the namespace defaults that route ``solve()`` down
+    the unchanged ``plan_fill(layout)`` path (the byte-identical-default guard)."""
+    args = build_parser().parse_args(["solve", "scenario.yaml"])
+    assert args.tow_heuristic == "euclidean"
+    assert args.tow_max_expansions is None
+
+
+def test_cli_tow_flags_parse_the_opt_in_values() -> None:
+    """The opt-in values reach the namespace with the right dests/types."""
+    args = build_parser().parse_args(
+        ["solve", "scenario.yaml", "--tow-heuristic", "grid", "--tow-max-expansions", "2000"]
+    )
+    assert args.tow_heuristic == "grid"
+    assert args.tow_max_expansions == 2000
+
+
+def test_cli_tow_heuristic_rejects_unknown_choice() -> None:
+    """``choices`` guards against a typo silently flowing into the planner."""
+    with pytest.raises(SystemExit):
+        build_parser().parse_args(["solve", "scenario.yaml", "--tow-heuristic", "astar"])

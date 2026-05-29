@@ -23,7 +23,7 @@ What it does, against a fixed set of deterministic target layouts:
    better heuristic fixes).
 
 2. BENCHMARK — route the same layouts plane-by-plane under four planner configs
-   (euclidean@700, euclidean@5000, grid@700, grid@5000) and report planes-routed
+   (euclidean@700, grid@700, euclidean@2000, grid@2000) and report planes-routed
    and wall-clock. This is the go/no-go table.
 
 Determinism: every layout target is reproducible (a fixed-seed ``solve`` with a
@@ -131,9 +131,7 @@ def route_in_order(
         except NoFeasiblePlanError:
             routed = False
         dt = time.monotonic() - t0
-        reachable = (
-            _goal_reachable_from_cone(layout, placed, slot) if characterise else False
-        )
+        reachable = _goal_reachable_from_cone(layout, placed, slot) if characterise else False
         out.append(
             PlaneResult(
                 plane_id=slot.plane_id,
@@ -151,8 +149,14 @@ def route_in_order(
 
 def _placeholder_six() -> Layout:
     sc = load_scenario("tests/fixtures/solve_fresh_six_planes.yaml")
-    r = solve(sc, budget_s=15.0, alternatives=1, seed=1, search=SearchConfig(spread=False),
-              plan_paths=False)
+    r = solve(
+        sc,
+        budget_s=15.0,
+        alternatives=1,
+        seed=1,
+        search=SearchConfig(spread=False),
+        plan_paths=False,
+    )
     assert r.layouts, "placeholder six-plane solve produced no layout"
     return r.layouts[0]
 
@@ -160,10 +164,14 @@ def _placeholder_six() -> Layout:
 def _targets() -> list[tuple[str, Layout]]:
     return [
         ("placeholder-25x18  solve_fresh_six_planes seed=1 (5 floor planes)", _placeholder_six()),
-        ("roomy-30x25        valid_all_nine_planes (9 planes)",
-         load_layout("tests/fixtures/valid_all_nine_planes.yaml")),
-        ("placeholder-25x18  valid_two_separated (2 planes, control)",
-         load_layout("tests/fixtures/valid_two_separated.yaml")),
+        (
+            "roomy-30x25        valid_all_nine_planes (9 planes)",
+            load_layout("tests/fixtures/valid_all_nine_planes.yaml"),
+        ),
+        (
+            "placeholder-25x18  valid_two_separated (2 planes, control)",
+            load_layout("tests/fixtures/valid_two_separated.yaml"),
+        ),
     ]
 
 
@@ -179,13 +187,16 @@ def main() -> None:
     for name, layout in targets:
         print(f"\n### {name}")
         rows = route_in_order(layout, heuristic="euclidean", max_expansions=700, characterise=True)
-        print(f"{'plane':<16}{'routed':<8}{'exp':>6}{'cap?':>7}{'space?':>8}"
-              f"{'reach?':>8}{'secs':>8}")
+        print(
+            f"{'plane':<16}{'routed':<8}{'exp':>6}{'cap?':>7}{'space?':>8}{'reach?':>8}{'secs':>8}"
+        )
         for r in rows:
-            print(f"{r.plane_id:<16}{('yes' if r.routed else 'NO'):<8}{r.expansions:>6}"
-                  f"{('Y' if r.budget_exhausted else '-'):>7}"
-                  f"{('Y' if r.space_exhausted else '-'):>8}"
-                  f"{('Y' if r.goal_reachable else 'N'):>8}{r.seconds:>8.2f}")
+            print(
+                f"{r.plane_id:<16}{('yes' if r.routed else 'NO'):<8}{r.expansions:>6}"
+                f"{('Y' if r.budget_exhausted else '-'):>7}"
+                f"{('Y' if r.space_exhausted else '-'):>8}"
+                f"{('Y' if r.goal_reachable else 'N'):>8}{r.seconds:>8.2f}"
+            )
         nr = sum(1 for r in rows if r.routed)
         print(f"  --> routed {nr}/{len(rows)} planes")
 
@@ -201,7 +212,7 @@ def main() -> None:
         ("euclidean", 2000),
         ("grid", 2000),
     ]
-    header = f"{'target':<52}" + "".join(f"{h+'@'+str(b):>16}" for h, b in configs)
+    header = f"{'target':<52}" + "".join(f"{h + '@' + str(b):>16}" for h, b in configs)
     print(header)
     for name, layout in targets:
         cells = []
