@@ -1,8 +1,19 @@
 # ADR-0011: Linear history strategy under GitFlow — squash feature merges, accept release merge commits, target a clean first-parent mainline
 
-- **Status:** Proposed
+- **Status:** Superseded by [ADR-0014](0014-merge-commit-only-history-strategy.md)
 - **Date:** 2026-05-27
 - **Deciders:** Patrick Kuhn (DocGerd)
+
+> **Superseded by [ADR-0014](0014-merge-commit-only-history-strategy.md) (2026-05-29) — never adopted.**
+> This ADR's chosen Option 1 (*feature PRs land as squash merges*) was never put
+> into effect: squash and rebase merging were disabled repo-wide as a
+> release-safety guardrail after the v0.7.0 cascade, so feature PRs land as **merge
+> commits**. ADR-0014 records the in-effect **merge-commit-only** strategy. The
+> Q1–Q4 research below — why `required_linear_history` is incompatible with
+> GitFlow, the rulesets community-#80952 historical-commits bug, and the
+> merge-base cost of squashed back-merges — **remains valid** and is the analysis
+> ADR-0014 builds on. Read the Decision Outcome below as the *proposal that was not
+> taken*, not current policy.
 
 ## Context & Problem Statement
 
