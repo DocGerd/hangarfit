@@ -8,12 +8,19 @@
 # Conventions (see `docs/architecture/08-crosscutting-concepts.md`
 # "The coordinate convention" and "The parts model" for the full version):
 # - Plane-local coords: +x = forward (toward nose), +y = right (toward right wingtip)
-# - Origin of plane-local frame = main-gear / cart centroid
+# - Origin of plane-local frame = a per-aircraft anchor used as the placement
+#   reference (where Placement.x_m/y_m positions the plane in world coords).
+#   The main-gear centroid is a *derived* point, accessible as
+#   (wheels.main_offset_x_m, 0) in plane-local coords. See ADR-0013.
 # - Each Part is an oriented rectangle: length_m runs along plane +x,
 #   width_m runs along plane +y
 # - Heights z_bottom_m / z_top_m are above-ground in world coords
 # - struts block (optional) is expanded by the loader into two mirrored
 #   strut Parts; cantilever aircraft omit the block entirely
+# - wheels block (required) declares the β-schema main_offset_x_m, track_m,
+#   and third_wheel_offset_x_m fields per aircraft (see ADR-0013). Monowheel
+#   aircraft set only main_offset_x_m. The loader cross-checks the
+#   wheel-derived wheelbase against turn_radius_m for own-gear aircraft.
 # - a `kind: fuselage` part is auto-split by the loader into a
 #   `fuselage_front` (cockpit) + `fuselage_aft` (tail) pair at the wing
 #   trailing-edge station (`wing.offset_x_m - wing.length_m/2`); no per-plane
@@ -59,6 +66,8 @@ aircraft:
         offset_y_m: 0.0
         z_bottom_m: 1.9
         z_top_m: 2.1
+    wheels:
+      main_offset_x_m: 0.0
 
   # ----------------------------------------------------------------------------
   # TAILWHEEL HIGH-WING — strut-braced, always on own gear
@@ -91,6 +100,10 @@ aircraft:
       fuselage_attach_z_m: 0.5
       wing_attach_y_m: 1.8
       width_m: 0.05
+    wheels:
+      main_offset_x_m: 0.20
+      track_m: 2.0
+      third_wheel_offset_x_m: -4.80
 
   # ----------------------------------------------------------------------------
   # LOW-WING — cantilever, nosewheel, always on own gear. ONLY low-wing in fleet.
@@ -118,6 +131,10 @@ aircraft:
         offset_y_m: 0.0
         z_bottom_m: 0.8
         z_top_m: 1.1
+    wheels:
+      main_offset_x_m: -0.40
+      track_m: 2.5
+      third_wheel_offset_x_m: 1.60
 
   # ----------------------------------------------------------------------------
   # ULTRALIGHT HIGH-WING — strut-braced, always on carts
@@ -150,6 +167,10 @@ aircraft:
       fuselage_attach_z_m: 0.5
       wing_attach_y_m: 1.6
       width_m: 0.05
+    wheels:
+      main_offset_x_m: -0.10
+      track_m: 1.5
+      third_wheel_offset_x_m: 1.40
 
   # ----------------------------------------------------------------------------
   # TAILWHEEL HIGH-WING — strut-braced, always on carts
@@ -182,6 +203,10 @@ aircraft:
       fuselage_attach_z_m: 0.5
       wing_attach_y_m: 1.5
       width_m: 0.05
+    wheels:
+      main_offset_x_m: 0.20
+      track_m: 1.8
+      third_wheel_offset_x_m: -4.30
 
   # ----------------------------------------------------------------------------
   # CART-ELIGIBLE — high-wing tailwheel, strut-braced (V-strut → one per side)
@@ -215,6 +240,10 @@ aircraft:
       fuselage_attach_z_m: 0.5
       wing_attach_y_m: 1.7
       width_m: 0.05
+    wheels:
+      main_offset_x_m: 0.50
+      track_m: 2.1
+      third_wheel_offset_x_m: -3.80
 
   # ----------------------------------------------------------------------------
   # CART-ELIGIBLE — high-wing nosewheel, strut-braced
@@ -247,6 +276,10 @@ aircraft:
       fuselage_attach_z_m: 0.5
       wing_attach_y_m: 1.8
       width_m: 0.05
+    wheels:
+      main_offset_x_m: -0.20
+      track_m: 2.3
+      third_wheel_offset_x_m: 1.30
 
   # ----------------------------------------------------------------------------
   # CART-ELIGIBLE — high-wing nosewheel, cantilever (no struts)
@@ -274,6 +307,10 @@ aircraft:
         offset_y_m: 0.0
         z_bottom_m: 1.9
         z_top_m: 2.2
+    wheels:
+      main_offset_x_m: -0.10
+      track_m: 1.7
+      third_wheel_offset_x_m: 1.40
 
   # ----------------------------------------------------------------------------
   # CART-ELIGIBLE — high-wing nosewheel, strut-braced
@@ -306,3 +343,7 @@ aircraft:
       fuselage_attach_z_m: 0.5
       wing_attach_y_m: 1.6
       width_m: 0.05
+    wheels:
+      main_offset_x_m: -0.10
+      track_m: 1.4
+      third_wheel_offset_x_m: 1.40

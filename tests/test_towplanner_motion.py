@@ -36,8 +36,19 @@ from __future__ import annotations
 
 import pytest
 
-from hangarfit.models import Aircraft, Door, Hangar, Layout, MaintenanceBay, Part, Placement
+from hangarfit.models import (
+    Aircraft,
+    Door,
+    Hangar,
+    Layout,
+    MaintenanceBay,
+    Part,
+    Placement,
+    Wheels,
+)
 from hangarfit.towplanner import Pose, path_first_conflict, plan_dubins
+
+_TAIL_WHEELS = Wheels(main_offset_x_m=0.20, track_m=1.8, third_wheel_offset_x_m=-2.0)
 
 
 def _fuselage_box() -> Part:
@@ -69,6 +80,7 @@ def _box_plane(plane_id: str, *, turn_radius_m: float = 4.0) -> Aircraft:
         turn_radius_m=turn_radius_m,
         measured=False,
         parts=(_fuselage_box(),),
+        wheels=_TAIL_WHEELS,
     )
 
 
@@ -84,6 +96,7 @@ def _cart_plane(plane_id: str, *, turn_radius_m: float = 4.0) -> Aircraft:
         turn_radius_m=turn_radius_m,
         measured=False,
         parts=(_fuselage_box(),),
+        wheels=_TAIL_WHEELS,
     )
 
 
@@ -116,6 +129,7 @@ def _spanning_plane(plane_id: str, *, turn_radius_m: float = 4.0) -> Aircraft:
         turn_radius_m=turn_radius_m,
         measured=False,
         parts=(_spanning_fuselage(),),
+        wheels=_TAIL_WHEELS,
     )
 
 

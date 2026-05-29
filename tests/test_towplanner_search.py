@@ -2,7 +2,16 @@ import math
 
 import pytest
 
-from hangarfit.models import Aircraft, Door, Hangar, Layout, MaintenanceBay, Part, Placement
+from hangarfit.models import (
+    Aircraft,
+    Door,
+    Hangar,
+    Layout,
+    MaintenanceBay,
+    Part,
+    Placement,
+    Wheels,
+)
 from hangarfit.towplanner import (
     DubinsArc,
     NoFeasiblePlanError,
@@ -15,6 +24,8 @@ from hangarfit.towplanner import (
     path_first_conflict,
     plan_path,
 )
+
+_TAIL_WHEELS = Wheels(main_offset_x_m=0.20, track_m=1.8, third_wheel_offset_x_m=-2.0)
 
 
 def test_primitives_own_gear_are_six_in_lf_sf_rf_lr_sr_rr_order() -> None:
@@ -125,6 +136,7 @@ def _winged_plane(pid: str, *, span_m: float = 10.0, turn_radius_m: float = 5.0)
                 z_top_m=1.8,
             ),
         ),
+        wheels=_TAIL_WHEELS,
     )
 
 
@@ -314,6 +326,7 @@ def test_motion_clear_matches_oracle_on_small_positive_z_gap() -> None:
                     z_top_m=z_top,
                 ),
             ),
+            wheels=_TAIL_WHEELS,
         )
 
     a = _slab("A", z_bottom=1.6, z_top=2.0)
@@ -370,6 +383,7 @@ def test_motion_clear_matches_oracle_on_bay_intrusion() -> None:
                     z_top_m=1.0,
                 ),
             ),
+            wheels=_TAIL_WHEELS,
         )
 
     # "M" is the bay occupant: in the fleet but NOT in placements (Layout
@@ -443,6 +457,7 @@ def _slab_plane(pid: str, z_bottom: float, z_top: float) -> Aircraft:
                 z_top_m=z_top,
             ),
         ),
+        wheels=_TAIL_WHEELS,
     )
 
 
@@ -615,6 +630,7 @@ def test_plan_path_routes_around_a_parked_plane() -> None:
                     z_top_m=1.4,
                 ),
             ),
+            wheels=_TAIL_WHEELS,
         )
 
     h = Hangar(

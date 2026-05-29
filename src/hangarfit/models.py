@@ -17,7 +17,7 @@ import typing
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from types import MappingProxyType
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Literal, cast
 
 if TYPE_CHECKING:
     from hangarfit.towplanner import MovesPlan
@@ -133,6 +133,81 @@ class StrutsSpec:
 
 
 @dataclass(frozen=True, slots=True)
+class Wheels:
+    """Plane-local wheel positions for one aircraft.
+
+    Origin is the per-aircraft anchor that ``Placement.x_m / y_m`` refers to —
+    the same origin every other Part offset is measured from. Each main wheel
+    sits at ``(main_offset_x_m, ±track_m/2)``; the third (nose or tail) wheel,
+    if present, sits at ``(third_wheel_offset_x_m, 0)``.
+
+    ``track_m`` and ``third_wheel_offset_x_m`` are both ``None`` for monowheel
+    aircraft (only the central main wheel is modelled; outriggers stay
+    render-only via the wing footprint). For tricycle and tailwheel aircraft,
+    both fields are required — the loader enforces this against ``gear``.
+    """
+
+    main_offset_x_m: float
+    track_m: float | None
+    third_wheel_offset_x_m: float | None
+
+    def __post_init__(self) -> None:
+        if not math.isfinite(self.main_offset_x_m):
+            raise ValueError(f"Wheels.main_offset_x_m must be finite, got {self.main_offset_x_m!r}")
+        if (self.track_m is None) != (self.third_wheel_offset_x_m is None):
+            # XOR: both present (tricycle/tailwheel) or both absent (monowheel).
+            if self.track_m is None:
+                raise ValueError(
+                    "Wheels.third_wheel_offset_x_m requires track_m to also be set "
+                    "(both present for tricycle/tailwheel, both None for monowheel)"
+                )
+            raise ValueError(
+                "Wheels.track_m requires third_wheel_offset_x_m to also be set "
+                "(both present for tricycle/tailwheel, both None for monowheel)"
+            )
+        if self.track_m is not None:
+            if not math.isfinite(self.track_m):
+                raise ValueError(f"Wheels.track_m must be finite, got {self.track_m!r}")
+            if self.track_m <= 0.0:
+                raise ValueError(f"Wheels.track_m must be positive, got {self.track_m!r}")
+        if self.third_wheel_offset_x_m is not None and not math.isfinite(
+            self.third_wheel_offset_x_m
+        ):
+            raise ValueError(
+                f"Wheels.third_wheel_offset_x_m must be finite, got {self.third_wheel_offset_x_m!r}"
+            )
+
+    @property
+    def positions(self) -> tuple[tuple[float, float], ...]:
+        """Plane-local ``(x, y)`` of every wheel.
+
+        Returns 1 entry for monowheel (``(main_offset_x_m, 0)``) or 3 entries
+        for tricycle/tailwheel (two mains at ``(main_offset_x_m, ±track_m/2)``
+        then the third wheel at ``(third_wheel_offset_x_m, 0)``). The order is
+        stable: mains first (``+y`` then ``-y``), then the third wheel.
+        """
+        if self.track_m is None:
+            return ((self.main_offset_x_m, 0.0),)
+        # __post_init__'s XOR rule guarantees third_wheel_offset_x_m is set whenever
+        # track_m is set; cast makes that invariant visible to mypy without an assert
+        # (which would get stripped under -O).
+        third_x = cast(float, self.third_wheel_offset_x_m)
+        half_track = self.track_m / 2.0
+        return (
+            (self.main_offset_x_m, half_track),
+            (self.main_offset_x_m, -half_track),
+            (third_x, 0.0),
+        )
+
+    @property
+    def wheelbase_m(self) -> float | None:
+        """``abs(third_wheel_offset_x_m - main_offset_x_m)``, or ``None`` for monowheel."""
+        if self.third_wheel_offset_x_m is None:
+            return None
+        return abs(self.third_wheel_offset_x_m - self.main_offset_x_m)
+
+
+@dataclass(frozen=True, slots=True)
 class Aircraft:
     """One plane in the fleet.
 
@@ -148,6 +223,12 @@ class Aircraft:
     ``turn_radius_m`` is required for any non-``always_cart`` aircraft
     (the future Dubins-path planner needs it for own-gear motion).
     For ``always_cart`` it may be ``None`` (or any value — it is ignored).
+
+    ``wheels`` is the canonical source of per-aircraft wheel positions
+    (ADR-0013). The loader populates it from a required per-aircraft
+    ``wheels:`` block in ``fleet.yaml`` and rejects any entry missing it.
+    Consumers (visualize, tow-path planner) read positions exclusively
+    through :meth:`Wheels.positions`.
     """
 
     id: str
@@ -158,6 +239,7 @@ class Aircraft:
     turn_radius_m: float | None
     measured: bool
     parts: tuple[Part, ...]
+    wheels: Wheels
     notes: str = ""
 
     def __post_init__(self) -> None:

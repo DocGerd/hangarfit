@@ -289,6 +289,7 @@ class TestBayIntrusion:
             MaintenanceBay,
             Part,
             Placement,
+            Wheels,
         )
 
         # 1×1 m wing at z=2..2.3 — a single-rectangle part lets us reason
@@ -313,6 +314,7 @@ class TestBayIntrusion:
                     z_top_m=2.3,
                 ),
             ),
+            wheels=Wheels(main_offset_x_m=0.0, track_m=1.8, third_wheel_offset_x_m=-2.0),
         )
         # Bay: x ∈ (10, 18), y ∈ (16, 25].
         hangar = Hangar(
@@ -359,6 +361,7 @@ class TestBayIntrusion:
                     z_top_m=1.0,
                 ),
             ),
+            wheels=Wheels(main_offset_x_m=0.0, track_m=None, third_wheel_offset_x_m=None),
         )
         return Layout(
             fleet={"probe": small_wing, "occupant": occupant},

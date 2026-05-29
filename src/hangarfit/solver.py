@@ -20,7 +20,7 @@ import random as _random_module
 import secrets
 import sys
 import time
-from typing import NamedTuple
+from typing import Literal, NamedTuple
 
 from hangarfit.collisions import check as check_layout
 from hangarfit.geometry import WorldPart, aircraft_parts_world
@@ -51,6 +51,8 @@ def solve(
     diversity: DiversityConfig | None = None,
     search: SearchConfig | None = None,
     plan_paths: bool = True,
+    tow_heuristic: Literal["euclidean", "grid"] = "euclidean",
+    tow_max_expansions: int | None = None,
 ) -> SolveResult:
     """Solve a Scenario into up to ``alternatives`` diverse valid Layouts.
 
@@ -83,6 +85,13 @@ def solve(
     fills. With it off, ``plans`` is all-``None`` (still index-aligned).
     Tow-planning is RNG-free, so it preserves the seeded determinism
     contract (ADR-0003) end-to-end through the bundle.
+
+    ``tow_heuristic`` and ``tow_max_expansions`` are forwarded verbatim to
+    :func:`~hangarfit.towplanner.plan_fill` (towplanner-v2 routability spike,
+    #332). The defaults (``"euclidean"`` / module ``_MAX_EXPANSIONS``) reproduce
+    the shipped planner byte-for-byte; ``tow_heuristic="grid"`` opts into the
+    obstacle-aware free-space heuristic and a larger ``tow_max_expansions`` opts
+    into a bigger per-plane search budget — both RNG-free, so determinism holds.
     """
     if diversity is None:
         diversity = DiversityConfig()
@@ -302,7 +311,20 @@ def solve(
             built: list[MovesPlan | None] = []
             for layout in accepted_layouts:
                 try:
-                    built.append(plan_fill(layout))
+                    # Default path calls ``plan_fill(layout)`` EXACTLY as before
+                    # (byte-identical; #332 spike params are opt-in), so the
+                    # ADR-0003 determinism canaries — and any test that stubs
+                    # ``plan_fill`` with a target-only signature — are untouched.
+                    if tow_heuristic == "euclidean" and tow_max_expansions is None:
+                        built.append(plan_fill(layout))
+                    else:
+                        built.append(
+                            plan_fill(
+                                layout,
+                                heuristic=tow_heuristic,
+                                max_expansions=tow_max_expansions,
+                            )
+                        )
                 except NoFeasiblePlanError as e:
                     built.append(None)
                     unroutable.append(e.plane_id)

@@ -36,7 +36,7 @@ from __future__ import annotations
 import dataclasses
 import difflib
 import math
-from collections.abc import Collection, Iterable
+from collections.abc import Collection, Iterable, Mapping
 from pathlib import Path
 from typing import Any
 
@@ -53,6 +53,7 @@ from .models import (
     PlaneConstraint,
     Scenario,
     StrutsSpec,
+    Wheels,
 )
 
 
@@ -596,6 +597,128 @@ def _resolve_known_plane_id(
     raise LoaderError(f"{path}: {role} references unknown plane id {candidate!r}{tail}")
 
 
+_WHEELS_KEYS_BY_GEAR: dict[str, frozenset[str]] = {
+    "monowheel": frozenset({"main_offset_x_m"}),
+    "nosewheel": frozenset({"main_offset_x_m", "track_m", "third_wheel_offset_x_m"}),
+    "tailwheel": frozenset({"main_offset_x_m", "track_m", "third_wheel_offset_x_m"}),
+}
+
+
+def _parse_wheels(
+    entry: Mapping[str, Any] | None,
+    gear: str,
+) -> Wheels:
+    """Parse a ``wheels:`` block into a :class:`Wheels`.
+
+    Raises ``LoaderError`` when ``entry`` is ``None`` — every aircraft
+    must declare a ``wheels:`` block (ADR-0013).
+
+    Validates that the key set exactly matches ``_WHEELS_KEYS_BY_GEAR[gear]``
+    and that nose-vs-tail sign rules hold for tricycle/tailwheel gear.
+
+    Errors are raised without an ``aircraft 'id': ...`` prefix — the outer
+    ``load_fleet`` loop wraps every per-aircraft error with that attribution
+    (see :func:`load_fleet`), so adding it here would double-decorate.
+    """
+    if entry is None:
+        raise LoaderError("wheels: block is required (see fleet.yaml header for the schema)")
+
+    if not isinstance(entry, Mapping):
+        # YAML can hand us a list/scalar/string here (e.g. a mis-indented
+        # block). Guard before .keys() so the user gets an attributed
+        # LoaderError, not a bare AttributeError that escapes load_fleet's
+        # catch tuple — mirrors the isinstance(dict) guard on 'struts'.
+        raise LoaderError(f"wheels: block must be a mapping, got {type(entry).__name__}")
+
+    if gear not in _WHEELS_KEYS_BY_GEAR:
+        raise LoaderError(f"wheels: unsupported gear {gear!r}")
+
+    expected = _WHEELS_KEYS_BY_GEAR[gear]
+    seen = frozenset(entry.keys())
+    missing = expected - seen
+    unknown = seen - expected
+    if missing:
+        raise LoaderError(
+            f"wheels: block missing required key(s) for gear={gear!r}: {sorted(missing)}"
+        )
+    if unknown:
+        if gear == "monowheel" and unknown & {"track_m", "third_wheel_offset_x_m"}:
+            raise LoaderError(
+                f"wheels: monowheel block must not set track_m or "
+                f"third_wheel_offset_x_m (got {sorted(unknown)})"
+            )
+        raise LoaderError(f"wheels: block has unknown key(s): {sorted(unknown)}")
+
+    main_offset_x_m = _to_float(entry["main_offset_x_m"], "wheels.main_offset_x_m")
+    if gear == "monowheel":
+        # _to_float already rejects non-finite; Wheels.__post_init__'s only other
+        # ValueError path for monowheel is also a finiteness check, so no wrap needed.
+        return Wheels(main_offset_x_m=main_offset_x_m, track_m=None, third_wheel_offset_x_m=None)
+
+    track_m = _to_float(entry["track_m"], "wheels.track_m")
+    third = _to_float(entry["third_wheel_offset_x_m"], "wheels.third_wheel_offset_x_m")
+    # Sign rule:
+    #   nosewheel → third (nose) must be forward of mains (greater x)
+    #   tailwheel → third (tail) must be aft of mains    (lesser x)
+    if gear == "nosewheel" and third <= main_offset_x_m:
+        raise LoaderError(
+            f"wheels: nosewheel third_wheel_offset_x_m must be forward of mains "
+            f"(greater than main_offset_x_m={main_offset_x_m}); got {third}"
+        )
+    if gear == "tailwheel" and third >= main_offset_x_m:
+        raise LoaderError(
+            f"wheels: tailwheel third_wheel_offset_x_m must be aft of mains "
+            f"(less than main_offset_x_m={main_offset_x_m}); got {third}"
+        )
+    try:
+        # Wheels.__post_init__ still validates `track_m > 0` — wrap so the loader
+        # surfaces a LoaderError rather than leaking ValueError to the caller.
+        return Wheels(
+            main_offset_x_m=main_offset_x_m,
+            track_m=track_m,
+            third_wheel_offset_x_m=third,
+        )
+    except ValueError as exc:
+        raise LoaderError(f"wheels: {exc}") from exc
+
+
+# Plausibility band for turn_radius_m against the wheel-derived wheelbase.
+# Deliberately loose (0.5×–5×): a sanity guard against a fat-fingered radius or
+# wheel coordinate, NOT a derivation. turn_radius_m stays an empirical value
+# (ADR-0013). Most fleet entries are still ``measured: false`` estimates, so a
+# tight band would produce false positives.
+_WHEELBASE_BAND_LOW = 0.5
+_WHEELBASE_BAND_HIGH = 5.0
+
+
+def _validate_wheels_vs_turn_radius(aircraft: Aircraft) -> None:
+    """Raise ``LoaderError`` if turn_radius_m is implausible vs the wheelbase.
+
+    Skipped whenever ``turn_radius_m`` is ``None`` (every always_cart entry
+    today, though the model permits a non-None value there too — which would
+    then be checked) and for monowheel (no ``wheelbase_m``). Cart-eligible
+    planes carry a real radius and wheelbase, so they ARE checked. The message
+    carries no ``aircraft 'id'`` prefix — the
+    ``load_fleet`` loop wraps per-aircraft errors with that attribution, so
+    adding it here would double-decorate (mirrors :func:`_parse_wheels`).
+    See ADR-0013 for the rationale on the loose band.
+    """
+    if aircraft.turn_radius_m is None:
+        return
+    wheelbase = aircraft.wheels.wheelbase_m
+    if wheelbase is None:
+        return
+    low = _WHEELBASE_BAND_LOW * wheelbase
+    high = _WHEELBASE_BAND_HIGH * wheelbase
+    r = aircraft.turn_radius_m
+    if not (low <= r <= high):
+        raise LoaderError(
+            f"turn_radius_m={r} is implausible given wheelbase={wheelbase:.2f}m "
+            f"(expected {low:.2f}..{high:.2f}). Either fix the wheel positions "
+            f"or fix turn_radius_m."
+        )
+
+
 def _build_aircraft(entry: Any) -> Aircraft:
     if not isinstance(entry, dict):
         raise LoaderError(f"aircraft entry must be a mapping, got {type(entry).__name__}")
@@ -666,7 +789,7 @@ def _build_aircraft(entry: Any) -> Aircraft:
     turn_radius_raw = entry.get("turn_radius_m")
     turn_radius_m = None if turn_radius_raw is None else _to_float(turn_radius_raw, "turn_radius_m")
 
-    return Aircraft(
+    aircraft = Aircraft(
         id=entry["id"],
         name=entry["name"],
         wing_position=entry["wing_position"],
@@ -676,7 +799,10 @@ def _build_aircraft(entry: Any) -> Aircraft:
         measured=_to_bool(entry.get("measured", False), "measured"),
         parts=tuple(parts),
         notes=entry.get("notes", ""),
+        wheels=_parse_wheels(entry.get("wheels"), entry["gear"]),
     )
+    _validate_wheels_vs_turn_radius(aircraft)
+    return aircraft
 
 
 def _build_part(data: Any, index: int) -> Part:

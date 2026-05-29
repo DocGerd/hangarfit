@@ -31,8 +31,11 @@ from hangarfit.models import Aircraft, Placement
 from hangarfit.visualize import (
     _BAY_WALL_FACE,
     _CART_DECK_COLOR,
+    _CART_PALLET_HALF_EXTENT_M,
+    _CONFLICT_COLOR,
     _GLYPH_ZORDER,
     _WHEEL_COLOR,
+    _draw_conflict_overlay,
     _draw_gear_glyph,
     _draw_maintenance_bay,
     nose_direction,
@@ -106,6 +109,50 @@ class TestRenderLayout:
         out = tmp_path / "clean_with_result.png"
         render_layout(layout, out, check_result=result)
         _assert_valid_png(out)
+
+    def test_conflict_overlay_carries_non_colour_redundancy(self) -> None:
+        """Every conflict overdraw patch must signal "in conflict" through
+        non-colour channels — a hatch pattern *and* a dashed stroke — in
+        addition to the red edge, so the conflict reads on a B&W printout and
+        for red-green colour-blind viewers (#326).
+
+        Guards the accessibility invariant documented in arc42 §8 ("Visualizer
+        colour accessibility") against a refactor that drops the hatch/dash and
+        leaves only ``_CONFLICT_COLOR`` — a regression that would still render a
+        plausible-looking PNG and so would pass every other test in this file.
+        Mirrors :meth:`TestConditionalBayRendering
+        .test_closed_bay_adds_hatched_red_patch_and_label`, the other
+        non-colour-redundancy guard in this suite.
+        """
+        import matplotlib.colors
+
+        layout = _load("invalid_wing_wing_same_height")
+        result = check(layout)
+        assert not result.valid, "fixture precondition: layout should have conflicts"
+        ax = MagicMock()
+
+        _draw_conflict_overlay(ax, layout, result)
+
+        assert ax.add_patch.call_count >= 1, (
+            "conflict overlay must redraw at least one offending part"
+        )
+        expected_edge = matplotlib.colors.to_rgba(_CONFLICT_COLOR)
+        for call in ax.add_patch.call_args_list:
+            patch = call.args[0]
+            assert isinstance(patch, MplPolygon)
+            assert patch.get_hatch(), (
+                f"conflict patch must carry a hatch pattern; got {patch.get_hatch()!r}"
+            )
+            assert patch.get_linestyle() in ("--", "dashed"), (
+                "conflict patch must use a dashed (non-solid) stroke; "
+                f"got {patch.get_linestyle()!r}"
+            )
+            # The red edge is *retained* as the fast signal for colour-normal
+            # viewers — the hatch/dash are additive, not a replacement.
+            edge = patch.get_edgecolor()
+            assert edge[:3] == expected_edge[:3], (
+                f"conflict patch must keep the {_CONFLICT_COLOR} edge; got {edge!r}"
+            )
 
     def test_title_is_optional(self, tmp_path: Path) -> None:
         layout = _load("valid_two_separated")
@@ -602,7 +649,9 @@ class TestGearGlyph:
         * ``nosewheel`` + ``on_carts=False`` → 3 wheel circles (1 nose + 2 mains)
         * ``tailwheel`` + ``on_carts=False`` → 3 wheel circles (2 mains + 1 tail)
         * ``monowheel`` + ``on_carts=False`` → 1 wheel circle
-        * ``on_carts=True`` (any gear) → 1 deck Polygon + 4 corner wheel circles
+        * ``on_carts=True`` (#321) → one small pallet Polygon + one wheel circle
+          per wheel position (3 of each for tricycle/tailwheel, 1 each for
+          monowheel); never a single body-sized deck rectangle
 
     Patch counting is feasible here (unlike pixel tests) because the glyph
     functions make a bounded, deterministic number of ``ax.add_patch`` calls.
@@ -655,6 +704,8 @@ class TestGearGlyph:
             z_top_m=1.5,
         )
         turn_radius = None if movement_mode == "always_cart" else 5.0
+        from tests.conftest import default_wheels_for
+
         return Aircraft(
             id="probe",
             name="Probe",
@@ -664,6 +715,7 @@ class TestGearGlyph:
             turn_radius_m=turn_radius,
             measured=False,
             parts=(fuselage_front, fuselage_aft),
+            wheels=default_wheels_for(gear),  # type: ignore[arg-type]
         )
 
     # ── end-to-end smoke ───────────────────────────────────────────────────────
@@ -773,9 +825,54 @@ class TestGearGlyph:
 
     # ── cart glyph ─────────────────────────────────────────────────────────────
 
-    def test_on_carts_adds_deck_polygon_plus_four_wheel_circles(self) -> None:
-        """Cart glyph: 1 deck Polygon + 4 corner Circle patches = 5 total."""
+    def test_on_carts_draws_one_pallet_and_wheel_per_wheel_position(self) -> None:
+        """#321: cart glyph draws one small pallet Polygon + one wheel Circle per
+        wheel position. A tailwheel plane has 3 wheels → 3 pallets + 3 wheels = 6
+        patches (never a single body-sized deck rectangle)."""
         from matplotlib.patches import Circle
+        from matplotlib.patches import Polygon as MplPolygon
+
+        aircraft = self._aircraft("tailwheel", movement_mode="always_cart")
+        n = len(aircraft.wheels.positions)
+        assert n == 3, "tailwheel fixture should expose 3 wheel positions"
+        placement = self._placement(on_carts=True)
+        ax = MagicMock()
+
+        _draw_gear_glyph(ax, placement, aircraft)
+
+        patches = [c.args[0] for c in ax.add_patch.call_args_list]
+        polygon_count = sum(1 for p in patches if isinstance(p, MplPolygon))
+        circle_count = sum(1 for p in patches if isinstance(p, Circle))
+        assert polygon_count == n, f"expected {n} pallet Polygons; got {polygon_count}"
+        assert circle_count == n, f"expected {n} wheel Circles; got {circle_count}"
+        assert ax.add_patch.call_count == 2 * n, (
+            f"cart glyph expects {2 * n} patches ({n} pallets + {n} wheels); "
+            f"got {ax.add_patch.call_count}"
+        )
+
+    def test_on_carts_monowheel_draws_single_pallet(self) -> None:
+        """#321: a monowheel cart-borne plane draws exactly 1 pallet + 1 wheel."""
+        from matplotlib.patches import Circle
+        from matplotlib.patches import Polygon as MplPolygon
+
+        aircraft = self._aircraft("monowheel", movement_mode="always_cart")
+        assert len(aircraft.wheels.positions) == 1
+        placement = self._placement(on_carts=True)
+        ax = MagicMock()
+
+        _draw_gear_glyph(ax, placement, aircraft)
+
+        patches = [c.args[0] for c in ax.add_patch.call_args_list]
+        assert sum(1 for p in patches if isinstance(p, MplPolygon)) == 1
+        assert sum(1 for p in patches if isinstance(p, Circle)) == 1
+        assert ax.add_patch.call_count == 2
+
+    def test_on_carts_pallet_is_not_body_sized(self) -> None:
+        """#321 regression: each pallet is small (per-wheel), not a body-spanning
+        rectangle. Pallet world extent must be far below the ~7 m fuselage span —
+        bounded by the pallet diagonal (2·√2·half-extent)."""
+        import math
+
         from matplotlib.patches import Polygon as MplPolygon
 
         aircraft = self._aircraft("tailwheel", movement_mode="always_cart")
@@ -784,17 +881,20 @@ class TestGearGlyph:
 
         _draw_gear_glyph(ax, placement, aircraft)
 
-        assert ax.add_patch.call_count == 5, (
-            f"cart glyph expects 5 patches (1 deck + 4 wheels); got {ax.add_patch.call_count}"
-        )
-        patches = [c.args[0] for c in ax.add_patch.call_args_list]
-        polygon_count = sum(1 for p in patches if isinstance(p, MplPolygon))
-        circle_count = sum(1 for p in patches if isinstance(p, Circle))
-        assert polygon_count == 1, f"expected 1 deck Polygon; got {polygon_count}"
-        assert circle_count == 4, f"expected 4 corner Circle wheels; got {circle_count}"
+        max_pallet_span = 2.0 * math.sqrt(2.0) * _CART_PALLET_HALF_EXTENT_M
+        for call in ax.add_patch.call_args_list:
+            patch = call.args[0]
+            if not isinstance(patch, MplPolygon):
+                continue
+            xy = patch.get_xy()
+            xs = [p[0] for p in xy]
+            ys = [p[1] for p in xy]
+            assert (max(xs) - min(xs)) <= max_pallet_span + 1e-9
+            assert (max(ys) - min(ys)) <= max_pallet_span + 1e-9
 
-    def test_on_carts_deck_uses_cart_deck_color(self) -> None:
-        """The cart deck Polygon must use _CART_DECK_COLOR as its facecolor (RGB channels).
+    def test_on_carts_pallet_uses_cart_deck_color(self) -> None:
+        """Each cart pallet Polygon must use _CART_DECK_COLOR as its facecolor
+        (RGB channels).
 
         The alpha channel is set independently via the ``alpha`` kwarg, so
         ``get_facecolor()`` returns ``(r, g, b, alpha)`` — we compare only
@@ -809,24 +909,28 @@ class TestGearGlyph:
 
         _draw_gear_glyph(ax, placement, aircraft)
 
-        deck = next(
+        pallets = [
             c.args[0] for c in ax.add_patch.call_args_list if isinstance(c.args[0], MplPolygon)
-        )
+        ]
+        assert pallets, "expected at least one pallet Polygon"
         expected_rgb = matplotlib.colors.to_rgba(_CART_DECK_COLOR)[:3]
-        actual_rgb = deck.get_facecolor()[:3]
-        assert actual_rgb == pytest.approx(expected_rgb, abs=1e-3), (
-            f"cart deck RGB must match _CART_DECK_COLOR; got {actual_rgb!r} vs {expected_rgb!r}"
-        )
+        for pallet in pallets:
+            actual_rgb = pallet.get_facecolor()[:3]
+            assert actual_rgb == pytest.approx(expected_rgb, abs=1e-3), (
+                f"pallet RGB must match _CART_DECK_COLOR; got {actual_rgb!r} vs {expected_rgb!r}"
+            )
 
-    def test_on_carts_suppresses_own_gear_wheels(self) -> None:
-        """``on_carts=True`` must draw the cart glyph, not own-gear wheels.
+    def test_on_carts_suppresses_bare_own_gear_wheels(self) -> None:
+        """``on_carts=True`` must draw the cart glyph (pallet + wheel per
+        position), not the bare own-gear wheels.
 
-        For a nosewheel plane: own-gear would add 3 circles, cart adds 1
-        polygon + 4 circles.  The distinguishing check is the polygon count.
-        """
+        For a nosewheel plane: bare own-gear would add 3 circles and 0 polygons,
+        whereas the cart adds one pallet polygon per wheel.  The distinguishing
+        check is that polygons are present (one per wheel)."""
         from matplotlib.patches import Polygon as MplPolygon
 
         aircraft = self._aircraft("nosewheel", movement_mode="cart_eligible")
+        n = len(aircraft.wheels.positions)
         placement = self._placement(on_carts=True)
         ax = MagicMock()
 
@@ -834,12 +938,11 @@ class TestGearGlyph:
 
         patches = [c.args[0] for c in ax.add_patch.call_args_list]
         polygon_count = sum(1 for p in patches if isinstance(p, MplPolygon))
-        assert polygon_count == 1, (
-            f"on_carts=True must use cart glyph (1 deck polygon); got {polygon_count} polygons"
+        assert polygon_count == n, (
+            f"on_carts=True must draw one pallet polygon per wheel; "
+            f"got {polygon_count} polygons for {n} wheels"
         )
-        assert ax.add_patch.call_count == 5, (
-            f"cart glyph expects 5 patches total; got {ax.add_patch.call_count}"
-        )
+        assert ax.add_patch.call_count == 2 * n
 
     def test_glyph_zorder_above_wing_layer(self) -> None:
         """All gear/cart patches must have zorder > 1 (the wing layer) so wings
@@ -875,10 +978,11 @@ class TestGearGlyph:
         )
 
     def test_cart_glyph_rotates_with_heading(self) -> None:
-        """Cart deck corners must rotate with the heading via the world transform.
+        """Cart pallet corners must rotate with the heading via the world
+        transform.
 
-        At heading 90°, the local +x (forward) axis maps to world +x.  The
-        deck's forward-half corner (positive local-u) must have a world-x
+        At heading 90°, the local +x (forward) axis maps to world +x. The
+        forward-most pallet (the nose wheel at local +u) must have a world-x
         coordinate greater than the placement's x — confirming the rotation
         applied rather than a static axis-aligned rectangle.
         """
@@ -890,22 +994,25 @@ class TestGearGlyph:
 
         _draw_gear_glyph(ax, placement, aircraft)
 
-        deck = next(
+        pallets = [
             c.args[0] for c in ax.add_patch.call_args_list if isinstance(c.args[0], MplPolygon)
-        )
-        # At heading 90° the forward (+u) axis maps to world +x.
-        # Some deck corners have +u > 0 → their world-x must exceed placement.x_m.
-        xs = [v[0] for v in deck.get_xy()]
-        assert max(xs) > placement.x_m, (
-            f"cart deck must extend in +x at heading 90°; "
-            f"max x={max(xs)}, placement.x={placement.x_m}"
+        ]
+        assert pallets, "expected at least one pallet Polygon"
+        # At heading 90° the forward (+u) axis maps to world +x. The nose-wheel
+        # pallet (largest +u) must reach world-x beyond placement.x_m.
+        all_xs = [pt[0] for pallet in pallets for pt in pallet.get_xy()]
+        assert max(all_xs) > placement.x_m, (
+            f"cart pallets must extend in +x at heading 90°; "
+            f"max x={max(all_xs)}, placement.x={placement.x_m}"
         )
 
     # ── no fuselage defensive path ─────────────────────────────────────────────
 
-    def test_no_fuselage_part_is_a_noop(self) -> None:
-        """If an aircraft has no fuselage part (defensive path), no patches are added."""
-        from hangarfit.models import Aircraft, Part
+    def test_wheels_are_fuselage_independent(self) -> None:
+        """Post-ADR-0013 wheel placement reads ``aircraft.wheels.positions`` and
+        no longer depends on the fuselage parts — an aircraft with only a wing
+        still draws its three gear wheels from the canonical data."""
+        from hangarfit.models import Aircraft, Part, Wheels
 
         wing = Part(
             kind="wing",
@@ -926,10 +1033,12 @@ class TestGearGlyph:
             turn_radius_m=5.0,
             measured=False,
             parts=(wing,),
+            wheels=Wheels(main_offset_x_m=0.0, track_m=1.8, third_wheel_offset_x_m=2.0),
         )
         placement = self._placement(on_carts=False)
         ax = MagicMock()
 
         _draw_gear_glyph(ax, placement, aircraft)
 
-        ax.add_patch.assert_not_called()
+        # Three wheels (two mains + nose) drawn from wheels.positions.
+        assert ax.add_patch.call_count == 3

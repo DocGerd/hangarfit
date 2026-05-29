@@ -32,15 +32,17 @@ from hangarfit.towplanner import NoFeasiblePlanError, path_first_conflict, plan_
 #
 # Bumped 30s → 75s for the Reeds–Shepp motion model (ADR-0010): the primitive
 # fan grew from 3 (forward L/S/R) to 6 (+ reverse L/S/R), so each expansion now
-# screens roughly twice the edges and the worst-case budget-exhaustion bail on
-# an un-towable layout (the six-plane fresh fill, where several planes are
-# un-routable at 700 expansions each) doubled to ~50s observed. 75s keeps the
-# runaway guard meaningful — it is still less than half the 177s pre-tuning
-# baseline — with margin over the observed worst case for slower machines.
-# Tighten once #197/v2 exercise the planner through solve() on real (measured)
-# hangar geometry, or once the primitive fan is pruned (e.g. dropping the
-# redundant reverse cart pivots, or gating reverse edges behind a heuristic).
-_PLAN_FILL_CEILING_S = 75.0
+# screens roughly twice the edges.
+#
+# Bumped 75s → 400s for the _MAX_EXPANSIONS 700 → 2000 raise (#335).  The
+# per-plane cost scales linearly with budget; with budget 2000 the worst-case
+# bail on the six-plane fresh fill (seed=7, two un-routable planes each
+# exhausting the full budget, tried multiple times by the greedy scan) measured
+# ~271 s on the development machine.  400 s = ~271 s × 1.5 + rounding — keeps
+# the runaway guard meaningful while allowing for slower CI machines.  Tighten
+# once real (measured) hangar geometry is available or issue #336 (RRT-Connect
+# v2) extends the motion model.
+_PLAN_FILL_CEILING_S = 400.0
 
 
 @pytest.mark.slow

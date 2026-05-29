@@ -49,8 +49,10 @@ if TYPE_CHECKING:
     from .towplanner import MovesPlan
 
 _WING_COLORS: dict[WingPosition, str] = {
-    "high": "#3498db",  # blue
-    "mid": "#e67e22",  # orange
+    "high": "#3498db",  # blue (retained — good contrast at all positions)
+    "mid": "#d55e00",  # Okabe–Ito vermillion — replaces #e67e22 (orange) for
+    # better luminance separation from the low-wing yellow #f4d03f under
+    # protanopia; #e67e22 and #f4d03f can merge for red-blind viewers.
     "low": "#f4d03f",  # yellow
 }
 # Defensive: ``WingPosition`` is closed at ``Literal["high", "mid", "low"]``
@@ -66,15 +68,21 @@ _CONFLICT_COLOR = "#e74c3c"  # red
 # fallback so a path never blurs into a conflict highlight or a placeholder
 # part. Eight entries cover the fleet (<=9 planes); a 9th plane reuses the
 # first colour — acceptable since each path terminates at its annotated slot.
+#
+# Palette: Okabe–Ito 8-colour CVD-safe set (https://jfly.uni-koeln.de/color/).
+# This palette is distinguishable under deuteranopia, protanopia, and
+# tritanopia simultaneously, and reads in grey-scale. The conflict red
+# (#e74c3c) is excluded from this cycle as noted above; it is not part of
+# the Okabe–Ito set either.
 _TOW_PATH_COLORS = (
-    "#1f77b4",  # blue
-    "#ff7f0e",  # orange
-    "#2ca02c",  # green
-    "#9467bd",  # purple
-    "#8c564b",  # brown
-    "#17becf",  # cyan
-    "#bcbd22",  # olive
-    "#e377c2",  # pink
+    "#000000",  # black
+    "#e69f00",  # orange
+    "#56b4e9",  # sky blue
+    "#009e73",  # bluish green
+    "#f0e442",  # yellow
+    "#0072b2",  # blue
+    "#d55e00",  # vermillion
+    "#cc79a7",  # reddish purple
 )
 _TOW_PATH_LINEWIDTH = 1.6
 
@@ -120,36 +128,25 @@ _DOOR_EDGE = "#bdc3c7"  # light gray — visually "open"
 _GLYPH_ZORDER = 1.5  # between wings (1) and fuselage (2)
 #
 # COLOUR: neutral dark-gray that reads on the off-white floor, stays clear of
-# the wing-position palette (#3498db/#e67e22/#f4d03f), the conflict-red
+# the wing-position palette (#3498db/#d55e00/#f4d03f), the conflict-red
 # (#e74c3c), and the tow-path colours. A second shade is used for the cart
-# deck so the dolly rectangle is distinct from its wheel circles.
+# pallets so each dolly square is distinct from its wheel disc.
 _WHEEL_COLOR = "#566573"  # dark slate-gray — individual wheel discs
-_CART_DECK_COLOR = "#aab7b8"  # lighter gray — cart/dolly deck rectangle
+_CART_DECK_COLOR = "#aab7b8"  # lighter gray — cart/dolly pallet squares
 _CART_DECK_ALPHA = 0.85
 
 # Wheel disc radius in meters. Visually "a tyre" at ~6–9 m fuselage scale
 # inside an 18–30 m hangar. Mirror the _NOSE_ARROW_LENGTH_M tuning idiom.
 _WHEEL_RADIUS_M = 0.18
 
-# Cart deck half-dimensions in meters. The deck rectangle is drawn under the
-# fuselage centroid. Full width is 2 × 0.55 = 1.1 m, which is ~1.3× a typical
-# 0.85 m fuselage width, so it reads as "something underneath"; length is
-# shorter (~40% of a typical 6.5 m fuselage) so it is clearly not the fuselage.
-_CART_DECK_HALF_LENGTH_M = 1.3
-_CART_DECK_HALF_WIDTH_M = 0.55
-
-# Fraction of fuselage forward half where nose-wheel / main-gear land.
-# Nose wheel: near the fuselage nose tip. Main-gear (nosewheel config):
-# placed at ~35% back from nose toward CG. Main-gear (tailwheel config):
-# placed at ~40% forward from origin (CG). Tailwheel: at aft tip.
-# These are intentionally approximate — real gear positions are unknown
-# (fleet.yaml has measured:false everywhere) and these fractions give a
-# visually convincing top-down silhouette.
-_NOSE_GEAR_FRAC = 0.85  # fraction of forward half-fuselage for nose wheel
-_MAIN_GEAR_FWD_FRAC = 0.30  # fraction of forward half for nosewheel mains
-_MAIN_GEAR_TAILDRAGGER_FWD_FRAC = 0.45  # fraction of forward half for tailwheel mains
-# Main-gear lateral offset as a multiple of fuselage half-width.
-_MAIN_GEAR_LATERAL_FRAC = 1.6
+# Cart pallet half-extent in meters (#321). A cart-borne plane no longer draws
+# one body-sized deck rectangle; instead each wheel sits on its own small
+# pallet, drawn as a square centred on the wheel position (from
+# ``aircraft.wheels.positions``) and rotated with the aircraft. At 0.4 m the
+# pallet (0.8 m across) reads as "a pallet under a tyre" — comfortably larger
+# than the 0.18 m wheel disc it backs, yet far smaller than the ~6.5 m
+# fuselage, so it never masquerades as the body.
+_CART_PALLET_HALF_EXTENT_M = 0.4
 
 
 def render_layout(
@@ -432,101 +429,42 @@ def _add_wheel(ax: Any, wx: float, wy: float) -> MplCircle:
 def _draw_gear_glyph(ax: Any, placement: Placement, aircraft: Aircraft) -> None:
     """Draw landing-gear wheels or a cart glyph depending on ``placement.on_carts``.
 
-    Geometry is approximated from the full fuselage's ``offset_x_m`` and
-    ``length_m``, reconstructed from the aircraft's ``fuselage_front`` +
-    ``fuselage_aft`` segments (the fuselage is split front/aft at load time —
-    ADR-0012, so there is no single ``fuselage`` part). The reconstructed span
-    is the union of every fuselage segment: nose tip = max segment
-    ``offset_x_m + length_m/2``, tail tip = min segment ``offset_x_m −
-    length_m/2``. ``tail`` parts are included so an aircraft that declares a
-    separate empennage still anchors its tail wheel correctly.
+    Wheel positions come straight from ``aircraft.wheels.positions`` — the
+    canonical per-aircraft plane-local coordinates (ADR-0013), no longer
+    reconstructed from heuristic fuselage fractions. Each is mapped to world
+    coords through ``local_to_world`` so the gear rotates with the aircraft
+    heading.
 
-    **Own-gear (``on_carts=False``):** wheel positions per ``aircraft.gear``:
-
-    - ``nosewheel`` (tricycle): one nose wheel near the fuselage nose tip, two
-      main wheels behind the CG at ±lateral offset.
-    - ``tailwheel``: two main wheels ahead of the CG, one tailwheel near the
-      fuselage aft tip.
-    - ``monowheel``: a single centred main wheel at the CG origin.
-
-    **Cart-borne (``on_carts=True``):** a dolly-deck rectangle (lighter gray,
-    translucent) centred at the origin with four small corner wheel circles,
-    drawn in the same world-transform path as parts so it rotates with the
-    aircraft heading.
+    When the plane rides on a cart (``placement.on_carts=True``), a small cart
+    pallet is drawn under each wheel instead of the plane's own bare gear (see
+    ``_draw_cart_glyph``).
     """
-    # Reconstruct the full fuselage span from its front/aft segments (the
-    # fuselage is split at load time — ADR-0012, so there is no single
-    # ``fuselage`` part). ``tail`` is folded in so a separate empennage still
-    # anchors the tail wheel.
-    fuselage_segments = [
-        p for p in aircraft.parts if p.kind in ("fuselage_front", "fuselage_aft", "tail")
-    ]
-    if not fuselage_segments:
-        # No fuselage segment found — skip silently. Defensive: every fleet
-        # entry today has a fuselage, but we should not crash on novel entries.
-        return
-
-    nose_x = max(p.offset_x_m + p.length_m / 2.0 for p in fuselage_segments)  # +x: nose tip
-    fus_aft_x = min(p.offset_x_m - p.length_m / 2.0 for p in fuselage_segments)  # −x: tail tip
-    fus_cx = (nose_x + fus_aft_x) / 2.0  # local +x centre of full fuselage
-    fus_half_len = (nose_x - fus_aft_x) / 2.0
-    # Width is uniform across segments (the split is purely longitudinal); use
-    # the widest segment so a separate narrow tail doesn't shrink the lateral
-    # main-gear offset.
-    fus_half_wid = max(p.width_m for p in fuselage_segments) / 2.0
-
     if placement.on_carts:
-        _draw_cart_glyph(ax, placement)
-    elif aircraft.gear == "nosewheel":
-        # Nose wheel — near the nose tip
-        nose_u = fus_cx + fus_half_len * _NOSE_GEAR_FRAC
-        wx, wy = local_to_world(nose_u, 0.0, placement)
+        _draw_cart_glyph(ax, placement, aircraft)
+        return
+    for u, v in aircraft.wheels.positions:
+        wx, wy = local_to_world(u, v, placement)
         _add_wheel(ax, wx, wy)
-        # Main gear pair — slightly aft of CG (behind the wing root)
-        main_u = fus_cx - fus_half_len * _MAIN_GEAR_FWD_FRAC
-        lateral = fus_half_wid * _MAIN_GEAR_LATERAL_FRAC
-        for v in (+lateral, -lateral):
-            wx, wy = local_to_world(main_u, v, placement)
-            _add_wheel(ax, wx, wy)
-    elif aircraft.gear == "tailwheel":
-        # Main gear pair — forward of CG, ahead of the wing root
-        main_u = fus_cx + fus_half_len * _MAIN_GEAR_TAILDRAGGER_FWD_FRAC
-        lateral = fus_half_wid * _MAIN_GEAR_LATERAL_FRAC
-        for v in (+lateral, -lateral):
-            wx, wy = local_to_world(main_u, v, placement)
-            _add_wheel(ax, wx, wy)
-        # Tailwheel — near the aft tip
-        tail_u = fus_aft_x + fus_half_len * (1.0 - _NOSE_GEAR_FRAC)
-        wx, wy = local_to_world(tail_u, 0.0, placement)
-        _add_wheel(ax, wx, wy)
-    elif aircraft.gear == "monowheel":
-        # Single centred main wheel at the gear/cart origin
-        wx, wy = local_to_world(0.0, 0.0, placement)
-        _add_wheel(ax, wx, wy)
-    # No else needed — Gear is a closed Literal; mypy and the model guard all values.
 
 
-def _draw_cart_glyph(ax: Any, placement: Placement) -> None:
-    """Draw a four-wheel dolly/cart glyph centred at the gear origin.
+def _add_cart_pallet(ax: Any, u: float, v: float, placement: Placement) -> MplPolygon:
+    """Add one small square cart pallet centred on plane-local wheel ``(u, v)``.
 
-    The deck rectangle is sized by the module constants
-    ``_CART_DECK_HALF_LENGTH_M`` / ``_CART_DECK_HALF_WIDTH_M`` and rotated
-    with ``placement.heading_deg`` via the standard world-transform.  Four
-    small wheel discs sit at the deck corners so the glyph reads as a
-    wheeled dolly rather than a coloured rectangle.
+    The pallet's four corners are offset by ``±_CART_PALLET_HALF_EXTENT_M`` in
+    plane-local space and mapped to world coordinates via ``local_to_world`` so
+    the pallet rotates with ``placement.heading_deg`` — exactly the transform
+    the own-gear wheel loop uses for the disc centres.
     """
-    # Deck corners in plane-local coordinates (centred at origin, ±L, ±W).
-    hl = _CART_DECK_HALF_LENGTH_M
-    hw = _CART_DECK_HALF_WIDTH_M
-    corner_locals = [
-        (+hl, +hw),
-        (+hl, -hw),
-        (-hl, -hw),
-        (-hl, +hw),
-    ]
-    deck_world = [local_to_world(u, v, placement) for u, v in corner_locals]
-    deck_patch = MplPolygon(
-        deck_world,
+    h = _CART_PALLET_HALF_EXTENT_M
+    corner_locals = (
+        (u + h, v + h),
+        (u + h, v - h),
+        (u - h, v - h),
+        (u - h, v + h),
+    )
+    corner_world = [local_to_world(cu, cv, placement) for cu, cv in corner_locals]
+    pallet = MplPolygon(
+        corner_world,
         closed=True,
         facecolor=_CART_DECK_COLOR,
         edgecolor=_WHEEL_COLOR,
@@ -534,10 +472,23 @@ def _draw_cart_glyph(ax: Any, placement: Placement) -> None:
         lw=0.8,
         zorder=_GLYPH_ZORDER,
     )
-    ax.add_patch(deck_patch)
+    ax.add_patch(pallet)
+    return pallet
 
-    # Four corner wheel discs.
-    for u, v in corner_locals:
+
+def _draw_cart_glyph(ax: Any, placement: Placement, aircraft: Aircraft) -> None:
+    """Draw a cart pallet under each wheel of a cart-borne aircraft (#321).
+
+    Physically the cart sits under the wheels: each wheel rides on its own
+    pallet. This draws a small square pallet (``_CART_PALLET_HALF_EXTENT_M``)
+    centred on every wheel position from ``aircraft.wheels.positions`` — the
+    same canonical plane-local coordinates the own-gear path consumes — with a
+    wheel disc on top of each. The number of pallets therefore equals the wheel
+    count: 1 for a monowheel, 3 for a tricycle/tailwheel. The old single
+    body-sized deck rectangle is gone; nothing here spans the fuselage.
+    """
+    for u, v in aircraft.wheels.positions:
+        _add_cart_pallet(ax, u, v, placement)
         wx, wy = local_to_world(u, v, placement)
         _add_wheel(ax, wx, wy)
 
@@ -569,7 +520,15 @@ def _annotate_plane(ax: Any, placement: Placement, plane_id: str) -> None:
 
 def _draw_conflict_overlay(ax: Any, layout: Layout, check_result: CheckResult) -> None:
     """Redraw every part of every plane named in any conflict, in red,
-    with a thicker edge so the conflict reads at a glance."""
+    with a thicker dashed edge and a cross hatch so the conflict reads at
+    a glance — even on a B&W printout or for red-green colour-blind viewers.
+
+    Non-colour redundancy: ``hatch="xxx"`` (dense cross pattern) plus
+    ``linestyle="--"`` (dashed stroke) ensure "this part is in conflict" is
+    legible without relying on the red edge colour alone.  The red edge is
+    *kept* as a fast visual signal for colour-normal viewers — the non-colour
+    signals are additive, not replacements.
+    """
     conflicting_planes: set[str] = set()
     for conflict in check_result.conflicts:
         conflicting_planes.update(conflict.planes)
@@ -585,6 +544,8 @@ def _draw_conflict_overlay(ax: Any, layout: Layout, check_result: CheckResult) -
                 facecolor="none",
                 edgecolor=_CONFLICT_COLOR,
                 lw=2,
+                linestyle="--",
+                hatch="xxx",
                 zorder=5,
             )
             ax.add_patch(patch)
