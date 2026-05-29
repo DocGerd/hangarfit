@@ -32,8 +32,10 @@ from hangarfit.visualize import (
     _BAY_WALL_FACE,
     _CART_DECK_COLOR,
     _CART_PALLET_HALF_EXTENT_M,
+    _CONFLICT_COLOR,
     _GLYPH_ZORDER,
     _WHEEL_COLOR,
+    _draw_conflict_overlay,
     _draw_gear_glyph,
     _draw_maintenance_bay,
     nose_direction,
@@ -107,6 +109,50 @@ class TestRenderLayout:
         out = tmp_path / "clean_with_result.png"
         render_layout(layout, out, check_result=result)
         _assert_valid_png(out)
+
+    def test_conflict_overlay_carries_non_colour_redundancy(self) -> None:
+        """Every conflict overdraw patch must signal "in conflict" through
+        non-colour channels — a hatch pattern *and* a dashed stroke — in
+        addition to the red edge, so the conflict reads on a B&W printout and
+        for red-green colour-blind viewers (#326).
+
+        Guards the accessibility invariant documented in arc42 §8 ("Visualizer
+        colour accessibility") against a refactor that drops the hatch/dash and
+        leaves only ``_CONFLICT_COLOR`` — a regression that would still render a
+        plausible-looking PNG and so would pass every other test in this file.
+        Mirrors :meth:`TestConditionalBayRendering
+        .test_closed_bay_adds_hatched_red_patch_and_label`, the other
+        non-colour-redundancy guard in this suite.
+        """
+        import matplotlib.colors
+
+        layout = _load("invalid_wing_wing_same_height")
+        result = check(layout)
+        assert not result.valid, "fixture precondition: layout should have conflicts"
+        ax = MagicMock()
+
+        _draw_conflict_overlay(ax, layout, result)
+
+        assert ax.add_patch.call_count >= 1, (
+            "conflict overlay must redraw at least one offending part"
+        )
+        expected_edge = matplotlib.colors.to_rgba(_CONFLICT_COLOR)
+        for call in ax.add_patch.call_args_list:
+            patch = call.args[0]
+            assert isinstance(patch, MplPolygon)
+            assert patch.get_hatch(), (
+                f"conflict patch must carry a hatch pattern; got {patch.get_hatch()!r}"
+            )
+            assert patch.get_linestyle() in ("--", "dashed"), (
+                "conflict patch must use a dashed (non-solid) stroke; "
+                f"got {patch.get_linestyle()!r}"
+            )
+            # The red edge is *retained* as the fast signal for colour-normal
+            # viewers — the hatch/dash are additive, not a replacement.
+            edge = patch.get_edgecolor()
+            assert edge[:3] == expected_edge[:3], (
+                f"conflict patch must keep the {_CONFLICT_COLOR} edge; got {edge!r}"
+            )
 
     def test_title_is_optional(self, tmp_path: Path) -> None:
         layout = _load("valid_two_separated")
