@@ -7,6 +7,7 @@ from pathlib import Path
 
 import pytest
 
+from hangarfit import __version__
 from hangarfit.cli import main
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
@@ -28,6 +29,17 @@ class TestArgparseUsageErrors:
         with pytest.raises(SystemExit) as exc_info:
             main(["nope"])
         assert exc_info.value.code == 2
+
+    def test_version_flag_exits_0_and_prints_version(self, capsys):
+        """`hangarfit --version` exits 0 (the version action fires before the
+        required-subparser check) and prints `hangarfit <version>` to stdout,
+        sourced from the packaged metadata so it tracks pyproject.toml."""
+        with pytest.raises(SystemExit) as exc_info:
+            main(["--version"])
+        assert exc_info.value.code == 0
+        captured = capsys.readouterr()
+        assert captured.out.strip() == f"hangarfit {__version__}"
+        assert captured.err == ""
 
 
 class TestCheckHappyPath:
