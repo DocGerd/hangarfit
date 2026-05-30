@@ -57,6 +57,9 @@ This installs the package in editable mode along with the test dependencies (`py
 # Install from a checkout (add "[dev]" if you will run the tests)
 pip install -e .
 
+# Print the version and exit
+hangarfit --version
+
 # Check a hand-authored layout
 hangarfit check layouts/example.yaml
 ```
