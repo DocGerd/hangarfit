@@ -22,7 +22,7 @@ The project pins a single supported interpreter, **Python 3.12** ([ADR-0009](../
 The `hooks/session-start.sh` script bridges that gap. On session start it:
 
 1. **no-ops outside the remote env** (`$CLAUDE_CODE_REMOTE != "true"`) — local 3.12 developers manage their own environment and are never touched — and no-ops when `HANGARFIT_SKIP_SESSIONSTART_HOOK` is set;
-2. creates (once) a 3.12 venv at `.venv312/` from `/usr/bin/python3.12` and installs the project + dev extras into it (idempotent — cheap to re-run, and the container caches the result);
+2. creates (once) a 3.12 venv at `.venv312/` from `python3.12` (resolved on `PATH`) and installs the project + dev extras into it. The install is skipped on `resume`/`clear`/`compact` once the venv exists, so only a fresh `startup` (or a missing venv) pays for it;
 3. prepends the venv's `bin/` to `PATH` (and sets `VIRTUAL_ENV`) via **`$CLAUDE_ENV_FILE`**, which Claude Code sources into every subsequent command. This is the key step: a hook runs in a subshell, so `source .venv312/bin/activate` would *not* survive to later tool calls — writing to `$CLAUDE_ENV_FILE` makes `python`, `pytest`, `ruff`, and `mypy` all resolve to the 3.12 venv for the rest of the session.
 
 It is **non-blocking**: a missing `python3.12` or a failed `pip install` is reported to stderr and the session still starts (exit `0`). It runs **synchronously** — the session waits until provisioning finishes, trading a slower start for the guarantee that the toolchain is ready before Claude runs anything. (It can be switched to async mode if faster startup is preferred.) Unlike the other three hooks it lives in a **script file** rather than an inline command, because the provisioning logic is too long to read inline.

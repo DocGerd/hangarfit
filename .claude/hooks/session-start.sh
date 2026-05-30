@@ -14,13 +14,20 @@
 # Claude Code into every subsequent command, so `python`, `pytest`, `ruff`,
 # and `mypy` all then resolve to the 3.12 venv for the rest of the session.
 #
-# It is idempotent (safe to re-run), non-interactive, and a no-op outside the
-# remote environment or when `HANGARFIT_SKIP_SESSIONSTART_HOOK` is set.
+# SessionStart fires on startup AND resume/clear/compact. The work here is
+# made idempotent across all of those: the venv is created once, the env-file
+# export is written once (guarded against duplicate appends that would bloat
+# PATH), and the expensive `pip install` is skipped on non-startup sources
+# when the venv already exists.
+#
+# Non-interactive, and a no-op outside the remote environment or when
+# `HANGARFIT_SKIP_SESSIONSTART_HOOK` is set.
 set -euo pipefail
 
-# stdin carries the SessionStart JSON payload; we don't need it. Drain it so a
-# closed pipe never wedges the hook.
-cat >/dev/null 2>&1 || true
+# stdin carries the SessionStart JSON payload. Capture it (rather than
+# discarding) so we can read `.source` (startup|resume|clear|compact) below.
+# `|| true` neutralizes a closed-pipe nonzero under `set -e`.
+PAYLOAD="$(cat 2>/dev/null || true)"
 
 # Per-contributor opt-out, matching the HANGARFIT_SKIP_* pattern of the other
 # hooks (see .claude/README.md).
@@ -34,8 +41,15 @@ if [ "${CLAUDE_CODE_REMOTE:-}" != "true" ]; then
   exit 0
 fi
 
-cd "${CLAUDE_PROJECT_DIR:-.}"
+# Guarded so a missing/unreadable project dir can't trip `set -e` — this hook
+# advertises itself as strictly non-blocking (always exit 0).
+cd "${CLAUDE_PROJECT_DIR:-.}" || {
+  echo "[hangarfit session-start] cannot cd to project dir; skipping." >&2
+  exit 0
+}
 
+# Resolve the interpreter via PATH (more robust than a hardcoded /usr/bin path:
+# tolerates /usr/local, a pyenv shim, etc.).
 PY312="$(command -v python3.12 || true)"
 if [ -z "$PY312" ]; then
   echo "[hangarfit session-start] python3.12 not found on PATH; cannot provision the" \
@@ -44,24 +58,37 @@ if [ -z "$PY312" ]; then
 fi
 
 VENV=".venv312"
+venv_existed=true
 if [ ! -x "$VENV/bin/python" ]; then
+  venv_existed=false
   echo "[hangarfit session-start] creating $VENV with $PY312"
   "$PY312" -m venv "$VENV"
 fi
 
-# Editable install of the project + dev extras. Cheap to re-run when already
-# satisfied, and the container caches the result after the hook completes.
-# Non-fatal: a transient failure should not wedge session start — the error is
-# surfaced and the session continues.
-"$VENV/bin/python" -m pip install --quiet --upgrade pip || true
-if ! "$VENV/bin/python" -m pip install --quiet -e ".[dev]"; then
-  echo "[hangarfit session-start] 'pip install -e .[dev]' failed; the 3.12 env may be" \
-    "incomplete (check network / logs above)." >&2
-  exit 0
+# Re-installing the dev extras on every resume/clear/compact adds latency for
+# no benefit once the env is built. Run the install on a fresh `startup`, or
+# whenever the venv had to be (re)created; otherwise skip it.
+source_field="$(printf '%s' "$PAYLOAD" \
+  | python3 -c 'import json,sys; print(json.load(sys.stdin).get("source",""))' 2>/dev/null || true)"
+if [ "$source_field" = "startup" ] || [ "$venv_existed" = false ]; then
+  # Editable install of the project + dev extras. Deliberately NOT
+  # `--require-hashes` against requirements-dev.txt: this is a dev-convenience
+  # provisioner whose only job is a working ruff/pytest/mypy toolchain, and an
+  # unpinned resolve from pyproject.toml can't fail on lockfile skew. Do not
+  # "fix" it to the hash-pinned CI path. Non-fatal: a transient failure should
+  # not wedge session start — the error is surfaced and the session continues.
+  "$VENV/bin/python" -m pip install --quiet --upgrade pip || true
+  if ! "$VENV/bin/python" -m pip install --quiet -e ".[dev]"; then
+    echo "[hangarfit session-start] 'pip install -e .[dev]' failed; the 3.12 env may be" \
+      "incomplete (check network / logs above)." >&2
+    exit 0
+  fi
 fi
 
 # Persist the interpreter choice for the whole session (see header note).
-if [ -n "${CLAUDE_ENV_FILE:-}" ]; then
+# Append-once: SessionStart can fire repeatedly into the same env file, and an
+# unguarded `>>` would stack duplicate `export PATH=...` lines and bloat PATH.
+if [ -n "${CLAUDE_ENV_FILE:-}" ] && ! grep -qF "$PWD/$VENV/bin" "$CLAUDE_ENV_FILE" 2>/dev/null; then
   {
     echo "export VIRTUAL_ENV=\"$PWD/$VENV\""
     echo "export PATH=\"$PWD/$VENV/bin:\$PATH\""

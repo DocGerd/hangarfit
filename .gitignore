@@ -11,6 +11,9 @@ dist/
 
 # Virtual environments
 .venv/
+# The SessionStart hook (.claude/hooks/session-start.sh, #354) provisions a
+# 3.12 venv at this exact path on web/remote sessions — keep it untracked.
+.venv312/
 venv/
 env/
 ENV/
