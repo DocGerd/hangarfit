@@ -1,6 +1,7 @@
 """Command-line interface for hangarfit.
 
 Implements:
+    hangarfit [--version]
     hangarfit check LAYOUT [--render OUT.png] [--fleet PATH] [--hangar PATH] [--json]
 
 See ``docs/superpowers/specs/2026-05-21-cli-design.md`` for the design.
