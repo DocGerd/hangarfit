@@ -38,7 +38,9 @@ class TestArgparseUsageErrors:
             main(["--version"])
         assert exc_info.value.code == 0
         captured = capsys.readouterr()
-        assert captured.out.strip() == f"hangarfit {__version__}"
+        # Exact, un-stripped match pins the `%(prog)s {__version__}` template,
+        # the single trailing newline, and the absence of any extra output.
+        assert captured.out == f"hangarfit {__version__}\n"
         assert captured.err == ""
 
 
