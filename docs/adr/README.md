@@ -91,3 +91,4 @@ manual workflow above is canonical.
 | 0011 | [Linear history strategy under GitFlow — squash feature merges, accept release merge commits, target a clean first-parent mainline](0011-linear-history-strategy-under-gitflow.md) | Proposed |
 | 0012 | [Split the fuselage into front/aft so a wing may overhang a tail but not a cockpit](0012-fuselage-front-aft-split.md) | Accepted |
 | 0013 | [Wheel positions are canonical per-aircraft data; turn_radius_m stays empirical, cross-checked at load](0013-wheels-canonical-data.md) | Accepted |
+| 0015 | [Wheels do not participate in the static collision model (gear stays render/motion data)](0015-wheels-not-in-collision-model.md) | Proposed |
