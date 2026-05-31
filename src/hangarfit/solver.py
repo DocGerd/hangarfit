@@ -385,6 +385,13 @@ def _check_trivially_infeasible(
     infeasible (the caller plugs both into
     :class:`SolverDiagnostics`); else ``None``.
 
+    The three checks run in a **fixed order** — per-plane bbox (#1), summed
+    footprint area (#2), pin self-collision (#3) — and the first to trip is
+    returned. The order is part of the observed behaviour (it determines which
+    conflict ``kind`` a multiply-infeasible scenario reports), so it must not
+    change; each sub-check is a pure predicate over ``scenario`` returning the
+    same ``(CheckResult, Layout)`` pair or ``None``.
+
     The Layout is paired with the CheckResult because
     :class:`SolverDiagnostics` requires ``best_partial`` and
     ``best_partial_layout`` to both be set or both be ``None``. For
@@ -393,7 +400,24 @@ def _check_trivially_infeasible(
     scenario, with no placements and no maintenance plane. For check #3
     it is the pin-only Layout that was used to detect the conflict.
     """
-    # Check 1: per-plane bbox vs hangar
+    for check in (
+        _check_plane_too_big,
+        _check_sum_areas,
+        _check_pin_feasibility,
+    ):
+        result = check(scenario)
+        if result is not None:
+            return result
+    return None
+
+
+def _check_plane_too_big(scenario: Scenario) -> tuple[CheckResult, Layout] | None:
+    """Check 1: any single plane's bbox exceeds the hangar's larger dimension.
+
+    A plane whose max part extent is larger than ``max(length, width)`` cannot
+    fit at any heading. Returns the conflict paired with the empty Layout, or
+    ``None`` if every plane fits.
+    """
     for pid in scenario.fleet_in:
         plane = scenario.fleet[pid]
         length, width = _plane_max_extent(plane)
@@ -413,11 +437,17 @@ def _check_trivially_infeasible(
                 total_penetration_m2=0.0,
             )
             return check, _empty_layout(scenario)
+    return None
 
-    # Check 2: Σ bbox areas vs hangar floor area. Uses the full-fuselage
-    # footprint (not _plane_max_extent) so the fuselage front/aft split
-    # (#50/ADR-0012) doesn't shrink the estimate and let an infeasible fleet
-    # slip the gate.
+
+def _check_sum_areas(scenario: Scenario) -> tuple[CheckResult, Layout] | None:
+    """Check 2: Σ bbox areas vs hangar floor area.
+
+    Uses the full-fuselage footprint (not _plane_max_extent) so the fuselage
+    front/aft split (#50/ADR-0012) doesn't shrink the estimate and let an
+    infeasible fleet slip the gate. Returns the conflict paired with the empty
+    Layout, or ``None`` if the summed footprint fits the floor.
+    """
     total_area = 0.0
     for pid in scenario.fleet_in:
         plane = scenario.fleet[pid]
@@ -442,75 +472,86 @@ def _check_trivially_infeasible(
             total_penetration_m2=0.0,
         )
         return check, _empty_layout(scenario)
+    return None
 
-    # Check 3: pin self-collision (build a pin-only Layout and run check())
+
+def _check_pin_feasibility(scenario: Scenario) -> tuple[CheckResult, Layout] | None:
+    """Check 3: pinned placements must satisfy the cart rule and not collide.
+
+    Builds a Layout containing only the pinned planes and runs ``check()`` on
+    it (after a sharp cart-rule pre-check). Returns the conflict paired with the
+    pin-only Layout, or ``None`` if there are no pins or the pin-only layout is
+    valid.
+    """
     pinned_placements = []
     for pid in scenario.fleet_in:
         constraint = scenario.constraints.get(pid)
         if constraint is not None and constraint.pin is not None:
             pinned_placements.append(constraint.pin)
 
-    if pinned_placements:
-        # The cart rule (at most hangar.max_carts cart_eligible planes on
-        # carts at a time) is enforced by Layout.__post_init__ but NOT by
-        # Scenario.__post_init__ — that's a cross-pin invariant Scenario
-        # currently doesn't check. Guard explicitly here so we can return
-        # a sharp `pin_cart_rule` conflict instead of silently absorbing
-        # a generic Layout `ValueError`. Morally this check belongs in
-        # Scenario; a follow-up could migrate it to Scenario.__post_init__
-        # so every caller (not just solve()) benefits. The limit tracks
-        # scenario.hangar.max_carts so it agrees with the Layout invariant
-        # (and with any --max-carts override already applied to the hangar).
-        max_carts = scenario.hangar.max_carts
-        cart_eligible_on_carts = sum(
-            1
-            for p in pinned_placements
-            if p.on_carts and scenario.fleet[p.plane_id].movement_mode == "cart_eligible"
-        )
-        if cart_eligible_on_carts > max_carts:
-            check = CheckResult(
-                conflicts=(
-                    Conflict.single(
-                        kind="trivially_infeasible_pin_cart_rule",
-                        plane=pinned_placements[0].plane_id,
-                        detail=(
-                            f"{cart_eligible_on_carts} cart_eligible pins on "
-                            f"carts (cart rule allows at most {max_carts})"
-                        ),
+    if not pinned_placements:
+        return None
+
+    # The cart rule (at most hangar.max_carts cart_eligible planes on
+    # carts at a time) is enforced by Layout.__post_init__ but NOT by
+    # Scenario.__post_init__ — that's a cross-pin invariant Scenario
+    # currently doesn't check. Guard explicitly here so we can return
+    # a sharp `pin_cart_rule` conflict instead of silently absorbing
+    # a generic Layout `ValueError`. Morally this check belongs in
+    # Scenario; a follow-up could migrate it to Scenario.__post_init__
+    # so every caller (not just solve()) benefits. The limit tracks
+    # scenario.hangar.max_carts so it agrees with the Layout invariant
+    # (and with any --max-carts override already applied to the hangar).
+    max_carts = scenario.hangar.max_carts
+    cart_eligible_on_carts = sum(
+        1
+        for p in pinned_placements
+        if p.on_carts and scenario.fleet[p.plane_id].movement_mode == "cart_eligible"
+    )
+    if cart_eligible_on_carts > max_carts:
+        check = CheckResult(
+            conflicts=(
+                Conflict.single(
+                    kind="trivially_infeasible_pin_cart_rule",
+                    plane=pinned_placements[0].plane_id,
+                    detail=(
+                        f"{cart_eligible_on_carts} cart_eligible pins on "
+                        f"carts (cart rule allows at most {max_carts})"
                     ),
                 ),
-                total_penetration_m2=0.0,
-            )
-            return check, _empty_layout(scenario)
-
-        # Build a Layout containing ONLY the pinned planes.
-        #
-        # ``maintenance_plane`` is forwarded to the pin-only Layout so that
-        # ``collisions.check()`` can fire the maintenance_position rule if the
-        # pins collectively leave the maintenance area occupied by another plane
-        # or violated (detected early, before burning the full solve() budget
-        # on a restart loop that can never escape a pinned conflict).
-        #
-        # Scenario.__post_init__ guarantees that the maintenance_plane cannot
-        # carry a pin (raises ValueError if it does), so ``pinned_placements``
-        # is provably free of the maintenance occupant — no filter is needed.
-        #
-        # No try/except: every remaining Layout invariant that could fire
-        # here is either structurally impossible given pin-only construction
-        # or already caught by Scenario.__post_init__ (pin.plane_id mismatch,
-        # pin.on_carts vs movement_mode). A genuinely unexpected ValueError
-        # should propagate as a bug, not get silently re-wrapped as a pin
-        # infeasibility.
-        pin_only_layout = Layout(
-            fleet=scenario.fleet,
-            hangar=scenario.hangar,
-            placements=tuple(pinned_placements),
-            maintenance_plane=scenario.maintenance_plane,
+            ),
+            total_penetration_m2=0.0,
         )
+        return check, _empty_layout(scenario)
 
-        pin_check = check_layout(pin_only_layout)
-        if not pin_check.valid:
-            return pin_check, pin_only_layout
+    # Build a Layout containing ONLY the pinned planes.
+    #
+    # ``maintenance_plane`` is forwarded to the pin-only Layout so that
+    # ``collisions.check()`` can fire the maintenance_position rule if the
+    # pins collectively leave the maintenance area occupied by another plane
+    # or violated (detected early, before burning the full solve() budget
+    # on a restart loop that can never escape a pinned conflict).
+    #
+    # Scenario.__post_init__ guarantees that the maintenance_plane cannot
+    # carry a pin (raises ValueError if it does), so ``pinned_placements``
+    # is provably free of the maintenance occupant — no filter is needed.
+    #
+    # No try/except: every remaining Layout invariant that could fire
+    # here is either structurally impossible given pin-only construction
+    # or already caught by Scenario.__post_init__ (pin.plane_id mismatch,
+    # pin.on_carts vs movement_mode). A genuinely unexpected ValueError
+    # should propagate as a bug, not get silently re-wrapped as a pin
+    # infeasibility.
+    pin_only_layout = Layout(
+        fleet=scenario.fleet,
+        hangar=scenario.hangar,
+        placements=tuple(pinned_placements),
+        maintenance_plane=scenario.maintenance_plane,
+    )
+
+    pin_check = check_layout(pin_only_layout)
+    if not pin_check.valid:
+        return pin_check, pin_only_layout
 
     return None
 
