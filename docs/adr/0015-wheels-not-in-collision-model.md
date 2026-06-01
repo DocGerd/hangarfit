@@ -7,7 +7,7 @@
 ## Context & Problem Statement
 
 Wheel positions became canonical per-aircraft data in [ADR-0013](0013-wheels-canonical-data.md):
-`data/fleet.yaml` now carries, per aircraft, a `Wheels` block — main gear at
+`data/fleet.yaml` now carries, per aircraft, a `wheels:` block — main gear at
 plane-local `(main_offset_x_m, ±track_m/2)` and an optional third (nose/tail)
 wheel at `(third_wheel_offset_x_m, 0)`. The visualizer draws gear glyphs from
 these, and `turn_radius_m` is cross-checked against the implied wheelbase at
@@ -21,15 +21,18 @@ of `Part` rectangles — `fuselage_front`, `fuselage_aft`, `wing`, `strut`,
 iterates only over those. `src/hangarfit/geometry.py` and
 `src/hangarfit/collisions.py` contain **zero** references to wheels.
 
-ADR-0013 explicitly deferred the question (its "Knock-on effects" note, echoed
-in issue [#322](https://github.com/DocGerd/hangarfit/issues/322)):
+The question was raised in issue
+[#322](https://github.com/DocGerd/hangarfit/issues/322)'s "Knock-on effects"
+note:
 
 > The parts model (ADR-0001, ADR-0012) doesn't currently include wheels.
 > Whether wheels participate in collision (they probably should: a wheel pad is
 > part of the plane's footprint) is a separate decision worth recording in an
 > ADR.
 
-This ADR settles that question so the omission is an intentional, citable
+[ADR-0013](0013-wheels-canonical-data.md) flagged the same open question — its
+D1.3 option, left as "a future decision; if revisited, this ADR is the starting
+point". This ADR settles that question so the omission is an intentional, citable
 decision rather than an apparent gap. **The question:** should a wheel /
 wheel-pad contribute to an aircraft's footprint for static collision purposes?
 
@@ -58,7 +61,7 @@ wheel-pad contribute to an aircraft's footprint for static collision purposes?
    documented). Wheels remain render + motion-model data; static validity stays
    "wing / fuselage / strut footprints, with z-nesting."
 2. **Add wheel pads as collision-bearing parts.** Derive a pad rectangle (or
-   disc) per wheel from the `Wheels` coordinates plus a **new** per-aircraft
+   disc) per wheel from the `wheels:` coordinates plus a **new** per-aircraft
    pad-size datum, give it a ground-anchored z-range (`0 .. axle height`), and
    feed it through `aircraft_parts_world` / `check` like any other `Part`.
 3. **Wheels participate only in a future tow-clearance check, never in static
