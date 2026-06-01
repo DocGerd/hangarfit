@@ -1,6 +1,7 @@
 """Command-line interface for hangarfit.
 
 Implements:
+    hangarfit [--version]
     hangarfit check LAYOUT [--render OUT.png] [--fleet PATH] [--hangar PATH] [--json]
 
 See ``docs/superpowers/specs/2026-05-21-cli-design.md`` for the design.
@@ -20,7 +21,7 @@ import secrets
 import sys
 from typing import TYPE_CHECKING
 
-from hangarfit import collisions, visualize
+from hangarfit import __version__, collisions, visualize
 from hangarfit.loader import LoaderError, load_fleet, load_hangar, load_layout
 from hangarfit.models import CheckResult, Conflict, DiversityConfig, Layout, SolveResult
 
@@ -39,6 +40,16 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="hangarfit",
         description="Check a hand-authored hangar layout for validity.",
+    )
+    # Top-level so `hangarfit --version` works before any subcommand. The
+    # version action fires (and exits 0) during parse, ahead of the
+    # required-subparser check below, so no `cmd` is needed. The string is
+    # sourced from the installed package metadata (hangarfit.__version__) so
+    # it can never drift from pyproject.toml's [project] version.
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
