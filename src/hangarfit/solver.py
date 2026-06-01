@@ -57,7 +57,7 @@ def solve(
     diversity: DiversityConfig | None = None,
     search: SearchConfig | None = None,
     plan_paths: bool = True,
-    tow_heuristic: Literal["euclidean", "grid"] = "euclidean",
+    tow_heuristic: Literal["euclidean", "grid"] = "grid",
     tow_max_expansions: int | None = None,
 ) -> SolveResult:
     """Solve a Scenario into up to ``alternatives`` diverse valid Layouts.
@@ -93,11 +93,11 @@ def solve(
     contract (ADR-0003) end-to-end through the bundle.
 
     ``tow_heuristic`` and ``tow_max_expansions`` are forwarded verbatim to
-    :func:`~hangarfit.towplanner.plan_fill` (towplanner-v2 routability spike,
-    #332). The defaults (``"euclidean"`` / module ``_MAX_EXPANSIONS``) reproduce
-    the shipped planner byte-for-byte; ``tow_heuristic="grid"`` opts into the
-    obstacle-aware free-space heuristic and a larger ``tow_max_expansions`` opts
-    into a bigger per-plane search budget — both RNG-free, so determinism holds.
+    :func:`~hangarfit.towplanner.plan_fill` (#332/#336). Since #336 the shipped
+    default is ``tow_heuristic="grid"`` (the obstacle-aware free-space heuristic)
+    with the module per-plane and global fill budgets; pass
+    ``tow_heuristic="euclidean"`` to opt out, or a larger ``tow_max_expansions``
+    to widen the per-plane budget. All RNG-free, so determinism holds (ADR-0003).
     """
     if diversity is None:
         diversity = DiversityConfig()
@@ -385,11 +385,13 @@ def _tow_plan_layouts(
     unroutable: list[str] = []
     for layout in accepted_layouts:
         try:
-            # Default path calls ``plan_fill(layout)`` EXACTLY as before
-            # (byte-identical; #332 spike params are opt-in), so the ADR-0003
-            # determinism canaries — and any test that stubs ``plan_fill`` with a
-            # target-only signature — are untouched.
-            if tow_heuristic == "euclidean" and tow_max_expansions is None:
+            # Default path calls ``plan_fill(layout)`` with NO kwargs, so the
+            # ADR-0003 determinism canaries — and any test that stubs
+            # ``plan_fill`` with a target-only signature — stay untouched. Since
+            # #336 the shipped default is grid + the module budgets, which is
+            # exactly what a bare ``plan_fill(layout)`` applies; an explicit
+            # euclidean / custom budget takes the kwargs path below.
+            if tow_heuristic == "grid" and tow_max_expansions is None:
                 built.append(plan_fill(layout))
             else:
                 built.append(

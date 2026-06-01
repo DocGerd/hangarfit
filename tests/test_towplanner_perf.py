@@ -40,8 +40,14 @@ from hangarfit.towplanner import NoFeasiblePlanError, path_first_conflict, plan_
 # exhausting the full budget, tried multiple times by the greedy scan) measured
 # ~271 s on the development machine.  400 s = ~271 s × 1.5 + rounding — keeps
 # the runaway guard meaningful while allowing for slower CI machines.  Tighten
-# once real (measured) hangar geometry is available or issue #336 (RRT-Connect
-# v2) extends the motion model.
+# once real (measured) hangar geometry is available.
+#
+# #336: the per-plane budget rose 2000 → 8000 (grid heuristic became the
+# plan_fill default) AND a GLOBAL per-fill expansion cap
+# (_MAX_FILL_EXPANSIONS = 16000) was added. The cap is what keeps this gate
+# green: grid@8000 with NO global cap measured ~997 s on the seed=7 fill
+# (blowing 400 s), but the cap bails it at ~334 s. So 400 s still holds — now
+# bounded by the global fill cap, not per-plane budget × scan-retries.
 _PLAN_FILL_CEILING_S = 400.0
 
 
@@ -55,7 +61,10 @@ _PLAN_FILL_CEILING_S = 400.0
 )
 def test_plan_fill_on_solved_layouts_completes_within_budget(scenario_path: str) -> None:
     scenario = load_scenario(scenario_path)
-    result = solve(scenario, budget_s=10.0, alternatives=1, seed=7)
+    # plan_paths=False: this gate times its OWN plan_fill calls below, so the
+    # layout search must NOT also tow-plan internally (wasted work that, since
+    # #336's grid default + larger budget, costs as much as the timed section).
+    result = solve(scenario, budget_s=10.0, alternatives=1, seed=7, plan_paths=False)
     if not result.layouts:
         pytest.skip(f"{scenario_path}: solve produced no layout (status={result.status})")
 

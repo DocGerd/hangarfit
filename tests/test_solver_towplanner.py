@@ -124,6 +124,35 @@ def test_solve_best_effort_real_planner_on_untowable_fill():
     assert result.diagnostics.unroutable_planes  # non-empty
 
 
+@pytest.mark.slow
+def test_six_plane_fresh_fill_fully_routes_at_shipped_defaults():
+    """#336: a tow-friendly (spread=False) fill of ``solve_fresh_six_planes``
+    (seed=1) is **fully** tow-routable under the SHIPPED default planner — the
+    obstacle-aware grid heuristic + the raised per-plane budget. Previously
+    un-routable: euclidean@2000 capped out on ``aviat_husky`` (which needs
+    ~6062 grid expansions to thread its 10.82 m wing into the back corner).
+
+    Scope: this asserts the *planner* improvement on a tow-friendly layout. The
+    default ``spread=True`` fill remaining hard is the separate #280 placement
+    tension (back-fill #320), not this issue. Slow (real per-plane search).
+    """
+    from hangarfit.loader import load_scenario
+    from hangarfit.models import SearchConfig
+    from hangarfit.solver import solve
+
+    scenario = load_scenario("tests/fixtures/solve_fresh_six_planes.yaml")
+    result = solve(
+        scenario, budget_s=15.0, alternatives=1, seed=1, search=SearchConfig(spread=False)
+    )
+    assert result.status in ("found", "found_partial")
+    assert len(result.layouts) == 1
+    assert all(p is not None for p in result.plans), (
+        f"fill not fully routed at shipped defaults: "
+        f"unroutable={result.diagnostics.unroutable_planes}"
+    )
+    assert result.diagnostics.unroutable_planes == ()
+
+
 def test_solve_k_gt_1_bundle_alignment_with_mixed_routability(monkeypatch):
     """K>1: the per-layout loop builds an aligned plans tuple with a mix of
     real plans and None, and unroutable_planes records exactly the failed
