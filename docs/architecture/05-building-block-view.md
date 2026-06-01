@@ -234,7 +234,7 @@ stateDiagram-v2
         Descent : Min-conflicts descent
         Descent : pick a conflicting non-pinned plane at random
         Descent : try N moves (nudges + jump + 180 deg flip)
-        Descent : score = (conflict_count, penetration_m2)
+        Descent : score = (conflict_count, total_penetration_m2)
         Descent --> Descent : improved, greedy accept
         Descent --> Spread : score reaches (0, 0.0)
         Descent --> Restart : plateau or all conflicts pinned

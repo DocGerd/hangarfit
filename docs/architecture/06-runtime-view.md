@@ -89,7 +89,7 @@ sequenceDiagram
                     Note over Solver: Spread (if SearchConfig.spread, default on):<br/>_spread maximizes inter-plane separation, only valid moves
                     Note over Solver: append valid (spread-polished) basin to pool
                 else conflicts > 0
-                    Note over Solver: perturb plane with max<br/>penetration contribution
+                    Note over Solver: perturb a conflicting non-pinned<br/>plane (chosen uniformly at random)
                 end
             end
         end
