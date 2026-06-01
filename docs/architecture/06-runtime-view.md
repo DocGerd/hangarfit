@@ -192,7 +192,7 @@ sequenceDiagram
             Tow-->>Solver: MovesPlan
         else greedy stuck
             Tow-->>Solver: raise NoFeasiblePlanError(plane_id)
-            Note over Solver: plans[i] = None;<br/>plane → diagnostics.unroutable_planes
+            Note over Solver: plans[i] = None,<br/>plane named in diagnostics.unroutable_planes
         end
     end
     Solver-->>CLI: SolveResult(layouts, plans, diagnostics, status, seed)
@@ -205,7 +205,7 @@ sequenceDiagram
     Note over CLI: _warn_unroutable: stderr names each blocked plane
     alt no candidate routable (all plans None)
         CLI->>Op: exit 3
-    else ≥1 routable
+    else at least 1 routable
         CLI->>Op: exit 0 (or status-driven)
     end
 ```

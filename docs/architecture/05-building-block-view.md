@@ -228,8 +228,8 @@ stateDiagram-v2
         direction TB
         [*] --> InitialPlacement
         InitialPlacement : Initial placement
-        InitialPlacement : random (x, y, heading); pins verbatim
-        InitialPlacement : cart-bucket round-robin; maintenance plane excluded
+        InitialPlacement : random (x, y, heading), pins verbatim
+        InitialPlacement : cart-bucket round-robin, maintenance plane excluded
         InitialPlacement --> Descent
         Descent : Min-conflicts descent
         Descent : pick a conflicting non-pinned plane at random
