@@ -17,8 +17,9 @@ After ADR-0011 was drafted, **squash and rebase merging were disabled repo-wide*
 as a guardrail. The trigger was the v0.7.0 release cascade: a squash-merge was
 mistakenly applied to the #283 release PR and had to be reset and re-merged as a
 proper merge commit, contributing to the burned-tag mess (the squash artifact was
-caught before it reached tagged history; the mechanism is documented in ADR-0011
-Q3's release-table footnote). The repo's current merge-button settings are:
+caught before it reached tagged history; the resulting tombstoned v0.7.0 release is
+recorded in ADR-0011 Q3's release-table footnote). The repo's current merge-button
+settings are:
 
 ```
 allow_merge_commit:  true
