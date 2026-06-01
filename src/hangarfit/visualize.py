@@ -8,10 +8,12 @@ maintenance bay rendered conditionally on ``layout.maintenance_plane``
 placed aircraft drawn as its world :class:`Part` polygons (fuselage
 near-opaque — ``fuselage_front``/cockpit a darker tint than
 ``fuselage_aft``/tail — wing translucent so overlapping wings show their
-stack, struts as thin lines). Aircraft are color-keyed by ``wing_position``.
-If a
+stack, struts as thin lines). Each plane gets one colour from the
+DocGerdSoft CVD-safe ``PLANES`` brand palette, keyed per plane by sorted
+``plane_id``; every part also carries an ink outline so identity never rests
+on hue alone. If a
 :class:`CheckResult` is supplied, the parts of conflicting planes are
-overdrawn in red.
+overdrawn in the conflict colour with a hatch + dashed edge.
 
 The renderer's job is to give a human something to eyeball — visual
 quality is intentionally not asserted in tests. The smoke tests verify
@@ -39,7 +41,7 @@ from matplotlib.patches import Circle as MplCircle  # noqa: E402
 from matplotlib.patches import Polygon as MplPolygon  # noqa: E402
 
 from .geometry import WorldPart, aircraft_parts_world, local_to_world  # noqa: E402
-from .models import Aircraft, CheckResult, Layout, Placement, WingPosition  # noqa: E402
+from .models import Aircraft, CheckResult, Layout, Placement  # noqa: E402
 
 if TYPE_CHECKING:
     # Annotation-only import: the runtime code in _draw_tow_paths is duck-typed
@@ -48,32 +50,86 @@ if TYPE_CHECKING:
     # visualize, so this is safe under TYPE_CHECKING either way.
     from .towplanner import MovesPlan
 
-_WING_COLORS: dict[WingPosition, str] = {
-    "high": "#3498db",  # blue (retained — good contrast at all positions)
-    "mid": "#d55e00",  # Okabe–Ito vermillion — replaces #e67e22 (orange) for
-    # better luminance separation from the low-wing yellow #f4d03f under
-    # protanopia; #e67e22 and #f4d03f can merge for red-blind viewers.
-    "low": "#f4d03f",  # yellow
+# ── DocGerdSoft brand palette (Horizon-blue expression) ─────────────────────
+# Lifted verbatim from the authoritative DocGerdSoft brand handoff for
+# hangarfit ("Deliverable 4 — matplotlib Diagram Palette", README "Drop-in"
+# block). The categorical set is derived from the Okabe–Ito CVD-safe palette
+# (https://jfly.uni-koeln.de/color/) and tuned so every fill also clears
+# ≥3:1 contrast on white (WCAG non-text threshold). Identity must never rest
+# on hue alone: every plane also carries an ink outline (``_INK_EDGE``) and a
+# mono id label, and conflicts always add a hatch + ink edge (see
+# :func:`_draw_conflict_overlay`).
+#
+# PLANES — one colour per aircraft, ordered for max pairwise CVD separation.
+PLANES = [
+    "#0079B5",  # 01 Horizon (the hangarfit accent)
+    "#D55E00",  # 02 Vermillion
+    "#009E73",  # 03 Sea green
+    "#B45CA6",  # 04 Orchid
+    "#B37903",  # 05 Amber
+    "#108FAA",  # 06 Cyan
+    "#4C4C9E",  # 07 Indigo
+    "#8A542D",  # 08 Sienna
+    "#5E646B",  # 09 Graphite
+]
+# STATUS — status & structure inks. Key is "wall" per the authoritative README
+# drop-in (NOT "datum" as in the page's hangarfit.js): wall/door/datum all map
+# to the one graphite-strong ink #3B4046.
+STATUS = {
+    "valid": "#0F7C72",  # 5.06:1 on white
+    "conflict": "#C8442C",  # 4.86:1 — always pair with a hatch + ink edge
+    "maint": "#7B63A3",  # 5.05:1 — maintenance-bay fill
+    "wall": "#3B4046",  # 10.5:1 — wall · door · datum ink
 }
-# Defensive: ``WingPosition`` is closed at ``Literal["high", "mid", "low"]``
-# and ``_WING_COLORS`` covers all three, so this fallback is unreachable
-# today. It exists so that adding a new wing_position literal to the model
-# doesn't blow up the renderer with KeyError before someone updates the map.
+# PLANES_DARK — lifted fills for the dark-figure variant (drawn at ~92%
+# opacity on #0D0E10). Same ordering as PLANES.
+PLANES_DARK = [
+    "#3FA3D6",
+    "#E8794A",
+    "#33B894",
+    "#CE7EC0",
+    "#D29A2E",
+    "#3FB6CE",
+    "#8585C9",
+    "#BC8154",
+    "#9AA0A8",
+]
+
+# Plane / part outline ink (#14161A) — the "never hue alone" guarantee: every
+# plane part is stroked in this ink so the silhouette reads without colour.
+# Distinct from the wall ink (STATUS["wall"] = #3B4046), which is the
+# hangar/door/datum structure colour.
+_INK_EDGE = "#14161A"
+
+# Retained for back-compat with the wing-position concept and as the
+# unreachable-by-default fallback when a placement cannot be mapped to a
+# PLANES index (see :func:`_draw_aircraft`). Kept gray so a stray placement is
+# visibly "uncoloured" rather than masquerading as a real plane hue.
 _FALLBACK_COLOR = "#95a5a6"  # gray
 
-_CONFLICT_COLOR = "#e74c3c"  # red
+# Conflict ink, sourced from the brand STATUS map. Was #e74c3c pre-brand; the
+# constant NAME is preserved so importers (tests read to_rgba(_CONFLICT_COLOR))
+# keep resolving. The conflict overlay pairs this edge with a hatch + dashed
+# stroke (non-colour redundancy) — see :func:`_draw_conflict_overlay`.
+_CONFLICT_COLOR = STATUS["conflict"]  # "#C8442C"
 
 # Tow-path overlay palette (#192). One colour per plane, cycled by sorted
-# plane_id. Deliberately excludes the conflict red (#e74c3c) and the gray
-# fallback so a path never blurs into a conflict highlight or a placeholder
-# part. Eight entries cover the fleet (<=9 planes); a 9th plane reuses the
-# first colour — acceptable since each path terminates at its annotated slot.
+# plane_id. Deliberately excludes the conflict colour and the gray fallback so
+# a path never blurs into a conflict highlight or a placeholder part. Eight
+# entries cover the fleet (<=9 planes); a 9th plane reuses the first colour —
+# acceptable since each path terminates at its annotated slot.
+#
+# TODO(brand): the DocGerdSoft handoff specifies tow paths coloured by the
+# plane's index in the 9-colour ``PLANES`` set. Repointing here is deferred:
+# ``test_colour_cycle_wraps_beyond_palette`` pins ``len(set) == len(
+# _TOW_PATH_COLORS)`` (exactly 8 distinct on a 9-plane fleet), which a 9-entry
+# palette would break. Aligning to PLANES needs that test updated deliberately.
 #
 # Palette: Okabe–Ito 8-colour CVD-safe set (https://jfly.uni-koeln.de/color/).
 # This palette is distinguishable under deuteranopia, protanopia, and
-# tritanopia simultaneously, and reads in grey-scale. The conflict red
-# (#e74c3c) is excluded from this cycle as noted above; it is not part of
-# the Okabe–Ito set either.
+# tritanopia simultaneously, and reads in grey-scale. The conflict colour is
+# excluded from this cycle as noted above; it is not part of the Okabe–Ito set
+# either.
 _TOW_PATH_COLORS = (
     "#000000",  # black
     "#e69f00",  # orange
@@ -118,7 +174,11 @@ _BAY_WALL_EDGE = "#641e16"
 _BAY_WALL_ALPHA = 0.55
 _BAY_WALL_HATCH = "///"
 _BAY_LABEL_COLOR = "#ffffff"
-_HANGAR_EDGE = "#2c3e50"  # near-black
+# Wall / door / datum ink, sourced from the brand STATUS map (#3B4046,
+# 10.5:1 on white). The handoff folds wall, door, and datum onto this one
+# graphite-strong ink. The door is then *lightened* (``_DOOR_EDGE``) so the
+# opening reads as "open" rather than a wall.
+_HANGAR_EDGE = STATUS["wall"]  # "#3B4046" — wall · door · datum ink
 _DOOR_EDGE = "#bdc3c7"  # light gray — visually "open"
 
 # ── Wheel / cart glyph constants ────────────────────────────────────────────
@@ -327,10 +387,22 @@ def _draw_maintenance_bay(ax: Any, layout: Layout) -> None:
 
 
 def _draw_aircraft(ax: Any, layout: Layout) -> None:
-    """Draw each placed plane as its world parts, color-keyed by wing position."""
+    """Draw each placed plane as its world parts, one brand colour per plane.
+
+    Colour is keyed *per plane* from the DocGerdSoft ``PLANES`` categorical set
+    (handoff Deliverable 4) — a shift from the pre-brand scheme, which keyed
+    three colours off ``wing_position``. Each placement gets a stable index by
+    enumerating ``layout.placements`` sorted by ``plane_id`` (the same
+    deterministic sorted-id approach :func:`_draw_tow_paths` uses), so a given
+    layout always renders the same plane in the same colour regardless of
+    placement order. The 9-colour palette wraps with ``idx % len(PLANES)`` for
+    fleets beyond nine. Identity never rests on hue alone: every part also
+    carries the ``_INK_EDGE`` outline and a mono id label.
+    """
+    colour_for = _plane_colour_map(layout)
     for placement in layout.placements:
         aircraft = layout.fleet[placement.plane_id]
-        color = _WING_COLORS.get(aircraft.wing_position, _FALLBACK_COLOR)
+        color = colour_for.get(placement.plane_id, _FALLBACK_COLOR)
         world_parts = aircraft_parts_world(aircraft, placement)
         # Gear/cart glyph drawn before parts so the fuselage patch (zorder=2)
         # sits on top — wheels peek out at nose/tail/sides.
@@ -340,10 +412,22 @@ def _draw_aircraft(ax: Any, layout: Layout) -> None:
         _annotate_plane(ax, placement, aircraft.id)
 
 
+def _plane_colour_map(layout: Layout) -> dict[str, str]:
+    """Map each placed ``plane_id`` to a stable colour from ``PLANES``.
+
+    Indices are assigned by *sorted* ``plane_id`` so the mapping is independent
+    of placement order (ADR-0003 determinism spirit), mirroring
+    :func:`_draw_tow_paths`. Wraps with ``idx % len(PLANES)`` so fleets larger
+    than the nine-colour palette never raise.
+    """
+    plane_ids = sorted({p.plane_id for p in layout.placements})
+    return {pid: PLANES[i % len(PLANES)] for i, pid in enumerate(plane_ids)}
+
+
 def _darken(color: str, factor: float = _FUSELAGE_FRONT_DARKEN) -> tuple[float, float, float]:
     """Return ``color`` with each RGB channel multiplied by ``factor`` (toward
     black). Used to tint ``fuselage_front`` a darker shade of the plane's
-    wing-position fill so the cockpit boundary is legible (ADR-0012)."""
+    brand fill so the cockpit boundary is legible (ADR-0012)."""
     from matplotlib.colors import to_rgb
 
     r, g, b = to_rgb(color)
@@ -353,11 +437,15 @@ def _darken(color: str, factor: float = _FUSELAGE_FRONT_DARKEN) -> tuple[float, 
 def _draw_part(ax: Any, part: WorldPart, color: str) -> None:
     """Render a single world part. Fuselage segments are near-opaque (two
     fuselages overlapping is always a conflict; no value in seeing through) —
-    ``fuselage_front`` (cockpit) a darker tint of the wing-position fill,
+    ``fuselage_front`` (cockpit) a darker tint of the plane's brand fill,
     ``fuselage_aft`` (tail) the plain fill — wing translucent (so stacked
     wings show their plan-view overlap visually), strut as a thin outlined
     polygon (struts are physically thin, a fill would be near-invisible), tail
     rendered like a small fuselage (same z-tier, same conflict semantics).
+
+    Solid parts are stroked in ``_INK_EDGE`` (#14161A), the brand "never hue
+    alone" outline — so a plane's silhouette reads even in greyscale or under
+    colour-vision deficiency, independent of its fill hue.
 
     Any other ``PartKind`` value raises ``ValueError`` rather than falling
     through to a generic style. ``PartKind`` is closed at the type level,
@@ -370,7 +458,7 @@ def _draw_part(ax: Any, part: WorldPart, color: str) -> None:
             coords,
             closed=True,
             facecolor=_darken(color),
-            edgecolor=_HANGAR_EDGE,
+            edgecolor=_INK_EDGE,
             alpha=_FUSELAGE_ALPHA,
             lw=0.5,
             zorder=2,
@@ -380,7 +468,7 @@ def _draw_part(ax: Any, part: WorldPart, color: str) -> None:
             coords,
             closed=True,
             facecolor=color,
-            edgecolor=_HANGAR_EDGE,
+            edgecolor=_INK_EDGE,
             alpha=_FUSELAGE_ALPHA,
             lw=0.5,
             zorder=2,
@@ -400,7 +488,7 @@ def _draw_part(ax: Any, part: WorldPart, color: str) -> None:
             coords,
             closed=True,
             facecolor="none",
-            edgecolor=_HANGAR_EDGE,
+            edgecolor=_INK_EDGE,
             lw=_STRUT_LINEWIDTH,
             zorder=3,
         )
@@ -503,7 +591,7 @@ def _annotate_plane(ax: Any, placement: Placement, plane_id: str) -> None:
             placement.y_m + dy * _NOSE_ARROW_LENGTH_M,
         ),
         xytext=(placement.x_m, placement.y_m),
-        arrowprops=dict(arrowstyle="->", color=_HANGAR_EDGE, lw=1),
+        arrowprops=dict(arrowstyle="->", color=_INK_EDGE, lw=1),
         zorder=4,
     )
     ax.text(
@@ -513,7 +601,7 @@ def _annotate_plane(ax: Any, placement: Placement, plane_id: str) -> None:
         ha="center",
         va="top",
         fontsize=7,
-        color=_HANGAR_EDGE,
+        color=_INK_EDGE,
         zorder=4,
     )
 
@@ -525,9 +613,18 @@ def _draw_conflict_overlay(ax: Any, layout: Layout, check_result: CheckResult) -
 
     Non-colour redundancy: ``hatch="xxx"`` (dense cross pattern) plus
     ``linestyle="--"`` (dashed stroke) ensure "this part is in conflict" is
-    legible without relying on the red edge colour alone.  The red edge is
-    *kept* as a fast visual signal for colour-normal viewers — the non-colour
-    signals are additive, not replacements.
+    legible without relying on the conflict colour alone.  The conflict edge
+    (``_CONFLICT_COLOR`` = ``STATUS["conflict"]``) is *kept* as a fast visual
+    signal for colour-normal viewers — the non-colour signals are additive,
+    not replacements.
+
+    TODO(brand): the DocGerdSoft handoff calls for a 45° hatch (``"////"``)
+    paired with the conflict fill + ink edge. The current overlay uses
+    ``hatch="xxx"`` on a ``facecolor="none"`` overdraw, which satisfies the
+    "never colour alone" rule and the existing accessibility regression test
+    (``test_conflict_overlay_carries_non_colour_redundancy`` asserts a truthy
+    hatch, not a specific pattern). Switching to the 45° fill+hatch form is a
+    deliberate visual change deferred to avoid any subtle test interaction.
     """
     conflicting_planes: set[str] = set()
     for conflict in check_result.conflicts:
