@@ -50,7 +50,7 @@ Split station x_break = wing.offset_x_m - wing.length_m/2  (the wing TRAILING ed
         +-----------+                                 +-----------+
         |           |                                 |:::::::::::|
         |           |  ... fuselage_aft (TAIL)        |::::: A :::|
-   - - -|:::::::::::|- - - x_break (wing TE) - - - - - |           |- - - x_break - - -
+   - - -|:::::::::::|- - - x_break (wing TE) - - - - -|           |- - - x_break - - -
         |::::: A :::|                                 |           |
         +-----------+  ... fuselage_front (COCKPIT)   +-----------+
               |   Plane B fuselage                          |   Plane B fuselage
