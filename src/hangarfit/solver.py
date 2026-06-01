@@ -757,35 +757,12 @@ def _spread(
         target = rng.choice(movable)
 
         # Same candidate mix as _descent_step: (N-2) small nudges + 1 large + 1 flip.
-        candidates: list[Placement] = []
-        n_small = max(0, search.candidates_per_iter - 2)
-        for _ in range(n_small):
-            candidates.append(
-                _perturb_plane(
-                    current=placements[target],
-                    scenario=scenario,
-                    rng=rng,
-                    search=search,
-                    large_jump=False,
-                )
-            )
-        candidates.append(
-            _perturb_plane(
-                current=placements[target],
-                scenario=scenario,
-                rng=rng,
-                search=search,
-                large_jump=True,
-            )
-        )
-        candidates.append(
-            Placement(
-                plane_id=target,
-                x_m=placements[target].x_m,
-                y_m=placements[target].y_m,
-                heading_deg=(placements[target].heading_deg + 180.0) % 360.0,
-                on_carts=placements[target].on_carts,
-            )
+        candidates = _generate_candidates(
+            current=placements[target],
+            target=target,
+            scenario=scenario,
+            rng=rng,
+            search=search,
         )
 
         # Pick the lowest-(energy, displacement) VALID candidate. Adopt it
@@ -1036,6 +1013,61 @@ def _perturb_plane(
     )
 
 
+def _generate_candidates(
+    *,
+    current: Placement,
+    target: str,
+    scenario: Scenario,
+    rng: _random_module.Random,
+    search: SearchConfig,
+) -> list[Placement]:
+    """Build the standard candidate mix for one plane (spec §4.3 step 4).
+
+    ``N = candidates_per_iter`` candidates, generated in a fixed order that
+    pins the RNG draw sequence: ``N - 2`` small Gaussian nudges, then 1 large
+    global jump, then 1 deterministic 180° heading flip. The two RNG-driven
+    variants (small nudges, large jump) consume entropy in exactly this order;
+    the flip draws nothing.
+
+    Shared verbatim by :func:`_descent_step` (min-conflicts descent) and
+    :func:`_spread` (the inter-plane spread post-pass) — both need the identical
+    mix. The extraction is byte-for-byte behaviour-preserving: keeping the draw
+    order (small × ``n_small`` → large → flip) is what preserves the ADR-0003
+    determinism contract, so do not reorder the appends.
+    """
+    candidates: list[Placement] = []
+    n_small = max(0, search.candidates_per_iter - 2)
+    for _ in range(n_small):
+        candidates.append(
+            _perturb_plane(
+                current=current,
+                scenario=scenario,
+                rng=rng,
+                search=search,
+                large_jump=False,
+            )
+        )
+    candidates.append(
+        _perturb_plane(
+            current=current,
+            scenario=scenario,
+            rng=rng,
+            search=search,
+            large_jump=True,
+        )
+    )
+    candidates.append(
+        Placement(
+            plane_id=target,
+            x_m=current.x_m,
+            y_m=current.y_m,
+            heading_deg=(current.heading_deg + 180.0) % 360.0,
+            on_carts=current.on_carts,
+        )
+    )
+    return candidates
+
+
 def _descent_step(
     *,
     placements: dict[str, Placement],
@@ -1101,35 +1133,14 @@ def _descent_step(
     target = rng.choice(sorted(conflicting))
 
     # Generate N candidate perturbations: (N-2) small + 1 large + 1 flip
-    candidates: list[Placement] = []
-    n_small = max(0, search.candidates_per_iter - 2)
-    for _ in range(n_small):
-        candidates.append(
-            _perturb_plane(
-                current=placements[target],
-                scenario=scenario,
-                rng=rng,
-                search=search,
-                large_jump=False,
-            )
-        )
-    candidates.append(
-        _perturb_plane(
-            current=placements[target],
-            scenario=scenario,
-            rng=rng,
-            search=search,
-            large_jump=True,
-        )
+    # (shared with _spread; see _generate_candidates for the draw-order contract).
+    candidates = _generate_candidates(
+        current=placements[target],
+        target=target,
+        scenario=scenario,
+        rng=rng,
+        search=search,
     )
-    flipped = Placement(
-        plane_id=target,
-        x_m=placements[target].x_m,
-        y_m=placements[target].y_m,
-        heading_deg=(placements[target].heading_deg + 180.0) % 360.0,
-        on_carts=placements[target].on_carts,
-    )
-    candidates.append(flipped)
 
     # Score each candidate. Tie-break by displacement from the current
     # state (encourages smooth trajectories — spec §4.3 step 4).
