@@ -1,3 +1,5 @@
+![hangarfit](docs/assets/banner.svg)
+
 # hangarfit
 
 [![CI](https://github.com/DocGerd/hangarfit/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/DocGerd/hangarfit/actions/workflows/ci.yml)
@@ -164,3 +166,7 @@ Architecture lives in [`docs/architecture/`](docs/architecture/) and [`docs/adr/
 ## License
 
 Licensed under the [Apache License 2.0](LICENSE).
+
+(C) 2026 Patrick Kuhn. The brand identity (the Horizon-blue accent, the abstract
+delta mark, and the assets under [`docs/assets/`](docs/assets/)) is part of the
+DocGerdSoft design system. DocGerdSoft is a personal brand of Patrick Kuhn.

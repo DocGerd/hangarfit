@@ -1042,3 +1042,85 @@ class TestGearGlyph:
 
         # Three wheels (two mains + nose) drawn from wheels.positions.
         assert ax.add_patch.call_count == 3
+
+
+class TestBrandPalette:
+    """Pin the DocGerdSoft brand palette lifted into ``visualize`` (handoff
+    Deliverable 4). Guards a regression that silently drifts a hex away from
+    the authoritative handoff "Drop-in" block, and that the per-plane colour
+    keying still draws every part of every placed plane.
+    """
+
+    def test_planes_palette_is_the_handoff_nine(self) -> None:
+        from hangarfit.visualize import PLANES
+
+        assert PLANES == [
+            "#0079B5",
+            "#D55E00",
+            "#009E73",
+            "#B45CA6",
+            "#B37903",
+            "#108FAA",
+            "#4C4C9E",
+            "#8A542D",
+            "#5E646B",
+        ]
+
+    def test_planes_dark_palette_is_the_handoff_nine(self) -> None:
+        from hangarfit.visualize import PLANES_DARK
+
+        assert PLANES_DARK == [
+            "#3FA3D6",
+            "#E8794A",
+            "#33B894",
+            "#CE7EC0",
+            "#D29A2E",
+            "#3FB6CE",
+            "#8585C9",
+            "#BC8154",
+            "#9AA0A8",
+        ]
+
+    def test_status_map_matches_handoff_drop_in(self) -> None:
+        # Key is "wall" per the authoritative README drop-in (NOT "datum").
+        from hangarfit.visualize import STATUS
+
+        assert STATUS == {
+            "valid": "#0F7C72",
+            "conflict": "#C8442C",
+            "maint": "#7B63A3",
+            "wall": "#3B4046",
+        }
+
+    def test_conflict_colour_is_sourced_from_status(self) -> None:
+        from hangarfit.visualize import _CONFLICT_COLOR, STATUS
+
+        assert _CONFLICT_COLOR == STATUS["conflict"] == "#C8442C"
+
+    def test_plane_parts_drawn_per_part_with_ink_outline(self) -> None:
+        """Each placed plane's parts are still drawn one ``_draw_part`` call
+        per part, and solid parts carry the brand ink outline (#14161A) so
+        identity never rests on hue alone.
+        """
+        import matplotlib.colors
+
+        from hangarfit.geometry import aircraft_parts_world
+        from hangarfit.visualize import _INK_EDGE, _draw_aircraft
+
+        layout = _load("valid_two_separated")
+        expected_parts = sum(
+            len(aircraft_parts_world(layout.fleet[p.plane_id], p)) for p in layout.placements
+        )
+        ax = MagicMock()
+
+        _draw_aircraft(ax, layout)
+
+        # One add_patch per part, plus the per-wheel gear glyphs. At minimum,
+        # every part must have produced a patch.
+        assert ax.add_patch.call_count >= expected_parts
+        ink = matplotlib.colors.to_rgba(_INK_EDGE)
+        # At least one solid (fuselage/strut) part must be stroked in the ink.
+        edges = [c.args[0].get_edgecolor() for c in ax.add_patch.call_args_list]
+        assert any(e[:3] == ink[:3] for e in edges), (
+            "at least one plane part must carry the _INK_EDGE outline"
+        )

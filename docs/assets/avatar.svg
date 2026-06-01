@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="hangarfit">
+  <!-- White delta on the hangarfit Horizon accent circle, mark at ~52%.
+       Circle fill swapped from the shared #0D0E10 to #0079B5; mark kept white
+       at translate(24,24) scale(0.52). GitHub/package avatar source. -->
+  <circle cx="50" cy="50" r="50" fill="#0079B5"/>
+  <g transform="translate(24,24) scale(0.52)" fill="#FFFFFF">
+    <path d="M50 17.09 L69.87 51.5 L30.13 51.5 Z"/>
+    <path d="M26.96 57 L73.04 57 L88 82.91 L12 82.91 Z"/>
+  </g>
+</svg>
