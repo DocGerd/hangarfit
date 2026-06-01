@@ -15,16 +15,17 @@ towplanner-v2 routability spike:
 * the geodesic field is well-formed (0 at the goal, increasing with distance,
   finite where free, and absent — i.e. ``+inf``/fallback — where walled off).
 
-These pin the *correctness* and *determinism* of the seam — NOT a routability
-win. Whether the grid heuristic buys routability is an empirical question the
-spike benchmark (``docs/spikes/towplanner_v2_routability_bench.py``) and the spike
-doc answer, and the honest answer is "no, not on these fixtures": their failures
-are budget-exhausted *finite-width maneuvering*, not interior-obstacle clutter, so
-a 2-D cost-to-go heuristic (this one, or a learned one) is inert. There is
-therefore deliberately **no** "grid routes what euclidean cannot" test — it would
-not hold, on the fixtures *or* on constructed bug-traps (once a detour is forced,
-the tight-maneuver bottleneck defeats both heuristics within budget). The seam is
-kept as a tested, opt-in PoC and the home for a future clutter/learned heuristic.
+These pin the *correctness* and *determinism* of the grid seam. **Since #336 grid
+is the shipped default** for ``plan_fill`` / ``solve`` (``plan_path``'s own
+primitive default stays ``euclidean`` — callers choose). The earlier "grid is
+inert, so no 'grid beats euclidean' test can exist" conclusion was a budget-700/
+2000 artifact: at those budgets BOTH heuristics cap out on the tight cases, so
+grid bought no extra *routed count*. But grid roughly halves the *expansions*
+(aviat_husky ~13.5k euclidean → ~6062 grid), which converts to a routed plane once
+the per-plane budget clears ~6100 (#336 raised it to 8000). The end-to-end "grid
+routes a tight fill euclidean cannot, at the shipped default budget" proof now
+lives in ``tests/test_solver_towplanner.py::
+test_six_plane_fresh_fill_fully_routes_at_shipped_defaults``.
 """
 
 from __future__ import annotations
@@ -340,6 +341,18 @@ def test_plan_fill_accepts_grid_heuristic_and_explicit_budget() -> None:
     assert [m.plane_id for m in plan.moves] == ["B", "A"]  # deepest first
 
 
+def test_plan_fill_global_cap_bails_in_bounded_total_expansions() -> None:
+    """``max_total_expansions`` caps the SUM of expansions across the whole fill
+    (#336). A tiny global cap forces a fast, bounded bail with the cap-exhausted
+    conflict — instead of paying per-plane-budget × scan-retries on a fill the
+    bounded planner cannot route. ``valid_two_separated`` leads with the 18 m-wing
+    scheibe_falke, which cannot route in 10 expansions, so the global cap trips."""
+    layout = load_layout("tests/fixtures/valid_two_separated.yaml")
+    with pytest.raises(NoFeasiblePlanError) as ei:
+        plan_fill(layout, max_total_expansions=10)
+    assert "global fill expansion budget" in ei.value.conflict.detail
+
+
 def test_solve_accepts_grid_tow_heuristic() -> None:
     """``solve(..., tow_heuristic="grid", tow_max_expansions=N)`` runs the opt-in
     grid branch in the solver. The plane may or may not route (best-effort); the
@@ -439,11 +452,12 @@ def test_grid_field_blocks_cells_past_non_aligned_walls() -> None:
 # ── CLI flag wiring (the #332 experimental knobs) ────────────────────────────
 
 
-def test_cli_tow_flags_default_to_the_byte_identical_shipped_planner() -> None:
-    """No ``--tow-*`` flags ⇒ the namespace defaults that route ``solve()`` down
-    the unchanged ``plan_fill(layout)`` path (the byte-identical-default guard)."""
+def test_cli_tow_flags_default_to_grid_with_no_explicit_budget() -> None:
+    """No ``--tow-*`` flags ⇒ the shipped default is ``grid`` (since #336) with no
+    explicit per-plane budget, so ``solve()`` takes the bare ``plan_fill(layout)``
+    no-kwargs path (the stub-compatible default)."""
     args = build_parser().parse_args(["solve", "scenario.yaml"])
-    assert args.tow_heuristic == "euclidean"
+    assert args.tow_heuristic == "grid"
     assert args.tow_max_expansions is None
 
 

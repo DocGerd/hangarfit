@@ -206,13 +206,14 @@ def build_parser() -> argparse.ArgumentParser:
     solve.add_argument(
         "--tow-heuristic",
         choices=("euclidean", "grid"),
-        default="euclidean",
+        default="grid",
         dest="tow_heuristic",
         help=(
-            "EXPERIMENTAL (#332): A* tow-path heuristic. 'euclidean' (default) is "
-            "the shipped straight-line heuristic; 'grid' is the obstacle-aware "
-            "free-space geodesic that routes around placed planes (only affects "
-            "--render-paths runs). Deterministic; the path is exact-oracle-validated."
+            "A* tow-path heuristic. 'grid' (default since #336) is the "
+            "obstacle-aware free-space geodesic that threads tight maneuvers in "
+            "far fewer expansions; 'euclidean' is the older straight-line "
+            "heuristic (opt out). Only affects --render-paths runs; deterministic, "
+            "and the path is exact-oracle-validated."
         ),
     )
     solve.add_argument(
@@ -222,9 +223,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         dest="tow_max_expansions",
         help=(
-            "EXPERIMENTAL (#332): per-plane Hybrid-A* expansion budget for tow "
-            "planning (default: the module _MAX_EXPANSIONS=700). Raise to trade "
-            "time for routability on hard fills."
+            "Per-plane Hybrid-A* expansion budget for tow planning (default: the "
+            "module _MAX_EXPANSIONS=8000). Raise to trade time for routability on "
+            "hard fills; a global per-fill cap bounds the worst case (#336)."
         ),
     )
 

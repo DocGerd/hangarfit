@@ -267,6 +267,36 @@ per-layout *count* is exactly the right invariant. The alternative *tug* reading
 and is explicitly **not** adopted here; it would warrant its own ADR. Full
 reasoning: the [cart-inventory design doc](../superpowers/specs/2026-05-27-cart-inventory-design.md).
 
+### 2026-06-01 — grid heuristic default + global fill-budget cap (#336)
+
+The planner originally defaulted to a straight-line (euclidean) Hybrid-A\*
+heuristic with a per-plane expansion budget (`_MAX_EXPANSIONS`); the #332 spike
+exposed `grid` (obstacle-aware) as an opt-in seam. A spike-first go/no-go on the
+deferred RRT-Connect fallback (also #336) found the standard fixtures are all
+*feasible* — Hybrid-A\* routes them given budget — so **RRT-Connect was retired as
+unjustified**, and the cheap planner levers that dig surfaced were adopted:
+
+- **`grid` is now the default heuristic** for `plan_fill` / `solve` / the CLI
+  (`plan_path`'s primitive default stays `euclidean`; callers choose). Euclidean
+  ignores walls and floods the frontier in tight quarters (`aviat_husky`: ~13.5k
+  expansions); the obstacle-aware grid geodesic threads the same maneuver in
+  ~6062. Pass `--tow-heuristic euclidean` to opt out.
+- **Per-plane `_MAX_EXPANSIONS` raised 2000 → 8000** — the budget grid needs to
+  route the tight-but-feasible cases (the earlier "infeasible even at 4000" note
+  was a euclidean-heuristic artifact, not geometry).
+- **New deterministic global fill cap `_MAX_FILL_EXPANSIONS` (16000)** on the sum
+  of expansions across every `plan_path` call in a fill. A high per-plane budget
+  is needed to *route* tight planes but makes an un-routable fill expensive to
+  *disprove* (~per-plane × greedy-scan-retries); the cap bounds that worst case
+  (the default `spread=True` six-plane fill: ~997 s uncapped → ~334 s capped,
+  under the 400 s perf gate). Overridable via `plan_fill(max_total_expansions=)`.
+
+All RNG-free, so the ADR-0003 determinism contract is preserved (same scenario +
+seed → bit-identical `MovesPlan`). Multi-plane *fill* routability is dominated by
+placement, not the planner — the spread-vs-towability tension is tracked
+separately under [#280](https://github.com/DocGerd/hangarfit/issues/280)
+(back-fill [#320](https://github.com/DocGerd/hangarfit/issues/320)).
+
 ## More Information
 
 - Related spike: [Tow-path planning (#180)](../spikes/tow-path-planning.md) — the
