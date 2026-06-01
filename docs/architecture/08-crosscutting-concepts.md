@@ -40,21 +40,21 @@ The wing-over-tail-but-not-cockpit rule in plan view, with the height
 band that makes the aft case a pass-through:
 
 ```text
-PLAN VIEW (top-down).  World frame: +x along the door, +y INTO the hangar.
-Plane B parked nose-in (heading_deg = 0 -> nose toward +y).  Plane-local +x = nose.
+PLAN VIEW (top-down).  +x along the door; +y runs deeper into the hangar,
+drawn DOWNWARD (door at top) to match the §8 convention box and the renderer.
+Plane B parked nose-in (heading_deg = 0 -> nose points DOWN, deeper in).  Plane-local +x = nose.
 Split station x_break = wing.offset_x_m - wing.length_m/2  (the wing TRAILING edge):
   fuselage_front = nose side [x_break .. nose]   |   fuselage_aft = tail side [tail .. x_break]
 
-           nose (+y, deeper in)                         nose (+y, deeper in)
-              ^   Plane B fuselage                          ^   Plane B fuselage
-              |                                             |
-        +-----------+  ... fuselage_front (COCKPIT)   +-----------+
-        |::::: A :::|                                 |           |
-   - - -|:::::::::::|- - - x_break (wing TE) - - - - - |           |- - - x_break - - -
-        |           |  ... fuselage_aft (TAIL)        |::::: A :::|
-        |           |                                 |:::::::::::|
+              |   tail (-y, near door)                      |   tail (-y, near door)
         +-----------+                                 +-----------+
-              |   tail (-y)                                 |   tail (-y)
+        |           |                                 |:::::::::::|
+        |           |  ... fuselage_aft (TAIL)        |::::: A :::|
+   - - -|:::::::::::|- - - x_break (wing TE) - - - - - |           |- - - x_break - - -
+        |::::: A :::|                                 |           |
+        +-----------+  ... fuselage_front (COCKPIT)   +-----------+
+              |   Plane B fuselage                          |   Plane B fuselage
+              v   nose (+y, deeper in)                      v   nose (+y, deeper in)
    [::: A :::] = Plane A's WING footprint overhanging Plane B in plan view
 
       CASE B:  wing over fuselage_front          CASE A:  wing over fuselage_aft
@@ -121,26 +121,27 @@ Top-down, with the placeholder `data/hangar.yaml` values made concrete
 (the bay is the back-right 9 m × 9 m corner):
 
 ```text
- back wall  y = length_m = 25.0   (bay back edge: INHERITED, INCLUSIVE -> y = 25 is INSIDE)
- x=0                                          x=9            x=13.5          x=18
-  +==========================================+=============================+   y = 25.0  [INSIDE]
-  |                                          |#############################|
-  |                                          |#  MAINTENANCE BAY (closed)  #|   right edge x=18
-  |          normal hangar floor             |#  back-anchored, partial-w  #|   == hangar wall
+ TOP-DOWN.  +x along the door; +y runs deeper into the hangar, drawn DOWNWARD
+ (door at top) to match the §8 convention box and the renderer.  Placeholder
+ data/hangar.yaml: length_m=25, width_m=18; bay center_x_m=13.5, width_m=9,
+ depth_m=9  ->  x in (9.0, 18.0),  y in (16.0, 25.0].
+ x=0          door center_x=9.0, width=12.0  (x in [3, 15])               x=18
+  +=========================[  door  ]=======================================+   y = 0.0   front wall
+  |        +x runs right along the door --->        +y runs into hangar      |
+  |                                                                          |
+  |                                                                          |
+  +------------------------------------------+#############################+   y = 16.0  bay FRONT edge
+  |                                          |#############################|   (= 25 - depth; STRICT:
+  |                                          |#  MAINTENANCE BAY (closed)  #|   a vertex ON x=9 or
+  |          normal hangar floor             |#  back-anchored, partial-w  #|   y=16 is OUTSIDE the bay)
   |                                          |#  x in (9.0, 18.0)          #|
-  |                                          |#  y in (16.0, 25.0]         #|
-  |                                          |#  any non-occupant vertex   #|
+  |                                          |#  y in (16.0, 25.0]         #|   right edge x=18
+  |                                          |#  any non-occupant vertex   #|   == hangar wall
   |                                          |#  STRICTLY inside  =>  one   #|
   |                                          |#  bay_intrusion per part    #|
-  +------------------------------------------+#############################+   y = 16.0  (= 25 - 9)
-  |              side aisle                   ^ left edge x=9   front edge y=16  (both STRICT:
-  |        (a vertex ON x=9 or y=16                                              a vertex ON the
-  |         counts as OUTSIDE the bay)                                           edge is OUTSIDE)
-  |                                                                          |
-  |        +x runs right along the door --->        +y runs into hangar      |
-  +=========================[  door  ]=======================================+   y = 0.0
- x=0          door center_x=9.0, width=12.0  (x in [3, 15])               x=18
- front wall   heading_deg = 0 points toward +y (into the hangar)
+  +==========================================+#############################+   y = 25.0  [INSIDE]
+ x=0                                          x=9            x=13.5          x=18
+ back wall  y = length_m = 25.0   (bay back edge: INHERITED, INCLUSIVE -> y = 25 is INSIDE)
 
  In-bay predicate:  (9.0 < x < 18.0)  AND  (16.0 < y <= 25.0)
    strict < on the left / right / front edges; inclusive <= on the back edge
@@ -298,6 +299,12 @@ looking down on the layout:
 - `+y` runs deeper into the hangar.
 - `heading_deg = 0` means the plane's nose points toward `+y`
   (deeper into hangar).
+
+Throughout §8, the top-down diagrams draw `+y` **downward** (door at the
+top), matching this box and the PNG renderer (`visualize.py` inverts the
+y-axis so the door renders at the top). The one exception is the det = −1
+sketch below, which uses standard math axes (`+y` up) because it is a
+coordinate-algebra diagram, not a hangar floor plan.
 
 **Plane-local coordinates** — origin at the plane reference point
 (main-gear / cart centroid):
