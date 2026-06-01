@@ -849,7 +849,11 @@ def _back_bias_energy(placements: dict[str, Placement], scenario: Scenario) -> f
     the per-target argmin. RNG-free. See ADR-0008 (amended) and #320.
     """
     length = scenario.hangar.length_m
-    return sum((length - p.y_m) / length for p in placements.values())
+    # Iterate in sorted plane-id order (mirrors _inter_plane_energy /
+    # _spread_quality) so this float sum is order-stable even if a future
+    # refactor ever builds the placements dict from an unordered source — an
+    # ADR-0003 hardening; the dict is currently fleet_in-ordered already.
+    return sum((length - placements[pid].y_m) / length for pid in sorted(placements))
 
 
 def _resolve_spread_scale(scenario: Scenario, search: SearchConfig) -> float:

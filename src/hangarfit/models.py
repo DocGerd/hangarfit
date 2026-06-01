@@ -996,7 +996,20 @@ class SearchConfig:
     mid-hangar; the ``<2 planes`` no-op guard is also relaxed so a lone plane is
     still pulled to the back wall. ``min_pairwise_gap_m`` remains the primary
     basin-selection key — this only re-ranks candidates *within* a basin's
-    hill-climb. The CLI enables it by default (``--no-back-fill`` opts out)."""
+    hill-climb. The CLI enables it by default (``--no-back-fill`` opts out).
+
+    This is a **dimensionless relative weight** balancing the back-bias term
+    (normalized to ``[0, 1]`` per plane) against the inter-plane spread energy
+    (a sum of ``O(1)`` ``exp`` terms); ``~1.0`` is the tuned operating point, and
+    large values subordinate spread to back-fill (collapsing gaps), so keep it a
+    *secondary* term. **No effect when ``spread=False``** — the bias is folded
+    into the spread post-pass, which only runs under ``spread=True`` (a
+    ``spread=False, back_bias_weight>0`` config is a silent no-op by design; the
+    CLI never builds one). Modeled as ``float = 0.0`` rather than ``float |
+    None`` deliberately: ``0.0`` is the exact identity of ``weight · B``
+    (contributes nothing), not a degenerate value, so no distinct opt-out
+    sentinel is warranted — ``None`` stays the *only* sentinel in this dataclass
+    (on ``max_restarts``)."""
 
     def __post_init__(self) -> None:
         if self.candidates_per_iter < 1:
