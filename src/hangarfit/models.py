@@ -985,6 +985,19 @@ class SearchConfig:
     keeping the kernel sensitive across hangar sizes. When set explicitly,
     must be ``> 0``."""
 
+    back_bias_weight: float = 0.0
+    """Strength of the back-of-hangar fill bias folded into the spread post-pass
+    (#320, ADR-0008 amendment). ``0.0`` (default) ⇒ pure inter-plane spread — the
+    pre-#320 behaviour, so the raw spread mechanism and the determinism canaries
+    (which run ``spread=False``) stay byte-unchanged. When ``> 0`` the spread
+    hill-climb additionally minimizes a secondary term
+    ``B = Σ (hangar.length_m − y_p) / hangar.length_m`` that rewards parking deep
+    (large ``y``), so free space accumulates at the door end rather than
+    mid-hangar; the ``<2 planes`` no-op guard is also relaxed so a lone plane is
+    still pulled to the back wall. ``min_pairwise_gap_m`` remains the primary
+    basin-selection key — this only re-ranks candidates *within* a basin's
+    hill-climb. The CLI enables it by default (``--no-back-fill`` opts out)."""
+
     def __post_init__(self) -> None:
         if self.candidates_per_iter < 1:
             raise ValueError(
@@ -1015,4 +1028,9 @@ class SearchConfig:
             raise ValueError(
                 f"SearchConfig.spread_scale_m must be positive when set "
                 f"(pass None for the adaptive default), got {self.spread_scale_m}"
+            )
+        if self.back_bias_weight < 0.0:
+            raise ValueError(
+                f"SearchConfig.back_bias_weight must be >= 0 "
+                f"(0 disables the back-of-hangar fill bias), got {self.back_bias_weight}"
             )

@@ -838,6 +838,20 @@ def _inter_plane_energy(
     return energy
 
 
+def _back_bias_energy(placements: dict[str, Placement], scenario: Scenario) -> float:
+    """Back-of-hangar fill bias ``B = Σ (length_m − y_p) / length_m`` (#320).
+
+    Minimized when planes park deep (large ``y``, toward the back wall at
+    ``y = hangar.length_m``), so the spread hill-climb leaves free space at the
+    door end (``y ≈ 0``) instead of mid-hangar. Normalized by ``length_m`` so a
+    single ``back_bias_weight`` reads consistently across hangar sizes. Summed
+    over ALL placements — pinned planes add a constant offset that cannot change
+    the per-target argmin. RNG-free. See ADR-0008 (amended) and #320.
+    """
+    length = scenario.hangar.length_m
+    return sum((length - p.y_m) / length for p in placements.values())
+
+
 def _resolve_spread_scale(scenario: Scenario, search: SearchConfig) -> float:
     """Repulsion length-scale for spread (spec §4): explicit override or
     20% of the smaller hangar dimension. Single source so ``_spread`` and
@@ -904,12 +918,23 @@ def _spread(
     scale = _resolve_spread_scale(scenario, search)
 
     movable = sorted(pid for pid in placements if pid not in pinned_planes)
-    if not movable or len(placements) < 2:
-        # Nothing to optimize: all planes pinned (no movable target) or
-        # <2 planes (energy is identically 0.0).
+    back_fill = search.back_bias_weight > 0.0
+    if not movable or (len(placements) < 2 and not back_fill):
+        # Nothing to optimize: no movable target, or <2 planes with no back-fill
+        # bias (inter-plane energy is identically 0.0). With back-fill active a
+        # lone plane is still pulled to the back wall, so we do NOT bail there.
         return placements
 
-    current_energy = _inter_plane_energy(placements, scenario, scale)
+    def _energy(trial: dict[str, Placement]) -> float:
+        # Spread repulsion, plus the #320 back-of-hangar bias when active. The
+        # back-bias re-ranks candidates *within* this hill-climb; basin selection
+        # stays min-gap-primary (ADR-0008 amended).
+        e = _inter_plane_energy(trial, scenario, scale)
+        if back_fill:
+            e += search.back_bias_weight * _back_bias_energy(trial, scenario)
+        return e
+
+    current_energy = _energy(placements)
     last_improved = 0
 
     for iter_count in range(10000):  # large cap; real exit via stall/budget
@@ -954,7 +979,7 @@ def _spread(
                 continue
             if _score(trial_layout) != (0, 0.0):
                 continue  # must STAY valid
-            e = _inter_plane_energy(trial, scenario, scale)
+            e = _energy(trial)
             disp = (
                 (cand.x_m - placements[target].x_m) ** 2 + (cand.y_m - placements[target].y_m) ** 2
             ) ** 0.5
