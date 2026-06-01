@@ -1,6 +1,6 @@
 # ADR-0014: Merge-commit-only history under GitFlow — squash/rebase disabled as a release-safety guardrail
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-05-29
 - **Deciders:** Patrick Kuhn (DocGerd)
 
