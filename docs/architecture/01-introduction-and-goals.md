@@ -15,6 +15,30 @@ asked, searches for a valid arrangement itself.
 It is a CLI tool. It reads YAML, writes JSON and optional top-down PNG
 renders, and persists nothing between invocations.
 
+## Shipped phases
+
+Shipped capability by phase, tied to the release it landed in
+(authoritative version-to-date mapping in [`CHANGELOG.md`](../../CHANGELOG.md)):
+
+```mermaid
+timeline
+    title hangarfit phases (phase to shipped capability to release)
+    section Phase 1 substrate
+        v0.1.0 : hangarfit check : parts collision rule, hangar bounds, maintenance bay : top-down PNG render
+    section Phase 2a static solver
+        v0.6.0 : hangarfit solve : Random-Restart Monte-Carlo layout search : diversity metric (--alternatives)
+    section Phase 2b/2c solver polish
+        v0.7.0 : Phase 2b spread post-pass, maximise min inter-plane gap : Phase 2c collect-then-select pool, maximin selection
+    section Phase 3a/3b tow-path planning
+        v0.7.0 : Phase 3a solve --render-paths tow-path fill (Dubins arcs) : Phase 3b Reeds-Shepp reverse-capable tow, door entry-cone
+```
+
+*Phases map to the CLI surface: Phase 1 = `hangarfit check`; Phase 2a/2b/2c
+= `hangarfit solve`; Phase 3a/3b = `hangarfit solve --render-paths`. There
+were no v0.2.0–v0.5.0 tags — the Phase 2a solver shipped in v0.6.0; the
+spread-aware solver (2b/2c) and the full tow-path planner (3a/3b) all shipped
+in v0.7.0.*
+
 ## Quality goals
 
 In rough order of priority — earlier goals trump later ones when they

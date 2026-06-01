@@ -9,6 +9,12 @@ the current implementation supports:
 - K-diverse alternatives + termination (§4.5-§4.7)  [Chunk E]
 - inter-plane spread post-pass (``_spread`` / ``_inter_plane_energy``; ADR-0008,
   default on via ``SearchConfig.spread``)
+- collect-then-select pool with maximin-gap selection across restarts, surfacing
+  ``min_pairwise_gap_m`` / ``valid_basins_found`` (Phase 2c, #267; determinism is
+  now ``max_restarts``-scoped per the ADR-0003 amendment)
+- best-effort tow-path bundling: with ``plan_paths=True`` each returned layout is
+  paired with a per-plane tow plan from ``hangarfit.towplanner``; an un-routable
+  plane is kept as ``plans[i] = None`` (Phase 3a, ADR-0007 / ADR-0010)
 """
 
 from __future__ import annotations

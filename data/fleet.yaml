@@ -32,7 +32,7 @@
 #   loader does not split; an aircraft with a `fuselage` part needs a `wing`
 #   part to derive the break.)
 # - turn_radius_m: own-gear minimum taxi turn radius (m). LOAD-BEARING since
-#   Phase 3a — consumed by the `towplanner` module's Dubins / Hybrid-A*
+#   Phase 3a — consumed by the `towplanner` module's Reeds–Shepp / Hybrid-A*
 #   path planning (it was an unused placeholder through Phase 1/2a). `null`
 #   on always_cart planes: they have no own-gear taxi radius, so the
 #   towplanner substitutes 0 (pivot-in-place on the cart) via
