@@ -169,5 +169,4 @@ Licensed under the [Apache License 2.0](LICENSE).
 
 (C) 2026 Patrick Kuhn. The brand identity (the Horizon-blue accent, the abstract
 delta mark, and the assets under [`docs/assets/`](docs/assets/)) is part of the
-DocGerdSoft design system. DocGerdSoft is a personal brand of Patrick Kuhn, not a
-company.
+DocGerdSoft design system. DocGerdSoft is a personal brand of Patrick Kuhn.
