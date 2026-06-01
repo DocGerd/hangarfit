@@ -88,6 +88,7 @@ manual workflow above is canonical.
 | 0008 | [Inter-plane spread soft preference (repulsion-energy surrogate for maximin)](0008-inter-plane-spread-soft-preference.md) | Accepted |
 | 0009 | [Single supported Python — 3.12, anchored to the distro LTS](0009-single-supported-python-version.md) | Accepted |
 | 0010 | [Reeds–Shepp motion model — towplanner v2](0010-reeds-shepp-motion-model.md) | Accepted |
-| 0011 | [Linear history strategy under GitFlow — squash feature merges, accept release merge commits, target a clean first-parent mainline](0011-linear-history-strategy-under-gitflow.md) | Proposed |
+| 0011 | [Linear history strategy under GitFlow — squash feature merges, accept release merge commits, target a clean first-parent mainline](0011-linear-history-strategy-under-gitflow.md) | Superseded by [ADR-0014](0014-merge-commit-only-history-strategy.md) |
 | 0012 | [Split the fuselage into front/aft so a wing may overhang a tail but not a cockpit](0012-fuselage-front-aft-split.md) | Accepted |
 | 0013 | [Wheel positions are canonical per-aircraft data; turn_radius_m stays empirical, cross-checked at load](0013-wheels-canonical-data.md) | Accepted |
+| 0014 | [Merge-commit-only history under GitFlow — squash/rebase disabled as a release-safety guardrail](0014-merge-commit-only-history-strategy.md) | Proposed |
