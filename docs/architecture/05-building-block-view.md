@@ -180,10 +180,12 @@ Internally:
   rectangle is enforced as a hard obstacle by the `bay_intrusion`
   collision rule, so no surrogate sample is needed.
 - **Initial placement** — random valid placements respecting pins.
-- **Descent step** — min-conflicts perturbation: identify the plane
-  with the largest conflict contribution (by `total_penetration_m2`),
-  perturb it to reduce its contribution, repeat until zero conflicts
-  or local minimum.
+- **Descent step** — min-conflicts perturbation: pick one conflicting
+  non-pinned plane *uniformly at random* (over a `sorted()` set, so the
+  RNG draw stays deterministic), generate `N` candidate moves for it
+  (small nudges + one large jump + one 180° flip) and greedily accept
+  the best-scoring one (ties broken by smallest displacement), repeat
+  until zero conflicts or a local minimum.
 - **Restart cycle** — when descent plateaus, restart with a new random
   placement.
 - **Acceptance gate** — every candidate runs through `collisions.check()`
@@ -204,6 +206,64 @@ across runs (compliance check:
 `tests/test_solver_canaries.py`). Tow-planning is RNG-free, so the
 bundled `(Layout, MovesPlan)` output preserves the same determinism
 contract.
+
+The `solve()` lifecycle as a state machine — the pre-search gate, the
+restart/descent inner loop, the post-acceptance spread + basin pool, and
+the four terminal `SolveStatus` outcomes:
+
+```mermaid
+stateDiagram-v2
+    direction TB
+    [*] --> PreSearchGate : solve(scenario, seed)
+
+    PreSearchGate : Pre-search infeasibility gate
+    PreSearchGate : (1) a plane bbox exceeds the hangar max dimension
+    PreSearchGate : (2) sum of bbox areas exceeds the hangar floor
+    PreSearchGate : (3) pin-only layout fails check()
+
+    PreSearchGate --> trivially_infeasible : a gate trips
+    PreSearchGate --> RestartLoop : all gates pass
+
+    state RestartLoop {
+        direction TB
+        [*] --> InitialPlacement
+        InitialPlacement : Initial placement
+        InitialPlacement : random (x, y, heading); pins verbatim
+        InitialPlacement : cart-bucket round-robin; maintenance plane excluded
+        InitialPlacement --> Descent
+        Descent : Min-conflicts descent
+        Descent : pick a conflicting non-pinned plane at random
+        Descent : try N moves (nudges + jump + 180 deg flip)
+        Descent : score = (conflict_count, penetration_m2)
+        Descent --> Descent : improved, greedy accept
+        Descent --> Spread : score reaches (0, 0.0)
+        Descent --> Restart : plateau or all conflicts pinned
+        Spread : Spread post-pass (ADR-0008)
+        Spread : minimise repulsion energy, valid moves only
+        Spread --> PoolAppend : append basin candidate
+        PoolAppend --> Restart : seek another basin
+        Restart --> InitialPlacement : restart_index under max_restarts, within budget_s
+    }
+
+    RestartLoop --> Select : budget_s or max_restarts reached
+    Select : Selection (ADR-0004, collect-then-select #267)
+    Select : sort by (-min_gap, energy, restart_index)
+    Select : diversity gate
+    Select --> found : selected count equals alternatives
+    Select --> found_partial : some but fewer than alternatives
+    Select --> exhausted_budget : pool empty
+
+    found --> [*]
+    found_partial --> [*]
+    exhausted_budget --> [*]
+    trivially_infeasible --> [*]
+```
+
+*RR-MC `solve()` state machine: pre-search gate → bounded random-restart
+loop (min-conflicts descent, spread post-pass once a layout reaches
+`(0, 0.0)`, basin pool) → collect-then-select maximin-gap + diversity
+selection → one of four `SolveStatus` outcomes. Sources:
+`src/hangarfit/solver.py`, ADR-0003, ADR-0004, ADR-0008.*
 
 ### `towplanner.py` — tow-path planning
 

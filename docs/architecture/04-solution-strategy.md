@@ -8,10 +8,11 @@ to which ADR, not a re-derivation.
 
 ## Headline decisions
 
-Ordered roughly Phase 1 → Phase 2a → cross-cutting scope and operations
-choices: the geometric substrate first (parts model, transform), then
-the solver layered on top of it (algorithm, constraint posture), then
-the surrounding shape of the tool (delivery, documentation).
+Ordered roughly Phase 1 → Phase 2 → Phase 3 → cross-cutting scope and
+operations choices: the geometric substrate first (parts model,
+transform), then the solver layered on top of it (algorithm, constraint
+posture), then the tow-path planner layered on the solver, then the
+surrounding shape of the tool (delivery, documentation).
 
 ### Aircraft geometry as a list of parts, not a single bounding box
 
@@ -85,6 +86,26 @@ If further soft-constraint optimisation use cases materialise, each
 gets its own ADR and, if possible, its own isolated post-pass rather
 than a new key in the hard score tuple.
 
+### Tow-path planning as a bound-aware search over Reeds–Shepp motion
+
+`hangarfit solve --render-paths` does not just validate a static
+layout — it plans how each aircraft is towed into its slot from the
+door. The `towplanner` module fills the hangar back-to-front and routes
+each plane with a bound-aware Hybrid-A* search whose steering primitive
+is a closed-form **Reeds–Shepp** path (forward *and* reverse arcs),
+re-validated against the already-placed aircraft by the collision
+checker as it moves. Routing is best-effort: a plane the planner cannot
+route comes back as `plans[i] = None` rather than failing the whole
+layout, and the CLI exits 3 only when *no* candidate layout is fully
+tow-routable.
+
+A sampling-based planner (RRT / PRM) was rejected in favour of this
+closed-form motion vocabulary, which keeps the planner deterministic
+without an RNG. See [ADR-0007](../adr/0007-tow-path-planner-v1-scope.md)
+for the v1 scope and
+[ADR-0010](../adr/0010-reeds-shepp-motion-model.md) for the v2
+Reeds–Shepp motion model.
+
 ### CLI + JSON + optional PNG; nothing else
 
 `hangarfit` is a single-binary CLI invoked from a terminal. It reads
@@ -110,8 +131,11 @@ no MkDocs / Sphinx / Docusaurus build step. Mermaid diagrams render
 natively in GitHub Markdown.
 
 Choosing a documentation site generator is itself an architectural
-decision that would deserve its own ADR. Until that decision is made,
-GitHub's built-in rendering is enough — and the absence of a build step
+decision. It was evaluated in #372 and the decision recorded: stay with
+in-repo Markdown and treat GitHub Pages as deferred-not-rejected — the
+docs deliberately cross-link into source and config files outside
+`docs/`, which a static-site generator rooted at `docs/` cannot resolve.
+GitHub's built-in rendering is enough, and the absence of a build step
 removes one whole class of "did the docs publish?" failure modes.
 
 ## What the headline decisions do *not* cover

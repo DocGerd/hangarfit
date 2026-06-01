@@ -120,7 +120,7 @@ also [`SECURITY.md`](../SECURITY.md) and [`security-posture.md`](security-postur
 
 | Criterion | Status | Justification + evidence |
 |---|---|---|
-| `documentation_roadmap` (MUST) | **Met** | README "Scope" (Phase 1/2a shipped + explicit out-of-scope list) + public [milestones](https://github.com/DocGerd/hangarfit/milestones). |
+| `documentation_roadmap` (MUST) | **Met** | README "Scope" + the phase timeline in [arc42 §1](architecture/01-introduction-and-goals.md) (Phases 1 → 3b shipped, v0.1.0 → v0.8.0) + the explicit out-of-scope list + public [milestones](https://github.com/DocGerd/hangarfit/milestones). |
 | `documentation_architecture` (MUST) | **Met** | [`docs/architecture/`](architecture/) (arc42) + [`docs/adr/`](adr/). |
 | `documentation_security` (MUST) | **Met** | [`SECURITY.md`](../SECURITY.md) + [`security-posture.md`](security-posture.md) + the assurance case above. |
 | `documentation_quick_start` (MUST) | **Met** | README "Install" + "Usage" (`pip install -e .`; `hangarfit check …`). |
@@ -139,7 +139,7 @@ also [`SECURITY.md`](../SECURITY.md) and [`security-posture.md`](security-postur
 
 | Criterion | Status | Justification + evidence |
 |---|---|---|
-| `maintenance_or_update` (MUST) | **Met** | Actively maintained: tagged releases (v0.1.0, v0.6.0, v0.6.1), recent commits, `[Unreleased]` section in [`CHANGELOG.md`](../CHANGELOG.md). |
+| `maintenance_or_update` (MUST) | **Met** | Actively maintained: regular tagged releases from v0.1.0 to the current **v0.8.0** (2026-05-29), recent commits, `[Unreleased]` section in [`CHANGELOG.md`](../CHANGELOG.md). |
 
 ## 5. Reporting
 

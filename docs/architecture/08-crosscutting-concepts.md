@@ -36,6 +36,41 @@ the uniform two-clause predicate. See
 [ADR-0012](../adr/0012-fuselage-front-aft-split.md) for the rationale
 and rejected alternatives.
 
+The wing-over-tail-but-not-cockpit rule in plan view, with the height
+band that makes the aft case a pass-through:
+
+```text
+PLAN VIEW (top-down).  World frame: +x along the door, +y INTO the hangar.
+Plane B parked nose-in (heading_deg = 0 -> nose toward +y).  Plane-local +x = nose.
+Split station x_break = wing.offset_x_m - wing.length_m/2  (the wing TRAILING edge):
+  fuselage_front = nose side [x_break .. nose]   |   fuselage_aft = tail side [tail .. x_break]
+
+           nose (+y, deeper in)                         nose (+y, deeper in)
+              ^   Plane B fuselage                          ^   Plane B fuselage
+              |                                             |
+        +-----------+  ... fuselage_front (COCKPIT)   +-----------+
+        |::::: A :::|                                 |           |
+   - - -|:::::::::::|- - - x_break (wing TE) - - - - - |           |- - - x_break - - -
+        |           |  ... fuselage_aft (TAIL)        |::::: A :::|
+        |           |                                 |:::::::::::|
+        +-----------+                                 +-----------+
+              |   tail (-y)                                 |   tail (-y)
+   [::: A :::] = Plane A's WING footprint overhanging Plane B in plan view
+
+      CASE B:  wing over fuselage_front          CASE A:  wing over fuselage_aft
+      => HARD CONFLICT, z-gap IGNORED            => LEGAL iff heights disjoint
+         (fuselage_front_wing_overlap)              (height-disjoint pass-through)
+
+HEIGHT BAND (side view, both cases): A's wing sits ABOVE B's fuselage with a
+z-gap >= wing_layer_clearance_m.   Case A: the gap makes it pass.  Case B: the
+gap is irrelevant -- the cockpit rule drops clause (2) entirely (ADR-0012, D1).
+
+         A wing  ----========----    (z_bottom_m .. z_top_m, the upper layer)
+                        | z-gap >= wing_layer_clearance_m
+         B fuselage  [############]   (lower layer)
+```
+*A wingtip may overhang a parked plane's aft fuselage / tail (Case A: legal when heights are disjoint, the two-clause `wing × fuselage_aft` rule) but never its cockpit / front fuselage (Case B: a hard `fuselage_front_wing_overlap` conflict at any nesting height). The loader auto-splits a `fuselage` part at the wing trailing edge `x_break`; front is the nose side, aft the tail side.*
+
 The closed set of `PartKind` values is `{"fuselage_front",
 "fuselage_aft", "wing", "strut", "tail"}`. The legacy `"fuselage"` is
 **not** a constructed kind — it survives only as a transient YAML keyword
@@ -81,6 +116,37 @@ that the back-`y` edge is *inherited* from the hangar boundary
 re-tested here. Any vertex of a non-occupant part that lies strictly
 inside that rectangle fires a `bay_intrusion` conflict on the owning
 plane — one conflict per offending part.
+
+Top-down, with the placeholder `data/hangar.yaml` values made concrete
+(the bay is the back-right 9 m × 9 m corner):
+
+```text
+ back wall  y = length_m = 25.0   (bay back edge: INHERITED, INCLUSIVE -> y = 25 is INSIDE)
+ x=0                                          x=9            x=13.5          x=18
+  +==========================================+=============================+   y = 25.0  [INSIDE]
+  |                                          |#############################|
+  |                                          |#  MAINTENANCE BAY (closed)  #|   right edge x=18
+  |          normal hangar floor             |#  back-anchored, partial-w  #|   == hangar wall
+  |                                          |#  x in (9.0, 18.0)          #|
+  |                                          |#  y in (16.0, 25.0]         #|
+  |                                          |#  any non-occupant vertex   #|
+  |                                          |#  STRICTLY inside  =>  one   #|
+  |                                          |#  bay_intrusion per part    #|
+  +------------------------------------------+#############################+   y = 16.0  (= 25 - 9)
+  |              side aisle                   ^ left edge x=9   front edge y=16  (both STRICT:
+  |        (a vertex ON x=9 or y=16                                              a vertex ON the
+  |         counts as OUTSIDE the bay)                                           edge is OUTSIDE)
+  |                                                                          |
+  |        +x runs right along the door --->        +y runs into hangar      |
+  +=========================[  door  ]=======================================+   y = 0.0
+ x=0          door center_x=9.0, width=12.0  (x in [3, 15])               x=18
+ front wall   heading_deg = 0 points toward +y (into the hangar)
+
+ In-bay predicate:  (9.0 < x < 18.0)  AND  (16.0 < y <= 25.0)
+   strict < on the left / right / front edges; inclusive <= on the back edge
+   (inherited from _hangar_bounds_conflicts, so y = 25 is not re-tested here)
+```
+*Maintenance-bay geometry on the placeholder hangar (`length_m`=25, `width_m`=18; bay `center_x_m`=13.5, `width_m`=9, `depth_m`=9): the back-right 9×9 m corner, `x ∈ (9.0, 18.0)`, `y ∈ (16.0, 25.0]`. The left/right/front edges are strict `<` (a vertex on the edge is in the aisle, not the bay); the back-`y` edge is inclusive because it coincides with the hangar back wall and is inherited from `_hangar_bounds_conflicts`. When a maintenance occupant is set, any non-occupant part vertex strictly inside fires one `bay_intrusion` conflict per offending part.*
 
 This rule replaced the earlier "fuselage centroid in the back strip"
 rule during the bay-walling work that completed in
@@ -153,6 +219,60 @@ headings (near 180°) are out of scope here; they belong to the Reeds–Shepp
 motion issue (#261). This replaces the earlier v1 single-ray reduction (one
 clamped target-x, heading 0°) described in ADR-0007 Q6.
 
+The motion vocabulary and the door entry-cone the planner searches over:
+
+```text
+REEDS-SHEPP MOTION MODEL (towplanner._primitives, ADR-0010)
+World frame: +x runs ALONG the door, +y runs INTO the hangar.
+A pose heading_deg=0 points nose-first toward +y (straight in).
+
+(1) REVERSE-CAPABLE REORIENT vs CART PIVOT-IN-PLACE
+---------------------------------------------------------------------
+ OWN GEAR (turn_radius_m = r > 0): 6 primitives, fixed order
+   forward:  Lf   Sf   Rf      reverse:  Lr   Sr   Rr   (gear = -1)
+   reverse legs cost _REVERSE_COST_FACTOR = 1.5 x  -> forward preferred
+
+   A turned goal a forward-only Dubins car can't reach in-bounds:
+
+      forward-only Dubins          Reeds-Shepp (fwd arc-line-arc + reverse)
+      must drive a full            backs up to reorient, then pulls in
+      turning-circle loop          (measured: an 18 m reverse beats a 32 m
+        .--->--.                    loop; even at the 1.5x weight it wins)
+       /        \                       Sf      Lr (reverse arc)
+      |  ~32 m   |  goal             >------>  .<......
+       \        /   X (turned)              \ '-.    : reverse retreats
+        '--<---'                       Lf arc   '--> X   around the steer centre
+
+ CART (turn_radius_m = 0): 4 primitives  ->  Lf  Sf  Rf  Sr
+   pivot-in-place (r = 0, zero translation) + reverse-straight (Sr).
+   Reverse PIVOTS (Lr/Rr) are omitted: a reverse pivot rotates heading the
+   same way as the OPPOSITE forward pivot -> exact duplicate, always loses
+   the best_g race. Only the reverse *straight* (Sr) is a genuinely new move.
+
+        ^ pivot CCW (Lf)    pivot CW (Rf)        Sr: back straight
+        |  .-.                .-.                 out of a slot
+        | (   ) spin in place (   )            <===== [plane] ======
+
+(2) DOOR ENTRY-CONE  (entry_poses, #262)  -- 3 x-samples x 5 headings
+---------------------------------------------------------------------
+ All surviving cone poses are seeded into the Hybrid-A* frontier at g=0
+ simultaneously; A* then returns the shortest path across the whole cone.
+
+  x-samples (within door interval): door-centre | clamped-target-x | midpoint
+  headings (forward-admissible, straight-in +/-30 deg in 15 deg steps):
+        330   345    0    15    30        (0 = straight into +y)
+
+  front wall (y=0) ===door-gap=== along +x ============================
+        x0          x1(target)         x2(mid)
+      \ | /        \ | /              \ | /        each fan = 5 headings
+       \|/          \|/                \|/         {330,345,0,15,30}
+        *            *                  *          = up to 15 seed poses
+                     |                              (duplicates removed;
+                     v  +y into hangar               poses clipping the
+                                                      side/back walls dropped)
+```
+*Reeds–Shepp gives every plane reverse legs (6 own-gear primitives `Lf Sf Rf Lr Sr Rr`, reverse weighted 1.5×; carts get 4: `Lf Sf Rf` + reverse-straight `Sr`), and the planner seeds the Hybrid-A\* search from a 3×5 door-cone fan instead of a single straight-in ray.*
+
 ## The coordinate convention
 
 The single most contributor-confusing concept in the project. Read
@@ -202,6 +322,44 @@ review-time subagent are the project's combined defense against a
 well-meaning contributor "fixing" it.
 
 If you're tempted to simplify the matrix, read ADR-0002 first.
+
+The picture below makes the handedness flip concrete: at the 45° canary
+heading the plane-local axes are overlaid on the world frame. The nose
+*and* the right wingtip both land in `+x` (to the right), but the wingtip
+lands *clockwise* of the nose, in `−y` (toward the door) — the opposite
+of where a pure (det = +1) rotation would send it.
+
+```text
+heading_deg = 45   (compass heading, CW from world +y; plane at the origin)
+plane-local axes:  +u = nose (forward),   +v = right wingtip (starboard)
+
+det = -1 map (local -> world), ADR-0002 / geometry.py:
+    world_x = x + u*sin(h) + v*cos(h)
+    world_y = y + u*cos(h) - v*sin(h)        at h = 45deg, sin h = cos h = 0.71
+
+                        +y  (deeper into hangar)
+                        ^
+                        |        N      nose:    (u=1, v=0) -> (+0.71, +0.71)
+                        |       /              ...lands in the (+x, +y) quadrant
+                        |      /
+                        |     /         sweeping nose -> right wingtip is +90deg
+                        |    /          IN THE PLANE, but in the WORLD the
+   -x ------------------+--------------> +x   (right, along the door wall)
+                        |    \          wingtip lands CLOCKWISE of the nose
+                        |     \
+                        |      \
+                        |       \
+                        |        R      wingtip: (u=0, v=1) -> (+0.71, -0.71)
+                        v              ...lands in the (+x, -y) quadrant
+                       -y  (front of door)         (right AND toward the door)
+
+THE FLIP:  a right-handed (det = +1) CCW rotation would instead send the
+           wingtip to (-0.71, +0.71) = the (-x, +y) quadrant -- mirrored,
+           WRONG. The nose probe alone cannot catch this (sin45 = cos45, so
+           the row swap is invisible at 45deg for u=1,v=0); only the wingtip
+           sign-flip reveals it. That is what the 45deg canary test pins.
+```
+*Plane-local frame (+u = nose, +v = right wingtip) overlaid on the world frame at the 45° canary heading. Both probes land in `+x`; the nose at (+0.71, +0.71) and the right wingtip at (+0.71, −0.71). A pure rotation would mirror the wingtip to (−0.71, +0.71). That reflected handedness is the determinant −1 (ADR-0002).*
 
 ### Fuselage offset signs
 
