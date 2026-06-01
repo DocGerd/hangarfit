@@ -107,48 +107,21 @@ def solve(
     resolved_seed = seed if seed is not None else secrets.randbits(32)
     rng = _random_module.Random(resolved_seed)
 
-    # ── Diversity-impossible heuristic (spec §4.6) ──────────────────────
-    # When the number of free (non-pinned) planes is strictly less than
-    # diversity.min_planes_moved AND the caller asked for >1 alternative,
-    # they cannot mathematically get more than one accepted layout: every
-    # candidate L' after the first will share too many pinned planes with
-    # L to ever pass `n_moved ≥ min_planes_moved`. Logged as a warning
-    # so CLI / library users see it; we do NOT mutate `alternatives` —
-    # search runs normally and the natural outcome is found_partial with
-    # one accepted layout (spec deliberately avoids downgrading the API
-    # contract). Pin-detection mirrors `_check_trivially_infeasible`.
-    free_planes = sum(
-        1
-        for pid in scenario.fleet_in
-        if scenario.constraints.get(pid) is None or scenario.constraints[pid].pin is None
-    )
-    diversity_impossible = alternatives > 1 and free_planes < diversity.min_planes_moved
-    if diversity_impossible:
-        _logger.warning(
-            "requested %d alternatives but only 1 is achievable "
-            "(%d of %d planes are pinned). Expect status=found_partial.",
-            alternatives,
-            len(scenario.fleet_in) - free_planes,
-            len(scenario.fleet_in),
-        )
+    # Diversity-impossible heuristic (spec §4.6): warn (without mutating
+    # `alternatives`) when too many planes are pinned to ever yield >1
+    # diverse layout. See `_diversity_is_impossible`.
+    diversity_impossible = _diversity_is_impossible(scenario, alternatives, diversity)
 
     # ── Pre-search infeasibility checks (§4.1) ──────────────────────────
     start = time.monotonic()
 
     infeasible = _check_trivially_infeasible(scenario)
     if infeasible is not None:
-        bad_check, bad_layout = infeasible
-        return SolveResult(
-            status="trivially_infeasible",
-            layouts=(),
-            diagnostics=SolverDiagnostics(
-                restarts_attempted=0,
-                wall_time_s=time.monotonic() - start,
-                best_partial=bad_check,
-                best_partial_layout=bad_layout,
-                seed=resolved_seed,
-                diversity_impossible=diversity_impossible,
-            ),
+        return _build_trivially_infeasible_result(
+            infeasible,
+            start=start,
+            resolved_seed=resolved_seed,
+            diversity_impossible=diversity_impossible,
         )
 
     # ── Real search (RR-MC, spec §4.2-§4.5) ─────────────────────────────
@@ -294,71 +267,213 @@ def solve(
     selected, diversity_rejected_count = _select_spread_diverse(pool, alternatives, diversity)
 
     if selected:
-        accepted_layouts = [c.layout for c in selected]
-        min_gaps = tuple(c.min_gap for c in selected)
-        status: SolveStatus = "found" if len(accepted_layouts) >= alternatives else "found_partial"
-        # Tow-plan every returned layout (best-effort enrichment, #197). The
-        # v2 planner (Reeds–Shepp arcs + bounded Hybrid-A* — #222/#261 under
-        # ADR-0007 + ADR-0010) cannot route dense multi-plane fills and has
-        # documented false-negatives, so an un-routable layout is recorded as
-        # plans[i]=None rather than discarding the otherwise-valid static
-        # arrangement — the layout is the headline answer; the tow plan is
-        # advisory (spike Risk #8). The `status` stays search-driven:
-        # tow-planning never changes found/found_partial.
-        plans: tuple[MovesPlan | None, ...]
-        unroutable: list[str] = []
-        if plan_paths:
-            built: list[MovesPlan | None] = []
-            for layout in accepted_layouts:
-                try:
-                    # Default path calls ``plan_fill(layout)`` EXACTLY as before
-                    # (byte-identical; #332 spike params are opt-in), so the
-                    # ADR-0003 determinism canaries — and any test that stubs
-                    # ``plan_fill`` with a target-only signature — are untouched.
-                    if tow_heuristic == "euclidean" and tow_max_expansions is None:
-                        built.append(plan_fill(layout))
-                    else:
-                        built.append(
-                            plan_fill(
-                                layout,
-                                heuristic=tow_heuristic,
-                                max_expansions=tow_max_expansions,
-                            )
-                        )
-                except NoFeasiblePlanError as e:
-                    built.append(None)
-                    unroutable.append(e.plane_id)
-                    # Log the conflict kind/detail too, not just the plane: it
-                    # distinguishes a genuinely-boxed-in plane from a Hybrid-A*
-                    # budget exhaustion (a known false-negative class), which
-                    # call for different operator responses.
-                    _logger.warning(
-                        "layout not tow-routable by the tow-path planner: plane %r blocked "
-                        "(%s: %s); returning the valid static layout without a tow plan",
-                        e.plane_id,
-                        e.conflict.kind,
-                        e.conflict.detail,
-                    )
-            plans = tuple(built)
-        else:
-            plans = (None,) * len(accepted_layouts)
-        return SolveResult(
-            status=status,
-            layouts=tuple(accepted_layouts),
-            plans=plans,
-            diagnostics=SolverDiagnostics(
-                restarts_attempted=restart_index,
-                wall_time_s=elapsed,
-                best_partial=None,
-                best_partial_layout=None,
-                seed=resolved_seed,
-                diversity_impossible=diversity_impossible,
-                diversity_rejected_count=diversity_rejected_count,
-                unroutable_planes=tuple(unroutable),
-                min_pairwise_gap_m=min_gaps,
-                valid_basins_found=len(pool),
-            ),
+        return _build_found_result(
+            selected,
+            alternatives=alternatives,
+            plan_paths=plan_paths,
+            tow_heuristic=tow_heuristic,
+            tow_max_expansions=tow_max_expansions,
+            restart_index=restart_index,
+            elapsed=elapsed,
+            resolved_seed=resolved_seed,
+            diversity_impossible=diversity_impossible,
+            diversity_rejected_count=diversity_rejected_count,
+            valid_basins_found=len(pool),
         )
+    return _build_exhausted_result(
+        best_partial_layout,
+        restart_index=restart_index,
+        elapsed=elapsed,
+        resolved_seed=resolved_seed,
+        diversity_impossible=diversity_impossible,
+        diversity_rejected_count=diversity_rejected_count,
+        valid_basins_found=len(pool),
+    )
+
+
+def _diversity_is_impossible(
+    scenario: Scenario,
+    alternatives: int,
+    diversity: DiversityConfig,
+) -> bool:
+    """Detect (and warn about) a structurally diversity-impossible request (spec §4.6).
+
+    When the number of free (non-pinned) planes is strictly less than
+    ``diversity.min_planes_moved`` AND the caller asked for >1 alternative, they
+    cannot mathematically get more than one accepted layout: every candidate L'
+    after the first will share too many pinned planes with L to ever pass
+    ``n_moved ≥ min_planes_moved``. Logged as a warning so CLI / library users
+    see it; ``alternatives`` is deliberately NOT mutated — search runs normally
+    and the natural outcome is found_partial with one accepted layout (the spec
+    avoids downgrading the API contract). Pin-detection mirrors
+    ``_check_trivially_infeasible``. RNG-free.
+    """
+    free_planes = sum(
+        1
+        for pid in scenario.fleet_in
+        if scenario.constraints.get(pid) is None or scenario.constraints[pid].pin is None
+    )
+    diversity_impossible = alternatives > 1 and free_planes < diversity.min_planes_moved
+    if diversity_impossible:
+        _logger.warning(
+            "requested %d alternatives but only 1 is achievable "
+            "(%d of %d planes are pinned). Expect status=found_partial.",
+            alternatives,
+            len(scenario.fleet_in) - free_planes,
+            len(scenario.fleet_in),
+        )
+    return diversity_impossible
+
+
+def _build_trivially_infeasible_result(
+    infeasible: tuple[CheckResult, Layout],
+    *,
+    start: float,
+    resolved_seed: int,
+    diversity_impossible: bool,
+) -> SolveResult:
+    """Build the ``trivially_infeasible`` :class:`SolveResult` (spec §4.1).
+
+    RNG-free. ``wall_time_s`` is measured at the same point in execution as the
+    inline code this replaces; the determinism canaries do not assert on it.
+    """
+    bad_check, bad_layout = infeasible
+    return SolveResult(
+        status="trivially_infeasible",
+        layouts=(),
+        diagnostics=SolverDiagnostics(
+            restarts_attempted=0,
+            wall_time_s=time.monotonic() - start,
+            best_partial=bad_check,
+            best_partial_layout=bad_layout,
+            seed=resolved_seed,
+            diversity_impossible=diversity_impossible,
+        ),
+    )
+
+
+def _tow_plan_layouts(
+    accepted_layouts: list[Layout],
+    *,
+    plan_paths: bool,
+    tow_heuristic: Literal["euclidean", "grid"],
+    tow_max_expansions: int | None,
+) -> tuple[tuple[MovesPlan | None, ...], tuple[str, ...]]:
+    """Tow-plan every returned layout (best-effort enrichment, #197).
+
+    Returns ``(plans, unroutable)`` index-aligned with ``accepted_layouts``.
+    The v2 planner (Reeds–Shepp arcs + bounded Hybrid-A* — #222/#261 under
+    ADR-0007 + ADR-0010) cannot route dense multi-plane fills and has documented
+    false-negatives, so an un-routable layout is recorded as ``plans[i]=None``
+    rather than discarding the otherwise-valid static arrangement — the layout is
+    the headline answer; the tow plan is advisory (spike Risk #8). RNG-free, so
+    it preserves the ADR-0003 determinism contract.
+
+    With ``plan_paths=False`` no planning runs and ``plans`` is all-``None``
+    (still index-aligned), with no ``unroutable`` planes.
+    """
+    if not plan_paths:
+        return (None,) * len(accepted_layouts), ()
+
+    built: list[MovesPlan | None] = []
+    unroutable: list[str] = []
+    for layout in accepted_layouts:
+        try:
+            # Default path calls ``plan_fill(layout)`` EXACTLY as before
+            # (byte-identical; #332 spike params are opt-in), so the ADR-0003
+            # determinism canaries — and any test that stubs ``plan_fill`` with a
+            # target-only signature — are untouched.
+            if tow_heuristic == "euclidean" and tow_max_expansions is None:
+                built.append(plan_fill(layout))
+            else:
+                built.append(
+                    plan_fill(
+                        layout,
+                        heuristic=tow_heuristic,
+                        max_expansions=tow_max_expansions,
+                    )
+                )
+        except NoFeasiblePlanError as e:
+            built.append(None)
+            unroutable.append(e.plane_id)
+            # Log the conflict kind/detail too, not just the plane: it
+            # distinguishes a genuinely-boxed-in plane from a Hybrid-A* budget
+            # exhaustion (a known false-negative class), which call for different
+            # operator responses.
+            _logger.warning(
+                "layout not tow-routable by the tow-path planner: plane %r blocked "
+                "(%s: %s); returning the valid static layout without a tow plan",
+                e.plane_id,
+                e.conflict.kind,
+                e.conflict.detail,
+            )
+    return tuple(built), tuple(unroutable)
+
+
+def _build_found_result(
+    selected: list[_SpreadCandidate],
+    *,
+    alternatives: int,
+    plan_paths: bool,
+    tow_heuristic: Literal["euclidean", "grid"],
+    tow_max_expansions: int | None,
+    restart_index: int,
+    elapsed: float,
+    resolved_seed: int,
+    diversity_impossible: bool,
+    diversity_rejected_count: int,
+    valid_basins_found: int,
+) -> SolveResult:
+    """Build the ``found`` / ``found_partial`` :class:`SolveResult`.
+
+    Derives the accepted layouts and per-layout maximin gaps from the selected
+    basins, tow-plans them (best-effort, see :func:`_tow_plan_layouts`), and
+    assembles the diagnostics. The ``status`` stays search-driven — tow-planning
+    never flips found ↔ found_partial. RNG-free.
+    """
+    accepted_layouts = [c.layout for c in selected]
+    min_gaps = tuple(c.min_gap for c in selected)
+    status: SolveStatus = "found" if len(accepted_layouts) >= alternatives else "found_partial"
+    plans, unroutable = _tow_plan_layouts(
+        accepted_layouts,
+        plan_paths=plan_paths,
+        tow_heuristic=tow_heuristic,
+        tow_max_expansions=tow_max_expansions,
+    )
+    return SolveResult(
+        status=status,
+        layouts=tuple(accepted_layouts),
+        plans=plans,
+        diagnostics=SolverDiagnostics(
+            restarts_attempted=restart_index,
+            wall_time_s=elapsed,
+            best_partial=None,
+            best_partial_layout=None,
+            seed=resolved_seed,
+            diversity_impossible=diversity_impossible,
+            diversity_rejected_count=diversity_rejected_count,
+            unroutable_planes=unroutable,
+            min_pairwise_gap_m=min_gaps,
+            valid_basins_found=valid_basins_found,
+        ),
+    )
+
+
+def _build_exhausted_result(
+    best_partial_layout: Layout | None,
+    *,
+    restart_index: int,
+    elapsed: float,
+    resolved_seed: int,
+    diversity_impossible: bool,
+    diversity_rejected_count: int,
+    valid_basins_found: int,
+) -> SolveResult:
+    """Build the ``exhausted_budget`` :class:`SolveResult`.
+
+    Re-checks ``best_partial_layout`` (if any) for the fused best-partial pair.
+    RNG-free.
+    """
     bp = check_layout(best_partial_layout) if best_partial_layout is not None else None
     return SolveResult(
         status="exhausted_budget",
@@ -371,7 +486,7 @@ def solve(
             seed=resolved_seed,
             diversity_impossible=diversity_impossible,
             diversity_rejected_count=diversity_rejected_count,
-            valid_basins_found=len(pool),
+            valid_basins_found=valid_basins_found,
         ),
     )
 
