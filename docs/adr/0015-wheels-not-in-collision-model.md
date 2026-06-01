@@ -1,6 +1,6 @@
 # ADR-0015: Wheels do not participate in the static collision model (gear stays render/motion data)
 
-- **Status:** Proposed
+- **Status:** Accepted
 - **Date:** 2026-05-31
 - **Deciders:** [@DocGerd](https://github.com/DocGerd)
 
