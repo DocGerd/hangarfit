@@ -34,6 +34,14 @@ if TYPE_CHECKING:
 _JSON_SCHEMA = "hangarfit.check/v1"
 _SOLVE_JSON_SCHEMA = "hangarfit.solve/v1"
 
+# #320 back-of-hangar fill bias: the SearchConfig.back_bias_weight the CLI passes
+# when back-fill is enabled (the default; --no-back-fill sets it to 0.0). Chosen
+# from a sweep over the acceptance fixtures (single plane → back wall; the
+# scenario_minimal 2-plane fill clears the door) as the smallest weight that
+# breaks the mid-hangar symmetry while staying a secondary term below the spread
+# objective — it does not collapse the inter-plane gap. See ADR-0008 (amended).
+_BACK_FILL_DEFAULT_WEIGHT = 1.0
+
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the argparse parser with the ``check`` and ``solve`` subcommands."""
@@ -180,6 +188,18 @@ def build_parser() -> argparse.ArgumentParser:
         dest="spread",
         default=True,
         help="Disable the inter-plane spread post-pass (default: spread enabled).",
+    )
+    solve.add_argument(
+        "--no-back-fill",
+        action="store_false",
+        dest="back_fill",
+        default=True,
+        help=(
+            "Disable the back-of-hangar fill bias (#320). By default the spread "
+            "post-pass also biases planes toward the back wall, leaving free space "
+            "at the door; pass this to keep the symmetric spread only. (No effect "
+            "with --no-spread, since the bias rides on the spread post-pass.)"
+        ),
     )
     # ── Experimental tow-planner knobs (towplanner-v2 routability spike, #332) ──
     # Behind opt-in flags; defaults reproduce the shipped planner byte-for-byte.
@@ -429,7 +449,10 @@ def cmd_solve(args: argparse.Namespace) -> int:
         budget_s=args.budget,
         alternatives=args.alternatives,
         seed=resolved_seed,
-        search=SearchConfig(spread=args.spread),
+        search=SearchConfig(
+            spread=args.spread,
+            back_bias_weight=_BACK_FILL_DEFAULT_WEIGHT if args.back_fill else 0.0,
+        ),
         plan_paths=args.render_paths,
         tow_heuristic=args.tow_heuristic,
         tow_max_expansions=args.tow_max_expansions,

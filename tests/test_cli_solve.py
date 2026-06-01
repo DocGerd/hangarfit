@@ -585,6 +585,37 @@ def test_solve_no_spread_flag_accepted_and_runs(tmp_path):
     assert out.exists()
 
 
+def test_solve_back_fill_defaults_on_and_no_back_fill_opts_out():
+    """`--no-back-fill` flips the ``back_fill`` namespace default (#320); absent,
+    it defaults ON (the back-of-hangar bias rides the spread post-pass)."""
+    from hangarfit.cli import build_parser
+
+    assert build_parser().parse_args(["solve", "s.yaml"]).back_fill is True
+    assert build_parser().parse_args(["solve", "s.yaml", "--no-back-fill"]).back_fill is False
+
+
+def test_solve_no_back_fill_flag_accepted_and_runs(tmp_path):
+    """`--no-back-fill` is accepted on `solve` and drives a successful run."""
+    from hangarfit.cli import main
+
+    out = tmp_path / "layout.yaml"
+    rc = main(
+        [
+            "solve",
+            "tests/fixtures/solve_all_nine_large_hangar.yaml",
+            "--seed",
+            "42",
+            "--budget",
+            "10",
+            "--no-back-fill",
+            "--write-yaml",
+            str(out),
+        ]
+    )
+    assert rc == 0
+    assert out.exists()
+
+
 class TestSolveRenderPaths:
     """`--render-paths` flag: tow-path overlay rendering + exit-3 semantics (#193).
 

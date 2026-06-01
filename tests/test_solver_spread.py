@@ -99,6 +99,42 @@ def test_solve_default_enables_spread():
     ]
 
 
+def test_solve_back_fill_parks_single_plane_at_back_wall():
+    """#320 acceptance: with back-fill a lone plane parks deep against the back
+    wall — and strictly deeper than with back-fill off, same seed. Bounded by
+    ``max_restarts`` so the basin pool (and selection) is seed-deterministic."""
+    s = load_scenario("tests/fixtures/solve_trivial_single_plane.yaml")
+    off = solve(
+        s, seed=42, search=SearchConfig(max_restarts=5, back_bias_weight=0.0), plan_paths=False
+    )
+    on = solve(
+        s, seed=42, search=SearchConfig(max_restarts=5, back_bias_weight=1.0), plan_paths=False
+    )
+    assert off.layouts and on.layouts
+    (p_off,) = off.layouts[0].placements
+    (p_on,) = on.layouts[0].placements
+    assert p_on.y_m > p_off.y_m  # back-fill pulls the lone plane deeper
+    assert p_on.y_m > 0.7 * s.hangar.length_m  # and up against the back wall
+
+
+def test_solve_back_fill_clears_the_door_on_two_plane_fill():
+    """#320 acceptance: on the 2-plane minimal fill, back-fill leaves free space
+    at the door — the front-most plane sits deeper than with back-fill off, and
+    no plane is parked in the front third of the hangar."""
+    s = load_scenario("tests/fixtures/scenario_minimal.yaml")
+    off = solve(
+        s, seed=1, search=SearchConfig(max_restarts=5, back_bias_weight=0.0), plan_paths=False
+    )
+    on = solve(
+        s, seed=1, search=SearchConfig(max_restarts=5, back_bias_weight=1.0), plan_paths=False
+    )
+    assert off.layouts and on.layouts
+    front_off = min(p.y_m for p in off.layouts[0].placements)
+    front_on = min(p.y_m for p in on.layouts[0].placements)
+    assert front_on > front_off  # door-side cleared relative to the spread-only baseline
+    assert front_on > s.hangar.length_m / 3  # no plane left in the front (door) third
+
+
 def test_solve_k2_with_spread_never_invalid_and_diverse_if_found():
     """The spread/diversity interaction (spec known-interaction): with K=2 and
     spread on, every returned layout must be valid, and if status==found the

@@ -985,6 +985,32 @@ class SearchConfig:
     keeping the kernel sensitive across hangar sizes. When set explicitly,
     must be ``> 0``."""
 
+    back_bias_weight: float = 0.0
+    """Strength of the back-of-hangar fill bias folded into the spread post-pass
+    (#320, ADR-0008 amendment). ``0.0`` (default) ⇒ pure inter-plane spread — the
+    pre-#320 behaviour, so the raw spread mechanism and the determinism canaries
+    (which run ``spread=False``) stay byte-unchanged. When ``> 0`` the spread
+    hill-climb additionally minimizes a secondary term
+    ``B = Σ (hangar.length_m − y_p) / hangar.length_m`` that rewards parking deep
+    (large ``y``), so free space accumulates at the door end rather than
+    mid-hangar; the ``<2 planes`` no-op guard is also relaxed so a lone plane is
+    still pulled to the back wall. ``min_pairwise_gap_m`` remains the primary
+    basin-selection key — this only re-ranks candidates *within* a basin's
+    hill-climb. The CLI enables it by default (``--no-back-fill`` opts out).
+
+    This is a **dimensionless relative weight** balancing the back-bias term
+    (normalized to ``[0, 1]`` per plane) against the inter-plane spread energy
+    (a sum of ``O(1)`` ``exp`` terms); ``~1.0`` is the tuned operating point, and
+    large values subordinate spread to back-fill (collapsing gaps), so keep it a
+    *secondary* term. **No effect when ``spread=False``** — the bias is folded
+    into the spread post-pass, which only runs under ``spread=True`` (a
+    ``spread=False, back_bias_weight>0`` config is a silent no-op by design; the
+    CLI never builds one). Modeled as ``float = 0.0`` rather than ``float |
+    None`` deliberately: ``0.0`` is the exact identity of ``weight · B``
+    (contributes nothing), not a degenerate value, so no distinct opt-out
+    sentinel is warranted — ``None`` stays the *only* sentinel in this dataclass
+    (on ``max_restarts``)."""
+
     def __post_init__(self) -> None:
         if self.candidates_per_iter < 1:
             raise ValueError(
@@ -1015,4 +1041,9 @@ class SearchConfig:
             raise ValueError(
                 f"SearchConfig.spread_scale_m must be positive when set "
                 f"(pass None for the adaptive default), got {self.spread_scale_m}"
+            )
+        if self.back_bias_weight < 0.0:
+            raise ValueError(
+                f"SearchConfig.back_bias_weight must be >= 0 "
+                f"(0 disables the back-of-hangar fill bias), got {self.back_bias_weight}"
             )
