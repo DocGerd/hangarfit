@@ -201,8 +201,9 @@ def build_parser() -> argparse.ArgumentParser:
             "with --no-spread, since the bias rides on the spread post-pass.)"
         ),
     )
-    # ── Experimental tow-planner knobs (towplanner-v2 routability spike, #332) ──
-    # Behind opt-in flags; defaults reproduce the shipped planner byte-for-byte.
+    # ── Tow-planner knobs (grid heuristic default + global fill cap since #336;
+    # spike #332). --tow-heuristic defaults to the shipped grid planner and
+    # --tow-max-expansions widens the per-plane budget; both RNG-free (ADR-0003).
     solve.add_argument(
         "--tow-heuristic",
         choices=("euclidean", "grid"),
