@@ -8,6 +8,20 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Changed
 
+### Fixed
+
+## [0.9.0] — 2026-06-02
+
+### Added
+
+- **`hangarfit --version`.** A top-level `--version` flag prints the installed
+  package version and exits (#360).
+- **DocGerdSoft "Horizon" brand identity.** Brand mark assets — avatar, banner,
+  favicon, mark, and monogram SVGs under `docs/assets/` — and a brand identity
+  note in the README (#380).
+
+### Changed
+
 - **Solver — back-of-hangar fill bias (#320).** The CLI now biases the spread
   post-pass to pack planes toward the back wall (default on; `--no-back-fill`
   disables, no effect under `--no-spread`), keeping the door-side approach
@@ -30,8 +44,17 @@ All notable changes to this project are documented here. Format follows [Keep a 
   comment, never silently. With the #320 placement bias in play, multi-plane
   fills that were previously a bare exit 3 now route under default settings
   without the backstop firing at all. New ADR-0016.
+- **Tow-path render palette retuned to the brand "Horizon" set (#380).** The
+  renderer's per-plane colours move to the DocGerdSoft `PLANES` palette (Horizon
+  `#0079B5` first), still derived from the Okabe–Ito CVD-safe set so every fill
+  keeps maximal pairwise colour-blind separation.
 
-### Fixed
+### Security
+
+- **Nightly fuzzing extended to the geometry and collision layers (#362, #369).**
+  An Atheris + Hypothesis harness now fuzzes the oriented-rect transform and the
+  pairwise collision checker on the nightly schedule, alongside the existing
+  loader fuzzing.
 
 ## [0.8.0] — 2026-05-29
 
@@ -163,7 +186,8 @@ First Phase 1 cut — substrate for arranging the flying club fleet in a stack-s
 - Apache-2.0 license, public-audience README, CI matrix (Python 3.11 + 3.12), branch protection on develop + main (#13, #14, #15, #16).
 - Strut-aware golden tests + all-9-planes fixture using larger test-only hangar to accommodate strut-bracing geometry on placeholder dimensions (#5).
 
-[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.8.0...HEAD
+[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.9.0...HEAD
+[0.9.0]: https://github.com/DocGerd/hangarfit/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/DocGerd/hangarfit/compare/v0.7.2...v0.8.0
 [0.7.2]: https://github.com/DocGerd/hangarfit/compare/v0.7.1...v0.7.2
 [0.7.1]: https://github.com/DocGerd/hangarfit/compare/v0.7.0...v0.7.1
