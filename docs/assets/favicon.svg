@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-label="hangarfit">
+  <!-- White delta on the hangarfit Horizon accent tile, container radius 22%
+       (tokens.radius.faviconContainer). Tile fill swapped from the shared
+       #0D0E10 to #0079B5; mark kept white at translate(19,19) scale(0.62).
+       Generate 48/32 PNG + ICO from this; use mark-line below 24px. -->
+  <rect width="100" height="100" rx="22" fill="#0079B5"/>
+  <g transform="translate(19,19) scale(0.62)" fill="#FFFFFF">
+    <path d="M50 17.09 L69.87 51.5 L30.13 51.5 Z"/>
+    <path d="M26.96 57 L73.04 57 L88 82.91 L12 82.91 Z"/>
+  </g>
+</svg>

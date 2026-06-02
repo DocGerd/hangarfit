@@ -1216,6 +1216,116 @@ def test_spread_runs_with_single_movable_among_pinned():
     assert _inter_plane_energy(out, s, scale) <= e_before
 
 
+def test_spread_back_fills_single_movable_plane_toward_the_back_wall():
+    """#320: with ``back_bias_weight > 0`` the ``<2 planes`` no-op guard is
+    relaxed and a lone movable plane is pulled DEEP toward the back wall (large
+    ``y``), where the back-bias term ``B = Σ (length_m − y) / length_m`` is
+    minimized. With the default ``back_bias_weight = 0.0`` the same call is a
+    no-op (see ``test_spread_noop_when_single_movable_plane``)."""
+    import random
+    import time
+
+    from hangarfit.loader import load_scenario
+    from hangarfit.models import Placement, SearchConfig
+    from hangarfit.solver import _spread
+
+    s = load_scenario(REPO_ROOT / "tests" / "fixtures" / "solve_all_nine_large_hangar.yaml")
+    pid = next(p for p in s.fleet_in if p != s.maintenance_plane)
+    start = Placement(plane_id=pid, x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False)
+
+    out = _spread(
+        {pid: start},
+        s,
+        random.Random(1),
+        SearchConfig(back_bias_weight=1.0),
+        start=time.monotonic(),
+        budget_s=10.0,
+        pinned_planes=frozenset(),
+    )
+    # Pulled deeper than it started, and into the back half of the hangar.
+    assert out[pid].y_m > start.y_m
+    assert out[pid].y_m > s.hangar.length_m / 2
+
+
+def test_spread_back_fill_is_deterministic_for_same_seed():
+    """#320: the back-bias is RNG-free re-ranking (it does not change the draw
+    count or order), so back-fill stays byte-identical across runs on a fixed
+    seed — the ADR-0003 belt-and-suspenders canary for the new term."""
+    import random
+    import time
+
+    from hangarfit.models import SearchConfig
+    from hangarfit.solver import _spread
+
+    s, placements = _valid_placements(seed=11)
+    cfg = SearchConfig(back_bias_weight=2.0)
+
+    a = _spread(
+        placements,
+        s,
+        random.Random(99),
+        cfg,
+        start=time.monotonic(),
+        budget_s=60.0,
+        pinned_planes=frozenset(),
+    )
+    b = _spread(
+        placements,
+        s,
+        random.Random(99),
+        cfg,
+        start=time.monotonic(),
+        budget_s=60.0,
+        pinned_planes=frozenset(),
+    )
+    assert {k: (v.x_m, v.y_m, v.heading_deg) for k, v in a.items()} == {
+        k: (v.x_m, v.y_m, v.heading_deg) for k, v in b.items()
+    }
+
+
+def test_spread_back_fill_packs_planes_deeper_than_spread_only():
+    """#320: with ``back_bias_weight > 0`` the spread hill-climb settles a
+    multi-plane layout DEEPER (larger mean ``y``) than pure spread, while
+    remaining a valid layout (the back-bias never overrides collision validity)."""
+    import random
+    import time
+    from statistics import mean
+
+    from hangarfit.models import Layout, SearchConfig
+    from hangarfit.solver import _score, _spread
+
+    s, placements = _valid_placements(seed=11)
+    assert len(placements) >= 2, "fixture sanity"
+
+    spread_only = _spread(
+        placements,
+        s,
+        random.Random(7),
+        SearchConfig(),
+        start=time.monotonic(),
+        budget_s=60.0,
+        pinned_planes=frozenset(),
+    )
+    back_filled = _spread(
+        placements,
+        s,
+        random.Random(7),
+        SearchConfig(back_bias_weight=3.0),
+        start=time.monotonic(),
+        budget_s=60.0,
+        pinned_planes=frozenset(),
+    )
+
+    assert mean(p.y_m for p in back_filled.values()) > mean(p.y_m for p in spread_only.values())
+    layout = Layout(
+        fleet=s.fleet,
+        hangar=s.hangar,
+        placements=tuple(back_filled.values()),
+        maintenance_plane=s.maintenance_plane,
+    )
+    assert _score(layout) == (0, 0.0)
+
+
 def test_plane_footprint_area_does_not_double_count_tail():
     """Regression guard for #317: a plane with a standalone ``tail`` part
     must not have its tail length both folded into the reconstructed

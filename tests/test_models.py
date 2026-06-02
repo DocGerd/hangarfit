@@ -1103,6 +1103,18 @@ class TestSearchConfig:
         assert SearchConfig(spread_scale_m=None).spread_scale_m is None
         assert SearchConfig(spread_scale_m=3.5).spread_scale_m == 3.5
 
+    def test_search_config_back_bias_weight_defaults_zero(self) -> None:
+        # Neutral library default (#320): pure spread, pre-back-fill behaviour.
+        # The CLI enables back-fill by default; --no-back-fill opts out.
+        assert SearchConfig().back_bias_weight == 0.0
+
+    def test_search_config_back_bias_weight_rejects_negative(self) -> None:
+        with pytest.raises(ValueError, match="back_bias_weight"):
+            SearchConfig(back_bias_weight=-0.1)
+        # zero (disabled) and positive are accepted
+        assert SearchConfig(back_bias_weight=0.0).back_bias_weight == 0.0
+        assert SearchConfig(back_bias_weight=2.5).back_bias_weight == 2.5
+
 
 # ---------------------------------------------------------------------------
 # SolveResult.plans — best-effort tow-plan bundle (#197)

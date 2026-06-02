@@ -51,6 +51,8 @@ If you find yourself about to write a domain assertion in this file, **don't** â
 | `release/<version>` | Cut from `develop`, PR'd into both `main` and `develop`. Use `/release-cut version=X.Y.Z` to automate this. | No, only via PR |
 | `hotfix/<slug>` | Only if needed; off `main`. | No, only via PR |
 
+`required_linear_history` must **never** be enabled â€” it blocks GitFlow's release flow, which merges each `release/*` into both `main` and `develop`. Feature PRs land as merge commits too (squash/rebase merging is disabled repo-wide as a release-safety guardrail). The strategy is recorded in [ADR-0014](docs/adr/0014-merge-commit-only-history-strategy.md), superseding the never-adopted [ADR-0011](docs/adr/0011-linear-history-strategy-under-gitflow.md).
+
 ### Per-PR process
 
 1. Branch `feature/<slug>` off `develop`. Work, commit.

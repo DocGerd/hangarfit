@@ -89,7 +89,7 @@ sequenceDiagram
                     Note over Solver: Spread (if SearchConfig.spread, default on):<br/>_spread maximizes inter-plane separation, only valid moves
                     Note over Solver: append valid (spread-polished) basin to pool
                 else conflicts > 0
-                    Note over Solver: perturb plane with max<br/>penetration contribution
+                    Note over Solver: perturb a conflicting non-pinned<br/>plane (chosen uniformly at random)
                 end
             end
         end
@@ -153,11 +153,82 @@ Exit 3 is checked before the `--strict-k` exit-1 rule. Without
 `--render-paths` the CLI does not tow-plan, so tow-routability never
 affects the exit code.
 
+**Spread-vs-towability fallback (#280, [ADR-0016](../adr/0016-spread-towability-fallback.md)).**
+Before that exit 3 is returned, one backstop runs: if spread was *not*
+explicitly disabled and **every** plan came back un-routable, the CLI
+re-solves once with `spread=False` (reusing the same resolved seed) and,
+*only if that re-solve actually routes a candidate*, renders the tighter
+no-spread arrangement instead — reporting the swap on stderr, in
+`--json` (`diagnostics.spread_fallback_applied`), and as a `--write-yaml`
+provenance comment. If the no-spread re-solve also routes nothing
+(genuinely too tight — e.g. the placeholder hangar), the original spread
+result is kept and exit 3 stands. The *primary* reason default layouts
+are routable in the first place is the back-of-hangar fill bias
+([#320](https://github.com/DocGerd/hangarfit/issues/320), the 2026-06-01
+amendment to [ADR-0008](../adr/0008-inter-plane-spread-soft-preference.md));
+this fallback is the backstop for when placement is not enough.
+
 **No retries inside solve().** The solver does not retry on a single
 candidate's failure — it just restarts. There is no exception path
 from `check()` into the solver other than structural failure (which
 would indicate a bug in the random-placement generator), and that
 bubbles up as exit code 2.
+
+## Scenario 3: `hangarfit solve scenario.yaml --render out_{i}.png --render-paths`
+
+The Phase 3a/3b path — a zoom-in on the `opt plan_paths` step that
+Scenario 2 abstracts as a single call. The operator wants the solver's
+layouts *plus* a per-plane tow path overlaid on each PNG; `--render-paths`
+turns on the best-effort tow bundle and the exit-3 routability check.
+
+```mermaid
+sequenceDiagram
+    participant Op as Operator
+    participant CLI as cli.py
+    participant Solver as solver.py
+    participant Tow as towplanner.py
+    participant Coll as collisions.py
+    participant Viz as visualize.py
+    participant FS as Filesystem
+
+    Op->>CLI: hangarfit solve scenario.yaml --render out_{i}.png --render-paths
+    Note over CLI: --render-paths requires a --render PATTERN<br/>(else: CLI usage error)
+    CLI->>Solver: solve(scenario, ..., plan_paths=True)
+    Note over Solver: search + spread + diversity select<br/>(Scenario 2) → accepted layouts
+    loop per accepted layout (best-effort, #197)
+        Solver->>Tow: plan_fill(layout)
+        Note over Tow: back_first_order: deepest slot first<br/>(y desc, x asc, plane_id asc)
+        loop per plane, deepest first
+            Tow->>Tow: plan_path (Hybrid-A* over Reeds–Shepp arcs)
+            Tow->>Coll: re-validate final arc (path_first_conflict → check)
+            Coll-->>Tow: per-pose clear / Conflict
+        end
+        alt all planes routed
+            Tow-->>Solver: MovesPlan
+        else greedy stuck
+            Tow-->>Solver: raise NoFeasiblePlanError(plane_id)
+            Note over Solver: plans[i] = None,<br/>plane named in diagnostics.unroutable_planes
+        end
+    end
+    Solver-->>CLI: SolveResult(layouts, plans, diagnostics, status, seed)
+
+    opt all plans None and spread was on (#280 backstop, ADR-0016)
+        Note over CLI: re-solve spread=False (same seed) and tow-plan<br/>swap in the tighter no-spread result iff it routes a candidate<br/>(swap reported via stderr, --json, --write-yaml)
+    end
+    Note over CLI: _warn_unroutable: stderr names each blocked plane
+    loop per returned layout
+        CLI->>Viz: render_layout(layout, moves_plan=plans[i])
+        Note over Viz: _draw_tow_paths samples each arc<br/>(un-routable → no overlay)
+        Viz->>FS: write out_i.png
+    end
+    alt no candidate routable (all plans None, after backstop)
+        CLI->>Op: exit 3
+    else at least 1 routable
+        CLI->>Op: exit 0 (or status-driven)
+    end
+```
+
+*Scenario 3 — `solve --render-paths`: `solve(plan_paths=True)` tow-plans each accepted layout via `plan_fill` (back-first order; per-plane Hybrid-A\* over Reeds–Shepp arcs, the final arc re-validated by `collisions.check`). Routing is best-effort — a layout the bounded planner can't route keeps `plans[i]=None` and the blocked plane is recorded in `diagnostics.unroutable_planes` rather than dropping the valid static layout. The CLI overlays each routable path and exits 3 only when no returned candidate is tow-routable (#193/#197, ADR-0007/ADR-0010).*
 
 ## What is *not* a runtime concern
 

@@ -1,6 +1,7 @@
 """Command-line interface for hangarfit.
 
 Implements:
+    hangarfit [--version]
     hangarfit check LAYOUT [--render OUT.png] [--fleet PATH] [--hangar PATH] [--json]
 
 See ``docs/superpowers/specs/2026-05-21-cli-design.md`` for the design.
@@ -20,7 +21,7 @@ import secrets
 import sys
 from typing import TYPE_CHECKING
 
-from hangarfit import collisions, visualize
+from hangarfit import __version__, collisions, visualize
 from hangarfit.loader import LoaderError, load_fleet, load_hangar, load_layout
 from hangarfit.models import CheckResult, Conflict, DiversityConfig, Layout, SolveResult
 
@@ -33,12 +34,30 @@ if TYPE_CHECKING:
 _JSON_SCHEMA = "hangarfit.check/v1"
 _SOLVE_JSON_SCHEMA = "hangarfit.solve/v1"
 
+# #320 back-of-hangar fill bias: the SearchConfig.back_bias_weight the CLI passes
+# when back-fill is enabled (the default; --no-back-fill sets it to 0.0). Chosen
+# from a sweep over the acceptance fixtures (single plane → back wall; the
+# scenario_minimal 2-plane fill clears the door) as the smallest weight that
+# breaks the mid-hangar symmetry while staying a secondary term below the spread
+# objective — it does not collapse the inter-plane gap. See ADR-0008 (amended).
+_BACK_FILL_DEFAULT_WEIGHT = 1.0
+
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the argparse parser with the ``check`` and ``solve`` subcommands."""
     parser = argparse.ArgumentParser(
         prog="hangarfit",
         description="Check a hand-authored hangar layout for validity.",
+    )
+    # Top-level so `hangarfit --version` works before any subcommand. The
+    # version action fires (and exits 0) during parse, ahead of the
+    # required-subparser check below, so no `cmd` is needed. The string is
+    # sourced from the installed package metadata (hangarfit.__version__) so
+    # it can never drift from pyproject.toml's [project] version.
+    parser.add_argument(
+        "--version",
+        action="version",
+        version=f"%(prog)s {__version__}",
     )
     sub = parser.add_subparsers(dest="cmd", required=True)
 
@@ -170,18 +189,32 @@ def build_parser() -> argparse.ArgumentParser:
         default=True,
         help="Disable the inter-plane spread post-pass (default: spread enabled).",
     )
-    # ── Experimental tow-planner knobs (towplanner-v2 routability spike, #332) ──
-    # Behind opt-in flags; defaults reproduce the shipped planner byte-for-byte.
+    solve.add_argument(
+        "--no-back-fill",
+        action="store_false",
+        dest="back_fill",
+        default=True,
+        help=(
+            "Disable the back-of-hangar fill bias (#320). By default the spread "
+            "post-pass also biases planes toward the back wall, leaving free space "
+            "at the door; pass this to keep the symmetric spread only. (No effect "
+            "with --no-spread, since the bias rides on the spread post-pass.)"
+        ),
+    )
+    # ── Tow-planner knobs (grid heuristic default + global fill cap since #336;
+    # spike #332). --tow-heuristic defaults to the shipped grid planner and
+    # --tow-max-expansions widens the per-plane budget; both RNG-free (ADR-0003).
     solve.add_argument(
         "--tow-heuristic",
         choices=("euclidean", "grid"),
-        default="euclidean",
+        default="grid",
         dest="tow_heuristic",
         help=(
-            "EXPERIMENTAL (#332): A* tow-path heuristic. 'euclidean' (default) is "
-            "the shipped straight-line heuristic; 'grid' is the obstacle-aware "
-            "free-space geodesic that routes around placed planes (only affects "
-            "--render-paths runs). Deterministic; the path is exact-oracle-validated."
+            "A* tow-path heuristic. 'grid' (default since #336) is the "
+            "obstacle-aware free-space geodesic that threads tight maneuvers in "
+            "far fewer expansions; 'euclidean' is the older straight-line "
+            "heuristic (opt out). Only affects --render-paths runs; deterministic, "
+            "and the path is exact-oracle-validated."
         ),
     )
     solve.add_argument(
@@ -191,9 +224,9 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         dest="tow_max_expansions",
         help=(
-            "EXPERIMENTAL (#332): per-plane Hybrid-A* expansion budget for tow "
-            "planning (default: the module _MAX_EXPANSIONS=700). Raise to trade "
-            "time for routability on hard fills."
+            "Per-plane Hybrid-A* expansion budget for tow planning (default: the "
+            "module _MAX_EXPANSIONS=8000). Raise to trade time for routability on "
+            "hard fills; a global per-fill cap bounds the worst case (#336)."
         ),
     )
 
@@ -418,7 +451,10 @@ def cmd_solve(args: argparse.Namespace) -> int:
         budget_s=args.budget,
         alternatives=args.alternatives,
         seed=resolved_seed,
-        search=SearchConfig(spread=args.spread),
+        search=SearchConfig(
+            spread=args.spread,
+            back_bias_weight=_BACK_FILL_DEFAULT_WEIGHT if args.back_fill else 0.0,
+        ),
         plan_paths=args.render_paths,
         tow_heuristic=args.tow_heuristic,
         tow_max_expansions=args.tow_max_expansions,

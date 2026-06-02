@@ -1,3 +1,5 @@
+![hangarfit](docs/assets/banner.svg)
+
 # hangarfit
 
 [![CI](https://github.com/DocGerd/hangarfit/actions/workflows/ci.yml/badge.svg?branch=develop)](https://github.com/DocGerd/hangarfit/actions/workflows/ci.yml)
@@ -28,7 +30,7 @@ It also renders a top-down PNG so a human can sanity-check the result by eye.
 **Still explicitly out of scope:**
 
 - No tracking of hangar state across runs — each invocation is stateless.
-- No user-defined soft constraints or weighted objectives — user-supplied constraints are HARD only (pin, force_on_carts, maintenance plane). The solver does apply one built-in soft spatial preference, inter-plane spread ([ADR-0008](docs/adr/0008-inter-plane-spread-soft-preference.md), default-on, toggleable with `--no-spread`), but it never overrides a hard constraint.
+- No user-defined soft constraints or weighted objectives — user-supplied constraints are HARD only (pin, force_on_carts, maintenance plane). The solver does apply two built-in soft spatial preferences — inter-plane spread ([ADR-0008](docs/adr/0008-inter-plane-spread-soft-preference.md), default-on, toggleable with `--no-spread`) and a back-of-hangar fill bias that keeps the door-side approach corridors clear ([ADR-0008 §Amendments, #320](docs/adr/0008-inter-plane-spread-soft-preference.md), default-on, toggleable with `--no-back-fill`) — but neither ever overrides a hard constraint.
 - No GUI or web frontend.
 - No handling of late arrivals as a live event stream.
 - Multi-plane *rearrangement* (move planes around an already-occupied hangar). The tow planner only handles **empty-hangar fill** — every plane enters once. Rearrangement is planner v2+ territory.
@@ -56,6 +58,9 @@ This installs the package in editable mode along with the test dependencies (`py
 ```bash
 # Install from a checkout (add "[dev]" if you will run the tests)
 pip install -e .
+
+# Print the version and exit
+hangarfit --version
 
 # Check a hand-authored layout
 hangarfit check layouts/example.yaml
@@ -121,7 +126,7 @@ A scenario YAML carries `fleet:` / `hangar:` refs plus a `fleet_in:` list (which
 | 2 | Could not solve (file not found, bad YAML, invariant violation, IO error during render/write, or `--render-paths` without `--render`) |
 | 3 | `--render-paths` only: valid layout(s) found but the v1 tow planner could not route **any** of them. The layouts still render (without path overlays); each blocked layout gets a stderr warning naming the plane. Distinct from code 1 (no layout at all). |
 
-`--render-paths` overlays each plane's tow path on the `--render` PNG(s) (one colour per plane). It tow-plans every returned layout; a layout the v1 planner cannot route is rendered without paths. If **at least one** candidate is routable the exit code is 0 (un-routable ones still warn); code 3 fires only when none are routable.
+`--render-paths` overlays each plane's tow path on the `--render` PNG(s) (one colour per plane). It tow-plans every returned layout; a layout the planner cannot route is rendered without paths. If **at least one** candidate is routable the exit code is 0 (un-routable ones still warn); code 3 fires only when none are routable. Under default settings, if a spread layout is fully un-routable the CLI first re-solves with spread disabled and renders that tighter arrangement instead (reported on stderr and in `--json`), preferring a towable layout before code 3 is returned ([ADR-0016](docs/adr/0016-spread-towability-fallback.md)).
 
 ### JSON schemas
 
@@ -161,3 +166,7 @@ Architecture lives in [`docs/architecture/`](docs/architecture/) and [`docs/adr/
 ## License
 
 Licensed under the [Apache License 2.0](LICENSE).
+
+(C) 2026 Patrick Kuhn. The brand identity (the Horizon-blue accent, the abstract
+delta mark, and the assets under [`docs/assets/`](docs/assets/)) is part of the
+DocGerdSoft design system. DocGerdSoft is a personal brand of Patrick Kuhn.

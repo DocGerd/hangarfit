@@ -1068,16 +1068,27 @@ class NoFeasiblePlanError(Exception):
 def plan_fill(
     target: Layout,
     *,
-    heuristic: Literal["euclidean", "grid"] = "euclidean",
+    heuristic: Literal["euclidean", "grid"] = "grid",
     max_expansions: int | None = None,
+    max_total_expansions: int | None = None,
 ) -> MovesPlan:
     """Plan a collision-free entry order + per-plane path for an empty fill.
 
-    ``heuristic`` and ``max_expansions`` are forwarded to :func:`plan_path` for
-    every plane (towplanner-v2 routability spike, #332). The defaults reproduce
-    the shipped planner byte-for-byte (``max_expansions=None`` ⇒ the module
-    ``_MAX_EXPANSIONS`` budget); ``heuristic="grid"`` and/or a raised
-    ``max_expansions`` are the opt-in routability experiments.
+    ``heuristic`` selects the per-plane :func:`plan_path` heuristic. ``"grid"``
+    (the default since #336) is the obstacle-aware free-space geodesic, which
+    threads tight-clearance maneuvers in far fewer expansions than the
+    straight-line ``"euclidean"`` (which ignores walls and floods the frontier);
+    pass ``heuristic="euclidean"`` to opt out. ``max_expansions`` (``None`` ⇒ the
+    module ``_MAX_EXPANSIONS`` per-plane budget) caps each plane's search.
+
+    ``max_total_expansions`` (``None`` ⇒ the module ``_MAX_FILL_EXPANSIONS``) is
+    a deterministic GLOBAL cap on the expansions summed across *every*
+    :func:`plan_path` call in the whole fill — including the failed candidates of
+    the greedy scan. A high per-plane budget is needed to *route* tight-feasible
+    planes, but it makes an un-routable fill expensive to *disprove*
+    (~per-plane × scan-retries); the global cap bounds that worst case so the
+    planner bails in bounded time instead of running away, while a routable fill
+    finishes well under it. RNG-free, so the cap is seed-deterministic (#336).
 
     Walks :func:`back_first_order` (deepest slot first); for each plane searches
     for an in-bounds path from the door-cone entry poses (:func:`entry_poses`) to
@@ -1102,6 +1113,8 @@ def plan_fill(
     :class:`MovesPlan`.
     """
     budget = _MAX_EXPANSIONS if max_expansions is None else max_expansions
+    total_budget = _MAX_FILL_EXPANSIONS if max_total_expansions is None else max_total_expansions
+    total_used = 0
     ordered = list(back_first_order(target.placements))
     fleet = target.fleet
     hangar = target.hangar
@@ -1126,13 +1139,29 @@ def plan_fill(
             maintenance_plane=target.maintenance_plane,
         )
         for idx, slot in enumerate(ordered):
+            remaining = total_budget - total_used
+            if remaining <= 0:
+                # Global fill-expansion budget exhausted (#336): bail in bounded
+                # time rather than paying per-plane budget × scan-retries on an
+                # un-routable fill. Name the deepest still-unplaced plane.
+                raise NoFeasiblePlanError(
+                    ordered[0].plane_id,
+                    Conflict.single(
+                        kind="no_feasible_path",
+                        plane=ordered[0].plane_id,
+                        detail=f"global fill expansion budget ({total_budget}) exhausted",
+                    ),
+                )
             plane = fleet[slot.plane_id]
+            stats: dict[str, object] = {}
             try:
                 # The full door cone drives the multi-start search (#262). Compute
                 # it once and pass it as `entries=`; the positional `entry` arg is
                 # ignored by plan_path whenever `entries` is set, so reuse cone[0]
                 # for it rather than recomputing entry_pose() (which plan_path would
-                # never read here).
+                # never read here). Each call is capped at the smaller of the
+                # per-plane budget and the global remainder, and its expansions are
+                # charged to the global total whether it succeeds or fails (#336).
                 cone = entry_poses(slot, hangar)
                 arc = plan_path(
                     plane,
@@ -1143,14 +1172,19 @@ def plan_fill(
                     mover_on_carts=slot.on_carts,
                     entries=cone,
                     heuristic=heuristic,
-                    max_expansions=budget,
+                    max_expansions=min(budget, remaining),
+                    stats=stats,
                 )
             except NoFeasiblePlanError as exc:
                 # This plane cannot be routed against the current obstacles; try
                 # the next candidate. Remember its conflict for the bail message.
+                exp = stats.get("expansions", 0)
+                total_used += exp if isinstance(exp, int) else 0
                 if deepest_conflict is None:
                     deepest_conflict = exc.conflict
                 continue
+            exp = stats.get("expansions", 0)
+            total_used += exp if isinstance(exp, int) else 0
             chosen, chosen_arc = idx, arc
             break
         if chosen is None:
@@ -1174,31 +1208,34 @@ _GRID_XY_M = 0.5  # (x, y) cell size for state binning
 _GRID_DEG = 15.0  # heading cell size; 360 / 15 = 24 heading bins
 _HEADING_BINS = round(360.0 / _GRID_DEG)
 _TURN_PENALTY = 0.1  # per-radian g-cost penalty to prefer straighter paths
-_MAX_EXPANSIONS = 2000  # node-expansion budget per plane before bailing (#335).
-# Raised 700 → 2000 based on a budget sweep over the standard fixtures
-# (placeholder 25×18 hangar, solve_fresh_six_planes seed=1, 5 floor planes):
+_MAX_EXPANSIONS = 8000  # node-expansion budget per plane before bailing (#336).
+# Raised 2000 → 8000 when the GRID heuristic became the plan_fill default (#336).
+# The earlier euclidean sweep concluded aviat_husky (first in back-first order at
+# seed=1) was "un-routable even at 4000 — genuine tight-geometry exhaustion."
+# That was a HEURISTIC artifact, NOT infeasibility: euclidean ignores walls and
+# floods the frontier, needing ~13.5k expansions, whereas the obstacle-aware grid
+# heuristic threads the same maneuver in ~6062. So with grid the routability knee
+# moves to ~6100, and 8000 gives headroom to route it (the seed=1 fill reaches
+# 5/5, ~8.4k total expansions).
 #
-#   Budget | Routed (seed=1) | plan_fill wall-clock (seed=7)
-#   -------|-----------------|-----------------------------
-#      700 |  3/5            |  ~108 s
-#     1000 |  3/5 (no gain)  |  ~137 s
-#     1500 |  3/5 (no gain)  |  ~215 s
-#     2000 |  4/5 (+1, KNEE) |  ~271 s
-#     3000 |  4/5 (no gain)  |  ~441 s
-#     4000 |  4/5 (no gain)  |  ~540 s+ (extrapolated)
-#
-# The knee is at 2000: routed count improves from 3→4 and does not improve
-# further at 3000 or 4000.  The aviat_husky (first in back-first order at
-# seed=1) remains un-routable even at budget 4000 — genuine tight-geometry
-# budget exhaustion that a larger budget alone cannot fix, not a false negative.
-#
-# Deterministic (machine-independent) bound on worst-case search cost. The flip
-# side: budget exhaustion can also report a genuinely-feasible-but-hard layout
-# as NoFeasiblePlanError (a false negative). Accepted v2 tradeoff — see the
-# design spec's failure semantics; retune once real (measured) hangar geometry
-# is available, or once issue #336 (RRT-Connect v2) extends the motion model.
-# Overridable per-invocation via the ``--tow-max-expansions`` CLI flag and the
-# ``tow_max_expansions`` param on ``solve()``/``plan_fill()`` (#332).
+# Deterministic (machine-independent) bound on worst-case per-plane search cost.
+# Budget exhaustion can still report a genuinely-feasible-but-hard layout as
+# NoFeasiblePlanError (a false negative) — accepted v2 tradeoff; retune once real
+# (measured) hangar geometry lands. Overridable per-invocation via the
+# ``--tow-max-expansions`` CLI flag and the ``tow_max_expansions`` param on
+# ``solve()`` / ``plan_fill()`` (#332).
+
+_MAX_FILL_EXPANSIONS = 16000  # GLOBAL expansion budget across one whole fill (#336).
+# Bounds the worst-case wall-clock of an UN-routable fill. The higher per-plane
+# budget above is needed to ROUTE tight-but-feasible planes, but it makes an
+# un-routable fill expensive to disprove: the greedy back-first scan retries the
+# remaining planes, each burning up to the per-plane budget, so cost is
+# ~per-plane × scan-retries (the default spread=True six-plane fill measured
+# ~997 s at per-plane 8000 with NO global cap). Capping the SUM of expansions
+# across every plan_path call — failed candidates included — bounds that: the
+# same fill bails at the cap in ~334 s (< the 400 s perf gate), while a routable
+# fill (seed=1: ~8.4k total) finishes well under it. Deterministic / RNG-free.
+# Overridable via the ``max_total_expansions`` param on ``plan_fill()``.
 # Sampling resolution for the FAST in-search `_motion_clear` validity checks
 # (edges + the analytic-shot screen). Coarser than the exact oracle's default
 # (0.05 m / 1°) to keep the search tractable: the worst case is a plane that can

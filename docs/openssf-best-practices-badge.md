@@ -27,7 +27,7 @@ alert #4) once the entry reaches Passing — see
 
 ## 0. Items that need *your* decision in the live form
 
-Everything else is mechanical. These three need a human:
+Everything else is mechanical. These need a human:
 
 1. **`know_secure_design` / `know_common_errors`** (Security) — self-attestation
    that the maintainer understands secure-design principles and common
@@ -35,9 +35,10 @@ Everything else is mechanical. These three need a human:
    threat-surface reasoning in [`SECURITY.md`](../SECURITY.md) and the
    determinant-trap / input-validation handling in the ADRs. (Only you can
    truthfully assert this — it's true.)
-2. **`dynamic_analysis`** (Analysis, *SUGGESTED*) — currently **Unmet**; fuzzing
-   the YAML loader is tracked in **#143** (parked). SUGGESTED does not block
-   Passing — mark Unmet with the #143 reference, or N/A.
+2. **`dynamic_analysis`** (Analysis, *SUGGESTED*) — **now Met** (no longer a
+   pending decision): nightly Atheris + Hypothesis fuzzing of the YAML loader
+   runs in `fuzz.yml` (#143, closed; the geometry/collisions harness was added
+   in #363). Mark **Met** with the `fuzz.yml` reference.
 3. **Contact email** — the form asks for a project contact. Use whatever address
    you want public; SECURITY.md routes vulnerabilities through GitHub private
    advisories rather than email.
@@ -72,7 +73,7 @@ Everything else is mechanical. These three need a human:
 | `repo_distributed` | **Met** | Git (a distributed VCS). |
 | `version_unique` | **Met** | Unique version per release. |
 | `version_semver` | **Met** | Semantic Versioning; declared in CHANGELOG. <https://github.com/DocGerd/hangarfit/blob/develop/CHANGELOG.md> |
-| `version_tags` | **Met** | Git tags `v0.1.0`, `v0.6.0`, `v0.6.1`. <https://github.com/DocGerd/hangarfit/tags> |
+| `version_tags` | **Met** | Git tags `v0.1.0`, `v0.6.0`, `v0.6.1`, `v0.7.0`, `v0.7.1`, `v0.7.2`, `v0.8.0`. <https://github.com/DocGerd/hangarfit/tags> |
 | `release_notes` | **Met** | CHANGELOG.md (Keep a Changelog format) + GitHub Releases. <https://github.com/DocGerd/hangarfit/releases> |
 | `release_notes_vulns` | **Met** | No vulnerabilities to date; release notes would call out any security fix per the CHANGELOG's "Fixed" section convention. |
 
@@ -136,9 +137,9 @@ Everything else is mechanical. These three need a human:
 | `static_analysis_common_vulnerabilities` | **Met** | CodeQL's default Python query suite covers common vulnerability classes. |
 | `static_analysis_fixed` | **Met** | CodeQL/ruff/mypy findings are fixed before merge (CI-gated). |
 | `static_analysis_often` | **Met** | Runs on every PR into `develop`/`main`. |
-| `dynamic_analysis` | **Unmet** (SUGGESTED) | No fuzzing yet; tracked in **#143** (fuzz the YAML loader). Does not block Passing. <https://github.com/DocGerd/hangarfit/issues/143> |
+| `dynamic_analysis` | **Met** (SUGGESTED) | Nightly Atheris + Hypothesis fuzzing of the YAML loader, extended to a geometry/collisions harness (#363), via [`fuzz.yml`](../.github/workflows/fuzz.yml); #143 closed. <https://github.com/DocGerd/hangarfit/blob/develop/.github/workflows/fuzz.yml> |
 | `dynamic_analysis_unsafe` | **N/A** | No unsafe-language memory bugs (pure Python). |
-| `dynamic_analysis_enable_assertions` | **N/A** | Follows from `dynamic_analysis` being deferred. |
+| `dynamic_analysis_enable_assertions` | **N/A** | The Atheris/Hypothesis harness runs under standard CPython with assertions active; there is no separate instrumented build to toggle. |
 
 ---
 

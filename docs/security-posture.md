@@ -123,6 +123,8 @@ second-person-gated — the cap this section describes.
 **off**. Enabling it would forbid the merge commits the GitFlow release
 flow depends on (`release/*` → `main`, and the back-merge to `develop`).
 The trade-off was explored in spike [#202] and the decision is recorded in
+[ADR-0014](adr/0014-merge-commit-only-history-strategy.md) — with the detailed
+`required_linear_history` analysis preserved in the superseded
 [ADR-0011](adr/0011-linear-history-strategy-under-gitflow.md); do not "fix"
 this to chase a Scorecard point.
 

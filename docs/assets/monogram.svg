@@ -1,0 +1,11 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 88 88" width="88" height="88" role="img" aria-label="hangarfit">
+  <!-- "hf" monogram: white on the hangarfit Horizon accent tile, radius 10px
+       (tokens.radius.md). Geist Mono 600 per the handoff; system monospace
+       fallback since Geist Mono may be absent locally. For tight horizontal
+       lockups / package avatars (handoff Deliverable 1, concept B). -->
+  <rect width="88" height="88" rx="10" fill="#0079B5"/>
+  <text x="44" y="44" fill="#FFFFFF"
+        font-family="'Geist Mono', ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace"
+        font-size="42" font-weight="600" letter-spacing="-1"
+        text-anchor="middle" dominant-baseline="central">hf</text>
+</svg>

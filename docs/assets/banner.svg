@@ -1,0 +1,90 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 400" width="1280" height="400" role="img" aria-label="hangarfit — validate, solve, and render a flying club's hangar-parking layouts, from above">
+  <!--
+    hangarfit README banner — ON-BRAND VECTOR STOPGAP (DocGerdSoft brand handoff,
+    Deliverable 2, Composition A "Split"). The pixel-accurate PNG is the canonical
+    deliverable and is deferred to a Claude Design export; this SVG is a faithful
+    vector approximation. The wordmark falls back to system-ui because Geist is not
+    installed locally, so this is NOT pixel-identical to the design comp.
+    Canvas 1280x400. No (R)/(TM); DocGerdSoft is a personal brand, not a company.
+  -->
+  <defs>
+    <linearGradient id="horizonRule" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#0079B5"/>
+      <stop offset="1" stop-color="#0079B5" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="gridMask" cx="78%" cy="30%" r="72%">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="1"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </radialGradient>
+    <pattern id="grid40" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M40 0 L0 0 L0 40" fill="none" stroke="#E6E9EC" stroke-width="1"/>
+    </pattern>
+    <mask id="gridFade">
+      <rect width="1280" height="400" fill="url(#gridMask)"/>
+    </mask>
+  </defs>
+
+  <!-- Background: Paper + faint 40px grid masked by a radial fade toward the right. -->
+  <rect width="1280" height="400" fill="#FBFBFC"/>
+  <rect width="1280" height="400" fill="url(#grid40)" mask="url(#gridFade)"/>
+
+  <!-- Right column: abstract top-down hangar schematic, bleeding off the right edge.
+       Three solid walls + a front wall with a central door gap, plus a faint
+       back-strip maintenance bay. Schematic only — never the brand mark. -->
+  <g transform="translate(760,60)" opacity="0.9">
+    <!-- floor -->
+    <rect x="0" y="0" width="560" height="280" fill="#FFFFFF" stroke="none"/>
+    <!-- back-strip maintenance bay (~13% opacity maint colour) -->
+    <rect x="0" y="0" width="560" height="46" fill="#7B63A3" opacity="0.13"/>
+    <!-- back wall -->
+    <line x1="0" y1="0" x2="560" y2="0" stroke="#3B4046" stroke-width="3"/>
+    <!-- left + right walls -->
+    <line x1="0" y1="0" x2="0" y2="280" stroke="#3B4046" stroke-width="3"/>
+    <line x1="560" y1="0" x2="560" y2="280" stroke="#3B4046" stroke-width="3"/>
+    <!-- front wall split around a central door gap -->
+    <line x1="0" y1="280" x2="210" y2="280" stroke="#3B4046" stroke-width="3"/>
+    <line x1="350" y1="280" x2="560" y2="280" stroke="#3B4046" stroke-width="3"/>
+    <line x1="210" y1="280" x2="350" y2="280" stroke="#bdc3c7" stroke-width="1.5" stroke-dasharray="4 4"/>
+    <!-- a few abstract plane-slot tiles, brand palette, ink outline (never hue alone) -->
+    <rect x="60"  y="70"  width="120" height="40" rx="6" fill="#0079B5" stroke="#14161A" stroke-width="1.5"/>
+    <rect x="220" y="120" width="120" height="40" rx="6" fill="#D55E00" stroke="#14161A" stroke-width="1.5"/>
+    <rect x="380" y="80"  width="120" height="40" rx="6" fill="#009E73" stroke="#14161A" stroke-width="1.5"/>
+    <rect x="110" y="180" width="120" height="40" rx="6" fill="#B45CA6" stroke="#14161A" stroke-width="1.5"/>
+    <rect x="330" y="200" width="120" height="40" rx="6" fill="#4C4C9E" stroke="#14161A" stroke-width="1.5"/>
+  </g>
+
+  <!-- Left column (fixed 560px), padding 56 48, vertically centered. -->
+  <g transform="translate(48,118)">
+    <!-- Lockup: delta mark 54x54 (#0079B5) + wordmark. -->
+    <g transform="translate(0,0)">
+      <g transform="scale(0.54)" fill="#0079B5">
+        <path d="M50 17.09 L69.87 51.5 L30.13 51.5 Z"/>
+        <path d="M26.96 57 L73.04 57 L88 82.91 L12 82.91 Z"/>
+      </g>
+      <text x="70" y="48" font-family="Geist, system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif"
+            font-size="52" font-weight="600" letter-spacing="-1.5">
+        <tspan fill="#14161A">hangar</tspan><tspan fill="#0079B5">fit</tspan>
+      </text>
+    </g>
+
+    <!-- Horizon rule: 120x2 gradient. -->
+    <rect x="2" y="78" width="120" height="2" fill="url(#horizonRule)"/>
+
+    <!-- Tagline, ~23px, graphite-strong. -->
+    <text x="0" y="120" font-family="Geist, system-ui, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif"
+          font-size="23" font-weight="400" fill="#3B4046">
+      <tspan x="0" dy="0">Validate, solve, and render a flying club's</tspan>
+      <tspan x="0" dy="32">hangar-parking layouts — from above.</tspan>
+    </text>
+
+    <!-- Mono command block, ~16px, graphite. $ in accent, check + verdict in valid green. -->
+    <text x="0" y="206" font-family="'Geist Mono', ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace"
+          font-size="16" fill="#5E646B">
+      <tspan fill="#0079B5">$</tspan><tspan> hangarfit check layouts/example.yaml</tspan>
+    </text>
+    <text x="0" y="232" font-family="'Geist Mono', ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace"
+          font-size="16" fill="#5E646B">
+      <tspan fill="#0F7C72">-</tspan><tspan> valid  // 9 planes . 0 conflicts</tspan>
+    </text>
+  </g>
+</svg>

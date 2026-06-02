@@ -75,11 +75,11 @@ The tool runs entirely on the user's local machine:
 
 | Out of scope | Why |
 |--------------|-----|
-| **Movement-sequence planning** — "in what order do I roll planes out and back in to reach this layout?" | The "Tower of Hanoi" reshuffling problem is harder than the static layout problem and was not the original need. The current tool finds *a* valid target; getting there is a human's job. |
+| **Movement-sequence planning** — "in what order do I roll planes out and back in to *re-sequence an already-parked* hangar?" | The "Tower of Hanoi" reshuffling of an already-occupied hangar is harder than the static layout problem and was not the original need; re-sequencing parked planes remains a human's job. This is **distinct from the empty-hangar tow-path fill** that *did* ship in Phase 3a/3b — `solve --render-paths` plans how each plane is towed into its slot from the door, one entry per plane ([ADR-0007](../adr/0007-tow-path-planner-v1-scope.md) / [ADR-0010](../adr/0010-reeds-shepp-motion-model.md)). |
 | **Tracking hangar state across runs.** | Each invocation is stateless. The scenario YAML carries everything. This is a deliberate constraint from §2; tracking state would invite an entire class of "what was true yesterday?" bugs. |
 | **GUI or web frontend.** | A CLI plus a PNG is the right shape for the actual usage (one operator, one decision, no audit trail needed yet). Anything browser-shaped is a separate project. |
 | **Live event stream** (late-arrival notifications, departure tracking). | The tool is invoked on demand against a hand-authored scenario. The club uses other tooling (radio, paper, eyeballs) to know who is back; `hangarfit` only checks whether a *proposed* layout is valid. |
-| **Soft constraints / preferences** ("prefer this region", "minimise total movement vs baseline"). | All constraints in v1 are HARD: pin, `force_on_carts`, maintenance plane. Soft-constraint optimization is a different problem; it would have its own ADR before being added. |
+| **Soft preferences *inside* the hard conflict-resolution loop** (a weighted "prefer this region" objective competing with collision penalties). | The conflict-resolution loop stays HARD-only (pin, `force_on_carts`, maintenance plane). Soft preferences are not banned outright — they ship as **isolated post-passes** that run only after a layout is already valid (the inter-plane spread post-pass, [ADR-0008](../adr/0008-inter-plane-spread-soft-preference.md)), each with its own ADR, never as a new key in the hard score tuple. |
 
 These boundaries are not "phase 1 limitations to be removed later." They
 are deliberate design choices that keep the tool small, correct, and

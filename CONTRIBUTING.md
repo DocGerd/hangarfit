@@ -2,10 +2,13 @@
 
 Welcome, and thanks for looking at the code. `hangarfit` is a small, focused
 tool — a collision checker for a flying club's hangar parking arrangements —
-maintained by [DocGerd](https://github.com/DocGerd). The full design context,
-coordinate conventions, and project philosophy live in [`CLAUDE.md`](CLAUDE.md).
-Read that before touching anything geometric; it will save you a round-trip on
-review.
+maintained by [DocGerd](https://github.com/DocGerd). The architectural canon —
+the coordinate convention, the parts-based collision model, and the decisions
+that shaped the substrate — lives in [`docs/architecture/`](docs/architecture/)
+(arc42) and [`docs/adr/`](docs/adr/); [`CLAUDE.md`](CLAUDE.md) is the
+*operational* guide (how we work: GitFlow, review, project-local config). Read
+[§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md) before
+touching anything geometric; it will save you a round-trip on review.
 
 ---
 
@@ -149,12 +152,19 @@ and it bypasses the maintainer's final check.
 
 ## Where the design lives
 
-- [`CLAUDE.md`](CLAUDE.md) — the full spec: fleet details, the parts-based
-  collision rule, the coordinate convention (including the non-obvious
-  heading transform), and the Phase 1 deliverables list.
-- [`README.md`](README.md) — quick-start, usage examples, and a pointer back
-  to `CLAUDE.md` for depth.
+- [`docs/architecture/`](docs/architecture/) — the arc42 architecture set: the
+  module map (§5), the runtime flows (§6), and the domain canon (§8: the parts
+  model, the coordinate convention, the maintenance-bay rule, the motion model).
+- [`docs/adr/`](docs/adr/) — the architecture decision records: *why* each
+  load-bearing choice was made and what alternatives were rejected (e.g.
+  [ADR-0001](docs/adr/0001-aircraft-parts-model.md) the parts model,
+  [ADR-0002](docs/adr/0002-determinant-minus-one-transform.md) the transform).
+- [`CLAUDE.md`](CLAUDE.md) — the *operational* guide: how we work together
+  (GitFlow, the PR-review process, project-local config). Not the design canon.
+- [`README.md`](README.md) — quick-start, usage examples, exit-code tables.
 
-If something in the codebase seems strange — especially around geometry — check
-`CLAUDE.md` first. The coordinate transform in particular has a non-obvious
-determinant-−1 property that is documented there and tested in the golden suite.
+If something in the codebase seems strange — especially around geometry — read
+[§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md) and
+[ADR-0002](docs/adr/0002-determinant-minus-one-transform.md) first. The
+coordinate transform in particular has a non-obvious determinant-−1 property
+documented there and tested in the golden suite.

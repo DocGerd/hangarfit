@@ -14,12 +14,12 @@ concurrency:
 
 jobs:
   fuzz:
-    name: Fuzz YAML loader
+    name: Fuzz YAML loader + geometry/collisions
     runs-on: ubuntu-latest
-    # The Atheris step is time-boxed to 300s and the Hypothesis deep run is
-    # ~100s; this ceiling fails a stuck nightly fast instead of riding the
-    # 6h default job timeout.
-    timeout-minutes: 15
+    # Two Atheris steps (loader + geometry/collisions) are each time-boxed to
+    # 300s and the Hypothesis deep run is ~100s; this ceiling fails a stuck
+    # nightly fast instead of riding the 6h default job timeout.
+    timeout-minutes: 25
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
@@ -51,3 +51,6 @@ jobs:
 
       - name: Atheris coverage-guided run (time-boxed)
         run: python -m tests.fuzz.atheris_loader_harness -max_total_time=300
+
+      - name: Atheris geometry/collisions run (time-boxed)
+        run: python -m tests.fuzz.atheris_geometry_harness -max_total_time=300

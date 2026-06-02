@@ -189,3 +189,53 @@ separation.
 **Determinism.** See the ADR-0003 amendment dated 2026-05-27 for the precise
 scoping: reproducible under a `max_restarts` bound; timing-dependent under a
 pure wall-clock `budget_s` bound.
+
+### 2026-06-01 — back-of-hangar fill bias (issue #320)
+
+**Background.** The repulsion energy is *position-symmetric*: it rewards
+inter-plane separation but is indifferent to *where* in the hangar that
+separation sits. So a lone plane settles mid-hangar, and multi-plane fills can
+leave free space wasted in the *middle* (between two filled bands) rather than
+at the door, where it is operationally useful — for the next exit, or for an
+out-of-band plane that needs to enter. This is also the lead lever of the
+tow-friendly-placement work ([#280](https://github.com/DocGerd/hangarfit/issues/280),
+Direction A): keeping the door-side approach corridors clear is what lets the
+bounded tow planner thread a path to each slot.
+
+**Change.** A secondary **back-bias** term is folded into the `_spread`
+hill-climb energy:
+
+```
+E_total = Σ_{i<j} exp(−gap_ij / scale)  +  back_bias_weight · Σ_p (length_m − y_p) / length_m
+          └─────────── spread (unchanged) ──────────┘     └──────── back bias B (#320) ───────┘
+```
+
+`B` is minimized when planes park deep (large `y`, toward the back wall at
+`y = hangar.length_m`), normalized by `length_m` so a single weight reads
+consistently across hangar sizes. It is a **secondary** term, not a hard
+back-wall snap: the smooth gradient and the "only valid moves accepted"
+invariant of the original `_spread` are preserved, and `min_pairwise_gap_m`
+remains the **primary** basin-selection key (#267) — the back-bias only
+re-ranks candidates *within* a basin's hill-climb. The `<2 planes` no-op guard
+is relaxed when back-bias is active so a lone plane is still pulled to the back
+wall (with `<2` planes the inter-plane energy is identically 0, so only the
+back-bias drives the climb).
+
+Because the back-bias scales ~linearly with plane count while the repulsion sum
+scales ~quadratically, a single weight is gentler on crowded hangars (where
+spread genuinely matters) and stronger on sparse ones — the intended behavior.
+
+**Default & toggle.** `SearchConfig.back_bias_weight` defaults to **0.0**
+(neutral — the raw spread mechanism and the `spread=False` determinism canaries
+stay byte-unchanged). The **CLI enables it by default** at weight `1.0`
+(`--no-back-fill` sets it to 0.0; no effect under `--no-spread`, since the bias
+rides the spread post-pass). `1.0` was chosen from a sweep over the acceptance
+fixtures as the smallest weight that breaks the mid-hangar symmetry (a lone
+plane reaches the back wall; the 2-plane `scenario_minimal` fill clears the
+door) while staying a secondary term that does not collapse the inter-plane gap.
+
+**Determinism.** The back-bias is RNG-free re-ranking: it adds no random draws
+and does not change the draw count or order (candidate generation is unchanged),
+so same-seed output stays byte-identical (`tests/test_solver_search.py::
+test_spread_back_fill_is_deterministic_for_same_seed`). No `determinism-guard`
+amendment is required.
