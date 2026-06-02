@@ -299,7 +299,8 @@ the **empty-hangar fill** case — every plane enters once (ADR-0007).
 - **Failure is honest** — a layout it cannot route raises
   `NoFeasiblePlanError` naming the offending plane; `solve` records it
   best-effort (see the bundling bullet above), and the CLI's
-  `--render-paths` surfaces it (warning + exit code 3, [§6](06-runtime-view.md)).
+  `--render-paths` surfaces it (warning + exit code 3, [§6](06-runtime-view.md)) —
+  after first attempting the spread-off backstop ([ADR-0016](../adr/0016-spread-towability-fallback.md)).
 - **Deterministic** (no RNG): a given `Layout` always yields the same
   `MovesPlan`, preserving [ADR-0003](../adr/0003-rr-mc-solver-algorithm.md)'s
   contract through the bundle.
