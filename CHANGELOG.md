@@ -8,6 +8,28 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Changed
 
+- **Solver — back-of-hangar fill bias (#320).** The CLI now biases the spread
+  post-pass to pack planes toward the back wall (default on; `--no-back-fill`
+  disables, no effect under `--no-spread`), keeping the door-side approach
+  corridors clear so `solve --render-paths` can thread a tow path to each slot.
+  The bias is RNG-free re-ranking — same-seed output stays byte-identical.
+  Documented as the 2026-06-01 amendment to ADR-0008.
+- **Tow planner — `grid` heuristic is now the default, with a global
+  fill-budget cap (#336).** The obstacle-aware `grid` A\* heuristic (added
+  opt-in in v0.8.0) is now the default for `solve` / `plan_fill` / the CLI; a
+  deterministic global per-fill expansion budget bounds total planning work so a
+  fill never hangs (`_MAX_EXPANSIONS` raised to 8000). `--tow-heuristic
+  euclidean` opts back into the older straight-line heuristic. Documented as the
+  2026-06-01 amendment to ADR-0007.
+- **CLI `solve --render-paths` — spread-vs-towability backstop (#280).** When a
+  default (spread-on) layout is fully un-routable, the CLI now re-solves once
+  with spread disabled (reusing the same seed) and renders that tighter
+  arrangement *if it routes* — reporting the swap on stderr, in `--json`
+  (`diagnostics.spread_fallback_applied`), and as a `--write-yaml` provenance
+  comment, never silently. With the #320 placement bias in play, multi-plane
+  fills that were previously a bare exit 3 now route under default settings
+  without the backstop firing at all. New ADR-0016.
+
 ### Fixed
 
 ## [0.8.0] — 2026-05-29

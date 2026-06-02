@@ -153,6 +153,21 @@ Exit 3 is checked before the `--strict-k` exit-1 rule. Without
 `--render-paths` the CLI does not tow-plan, so tow-routability never
 affects the exit code.
 
+**Spread-vs-towability fallback (#280, [ADR-0016](../adr/0016-spread-towability-fallback.md)).**
+Before that exit 3 is returned, one backstop runs: if spread was *not*
+explicitly disabled and **every** plan came back un-routable, the CLI
+re-solves once with `spread=False` (reusing the same resolved seed) and,
+*only if that re-solve actually routes a candidate*, renders the tighter
+no-spread arrangement instead — reporting the swap on stderr, in
+`--json` (`diagnostics.spread_fallback_applied`), and as a `--write-yaml`
+provenance comment. If the no-spread re-solve also routes nothing
+(genuinely too tight — e.g. the placeholder hangar), the original spread
+result is kept and exit 3 stands. The *primary* reason default layouts
+are routable in the first place is the back-of-hangar fill bias
+([#320](https://github.com/DocGerd/hangarfit/issues/320), the 2026-06-01
+amendment to [ADR-0008](../adr/0008-inter-plane-spread-soft-preference.md));
+this fallback is the backstop for when placement is not enough.
+
 **No retries inside solve().** The solver does not retry on a single
 candidate's failure — it just restarts. There is no exception path
 from `check()` into the solver other than structural failure (which
@@ -204,7 +219,12 @@ sequenceDiagram
     end
     Note over CLI: _warn_unroutable: stderr names each blocked plane
     alt no candidate routable (all plans None)
-        CLI->>Op: exit 3
+        Note over CLI: spread backstop (#280, ADR-0016):<br/>if spread was on, re-solve spread=False (same seed) and tow-plan
+        alt re-solve routes a candidate
+            CLI->>Op: render tighter no-spread layout, exit 0<br/>(swap reported via stderr, --json, --write-yaml)
+        else still nothing routable
+            CLI->>Op: exit 3
+        end
     else at least 1 routable
         CLI->>Op: exit 0 (or status-driven)
     end
