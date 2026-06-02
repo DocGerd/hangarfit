@@ -212,19 +212,17 @@ sequenceDiagram
     end
     Solver-->>CLI: SolveResult(layouts, plans, diagnostics, status, seed)
 
+    opt all plans None and spread was on (#280 backstop, ADR-0016)
+        Note over CLI: re-solve spread=False (same seed) and tow-plan<br/>swap in the tighter no-spread result iff it routes a candidate<br/>(swap reported via stderr, --json, --write-yaml)
+    end
+    Note over CLI: _warn_unroutable: stderr names each blocked plane
     loop per returned layout
         CLI->>Viz: render_layout(layout, moves_plan=plans[i])
         Note over Viz: _draw_tow_paths samples each arc<br/>(un-routable → no overlay)
         Viz->>FS: write out_i.png
     end
-    Note over CLI: _warn_unroutable: stderr names each blocked plane
-    alt no candidate routable (all plans None)
-        Note over CLI: spread backstop (#280, ADR-0016):<br/>if spread was on, re-solve spread=False (same seed) and tow-plan
-        alt re-solve routes a candidate
-            CLI->>Op: render tighter no-spread layout, exit 0<br/>(swap reported via stderr, --json, --write-yaml)
-        else still nothing routable
-            CLI->>Op: exit 3
-        end
+    alt no candidate routable (all plans None, after backstop)
+        CLI->>Op: exit 3
     else at least 1 routable
         CLI->>Op: exit 0 (or status-driven)
     end

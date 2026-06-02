@@ -16,11 +16,12 @@ All notable changes to this project are documented here. Format follows [Keep a 
   Documented as the 2026-06-01 amendment to ADR-0008.
 - **Tow planner — `grid` heuristic is now the default, with a global
   fill-budget cap (#336).** The obstacle-aware `grid` A\* heuristic (added
-  opt-in in v0.8.0) is now the default for `solve` / `plan_fill` / the CLI; a
-  deterministic global per-fill expansion budget bounds total planning work so a
-  fill never hangs (`_MAX_EXPANSIONS` raised to 8000). `--tow-heuristic
-  euclidean` opts back into the older straight-line heuristic. Documented as the
-  2026-06-01 amendment to ADR-0007.
+  opt-in in v0.8.0) is now the default for `solve` / `plan_fill` / the CLI; the
+  per-plane `_MAX_EXPANSIONS` is raised to 8000, and a *separate* deterministic
+  global fill cap (`_MAX_FILL_EXPANSIONS`, 16000) bounds the total expansions
+  across one fill so it never hangs. `--tow-heuristic euclidean` opts back into
+  the older straight-line heuristic. Documented as the 2026-06-01 amendment to
+  ADR-0007.
 - **CLI `solve --render-paths` — spread-vs-towability backstop (#280).** When a
   default (spread-on) layout is fully un-routable, the CLI now re-solves once
   with spread disabled (reusing the same seed) and renders that tighter

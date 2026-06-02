@@ -36,8 +36,11 @@ placement is *not* enough.
   demonstrably exists.
 - **Never silently swap.** If the rendered arrangement is not the one a plain
   `solve` would emit, the user (and any machine consumer) must be told.
-- **Preserve the ADR-0003 determinism contract.** A given `--seed` must yield
-  the same result, including across the two-pass fallback.
+- **Preserve the ADR-0003 determinism contract.** The shared resolved seed must
+  drive both passes, so the fallback adds no nondeterminism beyond ADR-0003's
+  existing scoping — bit-identical under a `max_restarts` bound,
+  same-machine-reproducible under the wall-clock `budget_s` the CLI uses (the
+  #267 amendment).
 - **Do not couple the planner into the solver's hot loop.** The static solver
   stays collision-only; tow-routability must not become a term in the seeded
   candidate scoring (the ADR-0008 "isolate the soft logic" driver).
@@ -85,9 +88,12 @@ keeps the solver and planner decoupled — the fallback lives entirely in the CL
 
 The determinism contract holds because the seed is resolved **once**, up front
 (`resolved_seed = args.seed if args.seed is not None else secrets.randbits(32)`),
-and shared by both passes; each `solve()` call is individually deterministic for
-that seed (ADR-0003), and the fallback is a deterministic function of the first
-pass's outcome.
+and shared by both passes; each `solve()` call is as deterministic as ADR-0003
+specifies for its bound — bit-identical under a `max_restarts` bound,
+same-machine-reproducible under the wall-clock `budget_s` the CLI passes (the
+spread-OFF second pass is unconditionally reproducible per ADR-0003). The
+fallback adds no new entropy: it reuses the resolved seed and is a pure function
+of the first pass's outcome.
 
 Empirically (issue #280 acceptance probe, develop @ this ADR, seed 1, default
 grid heuristic + back-fill on): the 3-plane and 6-plane fills that were exit 3
@@ -117,9 +123,11 @@ automatic re-solve, so the path appears without a second manual invocation.
 A bigger budget is a band-aid: it does not address the geometry tension, costs
 deterministic worst-case search time on every routable plane, and the
 false-negatives persist for tight-enough corridors. (Separately, #336 *did* make
-`grid` the default heuristic and set a global fill-budget cap of 8000 — see the
-2026-06-01 amendment to [ADR-0007](0007-tow-path-planner-v1-scope.md) — but as an
-efficiency/never-hang measure, **not** as the spread-vs-towability fix.)
+`grid` the default heuristic, raise the per-plane `_MAX_EXPANSIONS` to 8000, and
+add a *separate* global fill cap `_MAX_FILL_EXPANSIONS` (16000) on the sum of
+expansions across one fill — see the 2026-06-01 amendment to
+[ADR-0007](0007-tow-path-planner-v1-scope.md) — but as efficiency/never-hang
+measures, **not** as the spread-vs-towability fix.)
 
 ### Why not a tow-aware spread axis (option 5)?
 
