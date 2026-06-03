@@ -230,6 +230,94 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    view = sub.add_parser(
+        "view",
+        help="Render an interactive, offline 3D HTML viewer of a layout/solution.",
+    )
+    view.add_argument(
+        "input",
+        help="Layout YAML (or scenario YAML with --solve).",
+    )
+    view.add_argument(
+        "-o",
+        "--output",
+        required=True,
+        metavar="OUT.html",
+        help="Output HTML path (self-contained, opens offline in any browser).",
+    )
+    view.add_argument(
+        "--solve",
+        action="store_true",
+        help="Treat the input as a scenario: solve it first, then view the result.",
+    )
+    view.add_argument(
+        "--fleet",
+        metavar="PATH",
+        default=None,
+        help="Override the fleet data file (same rule as `check`).",
+    )
+    view.add_argument(
+        "--hangar",
+        metavar="PATH",
+        default=None,
+        help="Override the hangar data file (same rule as `check`).",
+    )
+    view.add_argument(
+        "--max-carts",
+        type=int,
+        metavar="N",
+        default=None,
+        dest="max_carts",
+        help="Override the hangar's spare-cart count for the cart_eligible pool.",
+    )
+    view.add_argument(
+        "--check",
+        action="store_true",
+        help="Layout mode: overlay collision conflicts (tint conflicting planes red).",
+    )
+    view.add_argument(
+        "--no-animate",
+        action="store_false",
+        dest="animate",
+        default=True,
+        help="Skip tow planning — render a static 3D scene only.",
+    )
+    view.add_argument(
+        "--spread",
+        action="store_true",
+        help=(
+            "Solve mode: keep the inter-plane spread post-pass ON. Default is OFF "
+            "for `view --solve` because spread routinely defeats the bounded tow "
+            "planner, leaving the animation static (#280)."
+        ),
+    )
+    view.add_argument(
+        "--budget",
+        type=float,
+        default=30.0,
+        metavar="SEC",
+        help="Solve mode: wall-clock budget in seconds (default: 30.0).",
+    )
+    view.add_argument(
+        "--seed",
+        type=int,
+        default=None,
+        metavar="S",
+        help="Solve mode: RNG seed (default: None -> system entropy).",
+    )
+    view.add_argument(
+        "--tow-max-expansions",
+        type=int,
+        metavar="N",
+        default=None,
+        dest="tow_max_expansions",
+        help=(
+            "Per-plane Hybrid-A* expansion budget for the tow animation (default: "
+            "the module _MAX_EXPANSIONS). Lower it to fail fast / degrade to a "
+            "static scene sooner on layouts that cannot be routed."
+        ),
+    )
+
     return parser
 
 
@@ -789,6 +877,88 @@ def _emit_solve_json(
     print(json.dumps(payload, indent=2))
 
 
+def cmd_view(args: argparse.Namespace) -> int:
+    """Run the ``view`` subcommand: write a self-contained 3D HTML viewer.
+
+    Layout mode loads a layout and (unless ``--no-animate``) best-effort
+    tow-plans it for the whole-fill animation; an un-routable layout degrades to
+    a static 3D scene with a stderr note (``plan_fill`` raises, so we catch it
+    here — unlike the solver, it does not return ``None``-plans). Solve mode
+    (``--solve``) solves a scenario first and views the first layout + its
+    bundled plan; spread defaults OFF so the result is tow-routable (#280).
+    """
+    # Defer the scene/viewer/solver stack so `check` callers don't pay for it.
+    from hangarfit import scene as scene_mod
+    from hangarfit import viewer
+    from hangarfit.models import SearchConfig
+    from hangarfit.towplanner import NoFeasiblePlanError, plan_fill
+
+    moves_plan: MovesPlan | None = None
+    check_result: CheckResult | None = None
+    try:
+        fleet_override = load_fleet(args.fleet) if args.fleet is not None else None
+        hangar_override = load_hangar(args.hangar) if args.hangar is not None else None
+        if args.solve:
+            from hangarfit.loader import load_scenario
+            from hangarfit.solver import solve
+
+            scenario = load_scenario(
+                args.input,
+                fleet=fleet_override,
+                hangar=hangar_override,
+                max_carts=args.max_carts,
+            )
+            result = solve(
+                scenario,
+                budget_s=args.budget,
+                alternatives=1,
+                seed=args.seed,
+                search=SearchConfig(spread=args.spread),
+                plan_paths=args.animate,
+                tow_max_expansions=args.tow_max_expansions,
+            )
+            if not result.layouts:
+                print(f"error: no valid layout found (status={result.status})", file=sys.stderr)
+                return 1
+            layout = result.layouts[0]
+            moves_plan = result.plans[0] if (args.animate and result.plans) else None
+            if args.animate and moves_plan is None:
+                print(
+                    "note: solution not tow-routable; rendering static 3D scene.",
+                    file=sys.stderr,
+                )
+        else:
+            layout = load_layout(
+                args.input,
+                fleet=fleet_override,
+                hangar=hangar_override,
+                max_carts=args.max_carts,
+            )
+            if args.check:
+                check_result = collisions.check(layout)
+            if args.animate:
+                try:
+                    moves_plan = plan_fill(layout, max_expansions=args.tow_max_expansions)
+                except NoFeasiblePlanError as e:
+                    print(
+                        f"note: layout not tow-routable (plane {e.plane_id!r} could not be "
+                        f"routed); rendering static 3D scene.",
+                        file=sys.stderr,
+                    )
+    except LoaderError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+
+    scene = scene_mod.build_scene(layout, moves_plan=moves_plan, check_result=check_result)
+    try:
+        viewer.render_viewer(scene, args.output)
+    except OSError as e:
+        print(f"error: could not write {args.output}: {e}", file=sys.stderr)
+        return 2
+    print(f"wrote 3D viewer to {args.output}")
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point. Returns an exit code; does not call ``sys.exit``."""
     parser = build_parser()
@@ -797,5 +967,7 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_check(args)
     if args.cmd == "solve":
         return cmd_solve(args)
+    if args.cmd == "view":
+        return cmd_view(args)
     # argparse with required=True should make this unreachable.
     parser.error(f"unknown command: {args.cmd!r}")

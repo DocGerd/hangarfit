@@ -1,0 +1,80 @@
+"""Tests for the ``hangarfit view`` subcommand."""
+
+from __future__ import annotations
+
+import pytest
+
+from hangarfit.cli import main
+
+NESTING = "tests/fixtures/valid_left_side_nesting.yaml"
+
+
+def test_view_layout_writes_html(tmp_path, capsys):
+    out = tmp_path / "v.html"
+    rc = main(["view", NESTING, "-o", str(out)])
+    assert rc == 0
+    assert out.exists()
+    assert out.read_text(encoding="utf-8").lstrip().startswith("<!DOCTYPE html>")
+    assert "wrote 3D viewer" in capsys.readouterr().out
+
+
+def test_view_requires_output():
+    with pytest.raises(SystemExit) as exc:  # argparse errors exit(2)
+        main(["view", NESTING])
+    assert exc.value.code == 2
+
+
+def test_view_no_animate_static(tmp_path):
+    out = tmp_path / "v.html"
+    rc = main(["view", NESTING, "-o", str(out), "--no-animate"])
+    assert rc == 0 and out.exists()
+
+
+def test_view_static_degradation_on_untowable(tmp_path, capsys):
+    # example.yaml is not tow-routable; a small expansion budget makes plan_fill
+    # fail fast so this exercises the degradation path without burning the full
+    # per-plane search budget.
+    out = tmp_path / "v.html"
+    rc = main(["view", "layouts/example.yaml", "-o", str(out), "--tow-max-expansions", "300"])
+    assert rc == 0 and out.exists()
+    assert "not tow-routable" in capsys.readouterr().err
+
+
+def test_view_check_overlay(tmp_path):
+    # --no-animate: we are testing the conflict overlay, not the tow animation
+    # (and tow-planning an invalid layout would just burn the search budget).
+    out = tmp_path / "v.html"
+    rc = main(
+        [
+            "view",
+            "tests/fixtures/invalid_fuselage_wing_overlap.yaml",
+            "-o",
+            str(out),
+            "--check",
+            "--no-animate",
+        ]
+    )
+    assert rc == 0 and out.exists()
+
+
+@pytest.mark.slow
+def test_view_solve_mode(tmp_path):
+    out = tmp_path / "v.html"
+    rc = main(
+        [
+            "view",
+            "--solve",
+            "tests/fixtures/scenario_minimal.yaml",
+            "-o",
+            str(out),
+            "--budget",
+            "10",
+        ]
+    )
+    assert rc == 0 and out.exists()
+
+
+def test_view_bad_input_returns_2(tmp_path):
+    out = tmp_path / "v.html"
+    rc = main(["view", "tests/fixtures/does_not_exist.yaml", "-o", str(out)])
+    assert rc == 2
