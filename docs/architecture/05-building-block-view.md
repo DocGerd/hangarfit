@@ -16,11 +16,15 @@ flowchart TD
     solver["solver.py<br/>RR-MC search<br/>deterministic RNG"]
     towplanner["towplanner.py<br/>tow-path planning<br/>Reeds–Shepp + bound-aware Hybrid-A*"]
     visualize["visualize.py<br/>top-down PNG renderer<br/>headless matplotlib"]
+    scene["scene.py<br/>scene/v1 builder<br/>precomputed affines + timeline"]
+    viewer["viewer.py<br/>self-contained 3D HTML<br/>inlined scene + vendored Three.js"]
 
     cli --> loader
     cli --> collisions
     cli --> solver
     cli --> visualize
+    cli --> scene
+    cli --> viewer
     cli --> models
 
     loader --> models
@@ -38,6 +42,12 @@ flowchart TD
 
     visualize --> geometry
     visualize --> models
+
+    scene --> geometry
+    scene --> towplanner
+    scene --> visualize
+    scene --> models
+    viewer --> scene
 ```
 
 Edges point from caller to callee. `models.py` is the lowest-level
@@ -333,6 +343,34 @@ broke* at a glance.
 
 The render is the only project output that is not also JSON-encodable;
 it is the human's sanity-check.
+
+### `scene.py` — `scene/v1` builder (3D)
+
+A pure builder (no I/O, no rendering) that turns a `Layout` (+ optional
+`MovesPlan`, `CheckResult`) into the JSON-serializable `hangarfit.scene/v1`
+dict consumed by the 3D viewer. It is a leaf consumer of the core types, the
+same role `visualize.py` plays for the 2D PNG.
+
+Its defining job is to **own the geometry**: it precomputes the plane-local→world
+transform (the determinant −1 map, [ADR-0002](../adr/0002-determinant-minus-one-transform.md))
+as per-frame affine matrices and emits `aircraft_parts_world` oracle corners as
+`anchors`, so the viewer applies matrices and does no transform math. It also
+builds the whole-fill timeline (one segment per plane in `back_first_order`, laid
+end-to-end, sampled from each tow `DubinsArc`). Pure and deterministic — same
+input ⇒ byte-identical scene. Schema: [`scene-v1-schema.md`](scene-v1-schema.md);
+rationale: [ADR-0017](../adr/0017-3d-viewer-architecture.md).
+
+### `viewer.py` — self-contained 3D HTML
+
+Assembles **one** offline HTML file: it inlines the `scene/v1` JSON plus a
+`data:`-URL import-map for the vendored Three.js (`_viewer_assets/three/`, shipped
+as package data) and the hand-written `_viewer_assets/viewer.js`. The `data:`
+import-map sidesteps the ES-module `file://` CORS block so a double-clicked page
+loads with zero network. The embedded scene JSON escapes `<` to prevent a
+`</script>` breakout. The thin `viewer.js` consumer builds each plane as a
+Three.js `Group` driven per-frame by the affine as a `Matrix4` (`DoubleSide` for
+the reflected matrix), with an orbit camera and a scrub/play/step timeline, and a
+load-time self-check of the affine path against the emitted `anchors`.
 
 ### `cli.py` — argparse dispatch + IO + exit codes
 
