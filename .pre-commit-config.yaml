@@ -2,10 +2,18 @@ repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
     rev: v6.0.0
     hooks:
+      # Vendored Three.js (src/hangarfit/_viewer_assets/three/) is excluded from
+      # the file-munging / size hooks: it is third-party source pinned by SHA-256
+      # in its VENDOR.md, so whitespace/EOF rewrites would break the hash + drift
+      # from upstream, and three.module.js (~1.2 MB) deliberately exceeds the
+      # 500 KB default for the offline self-contained viewer (ADR-0017).
       - id: trailing-whitespace
+        exclude: ^src/hangarfit/_viewer_assets/three/
       - id: end-of-file-fixer
+        exclude: ^src/hangarfit/_viewer_assets/three/
       - id: check-yaml
       - id: check-added-large-files
+        exclude: ^src/hangarfit/_viewer_assets/three/
       - id: check-merge-conflict
 
   - repo: https://github.com/astral-sh/ruff-pre-commit

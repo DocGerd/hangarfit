@@ -27,11 +27,13 @@ It also renders a top-down PNG so a human can sanity-check the result by eye.
 
 **Phase 3b — shipped.** Tow-path planner v2: a Reeds–Shepp motion model (reverse arcs eliminate the reorientation loops Dubins introduced) plus a door entry-cone search over heading × offset. See [ADR-0010](docs/adr/0010-reeds-shepp-motion-model.md).
 
+**Phase 4 — shipped.** Interactive 3D viewer: `hangarfit view` emits a self-contained, offline HTML file (vendored Three.js) showing the hangar and each aircraft as box models, with a scrubbable whole-fill tow timeline. Built from a documented `hangarfit.scene/v1` JSON seam; the determinant-−1 transform stays in Python (the viewer consumes per-frame affine matrices). See [ADR-0017](docs/adr/0017-3d-viewer-architecture.md).
+
 **Still explicitly out of scope:**
 
 - No tracking of hangar state across runs — each invocation is stateless.
 - No user-defined soft constraints or weighted objectives — user-supplied constraints are HARD only (pin, force_on_carts, maintenance plane). The solver does apply two built-in soft spatial preferences — inter-plane spread ([ADR-0008](docs/adr/0008-inter-plane-spread-soft-preference.md), default-on, toggleable with `--no-spread`) and a back-of-hangar fill bias that keeps the door-side approach corridors clear ([ADR-0008 §Amendments, #320](docs/adr/0008-inter-plane-spread-soft-preference.md), default-on, toggleable with `--no-back-fill`) — but neither ever overrides a hard constraint.
-- No GUI or web frontend.
+- No interactive editing GUI, server, or web app — the Phase 4 `hangarfit view` 3D viewer is a **read-only**, self-contained HTML *artifact* (like the PNG), not a live frontend you author layouts in.
 - No handling of late arrivals as a live event stream.
 - Multi-plane *rearrangement* (move planes around an already-occupied hangar). The tow planner only handles **empty-hangar fill** — every plane enters once. Rearrangement is planner v2+ territory.
 
@@ -39,7 +41,7 @@ These boundaries are deliberate.
 
 ## Status
 
-All shipped phases are feature-complete: `hangarfit check` (Phase 1), `hangarfit solve` (Phase 2a/b/c), and `hangarfit solve --render-paths` (Phase 3a/b). All dimensions in `data/` are placeholders pending real measurement and are flagged as such in the YAML; checker output on the current data is illustrative, not authoritative — and so are any layouts the solver finds and any tow paths the planner draws against it.
+All shipped phases are feature-complete: `hangarfit check` (Phase 1), `hangarfit solve` (Phase 2a/b/c), `hangarfit solve --render-paths` (Phase 3a/b), and `hangarfit view` (Phase 4 — interactive 3D). All dimensions in `data/` are placeholders pending real measurement and are flagged as such in the YAML; checker output on the current data is illustrative, not authoritative — and so are any layouts the solver finds and any tow paths the planner draws against it.
 
 Follow progress in [GitHub Issues](https://github.com/DocGerd/hangarfit/issues) and milestones.
 
@@ -127,6 +129,24 @@ A scenario YAML carries `fleet:` / `hangar:` refs plus a `fleet_in:` list (which
 | 3 | `--render-paths` only: valid layout(s) found but the v1 tow planner could not route **any** of them. The layouts still render (without path overlays); each blocked layout gets a stderr warning naming the plane. Distinct from code 1 (no layout at all). |
 
 `--render-paths` overlays each plane's tow path on the `--render` PNG(s) (one colour per plane). It tow-plans every returned layout; a layout the planner cannot route is rendered without paths. If **at least one** candidate is routable the exit code is 0 (un-routable ones still warn); code 3 fires only when none are routable. Under default settings, if a spread layout is fully un-routable the CLI first re-solves with spread disabled and renders that tighter arrangement instead (reported on stderr and in `--json`), preferring a towable layout before code 3 is returned ([ADR-0016](docs/adr/0016-spread-towability-fallback.md)).
+
+### Interactive 3D viewer (Phase 4)
+
+`hangarfit view` renders a **self-contained, offline** 3D HTML file — open it in any browser (no server, no internet, no Python), orbit the camera, and scrub a whole-fill tow timeline (planes enter back-first; play / pause / step per plane). Each aircraft is drawn as its stack of boxes, so the vertical clearances the collision checker reasons about (a high wing overhanging another plane's tail) are visible in a way the top-down PNG cannot show.
+
+```bash
+# View a layout in 3D (best-effort tow animation; static if un-routable).
+hangarfit view tests/fixtures/valid_left_side_nesting.yaml -o layout3d.html
+
+# Solve a scenario, then view the result with its tow animation.
+hangarfit view --solve tests/fixtures/scenario_minimal.yaml -o solved3d.html
+
+# Static 3D only (skip tow planning), or overlay collision conflicts.
+hangarfit view layouts/example.yaml -o static3d.html --no-animate
+hangarfit view some_invalid_layout.yaml -o conflicts3d.html --check --no-animate
+```
+
+Layout mode best-effort tow-plans for the animation; a layout the planner can't route degrades to a static 3D scene with a stderr note (`--tow-max-expansions` bounds that search so it degrades fast). The viewer is built from a documented `hangarfit.scene/v1` JSON contract (the seam between the Python core and any renderer) and a pinned, vendored copy of Three.js; the transform stays in Python (per-frame affine matrices), so the viewer never re-derives the determinant-−1 map. See [ADR-0017](docs/adr/0017-3d-viewer-architecture.md) and the schema reference [`docs/architecture/scene-v1-schema.md`](docs/architecture/scene-v1-schema.md).
 
 ### JSON schemas
 
