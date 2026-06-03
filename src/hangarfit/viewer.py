@@ -88,6 +88,11 @@ _HUD = (
     '<button id="play">▶</button>'
     '<button id="prev">◀ plane</button><button id="next">plane ▶</button>'
     '<input id="scrub" type="range" min="0" max="1000" value="0">'
+    '<select id="speed" title="playback speed">'
+    '<option value="0.5">0.5×</option>'
+    '<option value="1" selected>1×</option>'
+    '<option value="2">2×</option>'
+    "</select>"
     '<span id="clock">0.0s</span><span id="active"></span>'
     '<button id="reset">reset view</button>'
     '<label><input id="walls" type="checkbox" checked> walls</label>'

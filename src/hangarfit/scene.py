@@ -127,10 +127,19 @@ def _sample_affines(path: DubinsArc, max_samples: int) -> list[Affine]:
     length = path.length_m
     step_m = max(0.05, length / max_samples) if length > 0 else 0.05
     step_deg = max(1.0, 360.0 / max_samples)
-    return [
+    affines = [
         _pose_affine(p.x_m, p.y_m, p.heading_deg)
         for p in path.sample(step_m=step_m, step_deg=step_deg)
     ]
+    # The step sizes bound translation/angular density but not the total count
+    # (a multi-loop path could exceed max_samples on sweep alone). Hard-clamp to
+    # an exact bound, evenly strided, always keeping the first (door) and last
+    # (parked) pose so the segment still starts and ends correctly.
+    if len(affines) > max_samples >= 2:
+        last = len(affines) - 1
+        keep = sorted({round(i * last / (max_samples - 1)) for i in range(max_samples)})
+        affines = [affines[i] for i in keep]
+    return affines
 
 
 def _timeline(
@@ -150,8 +159,10 @@ def _timeline(
     max_seg_s]``. Static (no plan): ``segments == []``, ``total_s == 0`` and
     ``finals`` carries every plane at its slot.
     """
+    # Sorted by id so final_poses key order matches the planes/anchors blocks
+    # (all three id-ordered) — keeps the whole scene consistently ordered.
     finals: dict[str, Affine] = {
-        p.plane_id: _pose_affine(p.x_m, p.y_m, p.heading_deg) for p in layout.placements
+        p.plane_id: _affine(p) for p in sorted(layout.placements, key=lambda p: p.plane_id)
     }
     if moves_plan is None:
         return {"total_s": 0.0, "segments": []}, finals

@@ -43,8 +43,9 @@ def test_scene_json_round_trips(tmp_path):
 
 def test_embedded_scene_has_no_raw_angle_bracket(tmp_path):
     html = _html(tmp_path)
-    block = re.search(r'id="scene">(.*?)</script>', html, re.S).group(1)
-    assert "<" not in block  # all '<' escaped to < — no markup breakout
+    m = re.search(r'id="scene">(.*?)</script>', html, re.S)
+    assert m is not None
+    assert "<" not in m.group(1)  # all '<' escaped — no markup breakout
 
 
 def test_html_embeds_viewer_js(tmp_path):
@@ -66,3 +67,15 @@ def test_assets_are_packaged():
     assert resources.files("hangarfit._viewer_assets").joinpath("viewer.js").is_file()
     assert resources.files("hangarfit._viewer_assets.three").joinpath("three.module.js").is_file()
     assert resources.files("hangarfit._viewer_assets.three").joinpath("OrbitControls.js").is_file()
+
+
+def test_inlined_viewer_js_has_no_script_close():
+    # viewer.js is inlined RAW into a <script type="module"> (not escaped), so a
+    # literal </script> in the JS source would break out of the element. Guard
+    # against a future edit introducing one.
+    src = (
+        resources.files("hangarfit._viewer_assets")
+        .joinpath("viewer.js")
+        .read_text(encoding="utf-8")
+    )
+    assert "</script" not in src.lower()

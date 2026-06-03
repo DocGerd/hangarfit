@@ -218,8 +218,10 @@ def test_build_scene_conflicts_flattened_from_check_result():
 
 
 def test_build_scene_is_byte_deterministic():
+    # No sort_keys: this must prove the *serialized* dict (key + value order)
+    # is byte-identical, not just equal-as-sets — the scene/v1 determinism claim.
     lay = load_layout(LAYOUT)
     plan = plan_fill(lay)
-    a = json.dumps(scene.build_scene(lay, moves_plan=plan), sort_keys=True)
-    b = json.dumps(scene.build_scene(lay, moves_plan=plan), sort_keys=True)
+    a = json.dumps(scene.build_scene(lay, moves_plan=plan))
+    b = json.dumps(scene.build_scene(lay, moves_plan=plan))
     assert a == b

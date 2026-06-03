@@ -229,12 +229,16 @@ function applyTime(t) {
 // ── HUD wiring ───────────────────────────────────────────────────────────────
 let t = 0;
 let playing = false;
-const speed = 1;
+let speed = 1;
 const scrub = document.getElementById('scrub');
 const playBtn = document.getElementById('play');
+const speedSel = document.getElementById('speed');
+speedSel.addEventListener('change', () => { speed = parseFloat(speedSel.value); });
 
 if (!hasAnim) {
-  ['play', 'prev', 'next', 'scrub'].forEach((id) => { document.getElementById(id).disabled = true; });
+  ['play', 'prev', 'next', 'scrub', 'speed'].forEach((id) => {
+    document.getElementById(id).disabled = true;
+  });
 }
 
 scrub.addEventListener('input', () => {
