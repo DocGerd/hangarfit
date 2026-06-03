@@ -255,11 +255,19 @@ hangarfit view --solve SCENARIO.yaml -o out.html [--fleet P] [--hangar P] [solve
 ```
 
 - **Layout mode:** load + (default) `plan_fill` the layout for the tow animation,
-  **best-effort** — if unroutable, emit the static scene + a stderr note (mirrors
-  `--render-paths` degradation; never a hard failure for an otherwise-valid
-  layout). `--check` overlays conflicts. `--no-animate` skips tow planning.
+  **best-effort**. `plan_fill` **raises `NoFeasiblePlanError`** (it does *not*
+  return `None`-plans — that best-effort behaviour lives only in
+  `solver._tow_plan_layouts`), so `cmd_view` wraps it in `try/except
+  NoFeasiblePlanError`, emits a stderr note naming the blocking plane, and builds
+  the **static** scene (`segments == []`). Never a hard failure for an
+  otherwise-valid layout. `--check` overlays conflicts. `--no-animate` skips tow
+  planning entirely.
 - **Solve mode:** `--solve` runs the solver, takes the first returned layout +
-  its bundled `MovesPlan`, and views that.
+  its bundled `MovesPlan` (`SolveResult.plans[0]`, which may be `None` →
+  static), and views that. **Defaults to `spread=False`** for the tow animation
+  (spread-on routinely makes fills untowable, per #280); a `--spread` flag
+  re-enables it. Keep demo/test solve inputs small (≤5 planes / pinned) for sane
+  runtime.
 - Exit codes: `0` success; `2` usage error (e.g. missing `-o`); load/solve errors
   reuse the existing patterns. (No new exit-code semantics for the PoC.)
 
@@ -300,14 +308,21 @@ hangarfit view --solve SCENARIO.yaml -o out.html [--fleet P] [--hangar P] [solve
 ## PoC acceptance ("done")
 
 `pip install -e ".[dev]"` then
-`hangarfit view layouts/example.yaml -o out.html`; double-click `out.html`
-**offline** →
+`hangarfit view tests/fixtures/valid_left_side_nesting.yaml -o out.html`;
+double-click `out.html` **offline** →
 
 - orbitable 3D hangar with door gap, walls, ground grid;
-- every placed plane as its stack of boxes, vertical stacking visible;
+- every placed plane as its stack of boxes, **vertical stacking visible** (this
+  fixture is a genuine wing-over-nesting case at 90° — the motivating scenario);
 - conflicts (if any) tinted red;
-- a working whole-fill timeline: scrub, play/pause, per-plane step;
-- `pytest`, `ruff check`, `ruff format --check`, `mypy` all green.
+- a working whole-fill timeline: scrub, play/pause, per-plane step.
+
+`hangarfit view layouts/example.yaml -o out.html` additionally demonstrates
+**graceful static degradation**: `example.yaml` is not tow-routable
+(`NoFeasiblePlanError` on `fuji`), so it renders the static 3D scene + a stderr
+note and disabled transport controls — the `segments == []` path.
+
+`pytest`, `ruff check`, `ruff format --check`, `mypy` all green.
 
 ## Alternatives considered (rejected)
 
