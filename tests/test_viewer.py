@@ -28,8 +28,33 @@ def test_html_is_self_contained_and_offline(tmp_path):
     assert 'type="application/json" id="scene"' in html
     # Three.js source is embedded as a data: URL, not network-referenced.
     assert "data:text/javascript;base64," in html
-    # Fully offline: no remote references anywhere in the artifact.
+    # Coarse net: no remote references anywhere in the artifact.
     assert "http://" not in html and "https://" not in html
+
+
+def test_offline_targets_real_network_triggers(tmp_path):
+    # The coarse "no http://" check passes partly because the vendored JS is
+    # base64-encoded (its license URLs don't leak). Assert the properties that
+    # actually decide whether the browser fetches: every import-map target is a
+    # data: URL, and there is no src=/href= attribute pointing at a remote URL.
+    html = _html(tmp_path)
+    im = re.search(r'<script type="importmap">(.*?)</script>', html, re.S)
+    assert im is not None
+    imports = json.loads(im.group(1))["imports"]
+    assert imports  # non-empty
+    assert all(v.startswith("data:") for v in imports.values())
+    # No fetchable attribute references (the artifact has no <link>/<img>/<script src>).
+    assert not re.search(r'(?:src|href)\s*=\s*["\']https?:', html)
+
+
+def test_embed_json_neutralizes_hostile_script_close():
+    # The escape exists for exactly this: a string value containing </script>.
+    # Plane ids flow from user YAML straight into the inlined <script> JSON.
+    hostile = {"id": "</script><img src=x onerror=alert(1)>", "n": 1}
+    out = viewer._embed_json(hostile)
+    assert "</script" not in out.lower()  # no element breakout
+    assert "<" not in out  # every '<' escaped
+    assert json.loads(out) == hostile  # …and the original value still round-trips
 
 
 def test_scene_json_round_trips(tmp_path):

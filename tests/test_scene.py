@@ -178,8 +178,20 @@ def test_timeline_sample_count_capped():
     plan = plan_fill(lay)
     tl, _ = scene._timeline(lay, plan, max_samples_per_path=20)
     for s in tl["segments"]:
-        # sample() yields up to n+1 poses for a cap of n; allow a small margin.
-        assert len(s["samples"]) <= 25
+        assert len(s["samples"]) <= 20  # hard-clamped to the exact bound
+
+
+def test_sample_affines_hard_clamp_is_exact_and_keeps_endpoints():
+    # Directly exercise the overshoot branch: max_samples=2 forces the densely
+    # sampled path to overshoot, so the clamp must fire — bounding the count
+    # EXACTLY at 2 while keeping the door (first) and parked (last) poses.
+    lay = load_layout(LAYOUT)
+    path = plan_fill(lay).moves[0].path
+    full = scene._sample_affines(path, 10000)
+    clamped = scene._sample_affines(path, 2)
+    assert len(full) > 2  # the path genuinely oversamples at the small cap
+    assert len(clamped) == 2
+    assert clamped[0] == full[0] and clamped[-1] == full[-1]
 
 
 # ── Task 5: build_scene ──────────────────────────────────────────────────────

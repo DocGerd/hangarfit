@@ -172,24 +172,43 @@ function applyAffine(aff, u, v) {
   const [a, b, tx, c, d, ty] = aff;
   return [a * u + b * v + tx, c * u + d * v + ty];
 }
+// Must FAIL LOUD (banner), never throw — a throw here aborts module evaluation
+// and blanks the page with no signal, which is the opposite of the ADR-0017
+// fail-loud contract. So: structural problems (missing affine/anchors, box/anchor
+// count mismatch) banner instead of being skipped or indexing into undefined, and
+// the whole thing is wrapped so any unforeseen error still surfaces as a banner.
 (function checkAnchors() {
-  let maxErr = 0;
-  for (const p of SCENE.planes) {
-    const aff = SCENE.final_poses[p.id];
-    const want = SCENE.anchors[p.id];
-    if (!aff || !want) continue;
-    p.boxes.forEach((b, bi) => {
-      boxCornersLocal(b).forEach(([u, v], ci) => {
-        const [wx, wy] = applyAffine(aff, u, v);
-        maxErr = Math.max(maxErr, Math.abs(wx - want[bi][ci][0]), Math.abs(wy - want[bi][ci][1]));
+  try {
+    let maxErr = 0;
+    let structural = '';
+    for (const p of SCENE.planes) {
+      const aff = SCENE.final_poses[p.id];
+      const want = SCENE.anchors[p.id];
+      if (!aff || !want) {
+        structural = 'missing affine/anchors for ' + p.id;
+        break;
+      }
+      if (want.length !== p.boxes.length) {
+        structural = 'anchor/box count mismatch for ' + p.id;
+        break;
+      }
+      p.boxes.forEach((b, bi) => {
+        boxCornersLocal(b).forEach(([u, v], ci) => {
+          const [wx, wy] = applyAffine(aff, u, v);
+          maxErr = Math.max(maxErr, Math.abs(wx - want[bi][ci][0]), Math.abs(wy - want[bi][ci][1]));
+        });
       });
-    });
-  }
-  if (maxErr > 1e-6) {
-    banner(
-      'TRANSFORM CHECK FAILED (maxErr=' + maxErr.toExponential(2) +
-      '): viewer affine disagrees with the Python oracle — do not trust this render.',
-    );
+    }
+    if (structural) {
+      banner('TRANSFORM CHECK FAILED (' + structural + ') — do not trust this render.');
+    } else if (maxErr > 1e-6) {
+      banner(
+        'TRANSFORM CHECK FAILED (maxErr=' + maxErr.toExponential(2) +
+        '): viewer affine disagrees with the Python oracle — do not trust this render.',
+      );
+    }
+  } catch (e) {
+    banner('TRANSFORM CHECK ERRORED: ' + e.message + ' — do not trust this render.');
   }
 })();
 
@@ -203,7 +222,13 @@ for (const s of SEGS) segByPlane[s.plane_id] = s;
 
 function affineAt(pid, t) {
   const seg = segByPlane[pid];
-  if (!seg) return { vis: true, aff: SCENE.final_poses[pid] }; // static plane
+  if (!seg) {
+    // Static plane: render at its parked pose, but hide (rather than draw at the
+    // world origin) if a malformed scene is missing its final pose — the anchor
+    // self-check already banners this case.
+    const aff = SCENE.final_poses[pid];
+    return aff ? { vis: true, aff } : { vis: false, aff: null };
+  }
   if (t < seg.start_s) return { vis: false, aff: null };       // not entered yet
   if (t >= seg.end_s) return { vis: true, aff: SCENE.final_poses[pid] };
   const frac = (t - seg.start_s) / (seg.end_s - seg.start_s);

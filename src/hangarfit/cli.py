@@ -895,6 +895,14 @@ def cmd_view(args: argparse.Namespace) -> int:
 
     moves_plan: MovesPlan | None = None
     check_result: CheckResult | None = None
+    # --check only applies to layout mode; a solved layout is valid by
+    # construction (zero conflicts), so it would be a no-op. Surface the dropped
+    # intent rather than silently ignoring it.
+    if args.solve and args.check:
+        print(
+            "note: --check is ignored with --solve (a solved layout is valid by construction).",
+            file=sys.stderr,
+        )
     try:
         fleet_override = load_fleet(args.fleet) if args.fleet is not None else None
         hangar_override = load_hangar(args.hangar) if args.hangar is not None else None

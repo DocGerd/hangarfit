@@ -47,7 +47,6 @@ flowchart TD
     scene --> towplanner
     scene --> visualize
     scene --> models
-    viewer --> scene
 ```
 
 Edges point from caller to callee. `models.py` is the lowest-level
@@ -374,22 +373,25 @@ load-time self-check of the affine path against the emitted `anchors`.
 
 ### `cli.py` — argparse dispatch + IO + exit codes
 
-Two subcommands: `hangarfit check` (Phase 1) and `hangarfit solve`
-(Phase 2a). Both subcommands are thin wrappers around the library
-entry points (`check()` and `solve()` respectively); this module owns
-only argparse, IO routing, and exit-code mapping.
+Three subcommands: `hangarfit check` (Phase 1), `hangarfit solve`
+(Phase 2a), and `hangarfit view` (Phase 4 — write the 3D HTML viewer,
+`cmd_view` → `scene.build_scene` + `viewer.render_viewer`). All are thin
+wrappers around the library (`check()` / `solve()` / the scene+viewer
+builders); this module owns only argparse, IO routing, and exit-code mapping.
 
 JSON schemas are versioned: `hangarfit.check/v1` and
 `hangarfit.solve/v1`. Bumping a version is reserved for breaking
-changes to the payload shape; additive fields do not bump.
+changes to the payload shape; additive fields do not bump. (The
+`view` subcommand emits the `hangarfit.scene/v1` JSON *inlined into its
+HTML*, not to stdout — see [`scene-v1-schema.md`](scene-v1-schema.md).)
 
 Exit codes:
 
-| Code | `check` | `solve` |
-|------|---------|---------|
-| 0 | Valid layout | Found ≥ 1 valid layout (`found` or `found_partial`) |
-| 1 | Invalid layout (conflicts found) | No valid layout (`exhausted_budget` or `trivially_infeasible`); also `found_partial` with `--strict-k` |
-| 2 | Could not check (file not found, bad YAML, invariant violation, IO error during render) | Could not solve (file not found, bad YAML, invariant violation, IO error during render/write) |
+| Code | `check` | `solve` | `view` |
+|------|---------|---------|--------|
+| 0 | Valid layout | Found ≥ 1 valid layout (`found` or `found_partial`) | Wrote the viewer HTML (an un-routable layout still succeeds, as a static scene) |
+| 1 | Invalid layout (conflicts found) | No valid layout (`exhausted_budget` or `trivially_infeasible`); also `found_partial` with `--strict-k` | `--solve` mode only: solver found no valid layout |
+| 2 | Could not check (file not found, bad YAML, invariant violation, IO error during render) | Could not solve (file not found, bad YAML, invariant violation, IO error during render/write) | Could not load (file not found, bad YAML, invariant violation) or write the HTML (`OSError`); missing `-o` (argparse) |
 
 ## Module-level invariants
 
