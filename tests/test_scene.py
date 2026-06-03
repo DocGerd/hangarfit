@@ -173,6 +173,20 @@ def test_timeline_static_when_no_plan():
     assert set(finals) == {p.plane_id for p in lay.placements}
 
 
+def test_timeline_skips_placement_with_no_move():
+    # Defensive path: a placement present in the layout but absent from the plan's
+    # moves gets no segment, yet must still appear parked in final_poses.
+    from hangarfit.towplanner import MovesPlan
+
+    lay = load_layout(LAYOUT)
+    plan = plan_fill(lay)
+    dropped = plan.moves[0].plane_id
+    partial = MovesPlan(target_layout=plan.target_layout, moves=plan.moves[1:])
+    tl, finals = scene._timeline(lay, partial)
+    assert dropped not in {s["plane_id"] for s in tl["segments"]}  # no segment (the guard)
+    assert dropped in finals  # but still parked
+
+
 def test_timeline_sample_count_capped():
     lay = load_layout(LAYOUT)
     plan = plan_fill(lay)

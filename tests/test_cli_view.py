@@ -57,8 +57,10 @@ def test_view_check_overlay(tmp_path):
     assert rc == 0 and out.exists()
 
 
-@pytest.mark.slow
-def test_view_solve_mode(tmp_path):
+def test_view_solve_mode(tmp_path, capsys):
+    # scenario_minimal solves in well under a second; bound with seed+budget so
+    # it stays fast/deterministic and runs in CI's default (non-slow) suite.
+    # --check exercises the layout-only-flag note path under --solve.
     out = tmp_path / "v.html"
     rc = main(
         [
@@ -67,11 +69,52 @@ def test_view_solve_mode(tmp_path):
             "tests/fixtures/scenario_minimal.yaml",
             "-o",
             str(out),
+            "--check",
+            "--seed",
+            "1",
             "--budget",
-            "10",
+            "5",
         ]
     )
     assert rc == 0 and out.exists()
+    assert "--check is ignored with --solve" in capsys.readouterr().err
+
+
+def test_view_solve_no_layout_returns_1(tmp_path, capsys):
+    # A trivially-infeasible scenario → solver returns no layouts → exit 1
+    # (distinct from the bad-file exit 2). Trivially infeasible is instant.
+    out = tmp_path / "v.html"
+    rc = main(
+        ["view", "--solve", "tests/fixtures/solve_infeasible_plane_too_big.yaml", "-o", str(out)]
+    )
+    assert rc == 1
+    assert "no valid layout" in capsys.readouterr().err
+
+
+def test_view_solve_untowable_degrades_to_static(tmp_path, capsys, monkeypatch):
+    # Solver finds a layout but the bundled tow plan is None (un-routable) →
+    # the "not tow-routable" degradation note + a static scene. Monkeypatch
+    # solve() to return that shape deterministically (the real planner routes
+    # the small fixtures, so we don't depend on its internals here).
+    import hangarfit.solver as solver_mod
+    from hangarfit.loader import load_layout
+    from hangarfit.models import SolverDiagnostics, SolveResult
+
+    lay = load_layout(NESTING)
+    diag = SolverDiagnostics(
+        restarts_attempted=0,
+        wall_time_s=0.0,
+        best_partial=None,
+        best_partial_layout=None,
+        seed=1,
+    )
+    fake = SolveResult(status="found", layouts=(lay,), diagnostics=diag, plans=(None,))
+    monkeypatch.setattr(solver_mod, "solve", lambda *_a, **_k: fake)
+
+    out = tmp_path / "v.html"
+    rc = main(["view", "--solve", "tests/fixtures/scenario_minimal.yaml", "-o", str(out)])
+    assert rc == 0 and out.exists()
+    assert "not tow-routable" in capsys.readouterr().err
 
 
 def test_view_bad_input_returns_2(tmp_path):
