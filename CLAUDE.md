@@ -158,6 +158,11 @@ pytest -m slow
 # Or run everything regardless of marker
 pytest -m ""
 
+# GOTCHA: CI runs `pytest -m 'not slow'` and derives coverage from THAT run, so
+# marking a test @slow drops it from coverage too. If a @slow test is the only
+# one covering a new code path, the `codecov/patch` PR check fails — keep >=1
+# non-slow test per new path.
+
 # Lint + format check (CI also runs these)
 ruff check src/ tests/
 ruff format --check src/ tests/
@@ -231,7 +236,9 @@ pip-compile --generate-hashes --no-strip-extras --allow-unsafe -o requirements-p
 # the build toolchain from `requirements-build.txt` likewise, then
 # installs the project itself in editable mode with `--no-deps
 # --no-build-isolation` (reusing the hash-verified host setuptools/wheel
-# instead of an unpinned isolated build env). No coverage gate yet.
+# instead of an unpinned isolated build env). No pytest coverage threshold
+# (no --cov-fail-under), but Codecov's `codecov/patch` status gates patch
+# coverage on each PR (see the @slow gotcha above).
 
 # Phase 1 acceptance smoke test
 hangarfit check layouts/example.yaml --render out.png
@@ -240,6 +247,15 @@ hangarfit check layouts/example.yaml --render out.png
 # can't fully route renders without paths (blocking plane named on stderr);
 # exit 3 only if NO candidate layout is tow-routable.
 hangarfit solve tests/fixtures/scenario_minimal.yaml --render out.png --render-paths
+
+# Phase 4: 3D viewer (self-contained offline HTML). layouts/example.yaml is NOT
+# tow-routable (renders static-only) → use the wing-over-nesting fixture for an
+# animated demo. Verify headlessly via swiftshader WebGL (dbus/UPower + WebGL
+# "ReadPixels stall" lines are noise; a transform mismatch shows an on-page banner).
+hangarfit view tests/fixtures/valid_left_side_nesting.yaml -o out.html
+google-chrome --headless=new --use-gl=angle --use-angle=swiftshader \
+  --enable-unsafe-swiftshader --virtual-time-budget=8000 \
+  --screenshot=out.png "file://$PWD/out.html"
 
 # GitFlow loops
 git switch develop && git pull
