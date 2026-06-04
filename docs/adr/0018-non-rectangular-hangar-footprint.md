@@ -45,9 +45,12 @@ edge-crossing case below).
   notch geometry without upgrading from vertex-test to true polygon containment
   would leave this hole open.
 - **Reuse Shapely, add no new dependency or determinism surface.** Shapely is
-  already a runtime dependency and is already used in `collisions.py` for pairwise
-  part overlap. A polygon-containment floor check is the *same* library doing the
-  *same kind* of operation — not a new exposure.
+  already a runtime dependency and already backs `collisions.py`'s pairwise part
+  overlap — routed through the `geometry.polygon_overlap` / `polygon_overlap_area`
+  helpers, where the `shapely.geometry` import actually lives (`collisions.py`
+  itself imports those helpers, not Shapely directly). A polygon-containment floor
+  check is the *same* library doing the *same kind* of operation — not a new
+  exposure.
 - **Honor the byte-determinism contract ([ADR-0003](0003-rr-mc-solver-algorithm.md)).**
   Any new geometry the solver consumes must be RNG-free and float-stable: same
   scenario + seed → bit-identical plan, scoped to `max_restarts`.
@@ -122,12 +125,22 @@ floor = box(0, 0, width_m, length_m).difference(
 
 Replace the per-vertex `_first_out_of_bounds_vertex` test with a true containment
 test of each world part against `floor`: a part is in-bounds iff
-`floor.covers(part.polygon)` (`covers`, not `contains`, so a part edge flush with
-the outer wall — the existing inclusive-boundary convention — still counts as
-inside). This **fixes the edge-crossing bug**: a strut whose endpoints straddle
-the notch but whose edge crosses it fails `covers`, because the edge is not
-contained in the floor polygon. The conflict detail can still name the first
-offending vertex *or* report "part edge crosses a `structural_notch`" — the
+`floor.covers(part.polygon)`. Use `covers`, not `contains`: the two agree for
+every real (positive-area) part — including one flush against a wall — and diverge
+only on degenerate boundary-only geometry (a zero-area / line-like part, or one
+that touches the floor solely along its boundary), where `covers` is the
+boundary-*inclusive* predicate that avoids `contains`'s false-negative. This
+matters here because `_hangar_bounds_conflicts`'s current docstring **deliberately
+avoids `polygon.contains`** — it cites exactly those touching-vs-overlap boundary
+subtleties as the reason it tests per-vertex bounds instead. `covers` is the
+resolution of that recorded concern, so the implementing PR must also **rewrite
+that docstring**, which today asserts the opposite of this decision.
+
+Switching from a vertex test to a part-polygon test **fixes the latent
+edge-crossing bug**: a strut whose endpoints straddle the notch but whose edge
+crosses it passes the per-vertex test yet fails `floor.covers(...)`, because the
+edge is not contained in the floor polygon. The conflict detail can still name the
+first offending vertex *or* report "part edge crosses a `structural_notch`" — the
 diagnostic richness of the current per-part emission is preserved.
 
 The maintenance-bay keep-out is left exactly as ADR-0006 describes (a separate,
