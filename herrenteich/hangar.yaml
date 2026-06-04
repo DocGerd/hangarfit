@@ -15,7 +15,9 @@
 # floor there. Representing the notch in the data model + the containment /
 # solver / tow algorithms is deferred to spike #424. In the coordinate
 # frame below the notch is the back-right corner: x ∈ [12.72, 15.08],
-# y ∈ [22.66, 31.76].
+# y ∈ [22.66, 31.76]. These coords are DERIVED from the rectangle dims —
+# back-right = [width-2.36, width] × [length-9.10, length] — so if length_m /
+# width_m are ever re-surveyed, recompute this box (nothing enforces it).
 #
 # ⚠ NO MAINTENANCE BAY. The real hangar has no modelled curtained bay; the
 # block below is an inert placeholder that only satisfies the schema (the

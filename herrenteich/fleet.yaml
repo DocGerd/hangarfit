@@ -58,7 +58,7 @@ aircraft:
     movement_mode: always_cart
     turn_radius_m: null  # always_cart → towplanner uses 0 (pivot); see ADR-0007
     measured: false
-    notes: "18 m span, folds to ~10 m (not folded here). Monowheel → tiltable (one wing up, the other down on a tip outrigger). Full wing modelled in the high z-layer to represent the up-tilted wing's nesting; see header caveat."
+    notes: "18 m span (kept assembled here; folds to ~10 m per spec, incidental/unverified). Monowheel → tiltable (one wing up, the other down on a tip outrigger). Full wing modelled in the high z-layer to represent the up-tilted wing's nesting; see header caveat."
     parts:
       - kind: fuselage
         length_m: 7.58

@@ -33,15 +33,15 @@ Teaching the model the notch is spike **#424**.
 **2. `layout.yaml` is the tool's arrangement, not the club's real parking.**
 The product solver (`hangarfit solve`) cannot produce this layout: its
 trivial-infeasibility gate sums *bounding boxes* (Σ ≈ 606 m² > the 479 m²
-floor) and bails, because an 18 m-span motor glider is mostly empty air — see
+rectangular floor) and bails, because an 18 m-span motor glider is mostly empty air — see
 **#425**. The real, part-based collision checker accepts a nested layout, so
 this one was found by driving that checker directly. Replace the placements
 with the club's real parking positions when known.
 
 ## Notable aircraft
 
-- **Scheibe SF-25E Super Falke** — 18 m span, wider than the 15.08 m door wall,
-  so it parks lengthwise. Being a monowheel it can be *tilted* (one wing up,
+- **Scheibe SF-25E Super Falke** — 18 m span, wider than the 15.08 m hangar
+  width, so it parks lengthwise. Being a monowheel it can be *tilted* (one wing up,
   the other down), which is how a glider that wide nests with its neighbours;
   the single-layer wing model is a simplification of that tilt (see
   `fleet.yaml` header).

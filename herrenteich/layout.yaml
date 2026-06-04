@@ -3,7 +3,7 @@
 #
 # HOW THIS WAS PRODUCED. The product solver (`hangarfit solve`) cannot
 # generate this layout: its fast trivial-infeasibility gate sums each plane's
-# bounding-box area (Σ ≈ 606 m² > the 479 m² floor) and bails, because an
+# bounding-box area (Σ ≈ 606 m² > the 479 m² rectangular floor) and bails, because an
 # 18 m-span motor glider is a 136 m² bounding box of mostly empty air (#425). The
 # REAL, part-based collision checker (thin wing rectangles, z-disjoint
 # wing-over-fuselage nesting) accepts a nested arrangement. So this layout was
