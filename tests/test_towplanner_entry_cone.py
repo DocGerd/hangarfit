@@ -6,9 +6,12 @@ Tests are grouped into four blocks:
 2. Candidate filtering: poses that clip side/back walls are dropped before the search;
    if all are filtered the fallback straight-in centre pose is returned.
 3. Multi-start plan_path: the search accepts the cone and seeds all surviving entries.
-4. Door-gate (#411): for an off-to-the-side slot the cone does NOT corner-cut
-   through the solid front wall beside the door — its best legal path equals the
-   v1 straight-in baseline (the prior sub-cm "win" was a jamb wall-clip).
+4. Door-gate (#411) + legal strict win (#420): for an off-to-the-side slot the
+   cone does NOT corner-cut through the solid front wall beside the door (its best
+   legal path equals the v1 baseline there; the prior sub-cm "win" was a jamb
+   wall-clip). But on a STEEPLY-angled off-side slot the cone's angled door entry
+   yields a strictly shorter LEGAL path than v1 (#420), so the cone earns its
+   path-length keep post-#411.
 """
 
 from __future__ import annotations
@@ -407,8 +410,9 @@ def test_off_side_slot_cone_does_not_corner_cut_through_jamb() -> None:
     planner does not corner-cut through the jamb even when shorter; reverting the
     door-gate would make the cone beat v1 again and fail this test. (The #262
     cone still provides valid multi-start search + determinism, guarded by the
-    other tests in this module; whether it yields a *legal* strict path win on any
-    fixture is tracked as a follow-up.)
+    other tests in this module; that it ALSO yields a *legal* strict path win on a
+    steeply-angled off-side slot is now guarded by
+    ``test_steeply_angled_off_side_slot_cone_yields_legal_strict_win`` — #420.)
     """
     from hangarfit.towplanner import path_first_conflict
 
@@ -460,3 +464,66 @@ def test_off_side_slot_cone_does_not_corner_cut_through_jamb() -> None:
     # protrudes to y < 0 beside the door (the door-gate lives in path_first_conflict).
     assert path_first_conflict(arc_v1, plane, mover_on_carts=False, placed=placed) is None
     assert path_first_conflict(arc_cone, plane, mover_on_carts=False, placed=placed) is None
+
+
+def test_steeply_angled_off_side_slot_cone_yields_legal_strict_win() -> None:
+    """#420 strict-win guard: on a steeply-angled, off-to-the-side slot the
+    entry-cone's *angled* door entry produces a strictly shorter LEGAL path than
+    the v1 straight-in — restoring the intentional path-length guard #411 retired.
+
+    After #411 made the front-gap exemption door-aware, the only test that proved
+    the cone beat v1 (``test_off_side_slot_cone_does_not_corner_cut_through_jamb``)
+    lost its win — that win had been an illegal jamb corner-cut. #420 reassessed
+    whether the cone still earns its path-length keep. It does: a broad geometry
+    sweep found many *legal* wins on steeply-turned (90°/135°) off-side slots (the
+    cone also wins on obstacle-forced detours). This fixture pins one.
+
+    The slot is at (21, 10) heading 135° — far to the right of the door interval
+    [6, 18], facing back across the hangar. v1 clamps its straight-in entry to the
+    right door edge (x=18, heading 0°). The cone additionally fans angled entries
+    at the door; the −30° (330°) entry at the door edge pre-aligns the nose toward
+    the off-side slot, so the search reaches the goal via a ~0.18 m shorter arc
+    whose swept footprint stays within bounds and the door opening (legal under
+    the #411 gate). The win is deterministic (closed-form Reeds–Shepp + the RNG-free
+    search, ADR-0003), so it is a stable guard: dropping the cone (``entries=None``)
+    would make the cone path equal v1 again and fail this test.
+    """
+    from hangarfit.towplanner import path_first_conflict
+
+    h = _hangar(width_m=24.0, length_m=26.0, door_center=12.0, door_width=12.0)
+    plane = _box_plane("A", turn_radius_m=4.0)
+    placed = Layout(fleet={"A": plane}, hangar=h, placements=())
+
+    slot = _slot("A", x=21.0, y=10.0, h=135.0)
+    goal = Pose.from_placement(slot)
+
+    # v1 baseline: the single straight-in entry, clamped to the right door edge.
+    v1_entry = entry_pose(slot, h)
+    arc_v1 = plan_path(plane, v1_entry, goal, hangar=h, placed=placed, mover_on_carts=False)
+
+    # Cone: the multi-start fan (includes v1's straight-in among its 15 poses).
+    cone = entry_poses(slot, h)
+    arc_cone = plan_path(
+        plane, v1_entry, goal, hangar=h, placed=placed, mover_on_carts=False, entries=cone
+    )
+    arc_cone_again = plan_path(
+        plane, v1_entry, goal, hangar=h, placed=placed, mover_on_carts=False, entries=cone
+    )
+
+    # Strict legal win: the cone is meaningfully shorter than the v1 straight-in
+    # (measured margin ~0.18 m; the threshold leaves float headroom while proving
+    # it is a real win, not a tie).
+    assert arc_cone.length_m < arc_v1.length_m - 0.05, (
+        f"cone path {arc_cone.length_m:.4f} m should strictly beat v1 "
+        f"{arc_v1.length_m:.4f} m on this steeply-angled off-side slot"
+    )
+    # The winning start is an ANGLED cone entry, not the heading-0 straight-in —
+    # i.e. the cone's fan is what delivers the win, not the v1 pose it also holds.
+    assert arc_cone.start.heading_deg != 0.0
+    # Both paths are exact-oracle clean (incl. the #411 door-gate: no y<0
+    # protrusion outside the door opening).
+    assert path_first_conflict(arc_v1, plane, mover_on_carts=False, placed=placed) is None
+    assert path_first_conflict(arc_cone, plane, mover_on_carts=False, placed=placed) is None
+    # Deterministic (ADR-0003): the win is stable, not a float-tie artifact.
+    assert arc_cone.segments == arc_cone_again.segments
+    assert arc_cone.length_m == pytest.approx(arc_cone_again.length_m)
