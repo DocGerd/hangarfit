@@ -9,10 +9,16 @@
 // y = deeper into the hangar, z = up. We make Three.js +Z-up so the affine's
 // z-row is identity and box height runs along world up. Reflected matrices
 // (det −1) render correctly because every material is DoubleSide.
+//
+// All colours/opacities are read from the injected BRAND blob (Python `brand.py`,
+// emitted by viewer.py as <script id="brand">) — do NOT hard-code `0x` colour
+// literals here. Colours arrive as `#RRGGBB` strings and go straight into
+// `new THREE.Color(str)`; opacities/intensities are plain numbers (#419).
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
 const SCENE = JSON.parse(document.getElementById('scene').textContent);
+const BRAND = JSON.parse(document.getElementById('brand').textContent);
 const H = SCENE.hangar;
 
 // #401 honesty banner + actionable readouts. The banner text is static (set in
@@ -47,7 +53,7 @@ renderer.shadowMap.enabled = true; // contact shadows (#400)
 renderer.shadowMap.type = THREE.PCFSoftShadowMap; // soft edges
 
 const scene = new THREE.Scene();
-scene.background = new THREE.Color(0x0d0e10);
+scene.background = new THREE.Color(BRAND.sceneBg);
 
 const cam = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 2000);
 cam.up.set(0, 0, 1); // +Z up — set BEFORE OrbitControls reads it.
@@ -69,8 +75,10 @@ home();
 // reason the 3D viewer exists (ADR-0017). A soft fill from the opposite side keeps
 // shaded faces readable, and a (slightly lowered) hemisphere ambient lets shadows
 // darken without going black.
-scene.add(new THREE.HemisphereLight(0xffffff, 0x202428, 0.85));
-const sun = new THREE.DirectionalLight(0xffffff, 1.0);
+scene.add(new THREE.HemisphereLight(
+  new THREE.Color(BRAND.hemisphereSky), new THREE.Color(BRAND.hemisphereGround), BRAND.hemisphereIntensity,
+));
+const sun = new THREE.DirectionalLight(new THREE.Color(BRAND.sun), BRAND.sunIntensity);
 sun.position.set(H.width_m * 0.35, -H.length_m * 0.15, span * 1.1);
 sun.target.position.set(H.width_m / 2, H.length_m / 2, 0); // aim at hangar centre
 scene.add(sun.target);
@@ -86,7 +94,7 @@ sc.near = 0.5;
 sc.far = span * 3.5;
 sc.updateProjectionMatrix();
 scene.add(sun);
-const fill = new THREE.DirectionalLight(0xcfe3f2, 0.3); // soft fill: pale tint of the horizon accent #3FA3D6, no shadow
+const fill = new THREE.DirectionalLight(new THREE.Color(BRAND.fill), BRAND.fillIntensity); // soft fill: pale tint of the horizon accent #3FA3D6, no shadow
 fill.position.set(H.width_m * 0.7, H.length_m * 1.2, span * 0.6);
 scene.add(fill);
 
@@ -110,13 +118,17 @@ const wallMeshes = [];
 function addHangar() {
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(H.width_m, H.length_m),
-    new THREE.MeshStandardMaterial({ color: 0x15171a, roughness: 1, side: THREE.DoubleSide }),
+    new THREE.MeshStandardMaterial({
+      color: new THREE.Color(BRAND.floor), roughness: 1, side: THREE.DoubleSide,
+    }),
   );
   floor.position.set(H.width_m / 2, H.length_m / 2, 0); // PlaneGeometry lies in XY (normal +Z)
   floor.receiveShadow = true; // catches the planes' contact shadows (#400)
   scene.add(floor);
 
-  const grid = new THREE.GridHelper(span, Math.round(span), 0x3b4046, 0x202428);
+  const grid = new THREE.GridHelper(
+    span, Math.round(span), new THREE.Color(BRAND.gridMajor), new THREE.Color(BRAND.gridMinor),
+  );
   grid.rotation.x = Math.PI / 2; // GridHelper is in XZ by default → rotate into XY
   grid.position.set(H.width_m / 2, H.length_m / 2, 0.003);
   scene.add(grid);
@@ -124,7 +136,8 @@ function addHangar() {
   const t = 0.08;
   const addWall = (sx, sy, x, y) => {
     const m = new THREE.MeshStandardMaterial({
-      color: 0x3b4046, transparent: true, opacity: 0.20, side: THREE.DoubleSide,
+      color: new THREE.Color(BRAND.walls), transparent: true, opacity: BRAND.wallsOpacity,
+      side: THREE.DoubleSide,
     });
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, WALL_H), m);
     mesh.position.set(x, y, WALL_H / 2);
@@ -143,7 +156,9 @@ function addHangar() {
   if (bay && bay.closed) {
     const bm = new THREE.Mesh(
       new THREE.BoxGeometry(bay.width_m, bay.depth_m, WALL_H),
-      new THREE.MeshStandardMaterial({ color: 0x7b63a3, transparent: true, opacity: 0.32 }),
+      new THREE.MeshStandardMaterial({
+        color: new THREE.Color(BRAND.bay), transparent: true, opacity: BRAND.bayOpacity,
+      }),
     );
     bm.position.set(bay.center_x_m, H.length_m - bay.depth_m / 2, WALL_H / 2);
     scene.add(bm);
@@ -166,8 +181,8 @@ const WHEEL_WIDTH_M = 0.12; // tyre width — 3D-only glyph depth
 const LEG_WIDTH_M = 0.06; // thin gear-leg strut up to the belly — 3D-only glyph
 const CART_PALLET_HALF_EXTENT_M = 0.4; // visualize._CART_PALLET_HALF_EXTENT_M
 const CART_PALLET_HEIGHT_M = 0.12; // dolly deck thickness — 3D-only glyph depth
-const WHEEL_COLOR = 0x566573; // visualize._WHEEL_COLOR
-const CART_DECK_COLOR = 0xaab7b8; // visualize._CART_DECK_COLOR
+const WHEEL_COLOR = new THREE.Color(BRAND.wheel); // brand.WHEEL_COLOR (= visualize._WHEEL_COLOR)
+const CART_DECK_COLOR = new THREE.Color(BRAND.cartDeck); // brand.CART_DECK_COLOR (= visualize._CART_DECK_COLOR)
 // Shared materials (DoubleSide: the plane Group matrix may be det −1).
 const gearMat = new THREE.MeshStandardMaterial({
   color: WHEEL_COLOR, side: THREE.DoubleSide, roughness: 0.6, metalness: 0.1,
@@ -222,7 +237,7 @@ function addGear(g, p) {
 }
 
 // ── planes: one Group of boxes each, built ONCE in plane-local coords ────────
-const CONFLICT = 0xc8442c;
+const CONFLICT = BRAND.conflict; // '#RRGGBB' string → new THREE.Color(CONFLICT)
 const groups = {};
 const legend = document.getElementById('legend');
 
@@ -264,9 +279,9 @@ function makeLabel(text, conflicted = false) {
   const ctx = canvas.getContext('2d');
   ctx.font = fontPx + fontStack;
   ctx.textBaseline = 'middle';
-  ctx.fillStyle = conflicted ? '#C8442C' : 'rgba(21,23,26,0.86)';
+  ctx.fillStyle = conflicted ? BRAND.labelConflictChip : BRAND.labelChipBg;
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = '#ECEEF1';
+  ctx.fillStyle = BRAND.labelText;
   ctx.fillText(shown, padX, canvas.height / 2); // SAFE: canvas fillText, never innerHTML (ids are user YAML)
   const tex = new THREE.CanvasTexture(canvas);
   tex.anisotropy = 4;
@@ -338,7 +353,7 @@ for (const p of SCENE.planes) {
   const sw = document.createElement('span');
   sw.className = 'sw';
   const dot = document.createElement('i');
-  dot.style.background = conflicted ? '#c8442c' : p.color;
+  dot.style.background = conflicted ? BRAND.conflict : p.color;
   sw.appendChild(dot);
   sw.appendChild(document.createTextNode(p.id));
   legend.appendChild(sw);

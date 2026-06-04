@@ -96,3 +96,4 @@ manual workflow above is canonical.
 | 0016 | [Spread-vs-towability — CLI re-solves spread-off as a backstop when a default-spread layout is un-routable](0016-spread-towability-fallback.md) | Proposed |
 | 0017 | [3D viewer — `scene/v1` JSON seam → self-contained offline Three.js HTML, transform owned by Python](0017-3d-viewer-architecture.md) | Accepted |
 | 0018 | [Model the non-rectangular hangar footprint — list of keep-out rects + derived Shapely floor polygon for containment](0018-non-rectangular-hangar-footprint.md) | Proposed |
+| 0019 | [Brand tokens live in one Python module (`brand.py`), injected into the viewer as a canonical BRAND blob](0019-brand-tokens-single-source.md) | Proposed |

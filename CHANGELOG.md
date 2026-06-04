@@ -34,6 +34,17 @@ All notable changes to this project are documented here. Format follows [Keep a 
   non-colour `⚠ conflict` label cue (the 3D analogue of the 2D hatch — "never hue
   alone"). Render-only: the `scene/v1` contract, the Python-owned determinant-−1
   transform, `build_scene` byte-determinism, and the collision model are unchanged.
+- **Brand tokens centralized into one source (`src/hangarfit/brand.py`, #419).**
+  Every brand colour, opacity, darken factor and font stack is now *defined once*
+  in `brand.py` and *referenced* by all four render surfaces: `visualize.py` (2D)
+  re-exports the names it always exposed, `scene.py` reads `PLANES_DARK` from
+  `brand`, `viewer.py` builds its `_CSS` from brand tokens, and `viewer.js` reads
+  its colours from a new canonical `BRAND` JSON blob injected into the HTML
+  (separate from the scene blob — the `scene/v1` schema is unchanged) instead of
+  hard-coded `0x` literals. Render-only and determinism-neutral: the emitted HTML
+  is byte-identical across re-renders of a given scene, the CVD-safe palette
+  (#326) values are unchanged, and the
+  collision model / determinant-−1 transform are untouched (ADR-0019).
 
 ### Fixed
 
