@@ -18,6 +18,7 @@ flowchart TD
     visualize["visualize.py<br/>top-down PNG renderer<br/>headless matplotlib"]
     scene["scene.py<br/>scene/v1 builder<br/>precomputed affines + timeline"]
     viewer["viewer.py<br/>self-contained 3D HTML<br/>inlined scene + vendored Three.js"]
+    metrics["metrics.py<br/>read-only render annotations<br/>placeholder / gap / clearance / validity"]
 
     cli --> loader
     cli --> collisions
@@ -47,6 +48,14 @@ flowchart TD
     scene --> towplanner
     scene --> visualize
     scene --> models
+
+    metrics --> collisions
+    metrics --> geometry
+    metrics --> models
+
+    visualize --> metrics
+    scene --> metrics
+    viewer --> metrics
 ```
 
 Edges point from caller to callee. `models.py` is the lowest-level
@@ -370,6 +379,18 @@ loads with zero network. The embedded scene JSON escapes `<` to prevent a
 Three.js `Group` driven per-frame by the affine as a `Matrix4` (`DoubleSide` for
 the reflected matrix), with an orbit camera and a scrub/play/step timeline, and a
 load-time self-check of the affine path against the emitted `anchors`.
+
+### `metrics.py` — read-only render annotations
+
+Pure functions over a `Layout` that annotate (never gate) renders: whether any
+placed aircraft is on placeholder/unmeasured data (the "PLACEHOLDER DATA" honesty
+banner, #401/#79), the tightest plan-view inter-plane gap, the smallest
+wing-over-tail vertical clearance, and `layout_is_valid` (trusts a supplied
+`CheckResult`, else runs `collisions.check`) so readouts are shown only for a
+verified-valid layout. A leaf consumer used by `visualize.py` (2D) and `scene.py`
+(3D), with `viewer.py` consuming the shared `PLACEHOLDER_BANNER` string; it never
+enters the collision model, so it adds no determinism or correctness risk to the
+core.
 
 ### `cli.py` — argparse dispatch + IO + exit codes
 
