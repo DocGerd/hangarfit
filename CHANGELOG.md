@@ -15,9 +15,9 @@ All notable changes to this project are documented here. Format follows [Keep a 
   (`hangarfit check` → exit 0) with a regression test. Surfaced two follow-ups:
   the L-shaped hangar's office **notch** is not yet modelled (spike #424, the
   files keep clear of it by hand), and the solver's bounding-box
-  trivial-infeasibility gate false-rejects this glider fleet (#425) — the layout
-  was found by driving the real part-collision checker directly. The default
-  `data/` demo data is unchanged.
+  trivial-infeasibility gate then false-rejected this glider fleet (#425, fixed
+  below) — the layout was found by driving the real part-collision checker
+  directly. The default `data/` demo data is unchanged.
 - **Brand source of truth in-repo (#414).** `docs/assets/BRAND.md` captures the
   hangarfit brand (DocGerdSoft lineage + the 2D tokens + the 3D dark-surface
   section + the full token table), so the viewer's colours, banners, and

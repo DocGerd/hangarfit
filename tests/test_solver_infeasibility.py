@@ -82,9 +82,15 @@ def test_solve_trivially_infeasible_when_sum_areas_exceeds_hangar():
     gate, spec §4.1.2). The hangar's 19 m larger dimension clears the 18 m
     glider span so check #1 (per-plane bbox) does not fire first."""
     from hangarfit.loader import load_scenario
-    from hangarfit.solver import solve
+    from hangarfit.solver import _check_plane_too_big, solve
 
     s = load_scenario("tests/fixtures/solve_infeasible_sum_areas.yaml")
+    # Guard the fixture's narrow check-#1 margin (worst plane extent 18 m vs the
+    # hangar's 19 m larger dimension): if a future synthetic-fleet edit pushed a
+    # span past 19 m, check #1 would fire first and this test would silently pin
+    # the wrong conflict kind. Assert check #1 DEFERS here so this stays a
+    # check-#2 (Σ part-areas) regression rather than misfiring.
+    assert _check_plane_too_big(s) is None
     r = solve(s, budget_s=5.0, seed=42)
 
     assert r.status == "trivially_infeasible"
