@@ -6,6 +6,18 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Real Airfield Herrenteich dataset (`herrenteich/`, refs #79).** A
+  self-contained real-world dataset kept separate from the synthetic `data/`
+  placeholders: the DWG-measured hangar (15.08 m × 31.76 m, 13.46 m door), the
+  eight aircraft usually hangared there (published-spec dimensions,
+  second-source verified; adds a folded **Stemme S10** and a confirmed 18 m
+  Scheibe SF-25E; drops Fuji/Cessna 150), and a valid all-eight `layout.yaml`
+  (`hangarfit check` → exit 0) with a regression test. Surfaced two follow-ups:
+  the L-shaped hangar's office **notch** is not yet modelled (spike #424, the
+  files keep clear of it by hand), and the solver's bounding-box
+  trivial-infeasibility gate false-rejects this glider fleet (#425) — the layout
+  was found by driving the real part-collision checker directly. The default
+  `data/` demo data is unchanged.
 - **Brand source of truth in-repo (#414).** `docs/assets/BRAND.md` captures the
   hangarfit brand (DocGerdSoft lineage + the 2D tokens + the 3D dark-surface
   section + the full token table), so the viewer's colours, banners, and

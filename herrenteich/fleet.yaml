@@ -1,0 +1,320 @@
+# Airfield Herrenteich — real fleet (the aircraft usually hangared here).
+#
+# Kept separate from the synthetic data/fleet.yaml (the project's stable
+# demo/test fixture). Roster per the operator (2026-06-04): Cessna 140,
+# Flight Design CTSL, Wild Thing, Aviat Husky, Scheibe SF-25E, FK9 Mk II,
+# Stemme S10 (hangared WINGS-FOLDED), Zlin Savage. (Fuji and the Cessna 150
+# are not based here.)
+#
+# DIMENSIONS were looked up from published manufacturer / type-certificate /
+# reference specs on 2026-06-04 and each was independently second-source
+# verified (web research + cross-check). Span / length / height below reflect
+# those published figures (in metres). Verified primary dims:
+#
+#   id             span(m)  len(m)  height(m)  notes
+#   cessna_140     10.16    6.55    1.91       strut high-wing taildragger
+#   ctsl            8.59    6.60    2.34       cantilever high-wing, nosewheel
+#   wild_thing      9.15    6.49    1.90       ULBI Wild Thing WT-02, strut
+#   aviat_husky    10.82    6.88    2.26       Husky A-1C, strut taildragger
+#   scheibe_falke  18.00    7.58    1.85       SF-25E Super Falke motor glider
+#   fk9_mkii        9.85    5.85    2.15       FK9 Mk II, strut high-wing
+#   stemme_s10     23.00*   8.42    1.80       *11.40 m FOLDED (hangar config)
+#   zlin_savage     9.31    6.39    2.03       Savage Cub, strut taildragger
+#
+# measured: false is kept on every entry — these are PUBLISHED specs, not
+# on-site tape/laser measurements, so they still raise the viewer's
+# "PLACEHOLDER DATA" honesty banner. Flip to true once verified on site.
+#
+# MODELLING NOTES (see data/fleet.yaml header for the full parts-model
+# conventions and ADR-0012/0013):
+# - Each Part is an oriented rectangle: length_m along plane +x (fore-aft),
+#   width_m along plane +y (lateral = wingspan for the wing part).
+# - Part z_bottom/z_top encode the vertical layer that the nesting rule uses
+#   (a high wing may legally overhang a neighbour's lower tail/fuselage when
+#   z-disjoint). High wings sit ~1.9-2.3 m; fuselages ~0-1.5 m.
+# - scheibe_falke (SF-25E) is a MONOWHEEL motor glider: resting on its single
+#   main wheel it can be TILTED — raising one wingtip high while the other
+#   drops onto a tip outrigger/skid. It is a seesaw: one wing up necessarily
+#   means the other goes down. That tilt lets a raised half-wing overhang a
+#   neighbour AND a lowered half-wing tuck under another aircraft's high wing.
+#   The single-z parts model cannot express the tilt, so the FULL 18 m wing is
+#   modelled in the high z-layer. This is a deliberate simplification that
+#   slightly OVERSTATES the nestable span (physically only the up-tilted ~half
+#   is high at any moment). Revisit when a tilt-aware model exists.
+# - stemme_s10 is modelled in its WINGS-FOLDED hangar configuration: the
+#   wing part width is the folded 11.40 m span (unfolded 23 m would not enter
+#   the 13.46 m door). Folded outer panels raise the effective height.
+
+aircraft:
+  # ----------------------------------------------------------------------------
+  # MOTORGLIDER — Scheibe SF-25E Super Falke. 18 m span (longest in the fleet);
+  # too wide for the 15.08 m hangar nose-in, so it parks lengthwise. Cantilever,
+  # monowheel + outriggers, always on carts.
+  # ----------------------------------------------------------------------------
+  - id: scheibe_falke
+    name: "Scheibe SF-25E Super Falke"
+    wing_position: high
+    gear: monowheel
+    movement_mode: always_cart
+    turn_radius_m: null  # always_cart → towplanner uses 0 (pivot); see ADR-0007
+    measured: false
+    notes: "18 m span, folds to ~10 m (not folded here). Monowheel → tiltable (one wing up, the other down on a tip outrigger). Full wing modelled in the high z-layer to represent the up-tilted wing's nesting; see header caveat."
+    parts:
+      - kind: fuselage
+        length_m: 7.58
+        width_m: 1.1
+        offset_x_m: 0.0
+        offset_y_m: 0.0
+        z_bottom_m: 0.0
+        z_top_m: 1.5
+      - kind: wing
+        length_m: 1.0
+        width_m: 18.0
+        offset_x_m: 1.5
+        offset_y_m: 0.0
+        z_bottom_m: 1.9
+        z_top_m: 2.1
+    wheels:
+      main_offset_x_m: 0.0
+
+  # ----------------------------------------------------------------------------
+  # SELF-LAUNCHING MOTORGLIDER — Stemme S10. Hangared WINGS FOLDED (11.4 m span;
+  # 23 m unfolded). Cantilever, retractable monowheel, on own gear.
+  # ----------------------------------------------------------------------------
+  - id: stemme_s10
+    name: "Stemme S10"
+    wing_position: high
+    gear: monowheel
+    movement_mode: always_own_gear
+    turn_radius_m: 10.0  # monowheel → no wheelbase cross-check; towplanner own-gear radius
+    measured: false
+    notes: "Two-seat self-launching motor glider. WINGS-FOLDED config: wing width = 11.4 m folded span (23 m unfolded). Length 8.42 m, the longest fuselage in the fleet."
+    parts:
+      - kind: fuselage
+        length_m: 8.42
+        width_m: 1.18
+        offset_x_m: -1.5
+        offset_y_m: 0.0
+        z_bottom_m: 0.0
+        z_top_m: 1.4
+      - kind: wing
+        length_m: 0.82
+        width_m: 11.4
+        offset_x_m: 0.0
+        offset_y_m: 0.0
+        z_bottom_m: 1.9
+        z_top_m: 2.1
+    wheels:
+      main_offset_x_m: 0.0
+
+  # ----------------------------------------------------------------------------
+  # TAILWHEEL HIGH-WING — Aviat Husky A-1C, strut-braced, always on own gear
+  # ----------------------------------------------------------------------------
+  - id: aviat_husky
+    name: "Aviat Husky A-1C"
+    wing_position: high
+    gear: tailwheel
+    movement_mode: always_own_gear
+    turn_radius_m: 5.0
+    measured: false
+    parts:
+      - kind: fuselage
+        length_m: 6.88
+        width_m: 0.85
+        offset_x_m: -1.72
+        offset_y_m: 0.0
+        z_bottom_m: 0.0
+        z_top_m: 1.5
+      - kind: wing
+        length_m: 1.4
+        width_m: 10.82
+        offset_x_m: -0.52
+        offset_y_m: 0.0
+        z_bottom_m: 2.0
+        z_top_m: 2.3
+    struts:
+      fuselage_attach_x_m: -1.22
+      fuselage_attach_y_m: 0.425
+      fuselage_attach_z_m: 0.5
+      wing_attach_y_m: 1.8
+      width_m: 0.05
+    wheels:
+      main_offset_x_m: 0.20
+      track_m: 2.0
+      third_wheel_offset_x_m: -4.80
+
+  # ----------------------------------------------------------------------------
+  # ULTRALIGHT HIGH-WING — ULBI Wild Thing WT-02, strut-braced, always on carts
+  # ----------------------------------------------------------------------------
+  - id: wild_thing
+    name: "ULBI Wild Thing WT-02"
+    wing_position: high
+    gear: nosewheel
+    movement_mode: always_cart
+    turn_radius_m: null  # always_cart → towplanner uses 0 (pivot); see ADR-0007
+    measured: false
+    parts:
+      - kind: fuselage
+        length_m: 6.49
+        width_m: 0.85
+        offset_x_m: -0.33
+        offset_y_m: 0.0
+        z_bottom_m: 0.0
+        z_top_m: 1.4
+      - kind: wing
+        length_m: 1.2
+        width_m: 9.15
+        offset_x_m: 0.67
+        offset_y_m: 0.0
+        z_bottom_m: 2.0
+        z_top_m: 2.2
+    struts:
+      fuselage_attach_x_m: 0.07
+      fuselage_attach_y_m: 0.425
+      fuselage_attach_z_m: 0.5
+      wing_attach_y_m: 1.6
+      width_m: 0.05
+    wheels:
+      main_offset_x_m: -0.10
+      track_m: 1.5
+      third_wheel_offset_x_m: 1.40
+
+  # ----------------------------------------------------------------------------
+  # TAILWHEEL HIGH-WING — Zlin Savage Cub, strut-braced, always on carts
+  # ----------------------------------------------------------------------------
+  - id: zlin_savage
+    name: "Zlin Aviation Savage Cub"
+    wing_position: high
+    gear: tailwheel
+    movement_mode: always_cart
+    turn_radius_m: null  # always_cart → towplanner uses 0 (pivot); see ADR-0007
+    measured: false
+    parts:
+      - kind: fuselage
+        length_m: 6.39
+        width_m: 0.8
+        offset_x_m: -1.60
+        offset_y_m: 0.0
+        z_bottom_m: 0.0
+        z_top_m: 1.5
+      - kind: wing
+        length_m: 1.5
+        width_m: 9.31
+        offset_x_m: -0.50
+        offset_y_m: 0.0
+        z_bottom_m: 1.9
+        z_top_m: 2.2
+    struts:
+      fuselage_attach_x_m: -1.20
+      fuselage_attach_y_m: 0.4
+      fuselage_attach_z_m: 0.5
+      wing_attach_y_m: 1.5
+      width_m: 0.05
+    wheels:
+      main_offset_x_m: 0.20
+      track_m: 1.8
+      third_wheel_offset_x_m: -4.30
+
+  # ----------------------------------------------------------------------------
+  # CART-ELIGIBLE — Cessna 140, high-wing tailwheel, strut-braced
+  # ----------------------------------------------------------------------------
+  - id: cessna_140
+    name: "Cessna 140"
+    wing_position: high
+    gear: tailwheel
+    movement_mode: cart_eligible
+    turn_radius_m: 5.5
+    measured: false
+    notes: "V-strut treated as one strut per side"
+    parts:
+      - kind: fuselage
+        length_m: 6.55
+        width_m: 0.85
+        offset_x_m: -1.64
+        offset_y_m: 0.0
+        z_bottom_m: 0.0
+        z_top_m: 1.5
+      - kind: wing
+        length_m: 1.55
+        width_m: 10.16
+        offset_x_m: -0.54
+        offset_y_m: 0.0
+        z_bottom_m: 2.0
+        z_top_m: 2.3
+    struts:
+      fuselage_attach_x_m: -1.14
+      fuselage_attach_y_m: 0.425
+      fuselage_attach_z_m: 0.5
+      wing_attach_y_m: 1.7
+      width_m: 0.05
+    wheels:
+      main_offset_x_m: 0.50
+      track_m: 2.1
+      third_wheel_offset_x_m: -3.80
+
+  # ----------------------------------------------------------------------------
+  # CART-ELIGIBLE — Flight Design CTSL, high-wing nosewheel, cantilever (no struts)
+  # ----------------------------------------------------------------------------
+  - id: ctsl
+    name: "Flight Design CTSL"
+    wing_position: high
+    gear: nosewheel
+    movement_mode: cart_eligible
+    turn_radius_m: 4.0
+    measured: false
+    notes: "Cantilever wing (no struts)"
+    parts:
+      - kind: fuselage
+        length_m: 6.60
+        width_m: 1.0
+        offset_x_m: -0.33
+        offset_y_m: 0.0
+        z_bottom_m: 0.0
+        z_top_m: 1.4
+      - kind: wing
+        length_m: 1.4
+        width_m: 8.59
+        offset_x_m: 0.67
+        offset_y_m: 0.0
+        z_bottom_m: 1.9
+        z_top_m: 2.2
+    wheels:
+      main_offset_x_m: -0.10
+      track_m: 1.7
+      third_wheel_offset_x_m: 1.40
+
+  # ----------------------------------------------------------------------------
+  # CART-ELIGIBLE — FK9 Mk II, high-wing nosewheel, strut-braced
+  # ----------------------------------------------------------------------------
+  - id: fk9_mkii
+    name: "B&F Technik FK9 Mk II"
+    wing_position: high
+    gear: nosewheel
+    movement_mode: cart_eligible
+    turn_radius_m: 4.0
+    measured: false
+    parts:
+      - kind: fuselage
+        length_m: 5.85
+        width_m: 0.85
+        offset_x_m: -0.29
+        offset_y_m: 0.0
+        z_bottom_m: 0.0
+        z_top_m: 1.4
+      - kind: wing
+        length_m: 1.3
+        width_m: 9.85
+        offset_x_m: 0.71
+        offset_y_m: 0.0
+        z_bottom_m: 1.9
+        z_top_m: 2.2
+    struts:
+      fuselage_attach_x_m: 0.11
+      fuselage_attach_y_m: 0.425
+      fuselage_attach_z_m: 0.5
+      wing_attach_y_m: 1.6
+      width_m: 0.05
+    wheels:
+      main_offset_x_m: -0.10
+      track_m: 1.4
+      third_wheel_offset_x_m: 1.40

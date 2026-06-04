@@ -1,0 +1,16 @@
+# Airfield Herrenteich — "everyone home" scenario: all eight usual occupants
+# in the hangar at once. Used to generate herrenteich/layout.yaml via:
+#
+#   hangarfit solve herrenteich/scenario.yaml --no-spread --write-yaml herrenteich/layout.yaml
+#
+fleet: fleet.yaml
+hangar: hangar.yaml
+fleet_in:
+  - cessna_140
+  - ctsl
+  - wild_thing
+  - aviat_husky
+  - scheibe_falke
+  - fk9_mkii
+  - stemme_s10
+  - zlin_savage
