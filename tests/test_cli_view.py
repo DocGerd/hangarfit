@@ -40,6 +40,51 @@ def test_view_static_degradation_on_untowable(tmp_path, capsys):
     assert "not tow-routable" in capsys.readouterr().err
 
 
+def test_view_layout_caps_total_expansions_by_default(tmp_path, monkeypatch):
+    # #398: view layout-mode must pass a small *global* expansion cap by default
+    # so an un-routable layout degrades to static within the cap rather than
+    # riding the full ~16000-expansion disprove budget (~2 min). The bound is the
+    # deterministic expansion count, NOT a wall-clock deadline (ADR-0003).
+    import hangarfit.towplanner as tp
+    from hangarfit.models import Conflict
+
+    captured: dict = {}
+
+    def fake_plan_fill(_target, **kwargs):
+        captured.update(kwargs)
+        raise tp.NoFeasiblePlanError(
+            "p", Conflict.single(kind="no_feasible_path", plane="p", detail="stub")
+        )
+
+    monkeypatch.setattr(tp, "plan_fill", fake_plan_fill)
+    out = tmp_path / "v.html"
+    rc = main(["view", "layouts/example.yaml", "-o", str(out)])
+    assert rc == 0 and out.exists()
+    assert captured["max_total_expansions"] == 300
+
+
+def test_view_tow_max_expansions_overrides_view_cap(tmp_path, monkeypatch):
+    # #398 AC4: an explicit --tow-max-expansions overrides the view-mode default
+    # cap, bounding both the per-plane and the global view-degrade budget.
+    import hangarfit.towplanner as tp
+    from hangarfit.models import Conflict
+
+    captured: dict = {}
+
+    def fake_plan_fill(_target, **kwargs):
+        captured.update(kwargs)
+        raise tp.NoFeasiblePlanError(
+            "p", Conflict.single(kind="no_feasible_path", plane="p", detail="stub")
+        )
+
+    monkeypatch.setattr(tp, "plan_fill", fake_plan_fill)
+    out = tmp_path / "v.html"
+    rc = main(["view", "layouts/example.yaml", "-o", str(out), "--tow-max-expansions", "500"])
+    assert rc == 0 and out.exists()
+    assert captured["max_total_expansions"] == 500
+    assert captured["max_expansions"] == 500
+
+
 def test_view_check_overlay(tmp_path):
     # --no-animate: we are testing the conflict overlay, not the tow animation
     # (and tow-planning an invalid layout would just burn the search budget).
