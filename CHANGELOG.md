@@ -42,7 +42,8 @@ All notable changes to this project are documented here. Format follows [Keep a 
   its colours from a new canonical `BRAND` JSON blob injected into the HTML
   (separate from the scene blob — the `scene/v1` schema is unchanged) instead of
   hard-coded `0x` literals. Render-only and determinism-neutral: the emitted HTML
-  is byte-identical, the CVD-safe palette (#326) values are unchanged, and the
+  is byte-identical across re-renders of a given scene, the CVD-safe palette
+  (#326) values are unchanged, and the
   collision model / determinant-−1 transform are untouched (ADR-0019).
 
 ### Fixed

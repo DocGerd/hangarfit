@@ -113,9 +113,10 @@ _DOOR_EDGE = brand.DOOR_EDGE  # light gray — visually "open"
 _GLYPH_ZORDER = 1.5  # between wings (1) and fuselage (2)
 #
 # COLOUR: neutral dark-gray that reads on the off-white floor, stays clear of
-# the wing-position palette (#3498db/#d55e00/#f4d03f), the conflict-red
-# (#e74c3c), and the tow-path colours. A second shade is used for the cart
-# pallets so each dolly square is distinct from its wheel disc.
+# the plane palette, the conflict-red, and the tow-path colours (all defined in
+# brand.py — no hexes are restated here, so this comment can't go stale). A
+# second shade is used for the cart pallets so each dolly square is distinct
+# from its wheel disc.
 _WHEEL_COLOR = brand.WHEEL_COLOR  # dark slate-gray — individual wheel discs
 _CART_DECK_COLOR = brand.CART_DECK_COLOR  # lighter gray — cart/dolly pallet squares
 _CART_DECK_ALPHA = brand.CART_DECK_ALPHA

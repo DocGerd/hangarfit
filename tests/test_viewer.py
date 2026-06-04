@@ -237,6 +237,5 @@ def test_brand_module_exports():
         "labelText",
         "labelChipBg",
         "labelConflictChip",
-        "fontMono",
     ):
         assert key in tokens

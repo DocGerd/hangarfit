@@ -86,7 +86,8 @@ the same single-source guarantee with strictly less machinery, and the viewer
 - `viewer.js` carries **no** colour literals — a top-of-file comment forbids
   re-introducing them; colours arrive via the `BRAND` blob.
 - Render output is unchanged (the 2D constants, the `_CSS` bytes, and the
-  3D colours are identical values); the HTML is byte-identical across renders.
+  3D colours are identical values); the HTML is byte-identical across re-renders
+  of the same scene.
 
 ### Negative
 

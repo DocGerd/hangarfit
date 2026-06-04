@@ -20,7 +20,8 @@ same plane, so 2D and 3D keep one plane→colour identity.
 **Render-only / determinism-neutral.** Nothing here touches the collision model,
 the determinant-−1 transform, or the ``scene/v1`` contract; changing a value
 re-tints a render but never alters geometry or solver/planner output. Values
-match ``docs/assets/BRAND.md`` (esp. §2 and §4) byte-for-byte.
+match ``docs/assets/BRAND.md`` (esp. §2 and §4); hex casing is normalized and
+not significant (matplotlib and ``THREE.Color`` are case-insensitive).
 
 The 3D viewer tokens that historically lived only as ``0xRRGGBB`` literals inside
 ``viewer.js`` now live here too and are injected into the HTML as a canonical
@@ -234,6 +235,4 @@ def viewer_brand_tokens() -> dict[str, object]:
         "labelText": LABEL_TEXT,
         "labelChipBg": LABEL_CHIP_BG,
         "labelConflictChip": LABEL_CONFLICT_CHIP,
-        # mono label/legend font stack (offline fallback)
-        "fontMono": FONT_MONO,
     }
