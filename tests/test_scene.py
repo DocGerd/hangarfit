@@ -18,6 +18,7 @@ from hangarfit.geometry import aircraft_parts_world, oriented_rect
 from hangarfit.loader import load_layout
 from hangarfit.models import Aircraft, Part, Placement, Wheels
 from hangarfit.towplanner import back_first_order, plan_fill
+from hangarfit.visualize import PLANES, PLANES_DARK
 
 LAYOUT = "tests/fixtures/valid_left_side_nesting.yaml"
 
@@ -26,13 +27,26 @@ LAYOUT = "tests/fixtures/valid_left_side_nesting.yaml"
 
 
 def test_color_map_is_sorted_id_keyed():
-    assert scene._color_map(["b", "a"]) == {"a": scene.PLANES[0], "b": scene.PLANES[1]}
+    assert scene._color_map(["b", "a"]) == {
+        "a": PLANES_DARK[0],
+        "b": PLANES_DARK[1],
+    }
 
 
 def test_color_map_wraps_palette():
-    ids = [f"p{i:02d}" for i in range(len(scene.PLANES) + 2)]
+    ids = [f"p{i:02d}" for i in range(len(PLANES_DARK) + 2)]
     cm = scene._color_map(ids)
-    assert cm[ids[0]] == cm[ids[len(scene.PLANES)]]  # wraps with %
+    assert cm[ids[0]] == cm[ids[len(PLANES_DARK)]]  # wraps with %
+
+
+def test_plane_colors_are_dark_palette():
+    """#415: the 3D scene emits the dark-lifted fleet fills (PLANES_DARK), not
+    the light 2D PLANES — brand parity on the #0D0E10 surface."""
+    lay = load_layout(LAYOUT)
+    emitted = {b["color"] for b in scene._plane_blocks(lay)}
+    assert emitted, "expected at least one plane block"
+    assert emitted <= set(PLANES_DARK)
+    assert emitted.isdisjoint(set(PLANES) - set(PLANES_DARK))
 
 
 def test_hangar_block_shape():
