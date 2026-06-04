@@ -19,8 +19,8 @@
     "src/hangarfit/_viewer_assets/viewer.js",
     "src/hangarfit/_viewer_assets/_lsp_shims.d.ts"
   ],
-  // The vendored Three.js bundle (~1 MB) is excluded: analyzing it is slow and
-  // noisy, and viewer.js reaches it only through the runtime importmap, never
+  // The vendored Three.js bundle is excluded: the editor never needs to analyze
+  // it, because viewer.js reaches it only through the runtime importmap, never
   // from disk (the _lsp_shims.d.ts ambient declarations satisfy resolution).
   "exclude": [
     "src/hangarfit/_viewer_assets/three",

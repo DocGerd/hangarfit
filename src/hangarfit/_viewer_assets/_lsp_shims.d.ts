@@ -8,7 +8,7 @@
 // diagnostics on viewer.js's import lines.
 //
 // Declaring them as untyped modules satisfies resolution without parsing the
-// ~1 MB vendored three.module.js (which jsconfig.json also excludes from
+// vendored three.module.js bundle (which jsconfig.json also excludes from
 // analysis). See .claude/README.md ("LSP plugins") and issue #423.
 //
 // Packaging note: package-data ships only `*.js` under `_viewer_assets/`
