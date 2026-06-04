@@ -32,6 +32,8 @@ try {
 }
 renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
 renderer.setSize(window.innerWidth, window.innerHeight);
+renderer.shadowMap.enabled = true; // contact shadows (#400)
+renderer.shadowMap.type = THREE.PCFSoftShadowMap; // soft edges
 
 const scene = new THREE.Scene();
 scene.background = new THREE.Color(0x0d0e10);
@@ -51,10 +53,31 @@ function home() {
 }
 home();
 
-scene.add(new THREE.HemisphereLight(0xffffff, 0x202428, 1.15));
-const sun = new THREE.DirectionalLight(0xffffff, 0.75);
-sun.position.set(H.width_m * 0.3, -H.length_m * 0.2, span);
+// Lighting (#400). The key sun casts contact shadows so vertical clearance is
+// legible — a high wing's shadow falling across a neighbour's tail is the whole
+// reason the 3D viewer exists (ADR-0017). A soft fill from the opposite side keeps
+// shaded faces readable, and a (slightly lowered) hemisphere ambient lets shadows
+// darken without going black.
+scene.add(new THREE.HemisphereLight(0xffffff, 0x202428, 0.85));
+const sun = new THREE.DirectionalLight(0xffffff, 1.0);
+sun.position.set(H.width_m * 0.35, -H.length_m * 0.15, span * 1.1);
+sun.target.position.set(H.width_m / 2, H.length_m / 2, 0); // aim at hangar centre
+scene.add(sun.target);
+sun.castShadow = true;
+sun.shadow.mapSize.set(2048, 2048);
+sun.shadow.normalBias = 0.04; // suppress acne on the det-−1 reflected boxes
+const sc = sun.shadow.camera; // ortho frustum sized to the hangar span
+sc.left = -span;
+sc.right = span;
+sc.top = span;
+sc.bottom = -span;
+sc.near = 0.5;
+sc.far = span * 3.5;
+sc.updateProjectionMatrix();
 scene.add(sun);
+const fill = new THREE.DirectionalLight(0xcfe0ff, 0.3); // cool soft fill, no shadow
+fill.position.set(H.width_m * 0.7, H.length_m * 1.2, span * 0.6);
+scene.add(fill);
 
 // ── affine → Matrix4 (z-row identity; det may be −1, that's intentional) ─────
 function affineMatrix(aff) {
@@ -79,6 +102,7 @@ function addHangar() {
     new THREE.MeshStandardMaterial({ color: 0x16181c, roughness: 1, side: THREE.DoubleSide }),
   );
   floor.position.set(H.width_m / 2, H.length_m / 2, 0); // PlaneGeometry lies in XY (normal +Z)
+  floor.receiveShadow = true; // catches the planes' contact shadows (#400)
   scene.add(floor);
 
   const grid = new THREE.GridHelper(span, Math.round(span), 0x3b4046, 0x23262b);
@@ -162,6 +186,7 @@ function addGear(g, p) {
       gearMat,
     );
     wheel.position.set(u, v, wheelZ);
+    wheel.castShadow = true;
     g.add(wheel);
 
     const wheelTop = wheelZ + WHEEL_RADIUS_M;
@@ -169,6 +194,7 @@ function addGear(g, p) {
     if (legH > 0.01) {
       const leg = new THREE.Mesh(new THREE.BoxGeometry(LEG_WIDTH_M, LEG_WIDTH_M, legH), gearMat);
       leg.position.set(u, v, wheelTop + legH / 2);
+      leg.castShadow = true;
       g.add(leg);
     }
     if (p.on_carts) {
@@ -177,6 +203,8 @@ function addGear(g, p) {
         palletMat,
       );
       pallet.position.set(u, v, deck / 2);
+      pallet.castShadow = true;
+      pallet.receiveShadow = true;
       g.add(pallet);
     }
   }
@@ -186,28 +214,105 @@ function addGear(g, p) {
 const CONFLICT = 0xc8442c;
 const groups = {};
 const legend = document.getElementById('legend');
+
+// Kind-based materials (#400): translucent wings reveal vertical stacking; thin
+// metallic struts; a darker cockpit (fuselage_front) tint matching the 2D render;
+// everything else opaque body colour. DoubleSide for the det-−1 reflected group.
+function boxMaterial(b, colour) {
+  const base = { color: colour, side: THREE.DoubleSide, roughness: 0.7, metalness: 0.05 };
+  if (b.kind === 'wing') {
+    return new THREE.MeshStandardMaterial({ ...base, transparent: true, opacity: 0.5 });
+  }
+  if (b.kind === 'strut') {
+    return new THREE.MeshStandardMaterial({ ...base, roughness: 0.35, metalness: 0.85 });
+  }
+  if (b.kind === 'fuselage_front') {
+    return new THREE.MeshStandardMaterial({ ...base, color: colour.clone().multiplyScalar(0.55) });
+  }
+  return new THREE.MeshStandardMaterial(base);
+}
+
+// Identity cues (#400), HUD-toggleable: a billboarded id label and a nose cone at
+// the plane-local +x tip show which plane is which and which way it faces.
+const labelMeshes = [];
+const noseMeshes = [];
+function makeLabel(text) {
+  const fontPx = 64, padX = 14, padY = 8;
+  const measure = document.createElement('canvas').getContext('2d');
+  measure.font = fontPx + 'px system-ui, sans-serif';
+  const tw = Math.ceil(measure.measureText(text).width);
+  const canvas = document.createElement('canvas');
+  canvas.width = tw + padX * 2;
+  canvas.height = fontPx + padY * 2;
+  const ctx = canvas.getContext('2d');
+  ctx.font = fontPx + 'px system-ui, sans-serif';
+  ctx.textBaseline = 'middle';
+  ctx.fillStyle = 'rgba(18,20,24,0.82)';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
+  ctx.fillStyle = '#e8eaed';
+  ctx.fillText(text, padX, canvas.height / 2); // SAFE: canvas fillText, never innerHTML (ids are user YAML)
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.anisotropy = 4;
+  const sprite = new THREE.Sprite(
+    new THREE.SpriteMaterial({ map: tex, transparent: true, depthTest: false }),
+  );
+  const hWorld = 0.9; // label height in world metres
+  sprite.scale.set((hWorld * canvas.width) / canvas.height, hWorld, 1);
+  sprite.renderOrder = 999; // float above geometry (depthTest off)
+  return sprite;
+}
+function addLabelAndNose(g, p, colour) {
+  let maxTop = 0, sx = 0, sy = 0, noseX = -Infinity, noseZ = 0;
+  for (const b of p.boxes) {
+    maxTop = Math.max(maxTop, b.cz + b.height_m / 2);
+    sx += b.cx;
+    sy += b.cy;
+    noseX = Math.max(noseX, b.cx + b.length_m / 2);
+    if (b.kind === 'fuselage_front') noseZ = b.cz;
+  }
+  const n = p.boxes.length || 1;
+  if (!isFinite(noseX)) noseX = 0;
+  if (noseZ === 0) noseZ = maxTop * 0.5;
+
+  const label = makeLabel(p.id);
+  label.position.set(sx / n, sy / n, maxTop + 1.0); // above the plane, in plane-local
+  g.add(label);
+  labelMeshes.push(label);
+
+  const noseLen = 0.7, noseR = 0.28;
+  const nose = new THREE.Mesh(
+    new THREE.ConeGeometry(noseR, noseLen, 14),
+    new THREE.MeshStandardMaterial({
+      color: colour, emissive: colour.clone().multiplyScalar(0.25),
+      side: THREE.DoubleSide, roughness: 0.5, metalness: 0.1,
+    }),
+  );
+  nose.rotation.z = -Math.PI / 2; // default +Y tip → +x (plane-local nose)
+  nose.position.set(noseX + noseLen / 2, 0, noseZ);
+  nose.castShadow = true;
+  g.add(nose);
+  noseMeshes.push(nose);
+}
+
 for (const p of SCENE.planes) {
   const g = new THREE.Group();
   g.matrixAutoUpdate = false; // we drive g.matrix per frame from the affine
   const conflicted = SCENE.conflicts.includes(p.id);
   const colour = new THREE.Color(conflicted ? CONFLICT : p.color);
   for (const b of p.boxes) {
-    const isWing = b.kind === 'wing';
-    const mat = new THREE.MeshStandardMaterial({
-      color: colour,
-      side: THREE.DoubleSide,           // reflected (det −1) group matrix → show both faces
-      transparent: isWing,              // translucent wings reveal vertical stacking
-      opacity: isWing ? 0.5 : 0.95,
-      roughness: 0.7,
-      metalness: 0.05,
-    });
     // local X = u (forward/length), local Y = v (right/width), local Z = w (height).
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(b.length_m, b.width_m, b.height_m), mat);
+    const mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(b.length_m, b.width_m, b.height_m),
+      boxMaterial(b, colour),
+    );
     mesh.position.set(b.cx, b.cy, b.cz);
     mesh.rotation.z = THREE.MathUtils.degToRad(b.angle_deg); // CCW about local up, as oriented_rect
+    mesh.castShadow = true;
+    mesh.receiveShadow = true; // planes catch each other's shadows (vertical clearance)
     g.add(mesh);
   }
   addGear(g, p); // wheels + legs (+ pallets when carted), same affine Group
+  addLabelAndNose(g, p, colour); // id label + nose arrow, HUD-toggleable
   groups[p.id] = g;
   scene.add(g);
 
@@ -221,6 +326,14 @@ for (const p of SCENE.planes) {
   sw.appendChild(document.createTextNode(p.id));
   legend.appendChild(sw);
 }
+
+// Labels + nose arrows share one HUD toggle (#400). They are children of each
+// plane Group, so a hidden (not-yet-entered) plane hides its label too.
+document.getElementById('labels').addEventListener('change', (e) => {
+  const on = e.target.checked;
+  for (const m of labelMeshes) m.visible = on;
+  for (const m of noseMeshes) m.visible = on;
+});
 
 // ── load-time anchor self-check: recompute final world corners and compare ───
 function boxCornersLocal(b) {

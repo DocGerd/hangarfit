@@ -96,5 +96,6 @@ _HUD = (
     '<span id="clock">0.0s</span><span id="active"></span>'
     '<button id="reset">reset view</button>'
     '<label><input id="walls" type="checkbox" checked> walls</label>'
+    '<label><input id="labels" type="checkbox" checked> labels</label>'
     '<span id="legend"></span>'
 )
