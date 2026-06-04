@@ -6,8 +6,9 @@ Tests are grouped into four blocks:
 2. Candidate filtering: poses that clip side/back walls are dropped before the search;
    if all are filtered the fallback straight-in centre pose is returned.
 3. Multi-start plan_path: the search accepts the cone and seeds all surviving entries.
-4. Path-length regression: an off-to-the-side slot gets a shorter path than the v1
-   single-start baseline (straight-in only).
+4. Door-gate (#411): for an off-to-the-side slot the cone does NOT corner-cut
+   through the solid front wall beside the door — its best legal path equals the
+   v1 straight-in baseline (the prior sub-cm "win" was a jamb wall-clip).
 """
 
 from __future__ import annotations
@@ -393,14 +394,21 @@ def test_plan_path_single_entry_tuple_same_as_no_entries() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_cone_produces_shorter_path_for_off_side_slot() -> None:
-    """An angled slot off to the side of the door yields a shorter path with the
-    full cone search than the v1 single straight-in entry pose.
+def test_off_side_slot_cone_does_not_corner_cut_through_jamb() -> None:
+    """Door-gate regression (#411): for an off-side slot, the only route shorter
+    than the straight-in v1 entry would cut the corner THROUGH the solid front
+    wall beside the door (the box dipping to ``y < 0`` just left of the door
+    edge). The door-aware front-gap exemption forbids that, so the cone must NOT
+    take the shortcut — its best legal path EQUALS the v1 path, and neither clips
+    the front wall.
 
-    This is the core regression check: the cone win demonstrates the feature
-    actually helps. We use a slot at heading=30° near the left side of a wide hangar
-    so the straight-in entry at x=door_center forces a large heading correction,
-    while a 30°-heading cone entry from further left can close nearly straight.
+    Pre-#411 the cone was ~6 mm shorter here (10.422 vs 10.428 m) via exactly
+    that jamb corner-cut — a path that clipped the wall. This now guards that the
+    planner does not corner-cut through the jamb even when shorter; reverting the
+    door-gate would make the cone beat v1 again and fail this test. (The #262
+    cone still provides valid multi-start search + determinism, guarded by the
+    other tests in this module; whether it yields a *legal* strict path win on any
+    fixture is tracked as a follow-up.)
     """
     from hangarfit.towplanner import path_first_conflict
 
@@ -440,14 +448,15 @@ def test_cone_produces_shorter_path_for_off_side_slot() -> None:
     )
     len_cone = arc_cone.length_m
 
-    # The cone must find a shorter or equal path.
-    assert len_cone <= len_v1 + 1e-9, (
-        f"Cone path ({len_cone:.3f} m) should be ≤ v1 path ({len_v1:.3f} m)"
+    # The cone must NOT beat v1 by corner-cutting through the door jamb: with the
+    # #411 door-gate the only shorter route is illegal, so the best legal cone
+    # path EQUALS the v1 path (a door-gate revert would make it shorter again and
+    # fail here).
+    assert len_cone == pytest.approx(len_v1, abs=1e-9), (
+        f"Cone path ({len_cone:.3f} m) should equal the v1 path ({len_v1:.3f} m) — "
+        "the only shorter route corner-cuts through the door jamb, which #411 forbids"
     )
-    # And for this particular geometry it should actually be strictly shorter.
-    assert len_cone < len_v1, (
-        f"Expected cone ({len_cone:.3f} m) < v1 ({len_v1:.3f} m) for off-side slot"
-    )
-    # Both must be exact-oracle clean.
+    # Both must be exact-oracle clean — which, post-#411, also means neither
+    # protrudes to y < 0 beside the door (the door-gate lives in path_first_conflict).
     assert path_first_conflict(arc_v1, plane, mover_on_carts=False, placed=placed) is None
     assert path_first_conflict(arc_cone, plane, mover_on_carts=False, placed=placed) is None

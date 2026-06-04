@@ -954,22 +954,30 @@ def entry_pose(target: Placement, hangar: Hangar) -> Pose:
 def _mover_motion_bounds_conflict(
     mover: Aircraft, placement: Placement, hangar: Hangar
 ) -> Conflict | None:
-    """First side/back-wall bounds violation for a plane *in transit*, else ``None``.
+    """First wall violation for a plane *in transit*, else ``None``.
 
-    **Front-gap exemption (#222):** a plane being towed through the door
-    legitimately protrudes in front of it (``y < 0`` — the conceptual apron,
-    spike Q6). So — unlike the static :func:`hangarfit.collisions.check` oracle,
-    which forbids ``y < 0`` — the front wall is NOT enforced on the mover
-    mid-motion. The side walls (``0 ≤ x ≤ width``) and the back wall
-    (``y ≤ length``) still are; the mover's final slot is itself a valid static
-    placement, so full bounds hold at rest. Reuses the canonical
+    **Door-aware front-gap exemption (#222, refined in #411):** a plane being
+    towed through the door legitimately protrudes in front of it (``y < 0`` — the
+    conceptual apron, spike Q6) — but *only through the door opening*. The front
+    wall is solid except for the door gap, so a ``y < 0`` vertex is allowed only
+    when ``door_lo ≤ x ≤ door_hi``; a ``y < 0`` vertex *beside* the door clips the
+    solid front wall / jamb (an off-centre entry, or a plane wider than the door)
+    and is a conflict — making the door a true motion gate and matching what the
+    renderer draws. Unlike the static :func:`hangarfit.collisions.check` oracle
+    (which forbids ``y < 0`` entirely), only the door-gap protrusion is exempt.
+    The side walls (``0 ≤ x ≤ width``) and the back wall (``y ≤ length``) are
+    enforced unchanged; the mover's final slot is itself a valid static placement,
+    so full bounds hold at rest. Reuses the canonical
     :func:`~hangarfit.geometry.aircraft_parts_world` transform rather than
     re-deriving geometry — the determinant-(-1) trap lives there (ADR-0002).
     """
+    door_half = hangar.door.width_m / 2.0
+    door_lo = hangar.door.center_x_m - door_half
+    door_hi = hangar.door.center_x_m + door_half
     for world_part in aircraft_parts_world(mover, placement):
         for x, y in list(world_part.polygon.exterior.coords)[:-1]:
-            # The static rule is `0 <= x <= width and 0 <= y <= length`; the
-            # only relaxation is dropping the `0 <= y` front-wall lower bound.
+            # Side walls + back wall (unchanged): the static rule is
+            # `0 <= x <= width and 0 <= y <= length`.
             if x < 0.0 or x > hangar.width_m or y > hangar.length_m:
                 return Conflict.single(
                     kind="hangar_bounds",
@@ -978,6 +986,19 @@ def _mover_motion_bounds_conflict(
                         f"part {world_part.kind!r} vertex ({x:.3f}, {y:.3f}) "
                         f"outside hangar side/back walls during tow "
                         f"(0..{hangar.width_m:g} x ..{hangar.length_m:g})"
+                    ),
+                )
+            # Front wall is solid except the door gap (#411): a vertex in front of
+            # the hangar (y < 0) is legal only when it passes *through* the door
+            # opening; beside the door it clips the solid front wall / jamb.
+            if y < 0.0 and not (door_lo <= x <= door_hi):
+                return Conflict.single(
+                    kind="hangar_bounds",
+                    plane=mover.id,
+                    detail=(
+                        f"part {world_part.kind!r} vertex ({x:.3f}, {y:.3f}) "
+                        f"clips the solid front wall beside the door during tow "
+                        f"(door opening x in {door_lo:g}..{door_hi:g})"
                     ),
                 )
     return None

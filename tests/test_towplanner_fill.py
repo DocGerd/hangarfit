@@ -324,3 +324,65 @@ def test_plan_fill_routes_origin_spanning_planes() -> None:
             is None
         )
         placed.append(slot)
+
+
+def test_plane_wider_than_door_is_untowable() -> None:
+    """#411: a plane whose wing span exceeds the door width cannot pass through
+    the door at any admissible entry orientation, so plan_fill reports it
+    un-towable (raises NoFeasiblePlanError naming it) rather than routing a path
+    that clips the solid front wall beside the door. This is the
+    "no orientation fits -> un-towable" half of the door-gate fix.
+    """
+
+    def wide_wing_plane(pid: str) -> Aircraft:
+        # 16 m wing span vs a 12 m door: no heading gets the wing through the gap.
+        return Aircraft(
+            id=pid,
+            name=pid,
+            wing_position="high",
+            gear="tailwheel",
+            movement_mode="always_own_gear",
+            turn_radius_m=5.0,
+            measured=False,
+            parts=(
+                Part(
+                    kind="wing",
+                    length_m=1.5,
+                    width_m=16.0,
+                    offset_x_m=0.0,
+                    offset_y_m=0.0,
+                    angle_deg=0.0,
+                    z_bottom_m=1.8,
+                    z_top_m=2.1,
+                ),
+                Part(
+                    kind="fuselage_aft",
+                    length_m=4.0,
+                    width_m=1.0,
+                    offset_x_m=0.0,
+                    offset_y_m=0.0,
+                    angle_deg=0.0,
+                    z_bottom_m=0.0,
+                    z_top_m=1.2,
+                ),
+            ),
+            wheels=_TAIL_WHEELS,
+        )
+
+    h = Hangar(
+        length_m=30.0,
+        width_m=30.0,
+        door=Door(center_x_m=15.0, width_m=12.0),
+        maintenance_bay=MaintenanceBay(center_x_m=15.0, width_m=2.0, depth_m=2.0),
+        clearance_m=0.3,
+        wing_layer_clearance_m=0.3,
+    )
+    fleet = {"W": wide_wing_plane("W")}
+    target = Layout(
+        fleet=fleet,
+        hangar=h,
+        placements=(Placement(plane_id="W", x_m=15.0, y_m=15.0, heading_deg=0.0, on_carts=False),),
+    )
+    with pytest.raises(NoFeasiblePlanError) as ei:
+        plan_fill(target)
+    assert ei.value.plane_id == "W"
