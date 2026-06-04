@@ -387,9 +387,10 @@ placed aircraft is on placeholder/unmeasured data (the "PLACEHOLDER DATA" honest
 banner, #401/#79), the tightest plan-view inter-plane gap, the smallest
 wing-over-tail vertical clearance, and `layout_is_valid` (trusts a supplied
 `CheckResult`, else runs `collisions.check`) so readouts are shown only for a
-verified-valid layout. A leaf consumer used by both `visualize.py` (2D) and
-`scene.py` (3D); it never enters the collision model, so it adds no determinism or
-correctness risk to the core.
+verified-valid layout. A leaf consumer used by `visualize.py` (2D) and `scene.py`
+(3D), with `viewer.py` consuming the shared `PLACEHOLDER_BANNER` string; it never
+enters the collision model, so it adds no determinism or correctness risk to the
+core.
 
 ### `cli.py` — argparse dispatch + IO + exit codes
 
