@@ -6,7 +6,22 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Brand source of truth in-repo (#414).** `docs/assets/BRAND.md` captures the
+  hangarfit brand (DocGerdSoft lineage + the 2D tokens + the 3D dark-surface
+  section + the full token table), so the viewer's colours, banners, and
+  typography trace to one document.
+
 ### Changed
+
+- **3D viewer renders on the DocGerdSoft dark-surface brand (#415).** `hangarfit
+  view` now uses the dark-lifted fleet palette (`PLANES_DARK`, keyed by the same
+  sorted id so 2D/3D plane identity is preserved), a unified scene shell
+  (floor/grid/walls on the STATUS `wall` ink), a `maint`-violet maintenance bay
+  (retiring the off-system red), an accent fill light, branded HUD chrome (dark
+  neutrals, accent focus ring, amber honesty banner, Geist/mono typography), and a
+  non-colour `⚠ conflict` label cue (the 3D analogue of the 2D hatch — "never hue
+  alone"). Render-only: the `scene/v1` contract, the Python-owned determinant-−1
+  transform, `build_scene` byte-determinism, and the collision model are unchanged.
 
 ### Fixed
 
