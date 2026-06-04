@@ -481,12 +481,28 @@ def test_steeply_angled_off_side_slot_cone_yields_legal_strict_win() -> None:
     The slot is at (21, 10) heading 135° — far to the right of the door interval
     [6, 18], facing back across the hangar. v1 clamps its straight-in entry to the
     right door edge (x=18, heading 0°). The cone additionally fans angled entries
-    at the door; the −30° (330°) entry at the door edge pre-aligns the nose toward
-    the off-side slot, so the search reaches the goal via a ~0.18 m shorter arc
-    whose swept footprint stays within bounds and the door opening (legal under
-    the #411 gate). The win is deterministic (closed-form Reeds–Shepp + the RNG-free
-    search, ADR-0003), so it is a stable guard: dropping the cone (``entries=None``)
-    would make the cone path equal v1 again and fail this test.
+    at the door; the −30° (330°) entry at the door edge pre-aligns the nose so the
+    search needs far less corrective turning at the door (the v1 straight-in opens
+    with a ~3.1 m turn arc; the angled entry ~0.18 m), reaching the goal via a
+    ~0.18 m shorter total arc whose swept footprint stays within bounds and the
+    door opening (legal under the #411 gate). The win is deterministic — closed-form
+    Reeds–Shepp (ADR-0010) + the RNG-free search (ADR-0003) — so it is a stable
+    guard: dropping the cone (``entries=None``) makes the cone path equal v1 again
+    and fails this test.
+
+    Two notes for a future maintainer:
+
+    - **This is a point-wise win, not a universal one.** The bounded multi-start
+      Hybrid-A* returns the first goal-reaching start under its expansion budget /
+      heuristic ordering, NOT the global minimum across the cone's seeds — so off
+      this fixture the cone can even be *longer* than v1 despite the cone fan
+      containing the v1 pose. Do NOT add a "the cone is never worse than v1" test;
+      it would be wrong.
+    - **The fixture sits inside a fairly narrow win region** (sensitive to
+      ``turn_radius_m`` and the slot's x / y / heading). The ~0.18 m margin is
+      ~3.6× the 0.05 m threshold here, so the test is stable — but if it breaks
+      after a geometry or ``_box_plane`` turn-radius change, re-derive a winning
+      fixture; don't just lower the threshold.
     """
     from hangarfit.towplanner import path_first_conflict
 
