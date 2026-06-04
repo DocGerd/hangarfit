@@ -1,0 +1,19 @@
+# Test-only hangar — deliberately small so the Σ part-areas infeasibility
+# gate (solver check #2, spec §4.1.2) still fires under the #425 part-
+# footprint gate. The full 9-plane fleet's Σ part-footprint area (~185 m²)
+# exceeds this floor (19.0 × 9.0 = 171 m²), while max(length, width) = 19 m
+# still clears the 18 m Scheibe Falke wingspan so check #1 (per-plane bbox)
+# does NOT fire first. Used by solve_infeasible_sum_areas.yaml. Do NOT use
+# for a feasible-layout test — by design the fleet cannot fit here.
+
+length_m: 19.0          # depth from front (door) wall to back wall
+width_m: 9.0            # left-to-right span
+door:
+  center_x_m: 4.5
+  width_m: 6.0
+maintenance_bay:
+  center_x_m: 4.5
+  width_m: 4.0
+  depth_m: 2.0
+clearance_m: 0.3
+wing_layer_clearance_m: 0.2

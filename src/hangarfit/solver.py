@@ -564,17 +564,19 @@ def _check_plane_too_big(scenario: Scenario) -> tuple[CheckResult, Layout] | Non
 
 
 def _check_sum_areas(scenario: Scenario) -> tuple[CheckResult, Layout] | None:
-    """Check 2: Σ bbox areas vs hangar floor area.
+    """Check 2: Σ part-footprint areas vs hangar floor area.
 
-    Uses the full-fuselage footprint (not _plane_max_extent) so the fuselage
-    front/aft split (#50/ADR-0012) doesn't shrink the estimate and let an
-    infeasible fleet slip the gate. Returns the conflict paired with the empty
-    Layout, or ``None`` if the summed footprint fits the floor.
+    Sums each plane's actual part rectangles (:func:`_plane_parts_total_area`),
+    not its bounding box: a thin-winged glider's bbox is ``fuselage_span ×
+    wingspan`` — mostly empty air — so the old bbox sum false-rejected glider
+    fleets that a valid nested layout would fit (#425). Returns the conflict
+    paired with the empty Layout, or ``None`` if the summed part footprint fits
+    the floor.
     """
     total_area = 0.0
     for pid in scenario.fleet_in:
         plane = scenario.fleet[pid]
-        total_area += _plane_footprint_area(plane)
+        total_area += _plane_parts_total_area(plane)
     hangar_area = scenario.hangar.length_m * scenario.hangar.width_m
     if total_area > hangar_area:
         check = CheckResult(
@@ -707,40 +709,26 @@ def _plane_max_extent(plane: Aircraft) -> tuple[float, float]:
     return max_length, max_width
 
 
-def _plane_footprint_area(plane: Aircraft) -> float:
-    """A bbox-area lower bound for the Σ-areas infeasibility gate (check #2).
+def _plane_parts_total_area(plane: Aircraft) -> float:
+    """Σ of each part's footprint rectangle — the Σ-areas gate's per-plane term.
 
-    Like :func:`_plane_max_extent` this is a deliberately coarse, offset-
-    ignoring estimate, but it must NOT undercount the fuselage: the loader
-    splits one fuselage box into a ``fuselage_front`` + ``fuselage_aft`` pair
-    (#50/ADR-0012), so a plain ``max(length_m)`` over parts would collapse the
-    fuselage extent to its longer *segment* and shrink the footprint estimate
-    — making a genuinely-infeasible full fleet slip past the gate. Reconstruct
-    the full fuselage span (union of the segments, the same way the area is
-    conserved at load time) before taking the max length.
+    Consumed only by :func:`_check_sum_areas` (check #2). It replaces the old
+    bounding-box estimate (``max_length × max_width``), which multiplied the
+    fuselage span by the *wingspan* and so counted the empty air between a thin
+    wing and a narrow fuselage. For an 18 m-span glider that bbox was ~5× the
+    real footprint, so the gate false-rejected glider fleets that a valid nested
+    layout would fit — the bug this fixes (#425).
 
-    Kept separate from :func:`_plane_max_extent` on purpose: that function also
-    feeds the initial-placement spawn margin, and changing its return value
-    would shift the solver's RNG stream and disturb the determinism canaries.
-    This helper is consumed only by the infeasibility gate, where no RNG flows.
+    Summing the real part rectangles is a much tighter estimate. It is *not* a
+    strict lower bound on the plane's true plan-view footprint: parts that
+    overlap in plan view (a wing sitting over its own z-disjoint fuselage) are
+    counted twice. But that residual over-count is small (≈ one wing-root ×
+    fuselage-width) — it keeps the gate conservative without the empty-air
+    inflation a bbox invents. Like the rest of the gate it is RNG-free and runs
+    before the search, so it cannot perturb the determinism contract
+    (ADR-0003).
     """
-    fuselage_segs = [p for p in plane.parts if p.kind in ("fuselage_front", "fuselage_aft", "tail")]
-    # A standalone ``tail`` part is folded into the reconstructed fuselage span
-    # above, so it must also be excluded from the per-part lengths list — else
-    # an aircraft declaring both fuselage segments and a separate ``tail`` would
-    # have its ``tail`` length counted twice (#317). Dormant today (no fleet/
-    # fixture aircraft has a ``tail`` part) and the direction is fail-safe
-    # (over-count → over-eager rejection), but worth the one-line guard.
-    lengths = [
-        p.length_m for p in plane.parts if p.kind not in ("fuselage_front", "fuselage_aft", "tail")
-    ]
-    if fuselage_segs:
-        nose = max(p.offset_x_m + p.length_m / 2.0 for p in fuselage_segs)
-        tail = min(p.offset_x_m - p.length_m / 2.0 for p in fuselage_segs)
-        lengths.append(nose - tail)
-    max_length = max(lengths)
-    max_width = max(p.width_m for p in plane.parts)
-    return max_length * max_width
+    return sum(p.length_m * p.width_m for p in plane.parts)
 
 
 class _LayoutBuildFailure(Exception):

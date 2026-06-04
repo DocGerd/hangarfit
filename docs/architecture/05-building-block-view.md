@@ -186,8 +186,10 @@ Internally:
 
 - **Pre-search infeasibility checks** — three literal-impossibility
   gates fail fast before the search loop runs: (1) a per-plane bbox
-  exceeds the hangar's max dimension, (2) the fleet's Σ bbox areas
-  exceed the hangar floor, (3) the pin-only Layout (every constrained
+  exceeds the hangar's max dimension, (2) the fleet's Σ part-footprint
+  areas exceed the hangar floor (#425 — actual part rectangles, not the
+  empty-air-inflated bounding box, so thin-winged gliders are not
+  false-rejected), (3) the pin-only Layout (every constrained
   pin, occupant excluded) fails ``check_layout`` — including the case
   where a non-maintenance plane is pinned such that its geometry
   intrudes into the closed bay rectangle (covered by
@@ -236,7 +238,7 @@ stateDiagram-v2
 
     PreSearchGate : Pre-search infeasibility gate
     PreSearchGate : (1) a plane bbox exceeds the hangar max dimension
-    PreSearchGate : (2) sum of bbox areas exceeds the hangar floor
+    PreSearchGate : (2) sum of part-footprint areas exceeds the hangar floor
     PreSearchGate : (3) pin-only layout fails check()
 
     PreSearchGate --> trivially_infeasible : a gate trips

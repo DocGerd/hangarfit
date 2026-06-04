@@ -15,9 +15,9 @@ All notable changes to this project are documented here. Format follows [Keep a 
   (`hangarfit check` → exit 0) with a regression test. Surfaced two follow-ups:
   the L-shaped hangar's office **notch** is not yet modelled (spike #424, the
   files keep clear of it by hand), and the solver's bounding-box
-  trivial-infeasibility gate false-rejects this glider fleet (#425) — the layout
-  was found by driving the real part-collision checker directly. The default
-  `data/` demo data is unchanged.
+  trivial-infeasibility gate then false-rejected this glider fleet (#425, fixed
+  below) — the layout was found by driving the real part-collision checker
+  directly. The default `data/` demo data is unchanged.
 - **Brand source of truth in-repo (#414).** `docs/assets/BRAND.md` captures the
   hangarfit brand (DocGerdSoft lineage + the 2D tokens + the 3D dark-surface
   section + the full token table), so the viewer's colours, banners, and
@@ -36,6 +36,17 @@ All notable changes to this project are documented here. Format follows [Keep a 
   transform, `build_scene` byte-determinism, and the collision model are unchanged.
 
 ### Fixed
+
+- **Solver no longer false-rejects glider fleets (#425).** The pre-search
+  trivial-infeasibility gate (`solve` check #2) summed each plane's *bounding
+  box* (`fuselage_length × wingspan`), which for a thin-winged glider is mostly
+  empty air — so an 18 m-span Scheibe Falke could push Σ bbox over the hangar
+  floor and the solver would return `trivially_infeasible` without ever
+  searching, even when a valid nested layout existed. The gate now sums each
+  plane's actual **part-footprint rectangles** (a much tighter estimate), so
+  glider-containing fleets reach the search; only genuinely-too-big fleets still
+  short-circuit. RNG-free and pre-search, so the byte-identical determinism
+  contract (ADR-0003) is unchanged.
 
 ## [0.10.0] — 2026-06-04
 
