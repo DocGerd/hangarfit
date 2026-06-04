@@ -295,3 +295,36 @@ def test_build_scene_includes_gear_anchors_and_wheels():
     for p in sc["planes"]:
         assert "wheels" in p and "on_carts" in p
     json.dumps(sc)  # the new fields stay JSON-serializable
+
+
+# ── Task 7 (#401): honesty banner flag + actionable readouts ─────────────────
+
+
+def test_build_scene_emits_placeholder_and_readouts_when_valid():
+    lay = load_layout(LAYOUT)  # unmeasured fleet, valid (no conflicts)
+    sc = scene.build_scene(lay, moves_plan=plan_fill(lay))
+    assert sc["placeholder"] is True  # shipped fleet is measured: false
+    assert sc["readouts"] is not None
+    assert {"min_gap_m", "min_wing_over_tail_clearance_m"} <= set(sc["readouts"])
+    json.dumps(sc)
+
+
+def test_build_scene_readouts_none_when_conflicts():
+    from hangarfit import collisions
+    from hangarfit.loader import load_layout as _ll
+
+    lay = _ll("tests/fixtures/invalid_fuselage_wing_overlap.yaml")
+    sc = scene.build_scene(lay, check_result=collisions.check(lay))
+    assert sc["readouts"] is None  # an invalid layout shows no quality readouts
+    assert sc["placeholder"] is True
+
+
+def test_build_scene_readouts_none_for_unchecked_invalid_layout():
+    # #401 review (silent-failure): even with NO check_result (e.g. `view` without
+    # --check), an actually-invalid layout must not get readouts — build_scene
+    # verifies validity itself rather than conflating "not checked" with "valid".
+    from hangarfit.loader import load_layout as _ll
+
+    lay = _ll("tests/fixtures/invalid_fuselage_wing_overlap.yaml")
+    sc = scene.build_scene(lay)  # no check_result
+    assert sc["readouts"] is None

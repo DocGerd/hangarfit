@@ -17,6 +17,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
+from hangarfit import metrics
 from hangarfit.geometry import aircraft_parts_world, local_to_world
 from hangarfit.models import CheckResult, Layout, Placement
 from hangarfit.towplanner import back_first_order
@@ -222,6 +223,18 @@ def _conflict_ids(check_result: CheckResult | None) -> list[str]:
     return sorted({pid for c in check_result.conflicts for pid in c.planes})
 
 
+def _readouts(layout: Layout) -> dict:
+    """Actionable quality numbers (#401): the tightest plan-view inter-plane gap
+    and the smallest wing-over-tail vertical clearance (either may be ``null`` —
+    single plane / no overhang). Only meaningful for a *valid* layout; the caller
+    (:func:`build_scene`) decides validity via :func:`metrics.layout_is_valid` and
+    emits ``null`` instead for an invalid one."""
+    return {
+        "min_gap_m": metrics.min_pairwise_gap_m(layout),
+        "min_wing_over_tail_clearance_m": metrics.min_wing_over_tail_clearance_m(layout),
+    }
+
+
 def build_scene(
     layout: Layout,
     *,
@@ -246,6 +259,12 @@ def build_scene(
         max_seg_s=max_seg_s,
         max_samples_per_path=max_samples_per_path,
     )
+    conflicts = _conflict_ids(check_result)
+    # Readouts imply a *verified-valid* layout. Determine validity ourselves when
+    # the caller passed no CheckResult (e.g. `view` without --check) so we never
+    # present a misleading "gap 0.00 m" on an unchecked, actually-invalid layout
+    # (#401 review). collisions.check is pure/deterministic — determinism intact.
+    valid = metrics.layout_is_valid(layout, check_result)
     return {
         "schema": SCHEMA,
         "units": "m",
@@ -254,7 +273,9 @@ def build_scene(
         "planes": _plane_blocks(layout),
         "timeline": timeline,
         "final_poses": dict(finals),
-        "conflicts": _conflict_ids(check_result),
+        "conflicts": conflicts,
         "anchors": _anchors(layout),
         "gear_anchors": _gear_anchors(layout),
+        "placeholder": metrics.has_placeholder_data(layout),
+        "readouts": _readouts(layout) if valid else None,
     }

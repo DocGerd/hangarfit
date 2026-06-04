@@ -88,6 +88,20 @@ def test_html_embeds_polish_features(tmp_path):
     assert 'id="labels"' in html  # the HUD toggle for labels + nose arrows
 
 
+def test_html_embeds_honesty_banner_and_readouts(tmp_path):
+    # #401: the placeholder banner + readouts wiring must reach the artifact, and
+    # the scene JSON must carry the placeholder flag (shipped fleet is unmeasured).
+    html = _html(tmp_path)
+    assert "PLACEHOLDER DATA" in html
+    assert 'id="placeholder"' in html
+    assert 'id="readouts"' in html
+    m = re.search(r'id="scene">(.*?)</script>', html, re.S)
+    assert m is not None
+    scene_json = json.loads(m.group(1))
+    assert scene_json["placeholder"] is True
+    assert scene_json["readouts"] is not None
+
+
 def test_static_scene_renders(tmp_path):
     # A layout with no MovesPlan → static scene, still a valid HTML artifact.
     lay = load_layout(LAYOUT)

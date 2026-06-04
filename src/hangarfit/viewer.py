@@ -15,6 +15,8 @@ import json
 from importlib import resources
 from pathlib import Path
 
+from hangarfit import metrics
+
 _ASSETS = "hangarfit._viewer_assets"
 _THREE = "hangarfit._viewer_assets.three"
 
@@ -33,8 +35,12 @@ def _data_url(js_source: str) -> str:
 def _embed_json(obj: dict) -> str:
     """Compact JSON safe to inline inside a ``<script>`` element: ``<`` is
     escaped to ``\\u003c`` so a value can never produce a ``</script>``
-    breakout (the canonical safe-embedding technique)."""
-    return json.dumps(obj, separators=(",", ":")).replace("<", "\\u003c")
+    breakout (the canonical safe-embedding technique).
+
+    ``allow_nan=False`` makes a non-finite value (``inf``/``nan``) raise here at
+    the producer rather than serialize to a bare ``Infinity``/``NaN`` token that
+    the viewer's ``JSON.parse`` would choke on — fail loud, not a blank page."""
+    return json.dumps(obj, separators=(",", ":"), allow_nan=False).replace("<", "\\u003c")
 
 
 def render_viewer(scene: dict, output_path: Path | str) -> None:
@@ -61,6 +67,9 @@ def render_viewer(scene: dict, output_path: Path | str) -> None:
         "</head><body>\n"
         '<div id="app"><canvas id="c"></canvas></div>\n'
         '<div id="banner" hidden></div>\n'
+        # #401 honesty banner: static text (not user data), shown by viewer.js
+        # when scene.placeholder is true. Same wording as the 2D PNG.
+        f'<div id="placeholder" hidden>{metrics.PLACEHOLDER_BANNER}</div>\n'
         f'<div id="hud">{_HUD}</div>\n'
         f'<script type="application/json" id="scene">{_embed_json(scene)}</script>\n'
         f'<script type="module">{viewer_js}</script>\n'
@@ -80,6 +89,9 @@ _CSS = (
     "#scrub{flex:1;min-width:160px}"
     "#banner{position:fixed;top:0;left:0;right:0;padding:10px;background:#7a1f1f;color:#fff;"
     "text-align:center;z-index:9;font-weight:600}"
+    "#placeholder{position:fixed;top:0;left:0;right:0;padding:7px;background:#b00020;"
+    "color:#fff;text-align:center;z-index:8;font-weight:700;letter-spacing:.02em}"
+    "#readouts{color:#aeb6c2;font-variant-numeric:tabular-nums}"
     "#legend{display:flex;gap:8px;flex-wrap:wrap}"
     ".sw{display:inline-flex;align-items:center;gap:4px}"
     ".sw i{width:11px;height:11px;border-radius:2px;display:inline-block}"
@@ -97,5 +109,6 @@ _HUD = (
     '<button id="reset">reset view</button>'
     '<label><input id="walls" type="checkbox" checked> walls</label>'
     '<label><input id="labels" type="checkbox" checked> labels</label>'
+    '<span id="readouts"></span>'
     '<span id="legend"></span>'
 )

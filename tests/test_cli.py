@@ -8,10 +8,43 @@ from pathlib import Path
 import pytest
 
 from hangarfit import __version__
-from hangarfit.cli import main
+from hangarfit.cli import _format_conflict, main
+from hangarfit.models import Conflict
 
 FIXTURES_DIR = Path(__file__).resolve().parent / "fixtures"
 REPO_ROOT = Path(__file__).resolve().parent.parent
+
+
+class TestPlainLanguageConflicts:
+    """#401: conflict output reads as plain language, not just a kind enum,
+    while still keeping the authoritative detail string."""
+
+    def test_pairwise_overlap_says_overlaps_and_names_planes(self):
+        c = Conflict.pair(
+            kind="tail_wing_overlap",
+            plane_a="aviat_husky",
+            plane_b="falke",
+            detail="part 'tail' (z=0..1) and part 'wing' (z=0.5..0.7) ...",
+        )
+        s = _format_conflict(c)
+        assert "aviat_husky" in s and "falke" in s
+        assert "overlaps" in s
+        assert c.detail in s  # the precise detail is preserved
+
+    def test_bay_intrusion_is_plain(self):
+        c = Conflict.single(kind="bay_intrusion", plane="cessna_150", detail="...")
+        s = _format_conflict(c)
+        assert "cessna_150" in s and "maintenance bay" in s
+
+    def test_hangar_bounds_is_plain(self):
+        c = Conflict.single(kind="hangar_bounds", plane="fuji", detail="...")
+        s = _format_conflict(c)
+        assert "fuji" in s and "outside the hangar" in s
+
+    def test_unknown_kind_falls_back_without_crashing(self):
+        c = Conflict.single(kind="some_future_kind", plane="x", detail="d")
+        s = _format_conflict(c)
+        assert "x" in s and "d" in s
 
 
 class TestArgparseUsageErrors:
@@ -83,11 +116,12 @@ class TestCheckHappyPath:
         assert exit_code == 1
         captured = capsys.readouterr()
         assert captured.out.startswith("invalid:")
-        # Conflict line uses the spec's format: "  - <kind> [<plane>[, <plane>]]: <detail>"
-        # The fuselage front/aft split (#50/ADR-0012) replaced the single
-        # fuselage_wing_overlap kind with the segment-specific kinds; this
-        # fixture's wing crosses both of scheibe's fuselage segments.
-        assert "fuselage_front_wing_overlap" in captured.out
+        # Plain-language conflict lines (#401): "  - <A> overlaps <B>: <detail>".
+        # The lead-in says "overlaps" (not the raw kind), while the authoritative
+        # detail still names the parts — the fuselage front/aft split (#50/ADR-0012)
+        # means this fixture's wing crosses scheibe's fuselage_front segment.
+        assert "overlaps" in captured.out
+        assert "fuselage_front" in captured.out  # part named in the kept detail
         # Every conflict line starts with the two-space-dash prefix
         for line in captured.out.strip().split("\n")[1:]:
             assert line.startswith("  - ")
