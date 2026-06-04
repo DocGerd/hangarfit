@@ -1,0 +1,21 @@
+# Airfield Herrenteich — "everyone home" scenario: all eight usual occupants
+# in the hangar at once. This is the canonical solver INPUT.
+#
+# NOTE: `hangarfit solve` does NOT produce herrenteich/layout.yaml from this
+# scenario — its bounding-box trivial-infeasibility gate rejects this
+# glider-heavy fleet (Σ bbox ≈ 606 m² > the 479 m² rectangular floor; see #425
+# and the layout.yaml header). The committed layout was found by driving the
+# real, part-based collision checker directly. This file is kept as the
+# canonical scenario and as the reproduction case for #425.
+#
+fleet: fleet.yaml
+hangar: hangar.yaml
+fleet_in:
+  - cessna_140
+  - ctsl
+  - wild_thing
+  - aviat_husky
+  - scheibe_falke
+  - fk9_mkii
+  - stemme_s10
+  - zlin_savage

@@ -1,0 +1,66 @@
+# Airfield Herrenteich — "everyone home": all eight usual occupants parked
+# in the real hangar at once. Passes `hangarfit check` (exit 0).
+#
+# HOW THIS WAS PRODUCED. The product solver (`hangarfit solve`) cannot
+# generate this layout: its fast trivial-infeasibility gate sums each plane's
+# bounding-box area (Σ ≈ 606 m² > the 479 m² rectangular floor) and bails, because an
+# 18 m-span motor glider is a 136 m² bounding box of mostly empty air (#425). The
+# REAL, part-based collision checker (thin wing rectangles, z-disjoint
+# wing-over-fuselage nesting) accepts a nested arrangement. So this layout was
+# found by a search that drives that real checker directly, and additionally
+# keeps every plane clear of the back-right office NOTCH that the rectangular
+# hangar model does not yet represent (see hangar.yaml + spike #424).
+#
+# So: this file is a VALID nested layout, but it is the tool's arrangement,
+# not a record of where the club actually parks each aircraft. Replace the
+# placements with the real parking positions when known.
+#
+# Coordinate convention (see hangar.yaml): world (0,0) front-left, +x right
+# along the door wall, +y deeper in; heading 0 = nose deep (+y), 90 = nose
+# toward +x. scheibe_falke (18 m span) cannot sit nose-in under the 15.08 m
+# width, so it parks lengthwise (heading 90).
+
+fleet: fleet.yaml
+hangar: hangar.yaml
+
+placements:
+  - plane: scheibe_falke
+    x_m: 7.5
+    y_m: 22.5
+    heading_deg: 90.0
+    on_carts: true          # always_cart
+  - plane: stemme_s10
+    x_m: 3.5
+    y_m: 13.5
+    heading_deg: 270.0
+    on_carts: false         # always_own_gear
+  - plane: aviat_husky
+    x_m: 5.5
+    y_m: 19.5
+    heading_deg: 90.0
+    on_carts: false         # always_own_gear
+  - plane: cessna_140
+    x_m: 10.5
+    y_m: 6.5
+    heading_deg: 90.0
+    on_carts: false         # cart_eligible, on own gear
+  - plane: fk9_mkii
+    x_m: 7.5
+    y_m: 10.5
+    heading_deg: 270.0
+    on_carts: false         # cart_eligible, on own gear
+  - plane: zlin_savage
+    x_m: 6.5
+    y_m: 26.5
+    heading_deg: 270.0
+    on_carts: true          # always_cart
+  - plane: wild_thing
+    x_m: 10.5
+    y_m: 16.5
+    heading_deg: 90.0
+    on_carts: true          # always_cart
+  - plane: ctsl
+    x_m: 4.5
+    y_m: 4.5
+    heading_deg: 180.0
+    on_carts: false         # cart_eligible, on own gear
