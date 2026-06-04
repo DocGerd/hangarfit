@@ -32,6 +32,7 @@ metres.
 | `final_poses` | object | `plane_id → affine`: each plane at its parked slot. |
 | `conflicts` | array of string | Plane ids to tint red (flattened from a `CheckResult`); `[]` if none / not checked. |
 | `anchors` | object | `plane_id → [box → [corner → [x, y]]]`: oracle world corners at the final placement, for the viewer's load-time self-check. |
+| `gear_anchors` | object | `plane_id → [wheel → [x, y]]`: oracle world wheel positions at the final placement (same `local_to_world` as `anchors`), so the viewer self-check also covers the gear render. |
 
 ## The affine
 
@@ -82,13 +83,24 @@ draws it as a translucent red box only when `closed`.
       "angle_deg": 0.0                   // CCW rotation within plane-local (oriented_rect)
     }
     // … one box per Part
-  ]
+  ],
+  "wheels": [[0.0, 1.0], [0.0, -1.0], [-3.0, 0.0]],  // plane-local (u, v) per wheel (ADR-0013)
+  "on_carts": false                                  // true ⇒ plane rides a dolly
 }
 ```
 
 Boxes are static plane-local geometry, built once. Each is the 3D box of one
 `Part` (`offset_x/y` → `cx/cy`, `z_bottom/z_top` → `cz`/`height_m`). The viewer
 renders `wing` boxes translucent so vertical stacking is visible.
+
+`wheels` is the aircraft's canonical plane-local wheel positions
+([ADR-0013](../adr/0013-wheels-canonical-data.md)) — one `(u, v)` per wheel (1 for
+a monowheel, 3 for tricycle/tailwheel). `on_carts` is the per-placement dolly flag.
+The viewer draws a wheel at each point (+ a short leg up to the belly where the
+belly clears the wheel) inside the same affine Group as the boxes — so the gear
+inherits the plane-local→world transform and animates along the tow path — plus a
+pallet deck under each wheel when `on_carts`. Render *sizes* (wheel radius, pallet extent) are viewer-layer
+constants mirroring `visualize.py`, never data: the schema carries only positions.
 
 ## `timeline`
 

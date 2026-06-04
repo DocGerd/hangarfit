@@ -251,3 +251,47 @@ def test_build_scene_is_byte_deterministic():
     a = json.dumps(scene.build_scene(lay, moves_plan=plan))
     b = json.dumps(scene.build_scene(lay, moves_plan=plan))
     assert a == b
+
+
+# ── Task 6 (#399): gear + carts — plane-local wheels + world gear anchors ─────
+
+
+def test_plane_blocks_carry_wheels_and_on_carts():
+    # #399: each plane block emits its canonical plane-local wheel positions
+    # (ADR-0013) and the per-placement on_carts flag, so the viewer can draw gear
+    # and (when carted) pallets parented to the same affine Group.
+    lay = load_layout(LAYOUT)
+    planes = scene._plane_blocks(lay)
+    for placement in lay.placements:
+        ac = lay.fleet[placement.plane_id]
+        p = next(b for b in planes if b["id"] == placement.plane_id)
+        assert p["wheels"] == [[u, v] for u, v in ac.wheels.positions]
+        assert p["on_carts"] == placement.on_carts
+
+
+def test_gear_anchors_are_world_wheel_positions():
+    # The cross-language gear oracle: world wheel positions at the FINAL pose,
+    # via the production local_to_world transform (the viewer recomputes them from
+    # the plane-local wheels[] + the final affine and asserts agreement on load).
+    from hangarfit.geometry import local_to_world
+
+    lay = load_layout(LAYOUT)
+    ga = scene._gear_anchors(lay)
+    for placement in lay.placements:
+        ac = lay.fleet[placement.plane_id]
+        got = ga[placement.plane_id]
+        want = [local_to_world(u, v, placement) for u, v in ac.wheels.positions]
+        assert len(got) == len(want)
+        for (gx, gy), (wx, wy) in zip(got, want, strict=True):
+            assert math.isclose(gx, wx, abs_tol=1e-9) and math.isclose(gy, wy, abs_tol=1e-9)
+
+
+def test_build_scene_includes_gear_anchors_and_wheels():
+    lay = load_layout(LAYOUT)
+    plan = plan_fill(lay)
+    sc = scene.build_scene(lay, moves_plan=plan)
+    assert "gear_anchors" in sc
+    assert set(sc["gear_anchors"]) == {pl.plane_id for pl in lay.placements}
+    for p in sc["planes"]:
+        assert "wheels" in p and "on_carts" in p
+    json.dumps(sc)  # the new fields stay JSON-serializable
