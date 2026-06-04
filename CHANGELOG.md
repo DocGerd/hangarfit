@@ -17,7 +17,7 @@ All notable changes to this project are documented here. Format follows [Keep a 
   view` now uses the dark-lifted fleet palette (`PLANES_DARK`, keyed by the same
   sorted id so 2D/3D plane identity is preserved), a unified scene shell
   (floor/grid/walls on the STATUS `wall` ink), a `maint`-violet maintenance bay
-  (retiring the off-system red), an accent fill light, branded HUD chrome (dark
+  (retiring the viewer's off-system red), an accent fill light, branded HUD chrome (dark
   neutrals, accent focus ring, amber honesty banner, Geist/mono typography), and a
   non-colour `⚠ conflict` label cue (the 3D analogue of the 2D hatch — "never hue
   alone"). Render-only: the `scene/v1` contract, the Python-owned determinant-−1

@@ -184,8 +184,8 @@ JS uses.
 | Emissive policy | body **none**; nose cone `colour × 0.25` (cap 0.30) | `boxMaterial` (no emissive) / `addLabelAndNose` nose `emissive` | nose ×0.25 | Lit fills stay honest so CVD separation holds under the key light; reserve a faint self-emit for the nose wayfinding cone only. |
 | Wing | `PLANES_DARK` colour, opacity **0.5** *(keep)* | `boxMaterial` `kind==='wing'` | 0.5 | Translucent so vertical stacking reads — the 3D analogue of 2D `_WING_ALPHA` (0.4). Matte body `roughness 0.7`. |
 | Strut | `PLANES_DARK` colour, `roughness 0.35` / `metalness 0.85` *(keep)* | `boxMaterial` `kind==='strut'` | same | Metallic so struts read as gear, distinct from the matte body. |
-| Cockpit (`fuselage_front`) | `colour × 0.55` (linear) *(keep)* | `boxMaterial` `multiplyScalar(0.55)` | ×0.55 | Darker cockpit tint = the perceptual match to 2D `_FUSELAGE_FRONT_DARKEN` (0.62 sRGB). |
-| Wheels | `#566573` *(keep)* | `WHEEL_COLOR = 0x566573` (= `visualize._WHEEL_COLOR`) | same | Gear slate, deliberately offset from `PLANES[8]` graphite `#5E646B` so gear never reads as plane-09. Tokenise as **Gear slate**. |
+| Cockpit (`fuselage_front`) | `colour × 0.55` (linear) *(keep)* | `boxMaterial` `multiplyScalar(0.55)` | ×0.55 | Darker cockpit tint = the 3D analogue of 2D `_FUSELAGE_FRONT_DARKEN` (0.62 sRGB) — same *intent* (a darker cockpit), applied in **linear** space, **not** a perceptual sRGB match (see the `boxMaterial` note in `viewer.js`). |
+| Wheels | `#566573` *(keep)* | `WHEEL_COLOR = 0x566573` (= `visualize._WHEEL_COLOR`) | same | Gear slate, deliberately offset from the graphite fleet fill (`PLANES[8]` `#5E646B` in 2D / `PLANES_DARK[8]` `#9AA0A8` in the 3D scene) so gear never reads as plane-09. Tokenise as **Gear slate**. |
 | Cart decks | `#AAB7B8` *(keep)* | `CART_DECK_COLOR = 0xaab7b8` (= `visualize._CART_DECK_COLOR`) | same | Lighter neutral so the dolly pallet separates from the darker wheel disc. Tokenise as **Cart deck**. |
 | Conflict | `#C8442C` **+ label cue** | `CONFLICT = 0xc8442c`; add `⚠ conflict` in `makeLabel` / chip bg `#C8442C` | `0xc8442c` (colour only) | STATUS `conflict` ink. The label suffix supplies the non-colour redundancy 3D can't hatch — honours "never hue alone." |
 | Nose arrow | plane `PLANES_DARK` colour, `emissive ×0.25` *(keep)* | `addLabelAndNose` nose material | plane hue | The wayfinding tip carries the plane's own identity hue + a faint self-emit. |
@@ -232,7 +232,7 @@ machine output in Geist Mono.
 
 These keep the *single source of truth* honest but touch `visualize.py`, not the
 viewer. Render-only, no test/contract impact beyond a deliberate value change;
-recommend bundling with #415 or a sibling issue:
+tracked as the sibling issue #418 (deliberately **not** folded into #415, which is 3D-only):
 
 - **Maintenance bay → `maint` violet.** The 2D closed-bay currently draws
   `_BAY_WALL_FACE #922b21` / `_BAY_WALL_EDGE #641e16` (a second red that the code

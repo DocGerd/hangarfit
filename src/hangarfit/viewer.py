@@ -78,9 +78,10 @@ def render_viewer(scene: dict, output_path: Path | str) -> None:
     Path(output_path).write_text(html, encoding="utf-8")
 
 
-# DocGerdSoft dark-surface brand (BRAND.md §4). Form controls (button, select,
-# input) don't inherit font-family, so the Geist / Geist-Mono stacks are set
-# explicitly on them; machine output (clock, readouts, ids) is mono per brand.
+# DocGerdSoft dark-surface brand (BRAND.md §4). Form controls don't inherit
+# font-family, so the Geist stack is set explicitly on the text-bearing controls
+# (the HUD buttons + the speed select); machine output (clock, readouts, ids) is
+# mono per brand.
 _CSS = (
     "html,body{margin:0;height:100%;background:#0d0e10;color:#ECEEF1;"
     'font:13px "Geist",system-ui,sans-serif;overflow:hidden}'
@@ -91,6 +92,7 @@ _CSS = (
     "#hud button{cursor:pointer;background:#1B1E22;color:#ECEEF1;border:1px solid #2A2E33;"
     'font:500 13px "Geist",system-ui,sans-serif;'
     "border-radius:6px;padding:5px 10px}#hud button:disabled{opacity:.4;cursor:default}"
+    '#hud select{font:500 13px "Geist",system-ui,sans-serif}'
     "#hud button:focus,#scrub:focus{outline:2px solid #3FA3D6;outline-offset:2px}"
     "#scrub{flex:1;min-width:160px;accent-color:#3FA3D6}"
     "#banner{position:fixed;top:0;left:0;right:0;padding:10px;background:#BC4438;color:#fff;"
