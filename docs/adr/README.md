@@ -95,3 +95,4 @@ manual workflow above is canonical.
 | 0015 | [Wheels do not participate in the static collision model (gear stays render/motion data)](0015-wheels-not-in-collision-model.md) | Accepted |
 | 0016 | [Spread-vs-towability — CLI re-solves spread-off as a backstop when a default-spread layout is un-routable](0016-spread-towability-fallback.md) | Proposed |
 | 0017 | [3D viewer — `scene/v1` JSON seam → self-contained offline Three.js HTML, transform owned by Python](0017-3d-viewer-architecture.md) | Proposed |
+| 0018 | [Model the non-rectangular hangar footprint — list of keep-out rects + derived Shapely floor polygon for containment](0018-non-rectangular-hangar-footprint.md) | Proposed |
