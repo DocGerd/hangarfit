@@ -10,6 +10,15 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Fixed
 
+- **`hangarfit view` degrades to a static scene in seconds, not minutes
+  (#398).** Layout-mode `view` now passes a small deterministic *global*
+  tow-expansion cap (`_VIEW_TOW_MAX_TOTAL_EXPANSIONS`, 300) to `plan_fill`, so an
+  un-routable layout (e.g. the default `layouts/example.yaml`) falls back to a
+  static 3D render in ~5 s instead of grinding through the full ~16000-expansion
+  disprove budget (~2 min). The bound is a deterministic expansion count, not a
+  wall-clock deadline (ADR-0003); a fast-routable layout still animates, and an
+  explicit `--tow-max-expansions` overrides the cap.
+
 ## [0.9.0] — 2026-06-02
 
 ### Added

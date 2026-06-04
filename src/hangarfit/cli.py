@@ -42,6 +42,28 @@ _SOLVE_JSON_SCHEMA = "hangarfit.solve/v1"
 # objective — it does not collapse the inter-plane gap. See ADR-0008 (amended).
 _BACK_FILL_DEFAULT_WEIGHT = 1.0
 
+# #398 view-mode fast-degrade cap: the *global* tow-expansion budget the `view`
+# subcommand passes to ``plan_fill`` in layout mode. The default whole-fill
+# budget (towplanner._MAX_FILL_EXPANSIONS, 16000) is tuned to *disprove* a hard
+# fill in bounded time for batch `solve`, but at that scale an un-routable
+# interactive `view` (e.g. layouts/example.yaml) grinds ~2 min before falling
+# back to a static scene. A far smaller global cap degrades to static in a few
+# seconds. This bounds the search by a deterministic expansion COUNT, not a
+# wall-clock deadline — a time limit would bail a genuinely-but-slowly-routable
+# preview differently on a slow machine, the exact ADR-0003 violation it pretends
+# to avoid. A genuinely fast-routable layout finishes well under this cap and
+# still animates; --tow-max-expansions overrides it (and the per-plane budget).
+#
+# Value chosen from measurement (~14 ms / expansion here, dominated by shapely
+# collision checks): at 300 the un-routable example.yaml degrades in ~5 s while
+# the routable demo (valid_left_side_nesting) still animates using ≪300 total
+# expansions. The roadmap suggested ~2000, but that measured ~30 s — failing the
+# "within a few seconds" goal — so the confirm-at-implementation cap is 300, at
+# the cost of a smaller routable-animation envelope for slow/tight hand-authored
+# layouts (an accepted tradeoff: such a layout shows static rather than an
+# animation). `view --solve` is unaffected — it routes via solve(), not here.
+_VIEW_TOW_MAX_TOTAL_EXPANSIONS = 300
+
 
 def build_parser() -> argparse.ArgumentParser:
     """Build the argparse parser with the ``check`` and ``solve`` subcommands."""
@@ -313,8 +335,10 @@ def build_parser() -> argparse.ArgumentParser:
         dest="tow_max_expansions",
         help=(
             "Per-plane Hybrid-A* expansion budget for the tow animation (default: "
-            "the module _MAX_EXPANSIONS). Lower it to fail fast / degrade to a "
-            "static scene sooner on layouts that cannot be routed."
+            "the module _MAX_EXPANSIONS). In layout mode it also overrides the "
+            "small global fast-degrade cap the viewer applies by default, so an "
+            "un-routable layout falls back to a static 3D scene within a few "
+            "seconds instead of grinding through the full disprove budget."
         ),
     )
 
@@ -946,7 +970,21 @@ def cmd_view(args: argparse.Namespace) -> int:
                 check_result = collisions.check(layout)
             if args.animate:
                 try:
-                    moves_plan = plan_fill(layout, max_expansions=args.tow_max_expansions)
+                    # Cap the *global* fill budget so an un-routable layout
+                    # degrades to a static scene in a few seconds rather than
+                    # grinding through the full ~16000 disprove budget (#398). An
+                    # explicit --tow-max-expansions overrides the view default and
+                    # bounds the per-plane budget too.
+                    view_total_cap = (
+                        args.tow_max_expansions
+                        if args.tow_max_expansions is not None
+                        else _VIEW_TOW_MAX_TOTAL_EXPANSIONS
+                    )
+                    moves_plan = plan_fill(
+                        layout,
+                        max_expansions=args.tow_max_expansions,
+                        max_total_expansions=view_total_cap,
+                    )
                 except NoFeasiblePlanError as e:
                     print(
                         f"note: layout not tow-routable (plane {e.plane_id!r} could not be "
