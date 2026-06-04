@@ -15,6 +15,17 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 const SCENE = JSON.parse(document.getElementById('scene').textContent);
 const H = SCENE.hangar;
 
+// #401 honesty banner + actionable readouts. The banner text is static (set in
+// the HTML); we only unhide it. Readouts are numbers from the scene — no user
+// HTML, set via textContent.
+if (SCENE.placeholder) document.getElementById('placeholder').hidden = false;
+if (SCENE.readouts) {
+  const fmtM = (v) => (v == null ? 'n/a' : v.toFixed(2) + ' m');
+  document.getElementById('readouts').textContent =
+    'gap ' + fmtM(SCENE.readouts.min_gap_m) +
+    ' · wing-over-tail ' + fmtM(SCENE.readouts.min_wing_over_tail_clearance_m);
+}
+
 function banner(msg) {
   const b = document.getElementById('banner');
   b.hidden = false;

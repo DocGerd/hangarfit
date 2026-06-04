@@ -17,6 +17,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
+from hangarfit import metrics
 from hangarfit.geometry import aircraft_parts_world, local_to_world
 from hangarfit.models import CheckResult, Layout, Placement
 from hangarfit.towplanner import back_first_order
@@ -222,6 +223,19 @@ def _conflict_ids(check_result: CheckResult | None) -> list[str]:
     return sorted({pid for c in check_result.conflicts for pid in c.planes})
 
 
+def _readouts(layout: Layout, conflict_ids: list[str]) -> dict | None:
+    """Actionable quality numbers for a *valid* layout (#401): the tightest
+    plan-view inter-plane gap and the smallest wing-over-tail vertical clearance
+    (either may be ``null`` — single plane / no overhang). ``None`` when the
+    layout has conflicts: an invalid arrangement has no quality to report."""
+    if conflict_ids:
+        return None
+    return {
+        "min_gap_m": metrics.min_pairwise_gap_m(layout),
+        "min_wing_over_tail_clearance_m": metrics.min_wing_over_tail_clearance_m(layout),
+    }
+
+
 def build_scene(
     layout: Layout,
     *,
@@ -246,6 +260,7 @@ def build_scene(
         max_seg_s=max_seg_s,
         max_samples_per_path=max_samples_per_path,
     )
+    conflicts = _conflict_ids(check_result)
     return {
         "schema": SCHEMA,
         "units": "m",
@@ -254,7 +269,9 @@ def build_scene(
         "planes": _plane_blocks(layout),
         "timeline": timeline,
         "final_poses": dict(finals),
-        "conflicts": _conflict_ids(check_result),
+        "conflicts": conflicts,
         "anchors": _anchors(layout),
         "gear_anchors": _gear_anchors(layout),
+        "placeholder": metrics.has_placeholder_data(layout),
+        "readouts": _readouts(layout, conflicts),
     }

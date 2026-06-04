@@ -356,9 +356,29 @@ def _emit_human(result: CheckResult) -> None:
         print(_format_conflict(c))
 
 
+# Plain-language lead-in per single-plane conflict kind (#401). Pairwise overlaps
+# are phrased "A overlaps B" generically — the authoritative ``detail`` already
+# names the exact parts and z-gaps, so we never re-parse it (which would be fragile).
+_SINGLE_CONFLICT_PHRASES = {
+    "bay_intrusion": "intrudes into the maintenance bay",
+    "hangar_bounds": "extends outside the hangar",
+}
+
+
 def _format_conflict(c: Conflict) -> str:
-    """One-line human render of a Conflict. No re-parsing of ``detail``."""
-    return f"  - {c.kind} [{', '.join(c.planes)}]: {c.detail}"
+    """One-line *plain-language* render of a Conflict, keeping the authoritative
+    ``detail`` verbatim (#401). No re-parsing of ``detail`` — the lead-in is built
+    from ``kind`` + ``planes`` only."""
+    planes = list(c.planes)
+    if c.kind.endswith("_overlap") and len(planes) == 2:
+        lead = f"{planes[0]} overlaps {planes[1]}"
+    elif c.kind in _SINGLE_CONFLICT_PHRASES and planes:
+        lead = f"{planes[0]} {_SINGLE_CONFLICT_PHRASES[c.kind]}"
+    else:
+        # Unknown / future kind: fall back to the raw kind + ids (still names the
+        # planes), never crash.
+        lead = f"{c.kind} [{', '.join(planes)}]"
+    return f"  - {lead}: {c.detail}"
 
 
 def _conflict_to_dict(c: Conflict) -> dict:
@@ -418,7 +438,7 @@ def _emit_solve_human(result: SolveResult, *, alternatives: int) -> None:
         print("Trivially infeasible:")
         if d.best_partial is not None:
             for c in d.best_partial.conflicts:
-                print(f"  - {c.kind} [{', '.join(c.planes)}]: {c.detail}")
+                print(_format_conflict(c))
         return
 
     if result.status == "exhausted_budget":
@@ -430,7 +450,7 @@ def _emit_solve_human(result: SolveResult, *, alternatives: int) -> None:
             n = len(d.best_partial.conflicts)
             print(f"Best partial had {n} conflict{'s' if n != 1 else ''}:")
             for c in d.best_partial.conflicts:
-                print(f"  - {c.kind} [{', '.join(c.planes)}]: {c.detail}")
+                print(_format_conflict(c))
         print("Hint: increase --budget, or relax pins.")
         return
 

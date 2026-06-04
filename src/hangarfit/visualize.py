@@ -40,8 +40,14 @@ import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.patches import Circle as MplCircle  # noqa: E402
 from matplotlib.patches import Polygon as MplPolygon  # noqa: E402
 
+from . import metrics  # noqa: E402
 from .geometry import WorldPart, aircraft_parts_world, local_to_world  # noqa: E402
 from .models import Aircraft, CheckResult, Layout, Placement  # noqa: E402
+
+# #401 honesty banner: shown whenever any placed aircraft is on placeholder
+# (unmeasured) data, so a club member never mistakes an illustrative render for a
+# real parking plan. Wording is shared 2D/3D via metrics.PLACEHOLDER_BANNER.
+_PLACEHOLDER_BANNER = metrics.PLACEHOLDER_BANNER
 
 if TYPE_CHECKING:
     # Annotation-only import: the runtime code in _draw_tow_paths is duck-typed
@@ -262,6 +268,13 @@ def render_layout(
         if moves_plan is not None:
             _draw_tow_paths(ax, moves_plan)
         _finalize_axes(ax, layout, title)
+        if metrics.has_placeholder_data(layout):
+            _draw_placeholder_banner(fig)
+        # Readouts only make sense for a valid arrangement (#401): an invalid one
+        # has overlaps, so a "tightest gap" of 0 would mislead. `check` passes a
+        # CheckResult; solve/None layouts are valid by construction.
+        if check_result is None or check_result.valid:
+            _draw_readouts(fig, layout)
         fig.savefig(str(output_path), dpi=dpi, bbox_inches="tight")
     finally:
         # Always close the figure, even if savefig raises (bad path,
@@ -681,6 +694,47 @@ def _draw_tow_paths(ax: Any, moves_plan: MovesPlan) -> None:
             zorder=5,
             label=move.plane_id,
         )
+
+
+def _draw_placeholder_banner(fig: Any) -> None:
+    """Draw the persistent "PLACEHOLDER DATA" honesty banner across the top of the
+    figure (#401). Caller decides whether to show it (unmeasured data loaded)."""
+    fig.text(
+        0.5,
+        0.995,
+        _PLACEHOLDER_BANNER,
+        ha="center",
+        va="top",
+        fontsize=12,
+        fontweight="bold",
+        color="white",
+        bbox={"facecolor": "#b00020", "edgecolor": "none", "boxstyle": "round,pad=0.45"},
+    )
+
+
+def _readout_text(layout: Layout) -> str:
+    """Human one-liner of the actionable readouts (#401): the tightest plan-view
+    inter-plane gap and the smallest wing-over-tail vertical clearance. Each reads
+    ``n/a`` when undefined (single plane / no overhang)."""
+    gap = metrics.min_pairwise_gap_m(layout)
+    clr = metrics.min_wing_over_tail_clearance_m(layout)
+    gap_s = f"{gap:.2f} m" if gap is not None else "n/a (single plane)"
+    clr_s = f"{clr:.2f} m" if clr is not None else "n/a"
+    return f"tightest inter-plane gap: {gap_s}    ·    smallest wing-over-tail clearance: {clr_s}"
+
+
+def _draw_readouts(fig: Any, layout: Layout) -> None:
+    """Draw the actionable quality readouts along the bottom of the figure (#401)."""
+    fig.text(
+        0.5,
+        0.005,
+        _readout_text(layout),
+        ha="center",
+        va="bottom",
+        fontsize=9,
+        color="#2c3e50",
+        bbox={"facecolor": "#ecf0f1", "edgecolor": "#bdc3c7", "boxstyle": "round,pad=0.4"},
+    )
 
 
 def _finalize_axes(ax: Any, layout: Layout, title: str | None) -> None:

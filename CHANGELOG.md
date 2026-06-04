@@ -29,8 +29,23 @@ All notable changes to this project are documented here. Format follows [Keep a 
   `labels` HUD toggle. All client-side with the already-vendored Three.js r160 —
   still a single self-contained offline HTML, no new assets, no determinism or
   collision risk.
+- **Honesty banner + actionable readouts (#401).** A persistent "PLACEHOLDER
+  DATA — illustrative only, not for real parking" banner now appears on both the
+  2D PNG and the 3D viewer whenever any placed aircraft is on unmeasured
+  (`measured: false`) data — so a club member never mistakes an illustrative
+  render for a real parking plan (#79). It disappears once the data is measured.
+  Valid layouts also surface two actionable numbers — the tightest plan-view
+  inter-plane gap and the smallest wing-over-tail vertical clearance — computed by
+  a new read-only `hangarfit.metrics` module (never entering the collision model).
 
 ### Changed
+
+- **Plain-language conflict messages (#401).** `check` (exit 1) and the solver's
+  trivially-infeasible / exhausted-budget summaries now lead each conflict with a
+  readable sentence ("`fuji` overlaps `scheibe_falke`", "`x` intrudes into the
+  maintenance bay", "`x` extends outside the hangar") instead of the raw `kind`
+  enum, while keeping the precise `detail` (parts + z-gaps) verbatim. The exit-3
+  "no feasible tow path (plane …)" message already named the blocking plane.
 
 ### Fixed
 
