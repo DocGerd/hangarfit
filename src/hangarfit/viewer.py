@@ -78,20 +78,30 @@ def render_viewer(scene: dict, output_path: Path | str) -> None:
     Path(output_path).write_text(html, encoding="utf-8")
 
 
+# DocGerdSoft dark-surface brand (BRAND.md §4). Form controls don't inherit
+# font-family, so the Geist stack is set explicitly on the text-bearing controls
+# (the HUD buttons + the speed select); machine output (clock, readouts, ids) is
+# mono per brand.
 _CSS = (
-    "html,body{margin:0;height:100%;background:#0d0e10;color:#e8eaed;"
-    "font:13px system-ui,sans-serif;overflow:hidden}"
+    "html,body{margin:0;height:100%;background:#0d0e10;color:#ECEEF1;"
+    'font:13px "Geist",system-ui,sans-serif;overflow:hidden}'
     "#c{display:block;width:100vw;height:100vh}"
     "#hud{position:fixed;left:0;right:0;bottom:0;padding:10px 14px;"
-    "background:rgba(18,20,24,.86);display:flex;gap:10px;align-items:center;flex-wrap:wrap}"
-    "#hud button{cursor:pointer;background:#2a2d33;color:#e8eaed;border:1px solid #3b4046;"
+    "background:rgba(21,23,26,.86);border-top:1px solid #2A2E33;"
+    "display:flex;gap:10px;align-items:center;flex-wrap:wrap}"
+    "#hud button{cursor:pointer;background:#1B1E22;color:#ECEEF1;border:1px solid #2A2E33;"
+    'font:500 13px "Geist",system-ui,sans-serif;'
     "border-radius:6px;padding:5px 10px}#hud button:disabled{opacity:.4;cursor:default}"
-    "#scrub{flex:1;min-width:160px}"
-    "#banner{position:fixed;top:0;left:0;right:0;padding:10px;background:#7a1f1f;color:#fff;"
+    '#hud select{font:500 13px "Geist",system-ui,sans-serif}'
+    "#hud button:focus,#scrub:focus{outline:2px solid #3FA3D6;outline-offset:2px}"
+    "#scrub{flex:1;min-width:160px;accent-color:#3FA3D6}"
+    "#banner{position:fixed;top:0;left:0;right:0;padding:10px;background:#BC4438;color:#fff;"
     "text-align:center;z-index:9;font-weight:600}"
-    "#placeholder{position:fixed;top:0;left:0;right:0;padding:7px;background:#b00020;"
-    "color:#fff;text-align:center;z-index:8;font-weight:700;letter-spacing:.02em}"
-    "#readouts{color:#aeb6c2;font-variant-numeric:tabular-nums}"
+    "#placeholder{position:fixed;top:0;left:0;right:0;padding:7px;background:#D6A23E;"
+    "color:#14161A;text-align:center;z-index:8;font-weight:700;letter-spacing:.02em}"
+    '#clock,#active,#readouts,.sw{font-family:"Geist Mono",ui-monospace,'
+    '"SF Mono",Menlo,monospace;font-feature-settings:"tnum" 1,"zero" 1}'
+    "#readouts{color:#C2C7CD;font-variant-numeric:tabular-nums}"
     "#legend{display:flex;gap:8px;flex-wrap:wrap}"
     ".sw{display:inline-flex;align-items:center;gap:4px}"
     ".sw i{width:11px;height:11px;border-radius:2px;display:inline-block}"

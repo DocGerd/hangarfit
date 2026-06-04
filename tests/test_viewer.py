@@ -102,6 +102,31 @@ def test_html_embeds_honesty_banner_and_readouts(tmp_path):
     assert scene_json["readouts"] is not None
 
 
+def test_html_carries_brand_3d_tokens(tmp_path):
+    # #415: the generated viewer embeds the DocGerdSoft dark-surface brand. These
+    # are string-presence guards (pixels are checked by the headless screenshot);
+    # every viewer.js literal is always in the inlined module text and every CSS
+    # token always in the <style> block, so one fixture suffices.
+    html = _html(tmp_path)
+    # HUD chrome (viewer.py _CSS)
+    assert "#D6A23E" in html  # placeholder/honesty banner -> warning amber
+    assert "#14161A" in html  # ...with dark ink on the amber
+    assert "#BC4438" in html  # error banner -> danger red
+    assert "outline:2px solid #3FA3D6" in html  # accent focus ring
+    assert "accent-color:#3FA3D6" in html  # branded range scrubber
+    assert "#C2C7CD" in html  # readouts -> --graphite-strong dark
+    assert '"Geist Mono"' in html  # machine-output mono stack
+    # Scene shell + lights (viewer.js)
+    assert "0x15171a" in html  # floor -> --surface dark
+    assert "0x202428" in html  # grid minor -> --hairline-2 dark
+    assert "0x7b63a3" in html  # maintenance bay -> maint violet
+    assert "opacity: 0.20" in html  # walls -> lifted opacity
+    assert "0xcfe3f2" in html  # fill light -> pale accent tint
+    # Never-hue-alone conflict cue (viewer.js)
+    assert "⚠ conflict" in html  # non-colour label suffix the 3D box can't hatch
+    assert "ui-monospace" in html  # mono label stack
+
+
 def test_static_scene_renders(tmp_path):
     # A layout with no MovesPlan → static scene, still a valid HTML artifact.
     lay = load_layout(LAYOUT)
