@@ -97,11 +97,13 @@ Use the best-fitted model for the task. The model class to pick is "as much reas
 
 Most coding goes direct in-session. Subagent dispatch is for review work and isolated heavy lifts.
 
+**Review subagents must stay read-only in the shared checkout.** A review agent that runs `git switch` / `checkout` / `stash` in the shared working tree silently reverts it under any sibling agent (and under you). Point review agents at `origin/<branch>` refs instead — `gh pr diff N`, `git diff origin/develop...origin/feature/X`, and `git show origin/develop:<path>` for the pre-change state — and **never** switch branches in place. Isolate any subagent that *writes* in its own worktree.
+
 ---
 
 ## Project-local Claude Code config
 
-The `.claude/` directory holds team-shared Claude Code settings (currently: a PreToolUse guard that blocks hand-edits to the hash-pinned `requirements-*.txt` lockfiles, a PostToolUse hook that runs ruff + pytest after edits under `src/hangarfit/` or `tests/`, plus a Stop-event hook that runs mypy once when a turn finishes). See [.claude/README.md](.claude/README.md) for what's there and how to disable per-contributor via a gitignored `.claude/settings.local.json`.
+The `.claude/` directory holds team-shared Claude Code settings (currently: a PreToolUse guard that blocks hand-edits to the hash-pinned `requirements-*.txt` lockfiles, a PostToolUse hook that runs ruff + pytest after edits under `src/hangarfit/` or `tests/`, plus a Stop-event hook that runs mypy once when a turn finishes; and the `pyright-lsp` + `typescript-lsp` editor plugins under `enabledPlugins`). See [.claude/README.md](.claude/README.md) for what's there and how to disable per-contributor via a gitignored `.claude/settings.local.json`.
 
 ---
 
@@ -136,6 +138,8 @@ After cloning and running `claude`, use the `/mcp` command. The `github` and `co
 ## Worktrees
 
 Allowed but not the default. Use only when two feature branches need parallel work (e.g., long-running test suite while writing the visualizer). For sequential issue flow, plain branch checkout is simpler.
+
+**Worktree gotcha:** the editable install's `.pth` points at the **main** checkout, so a bare `pytest` / `python` / `hangarfit` run *inside* a worktree imports the wrong `src` (the PostToolUse hook's pytest included) — run `PYTHONPATH=$PWD/src python -m pytest …` instead. There is no `__main__.py` (the CLI entry point is `hangarfit.cli:main`), so `python -m hangarfit` fails — invoke the CLI as `PYTHONPATH=$PWD/src python -c "from hangarfit.cli import main; main(['view', …])"`.
 
 ---
 
