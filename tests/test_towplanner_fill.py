@@ -386,3 +386,49 @@ def test_plane_wider_than_door_is_untowable() -> None:
     with pytest.raises(NoFeasiblePlanError) as ei:
         plan_fill(target)
     assert ei.value.plane_id == "W"
+
+
+def test_off_centre_plane_within_door_still_routes() -> None:
+    """#411 (no over-fire): the door-gate must NOT block a plane whose y<0 entry
+    protrusion stays WITHIN the door opening. A narrow origin-spanning plane
+    parked off-centre — but inside a wide door — tows in cleanly. The gate only
+    rejects protrusions BESIDE the door, not through it; this is the positive
+    mirror of test_plane_wider_than_door_is_untowable.
+    """
+    from hangarfit.towplanner import path_first_conflict
+
+    def span_plane(pid: str) -> Aircraft:
+        return Aircraft(
+            id=pid,
+            name=pid,
+            wing_position="high",
+            gear="tailwheel",
+            movement_mode="always_own_gear",
+            turn_radius_m=4.0,
+            measured=False,
+            parts=(
+                Part(
+                    kind="fuselage_aft",
+                    length_m=3.0,
+                    width_m=0.6,
+                    offset_x_m=0.0,
+                    offset_y_m=0.0,
+                    angle_deg=0.0,
+                    z_bottom_m=0.0,
+                    z_top_m=1.0,
+                ),
+            ),
+            wheels=_TAIL_WHEELS,
+        )
+
+    # Wide door [4, 16]; the narrow plane parks off-centre at x = 6, well inside
+    # it, so its y<0 entry protrusion (x ~ [5.7, 6.3]) passes through the doorway.
+    h = _hangar(width_m=20.0, length_m=30.0, door_center=10.0, door_width=12.0)
+    fleet = {"P": span_plane("P")}
+    target = _layout(fleet, h, Placement("P", x_m=6.0, y_m=12.0, heading_deg=0.0, on_carts=False))
+    plan = plan_fill(target)
+    (move,) = plan.moves
+    assert move.plane_id == "P"
+    # The routed path is oracle-clean: no front-wall-beside-door clip anywhere.
+    empty = Layout(fleet=fleet, hangar=h, placements=())
+    assert path_first_conflict(move.path, fleet["P"], mover_on_carts=False, placed=empty) is None

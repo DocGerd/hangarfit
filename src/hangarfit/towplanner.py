@@ -892,9 +892,11 @@ def entry_poses(target: Placement, hangar: Hangar) -> tuple[Pose, ...]:
       second occurrence.
 
     The caller (:func:`plan_path` via ``entries=`` and :func:`plan_fill`) filters
-    candidates that clip the side/back walls at the entry pose before seeding the
-    search; a straight-in centre pose is always the final fallback so the search
-    has at least one start.
+    candidates that clip the side/back walls, or protrude in front of the solid
+    wall beside the door (the door-gated front-gap exemption, #411), before
+    seeding the search; a straight-in centre pose is always the final fallback so
+    the search has at least one start (which may itself be infeasible — e.g. a
+    plane wider than the door — leaving the plane un-towable).
 
     Returns a non-empty :class:`tuple` of :class:`Pose` objects, each with
     ``y_m = 0.0`` and ``heading_deg`` from ``_CONE_HEADINGS``.
@@ -1687,10 +1689,13 @@ def plan_path(
     **Multi-start / door-cone mode** (``entries`` provided, #262): seeds the
     search frontier with every *surviving* start pose from the cone — a pose
     survives iff its footprint at the front boundary does not clip the side or
-    back walls (:func:`_mover_motion_bounds_conflict`; the front-wall ``y < 0``
-    exemption still applies).  If ALL candidates are filtered out, the fallback
-    is the door-centre straight-in pose (always safe) so the search always has
-    at least one start.  Each surviving start is enqueued at ``g = 0`` with its
+    back walls AND any ``y < 0`` protrusion stays within the door opening
+    (:func:`_mover_motion_bounds_conflict`; the front-gap exemption is now
+    door-gated, #411).  If ALL candidates are filtered out, the fallback is the
+    door-centre straight-in pose so the search always has at least one start —
+    which may itself be infeasible (e.g. a plane wider than the door), in which
+    case no valid path is found and the caller raises
+    :class:`NoFeasiblePlanError`.  Each surviving start is enqueued at ``g = 0`` with its
     own Euclidean heuristic; A* then naturally expands the most-promising start
     first and returns the best total path across the whole cone.  The
     ``DubinsArc.start`` of the returned arc is the cone pose that *won* (from
@@ -1762,14 +1767,17 @@ def plan_path(
 
     # ── Build the effective start set ────────────────────────────────────────
     # Single-start (no cone): use the bare ``entry`` unchanged.
-    # Multi-start (cone provided): filter cone candidates that clip side/back walls
-    # at the entry pose; fall back to the door-centre straight-in pose if all are
-    # filtered so the search always has at least one start.
+    # Multi-start (cone provided): filter cone candidates that clip the side/back
+    # walls OR protrude in front of the solid wall beside the door; fall back to
+    # the door-centre straight-in pose if all are filtered so the search always
+    # has at least one start.
     if entries is None:
         start_poses: tuple[Pose, ...] = (entry,)
     else:
         # Filter: keep only poses whose footprint at the door boundary is clear of
-        # side/back walls (front-wall y<0 exemption already built into the predicate).
+        # the side/back walls AND whose y<0 protrusion (if any) stays within the
+        # door opening (the door-gated front-gap exemption is built into the
+        # predicate, #411).
         surviving: list[Pose] = []
         for candidate_pose in entries:
             candidate_placement = Placement(
@@ -1784,7 +1792,9 @@ def plan_path(
         if surviving:
             start_poses = tuple(surviving)
         else:
-            # Fallback: straight-in door-centre pose (always fits through the door).
+            # Fallback: door-centre straight-in pose, so the search always has a
+            # start. It is NOT guaranteed feasible — a plane wider than the door
+            # clips even here, and the search then finds no valid path (#411).
             start_poses = (Pose(x_m=hangar.door.center_x_m, y_m=0.0, heading_deg=0.0),)
 
     # ── Seed the open heap with all surviving start poses ───────────────────
