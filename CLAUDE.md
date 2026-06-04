@@ -25,6 +25,7 @@ This file is the durable **operational** context for the project: how we work, w
 | **The maintenance bay rule** (current `bay_intrusion` semantics) | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#the-maintenance-bay-rule) + [ADR-0006](docs/adr/0006-bay-intrusion-maintenance-rule.md). The Phase 1 predecessor is preserved as [ADR-0005](docs/adr/0005-maintenance-bay-rule.md) (Superseded by ADR-0006). |
 | Fleet composition (per-plane wing type, gear, movement mode, struts, canonical wheel positions) | [`data/fleet.yaml`](data/fleet.yaml) — the source of truth; §8 calls out the strut-braced subset and the only low-wing. Wheel positions are canonical per-aircraft data ([ADR-0013](docs/adr/0013-wheels-canonical-data.md)), not renderer heuristics |
 | Hangar dimensions, door, maintenance bay rectangle | [`data/hangar.yaml`](data/hangar.yaml) — all values currently placeholders pending real measurement |
+| **The real Airfield Herrenteich dataset** (DWG-measured hangar + published-spec, second-source-verified fleet incl. a folded Stemme S10 + a valid all-8 `layout.yaml`), kept **separate** from the synthetic `data/` placeholders | [`herrenteich/`](herrenteich/README.md) — real data; `data/` stays the synthetic demo/test fixtures |
 | Default clearances (`clearance_m`, `wing_layer_clearance_m`) | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#default-clearances) |
 | RR-MC solver algorithm and the determinism contract | [ADR-0003](docs/adr/0003-rr-mc-solver-algorithm.md) |
 | Diversity metric (edit-count, thresholds) | [ADR-0004](docs/adr/0004-diversity-metric.md) |
@@ -146,11 +147,13 @@ Vulnerability reporting lives in [SECURITY.md](SECURITY.md). The rationale for t
 
 ## Open questions / TBD before trusting output
 
-- **Real measurements** for every aircraft (`measured: false` in `fleet.yaml`). All current dimensions are eyeballed placeholders.
-- **Real hangar measurements** (`data/hangar.yaml`) — length, width, door position and width, maintenance bay rectangle (`center_x_m`, `width_m`, `depth_m` — back-anchored, partial-width).
-- **Placeholder hangar can't fit the full fleet.** The placeholder hangar in [`data/hangar.yaml`](data/hangar.yaml) is too tight to fit every aircraft at once under the placeholder clearance budget. The default [`layouts/example.yaml`](layouts/example.yaml) is a deliberate 6-plane subset; test fixtures that need the full fleet use [`tests/fixtures/test_hangar_large.yaml`](tests/fixtures/test_hangar_large.yaml). Real hangar measurements will reset this.
+- **`data/` is synthetic.** Every aircraft (`measured: false` in `fleet.yaml`) and the hangar in `data/hangar.yaml` are eyeballed placeholders — kept deliberately as the stable demo/test fixtures.
+- **Real data lives in [`herrenteich/`](herrenteich/README.md)** (since #426): the DWG-measured hangar (15.08 × 31.76 m, 13.46 m door) and the eight usual occupants on published-spec, second-source-verified dimensions (still `measured: false` — published specs, not on-site). Two modelling gaps it surfaced:
+  - **The real hangar is L-shaped; the model is a rectangle.** Its back-right office **notch** (~2.36 × 9.10 m) is recorded only in comments and avoided by hand; teaching the model the notch is **spike #424**.
+  - **`hangarfit solve` false-rejects glider fleets** (#425): its trivial-infeasibility gate sums *bounding boxes*, so an 18 m-span glider trips it (Σ bbox > floor) even when a nested layout is valid. The Herrenteich layout was built by driving `collisions.check` directly, **not** `solve`.
+- **Placeholder hangar can't fit the full fleet.** The placeholder hangar in [`data/hangar.yaml`](data/hangar.yaml) is too tight to fit every aircraft at once under the placeholder clearance budget. The default [`layouts/example.yaml`](layouts/example.yaml) is a deliberate 6-plane subset; test fixtures that need the full fleet use [`tests/fixtures/test_hangar_large.yaml`](tests/fixtures/test_hangar_large.yaml).
 
-The collision checker will run on placeholder data, but until the measurements are real, the output is illustrative only.
+The collision checker will run on the `data/` placeholders, but until those are real, output on them is illustrative only (the `herrenteich/` hangar is real; its fleet is published-spec).
 
 ---
 
