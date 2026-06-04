@@ -18,10 +18,10 @@ import math
 from typing import TYPE_CHECKING
 
 from hangarfit import metrics
+from hangarfit.brand import PLANES_DARK
 from hangarfit.geometry import aircraft_parts_world, local_to_world
 from hangarfit.models import CheckResult, Layout, Placement
 from hangarfit.towplanner import back_first_order
-from hangarfit.visualize import PLANES_DARK
 
 if TYPE_CHECKING:
     from hangarfit.towplanner import DubinsArc, MovesPlan

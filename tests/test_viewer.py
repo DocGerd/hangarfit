@@ -6,7 +6,7 @@ import json
 import re
 from importlib import resources
 
-from hangarfit import scene, viewer
+from hangarfit import brand, scene, viewer
 from hangarfit.loader import load_layout
 from hangarfit.towplanner import plan_fill
 
@@ -19,6 +19,13 @@ def _html(tmp_path) -> str:
     out = tmp_path / "v.html"
     viewer.render_viewer(sc, out)
     return out.read_text(encoding="utf-8")
+
+
+def _brand_blob(html: str) -> dict:
+    """Parse the injected BRAND token blob (#419) out of the rendered HTML."""
+    m = re.search(r'<script type="application/json" id="brand">(.*?)</script>', html, re.S)
+    assert m is not None
+    return json.loads(m.group(1))
 
 
 def test_html_is_self_contained_and_offline(tmp_path):
@@ -116,12 +123,16 @@ def test_html_carries_brand_3d_tokens(tmp_path):
     assert "accent-color:#3FA3D6" in html  # branded range scrubber
     assert "#C2C7CD" in html  # readouts -> --graphite-strong dark
     assert '"Geist Mono"' in html  # machine-output mono stack
-    # Scene shell + lights (viewer.js)
-    assert "0x15171a" in html  # floor -> --surface dark
-    assert "0x202428" in html  # grid minor -> --hairline-2 dark
-    assert "0x7b63a3" in html  # maintenance bay -> maint violet
-    assert "opacity: 0.20" in html  # walls -> lifted opacity
-    assert "0xcfe3f2" in html  # fill light -> pale accent tint
+    # Scene shell + lights now live in the injected BRAND blob (#419): viewer.js
+    # reads them at runtime instead of hard-coding 0x literals. Assert the token
+    # values are present (case-insensitive hex, since THREE.Color is) rather than
+    # the old 0x form.
+    b = _brand_blob(html)
+    assert b["floor"].lower() == "#15171a"  # floor -> --surface dark
+    assert b["gridMinor"].lower() == "#202428"  # grid minor -> --hairline-2 dark
+    assert b["bay"].lower() == "#7b63a3"  # maintenance bay -> maint violet
+    assert b["wallsOpacity"] == 0.20  # walls -> lifted opacity
+    assert b["fill"].lower() == "#cfe3f2"  # fill light -> pale accent tint
     # Never-hue-alone conflict cue (viewer.js)
     assert "⚠ conflict" in html  # non-colour label suffix the 3D box can't hatch
     assert "ui-monospace" in html  # mono label stack
@@ -152,3 +163,80 @@ def test_inlined_viewer_js_has_no_script_close():
         .read_text(encoding="utf-8")
     )
     assert "</script" not in src.lower()
+
+
+# ── #419: the injected canonical BRAND token blob ───────────────────────────
+
+
+def test_brand_blob_is_present_canonical_and_round_trips(tmp_path):
+    # The BRAND blob (#419) is its OWN <script id="brand">, separate from the
+    # scene blob (scene/v1 unchanged). It must parse, be canonical (sorted keys +
+    # compact separators) so the HTML is byte-stable, and be a flat dict of
+    # str/number values.
+    html = _html(tmp_path)
+    m = re.search(r'<script type="application/json" id="brand">(.*?)</script>', html, re.S)
+    assert m is not None
+    raw = m.group(1)
+    tokens = json.loads(raw)
+    # Canonical: re-serializing with sort_keys + compact separators (then the same
+    # '<'-escape the assembler applies) reproduces the embedded bytes exactly.
+    canonical = json.dumps(tokens, sort_keys=True, separators=(",", ":"), allow_nan=False).replace(
+        "<", "\\u003c"
+    )
+    assert raw == canonical
+    assert tokens == brand.viewer_brand_tokens()
+    assert all(isinstance(v, (str, int, float)) for v in tokens.values())
+
+
+def test_brand_blob_has_no_raw_angle_bracket(tmp_path):
+    # Same </script>-breakout guard as the scene blob: every '<' in the BRAND blob
+    # is escaped to < so a future hostile token can't break out of the element.
+    html = _html(tmp_path)
+    m = re.search(r'id="brand">(.*?)</script>', html, re.S)
+    assert m is not None
+    assert "<" not in m.group(1)
+
+
+def test_render_viewer_is_byte_identical_across_two_calls(tmp_path):
+    # Render-only token centralization must not cost determinism: the same scene
+    # renders to byte-identical HTML twice (the BRAND blob is sort_keys-stable).
+    lay = load_layout(LAYOUT)
+    sc1 = scene.build_scene(lay, moves_plan=plan_fill(lay))
+    sc2 = scene.build_scene(lay, moves_plan=plan_fill(lay))
+    out1 = tmp_path / "a.html"
+    out2 = tmp_path / "b.html"
+    viewer.render_viewer(sc1, out1)
+    viewer.render_viewer(sc2, out2)
+    assert out1.read_bytes() == out2.read_bytes()
+
+
+def test_brand_module_exports():
+    # The single token source (#419) exposes the palettes, status inks, and the
+    # 3D viewer token object the BRAND blob is built from.
+    assert len(brand.PLANES) == 9
+    assert len(brand.PLANES_DARK) == 9
+    assert set(brand.STATUS) == {"valid", "conflict", "maint", "wall"}
+    tokens = brand.viewer_brand_tokens()
+    # The 3D token keys viewer.js reads must all exist.
+    for key in (
+        "sceneBg",
+        "floor",
+        "gridMajor",
+        "gridMinor",
+        "walls",
+        "wallsOpacity",
+        "bay",
+        "bayOpacity",
+        "hemisphereSky",
+        "hemisphereGround",
+        "sun",
+        "fill",
+        "wheel",
+        "cartDeck",
+        "conflict",
+        "labelText",
+        "labelChipBg",
+        "labelConflictChip",
+        "fontMono",
+    ):
+        assert key in tokens

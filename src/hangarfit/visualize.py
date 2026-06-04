@@ -40,7 +40,7 @@ import matplotlib.pyplot as plt  # noqa: E402
 from matplotlib.patches import Circle as MplCircle  # noqa: E402
 from matplotlib.patches import Polygon as MplPolygon  # noqa: E402
 
-from . import metrics  # noqa: E402
+from . import brand, metrics  # noqa: E402
 from .geometry import WorldPart, aircraft_parts_world, local_to_world  # noqa: E402
 from .models import Aircraft, CheckResult, Layout, Placement  # noqa: E402
 
@@ -57,107 +57,25 @@ if TYPE_CHECKING:
     from .towplanner import MovesPlan
 
 # ── DocGerdSoft brand palette (Horizon-blue expression) ─────────────────────
-# Lifted verbatim from the authoritative DocGerdSoft brand handoff for
-# hangarfit ("Deliverable 4 — matplotlib Diagram Palette", README "Drop-in"
-# block). The categorical set is derived from the Okabe–Ito CVD-safe palette
-# (https://jfly.uni-koeln.de/color/) and tuned so every fill also clears
-# ≥3:1 contrast on white (WCAG non-text threshold). Identity must never rest
-# on hue alone: every plane also carries an ink outline (``_INK_EDGE``) and a
-# mono id label, and conflicts always add a hatch + ink edge (see
-# :func:`_draw_conflict_overlay`).
-#
-# PLANES — one colour per aircraft, ordered for max pairwise CVD separation.
-PLANES = [
-    "#0079B5",  # 01 Horizon (the hangarfit accent)
-    "#D55E00",  # 02 Vermillion
-    "#009E73",  # 03 Sea green
-    "#B45CA6",  # 04 Orchid
-    "#B37903",  # 05 Amber
-    "#108FAA",  # 06 Cyan
-    "#4C4C9E",  # 07 Indigo
-    "#8A542D",  # 08 Sienna
-    "#5E646B",  # 09 Graphite
-]
-# STATUS — status & structure inks. Key is "wall" per the authoritative README
-# drop-in (NOT "datum" as in the page's hangarfit.js): wall/door/datum all map
-# to the one graphite-strong ink #3B4046.
-STATUS = {
-    "valid": "#0F7C72",  # 5.06:1 on white
-    "conflict": "#C8442C",  # 4.86:1 — always pair with a hatch + ink edge
-    "maint": "#7B63A3",  # 5.05:1 — maintenance-bay fill
-    "wall": "#3B4046",  # 10.5:1 — wall · door · datum ink
-}
-# PLANES_DARK — lifted fills for the dark-figure variant (drawn at ~92%
-# opacity on #0D0E10). Same ordering as PLANES.
-PLANES_DARK = [
-    "#3FA3D6",
-    "#E8794A",
-    "#33B894",
-    "#CE7EC0",
-    "#D29A2E",
-    "#3FB6CE",
-    "#8585C9",
-    "#BC8154",
-    "#9AA0A8",
-]
-
-# Plane / part outline ink (#14161A) — the "never hue alone" guarantee: every
-# plane part is stroked in this ink so the silhouette reads without colour.
-# Distinct from the wall ink (STATUS["wall"] = #3B4046), which is the
-# hangar/door/datum structure colour.
-_INK_EDGE = "#14161A"
-
-# Retained for back-compat with the wing-position concept and as the
-# unreachable-by-default fallback when a placement cannot be mapped to a
-# PLANES index (see :func:`_draw_aircraft`). Kept gray so a stray placement is
-# visibly "uncoloured" rather than masquerading as a real plane hue.
-_FALLBACK_COLOR = "#95a5a6"  # gray
-
-# Conflict ink, sourced from the brand STATUS map. Was #e74c3c pre-brand; the
-# constant NAME is preserved so importers (tests read to_rgba(_CONFLICT_COLOR))
-# keep resolving. The conflict overlay pairs this edge with a hatch + dashed
-# stroke (non-colour redundancy) — see :func:`_draw_conflict_overlay`.
-_CONFLICT_COLOR = STATUS["conflict"]  # "#C8442C"
-
-# Tow-path overlay palette (#192). One colour per plane, cycled by sorted
-# plane_id. Deliberately excludes the conflict colour and the gray fallback so
-# a path never blurs into a conflict highlight or a placeholder part. Eight
-# entries cover the fleet (<=9 planes); a 9th plane reuses the first colour —
-# acceptable since each path terminates at its annotated slot.
-#
-# TODO(brand): the DocGerdSoft handoff specifies tow paths coloured by the
-# plane's index in the 9-colour ``PLANES`` set. Repointing here is deferred:
-# ``test_colour_cycle_wraps_beyond_palette`` pins ``len(set) == len(
-# _TOW_PATH_COLORS)`` (exactly 8 distinct on a 9-plane fleet), which a 9-entry
-# palette would break. Aligning to PLANES needs that test updated deliberately.
-#
-# Palette: Okabe–Ito 8-colour CVD-safe set (https://jfly.uni-koeln.de/color/).
-# This palette is distinguishable under deuteranopia, protanopia, and
-# tritanopia simultaneously, and reads in grey-scale. The conflict colour is
-# excluded from this cycle as noted above; it is not part of the Okabe–Ito set
-# either.
-_TOW_PATH_COLORS = (
-    "#000000",  # black
-    "#e69f00",  # orange
-    "#56b4e9",  # sky blue
-    "#009e73",  # bluish green
-    "#f0e442",  # yellow
-    "#0072b2",  # blue
-    "#d55e00",  # vermillion
-    "#cc79a7",  # reddish purple
-)
-_TOW_PATH_LINEWIDTH = 1.6
-
-_FUSELAGE_ALPHA = 0.9  # near-opaque: two fuselages overlapping is always
-# a conflict, no value in seeing through.
-# fuselage_front (cockpit) is drawn a darker tint of the same wing-position
-# fill so the cockpit boundary reads at a glance and the wing-over-cockpit
-# hard-conflict region is legible (ADR-0012). fuselage_aft keeps the plain
-# fill. 0.62 multiplies each RGB channel toward black — dark enough to
-# distinguish, light enough that the wing-position hue is still recognisable.
-_FUSELAGE_FRONT_DARKEN = 0.62
-_WING_ALPHA = 0.4  # translucent so stacked wings (z-disjoint nesting,
-# case 3 / case 7-8) show their plan-view overlap.
+# All brand tokens are DEFINED ONCE in :mod:`hangarfit.brand` and re-exported
+# here under the names this module has always exposed, so external importers
+# (e.g. ``scene.py`` historically read ``visualize.PLANES_DARK``; tests read
+# ``visualize.PLANES`` / ``STATUS`` / ``_CONFLICT_COLOR`` / ``_INK_EDGE`` / …)
+# keep resolving while the values live in a single source (#419). The palette is
+# Okabe–Ito-derived CVD-safe (#326) and traces to ``docs/assets/BRAND.md``.
+# Every plane also carries an ink outline (``_INK_EDGE``) + a mono id label, and
+# conflicts add a hatch + ink edge — identity never rests on hue alone.
+PLANES = brand.PLANES
+PLANES_DARK = brand.PLANES_DARK
+STATUS = brand.STATUS
+_INK_EDGE = brand.INK_EDGE
+_FALLBACK_COLOR = brand.FALLBACK_COLOR
+_CONFLICT_COLOR = brand.CONFLICT_COLOR
+_TOW_PATH_COLORS = brand.TOW_PATH_COLORS
+_TOW_PATH_LINEWIDTH = brand.TOW_PATH_LINEWIDTH
+_FUSELAGE_ALPHA = brand.FUSELAGE_ALPHA
+_FUSELAGE_FRONT_DARKEN = brand.FUSELAGE_FRONT_DARKEN
+_WING_ALPHA = brand.WING_ALPHA
 _STRUT_LINEWIDTH = 1.2  # struts are physically thin (~5 cm × ~1.3 m); a
 # filled polygon would be near-invisible at hangar
 # scale, so we draw an outline instead.
@@ -175,17 +93,18 @@ _VIEW_PADDING_M = 1.0
 
 # Closed-bay "wall" style — saturated red + slashed hatch, kept visually
 # distinct from ``_CONFLICT_COLOR`` so the two reds don't blur in one image.
-_BAY_WALL_FACE = "#922b21"
-_BAY_WALL_EDGE = "#641e16"
-_BAY_WALL_ALPHA = 0.55
-_BAY_WALL_HATCH = "///"
-_BAY_LABEL_COLOR = "#ffffff"
+# (Tokens sourced from :mod:`hangarfit.brand`, #419.)
+_BAY_WALL_FACE = brand.BAY_WALL_FACE
+_BAY_WALL_EDGE = brand.BAY_WALL_EDGE
+_BAY_WALL_ALPHA = brand.BAY_WALL_ALPHA
+_BAY_WALL_HATCH = brand.BAY_WALL_HATCH
+_BAY_LABEL_COLOR = brand.BAY_LABEL_COLOR
 # Wall / door / datum ink, sourced from the brand STATUS map (#3B4046,
 # 10.5:1 on white). The handoff folds wall, door, and datum onto this one
 # graphite-strong ink. The door is then *lightened* (``_DOOR_EDGE``) so the
 # opening reads as "open" rather than a wall.
-_HANGAR_EDGE = STATUS["wall"]  # "#3B4046" — wall · door · datum ink
-_DOOR_EDGE = "#bdc3c7"  # light gray — visually "open"
+_HANGAR_EDGE = brand.HANGAR_EDGE  # "#3B4046" — wall · door · datum ink
+_DOOR_EDGE = brand.DOOR_EDGE  # light gray — visually "open"
 
 # ── Wheel / cart glyph constants ────────────────────────────────────────────
 # All drawn at zorder=1.5, strictly between the wing/floor layer (zorder=1)
@@ -197,9 +116,9 @@ _GLYPH_ZORDER = 1.5  # between wings (1) and fuselage (2)
 # the wing-position palette (#3498db/#d55e00/#f4d03f), the conflict-red
 # (#e74c3c), and the tow-path colours. A second shade is used for the cart
 # pallets so each dolly square is distinct from its wheel disc.
-_WHEEL_COLOR = "#566573"  # dark slate-gray — individual wheel discs
-_CART_DECK_COLOR = "#aab7b8"  # lighter gray — cart/dolly pallet squares
-_CART_DECK_ALPHA = 0.85
+_WHEEL_COLOR = brand.WHEEL_COLOR  # dark slate-gray — individual wheel discs
+_CART_DECK_COLOR = brand.CART_DECK_COLOR  # lighter gray — cart/dolly pallet squares
+_CART_DECK_ALPHA = brand.CART_DECK_ALPHA
 
 # Wheel disc radius in meters. Visually "a tyre" at ~6–9 m fuselage scale
 # inside an 18–30 m hangar. Mirror the _NOSE_ARROW_LENGTH_M tuning idiom.
@@ -708,8 +627,12 @@ def _draw_placeholder_banner(fig: Any) -> None:
         va="top",
         fontsize=12,
         fontweight="bold",
-        color="white",
-        bbox={"facecolor": "#b00020", "edgecolor": "none", "boxstyle": "round,pad=0.45"},
+        color=brand.PLACEHOLDER_BANNER_TEXT_2D,
+        bbox={
+            "facecolor": brand.PLACEHOLDER_BANNER_BG_2D,
+            "edgecolor": "none",
+            "boxstyle": "round,pad=0.45",
+        },
     )
 
 
@@ -733,8 +656,12 @@ def _draw_readouts(fig: Any, layout: Layout) -> None:
         ha="center",
         va="bottom",
         fontsize=9,
-        color="#2c3e50",
-        bbox={"facecolor": "#ecf0f1", "edgecolor": "#bdc3c7", "boxstyle": "round,pad=0.4"},
+        color=brand.READOUT_TEXT_2D,
+        bbox={
+            "facecolor": brand.READOUT_BG_2D,
+            "edgecolor": brand.READOUT_EDGE_2D,
+            "boxstyle": "round,pad=0.4",
+        },
     )
 
 

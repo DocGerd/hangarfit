@@ -15,7 +15,7 @@ import json
 from importlib import resources
 from pathlib import Path
 
-from hangarfit import metrics
+from hangarfit import brand, metrics
 
 _ASSETS = "hangarfit._viewer_assets"
 _THREE = "hangarfit._viewer_assets.three"
@@ -41,6 +41,20 @@ def _embed_json(obj: dict) -> str:
     the producer rather than serialize to a bare ``Infinity``/``NaN`` token that
     the viewer's ``JSON.parse`` would choke on — fail loud, not a blank page."""
     return json.dumps(obj, separators=(",", ":"), allow_nan=False).replace("<", "\\u003c")
+
+
+def _embed_brand() -> str:
+    """The canonical ``BRAND`` JSON blob injected into the HTML for ``viewer.js``
+    to read (#419). Serialized with ``sort_keys=True`` + compact separators so the
+    byte sequence is stable across renders (determinism), then ``<``-escaped the
+    same way :func:`_embed_json` escapes the scene blob — the values are
+    Python-authored brand tokens, but the escape keeps a future hostile token from
+    breaking out of the ``<script>`` element. This blob is SEPARATE from the
+    ``scene`` blob: the ``scene/v1`` schema is unchanged (ADR-0017)."""
+    tokens = brand.viewer_brand_tokens()
+    return json.dumps(tokens, sort_keys=True, separators=(",", ":"), allow_nan=False).replace(
+        "<", "\\u003c"
+    )
 
 
 def render_viewer(scene: dict, output_path: Path | str) -> None:
@@ -71,6 +85,10 @@ def render_viewer(scene: dict, output_path: Path | str) -> None:
         # when scene.placeholder is true. Same wording as the 2D PNG.
         f'<div id="placeholder" hidden>{metrics.PLACEHOLDER_BANNER}</div>\n'
         f'<div id="hud">{_HUD}</div>\n'
+        # The canonical BRAND token blob (#419), separate from the scene blob so
+        # the scene/v1 schema stays unchanged. viewer.js reads its colours from
+        # here instead of hard-coding 0x literals.
+        f'<script type="application/json" id="brand">{_embed_brand()}</script>\n'
         f'<script type="application/json" id="scene">{_embed_json(scene)}</script>\n'
         f'<script type="module">{viewer_js}</script>\n'
         "</body></html>\n"
@@ -81,27 +99,33 @@ def render_viewer(scene: dict, output_path: Path | str) -> None:
 # DocGerdSoft dark-surface brand (BRAND.md §4). Form controls don't inherit
 # font-family, so the Geist stack is set explicitly on the text-bearing controls
 # (the HUD buttons + the speed select); machine output (clock, readouts, ids) is
-# mono per brand.
+# mono per brand. Every colour/font below is sourced from :mod:`hangarfit.brand`
+# (#419) so the CSS can't drift from the 3D scene tokens; the byte output is
+# unchanged.
 _CSS = (
-    "html,body{margin:0;height:100%;background:#0d0e10;color:#ECEEF1;"
-    'font:13px "Geist",system-ui,sans-serif;overflow:hidden}'
+    f"html,body{{margin:0;height:100%;background:{brand.PAPER};color:{brand.INK};"
+    f"font:13px {brand.FONT_SANS};overflow:hidden}}"
     "#c{display:block;width:100vw;height:100vh}"
     "#hud{position:fixed;left:0;right:0;bottom:0;padding:10px 14px;"
-    "background:rgba(21,23,26,.86);border-top:1px solid #2A2E33;"
+    f"background:{brand.HUD_GLASS};border-top:1px solid {brand.HAIRLINE};"
     "display:flex;gap:10px;align-items:center;flex-wrap:wrap}"
-    "#hud button{cursor:pointer;background:#1B1E22;color:#ECEEF1;border:1px solid #2A2E33;"
-    'font:500 13px "Geist",system-ui,sans-serif;'
+    f"#hud button{{cursor:pointer;background:{brand.BUTTON_BG};color:{brand.INK};"
+    f"border:1px solid {brand.BUTTON_BORDER};"
+    f"font:500 13px {brand.FONT_SANS};"
     "border-radius:6px;padding:5px 10px}#hud button:disabled{opacity:.4;cursor:default}"
-    '#hud select{font:500 13px "Geist",system-ui,sans-serif}'
-    "#hud button:focus,#scrub:focus{outline:2px solid #3FA3D6;outline-offset:2px}"
-    "#scrub{flex:1;min-width:160px;accent-color:#3FA3D6}"
-    "#banner{position:fixed;top:0;left:0;right:0;padding:10px;background:#BC4438;color:#fff;"
+    f"#hud select{{font:500 13px {brand.FONT_SANS}}}"
+    f"#hud button:focus,#scrub:focus{{outline:2px solid {brand.FOCUS_RING};outline-offset:2px}}"
+    f"#scrub{{flex:1;min-width:160px;accent-color:{brand.SCRUBBER_ACCENT}}}"
+    f"#banner{{position:fixed;top:0;left:0;right:0;padding:10px;"
+    f"background:{brand.ERROR_BANNER_BG};color:{brand.ERROR_BANNER_TEXT};"
     "text-align:center;z-index:9;font-weight:600}"
-    "#placeholder{position:fixed;top:0;left:0;right:0;padding:7px;background:#D6A23E;"
-    "color:#14161A;text-align:center;z-index:8;font-weight:700;letter-spacing:.02em}"
-    '#clock,#active,#readouts,.sw{font-family:"Geist Mono",ui-monospace,'
-    '"SF Mono",Menlo,monospace;font-feature-settings:"tnum" 1,"zero" 1}'
-    "#readouts{color:#C2C7CD;font-variant-numeric:tabular-nums}"
+    f"#placeholder{{position:fixed;top:0;left:0;right:0;padding:7px;"
+    f"background:{brand.PLACEHOLDER_BANNER_BG};"
+    f"color:{brand.PLACEHOLDER_BANNER_TEXT};"
+    "text-align:center;z-index:8;font-weight:700;letter-spacing:.02em}"
+    f"#clock,#active,#readouts,.sw{{font-family:{brand.FONT_MONO};"
+    f'font-feature-settings:"tnum" 1,"zero" 1}}'
+    f"#readouts{{color:{brand.READOUTS_TEXT};font-variant-numeric:tabular-nums}}"
     "#legend{display:flex;gap:8px;flex-wrap:wrap}"
     ".sw{display:inline-flex;align-items:center;gap:4px}"
     ".sw i{width:11px;height:11px;border-radius:2px;display:inline-block}"
