@@ -216,8 +216,9 @@ const groups = {};
 const legend = document.getElementById('legend');
 
 // Kind-based materials (#400): translucent wings reveal vertical stacking; thin
-// metallic struts; a darker cockpit (fuselage_front) tint matching the 2D render;
-// everything else opaque body colour. DoubleSide for the det-−1 reflected group.
+// metallic struts; a darker cockpit (fuselage_front) tint echoing the 2D render's
+// cockpit shading (same intent, not a perceptual match — 3D darkens in linear
+// space); everything else opaque body colour. DoubleSide for the det-−1 group.
 function boxMaterial(b, colour) {
   const base = { color: colour, side: THREE.DoubleSide, roughness: 0.7, metalness: 0.05 };
   if (b.kind === 'wing') {
