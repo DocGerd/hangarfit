@@ -37,6 +37,17 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Fixed
 
+- **Solver no longer false-rejects glider fleets (#425).** The pre-search
+  trivial-infeasibility gate (`solve` check #2) summed each plane's *bounding
+  box* (`fuselage_length × wingspan`), which for a thin-winged glider is mostly
+  empty air — so an 18 m-span Scheibe Falke could push Σ bbox over the hangar
+  floor and the solver would return `trivially_infeasible` without ever
+  searching, even when a valid nested layout existed. The gate now sums each
+  plane's actual **part-footprint rectangles** (a much tighter estimate), so
+  glider-containing fleets reach the search; only genuinely-too-big fleets still
+  short-circuit. RNG-free and pre-search, so the byte-identical determinism
+  contract (ADR-0003) is unchanged.
+
 ## [0.10.0] — 2026-06-04
 
 ### Added
