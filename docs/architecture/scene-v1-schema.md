@@ -96,10 +96,10 @@ renders `wing` boxes translucent so vertical stacking is visible.
 `wheels` is the aircraft's canonical plane-local wheel positions
 ([ADR-0013](../adr/0013-wheels-canonical-data.md)) — one `(u, v)` per wheel (1 for
 a monowheel, 3 for tricycle/tailwheel). `on_carts` is the per-placement dolly flag.
-The viewer draws a wheel (+ a short leg up to the belly) at each point inside the
-same affine Group as the boxes — so the gear inherits the plane-local→world
-transform and animates along the tow path — plus a pallet deck under each wheel
-when `on_carts`. Render *sizes* (wheel radius, pallet extent) are viewer-layer
+The viewer draws a wheel at each point (+ a short leg up to the belly where the
+belly clears the wheel) inside the same affine Group as the boxes — so the gear
+inherits the plane-local→world transform and animates along the tow path — plus a
+pallet deck under each wheel when `on_carts`. Render *sizes* (wheel radius, pallet extent) are viewer-layer
 constants mirroring `visualize.py`, never data: the schema carries only positions.
 
 ## `timeline`

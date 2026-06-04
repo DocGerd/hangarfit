@@ -122,9 +122,10 @@ document.getElementById('walls').addEventListener('change', (e) => {
 // ── gear / cart render constants (#399) ──────────────────────────────────────
 // Render *sizes* live here in the viewer layer, never in fleet.yaml (the canonical
 // data carries only plane-local wheel POSITIONS, ADR-0013). Values mirror the 2D
-// path's constants in visualize.py so 2D and 3D read alike; the two that have no
-// 2D analogue (the top-down PNG has no z) are glyph depths chosen to read at
-// fuselage scale.
+// path's constants in visualize.py so 2D and 3D read alike; the remaining three
+// (WHEEL_WIDTH_M, LEG_WIDTH_M, CART_PALLET_HEIGHT_M) have no 2D analogue — the
+// top-down PNG has no z and draws no gear leg — and are glyph extents chosen to
+// read at fuselage scale.
 const WHEEL_RADIUS_M = 0.18; // visualize._WHEEL_RADIUS_M
 const WHEEL_WIDTH_M = 0.12; // tyre width — 3D-only glyph depth
 const LEG_WIDTH_M = 0.06; // thin gear-leg strut up to the belly — 3D-only glyph
@@ -140,12 +141,14 @@ const palletMat = new THREE.MeshStandardMaterial({
   color: CART_DECK_COLOR, side: THREE.DoubleSide, roughness: 0.9, metalness: 0.0,
 });
 
-// Draw gear (wheels + short legs up to the belly) and, when carted, a pallet deck
-// under each wheel, all parented to the plane's affine Group `g` so they inherit
-// the verified plane-local→world transform and animate along the tow path for
-// free. Wheel/leg/pallet world positions are oracle-checked in checkAnchors().
+// Draw gear (a wheel at each point + a short leg up to the belly where there is
+// clearance) and, when carted, a pallet deck under each wheel, all parented to the
+// plane's affine Group `g` so they inherit the verified plane-local→world transform
+// and animate along the tow path for free. Wheel world positions are oracle-checked
+// in checkAnchors().
 function addGear(g, p) {
-  // Belly = lowest box bottom; the leg rises from the wheel top to it.
+  // Belly = lowest box bottom; the leg rises from the wheel top to it. A plane
+  // with no boxes falls back to a wheel-diameter belly so a stub leg still renders.
   let belly = Infinity;
   for (const b of p.boxes) belly = Math.min(belly, b.cz - b.height_m / 2);
   if (!isFinite(belly)) belly = 2 * WHEEL_RADIUS_M;

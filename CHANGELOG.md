@@ -8,9 +8,10 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 - **3D viewer renders landing gear + tow carts (#399).** `scene/v1` now emits
   per-plane `wheels[]` (canonical plane-local positions, ADR-0013) and an
-  `on_carts` flag, plus a `gear_anchors` oracle. The viewer draws a wheel and a
-  short leg up to the belly at each wheel — and a pallet deck under each wheel for
-  carted planes — all parented to the existing per-plane affine Group, so the gear
+  `on_carts` flag, plus a `gear_anchors` oracle. The viewer draws a wheel at each
+  wheel point (+ a short leg up to the belly where it clears) — and a pallet deck
+  under each wheel for carted planes — all parented to the existing per-plane
+  affine Group, so the gear
   inherits the determinant-−1 transform and animates along the tow path for free.
   The load-time anchor self-check now also oracles gear world positions (the only
   cross-language backstop, since `viewer.js` is not pytest-covered). Wheels/carts
