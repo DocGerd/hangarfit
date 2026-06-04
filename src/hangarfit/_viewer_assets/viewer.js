@@ -119,6 +119,66 @@ document.getElementById('walls').addEventListener('change', (e) => {
   wallMeshes.forEach((m) => { m.visible = e.target.checked; });
 });
 
+// ── gear / cart render constants (#399) ──────────────────────────────────────
+// Render *sizes* live here in the viewer layer, never in fleet.yaml (the canonical
+// data carries only plane-local wheel POSITIONS, ADR-0013). Values mirror the 2D
+// path's constants in visualize.py so 2D and 3D read alike; the two that have no
+// 2D analogue (the top-down PNG has no z) are glyph depths chosen to read at
+// fuselage scale.
+const WHEEL_RADIUS_M = 0.18; // visualize._WHEEL_RADIUS_M
+const WHEEL_WIDTH_M = 0.12; // tyre width — 3D-only glyph depth
+const LEG_WIDTH_M = 0.06; // thin gear-leg strut up to the belly — 3D-only glyph
+const CART_PALLET_HALF_EXTENT_M = 0.4; // visualize._CART_PALLET_HALF_EXTENT_M
+const CART_PALLET_HEIGHT_M = 0.12; // dolly deck thickness — 3D-only glyph depth
+const WHEEL_COLOR = 0x566573; // visualize._WHEEL_COLOR
+const CART_DECK_COLOR = 0xaab7b8; // visualize._CART_DECK_COLOR
+// Shared materials (DoubleSide: the plane Group matrix may be det −1).
+const gearMat = new THREE.MeshStandardMaterial({
+  color: WHEEL_COLOR, side: THREE.DoubleSide, roughness: 0.6, metalness: 0.1,
+});
+const palletMat = new THREE.MeshStandardMaterial({
+  color: CART_DECK_COLOR, side: THREE.DoubleSide, roughness: 0.9, metalness: 0.0,
+});
+
+// Draw gear (wheels + short legs up to the belly) and, when carted, a pallet deck
+// under each wheel, all parented to the plane's affine Group `g` so they inherit
+// the verified plane-local→world transform and animate along the tow path for
+// free. Wheel/leg/pallet world positions are oracle-checked in checkAnchors().
+function addGear(g, p) {
+  // Belly = lowest box bottom; the leg rises from the wheel top to it.
+  let belly = Infinity;
+  for (const b of p.boxes) belly = Math.min(belly, b.cz - b.height_m / 2);
+  if (!isFinite(belly)) belly = 2 * WHEEL_RADIUS_M;
+  const deck = p.on_carts ? CART_PALLET_HEIGHT_M : 0;
+  for (const [u, v] of p.wheels) {
+    // Cylinder's default axis is +Y = local v (lateral), so the disc lies in the
+    // forward/up (u,w) plane — a wheel that rolls forward. No rotation needed.
+    const wheelZ = deck + WHEEL_RADIUS_M;
+    const wheel = new THREE.Mesh(
+      new THREE.CylinderGeometry(WHEEL_RADIUS_M, WHEEL_RADIUS_M, WHEEL_WIDTH_M, 16),
+      gearMat,
+    );
+    wheel.position.set(u, v, wheelZ);
+    g.add(wheel);
+
+    const wheelTop = wheelZ + WHEEL_RADIUS_M;
+    const legH = belly - wheelTop;
+    if (legH > 0.01) {
+      const leg = new THREE.Mesh(new THREE.BoxGeometry(LEG_WIDTH_M, LEG_WIDTH_M, legH), gearMat);
+      leg.position.set(u, v, wheelTop + legH / 2);
+      g.add(leg);
+    }
+    if (p.on_carts) {
+      const pallet = new THREE.Mesh(
+        new THREE.BoxGeometry(2 * CART_PALLET_HALF_EXTENT_M, 2 * CART_PALLET_HALF_EXTENT_M, deck),
+        palletMat,
+      );
+      pallet.position.set(u, v, deck / 2);
+      g.add(pallet);
+    }
+  }
+}
+
 // ── planes: one Group of boxes each, built ONCE in plane-local coords ────────
 const CONFLICT = 0xc8442c;
 const groups = {};
@@ -144,6 +204,7 @@ for (const p of SCENE.planes) {
     mesh.rotation.z = THREE.MathUtils.degToRad(b.angle_deg); // CCW about local up, as oriented_rect
     g.add(mesh);
   }
+  addGear(g, p); // wheels + legs (+ pallets when carted), same affine Group
   groups[p.id] = g;
   scene.add(g);
 
@@ -197,6 +258,22 @@ function applyAffine(aff, u, v) {
           const [wx, wy] = applyAffine(aff, u, v);
           maxErr = Math.max(maxErr, Math.abs(wx - want[bi][ci][0]), Math.abs(wy - want[bi][ci][1]));
         });
+      });
+      // Gear oracle (#399): the wheels[] ride the same affine Group as the boxes,
+      // so a wrong transform corrupts both — but viewer.js is not pytest-covered,
+      // so we cross-check the wheel world positions against the Python oracle too.
+      const gw = SCENE.gear_anchors[p.id];
+      if (!gw || !p.wheels) {
+        structural = 'missing gear anchors/wheels for ' + p.id;
+        break;
+      }
+      if (gw.length !== p.wheels.length) {
+        structural = 'gear anchor/wheel count mismatch for ' + p.id;
+        break;
+      }
+      p.wheels.forEach(([u, v], wi) => {
+        const [wx, wy] = applyAffine(aff, u, v);
+        maxErr = Math.max(maxErr, Math.abs(wx - gw[wi][0]), Math.abs(wy - gw[wi][1]));
       });
     }
     if (structural) {

@@ -17,7 +17,7 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING
 
-from hangarfit.geometry import aircraft_parts_world
+from hangarfit.geometry import aircraft_parts_world, local_to_world
 from hangarfit.models import CheckResult, Layout, Placement
 from hangarfit.towplanner import back_first_order
 from hangarfit.visualize import PLANES
@@ -86,7 +86,17 @@ def _plane_blocks(layout: Layout) -> list[dict]:
             for part in ac.parts
         ]
         blocks.append(
-            {"id": placement.plane_id, "color": colour[placement.plane_id], "boxes": boxes}
+            {
+                "id": placement.plane_id,
+                "color": colour[placement.plane_id],
+                "boxes": boxes,
+                # Canonical plane-local wheel points (ADR-0013) + the per-placement
+                # cart flag, so the viewer draws gear (and, when carted, pallets)
+                # parented to the same affine Group as the boxes (#399). Render
+                # sizes (wheel radius, pallet extent) stay viewer-layer constants.
+                "wheels": [[u, v] for u, v in ac.wheels.positions],
+                "on_carts": placement.on_carts,
+            }
         )
     return blocks
 
@@ -117,6 +127,23 @@ def _anchors(layout: Layout) -> dict[str, list[list[list[float]]]]:
         out[placement.plane_id] = [
             [[x, y] for x, y in list(wp.polygon.exterior.coords)[:-1]]
             for wp in aircraft_parts_world(ac, placement)
+        ]
+    return out
+
+
+def _gear_anchors(layout: Layout) -> dict[str, list[list[float]]]:
+    """Per-plane world wheel positions at the FINAL placement, via the production
+    :func:`hangarfit.geometry.local_to_world` transform. Sibling to
+    :func:`_anchors` (which oracles box corners): the viewer recomputes each wheel
+    from the plane-local ``wheels[]`` + the final affine and asserts agreement on
+    load. ``viewer.js`` is not pytest-covered, so this is the only cross-language
+    backstop for the gear render (#399), and it shares the same det-−1 transform
+    as the box anchors — so a sign-flip regression fails both at once."""
+    out: dict[str, list[list[float]]] = {}
+    for placement in sorted(layout.placements, key=lambda p: p.plane_id):
+        ac = layout.fleet[placement.plane_id]
+        out[placement.plane_id] = [
+            list(local_to_world(u, v, placement)) for u, v in ac.wheels.positions
         ]
     return out
 
@@ -229,4 +256,5 @@ def build_scene(
         "final_poses": dict(finals),
         "conflicts": _conflict_ids(check_result),
         "anchors": _anchors(layout),
+        "gear_anchors": _gear_anchors(layout),
     }
