@@ -79,6 +79,15 @@ def test_html_embeds_viewer_js(tmp_path):
     assert "three/addons/controls/OrbitControls.js" in html
 
 
+def test_html_embeds_polish_features(tmp_path):
+    # #400: contact shadows, a billboarded id-label sprite, and the labels/nose
+    # HUD toggle must all reach the emitted artifact (viewer.js + HUD).
+    html = _html(tmp_path)
+    assert "shadowMap" in html  # contact shadows enabled on the renderer
+    assert "CanvasTexture" in html  # billboarded id-label sprite (safe fillText)
+    assert 'id="labels"' in html  # the HUD toggle for labels + nose arrows
+
+
 def test_static_scene_renders(tmp_path):
     # A layout with no MovesPlan → static scene, still a valid HTML artifact.
     lay = load_layout(LAYOUT)

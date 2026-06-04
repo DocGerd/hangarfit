@@ -17,6 +17,18 @@ All notable changes to this project are documented here. Format follows [Keep a 
   cross-language backstop, since `viewer.js` is not pytest-covered). Wheels/carts
   are render-only and never enter the collision model (ADR-0015); `build_scene`
   stays byte-deterministic and `collisions.py` is untouched.
+- **3D viewer polish — shadows, materials, labels, nose arrows (#400).** The
+  viewer now casts soft contact shadows (a `PCFSoftShadowMap` key sun + ortho
+  frustum sized to the hangar, a soft fill, softened ambient) so vertical
+  clearance is legible — a high wing's shadow across a neighbour's tail is the
+  viewer's reason to exist (ADR-0017). Materials are kind-based (translucent wings,
+  thin metallic struts, a darker cockpit tint echoing the 2D render's cockpit
+  shading). Each plane gets
+  a billboarded id label (a `CanvasTexture` sprite drawn with safe `fillText`,
+  never `innerHTML`) and a nose-cone arrow at its `+x` tip, both behind a new
+  `labels` HUD toggle. All client-side with the already-vendored Three.js r160 —
+  still a single self-contained offline HTML, no new assets, no determinism or
+  collision risk.
 
 ### Changed
 
