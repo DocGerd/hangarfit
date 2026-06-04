@@ -35,8 +35,12 @@ def _data_url(js_source: str) -> str:
 def _embed_json(obj: dict) -> str:
     """Compact JSON safe to inline inside a ``<script>`` element: ``<`` is
     escaped to ``\\u003c`` so a value can never produce a ``</script>``
-    breakout (the canonical safe-embedding technique)."""
-    return json.dumps(obj, separators=(",", ":")).replace("<", "\\u003c")
+    breakout (the canonical safe-embedding technique).
+
+    ``allow_nan=False`` makes a non-finite value (``inf``/``nan``) raise here at
+    the producer rather than serialize to a bare ``Infinity``/``NaN`` token that
+    the viewer's ``JSON.parse`` would choke on — fail loud, not a blank page."""
+    return json.dumps(obj, separators=(",", ":"), allow_nan=False).replace("<", "\\u003c")
 
 
 def render_viewer(scene: dict, output_path: Path | str) -> None:

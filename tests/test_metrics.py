@@ -52,3 +52,15 @@ def test_min_wing_over_tail_clearance_positive_when_overhang():
 def test_min_wing_over_tail_clearance_none_when_no_overhang():
     # Two well-separated planes: no wing footprint overlaps another's tail/aft.
     assert metrics.min_wing_over_tail_clearance_m(load_layout(SEPARATED)) is None
+
+
+def test_layout_is_valid_self_checks_when_no_check_result():
+    from hangarfit.collisions import check
+
+    valid_lay = load_layout(NESTING)
+    assert metrics.layout_is_valid(valid_lay) is True
+
+    invalid_lay = load_layout("tests/fixtures/invalid_fuselage_wing_overlap.yaml")
+    assert metrics.layout_is_valid(invalid_lay) is False  # determined by self-check
+    # And it trusts a supplied CheckResult rather than re-running.
+    assert metrics.layout_is_valid(invalid_lay, check(invalid_lay)) is False

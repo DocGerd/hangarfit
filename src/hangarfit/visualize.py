@@ -270,10 +270,11 @@ def render_layout(
         _finalize_axes(ax, layout, title)
         if metrics.has_placeholder_data(layout):
             _draw_placeholder_banner(fig)
-        # Readouts only make sense for a valid arrangement (#401): an invalid one
-        # has overlaps, so a "tightest gap" of 0 would mislead. `check` passes a
-        # CheckResult; solve/None layouts are valid by construction.
-        if check_result is None or check_result.valid:
+        # Readouts only make sense for a *verified-valid* arrangement (#401): an
+        # invalid one has overlaps, so a "tightest gap" of 0 would mislead. Trust a
+        # supplied CheckResult, else verify (so a caller that renders an unchecked
+        # layout never gets misleading numbers).
+        if metrics.layout_is_valid(layout, check_result):
             _draw_readouts(fig, layout)
         fig.savefig(str(output_path), dpi=dpi, bbox_inches="tight")
     finally:

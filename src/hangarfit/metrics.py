@@ -13,8 +13,9 @@ from __future__ import annotations
 
 import math
 
+from hangarfit import collisions
 from hangarfit.geometry import WorldPart, aircraft_parts_world
-from hangarfit.models import Layout
+from hangarfit.models import CheckResult, Layout
 
 # Parts a wing may legally overhang: a wingtip may overhang a low-winger's tail or
 # aft fuselage, never its cockpit (ADR-0012). The vertical clearance there is the
@@ -31,9 +32,24 @@ def has_placeholder_data(layout: Layout) -> bool:
 
     Drives the "PLACEHOLDER DATA" honesty banner (#401, #79). There is no hangar
     ``measured`` flag today, so the signal is fleet-driven; once every placed
-    aircraft is ``measured: true`` the banner disappears.
+    aircraft is ``measured: true`` the banner disappears. A layout with no
+    placements is vacuously not-placeholder — nothing is drawn, so there is no
+    illustrative arrangement to caveat.
     """
     return any(not layout.fleet[p.plane_id].measured for p in layout.placements)
+
+
+def layout_is_valid(layout: Layout, check_result: CheckResult | None = None) -> bool:
+    """Whether the layout is collision-free, for gating render annotations (#401).
+
+    Trusts a supplied :class:`CheckResult`; otherwise runs :func:`collisions.check`
+    itself. Annotations (the quality readouts) must never imply a validity that was
+    never verified — ``check_result is None`` means "caller did not check", **not**
+    "valid", so we determine it here rather than assuming the layout is fine.
+    """
+    if check_result is not None:
+        return check_result.valid
+    return collisions.check(layout).valid
 
 
 def _world_by_plane(layout: Layout) -> tuple[list[str], dict[str, list[WorldPart]]]:
@@ -62,7 +78,11 @@ def min_pairwise_gap_m(layout: Layout) -> float | None:
             for pa in world[ids[i]]:
                 for pb in world[ids[j]]:
                     best = min(best, pa.polygon.distance(pb.polygon))
-    return best
+    # isfinite guard (symmetry with min_wing_over_tail_clearance_m): with ≥2
+    # planes and the non-empty-parts invariant best is always finite, but never
+    # let an inf leak into the scene JSON — json would emit a bare `Infinity` that
+    # breaks the viewer's JSON.parse.
+    return best if math.isfinite(best) else None
 
 
 def min_wing_over_tail_clearance_m(layout: Layout) -> float | None:
