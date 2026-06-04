@@ -1,0 +1,29 @@
+{
+  // Editor-side static analysis for the repo's only hand-written first-party
+  // JavaScript: src/hangarfit/_viewer_assets/viewer.js (the 3D viewer, ADR-0017).
+  // Consumed by the `typescript-lsp@claude-plugins-official` plugin enabled in
+  // .claude/settings.json — the editor-side analogue of the Python pyright-lsp.
+  // CI does NOT lint JS, so this file is purely an in-editor signal. See
+  // .claude/README.md ("LSP plugins") and issue #423.
+  "compilerOptions": {
+    "checkJs": true,
+    "noEmit": true,
+    "target": "esnext",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "lib": ["esnext", "dom"],
+    "strict": false,
+    "noImplicitAny": false
+  },
+  "include": [
+    "src/hangarfit/_viewer_assets/viewer.js",
+    "src/hangarfit/_viewer_assets/_lsp_shims.d.ts"
+  ],
+  // The vendored Three.js bundle (~1 MB) is excluded: analyzing it is slow and
+  // noisy, and viewer.js reaches it only through the runtime importmap, never
+  // from disk (the _lsp_shims.d.ts ambient declarations satisfy resolution).
+  "exclude": [
+    "src/hangarfit/_viewer_assets/three",
+    "node_modules"
+  ]
+}
