@@ -27,7 +27,7 @@ It also renders a top-down PNG so a human can sanity-check the result by eye.
 
 **Phase 3b — shipped.** Tow-path planner v2: a Reeds–Shepp motion model (reverse arcs eliminate the reorientation loops Dubins introduced) plus a door entry-cone search over heading × offset. See [ADR-0010](docs/adr/0010-reeds-shepp-motion-model.md).
 
-**Phase 4 — shipped.** Interactive 3D viewer: `hangarfit view` emits a self-contained, offline HTML file (vendored Three.js) showing the hangar and each aircraft as box models, with a scrubbable whole-fill tow timeline. Built from a documented `hangarfit.scene/v1` JSON seam; the determinant-−1 transform stays in Python (the viewer consumes per-frame affine matrices). See [ADR-0017](docs/adr/0017-3d-viewer-architecture.md).
+**Phase 4 — shipped.** Interactive 3D viewer: `hangarfit view` emits a self-contained, offline HTML file (vendored Three.js) showing the hangar and each aircraft as a stack of boxes — with landing gear, tow carts, soft contact shadows, kind-based materials, nose-cone arrows and id labels (both toggle from the on-page `labels` control) — plus a scrubbable whole-fill tow timeline. A "PLACEHOLDER DATA" honesty banner is shown (on both the 3D viewer and the 2D PNG) whenever any placed aircraft is on unmeasured data. Built from a documented `hangarfit.scene/v1` JSON seam; the determinant-−1 transform stays in Python (the viewer consumes per-frame affine matrices). See [ADR-0017](docs/adr/0017-3d-viewer-architecture.md).
 
 **Still explicitly out of scope:**
 
@@ -132,7 +132,7 @@ A scenario YAML carries `fleet:` / `hangar:` refs plus a `fleet_in:` list (which
 
 ### Interactive 3D viewer (Phase 4)
 
-`hangarfit view` renders a **self-contained, offline** 3D HTML file — open it in any browser (no server, no internet, no Python), orbit the camera, and scrub a whole-fill tow timeline (planes enter back-first; play / pause / step per plane). Each aircraft is drawn as its stack of boxes, so the vertical clearances the collision checker reasons about (a high wing overhanging another plane's tail) are visible in a way the top-down PNG cannot show.
+`hangarfit view` renders a **self-contained, offline** 3D HTML file — open it in any browser (no server, no internet, no Python), orbit the camera, and scrub a whole-fill tow timeline (planes enter back-first; play / pause / step per plane). Each aircraft is drawn as its stack of boxes — with landing gear, tow carts, soft contact shadows, kind-based materials, nose-cone arrows and id labels (both toggle from the on-page `labels` control) — so the vertical clearances the collision checker reasons about (a high wing overhanging another plane's tail) are visible in a way the top-down PNG cannot show. When any placed aircraft is on placeholder (`measured: false`) data, a "PLACEHOLDER DATA" banner is overlaid (the same banner now appears on the 2D PNG), and a valid layout surfaces the tightest plan-view inter-plane gap and the smallest wing-over-tail clearance.
 
 ```bash
 # View a layout in 3D (best-effort tow animation; static if un-routable).
@@ -146,7 +146,7 @@ hangarfit view layouts/example.yaml -o static3d.html --no-animate
 hangarfit view some_invalid_layout.yaml -o conflicts3d.html --check --no-animate
 ```
 
-Layout mode best-effort tow-plans for the animation; a layout the planner can't route degrades to a static 3D scene with a stderr note (`--tow-max-expansions` bounds that search so it degrades fast). The viewer is built from a documented `hangarfit.scene/v1` JSON contract (the seam between the Python core and any renderer) and a pinned, vendored copy of Three.js; the transform stays in Python (per-frame affine matrices), so the viewer never re-derives the determinant-−1 map. See [ADR-0017](docs/adr/0017-3d-viewer-architecture.md) and the schema reference [`docs/architecture/scene-v1-schema.md`](docs/architecture/scene-v1-schema.md).
+Layout mode best-effort tow-plans for the animation; a layout the planner can't route degrades to a static 3D scene with a stderr note. By default the viewer applies a small deterministic global tow-expansion cap, so an un-routable layout (e.g. the default `layouts/example.yaml`) falls back to the static render in a few seconds rather than grinding through the full disprove budget — a fixed expansion count, **not** a wall-clock deadline ([ADR-0003](docs/adr/0003-rr-mc-solver-algorithm.md)); `--tow-max-expansions` overrides it. The viewer is built from a documented `hangarfit.scene/v1` JSON contract (the seam between the Python core and any renderer) and a pinned, vendored copy of Three.js; the transform stays in Python (per-frame affine matrices), so the viewer never re-derives the determinant-−1 map. See [ADR-0017](docs/adr/0017-3d-viewer-architecture.md) and the schema reference [`docs/architecture/scene-v1-schema.md`](docs/architecture/scene-v1-schema.md).
 
 ### JSON schemas
 
@@ -166,7 +166,7 @@ The test suite includes a strut-aware golden set for the collision checker cover
 ## Project layout
 
 ```
-src/hangarfit/      # models, loader, geometry, collisions, solver, towplanner, visualize, cli
+src/hangarfit/      # models, loader, geometry, collisions, solver, towplanner, visualize, scene, viewer, metrics, cli
 data/               # fleet.yaml, hangar.yaml — placeholder measurements
 layouts/            # hand-authored candidate layouts, one YAML per scenario
 tests/              # pytest suite, including strut-aware collision golden tests

@@ -349,6 +349,16 @@ conflicting parts in red. The two-layer rendering (base layout in
 neutral colors, conflicts in red on top) lets the operator see *what
 broke* at a glance.
 
+Two render-only annotations (#401) share the read-only `metrics` oracle with the
+3D viewer so the 2D and 3D outputs never drift: when any placed aircraft is on
+placeholder (`measured: false`) data the persistent "PLACEHOLDER DATA" honesty
+banner is drawn across the top (wording from `metrics.PLACEHOLDER_BANNER`), and for
+a valid layout the tightest plan-view inter-plane gap and smallest wing-over-tail
+clearance are drawn along the bottom. Landing-gear wheels are drawn from each
+plane's canonical `aircraft.wheels.positions`
+([ADR-0013](../adr/0013-wheels-canonical-data.md)), or a cart glyph when
+`placement.on_carts`. None of this enters the collision model.
+
 The render is the only project output that is not also JSON-encodable;
 it is the human's sanity-check.
 
@@ -375,10 +385,30 @@ Assembles **one** offline HTML file: it inlines the `scene/v1` JSON plus a
 as package data) and the hand-written `_viewer_assets/viewer.js`. The `data:`
 import-map sidesteps the ES-module `file://` CORS block so a double-clicked page
 loads with zero network. The embedded scene JSON escapes `<` to prevent a
-`</script>` breakout. The thin `viewer.js` consumer builds each plane as a
+`</script>` breakout. The thin `viewer.js` consumer (Three.js vendored at r160) builds each plane as a
 Three.js `Group` driven per-frame by the affine as a `Matrix4` (`DoubleSide` for
-the reflected matrix), with an orbit camera and a scrub/play/step timeline, and a
-load-time self-check of the affine path against the emitted `anchors`.
+the reflected det-−1 matrix), with an orbit camera and a scrub/play/step timeline, and a
+load-time self-check of the affine path against the emitted `anchors` **and `gear_anchors`**.
+
+The v0.10.0 "viewer appeal" work (milestone #30) is all client-side and render-only —
+it never touches the scene's geometry contract:
+
+- **Gear + carts (#399).** Each plane `Group` also gets a wheel at every
+  `planes[].wheels[]` position (canonical plane-local data,
+  [ADR-0013](../adr/0013-wheels-canonical-data.md)) plus a short leg to the belly,
+  and a pallet deck under each wheel when `on_carts` — so the gear inherits the same
+  affine and animates along the tow path. Render-only, never in collisions
+  ([ADR-0015](../adr/0015-wheels-not-in-collision-model.md)); the load-time
+  self-check validates it against `gear_anchors`.
+- **Polish (#400).** A `PCFSoftShadowMap` key sun casts soft contact shadows (so a
+  high wing's shadow on a neighbour's tail reads as vertical clearance); kind-based
+  materials (translucent wings, metallic struts, a tinted cockpit); billboarded id
+  labels built as a `CanvasTexture` via safe `fillText` (never `innerHTML` — ids are
+  user YAML) and a nose-cone arrow per plane, both behind a `labels` HUD toggle.
+- **Honesty banner + readouts (#401).** When `scene.placeholder` is set the viewer
+  unhides the "PLACEHOLDER DATA" banner (wording shared with the 2D PNG via
+  `metrics.PLACEHOLDER_BANNER`); when `scene.readouts` is present (valid layouts
+  only) it shows the tightest plan-view gap and smallest wing-over-tail clearance.
 
 ### `metrics.py` — read-only render annotations
 

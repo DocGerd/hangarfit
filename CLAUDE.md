@@ -269,12 +269,15 @@ hangarfit check layouts/example.yaml --render out.png
 hangarfit solve tests/fixtures/scenario_minimal.yaml --render out.png --render-paths
 
 # Phase 4: 3D viewer (self-contained offline HTML). layouts/example.yaml is NOT
-# tow-routable → it renders static-only but grinds ~2 min first exhausting the
-# tow-planner's per-plane expansion budget (layout-mode view has no wall-clock
-# cap); pass --no-animate to skip straight to static, or use the wing-over-nesting
-# fixture for a fast animated demo. Verify headlessly via swiftshader WebGL
-# (dbus/UPower + WebGL "ReadPixels stall" lines are noise; a transform mismatch
-# shows an on-page banner).
+# tow-routable → it falls back to a static 3D render. Since #398 (F1), layout-mode
+# `view` passes a small deterministic GLOBAL tow-expansion cap
+# (_VIEW_TOW_MAX_TOTAL_EXPANSIONS=300) to the planner, so an un-routable layout
+# degrades to static in ~5 s instead of grinding ~2 min — a deterministic
+# expansion COUNT, not a wall-clock deadline (ADR-0003). Override with
+# --tow-max-expansions N; pass --no-animate to skip tow planning entirely, or use
+# the wing-over-nesting fixture for a fast animated demo. Verify headlessly via
+# swiftshader WebGL (dbus/UPower + WebGL "ReadPixels stall" lines are noise; a
+# transform mismatch shows an on-page banner).
 hangarfit view tests/fixtures/valid_left_side_nesting.yaml -o out.html
 google-chrome --headless=new --use-gl=angle --use-angle=swiftshader \
   --enable-unsafe-swiftshader --virtual-time-budget=8000 \

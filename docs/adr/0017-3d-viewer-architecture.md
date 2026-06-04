@@ -1,9 +1,24 @@
 # ADR-0017: 3D viewer — a `scene/v1` JSON seam fed to a self-contained offline Three.js HTML, with the transform owned by Python
 
-- **Status:** Proposed
+- **Status:** Accepted
 
 - **Date:** 2026-06-03
 - **Deciders:** Patrick Kuhn (DocGerd)
+
+> **v0.10.0 amendment (milestone #30, "viewer appeal").** The core decision —
+> the `scene/v1` seam and the Python-owned determinant-−1 transform — is
+> unchanged. Additive, render-only extensions shipped on top: gear + tow carts
+> (#399; `scene/v1` gains per-plane `wheels[]`/`on_carts` + a `gear_anchors`
+> oracle, still absent from the collision model per
+> [ADR-0015](0015-wheels-not-in-collision-model.md)); soft contact shadows,
+> kind-based materials, billboarded id labels (`CanvasTexture` via safe
+> `fillText`, never `innerHTML`) and nose-cone arrows behind a `labels` toggle
+> (#400); and a "PLACEHOLDER DATA" honesty banner + valid-layout readouts driven
+> by the new read-only `metrics` module (#401). Layout-mode `view` also gained a
+> small deterministic *global* tow-expansion cap so an un-routable layout
+> degrades to a static render in seconds (#398) — an expansion count, **not** a
+> wall-clock deadline ([ADR-0003](0003-rr-mc-solver-algorithm.md)). Schema-level
+> record of the new fields: [`scene-v1-schema.md`](../architecture/scene-v1-schema.md).
 
 ## Context & Problem Statement
 

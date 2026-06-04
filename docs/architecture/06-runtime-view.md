@@ -1,9 +1,10 @@
 # §6 Runtime View
 
-Two scenarios cover the operational use of `hangarfit`: validating a
-candidate layout (`hangarfit check`) and searching for a valid layout
-(`hangarfit solve`). Both are short-lived CLI invocations — there is
-no daemon, no long-running process, no stateful session.
+Four scenarios cover the operational use of `hangarfit`: validating a
+candidate layout (`hangarfit check`), searching for a valid layout
+(`hangarfit solve`), the `--render-paths` tow-overlay zoom-in, and writing
+the interactive 3D viewer (`hangarfit view`). All are short-lived CLI
+invocations — there is no daemon, no long-running process, no stateful session.
 
 ## Scenario 1: `hangarfit check layouts/example.yaml --render out.png`
 
@@ -229,6 +230,30 @@ sequenceDiagram
 ```
 
 *Scenario 3 — `solve --render-paths`: `solve(plan_paths=True)` tow-plans each accepted layout via `plan_fill` (back-first order; per-plane Hybrid-A\* over Reeds–Shepp arcs, the final arc re-validated by `collisions.check`). Routing is best-effort — a layout the bounded planner can't route keeps `plans[i]=None` and the blocked plane is recorded in `diagnostics.unroutable_planes` rather than dropping the valid static layout. The CLI overlays each routable path and exits 3 only when no returned candidate is tow-routable (#193/#197, ADR-0007/ADR-0010).*
+
+## Scenario 4: `hangarfit view layout.yaml -o out.html`
+
+The Phase 4 / v0.10.0 path. The operator wants a self-contained, offline 3D
+HTML view of a candidate layout — with the whole-fill tow animation when the
+layout is tow-routable. In layout mode the CLI best-effort tow-plans the layout
+to drive the animation, but caps the **global** fill budget at a small
+deterministic expansion count (`_VIEW_TOW_MAX_TOTAL_EXPANSIONS = 300`, #398) so
+an un-routable layout (e.g. the default `layouts/example.yaml`) degrades to a
+**static** 3D render in a few seconds instead of grinding through the full
+disprove budget (~2 min). This is a deterministic expansion-count cap, **not** a
+wall-clock deadline ([ADR-0003](../adr/0003-rr-mc-solver-algorithm.md));
+`--tow-max-expansions` overrides it. On a `NoFeasiblePlanError` the CLI prints a
+`note:` to stderr and proceeds; `scene.build_scene` then emits empty `timeline`
+segments and the viewer disables transport. `cmd_view` calls
+`scene.build_scene` → `viewer.render_viewer` and writes the HTML; exit 0 even
+for an un-routable (static) layout, exit 2 on a load/write error, and — in
+`--solve` mode only — exit 1 when the solver finds no valid layout. `--no-animate`
+skips tow planning entirely; `view --solve` solves a scenario first and routes
+via `solve()`, unaffected by this global cap. In layout mode the render never
+touches the solver's seeded path — it goes through `metrics` only for the
+placeholder banner and readouts — so the scene is byte-identical for a given
+input layout; under `--solve`, reproducibility is the solver's usual same-seed
+contract.
 
 ## What is *not* a runtime concern
 
