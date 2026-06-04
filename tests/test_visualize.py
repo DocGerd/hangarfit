@@ -34,10 +34,12 @@ from hangarfit.visualize import (
     _CART_PALLET_HALF_EXTENT_M,
     _CONFLICT_COLOR,
     _GLYPH_ZORDER,
+    _PLACEHOLDER_BANNER,
     _WHEEL_COLOR,
     _draw_conflict_overlay,
     _draw_gear_glyph,
     _draw_maintenance_bay,
+    _readout_text,
     nose_direction,
     render_layout,
 )
@@ -1124,3 +1126,23 @@ class TestBrandPalette:
         assert any(e[:3] == ink[:3] for e in edges), (
             "at least one plane part must carry the _INK_EDGE outline"
         )
+
+
+class TestHonestyAnnotations:
+    """#401: placeholder banner constant + actionable readouts."""
+
+    def test_readout_text_reports_gap_and_clearance(self):
+        s = _readout_text(_load("valid_left_side_nesting"))
+        assert "tightest inter-plane gap" in s
+        assert "smallest wing-over-tail clearance" in s
+
+    def test_banner_constant_is_explicit_about_placeholder(self):
+        assert "PLACEHOLDER DATA" in _PLACEHOLDER_BANNER
+        assert "not for real parking" in _PLACEHOLDER_BANNER
+
+    def test_render_with_placeholder_data_produces_png(self, tmp_path):
+        # The shipped fleet is measured: false, so this exercises the banner +
+        # readout draw paths end-to-end and must still produce a valid PNG.
+        out = tmp_path / "placeholder.png"
+        render_layout(_load("valid_left_side_nesting"), out)
+        _assert_valid_png(out)

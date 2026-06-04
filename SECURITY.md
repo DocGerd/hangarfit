@@ -25,8 +25,9 @@ The following areas have non-zero attack surface and merit scrutiny:
 
 - **YAML loader** (`src/hangarfit/loader.py`): parses user-supplied layout and fleet files
 - **Visualizer** (`src/hangarfit/visualize.py`): renders user-supplied aircraft placements and conflict data
+- **3D viewer** (`src/hangarfit/scene.py`, `src/hangarfit/viewer.py`): builds a self-contained offline HTML file embedding user-supplied plane ids and a JSON scene. By design, ids reach the page only via safe text APIs — canvas `fillText`, `textContent`, and `createTextNode` — never `innerHTML`; the inlined scene JSON escapes every `<` (to its JSON unicode escape) so a value can never close the `<script>` block. Three.js is vendored (r160) and hash-recorded in its `_viewer_assets/three/VENDOR.md`.
 
-We welcome reports of resource exhaustion, parsing edge cases, or rendering defects that could affect the tool's reliability or the user's system.
+We welcome reports of resource exhaustion, parsing edge cases, rendering defects, or any way the generated viewer HTML could be coerced into executing injected markup — anything that could affect the tool's reliability or the user's system.
 
 ## Project security posture
 

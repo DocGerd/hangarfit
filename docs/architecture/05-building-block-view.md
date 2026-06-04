@@ -16,11 +16,16 @@ flowchart TD
     solver["solver.py<br/>RR-MC search<br/>deterministic RNG"]
     towplanner["towplanner.py<br/>tow-path planning<br/>Reeds–Shepp + bound-aware Hybrid-A*"]
     visualize["visualize.py<br/>top-down PNG renderer<br/>headless matplotlib"]
+    scene["scene.py<br/>scene/v1 builder<br/>precomputed affines + timeline"]
+    viewer["viewer.py<br/>self-contained 3D HTML<br/>inlined scene + vendored Three.js"]
+    metrics["metrics.py<br/>read-only render annotations<br/>placeholder / gap / clearance / validity"]
 
     cli --> loader
     cli --> collisions
     cli --> solver
     cli --> visualize
+    cli --> scene
+    cli --> viewer
     cli --> models
 
     loader --> models
@@ -38,6 +43,19 @@ flowchart TD
 
     visualize --> geometry
     visualize --> models
+
+    scene --> geometry
+    scene --> towplanner
+    scene --> visualize
+    scene --> models
+
+    metrics --> collisions
+    metrics --> geometry
+    metrics --> models
+
+    visualize --> metrics
+    scene --> metrics
+    viewer --> metrics
 ```
 
 Edges point from caller to callee. `models.py` is the lowest-level
@@ -331,27 +349,100 @@ conflicting parts in red. The two-layer rendering (base layout in
 neutral colors, conflicts in red on top) lets the operator see *what
 broke* at a glance.
 
+Two render-only annotations (#401) share the read-only `metrics` oracle with the
+3D viewer so the 2D and 3D outputs never drift: when any placed aircraft is on
+placeholder (`measured: false`) data the persistent "PLACEHOLDER DATA" honesty
+banner is drawn across the top (wording from `metrics.PLACEHOLDER_BANNER`), and for
+a valid layout the tightest plan-view inter-plane gap and smallest wing-over-tail
+clearance are drawn along the bottom. Landing-gear wheels are drawn from each
+plane's canonical `aircraft.wheels.positions`
+([ADR-0013](../adr/0013-wheels-canonical-data.md)), or a cart glyph when
+`placement.on_carts`. None of this enters the collision model.
+
 The render is the only project output that is not also JSON-encodable;
 it is the human's sanity-check.
 
+### `scene.py` — `scene/v1` builder (3D)
+
+A pure builder (no I/O, no rendering) that turns a `Layout` (+ optional
+`MovesPlan`, `CheckResult`) into the JSON-serializable `hangarfit.scene/v1`
+dict consumed by the 3D viewer. It is a leaf consumer of the core types, the
+same role `visualize.py` plays for the 2D PNG.
+
+Its defining job is to **own the geometry**: it precomputes the plane-local→world
+transform (the determinant −1 map, [ADR-0002](../adr/0002-determinant-minus-one-transform.md))
+as per-frame affine matrices and emits `aircraft_parts_world` oracle corners as
+`anchors`, so the viewer applies matrices and does no transform math. It also
+builds the whole-fill timeline (one segment per plane in `back_first_order`, laid
+end-to-end, sampled from each tow `DubinsArc`). Pure and deterministic — same
+input ⇒ byte-identical scene. Schema: [`scene-v1-schema.md`](scene-v1-schema.md);
+rationale: [ADR-0017](../adr/0017-3d-viewer-architecture.md).
+
+### `viewer.py` — self-contained 3D HTML
+
+Assembles **one** offline HTML file: it inlines the `scene/v1` JSON plus a
+`data:`-URL import-map for the vendored Three.js (`_viewer_assets/three/`, shipped
+as package data) and the hand-written `_viewer_assets/viewer.js`. The `data:`
+import-map sidesteps the ES-module `file://` CORS block so a double-clicked page
+loads with zero network. The embedded scene JSON escapes `<` to prevent a
+`</script>` breakout. The thin `viewer.js` consumer (Three.js vendored at r160) builds each plane as a
+Three.js `Group` driven per-frame by the affine as a `Matrix4` (`DoubleSide` for
+the reflected det-−1 matrix), with an orbit camera and a scrub/play/step timeline, and a
+load-time self-check of the affine path against the emitted `anchors` **and `gear_anchors`**.
+
+The v0.10.0 "viewer appeal" work (milestone #30) is all client-side and render-only —
+it never touches the scene's geometry contract:
+
+- **Gear + carts (#399).** Each plane `Group` also gets a wheel at every
+  `planes[].wheels[]` position (canonical plane-local data,
+  [ADR-0013](../adr/0013-wheels-canonical-data.md)) plus a short leg to the belly,
+  and a pallet deck under each wheel when `on_carts` — so the gear inherits the same
+  affine and animates along the tow path. Render-only, never in collisions
+  ([ADR-0015](../adr/0015-wheels-not-in-collision-model.md)); the load-time
+  self-check validates it against `gear_anchors`.
+- **Polish (#400).** A `PCFSoftShadowMap` key sun casts soft contact shadows (so a
+  high wing's shadow on a neighbour's tail reads as vertical clearance); kind-based
+  materials (translucent wings, metallic struts, a tinted cockpit); billboarded id
+  labels built as a `CanvasTexture` via safe `fillText` (never `innerHTML` — ids are
+  user YAML) and a nose-cone arrow per plane, both behind a `labels` HUD toggle.
+- **Honesty banner + readouts (#401).** When `scene.placeholder` is set the viewer
+  unhides the "PLACEHOLDER DATA" banner (wording shared with the 2D PNG via
+  `metrics.PLACEHOLDER_BANNER`); when `scene.readouts` is present (valid layouts
+  only) it shows the tightest plan-view gap and smallest wing-over-tail clearance.
+
+### `metrics.py` — read-only render annotations
+
+Pure functions over a `Layout` that annotate (never gate) renders: whether any
+placed aircraft is on placeholder/unmeasured data (the "PLACEHOLDER DATA" honesty
+banner, #401/#79), the tightest plan-view inter-plane gap, the smallest
+wing-over-tail vertical clearance, and `layout_is_valid` (trusts a supplied
+`CheckResult`, else runs `collisions.check`) so readouts are shown only for a
+verified-valid layout. A leaf consumer used by `visualize.py` (2D) and `scene.py`
+(3D), with `viewer.py` consuming the shared `PLACEHOLDER_BANNER` string; it never
+enters the collision model, so it adds no determinism or correctness risk to the
+core.
+
 ### `cli.py` — argparse dispatch + IO + exit codes
 
-Two subcommands: `hangarfit check` (Phase 1) and `hangarfit solve`
-(Phase 2a). Both subcommands are thin wrappers around the library
-entry points (`check()` and `solve()` respectively); this module owns
-only argparse, IO routing, and exit-code mapping.
+Three subcommands: `hangarfit check` (Phase 1), `hangarfit solve`
+(Phase 2a), and `hangarfit view` (Phase 4 — write the 3D HTML viewer,
+`cmd_view` → `scene.build_scene` + `viewer.render_viewer`). All are thin
+wrappers around the library (`check()` / `solve()` / the scene+viewer
+builders); this module owns only argparse, IO routing, and exit-code mapping.
 
 JSON schemas are versioned: `hangarfit.check/v1` and
 `hangarfit.solve/v1`. Bumping a version is reserved for breaking
-changes to the payload shape; additive fields do not bump.
+changes to the payload shape; additive fields do not bump. (The
+`view` subcommand emits the `hangarfit.scene/v1` JSON *inlined into its
+HTML*, not to stdout — see [`scene-v1-schema.md`](scene-v1-schema.md).)
 
 Exit codes:
 
-| Code | `check` | `solve` |
-|------|---------|---------|
-| 0 | Valid layout | Found ≥ 1 valid layout (`found` or `found_partial`) |
-| 1 | Invalid layout (conflicts found) | No valid layout (`exhausted_budget` or `trivially_infeasible`); also `found_partial` with `--strict-k` |
-| 2 | Could not check (file not found, bad YAML, invariant violation, IO error during render) | Could not solve (file not found, bad YAML, invariant violation, IO error during render/write) |
+| Code | `check` | `solve` | `view` |
+|------|---------|---------|--------|
+| 0 | Valid layout | Found ≥ 1 valid layout (`found` or `found_partial`) | Wrote the viewer HTML (an un-routable layout still succeeds, as a static scene) |
+| 1 | Invalid layout (conflicts found) | No valid layout (`exhausted_budget` or `trivially_infeasible`); also `found_partial` with `--strict-k` | `--solve` mode only: solver found no valid layout |
+| 2 | Could not check (file not found, bad YAML, invariant violation, IO error during render) | Could not solve (file not found, bad YAML, invariant violation, IO error during render/write) | Could not load (file not found, bad YAML, invariant violation) or write the HTML (`OSError`); missing `-o` (argparse) |
 
 ## Module-level invariants
 

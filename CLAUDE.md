@@ -8,7 +8,7 @@ This file is the durable **operational** context for the project: how we work, w
 
 `hangarfit` is an **on-demand exception tool** for a flying club: when the standard hangar parking layout breaks (delayed return, surprise maintenance, etc.), it helps find *a* valid alternative arrangement. The tool checks whether a hand-authored candidate layout is physically valid and renders a top-down PNG so a human can eyeball it; the solver searches for one when no candidate is in hand.
 
-**Status:** Phase 1 (substrate), Phase 2a (static layout solver, `hangarfit solve`), Phase 2b–2c (solver realism + spread/diversity polish), Phase 3a (tow-path planning, `hangarfit solve --render-paths`), and Phase 3b (Reeds–Shepp reverse-capable tow motion) have all shipped. Live milestone status lives in auto-memory and GitHub milestones, not here.
+**Status:** Phase 1 (substrate), Phase 2a (static layout solver, `hangarfit solve`), Phase 2b–2c (solver realism + spread/diversity polish), Phase 3a (tow-path planning, `hangarfit solve --render-paths`), Phase 3b (Reeds–Shepp reverse-capable tow motion), and Phase 4 (interactive 3D viewer, `hangarfit view`) have all shipped. Live milestone status lives in auto-memory and GitHub milestones, not here.
 
 ---
 
@@ -18,7 +18,7 @@ This file is the durable **operational** context for the project: how we work, w
 |---|---|
 | What `hangarfit` is and the quality goals it optimizes for | [§1 Introduction & Goals](docs/architecture/01-introduction-and-goals.md) |
 | What is in / out of scope, the external actors, exit-code semantics pointer | [§3 Context & Scope](docs/architecture/03-context-and-scope.md) |
-| Module map (`cli`, `loader`, `models`, `geometry`, `collisions`, `solver`, `towplanner`, `visualize`) and per-module responsibilities | [§5 Building Block View](docs/architecture/05-building-block-view.md) |
+| Module map (`cli`, `loader`, `models`, `geometry`, `collisions`, `solver`, `towplanner`, `visualize`, `scene`, `viewer`, `metrics`) and per-module responsibilities | [§5 Building Block View](docs/architecture/05-building-block-view.md) |
 | Runtime flow of `check` and `solve` invocations | [§6 Runtime View](docs/architecture/06-runtime-view.md) |
 | **The parts model** (collision rule, why parts not bbox, `struts:` block, the fuselage front/aft split — a wingtip may overhang a low-winger's *tail* but not its *cockpit*) | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#the-parts-model) + [ADR-0001](docs/adr/0001-aircraft-parts-model.md) + [ADR-0012](docs/adr/0012-fuselage-front-aft-split.md) |
 | **The coordinate convention + the determinant-−1 transform trap** | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#the-coordinate-convention) + [ADR-0002](docs/adr/0002-determinant-minus-one-transform.md) |
@@ -30,6 +30,7 @@ This file is the durable **operational** context for the project: how we work, w
 | Diversity metric (edit-count, thresholds) | [ADR-0004](docs/adr/0004-diversity-metric.md) |
 | **The spread post-pass** (maximize inter-plane gap once valid) | [ADR-0008](docs/adr/0008-inter-plane-spread-soft-preference.md) |
 | **The tow-path planner** (empty-hangar fill, Reeds–Shepp arcs, `solve --render-paths`, exit-3 tow-routability) | [§5 Building Block View](docs/architecture/05-building-block-view.md) (`towplanner`) + [ADR-0007](docs/adr/0007-tow-path-planner-v1-scope.md) (v1 scope) + [ADR-0010](docs/adr/0010-reeds-shepp-motion-model.md) (v2 Reeds–Shepp motion) |
+| **The 3D viewer** (`hangarfit view`, interactive offline HTML, whole-fill tow timeline, the `scene/v1` JSON seam, Python-owned transform) | [§5 Building Block View](docs/architecture/05-building-block-view.md) (`scene`, `viewer`) + [ADR-0017](docs/adr/0017-3d-viewer-architecture.md) + the schema reference [docs/architecture/scene-v1-schema.md](docs/architecture/scene-v1-schema.md) |
 | Why the project targets a single Python (3.12), not a range | [ADR-0009](docs/adr/0009-single-supported-python-version.md) |
 | All architecture decisions, including superseded ones | [`docs/adr/`](docs/adr/) |
 
@@ -62,6 +63,16 @@ If you find yourself about to write a domain assertion in this file, **don't** �
 5. Resolve every thread: fix the code (preferred) or reply with rationale, then mark resolved.
 6. If the changes were non-trivial, re-run the review.
 7. Tell the user the PR is **clean and ready for final review**. The user approves and merges. **Never `gh pr merge` from Claude.**
+
+**Stacking PRs (shared-file features).** When a feature splits into PRs that touch
+the same files (parallel branches would conflict), build a linear stack but **base
+every PR on `develop`, never on the parent feature branch**: CI (`on:
+pull_request: branches:[develop,main]`) and GitHub `Closes #N` linkage only fire
+for develop/main-base PRs, so a feature-branch-based PR silently gets **no CI run
+and no issue link**. Accept the cumulative diff until parents merge, and document
+the merge order. (Mis-based already? `gh api -X PATCH repos/DocGerd/hangarfit/pulls/<n> -f base=develop`,
+then close+reopen the PR to trigger CI.) Wire the stack's order as native issue
+deps: `gh api -X POST repos/DocGerd/hangarfit/issues/<n>/dependencies/blocked_by -F issue_id=<numeric id>`.
 
 ### Issues
 
@@ -157,6 +168,19 @@ pytest -m slow
 # Or run everything regardless of marker
 pytest -m ""
 
+# GOTCHA: tests/test_solver_canaries.py::test_solve_deterministic_given_seed uses
+# a wall-clock `budget_s` (not max_restarts), so under heavy concurrent CPU load
+# (e.g. running the full suite alongside several subagents) the two in-process
+# solves can complete different restart counts and it flakes — re-run it in
+# isolation before treating a failure as a regression. The max_restarts-scoped
+# companion (test_solve_deterministic_best_partial_under_max_restarts) is the
+# load-independent determinism check.
+
+# GOTCHA: CI runs `pytest -m 'not slow'` and derives coverage from THAT run, so
+# marking a test @slow drops it from coverage too. If a @slow test is the only
+# one covering a new code path, the `codecov/patch` PR check fails — keep >=1
+# non-slow test per new path.
+
 # Lint + format check (CI also runs these)
 ruff check src/ tests/
 ruff format --check src/ tests/
@@ -230,7 +254,11 @@ pip-compile --generate-hashes --no-strip-extras --allow-unsafe -o requirements-p
 # the build toolchain from `requirements-build.txt` likewise, then
 # installs the project itself in editable mode with `--no-deps
 # --no-build-isolation` (reusing the hash-verified host setuptools/wheel
-# instead of an unpinned isolated build env). No coverage gate yet.
+# instead of an unpinned isolated build env). No pytest coverage threshold
+# (no --cov-fail-under); Codecov posts a `codecov/patch` status flagging patch
+# coverage on each PR, but it is NOT a required check on `develop` (required =
+# test 3.12 + the three lockfile-drift jobs + Analyze), so a red patch status
+# reports but does not by itself block merge (see the @slow gotcha above).
 
 # Phase 1 acceptance smoke test
 hangarfit check layouts/example.yaml --render out.png
@@ -239,6 +267,21 @@ hangarfit check layouts/example.yaml --render out.png
 # can't fully route renders without paths (blocking plane named on stderr);
 # exit 3 only if NO candidate layout is tow-routable.
 hangarfit solve tests/fixtures/scenario_minimal.yaml --render out.png --render-paths
+
+# Phase 4: 3D viewer (self-contained offline HTML). layouts/example.yaml is NOT
+# tow-routable → it falls back to a static 3D render. Since #398 (F1), layout-mode
+# `view` passes a small deterministic GLOBAL tow-expansion cap
+# (_VIEW_TOW_MAX_TOTAL_EXPANSIONS=300) to the planner, so an un-routable layout
+# degrades to static in ~5 s instead of grinding ~2 min — a deterministic
+# expansion COUNT, not a wall-clock deadline (ADR-0003). Override with
+# --tow-max-expansions N; pass --no-animate to skip tow planning entirely, or use
+# the wing-over-nesting fixture for a fast animated demo. Verify headlessly via
+# swiftshader WebGL (dbus/UPower + WebGL "ReadPixels stall" lines are noise; a
+# transform mismatch shows an on-page banner).
+hangarfit view tests/fixtures/valid_left_side_nesting.yaml -o out.html
+google-chrome --headless=new --use-gl=angle --use-angle=swiftshader \
+  --enable-unsafe-swiftshader --virtual-time-budget=8000 \
+  --screenshot=out.png "file://$PWD/out.html"
 
 # GitFlow loops
 git switch develop && git pull

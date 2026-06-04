@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "hangarfit"
-version = "0.9.0"
+version = "0.10.0"
 description = "Helper tool for arranging a flying club's fleet in a stack-style hangar — collision checker, layout solver, tow-path planner, and top-down visualizer."
 readme = "README.md"
 requires-python = ">=3.12"
@@ -26,6 +26,15 @@ hangarfit = "hangarfit.cli:main"
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+# Ship the 3D-viewer assets (vendored Three.js + viewer.js) inside the wheel so
+# `hangarfit view` can read them at runtime via importlib.resources after a
+# plain `pip install` (ADR-0017). These are non-.py files, so they need an
+# explicit package-data entry — `packages.find` discovers the packages but not
+# their data.
+[tool.setuptools.package-data]
+"hangarfit._viewer_assets" = ["*.js"]
+"hangarfit._viewer_assets.three" = ["*.js", "*.txt", "*.md"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

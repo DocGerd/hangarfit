@@ -10,6 +10,62 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Fixed
 
+## [0.10.0] — 2026-06-04
+
+### Added
+
+- **3D viewer renders landing gear + tow carts (#399).** `scene/v1` now emits
+  per-plane `wheels[]` (canonical plane-local positions, ADR-0013) and an
+  `on_carts` flag, plus a `gear_anchors` oracle. The viewer draws a wheel at each
+  wheel point (+ a short leg up to the belly where it clears) — and a pallet deck
+  under each wheel for carted planes — all parented to the existing per-plane
+  affine Group, so the gear
+  inherits the determinant-−1 transform and animates along the tow path for free.
+  The load-time anchor self-check now also oracles gear world positions (the only
+  cross-language backstop, since `viewer.js` is not pytest-covered). Wheels/carts
+  are render-only and never enter the collision model (ADR-0015); `build_scene`
+  stays byte-deterministic and `collisions.py` is untouched.
+- **3D viewer polish — shadows, materials, labels, nose arrows (#400).** The
+  viewer now casts soft contact shadows (a `PCFSoftShadowMap` key sun + ortho
+  frustum sized to the hangar, a soft fill, softened ambient) so vertical
+  clearance is legible — a high wing's shadow across a neighbour's tail is the
+  viewer's reason to exist (ADR-0017). Materials are kind-based (translucent wings,
+  thin metallic struts, a darker cockpit tint echoing the 2D render's cockpit
+  shading). Each plane gets
+  a billboarded id label (a `CanvasTexture` sprite drawn with safe `fillText`,
+  never `innerHTML`) and a nose-cone arrow at its `+x` tip, both behind a new
+  `labels` HUD toggle. All client-side with the already-vendored Three.js r160 —
+  still a single self-contained offline HTML, no new assets, no determinism or
+  collision risk.
+- **Honesty banner + actionable readouts (#401).** A persistent "PLACEHOLDER
+  DATA — illustrative only, not for real parking" banner now appears on both the
+  2D PNG and the 3D viewer whenever any placed aircraft is on unmeasured
+  (`measured: false`) data — so a club member never mistakes an illustrative
+  render for a real parking plan (#79). It disappears once the data is measured.
+  Valid layouts also surface two actionable numbers — the tightest plan-view
+  inter-plane gap and the smallest wing-over-tail vertical clearance — computed by
+  a new read-only `hangarfit.metrics` module (never entering the collision model).
+
+### Changed
+
+- **Plain-language conflict messages (#401).** `check` (exit 1) and the solver's
+  trivially-infeasible / exhausted-budget summaries now lead each conflict with a
+  readable sentence ("`fuji` overlaps `scheibe_falke`", "`x` intrudes into the
+  maintenance bay", "`x` extends outside the hangar") instead of the raw `kind`
+  enum, while keeping the precise `detail` (parts + z-gaps) verbatim. The exit-3
+  "no feasible tow path (plane …)" message already named the blocking plane.
+
+### Fixed
+
+- **`hangarfit view` degrades to a static scene in seconds, not minutes
+  (#398).** Layout-mode `view` now passes a small deterministic *global*
+  tow-expansion cap (`_VIEW_TOW_MAX_TOTAL_EXPANSIONS`, 300) to `plan_fill`, so an
+  un-routable layout (e.g. the default `layouts/example.yaml`) falls back to a
+  static 3D render in ~5 s instead of grinding through the full ~16000-expansion
+  disprove budget (~2 min). The bound is a deterministic expansion count, not a
+  wall-clock deadline (ADR-0003); a fast-routable layout still animates, and an
+  explicit `--tow-max-expansions` overrides the cap.
+
 ## [0.9.0] — 2026-06-02
 
 ### Added
@@ -186,7 +242,8 @@ First Phase 1 cut — substrate for arranging the flying club fleet in a stack-s
 - Apache-2.0 license, public-audience README, CI matrix (Python 3.11 + 3.12), branch protection on develop + main (#13, #14, #15, #16).
 - Strut-aware golden tests + all-9-planes fixture using larger test-only hangar to accommodate strut-bracing geometry on placeholder dimensions (#5).
 
-[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.10.0...HEAD
+[0.10.0]: https://github.com/DocGerd/hangarfit/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/DocGerd/hangarfit/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/DocGerd/hangarfit/compare/v0.7.2...v0.8.0
 [0.7.2]: https://github.com/DocGerd/hangarfit/compare/v0.7.1...v0.7.2
