@@ -86,7 +86,7 @@ sc.near = 0.5;
 sc.far = span * 3.5;
 sc.updateProjectionMatrix();
 scene.add(sun);
-const fill = new THREE.DirectionalLight(0xcfe0ff, 0.3); // cool soft fill, no shadow
+const fill = new THREE.DirectionalLight(0xcfe3f2, 0.3); // soft fill: pale tint of the horizon accent #3FA3D6, no shadow
 fill.position.set(H.width_m * 0.7, H.length_m * 1.2, span * 0.6);
 scene.add(fill);
 
@@ -110,13 +110,13 @@ const wallMeshes = [];
 function addHangar() {
   const floor = new THREE.Mesh(
     new THREE.PlaneGeometry(H.width_m, H.length_m),
-    new THREE.MeshStandardMaterial({ color: 0x16181c, roughness: 1, side: THREE.DoubleSide }),
+    new THREE.MeshStandardMaterial({ color: 0x15171a, roughness: 1, side: THREE.DoubleSide }),
   );
   floor.position.set(H.width_m / 2, H.length_m / 2, 0); // PlaneGeometry lies in XY (normal +Z)
   floor.receiveShadow = true; // catches the planes' contact shadows (#400)
   scene.add(floor);
 
-  const grid = new THREE.GridHelper(span, Math.round(span), 0x3b4046, 0x23262b);
+  const grid = new THREE.GridHelper(span, Math.round(span), 0x3b4046, 0x202428);
   grid.rotation.x = Math.PI / 2; // GridHelper is in XZ by default → rotate into XY
   grid.position.set(H.width_m / 2, H.length_m / 2, 0.003);
   scene.add(grid);
@@ -124,7 +124,7 @@ function addHangar() {
   const t = 0.08;
   const addWall = (sx, sy, x, y) => {
     const m = new THREE.MeshStandardMaterial({
-      color: 0x4b5560, transparent: true, opacity: 0.16, side: THREE.DoubleSide,
+      color: 0x3b4046, transparent: true, opacity: 0.20, side: THREE.DoubleSide,
     });
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(sx, sy, WALL_H), m);
     mesh.position.set(x, y, WALL_H / 2);
@@ -143,7 +143,7 @@ function addHangar() {
   if (bay && bay.closed) {
     const bm = new THREE.Mesh(
       new THREE.BoxGeometry(bay.width_m, bay.depth_m, WALL_H),
-      new THREE.MeshStandardMaterial({ color: 0x922b21, transparent: true, opacity: 0.34 }),
+      new THREE.MeshStandardMaterial({ color: 0x7b63a3, transparent: true, opacity: 0.32 }),
     );
     bm.position.set(bay.center_x_m, H.length_m - bay.depth_m / 2, WALL_H / 2);
     scene.add(bm);
@@ -248,21 +248,26 @@ function boxMaterial(b, colour) {
 // the plane-local +x tip show which plane is which and which way it faces.
 const labelMeshes = [];
 const noseMeshes = [];
-function makeLabel(text) {
+function makeLabel(text, conflicted = false) {
+  // Plane ids are machine output → mono (brand). A conflicted plane carries the
+  // non-colour "never hue alone" cue 3D can't hatch: a " ⚠ conflict" suffix and
+  // the conflict-ink chip instead of the surface glass (BRAND.md §3).
+  const shown = conflicted ? text + ' ⚠ conflict' : text;
   const fontPx = 64, padX = 14, padY = 8;
+  const fontStack = "px ui-monospace, 'SF Mono', Menlo, monospace";
   const measure = document.createElement('canvas').getContext('2d');
-  measure.font = fontPx + 'px system-ui, sans-serif';
-  const tw = Math.ceil(measure.measureText(text).width);
+  measure.font = fontPx + fontStack;
+  const tw = Math.ceil(measure.measureText(shown).width);
   const canvas = document.createElement('canvas');
   canvas.width = tw + padX * 2;
   canvas.height = fontPx + padY * 2;
   const ctx = canvas.getContext('2d');
-  ctx.font = fontPx + 'px system-ui, sans-serif';
+  ctx.font = fontPx + fontStack;
   ctx.textBaseline = 'middle';
-  ctx.fillStyle = 'rgba(18,20,24,0.82)';
+  ctx.fillStyle = conflicted ? '#C8442C' : 'rgba(21,23,26,0.86)';
   ctx.fillRect(0, 0, canvas.width, canvas.height);
-  ctx.fillStyle = '#e8eaed';
-  ctx.fillText(text, padX, canvas.height / 2); // SAFE: canvas fillText, never innerHTML (ids are user YAML)
+  ctx.fillStyle = '#ECEEF1';
+  ctx.fillText(shown, padX, canvas.height / 2); // SAFE: canvas fillText, never innerHTML (ids are user YAML)
   const tex = new THREE.CanvasTexture(canvas);
   tex.anisotropy = 4;
   const sprite = new THREE.Sprite(
@@ -273,7 +278,7 @@ function makeLabel(text) {
   sprite.renderOrder = 999; // float above geometry (depthTest off)
   return sprite;
 }
-function addLabelAndNose(g, p, colour) {
+function addLabelAndNose(g, p, colour, conflicted) {
   let maxTop = 0, sx = 0, sy = 0, noseX = -Infinity, noseZ = 0;
   for (const b of p.boxes) {
     maxTop = Math.max(maxTop, b.cz + b.height_m / 2);
@@ -286,7 +291,7 @@ function addLabelAndNose(g, p, colour) {
   if (!isFinite(noseX)) noseX = 0;
   if (noseZ === 0) noseZ = maxTop * 0.5;
 
-  const label = makeLabel(p.id);
+  const label = makeLabel(p.id, conflicted);
   label.position.set(sx / n, sy / n, maxTop + 1.0); // above the plane, in plane-local
   g.add(label);
   labelMeshes.push(label);
@@ -324,7 +329,7 @@ for (const p of SCENE.planes) {
     g.add(mesh);
   }
   addGear(g, p); // wheels + legs (+ pallets when carted), same affine Group
-  addLabelAndNose(g, p, colour); // id label + nose arrow, HUD-toggleable
+  addLabelAndNose(g, p, colour, conflicted); // id label + nose arrow, HUD-toggleable
   groups[p.id] = g;
   scene.add(g);
 
