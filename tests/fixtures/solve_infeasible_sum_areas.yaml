@@ -1,0 +1,14 @@
+# All 9 planes in a deliberately-small hangar so the Σ part-areas gate
+# (solver check #2, spec §4.1.2) fires under the #425 part-footprint gate:
+# the fleet's Σ part-footprint area (~185 m²) exceeds the 171 m² floor of
+# hangar_area_too_small.yaml, while no single plane trips check #1 (the
+# hangar's 19 m larger dimension clears the 18 m Scheibe Falke wingspan).
+#
+# The companion fix case — the same fleet in the real placeholder 25×18
+# hangar, where the part-area gate now correctly DEFERS to the search
+# (Σ part ~185 m² < 450 m² floor, even though Σ bbox ~654 m² > floor) —
+# lives in solve_infeasible_too_big.yaml.
+
+fleet: ../../data/fleet.yaml
+hangar: hangar_area_too_small.yaml
+fleet_in: [scheibe_falke, aviat_husky, fuji, wild_thing, zlin_savage, cessna_140, cessna_150, ctsl, fk9_mkii]

@@ -31,12 +31,17 @@ bounding rectangle and the files keep planes clear of the notch by hand.
 Teaching the model the notch is spike **#424**.
 
 **2. `layout.yaml` is the tool's arrangement, not the club's real parking.**
-The product solver (`hangarfit solve`) cannot produce this layout: its
-trivial-infeasibility gate sums *bounding boxes* (Σ ≈ 606 m² > the 479 m²
-rectangular floor) and bails, because an 18 m-span motor glider is mostly empty air — see
-**#425**. The real, part-based collision checker accepts a nested layout, so
-this one was found by driving that checker directly. Replace the placements
-with the club's real parking positions when known.
+The product solver (`hangarfit solve`) cannot produce this layout. (**#425**
+— fixed — once made its trivial-infeasibility gate sum *bounding boxes*, Σ ≈
+606 m² > the 479 m² rectangular floor, and bail, because an 18 m-span motor
+glider is mostly empty air; the gate now sums actual part footprints, Σ ≈
+160 m² « 479, and no longer bails.) It still won't reproduce this layout: the
+rectangular model ignores the office **notch** (#424) the layout keeps clear
+by hand, and finding an all-eight nested arrangement within budget is a
+separate search-feasibility question. The real, part-based collision checker
+accepts a nested layout, so this one was found by driving that checker
+directly. Replace the placements with the club's real parking positions when
+known.
 
 ## Notable aircraft
 

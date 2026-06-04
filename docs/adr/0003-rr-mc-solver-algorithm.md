@@ -116,7 +116,7 @@ design rationale is in the Phase 2a spec
   `found_partial` (`0 < n < K`, budget exhausted), `exhausted_budget`
   (0 accepted). Plus `trivially_infeasible` from the pre-search gate.
 - **Pre-search infeasibility checks** run before the main loop:
-  (1) per-plane bbox vs. hangar, (2) Σ bbox areas vs. floor area,
+  (1) per-plane bbox vs. hangar, (2) Σ part-footprint areas vs. floor area (#425),
   (3) pin self-collision via `check()` on a pin-only Layout. Catches
   literal impossibilities (a 200 m wingspan typo, two pins on top of
   each other) in milliseconds instead of after the full budget burns.
