@@ -63,9 +63,13 @@ numbers trustworthy and comparable:
   tow budget; the global fill cap (`max_total_expansions`) is reachable only by
   calling `plan_fill` directly. Routing through it lets the un-routable regimes be
   bounded instead of running to the 16000-expansion module default (~hundreds of
-  seconds). Because `solve(plan_paths=True)` internally calls the *same*
-  `plan_fill` on the selected layouts, `placement_s + routing_s` is a faithful
-  decomposition of end-to-end wall-clock.
+  seconds). For the **fast** regimes (`tow_max_total_expansions=None`) this is
+  *exactly* what `solve(plan_paths=True)` runs internally, so `placement_s +
+  routing_s` is a faithful decomposition of end-to-end wall-clock. The two
+  **heavy** regimes deliberately pass a tighter global cap than `solve()` ever
+  does, so their `routing_s` / "un-routable" verdict is a harness-specific *lower
+  bound* on what `solve()` would spend before bailing at its 16000 default — not
+  a reproduction of it.
 
 The harness also asserts three correctness invariants per regime (the substrate
 F6/#403 will promote to always-on CI gates): **validity** (every layout scores
@@ -167,20 +171,27 @@ Two things this nails down:
   it, again, `aircraft_parts_world` → shapely. (`tight_six` is identical: 98.0 %
   `_motion_clear`, 227,497 calls → 455,009 `aircraft_parts_world` → 4.55 M
   polygons.)
-- **`_motion_clear` rebuilds the *constant* obstacle geometry every pose sample.**
-  The obstacle set does not change during a single `plan_path` search — only the
-  mover's pose does — yet all 432 k `_motion_clear` calls reconstruct every
-  obstacle's world parts from scratch. Building obstacle parts **once per
-  `plan_path` and reusing them** is the routing-side twin of the placement-side
-  world-part caching, and it is equally byte-identical.
+- **The routing redundancy is the *mover's* parts rebuilt twice per pose — not
+  the obstacles.** Obstacle geometry is *already* built once per `plan_path` and
+  reused for every sample (`_Obstacles` / `_build_obstacles`, towplanner.py).
+  The tell is the call ratio: 432,080 `_motion_clear` → 865,459
+  `aircraft_parts_world` is exactly **2.00×**, not the ~9× you would see if all
+  eight obstacles were rebuilt per sample. The 2× is the *mover's* parts
+  reconstructed once in `_motion_clear` (towplanner.py:1514) and again in
+  `_mover_motion_bounds_conflict` (:979) for the **same** pose. A per-(plane,
+  pose) memo collapses both to one build — byte-identical, and the routing-side
+  application of the very same lever as placement.
 
 ### 5. The one root cause
 
 Every regime — placement *and* routing, routable *and* not — bottlenecks on
 `geometry.aircraft_parts_world` → `geometry.oriented_rect` → shapely `Polygon`
-construction, rebuilt from scratch on every collision/clearance check with **no
-memoization and no broad-phase**. A single un-routable 9-plane fill constructs
-**8.6 million** shapely polygons. That one function is the lever.
+construction. The one existing cache (`_Obstacles`) already holds *obstacle*
+parts constant within a `plan_path`, but everything else — every placement-side
+`collisions.check`, every `path_first_conflict` sample, and the mover in
+`_motion_clear` — rebuilds parts from scratch with **no memoization and no
+broad-phase**. A single un-routable 9-plane fill still constructs **8.6 million**
+shapely polygons. That one function is the lever.
 
 ---
 
@@ -199,7 +210,7 @@ first-pass payoff guesses in both directions. Payoff is scored against the
 | **Memoize `aircraft_parts_world`** (per-solve, exact-key, no eviction) | **high** — 83.8 % of calls are redundant rebuilds (314,460 calls / 50,889 unique poses on roomy-3); cross-cuts *both* stages and the un-routable 8.6 M-polygon case | low | **none — byte-identical** (verified end-to-end: memoized solve → identical `SolveResult` digest; GEOS distance bit-matched) | **BUILD** — this is F6's "one cheap lever" |
 | **Incremental single-plane re-scoring in `_spread`** | **high** — `_spread` is >99 % of placement | medium — the naive delta-update drifts ~1e-15 in 29 % of moves and flips acceptance; the safe form re-sums *all* pairs in canonical sorted order | safe-with-care (canonical re-sum is byte-identical; delta-update **breaks** it) | build **after** caching |
 | **AABB / circle-distance broad-phase** in `_parts_conflict` | medium — payoff overstated ~5–7×: `collisions.check` rebuilds polygons *unconditionally* before the pairwise loop the filter sits in, so it can't shrink the 86 % rebuild; caching is the real win | low | none — byte-identical (a per-axis gap is a sound lower bound) | build after caching; **do not** copy `_motion_clear`'s z-prefilter (divergence trap) |
-| Routing-side mover/obstacle parts caching across `path_first_conflict` / `_motion_clear` | high *for un-routable fills* — `_motion_clear` is 98 % of that routing and rebuilds **constant** obstacle geometry every sample | low | none — byte-identical, RNG-free planner | folds into the memoization lever |
+| Routing-side mover-parts caching across `path_first_conflict` / `_motion_clear` | high *for un-routable fills* — `_motion_clear` is 98 % of that routing; the mover's parts are rebuilt **twice per pose** (`_motion_clear` + `_mover_motion_bounds_conflict`), 2.00× ratio. (Obstacles are already cached per `plan_path`.) | low | none — byte-identical, RNG-free planner | folds into the memoization lever |
 | `incremental_collision_across_restarts` | the determinism-safe subset *is* the per-solve memoization lever above | — | safe only as per-restart, exact-key, **no eviction** (the named LRU variant breaks basin selection) | folds into the memoization lever |
 | `grid_heuristic_rebuild_caching` | **~0** — instrumented: 0 cache hits (obstacles grow monotonically); `_build_grid_heuristic` is 0.1 % of routing | — | not robustly safe (h participates in heap pop order) | **REJECT** |
 | `warm_start_tow_from_placement` | **~0** — instrumented: the analytic Reeds–Shepp shot closes in **0 expansions** on routable cases; nothing to warm-start | — | breaks (changes the returned arc) | **REJECT** |

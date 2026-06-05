@@ -59,6 +59,8 @@ def _print_profile(key: str) -> None:
     regime = regime_by_key(key)
     print(f"\n═══ cProfile: {regime.key} — {regime.description} ═══")
 
+    print("  (bucket times are cumulative — nested stages overlap, do not sum to 100%)")
+
     p_elapsed, p_buckets, _ = profile_placement(regime)
     print(f"\n  PLACEMENT  ({p_elapsed:.3f} s wall)")
     for stage, cum, ncalls in p_buckets:

@@ -19,10 +19,14 @@ gates):
 Timing method: ``solve(plan_paths=False)`` is timed for placement; routing is
 driven by a **direct** ``plan_fill`` call on each selected layout (``solve()``
 forwards only the per-plane budget, so the direct call is the only way to set
-the global expansion cap and bound the un-routable regimes). Because
-``solve(plan_paths=True)`` internally calls exactly the same ``plan_fill`` on
-the selected layouts, ``placement_s + routing_s`` is a faithful decomposition
-of the end-to-end wall-clock.
+the global expansion cap and bound the un-routable regimes). For a regime with
+``tow_max_total_expansions=None`` (the fast set), this direct call is *exactly*
+what ``solve(plan_paths=True)`` runs internally, so ``placement_s + routing_s``
+is a faithful decomposition of the end-to-end wall-clock. The heavy regimes
+deliberately pass a **tighter** global cap than ``solve()`` ever does (to bound
+the un-routable "gives-up" case), so their ``routing_s`` and "un-routable" verdict
+are harness-specific — a *lower bound* on what ``solve()`` would spend before
+bailing at the 16000-expansion module default, not a reproduction of it.
 """
 
 from __future__ import annotations
@@ -50,14 +54,23 @@ from .regimes import FAST_REGIMES, REGIMES, Regime
 # Functions whose cumulative time a routing cProfile is bucketed into. Keys are
 # the human-facing stage names from #381; values are (module-substring,
 # function-name) pairs matched against pstats rows. Ordered most→least specific.
+# NOTE: bucket times are *cumulative* (pstats ct), so an outer stage subsumes
+# the inner ones it calls — they overlap and do NOT sum to 100% of the stage
+# wall (e.g. path_first_conflict ⊃ collisions.check ⊃ _parts_conflict ⊃
+# polygon_overlap ⊃ aircraft_parts_world). The module-substring in each value
+# matches a function by its *defining* file, so polygon_overlap and
+# aircraft_parts_world key on "geometry" (where they are defined), not on the
+# importing module — keying them on "collisions" would silently never match.
 _ROUTING_STAGES: tuple[tuple[str, tuple[str, str]], ...] = (
     ("grid-heuristic build", ("towplanner", "_build_grid_heuristic")),
     ("Reeds-Shepp enumeration", ("towplanner", "_rs_solve_normalised")),
     ("motion-clear (fast collision)", ("towplanner", "_motion_clear")),
-    ("exact parts-conflict", ("collisions", "_parts_conflict")),
-    ("polygon overlap (shapely)", ("collisions", "polygon_overlap")),
+    ("mover bounds (in-transit)", ("towplanner", "_mover_motion_bounds_conflict")),
     ("path_first_conflict re-check", ("towplanner", "path_first_conflict")),
     ("collisions.check", ("collisions", "check")),
+    ("exact parts-conflict", ("collisions", "_parts_conflict")),
+    ("polygon overlap (shapely)", ("geometry", "polygon_overlap")),
+    ("world-part build (shapely)", ("geometry", "aircraft_parts_world")),
 )
 
 _PLACEMENT_STAGES: tuple[tuple[str, tuple[str, str]], ...] = (
@@ -66,7 +79,8 @@ _PLACEMENT_STAGES: tuple[tuple[str, tuple[str, str]], ...] = (
     ("inter-plane energy", ("solver", "_inter_plane_energy")),
     ("collisions.check", ("collisions", "check")),
     ("exact parts-conflict", ("collisions", "_parts_conflict")),
-    ("polygon overlap (shapely)", ("collisions", "polygon_overlap")),
+    ("polygon overlap (shapely)", ("geometry", "polygon_overlap")),
+    ("world-part build (shapely)", ("geometry", "aircraft_parts_world")),
 )
 
 
@@ -198,14 +212,24 @@ def _layout_digest(layout: Layout) -> str:
 
 
 def _plan_digest(plan: MovesPlan | None) -> str:
-    """Exact digest of a plan's moves (target slot + arc segment lengths)."""
+    """Exact digest of a plan's moves (target slot + full arc shape).
+
+    Each segment contributes its ``kind`` (L/S/R), ``gear`` (±1), and exact
+    ``length_m`` plus the arc's ``turn_radius_m`` — not length alone — so two
+    arcs that share a target slot and per-leg lengths but differ in steering,
+    travel direction, or radius do not collapse to the same digest (which would
+    let an arc-*shape* non-determinism slip through as ``det = ok``).
+    """
     if plan is None:
         return "None"
     parts: list[str] = []
     for move in plan.moves:
         slot: Pose = move.target_slot
-        seglen = ",".join(f"{s.length_m!r}" for s in move.path.segments)
-        parts.append(f"{move.plane_id}@{slot.x_m!r},{slot.y_m!r},{slot.heading_deg!r}[{seglen}]")
+        segs = ",".join(f"{s.kind}{s.gear:+d}:{s.length_m!r}" for s in move.path.segments)
+        parts.append(
+            f"{move.plane_id}@{slot.x_m!r},{slot.y_m!r},{slot.heading_deg!r}"
+            f"r{move.path.turn_radius_m!r}[{segs}]"
+        )
     return "|".join(parts)
 
 
