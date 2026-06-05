@@ -16,9 +16,11 @@ for the full rationale. Key invariants:
 - **Node is dev/CI-only.** `pip install hangarfit` and `python -m build` invoke no
   npm — they consume the committed `viewer.js`. You only need Node to *change* the
   viewer.
-- **The committed bundle is the source of truth at runtime.** The
-  `viewer-build-drift` CI guard (issue #438) rebuilds it and fails on any diff, so
-  the shipped artifact can never drift from the TS source.
+- **The committed bundle is the source of truth at runtime.** Once the
+  `viewer-build-drift` CI guard lands (scope of #438, with the #439 port) it will
+  rebuild the bundle and fail on any diff, so the shipped artifact cannot drift from
+  the TS source. **During this #437 scaffold that guard is not yet wired** and the
+  committed `viewer.js` is still the hand-written renderer (see Status below).
 - **Three.js stays vendored & external.** The bare `three` / OrbitControls imports
   are left in the bundle and resolved by `viewer.py`'s `data:` import-map over the
   vendored r160 sources; `viewer.py` is unchanged. `@types/three` is pinned to
