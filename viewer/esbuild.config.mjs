@@ -1,11 +1,10 @@
 // Build the committed viewer bundle from viewer/src/*.ts.
 //
 // ADR-0020: this toolchain is DEV/CI-ONLY. `pip install` and the wheel build never
-// invoke it — they consume the committed src/hangarfit/_viewer_assets/viewer.js. Once
-// the `viewer-build-drift` CI guard lands (scope of #438, with the #439 port) it will
-// rebuild and assert the committed bundle equals this output, keeping the shipped
-// artifact in sync with the TS source. (During the #437 scaffold the committed
-// viewer.js is the hand-written renderer, not this output — see ADR-0020.)
+// invoke it — they consume the committed src/hangarfit/_viewer_assets/viewer.js. The
+// `viewer-build-drift` CI guard (#438, live since the #439 port) rebuilds and asserts
+// the committed bundle equals this output, keeping the shipped artifact in sync with
+// the TS source: since #439 the committed viewer.js IS this esbuild output.
 //
 // three stays EXTERNAL: the bare `three` / OrbitControls imports are left in the output
 // and resolved at HTML-assembly time by viewer.py's `data:` import-map over the vendored
