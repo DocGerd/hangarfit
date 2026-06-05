@@ -60,3 +60,9 @@ out*.png
 # `.claude/worktrees/agent-<hash>/`; nothing in there is ever meant to be
 # committed (issue #148).
 .claude/worktrees/
+
+# Viewer TypeScript toolchain (top-level `viewer/`, ADR-0020 / issue #437). The
+# dev/CI-only Node deps are installed via `npm --prefix viewer/ ci` and must never
+# be committed or shipped; the committed bundle is src/hangarfit/_viewer_assets/
+# viewer.js, built FROM viewer/src/*.ts.
+viewer/node_modules/

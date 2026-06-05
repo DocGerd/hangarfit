@@ -1,0 +1,22 @@
+{
+  "name": "hangarfit-viewer",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Dev/CI-only TypeScript toolchain for the hangarfit 3D viewer. Never published, never shipped in the wheel; it only emits the committed bundle src/hangarfit/_viewer_assets/viewer.js (ADR-0020).",
+  "type": "module",
+  "scripts": {
+    "build": "node esbuild.config.mjs",
+    "typecheck": "tsc --noEmit",
+    "lint": "eslint .",
+    "test": "node --test"
+  },
+  "devDependencies": {
+    "@eslint/js": "10.0.1",
+    "@types/three": "0.160.0",
+    "esbuild": "0.28.0",
+    "eslint": "10.4.1",
+    "globals": "17.6.0",
+    "typescript": "5.9.3",
+    "typescript-eslint": "8.60.1"
+  }
+}
