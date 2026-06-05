@@ -1099,6 +1099,20 @@ class TestBrandPalette:
 
         assert _CONFLICT_COLOR == STATUS["conflict"] == "#C8442C"
 
+    def test_bay_wall_aligns_to_brand_maint_and_ink_tokens(self) -> None:
+        """#418: the 2D maintenance-bay fill is the brand ``maint`` violet (shared
+        with the 3D bay), the edge + label are the brand ink, and the hatch is
+        retained — so the bay reads on-token, stays legible on the lighter violet,
+        and never rests on hue alone. Catches a regression back to the old
+        off-system bay red (#922b21), which collided with the conflict red.
+        """
+        from hangarfit import brand
+
+        assert brand.BAY_WALL_FACE == brand.STATUS["maint"] == "#7B63A3"
+        assert brand.BAY_WALL_EDGE == brand.INK_EDGE == "#14161A"
+        assert brand.BAY_LABEL_COLOR == brand.INK_EDGE
+        assert brand.BAY_WALL_HATCH, "the bay hatch must be retained (never hue alone)"
+
     def test_plane_parts_drawn_per_part_with_ink_outline(self) -> None:
         """Each placed plane's parts are still drawn one ``_draw_part`` call
         per part, and solid parts carry the brand ink outline (#14161A) so
@@ -1146,3 +1160,33 @@ class TestHonestyAnnotations:
         out = tmp_path / "placeholder.png"
         render_layout(_load("valid_left_side_nesting"), out)
         _assert_valid_png(out)
+
+    def test_placeholder_banner_uses_warning_amber_with_ink_text(self) -> None:
+        """#418: the 2D placeholder banner is the brand ``warning`` amber with dark
+        ink text — the *same* signal as the 3D honesty banner (cross-surface
+        parity), single-sourced via ``brand.WARNING`` so 2D and 3D can't drift.
+        Catches a regression back to the old off-system red (#b00020).
+        """
+        from hangarfit import brand
+
+        assert brand.WARNING == "#D6A23E"
+        assert brand.PLACEHOLDER_BANNER_BG_2D == brand.WARNING == brand.PLACEHOLDER_BANNER_BG
+        assert brand.PLACEHOLDER_BANNER_TEXT_2D == brand.INK_EDGE == "#14161A"
+
+    def test_placeholder_banner_draw_wires_brand_tokens(self) -> None:
+        """The draw path actually passes those tokens into ``fig.text`` (bbox
+        facecolor + text colour), so the cross-surface parity can't silently
+        regress inside the renderer while the constants stay correct.
+        """
+        from unittest.mock import MagicMock
+
+        from hangarfit import brand
+        from hangarfit.visualize import _draw_placeholder_banner
+
+        fig = MagicMock()
+        _draw_placeholder_banner(fig)
+
+        fig.text.assert_called_once()
+        kwargs = fig.text.call_args.kwargs
+        assert kwargs["color"] == brand.PLACEHOLDER_BANNER_TEXT_2D
+        assert kwargs["bbox"]["facecolor"] == brand.PLACEHOLDER_BANNER_BG_2D
