@@ -1,7 +1,7 @@
 // ── hangar: floor, grid, walls (split at door), maintenance bay ──────────────
 import * as THREE from 'three';
-import type { BrandTokens } from './brand-contract';
-import type { HangarData } from './scene-contract';
+import type { BrandTokens } from './brand-contract.ts';
+import type { HangarData } from './scene-contract.ts';
 
 export const WALL_H = 3.0;
 

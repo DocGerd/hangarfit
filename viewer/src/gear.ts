@@ -6,8 +6,8 @@
 // top-down PNG has no z and draws no gear leg — and are glyph extents chosen to
 // read at fuselage scale.
 import * as THREE from 'three';
-import type { BrandTokens } from './brand-contract';
-import type { PlaneData } from './scene-contract';
+import type { BrandTokens } from './brand-contract.ts';
+import type { PlaneData } from './scene-contract.ts';
 
 export const WHEEL_RADIUS_M = 0.18; // visualize._WHEEL_RADIUS_M
 export const WHEEL_WIDTH_M = 0.12; // tyre width — 3D-only glyph depth

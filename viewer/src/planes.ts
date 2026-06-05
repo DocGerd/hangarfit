@@ -1,10 +1,10 @@
 // ── planes: one Group of boxes each, built ONCE in plane-local coords ────────
 import * as THREE from 'three';
-import { byId } from './dom';
-import { addGear, makeGearMaterials } from './gear';
-import { addLabelAndNose } from './labels';
-import type { BrandTokens } from './brand-contract';
-import type { BoxData, SceneV1 } from './scene-contract';
+import { byId } from './dom.ts';
+import { addGear, makeGearMaterials } from './gear.ts';
+import { addLabelAndNose } from './labels.ts';
+import type { BrandTokens } from './brand-contract.ts';
+import type { BoxData, SceneV1 } from './scene-contract.ts';
 
 export interface PlanesBundle {
   groups: Record<string, THREE.Group>;

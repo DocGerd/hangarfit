@@ -1,10 +1,12 @@
 // Typed mirror of the `hangarfit.scene/v1` contract (Python `scene.py`).
 //
 // This is the EXTENSION SEAM (ADR-0020): an additive scene field becomes an
-// additive interface field here. #439 keeps these LEAN — just enough for the
-// port to typecheck under `strict`. The full schema-faithful depth + the Python
-// key-set parity test land in #440 (spec §Decisions 6); the runtime
-// `checkAnchors()` self-check still guards the transform *values* regardless.
+// additive interface field here. It is the schema-faithful mirror of
+// `docs/architecture/scene-v1-schema.md`; a Python key-set parity test in
+// `tests/test_scene.py` fails if `scene.py`'s emitted keys and these interfaces
+// drift apart (the near-term desync guard — JSON-Schema single-source is the
+// deferred principled fix, spike #444). The runtime `checkAnchors()` self-check
+// still guards the transform *values* regardless.
 //
 // The viewer performs NO transform math (ADR-0002): every plane-local→world
 // placement arrives here as a 2x3 affine computed in Python.
@@ -38,10 +40,11 @@ export interface DoorData {
 }
 
 export interface MaintenanceBay {
-  closed: boolean;
+  closed: boolean; // true iff layout.maintenance_plane is set
   width_m: number;
   depth_m: number;
   center_x_m: number;
+  plane_id: string | null; // the absent occupant, or null
 }
 
 export interface HangarData {
@@ -69,6 +72,9 @@ export interface Readouts {
 }
 
 export interface SceneV1 {
+  schema: string; // always "hangarfit.scene/v1"
+  units: string; // always "m"
+  coordinate_note: string; // human reminder of the coordinate convention
   hangar: HangarData;
   planes: PlaneData[];
   conflicts: string[];
