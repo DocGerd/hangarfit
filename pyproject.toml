@@ -32,8 +32,16 @@ where = ["src"]
 # plain `pip install` (ADR-0017). These are non-.py files, so they need an
 # explicit package-data entry — `packages.find` discovers the packages but not
 # their data.
+#
+# The first entry is the EXPLICIT `viewer.js`, not a `*.js` glob (ADR-0020 /
+# issue #437): the viewer's TypeScript source lives in the top-level `viewer/`
+# dir, *outside* this package, and esbuild only emits `viewer.js` here — but
+# naming the file (rather than globbing) is belt-and-suspenders so no future
+# stray `.js` under `_viewer_assets/` can be shipped by accident. The TS
+# toolchain (`viewer/`) is never discovered by `packages.find` (`where=["src"]`),
+# so no `*.ts`/`node_modules`/`package.json` can reach the sdist or wheel.
 [tool.setuptools.package-data]
-"hangarfit._viewer_assets" = ["*.js"]
+"hangarfit._viewer_assets" = ["viewer.js"]
 "hangarfit._viewer_assets.three" = ["*.js", "*.txt", "*.md"]
 
 [tool.pytest.ini_options]
