@@ -317,12 +317,12 @@ jobs:
     # Deliberately a SEPARATE job from the Python matrix above: a Node failure must
     # never block the Python test / lint / mypy / lockfile-drift jobs (the viewer is
     # built from a committed bundle the Python install never touches). This job runs
-    # the checks that are greenable for the scaffold — `tsc --noEmit`, eslint, and the
-    # three <-> @types/three version-skew guard. The `viewer-build-drift` byte guard
-    # and the `node --test` pure-unit job (the rest of #438) land with the real port
-    # (#439), where the committed viewer.js equals esbuild(viewer/src) and the pure
-    # units (affine/anchors/timeline) exist to test.
-    name: viewer toolchain (typecheck + lint)
+    # `tsc --noEmit`, eslint, the three <-> @types/three <-> three(devDep) version-skew
+    # guard, the `viewer-build-drift` byte guard (a rebuild of the committed bundle from
+    # viewer/src must reproduce src/hangarfit/_viewer_assets/viewer.js exactly), and
+    # (since #440) `node --test` for the pure units (affine/anchors/timeline) — coverage
+    # pytest cannot reach. This completes #438.
+    name: viewer toolchain (typecheck + lint + build-drift + node-test)
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
@@ -345,21 +345,51 @@ jobs:
       - name: Lint (eslint)
         run: npm --prefix viewer/ run lint
 
-      - name: three <-> @types/three version-skew guard
-        # Assert the vendored three (VENDOR.md) and the @types/three the viewer
-        # type-checks against agree on major.minor, so the API the TS is checked
-        # against cannot drift from the three the viewer actually runs (ADR-0020).
+      - name: Unit tests (node --test, pure affine/anchors/timeline units)
+        # Node-native type-stripping runs the .ts units directly (Node pinned via
+        # .nvmrc). This is coverage pytest cannot reach: the only transform math the
+        # viewer does (affine), the cross-language oracle compare (anchors), and the
+        # timeline state machine. three is a test-only devDep (kept external from the
+        # bundle by esbuild), so the units exercise the SAME three r160 the browser runs.
+        run: npm --prefix viewer/ run test
+
+      - name: viewer-build-drift (rebuilt bundle must equal the committed one)
+        # The Node analogue of the lockfile-drift guards: rebuild the committed
+        # bundle from viewer/src and assert it is byte-identical to what is checked
+        # in. Drift means either a viewer/src edit without a rebuild, or an
+        # unpinned-toolchain change — exactly what the guard should catch. The
+        # bundle is unminified + esbuild/Node are exact-pinned, so a green diff is
+        # deterministic (ADR-0020). Writes the canonical path (VIEWER_OUTFILE unset).
+        run: |
+          npm --prefix viewer/ run build
+          if ! git diff --exit-code -- src/hangarfit/_viewer_assets/viewer.js; then
+            echo "::error::src/hangarfit/_viewer_assets/viewer.js is out of sync with viewer/src. Run 'npm --prefix viewer/ run build' and commit the rebuilt bundle (ADR-0020)."
+            exit 1
+          fi
+
+      - name: three <-> @types/three <-> three(devDep) version-skew guard
+        # Assert the vendored three (VENDOR.md, what the BROWSER runs), the
+        # @types/three the viewer type-checks against, and the test-only `three`
+        # devDep (what `node --test` runs, #440) all agree on major.minor — so the
+        # API the TS is checked against and node-tested against cannot drift from the
+        # three the browser actually runs (ADR-0020).
         run: |
           vendor=$(grep -oE 'three@0\.[0-9]+\.[0-9]+' src/hangarfit/_viewer_assets/three/VENDOR.md | head -1 | sed 's/^three@//')
           types=$(node -p "require('./viewer/package.json').devDependencies['@types/three']")
+          three_dev=$(node -p "require('./viewer/package.json').devDependencies['three']")
           if [ -z "$vendor" ]; then
             echo "::error::could not parse the vendored three version from VENDOR.md — update the skew guard in ci.yml."
             exit 1
           fi
           vendor_mm=${vendor%.*}
           types_mm=$(printf '%s' "$types" | grep -oE '^[0-9]+\.[0-9]+')
-          echo "vendored three=$vendor (major.minor=$vendor_mm); @types/three=$types (major.minor=$types_mm)"
+          three_dev_mm=$(printf '%s' "$three_dev" | grep -oE '^[0-9]+\.[0-9]+')
+          echo "vendored three=$vendor (mm=$vendor_mm); @types/three=$types (mm=$types_mm); three devDep=$three_dev (mm=$three_dev_mm)"
           if [ "$vendor_mm" != "$types_mm" ]; then
             echo "::error::@types/three ($types_mm) does not match vendored three ($vendor_mm). Bump @types/three in viewer/package.json in lockstep with VENDOR.md (ADR-0020)."
+            exit 1
+          fi
+          if [ "$vendor_mm" != "$three_dev_mm" ]; then
+            echo "::error::test-only three devDep ($three_dev_mm) does not match vendored three ($vendor_mm). Bump it in viewer/package.json in lockstep with VENDOR.md (ADR-0020)."
             exit 1
           fi

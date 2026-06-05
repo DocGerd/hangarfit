@@ -4,6 +4,7 @@
     "target": "es2022",
     "module": "es2022",
     "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
     "lib": ["es2022", "dom", "dom.iterable"],
     "strict": true,
     "noEmit": true,
@@ -15,5 +16,5 @@
     "verbatimModuleSyntax": true,
     "skipLibCheck": true
   },
-  "include": ["src"]
+  "include": ["src", "test"]
 }
