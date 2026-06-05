@@ -4,8 +4,9 @@
 // intensities are plain numbers. Do NOT hard-code `0x` colour literals in the
 // viewer — every colour is a brand token (#419).
 //
-// LEAN for #439 (only the tokens the renderer reads); the full token parity
-// test against `brand.py` lands in #440.
+// The complete mirror of `brand.viewer_brand_tokens()`; a Python key-set parity
+// test in `tests/test_scene.py` fails if `brand.py` and these keys drift apart
+// (the same desync guard as `scene-contract.ts`).
 
 export interface BrandTokens {
   sceneBg: string;

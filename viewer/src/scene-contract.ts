@@ -51,7 +51,7 @@ export interface HangarData {
   width_m: number;
   length_m: number;
   door: DoorData;
-  maintenance_bay?: MaintenanceBay | null;
+  maintenance_bay: MaintenanceBay; // always emitted (a dict; `closed` distinguishes occupied)
 }
 
 export interface SegmentData {
@@ -85,6 +85,6 @@ export interface SceneV1 {
   /** Oracle world wheel positions per plane: [wheel][x|y]. */
   gear_anchors: Record<string, number[][]>;
   timeline: TimelineData;
-  placeholder?: boolean;
-  readouts?: Readouts | null;
+  placeholder: boolean; // always emitted (true iff any placed aircraft is unmeasured)
+  readouts: Readouts | null; // always emitted; null when the layout is invalid
 }
