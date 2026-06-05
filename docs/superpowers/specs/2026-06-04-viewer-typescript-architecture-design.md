@@ -167,8 +167,9 @@ and **must never import `affine.ts`/`anchors.ts`** to re-derive geometry.
 
 **Stage 3 — full frontend via `hangarfit serve` (deferred — #445, own ADR).** The exact
 same intent object + `Scenario` contract is delivered over a **localhost HTTP API** instead
-of a file: a new `hangarfit serve` subcommand wraps the existing `solve`/`check`/`scene`
-path; the browser POSTs intent, the server runs the *unchanged* Python solver
+of a file: a new `hangarfit serve` subcommand wraps the existing `solve`/`check` pipeline
+(reusing the internal `scene.py` builder — `scene` is a module, not a CLI command);
+the browser POSTs intent, the server runs the *unchanged* Python solver
 (determinism + det-−1 untouched), and returns a `scene/v1` the viewer renders — making it a
 click-to-solve frontend. The **offline single-file export survives** (ADR-0017) as the
 shareable/pure-view artifact; `serve` is an *additional* deployment, not a replacement.

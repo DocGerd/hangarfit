@@ -80,9 +80,10 @@ Supporting choices:
   `esbuild.config.mjs`, eslint config, `node_modules/` — lives in a **new top-level
   `viewer/` directory, *outside* the importable Python package**. esbuild emits the one
   committed artifact to `outfile: ../src/hangarfit/_viewer_assets/viewer.js`, exactly where
-  `viewer.py` already reads it via `importlib.resources`. This keeps
-  `find_packages(where="src")` returning exactly `{hangarfit, _viewer_assets,
-  _viewer_assets.three}` with **zero** packaging changes and makes wheel /
+  `viewer.py` already reads it via `importlib.resources`. This keeps the declarative
+  `[tool.setuptools.packages.find]` (`where = ["src"]`) discovering exactly
+  `{hangarfit, hangarfit._viewer_assets, hangarfit._viewer_assets.three}` with **zero**
+  packaging changes and makes wheel /
   discovery / ruff / mypy / editable-install hygiene **structural rather than
   discipline-dependent** — a nested `_viewer_assets/src/` would expose
   `hangarfit._viewer_assets.src` as a PEP-420 namespace subpackage and let any future
@@ -230,5 +231,5 @@ language pytest cannot exercise — the precise hazard ADR-0002/0017 guard again
   serve` — own ADR); follows #423, subsumes #433.
 - External references: [esbuild](https://esbuild.github.io/) (reproducible builds,
   semver: minor = breaking), [`@types/three`](https://www.npmjs.com/package/@types/three),
-  Three.js r160, [`vite-plugin-singlefile`](https://github.com/richmolj/vite-plugin-singlefile)
+  Three.js r160, [`vite-plugin-singlefile`](https://github.com/richardtallent/vite-plugin-singlefile)
   (the deferred Vite path).
