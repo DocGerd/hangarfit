@@ -1,0 +1,243 @@
+# Viewer TypeScript migration — modular, typed, editor-ready (epic #436)
+
+- **Date:** 2026-06-04
+- **Epic:** #436. **Issues:** #437 (toolchain scaffold), #438 (CI guard), #439
+  (port viewer.js → TS), #440 (typed scene-contract + interaction seam + node tests),
+  #441 (Python `PlaneConstraint.priority` groundwork), #442 (deferred interactive
+  editor). Follows #423 (`typescript-lsp` + `jsconfig.json`); subsumes #433.
+- **Status:** design record authored before implementation. Decision basis recorded in
+  [ADR-0020](../../adr/0020-viewer-typescript-architecture.md). User-approved the
+  shaping choices on 2026-06-04 (build approach: design for the future app, not the
+  current thin-renderer constraints; this pass is design + issues only; the interactive
+  feature is tracked + groundwork).
+
+## Problem
+
+The `hangarfit view` 3D viewer is one hand-written, untyped, ~546-line ES module
+(`src/hangarfit/_viewer_assets/viewer.js`) — the repo's only application JavaScript and
+its only code with **no static analysis in CI**. [ADR-0017](../../adr/0017-3d-viewer-architecture.md)
+kept it a *thin read-only renderer* with no build toolchain, which fit "render what
+Python computed."
+
+The user's outlook changes the premise: the JS app should grow into an **interactive
+editor** — select which planes go into the hangar, and assign **priorities** and **"must
+positions"** to certain aircraft. Untyped single-file growth toward that is risk in the
+one language pytest cannot reach. We want a typed, modular, extendable foundation —
+**without** giving up the offline single-file deliverable, output determinism, the
+OpenSSF supply-chain posture, or the Python-owned transform.
+
+## What already supports this (no core changes needed)
+
+- **The seam is already a clean data contract.** `scene.py` emits a deterministic
+  `hangarfit.scene/v1` dict; the viewer is a pure consumer. Typing it is additive.
+- **The transform already lives in one tested place.** `geometry.local_to_world` is the
+  single det-−1 definition; `scene.py` emits per-frame affines `[a,b,tx,c,d,ty]`. The TS
+  viewer keeps applying them and re-derives nothing (ADR-0002).
+- **The constraint machinery for "must positions" already exists.** `PlaneConstraint.pin`
+  (models.py) hard-fixes a plane's `(x,y,heading)`; `Scenario.constraints` validates it.
+  Only a *soft* `priority` is missing (#441).
+- **`viewer.js` is already internally modular.** Its nine comment-delimited sections
+  (renderer/scene/camera, affine, hangar, gear, planes [label code lives here], anchor
+  self-check, timeline, HUD wiring, render loop) map *closely* onto TS modules — `labels.ts`
+  is extracted from the planes section and `hud.ts` folds in the render loop — so the port
+  is mechanical and reviewable section-by-section.
+
+## Goals
+
+- Real **TypeScript**, modular under a top-level `viewer/src/*.ts` project, typed
+  against the `scene/v1` contract and `@types/three`.
+- A **dev/CI-only** Node toolchain (esbuild + tsc + eslint) that **never** enters
+  `pip install`, the wheel build, or the runtime — the committed bundle is the artifact.
+- **Reproducible** output, guarded in CI like the existing hash-pinned lockfiles.
+- An **extension seam** (typed `scene-contract.ts` + an inert `interaction/` namespace)
+  the future editor plugs into.
+- Every ADR-0017 invariant preserved: offline single file, no JS transform math, the
+  fail-loud anchor self-check, deterministic assembly.
+
+## Non-goals (this epic)
+
+- Building the interactive editor (selection / priorities / must-positions UI) — that is
+  the deferred #442; this epic only lays its seam.
+- Re-deriving any transform / collision / solver math in JavaScript.
+- A runtime Node server, client-side solving, or shipping `node_modules` in the wheel.
+- Byte-identity with the *old* `viewer.js` (a bundled TS port differs in bytes by
+  construction — see §Verification).
+
+## Decisions (basis in ADR-0020)
+
+1. **Layout:** the Node project lives in a **new top-level `viewer/`** directory, *outside*
+   the Python package; esbuild emits the one committed artifact to
+   `outfile: ../src/hangarfit/_viewer_assets/viewer.js`. This needs **zero** `pyproject.toml`
+   packaging changes and makes wheel/discovery/ruff/mypy/editable hygiene structural (a
+   nested `_viewer_assets/src/` would expose a namespace subpackage and risk a `**/*.js`
+   glob shipping `node_modules`).
+2. **Build approach:** esbuild bundles `viewer/src/*.ts` → a single **committed**
+   `viewer.js`, emitted **unminified**, `target: es2022`, for a legible diff. esbuild and
+   Node are **exact-pinned** (esbuild minor releases are breaking; `.nvmrc` / `setup-node`)
+   so the drift guard catches source edits, not toolchain bumps. Node is dev/CI-only.
+3. **three (recommended): stays vendored & external + Python-inlined** via the existing
+   `data:` import-map — `viewer.py` is unchanged. Bundling three from npm is a **deferred**
+   option, not the default: it would bloat the byte-diffed drift artifact ~58× (1.27 MB
+   three vs 22 KB viewer.js) and erode the `viewer-build-drift` guard. Either way the
+   offline single-file deliverable is preserved.
+4. **Types:** `@types/three` pinned to `0.160.x` (matches vendored three r160), types-only.
+5. **Determinism:** redefined as *reproducibility of the committed bundle*, enforced by a
+   `viewer-build-drift` CI job (rebuild + sha256/diff), mirroring `lockfile-drift`.
+6. **Contract sync (near-term):** hand-written `scene-contract.ts`/`brand-contract.ts` +
+   cheap Python **key-set parity tests** in `tests/test_scene.py`; JSON-Schema single-source
+   is the deferred principled target (spike #444).
+7. **Transform ownership:** unchanged — Python owns it; the editor exports a `Scenario`
+   artifact for the solver.
+8. **Vite** (+ `vite-plugin-singlefile`) considered and **deferred** (output less
+   byte-reproducible under a diff guard; larger surface) — revisit only on a concrete
+   editor-tooling trigger.
+
+## Architecture — module map
+
+The Node project lives in a **top-level `viewer/`** dir (never imported, never shipped);
+esbuild emits the one committed `viewer.js` into the existing package asset path. Only that
+emitted artifact (+ vendored three) ships in the wheel; nothing under `viewer/` does.
+
+```
+viewer/                          # NEW top-level Node project (NOT importable, gitignored node_modules)
+  package.json                   # devDependencies ONLY: typescript, esbuild (exact pin),
+                                 #   eslint + TS parser, @types/three@0.160.x; no runtime deps
+  package-lock.json              # committed + integrity-pinned; CI uses `npm --prefix viewer/ ci`
+  tsconfig.json                  # strict; target es2022; noEmit for the typecheck pass
+  esbuild.config.mjs             # bundle, format esm, target es2022, minify:false,
+                                 #   external:['three','three/addons/controls/OrbitControls.js'],
+                                 #   outfile:'../src/hangarfit/_viewer_assets/viewer.js'
+  eslint config · .nvmrc         # eslint (TS) + pinned Node major
+  src/
+    main.ts                      # entry: init in viewer.js's exact current order
+    scene-contract.ts            # typed scene/v1 mirror of scene.py (the extension seam) — pure types
+    brand-contract.ts            # typed BRAND token mirror of brand.py (#419/ADR-0019)
+    dom.ts                       # element lookups, banner(), readouts wiring (#401)
+    affine.ts                    # affineMatrix()->Matrix4, applyAffine() — PURE, node-tested
+    anchors.ts                   # boxCornersLocal() + oracle-compare — PURE; banner at edge
+    renderer.ts                  # renderer/scene/camera/lights/OrbitControls, home(), resize
+    hangar.ts                    # floor/grid/walls(door split)/bay + walls toggle
+    gear.ts                      # wheels/legs/pallets + render constants
+    planes.ts                    # boxMaterial(), per-plane Group loop, legend chips
+    labels.ts                    # makeLabel() (CanvasTexture, safe fillText), nose, toggle
+    timeline.ts                  # segByPlane, affineAt() — PURE, node-tested; applyTime()
+    hud.ts                       # play/scrub/step/speed wiring + render loop
+    interaction/                 # FUTURE seam — README.md only now (no .ts; bundle unchanged)
+  test/                          # node --test units for affine/anchors/timeline
+
+src/hangarfit/_viewer_assets/
+  viewer.js                      # COMMITTED esbuild OUTPUT — the only shipped JS (package-data)
+  three/                         # vendored r160 — three stays external + Python-inlined
+```
+
+**Pure, testable units** (the high-value extraction, covered by `node --test` in #440):
+`affine.ts` (the only math the viewer does), `anchors.ts` (the cross-language oracle
+compare; banner side-effect stays at the thin edge so the comparison is testable without
+a DOM), `timeline.ts` (`affineAt` is pure given `(segByPlane, finals, t)`).
+
+**The `checkAnchors()` backstop** — the load-time anchor self-check IIFE in `viewer.js`
+(grep `checkAnchors`; line numbers shift with brand/edit churn, so we cite the function,
+not a range) — is ported behavior-identically: it recomputes world corners + wheel
+positions from geometry + the final affine and **fails loud on the `#banner`** (never
+throws) if they diverge from the Python oracle past 1e-6. It is the only thing pinning the
+JS matrix path to Python and is non-negotiable.
+
+## Roadmap — viewer → editor → full frontend
+
+This migration is **Stage 1** of a deliberate trajectory. The end-state is a **full
+frontend to the Python tool**: the viewer not only edits inputs but **triggers the solve
+itself**. The invariant across all stages: **Python stays the solver/authority** — the
+browser never re-derives the det-−1 transform or solves geometry (ADR-0002/0017/0020).
+
+| Stage | What | Trigger model | Issue |
+|---|---|---|---|
+| **1 — Foundation** *(this epic)* | read-only viewer → typed, modular TS app + extension seam | n/a (renders a Python-built `scene/v1`) | #436 |
+| **2 — Interactive editor** | select planes; assign **priorities** + **must-positions**; capture *intent* | **round-trip file**: export a `Scenario` YAML, user re-runs `hangarfit solve`, re-open viewer | #442 (+ Python `priority` #441) |
+| **3 — Full frontend** | the viewer **triggers the solve** and live-re-renders | **local served backend**: `hangarfit serve` exposes a localhost HTTP API over the existing CLI/solver; the browser POSTs the intent and renders the returned `scene/v1` | #445 *(own future ADR)* |
+
+**Stage 2 — the `interaction/` seam (deferred — #442).** The `interaction/` namespace
+documents the contract now and stays inert (README-only) so the bundle is unchanged. When
+#442 lands, an `interaction/` module: reads `scene-contract` types; builds an **intent
+object** mirroring `Scenario.constraints` —
+`{ selectedPlaneIds, priorities: Record<id, number>, mustPositions: Record<id, {x,y,heading}> }`
+("must positions" → `PlaneConstraint.pin`, "priorities" → the soft `PlaneConstraint.priority`
+#441); **exports a `Scenario`/constraints YAML** the Python solver consumes (round-trip);
+and **must never import `affine.ts`/`anchors.ts`** to re-derive geometry.
+`intent-contract.ts` becomes the typed mirror of that artifact.
+
+**Stage 3 — full frontend via `hangarfit serve` (deferred — #445, own ADR).** The exact
+same intent object + `Scenario` contract is delivered over a **localhost HTTP API** instead
+of a file: a new `hangarfit serve` subcommand wraps the existing `solve`/`check` pipeline
+(reusing the internal `scene.py` builder — `scene` is a module, not a CLI command);
+the browser POSTs intent, the server runs the *unchanged* Python solver
+(determinism + det-−1 untouched), and returns a `scene/v1` the viewer renders — making it a
+click-to-solve frontend. The **offline single-file export survives** (ADR-0017) as the
+shareable/pure-view artifact; `serve` is an *additional* deployment, not a replacement.
+Because it shifts the deployment model (a local server vs a double-clicked file), it gets
+its **own ADR** when scheduled; alternatives weighed there: desktop wrapper
+(Tauri/pywebview) and — explicitly rejected — in-browser WASM solving (re-opens
+ADR-0002/0003). The Stage-2 round-trip file is the stepping stone: Stage 3 reuses its
+contract verbatim, just over HTTP.
+
+## Build & CI
+
+- **#437 scaffold** (all under top-level `viewer/`): `package.json` (devDeps only),
+  committed integrity-pinned `package-lock.json` (`npm --prefix viewer/ ci`), strict
+  `tsconfig.json`, `esbuild.config.mjs` (unminified, es2022, three external,
+  `outfile=../src/hangarfit/_viewer_assets/viewer.js`), eslint, `.nvmrc`,
+  `@types/three@0.160.x` (exact-pinned, like esbuild). `.gitignore` adds
+  `viewer/node_modules/`. Tighten package-data from `*.js` to the explicit `viewer.js`; a
+  packaging assertion proves no `*.ts`/`node_modules`/`package.json` reach the sdist/wheel
+  (trivially true since `viewer/` is outside `src/`).
+- **#438 CI** (new Node job, pinned `setup-node`/`.nvmrc`): `viewer-build-drift`
+  (`npm --prefix viewer/ ci && npm --prefix viewer/ run build` → `git diff --exit-code --
+  src/hangarfit/_viewer_assets/viewer.js`, `::error::` on drift), `tsc --noEmit`, eslint,
+  `node --test`, the three↔types skew guard. Python-3.12 jobs untouched (a Node failure
+  must never block the Python matrix). Recommend making `viewer-build-drift` + `tsc`
+  required checks on `develop`.
+
+## Verification
+
+- **Reproducibility:** `viewer-build-drift` is the determinism pin — `npm ci && npm run
+  build` must reproduce the committed `viewer.js` byte-for-byte (unminified + pinned
+  toolchain).
+- **Semantic equivalence to the old viewer** (NOT a byte-diff — the bundle's bytes
+  necessarily differ): the documented headless check renders a fixture and asserts the
+  `#banner` TRANSFORM CHECK stays **hidden**:
+  ```
+  google-chrome --headless=new --use-gl=angle --use-angle=swiftshader \
+    --enable-unsafe-swiftshader --virtual-time-budget=8000 \
+    --screenshot=out.png "file://$PWD/out.html"
+  ```
+  Optionally grep `--dump-dom` for the banner text as a hard gate. (swiftshader WebGL
+  "ReadPixels stall" / dbus/UPower lines are noise.)
+- **Assembly determinism:** extend `tests/test_viewer.py` with a golden-HTML pin for a
+  fixed fixture, plus the unchanged offline + `</script>`-escape asserts.
+- **Pure units:** `node --test` covers `affine` (matrix algebra), `anchors`
+  (oracle-compare incl. structural-mismatch banners), `timeline` (hidden→animating→
+  parked) — coverage pytest cannot reach.
+
+## Risks & mitigations
+
+| Risk | Mitigation |
+|---|---|
+| Supply-chain surface vs ADR-0017 | dev/CI-only; committed artifact; `npm ci` + pinned lockfile; minimal pinned devDeps; never in wheel/install path; ADR-0020 distinguishes this from ADR-0017's rejected *runtime* node app. |
+| esbuild semver: **minor = breaking** | **exact-pin** esbuild (never `^`/`~`) + pin Node (`.nvmrc`/`setup-node`); unminified + fixed target → byte-stable per version; `viewer-build-drift` is the backstop (drift = guard failure, not silent change). |
+| Node leaking into the install path | the Node project is in top-level `viewer/`, *outside* `src/`, so nothing it touches can be discovered/shipped by construction; package-data tightened to explicit `viewer.js`; packaging assertion. |
+| `@types/three` skew vs three r160 | pin `@types/three@0.160.x`; CI skew guard (VENDOR.md vs package.json); the VENDOR.md refresh procedure bumps types in lockstep. |
+| Hand-mirrored `scene-contract.ts`/`brand-contract.ts` silently desync from `scene.py`/`brand.py` | Python key-set parity tests in `tests/test_scene.py` (+ brand token-name parity) — fail the test the maintainer already runs; JSON-Schema single-source is the deferred principled fix (#444); runtime `checkAnchors()` still guards transform *values*. |
+| JS untestable by pytest | extract pure units + `node --test`; in-browser `checkAnchors` + headless banner-grep as integration backstop; `test_scene.py` still pins the producer side. |
+| Half-ported intermediate states | the port (#439) is one atomic, behavior-neutral PR committing `viewer.js` + `viewer/src/*.ts` together. |
+
+## Impact map
+
+- **New (dev-only, all under top-level `viewer/`):** `viewer/src/*.ts`, `viewer/test/*`,
+  `viewer/package.json`, `viewer/package-lock.json`, `viewer/tsconfig.json`,
+  `viewer/esbuild.config.mjs`, `viewer/eslint` config, `viewer/.nvmrc`;
+  `.github/workflows/ci.yml` Node job; `.gitignore` (`viewer/node_modules/`).
+- **Changed:** `_viewer_assets/viewer.js` (becomes the esbuild artifact — `viewer.py`
+  **unchanged**, since three stays external); `tests/test_scene.py` (contract parity test);
+  `tests/test_viewer.py` (golden pin); `CLAUDE.md` + `.claude/README.md` (build commands);
+  `pyproject.toml` (tighten package-data `*.js`→`viewer.js`); `VENDOR.md` (types-lockstep note).
+- **Deferred:** `models.py`/`solver.py`/`loader.py` for `priority` (#441);
+  `viewer/src/interaction/*.ts` for the editor (#442); `scene-v1.schema.json` single-source (#444).
