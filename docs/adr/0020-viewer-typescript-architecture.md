@@ -25,8 +25,10 @@ Python-only; the `typescript-lsp`/`jsconfig.json` from #423 is editor-only). ADR
 deliberately rejected a build toolchain when the viewer was a *render-only* artifact.
 That premise is changing: the user's outlook is an **interactive editor** — let a user
 select which planes go into the hangar and assign **priorities** and **"must
-positions"** to certain aircraft. Untyped, single-file growth toward that is risk
-concentrated in the repo's only untested language. The question this ADR answers: **how
+positions"** to certain aircraft — and, ultimately, a **full frontend that triggers the
+solve itself** (a local `hangarfit serve` backend; Python stays the solver/authority — see
+the spec's Roadmap and #445). Untyped, single-file growth toward that is risk concentrated
+in the repo's only untested language. The question this ADR answers: **how
 do we make the viewer typed, modular, and extendable for that future without losing the
 offline single-file deliverable, the build/output determinism, the OpenSSF supply-chain
 posture, or the Python-owned transform?**
@@ -223,8 +225,9 @@ language pytest cannot exercise — the precise hazard ADR-0002/0017 guard again
   schema reference [`docs/architecture/scene-v1-schema.md`](../architecture/scene-v1-schema.md).
 - Related issues / PRs: #436 (epic), #437 (toolchain), #438 (CI), #439 (port), #440
   (typed contract + interaction seam), #441 (Python `priority` groundwork), #442
-  (deferred interactive editor), #444 (deferred JSON-Schema single-source spike); follows
-  #423, subsumes #433.
+  (deferred interactive editor — Stage 2 round-trip), #444 (deferred JSON-Schema
+  single-source spike), #445 (deferred Stage 3: viewer-as-full-frontend via `hangarfit
+  serve` — own ADR); follows #423, subsumes #433.
 - External references: [esbuild](https://esbuild.github.io/) (reproducible builds,
   semver: minor = breaking), [`@types/three`](https://www.npmjs.com/package/@types/three),
   Three.js r160, [`vite-plugin-singlefile`](https://github.com/richmolj/vite-plugin-singlefile)

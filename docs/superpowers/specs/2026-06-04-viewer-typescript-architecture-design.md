@@ -142,22 +142,41 @@ positions from geometry + the final affine and **fails loud on the `#banner`** (
 throws) if they diverge from the Python oracle past 1e-6. It is the only thing pinning the
 JS matrix path to Python and is non-negotiable.
 
-## The future-editor seam (deferred — #442)
+## Roadmap — viewer → editor → full frontend
 
-The `interaction/` namespace documents the contract now and stays inert (README-only) so
-the bundle is unchanged. When #442 lands, an `interaction/` module:
+This migration is **Stage 1** of a deliberate trajectory. The end-state is a **full
+frontend to the Python tool**: the viewer not only edits inputs but **triggers the solve
+itself**. The invariant across all stages: **Python stays the solver/authority** — the
+browser never re-derives the det-−1 transform or solves geometry (ADR-0002/0017/0020).
 
-- reads `scene-contract` types;
-- builds an **intent object** mirroring `Scenario.constraints`:
-  `{ selectedPlaneIds, priorities: Record<id, number>, mustPositions: Record<id, {x,y,heading}> }`
-  — "must positions" → `PlaneConstraint.pin` (hard), "priorities" → the new soft
-  `PlaneConstraint.priority` (#441);
-- **exports a `Scenario`/constraints YAML** the Python solver consumes (round-trip); the
-  user re-runs `hangarfit solve` and a fresh viewer renders the result;
-- **must never import `affine.ts`/`anchors.ts`** to re-derive geometry (ADR-0002/0020):
-  Python remains the authority/solver.
+| Stage | What | Trigger model | Issue |
+|---|---|---|---|
+| **1 — Foundation** *(this epic)* | read-only viewer → typed, modular TS app + extension seam | n/a (renders a Python-built `scene/v1`) | #436 |
+| **2 — Interactive editor** | select planes; assign **priorities** + **must-positions**; capture *intent* | **round-trip file**: export a `Scenario` YAML, user re-runs `hangarfit solve`, re-open viewer | #442 (+ Python `priority` #441) |
+| **3 — Full frontend** | the viewer **triggers the solve** and live-re-renders | **local served backend**: `hangarfit serve` exposes a localhost HTTP API over the existing CLI/solver; the browser POSTs the intent and renders the returned `scene/v1` | #445 *(own future ADR)* |
 
-`intent-contract.ts` becomes the typed mirror of that artifact when #442 lands.
+**Stage 2 — the `interaction/` seam (deferred — #442).** The `interaction/` namespace
+documents the contract now and stays inert (README-only) so the bundle is unchanged. When
+#442 lands, an `interaction/` module: reads `scene-contract` types; builds an **intent
+object** mirroring `Scenario.constraints` —
+`{ selectedPlaneIds, priorities: Record<id, number>, mustPositions: Record<id, {x,y,heading}> }`
+("must positions" → `PlaneConstraint.pin`, "priorities" → the soft `PlaneConstraint.priority`
+#441); **exports a `Scenario`/constraints YAML** the Python solver consumes (round-trip);
+and **must never import `affine.ts`/`anchors.ts`** to re-derive geometry.
+`intent-contract.ts` becomes the typed mirror of that artifact.
+
+**Stage 3 — full frontend via `hangarfit serve` (deferred — #445, own ADR).** The exact
+same intent object + `Scenario` contract is delivered over a **localhost HTTP API** instead
+of a file: a new `hangarfit serve` subcommand wraps the existing `solve`/`check`/`scene`
+path; the browser POSTs intent, the server runs the *unchanged* Python solver
+(determinism + det-−1 untouched), and returns a `scene/v1` the viewer renders — making it a
+click-to-solve frontend. The **offline single-file export survives** (ADR-0017) as the
+shareable/pure-view artifact; `serve` is an *additional* deployment, not a replacement.
+Because it shifts the deployment model (a local server vs a double-clicked file), it gets
+its **own ADR** when scheduled; alternatives weighed there: desktop wrapper
+(Tauri/pywebview) and — explicitly rejected — in-browser WASM solving (re-opens
+ADR-0002/0003). The Stage-2 round-trip file is the stepping stone: Stage 3 reuses its
+contract verbatim, just over HTTP.
 
 ## Build & CI
 
