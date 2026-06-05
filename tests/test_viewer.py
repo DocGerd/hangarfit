@@ -165,6 +165,24 @@ def test_inlined_viewer_js_has_no_script_close():
     assert "</script" not in src.lower()
 
 
+def test_inlined_viewer_js_is_the_committed_bundle_verbatim(tmp_path):
+    # #439: viewer.js is now an esbuild artifact built from viewer/src/*.ts. The
+    # CI `viewer-build-drift` guard pins one half — viewer.js == esbuild(viewer/src);
+    # this pins the other half — the assembler inlines the committed bundle RAW,
+    # byte-for-byte, into the <script type="module">. Together they guarantee the
+    # shipped HTML carries exactly the reviewed, drift-guarded bytes. (A full-HTML
+    # golden hash is deliberately avoided: it would be brittle against every bundle
+    # rebuild / brand / vendored-three bump; the two-call determinism test below
+    # pins assembly stability instead.)
+    html = _html(tmp_path)
+    src = (
+        resources.files("hangarfit._viewer_assets")
+        .joinpath("viewer.js")
+        .read_text(encoding="utf-8")
+    )
+    assert src in html
+
+
 # ── #419: the injected canonical BRAND token blob ───────────────────────────
 
 
