@@ -299,14 +299,18 @@ npm --prefix viewer/ ci          # install from the committed lockfile (CI uses 
 npm --prefix viewer/ run build   # rebuild ../src/hangarfit/_viewer_assets/viewer.js
 npm --prefix viewer/ run typecheck   # tsc --noEmit (strict)
 npm --prefix viewer/ run lint    # eslint (flat config, ESLint 10)
-npm --prefix viewer/ run test    # node --test — no-op until the pure-unit tests land (#440)
+npm --prefix viewer/ run test    # node --test — pure units (affine/anchors/timeline) in viewer/test/
 # After editing any viewer/src/*.ts, REBUILD and commit viewer.js in the same change
 # or the `viewer-build-drift` CI guard (#438, live since the #439 port) will fail —
 # it rebuilds the bundle and diffs it against the committed viewer.js. To verify
 # a build WITHOUT clobbering the committed bundle, redirect the output:
 VIEWER_OUTFILE=/tmp/viewer-scratch.js npm --prefix viewer/ run build
-# three stays vendored & external (resolved by viewer.py's import-map); @types/three
-# is pinned to 0.160.x to match vendored three r160 — bump both in lockstep.
+# three stays vendored & external (resolved by viewer.py's import-map). @types/three
+# AND a TEST-ONLY `three` devDep (node --test runs the real three; esbuild keeps it
+# external, never in the wheel) are both 0.160.x — the CI skew guard ties all three to
+# vendored r160; bump in lockstep. GOTCHA: viewer/src internal imports use explicit
+# `.ts` extensions (tsconfig allowImportingTsExtensions) so node --test resolves them
+# under Node 24 type-stripping; esbuild inlines internal modules, so .ts is bundle-neutral.
 
 # GitFlow loops
 git switch develop && git pull
