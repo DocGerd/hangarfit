@@ -84,6 +84,16 @@ FALLBACK_COLOR: str = "#95a5a6"  # gray
 # Conflict ink, sourced from STATUS (single source for the conflict red).
 CONFLICT_COLOR: str = STATUS["conflict"]  # "#C8442C"
 
+# Warning amber — the "illustrative / placeholder data" signal, single source for
+# the honesty banner on BOTH surfaces (2D ``PLACEHOLDER_BANNER_BG_2D`` and 3D
+# ``PLACEHOLDER_BANNER_BG``). Kept OUT of the STATUS map on purpose: STATUS is the
+# fixed four-key structural-ink set (valid/conflict/maint/wall) pinned by tests,
+# whereas warning is a banner signal. Defined here, early, so both the 2D and the
+# later 3D banner constants can reference it and never drift (#418/#419). With
+# conflict #C8442C, danger/error #BC4438 and maint #7B63A3, the system's reds
+# resolve to four distinct, on-token signals.
+WARNING: str = "#D6A23E"
+
 # Tow-path overlay palette (#192): Okabe–Ito 8-colour CVD-safe set. One colour
 # per plane, cycled by sorted plane_id; deliberately excludes the conflict colour
 # and the gray fallback so a path never blurs into a conflict highlight.
@@ -105,13 +115,20 @@ FUSELAGE_FRONT_DARKEN: float = 0.62  # cockpit tint = ×0.62 per RGB channel (sR
 WING_ALPHA: float = 0.4  # translucent so stacked wings show their plan overlap.
 CART_DECK_ALPHA: float = 0.85  # cart/dolly pallet squares.
 
-# Closed maintenance-bay "wall" style (2D) — saturated red + slashed hatch, kept
-# visually distinct from the conflict red so the two reds don't blur in one image.
-BAY_WALL_FACE: str = "#922b21"
-BAY_WALL_EDGE: str = "#641e16"
+# Closed maintenance-bay "wall" style (2D) — the brand ``maint`` violet + slashed
+# hatch + ink edge, matching the 3D bay (``BAY = STATUS["maint"]``). The fill is
+# sourced from STATUS so 2D and 3D share one maintenance colour (#418), and the
+# hatch + ink edge keep identity off hue alone. This also removes the old
+# off-system bay red (#922b21), which collided with the conflict red. The label is
+# the brand ink (not white): the fill renders at BAY_WALL_ALPHA=0.55, so it
+# composites to a light violet (~#B6A9CC over white) where dark ink is ~8:1 and
+# white would be only ~2:1 — note this contrast is against the *rendered* fill,
+# not the solid #7B63A3 swatch (where white would win).
+BAY_WALL_FACE: str = STATUS["maint"]  # #7B63A3 — shared with the 3D bay
+BAY_WALL_EDGE: str = INK_EDGE  # #14161A — ink edge (also tints the hatch)
 BAY_WALL_ALPHA: float = 0.55
 BAY_WALL_HATCH: str = "///"
-BAY_LABEL_COLOR: str = "#ffffff"
+BAY_LABEL_COLOR: str = INK_EDGE  # #14161A — dark ink, legible on the alpha-0.55 fill
 
 # Hangar / door inks (2D). The hangar edge folds wall/door/datum onto STATUS
 # "wall"; the door is lightened (DOOR_EDGE) so the opening reads as "open".
@@ -124,10 +141,12 @@ DOOR_EDGE: str = "#bdc3c7"  # light gray — visually "open"
 WHEEL_COLOR: str = "#566573"  # dark slate-gray — individual wheel discs
 CART_DECK_COLOR: str = "#aab7b8"  # lighter gray — cart/dolly pallet squares
 
-# 2D honesty banner + readout chrome (BRAND.md §6 parity follow-ups are tracked
-# separately; these are the values the PNG currently draws).
-PLACEHOLDER_BANNER_BG_2D: str = "#b00020"  # placeholder banner fill (2D)
-PLACEHOLDER_BANNER_TEXT_2D: str = "white"  # placeholder banner ink (2D)
+# 2D honesty banner + readout chrome. The banner is aligned to the brand
+# ``warning`` amber with dark ink, matching the 3D honesty banner
+# (``PLACEHOLDER_BANNER_BG`` / ``PLACEHOLDER_BANNER_TEXT``) — cross-surface parity
+# (#418), replacing the old off-system red #b00020.
+PLACEHOLDER_BANNER_BG_2D: str = WARNING  # #D6A23E — warning amber (2D, == 3D banner)
+PLACEHOLDER_BANNER_TEXT_2D: str = INK_EDGE  # #14161A — dark ink on the amber
 READOUT_BG_2D: str = "#ecf0f1"  # readout chip fill (2D)
 READOUT_EDGE_2D: str = "#bdc3c7"  # readout chip edge (2D)
 READOUT_TEXT_2D: str = "#2c3e50"  # readout chip ink (2D)
@@ -193,7 +212,7 @@ FOCUS_RING: str = ACCENT_DARK  # #3FA3D6
 SCRUBBER_ACCENT: str = ACCENT_DARK  # #3FA3D6
 ERROR_BANNER_BG: str = "#BC4438"  # --danger: a real "do not trust this render"
 ERROR_BANNER_TEXT: str = "#fff"
-PLACEHOLDER_BANNER_BG: str = "#D6A23E"  # --warning amber: illustrative data
+PLACEHOLDER_BANNER_BG: str = WARNING  # #D6A23E — --warning amber: illustrative data
 PLACEHOLDER_BANNER_TEXT: str = INK_EDGE  # #14161A — dark ink on the amber
 READOUTS_TEXT: str = GRAPHITE_STRONG  # #C2C7CD
 
