@@ -71,9 +71,17 @@ def _to_float(value: Any, field_name: str) -> float:
     downstream consumers (e.g. ``_wing_spar_x``) silently propagate them
     into geometry calculations, where NaN comparisons always return False
     and inf values produce nonsensical coordinates.
+
+    ``bool`` is rejected too: it is an ``int`` subclass, so ``float(True)`` is a
+    silent ``1.0`` — the same YAML footgun ``_to_int`` / ``_to_bool`` guard
+    against (``yes``/``on`` coerce to ``True`` under YAML 1.1). Without this a
+    ``priority: true`` (#441) — or any ``true`` fat-fingered into a numeric
+    field — would parse to a plausible-but-wrong number instead of erroring.
     """
     if value is None:
         raise LoaderError(f"{field_name!r}: expected number, got null")
+    if isinstance(value, bool):
+        raise LoaderError(f"{field_name!r}: expected number, got {value!r} (bool)")
     try:
         result = float(value)
     except (TypeError, ValueError) as e:
@@ -455,10 +463,13 @@ def _build_plane_constraint(plane_id: str, data: Any) -> PlaneConstraint:
           <plane_id>:
             pin: { x_m: <float>, y_m: <float>, heading_deg: <float>, on_carts: <bool> }
             force_on_carts: <bool>
+            priority: <float>   # soft, >= 0 (#441)
 
-    Both ``pin`` and ``force_on_carts`` are optional. Omitting both
+    ``pin``, ``force_on_carts`` and ``priority`` are all optional. Omitting all
     yields a "free" constraint (the solver may place the plane anywhere
-    within physical / cart-rule limits).
+    within physical / cart-rule limits). ``priority`` is a soft spread weight
+    (see :class:`~hangarfit.models.PlaneConstraint`); its range is validated by
+    ``Scenario.__post_init__``.
 
     **Implicit ``pin.plane_id``** — the loader fills :attr:`Placement.plane_id`
     from the constraint key, so authors don't repeat the plane id under
@@ -498,7 +509,13 @@ def _build_plane_constraint(plane_id: str, data: Any) -> PlaneConstraint:
     if force_on_carts is not None:
         force_on_carts = _to_bool(force_on_carts, "force_on_carts")
 
-    return PlaneConstraint(pin=pin, force_on_carts=force_on_carts)
+    # Soft per-plane spread weight (#441). Range/finiteness is enforced by
+    # Scenario.__post_init__ (alongside pin/force_on_carts validation).
+    priority = data.get("priority")
+    if priority is not None:
+        priority = _to_float(priority, "priority")
+
+    return PlaneConstraint(pin=pin, force_on_carts=force_on_carts, priority=priority)
 
 
 def _extract_maintenance_plane(raw: dict, path: Path) -> str | None:
