@@ -2,8 +2,8 @@
 // HUD-toggleable. A billboarded id label and a nose cone at the plane-local +x
 // tip show which plane is which and which way it faces.
 import * as THREE from 'three';
-import type { BrandTokens } from './brand-contract';
-import type { PlaneData } from './scene-contract';
+import type { BrandTokens } from './brand-contract.ts';
+import type { PlaneData } from './scene-contract.ts';
 
 export function makeLabel(text: string, BRAND: BrandTokens, conflicted = false): THREE.Sprite {
   // Plane ids are machine output → mono (brand). A conflicted plane carries the

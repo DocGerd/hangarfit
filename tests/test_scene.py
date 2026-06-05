@@ -342,3 +342,67 @@ def test_build_scene_readouts_none_for_unchecked_invalid_layout():
     lay = _ll("tests/fixtures/invalid_fuselage_wing_overlap.yaml")
     sc = scene.build_scene(lay)  # no check_result
     assert sc["readouts"] is None
+
+
+# ── #440: scene/v1 ↔ TypeScript contract key-set parity ─────────────────────
+#
+# The TS viewer types its scene/v1 consumption against hand-written mirrors
+# (viewer/src/scene-contract.ts, brand-contract.ts). These guard against the
+# documented desync risk (ADR-0020): if scene.py/brand.py grow or drop a key and
+# the TS mirror is not updated in lockstep, these fail the test the maintainer
+# already runs — the near-term substitute for the deferred JSON-Schema
+# single-source (spike #444). They pin KEY SETS only; runtime checkAnchors() still
+# guards transform *values*.
+import re  # noqa: E402
+from pathlib import Path  # noqa: E402
+
+_VIEWER_SRC = Path(__file__).resolve().parent.parent / "viewer" / "src"
+
+
+def _ts_interface_fields(filename: str, interface: str) -> set[str]:
+    """Field names declared in `export interface <interface> { … }`.
+
+    Interfaces in these contracts have flat bodies (no inline object-literal
+    types), so the first column-0 `}` closes the block.
+    """
+    text = (_VIEWER_SRC / filename).read_text(encoding="utf-8")
+    m = re.search(rf"export interface {interface}\s*\{{(.*?)\n\}}", text, re.S)
+    assert m is not None, f"interface {interface} not found in {filename}"
+    return {
+        fm.group(1)
+        for line in m.group(1).splitlines()
+        if (fm := re.match(r"\s*(\w+)\??\s*:", line))
+    }
+
+
+def _animated_scene() -> dict:
+    lay = load_layout(LAYOUT)
+    return scene.build_scene(lay, moves_plan=plan_fill(lay))
+
+
+def test_brand_contract_ts_keys_match_brand_py():
+    from hangarfit import brand
+
+    assert _ts_interface_fields("brand-contract.ts", "BrandTokens") == set(
+        brand.viewer_brand_tokens()
+    )
+
+
+def test_scene_contract_ts_top_level_keys_match_scene_py():
+    assert _ts_interface_fields("scene-contract.ts", "SceneV1") == set(_animated_scene())
+
+
+def test_scene_contract_ts_nested_keys_match_scene_py():
+    sc = _animated_scene()
+    cases = {
+        "HangarData": sc["hangar"],
+        "DoorData": sc["hangar"]["door"],
+        "MaintenanceBay": sc["hangar"]["maintenance_bay"],
+        "PlaneData": sc["planes"][0],
+        "BoxData": sc["planes"][0]["boxes"][0],
+        "TimelineData": sc["timeline"],
+        "SegmentData": sc["timeline"]["segments"][0],
+        "Readouts": sc["readouts"],
+    }
+    for interface, obj in cases.items():
+        assert _ts_interface_fields("scene-contract.ts", interface) == set(obj), interface

@@ -1,8 +1,8 @@
 // ── HUD wiring + render loop ─────────────────────────────────────────────────
 import type * as THREE from 'three';
-import { byId, disableControl } from './dom';
+import { byId, disableControl } from './dom.ts';
 import type { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import type { Timeline } from './timeline';
+import type { Timeline } from './timeline.ts';
 
 export interface HudDeps {
   timeline: Timeline;

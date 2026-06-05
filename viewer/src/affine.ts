@@ -5,7 +5,7 @@
 // drops the Python-computed 2x3 affine into a THREE.Matrix4. The viewer never
 // DERIVES an affine — Python owns the determinant-−1 transform (ADR-0002/0017).
 import * as THREE from 'three';
-import type { Affine } from './scene-contract';
+import type { Affine } from './scene-contract.ts';
 
 /** 2x3 affine `[a,b,tx,c,d,ty]` → THREE.Matrix4 mapping local (u,v,w,1) → world. */
 export function affineMatrix(aff: Affine): THREE.Matrix4 {

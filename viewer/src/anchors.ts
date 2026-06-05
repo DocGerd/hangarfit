@@ -7,8 +7,8 @@
 // structural-vs-tolerance reporting (and the "never throw" wrapping) is
 // preserved behaviour-identically by the caller.
 import * as THREE from 'three';
-import { applyAffine } from './affine';
-import type { BoxData, SceneV1 } from './scene-contract';
+import { applyAffine } from './affine.ts';
+import type { BoxData, SceneV1 } from './scene-contract.ts';
 
 /** oriented_rect corner order, rotated CCW about (cx,cy):
  *  (+hl,-hw),(+hl,+hw),(-hl,+hw),(-hl,-hw). */

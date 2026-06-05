@@ -6,9 +6,9 @@
 // (det −1) render correctly because every material is DoubleSide.
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
-import { banner } from './dom';
-import type { BrandTokens } from './brand-contract';
-import type { HangarData } from './scene-contract';
+import { banner } from './dom.ts';
+import type { BrandTokens } from './brand-contract.ts';
+import type { HangarData } from './scene-contract.ts';
 
 export interface RendererBundle {
   renderer: THREE.WebGLRenderer;

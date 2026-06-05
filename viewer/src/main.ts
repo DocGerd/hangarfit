@@ -10,15 +10,15 @@
 //
 // This file keeps viewer.js's exact init ORDER; the heavy lifting lives in the
 // sibling section modules so the port is reviewable section-by-section.
-import { banner, byId } from './dom';
-import { createRenderer } from './renderer';
-import { addHangar } from './hangar';
-import { addPlanes } from './planes';
-import { checkAnchors } from './anchors';
-import { createTimeline } from './timeline';
-import { startHud } from './hud';
-import type { BrandTokens } from './brand-contract';
-import type { SceneV1 } from './scene-contract';
+import { banner, byId } from './dom.ts';
+import { createRenderer } from './renderer.ts';
+import { addHangar } from './hangar.ts';
+import { addPlanes } from './planes.ts';
+import { checkAnchors } from './anchors.ts';
+import { createTimeline } from './timeline.ts';
+import { startHud } from './hud.ts';
+import type { BrandTokens } from './brand-contract.ts';
+import type { SceneV1 } from './scene-contract.ts';
 
 const SCENE = JSON.parse(byId('scene').textContent ?? 'null') as SceneV1;
 const BRAND = JSON.parse(byId('brand').textContent ?? 'null') as BrandTokens;

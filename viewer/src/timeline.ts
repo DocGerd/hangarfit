@@ -1,8 +1,8 @@
 // ── timeline state machine (hidden → animating → parked) ─────────────────────
 import type * as THREE from 'three';
-import { affineMatrix } from './affine';
-import { byId } from './dom';
-import type { Affine, SceneV1, SegmentData } from './scene-contract';
+import { affineMatrix } from './affine.ts';
+import { byId } from './dom.ts';
+import type { Affine, SceneV1, SegmentData } from './scene-contract.ts';
 
 /** Pose + visibility of a plane at time `t`. PURE given `(segByPlane, finals, pid, t)`
  * — no THREE, no DOM (node-tested in #440). A static plane (no segment) renders at
