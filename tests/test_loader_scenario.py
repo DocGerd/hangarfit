@@ -222,6 +222,53 @@ def test_load_scenario_typo_fleet_in_entry_suggests_via_difflib(tmp_path):
     assert "did you mean 'aviat_husky'?" in msg
 
 
+# ── #441: soft PlaneConstraint.priority in scenario YAML ─────────────────
+
+
+def test_load_scenario_with_priority(tmp_path):
+    from hangarfit.loader import load_scenario
+
+    p = _stage_scenario(
+        tmp_path,
+        "fleet_in: [aviat_husky, ctsl]\nconstraints:\n  aviat_husky:\n    priority: 2.5\n",
+    )
+    s = load_scenario(p)
+    assert s.constraints["aviat_husky"].priority == 2.5
+
+
+def test_load_scenario_priority_null_is_none(tmp_path):
+    from hangarfit.loader import load_scenario
+
+    p = _stage_scenario(
+        tmp_path,
+        "fleet_in: [aviat_husky]\nconstraints:\n  aviat_husky:\n    priority: null\n",
+    )
+    s = load_scenario(p)
+    assert s.constraints["aviat_husky"].priority is None
+
+
+def test_load_scenario_rejects_negative_priority(tmp_path):
+    from hangarfit.loader import load_scenario
+
+    p = _stage_scenario(
+        tmp_path,
+        "fleet_in: [aviat_husky]\nconstraints:\n  aviat_husky:\n    priority: -1.0\n",
+    )
+    with pytest.raises(LoaderError, match="priority"):
+        load_scenario(p)
+
+
+def test_load_scenario_rejects_non_finite_priority(tmp_path):
+    from hangarfit.loader import load_scenario
+
+    p = _stage_scenario(
+        tmp_path,
+        "fleet_in: [aviat_husky]\nconstraints:\n  aviat_husky:\n    priority: .nan\n",
+    )
+    with pytest.raises(LoaderError, match="finite"):
+        load_scenario(p)
+
+
 def test_scenario_post_init_backstop_still_fires_on_direct_construction():
     """Direct-construction path: Scenario.__post_init__ still raises ValueError
     when maintenance_plane is not in fleet_in, bypassing the loader guard.

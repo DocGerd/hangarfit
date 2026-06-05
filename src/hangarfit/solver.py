@@ -798,19 +798,38 @@ def _initial_placement_for_plane(
     )
 
 
+def _priority_weight(scenario: Scenario, pid: str) -> float:
+    """Soft spread weight for plane ``pid``: ``1.0 + priority`` (#441).
+
+    A plane's soft :attr:`~hangarfit.models.PlaneConstraint.priority` (default
+    ``None`` ≡ the neutral ``0.0``) scales how hard the spread post-pass works to
+    clear space around it: each plane-pair's repulsion energy is weighted by
+    ``w_i · w_j``. With every priority unset every weight is exactly ``1.0``, so
+    ``w_i · w_j == 1.0`` and ``1.0 * exp(x) == exp(x)`` — the energy, and hence
+    the whole search, is byte-identical to the pre-#441 behaviour (ADR-0003).
+    The non-negative range is enforced by ``Scenario.__post_init__``.
+    """
+    constraint = scenario.constraints.get(pid)
+    priority = constraint.priority if constraint is not None else None
+    return 1.0 + (priority if priority is not None else 0.0)
+
+
 def _inter_plane_energy(
     placements: dict[str, Placement],
     scenario: Scenario,
     scale: float,
 ) -> float:
-    """Smooth repulsion energy ``E = Σ_{i<j} exp(−gap_ij / scale)`` (spec §4).
+    """Smooth repulsion energy ``E = Σ_{i<j} w_i·w_j·exp(−gap_ij / scale)`` (spec §4).
 
     ``gap_ij`` is the minimum plan-view edge-to-edge distance between plane
     ``i``'s and plane ``j``'s world parts (shapely ``polygon.distance``).
     Lower ``E`` ⇒ planes further apart; close pairs dominate the sum, so
     minimizing it maximizes the *minimum* gap (a smooth maximin surrogate).
-    Returns ``0.0`` when fewer than two planes are present. Ignores z
-    (plan-view only) — see ADR-0008 for the nesting limitation.
+    ``w_i·w_j`` is the soft-priority pair weight (:func:`_priority_weight`, #441);
+    it is identically ``1.0`` when no priorities are set, so this reduces to the
+    unweighted ``Σ exp(−gap/scale)`` byte-for-byte (ADR-0003). Returns ``0.0``
+    when fewer than two planes are present. Ignores z (plan-view only) — see
+    ADR-0008 for the nesting limitation.
     """
     ids = sorted(placements)
     if len(ids) < 2:
@@ -818,13 +837,14 @@ def _inter_plane_energy(
     world: dict[str, list[WorldPart]] = {
         pid: aircraft_parts_world(scenario.fleet[pid], placements[pid]) for pid in ids
     }
+    w = {pid: _priority_weight(scenario, pid) for pid in ids}
     energy = 0.0
     for i in range(len(ids)):
         for j in range(i + 1, len(ids)):
             gap = min(
                 pa.polygon.distance(pb.polygon) for pa in world[ids[i]] for pb in world[ids[j]]
             )
-            energy += math.exp(-gap / scale)
+            energy += w[ids[i]] * w[ids[j]] * math.exp(-gap / scale)
     return energy
 
 
@@ -863,12 +883,15 @@ def _spread_quality(
     """Return ``(min_gap, energy)`` for a layout in one pass over plane-pairs.
 
     ``min_gap`` is the minimum plan-view edge-to-edge distance between any two
-    planes' world parts (``math.inf`` when <2 planes — no pairs). ``energy``
-    is the same ``Σ exp(−gap/scale)`` repulsion :func:`_inter_plane_energy`
-    computes; returning both from one pairwise sweep avoids paying the
-    (expensive) shapely distances twice when scoring a candidate basin. The
-    hot ``_spread`` loop keeps using the energy-only :func:`_inter_plane_energy`
-    — this is called once per accepted basin, not per perturbation.
+    planes' world parts (``math.inf`` when <2 planes — no pairs); it is the raw
+    geometric gap and is **never** priority-weighted, so basin selection stays
+    maximin-primary (ADR-0008). ``energy`` is the same priority-weighted
+    ``Σ w_i·w_j·exp(−gap/scale)`` repulsion :func:`_inter_plane_energy` computes
+    (#441; identically the unweighted sum when no priorities are set, ADR-0003);
+    returning both from one pairwise sweep avoids paying the (expensive) shapely
+    distances twice when scoring a candidate basin. The hot ``_spread`` loop
+    keeps using the energy-only :func:`_inter_plane_energy` — this is called once
+    per accepted basin, not per perturbation.
     """
     ids = sorted(placements)
     if len(ids) < 2:
@@ -876,6 +899,7 @@ def _spread_quality(
     world: dict[str, list[WorldPart]] = {
         pid: aircraft_parts_world(scenario.fleet[pid], placements[pid]) for pid in ids
     }
+    w = {pid: _priority_weight(scenario, pid) for pid in ids}
     min_gap = math.inf
     energy = 0.0
     for i in range(len(ids)):
@@ -884,7 +908,7 @@ def _spread_quality(
                 pa.polygon.distance(pb.polygon) for pa in world[ids[i]] for pb in world[ids[j]]
             )
             min_gap = min(min_gap, gap)
-            energy += math.exp(-gap / scale)
+            energy += w[ids[i]] * w[ids[j]] * math.exp(-gap / scale)
     return (min_gap, energy)
 
 

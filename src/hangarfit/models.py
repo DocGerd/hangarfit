@@ -595,15 +595,25 @@ class CheckResult:
 
 @dataclass(frozen=True, slots=True)
 class PlaneConstraint:
-    """Per-plane HARD constraints for a Scenario.
+    """Per-plane constraints for a Scenario.
 
-    All fields optional — a constraint with everything None means 'free'
+    ``pin`` and ``force_on_carts`` are HARD constraints; ``priority`` is a SOFT
+    preference. All optional — a constraint with everything None means 'free'
     (the solver may place the plane anywhere within physical / cart-rule
     limits). See spec §3.2 for the rationale.
+
+    ``priority`` (#441) is a non-negative soft importance weight (``None`` ≡ the
+    neutral ``0.0``): the spread post-pass weights each plane-pair's repulsion
+    energy by ``(1 + priority_i)·(1 + priority_j)``, so a higher-priority plane
+    is pushed to more clearance. With every ``priority`` unset the weights are
+    all ``1.0`` and the search is byte-identical to the pre-#441 behaviour
+    (ADR-0003). It never overrides a hard ``pin``. Groundwork for the future
+    interactive editor (#442), which exports per-plane priorities.
     """
 
     pin: Placement | None = None
     force_on_carts: bool | None = None
+    priority: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -736,6 +746,21 @@ class Scenario:
                     f"{constraint.pin.on_carts} and force_on_carts="
                     f"{constraint.force_on_carts} disagree (contradictory)"
                 )
+
+            # priority (#441): a non-negative, finite soft weight. A negative
+            # weight would invert the spread repulsion (nonsensical), and a
+            # non-finite one would poison the energy sum.
+            if constraint.priority is not None:
+                if not math.isfinite(constraint.priority):
+                    raise ValueError(
+                        f"Scenario.constraints[{plane_id!r}].priority="
+                        f"{constraint.priority!r} must be finite"
+                    )
+                if constraint.priority < 0.0:
+                    raise ValueError(
+                        f"Scenario.constraints[{plane_id!r}].priority="
+                        f"{constraint.priority!r} must be >= 0.0 (a soft importance weight)"
+                    )
 
         object.__setattr__(self, "fleet", MappingProxyType(dict(self.fleet)))
         # Always copy+wrap constraints — mirrors the unconditional pattern on

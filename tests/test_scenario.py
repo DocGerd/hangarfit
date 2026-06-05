@@ -35,6 +35,16 @@ def test_plane_constraint_can_carry_force_on_carts():
     assert c.pin is None
 
 
+def test_plane_constraint_priority_defaults_to_none():
+    assert PlaneConstraint().priority is None
+
+
+def test_plane_constraint_can_carry_priority():
+    c = PlaneConstraint(priority=2.5)
+    assert c.priority == 2.5
+    assert c.pin is None and c.force_on_carts is None
+
+
 # ── Scenario ────────────────────────────────────────────────────────────
 
 # Helpers: build a minimal in-memory fleet + hangar for Scenario tests.
@@ -555,3 +565,61 @@ def test_search_config_defaults():
     assert s.k_stall == 50
     assert s.pos_sigma_m == 0.5
     assert s.heading_sigma_deg == 10.0
+
+
+# ── #441: soft PlaneConstraint.priority validation ──────────────────────
+
+
+def test_scenario_accepts_priority(fleet, hangar):
+    """A non-negative finite priority is accepted (soft weight)."""
+    s = Scenario(
+        fleet=fleet,
+        hangar=hangar,
+        fleet_in=("aviat_husky", "ctsl"),
+        constraints={"aviat_husky": PlaneConstraint(priority=3.0)},
+    )
+    assert s.constraints["aviat_husky"].priority == 3.0
+
+
+def test_scenario_accepts_priority_zero(fleet, hangar):
+    """0.0 is the neutral weight and explicitly allowed."""
+    Scenario(
+        fleet=fleet,
+        hangar=hangar,
+        fleet_in=("aviat_husky",),
+        constraints={"aviat_husky": PlaneConstraint(priority=0.0)},
+    )
+
+
+def test_scenario_rejects_negative_priority(fleet, hangar):
+    with pytest.raises(ValueError, match="priority"):
+        Scenario(
+            fleet=fleet,
+            hangar=hangar,
+            fleet_in=("aviat_husky",),
+            constraints={"aviat_husky": PlaneConstraint(priority=-1.0)},
+        )
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), float("-inf")])
+def test_scenario_rejects_non_finite_priority(fleet, hangar, bad):
+    with pytest.raises(ValueError, match="finite"):
+        Scenario(
+            fleet=fleet,
+            hangar=hangar,
+            fleet_in=("aviat_husky",),
+            constraints={"aviat_husky": PlaneConstraint(priority=bad)},
+        )
+
+
+def test_scenario_priority_coexists_with_pin_and_force_on_carts(fleet, hangar):
+    """priority is soft — it stacks with the hard constraints, no conflict."""
+    pin = Placement(plane_id="ctsl", x_m=2.0, y_m=10.0, heading_deg=0.0, on_carts=True)
+    s = Scenario(
+        fleet=fleet,
+        hangar=hangar,
+        fleet_in=("ctsl",),
+        constraints={"ctsl": PlaneConstraint(pin=pin, force_on_carts=True, priority=4.0)},
+    )
+    c = s.constraints["ctsl"]
+    assert c.priority == 4.0 and c.pin == pin and c.force_on_carts is True
