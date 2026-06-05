@@ -290,6 +290,19 @@ google-chrome --headless=new --use-gl=angle --use-angle=swiftshader \
   --enable-unsafe-swiftshader --virtual-time-budget=8000 \
   --screenshot=out.png "file://$PWD/out.html"
 
+# Solve→tow profiling harness (DEV/CI-ONLY, #381 — top-level `bench/`, NOT shipped
+# in the wheel; `pip install` / `python -m build` / pytest never touch it). Splits
+# each regime's wall-clock into placement vs routing and asserts validity /
+# path-validity / determinism per regime, exiting non-zero on any failure (the
+# substrate for #403/F6's CI gate). Binds on `max_restarts`, NOT wall-clock, so the
+# work — and thus the numbers — is reproducible run-to-run and machine-to-machine.
+# Findings + the ranked speedup levers: docs/spikes/solve-tow-profiling.md (and
+# bench/README.md). GOTCHA: only the FAST regimes faithfully mirror
+# `solve(plan_paths=True)`; the heavy regimes pass a tighter global tow cap to
+# bound the un-routable case, so their routing time is a harness-specific lower bound.
+python -m bench.profile_pipeline                    # fast regimes: timing + correctness verdicts
+python -m bench.profile_pipeline --heavy --profile  # + heavy regimes + cProfile stage breakdown
+
 # Viewer TypeScript toolchain (DEV/CI-ONLY — ADR-0020, top-level `viewer/`). You
 # need Node ONLY to change the viewer; `pip install` / `python -m build` / pytest
 # never invoke npm. The wheel ships the COMMITTED bundle
