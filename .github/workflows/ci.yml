@@ -311,3 +311,55 @@ jobs:
             echo "::error::requirements-fuzz.txt is out of sync. Regenerate on Python 3.12 with pip-tools==7.5.3: pip-compile --generate-hashes --no-strip-extras -o requirements-fuzz.txt requirements-fuzz.in"
             exit 1
           fi
+
+  viewer-toolchain:
+    # Dev/CI-only TypeScript toolchain for the 3D viewer (ADR-0020, issue #437).
+    # Deliberately a SEPARATE job from the Python matrix above: a Node failure must
+    # never block the Python test / lint / mypy / lockfile-drift jobs (the viewer is
+    # built from a committed bundle the Python install never touches). This job runs
+    # the checks that are greenable for the scaffold — `tsc --noEmit`, eslint, and the
+    # three <-> @types/three version-skew guard. The `viewer-build-drift` byte guard
+    # and the `node --test` pure-unit job (the rest of #438) land with the real port
+    # (#439), where the committed viewer.js equals esbuild(viewer/src) and the pure
+    # units (affine/anchors/timeline) exist to test.
+    name: viewer toolchain (typecheck + lint)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Set up Node (pinned via viewer/.nvmrc)
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
+        with:
+          node-version-file: viewer/.nvmrc
+          cache: npm
+          cache-dependency-path: viewer/package-lock.json
+
+      - name: Install viewer toolchain (lockfile-authoritative)
+        # `npm ci` installs exactly the committed package-lock.json (integrity-pinned),
+        # the Node analogue of the hash-pinned `pip install --require-hashes` above.
+        run: npm --prefix viewer/ ci
+
+      - name: Typecheck (tsc --noEmit)
+        run: npm --prefix viewer/ run typecheck
+
+      - name: Lint (eslint)
+        run: npm --prefix viewer/ run lint
+
+      - name: three <-> @types/three version-skew guard
+        # Assert the vendored three (VENDOR.md) and the @types/three the viewer
+        # type-checks against agree on major.minor, so the API the TS is checked
+        # against cannot drift from the three the viewer actually runs (ADR-0020).
+        run: |
+          vendor=$(grep -oE 'three@0\.[0-9]+\.[0-9]+' src/hangarfit/_viewer_assets/three/VENDOR.md | head -1 | sed 's/^three@//')
+          types=$(node -p "require('./viewer/package.json').devDependencies['@types/three']")
+          if [ -z "$vendor" ]; then
+            echo "::error::could not parse the vendored three version from VENDOR.md — update the skew guard in ci.yml."
+            exit 1
+          fi
+          vendor_mm=${vendor%.*}
+          types_mm=$(printf '%s' "$types" | grep -oE '^[0-9]+\.[0-9]+')
+          echo "vendored three=$vendor (major.minor=$vendor_mm); @types/three=$types (major.minor=$types_mm)"
+          if [ "$vendor_mm" != "$types_mm" ]; then
+            echo "::error::@types/three ($types_mm) does not match vendored three ($vendor_mm). Bump @types/three in viewer/package.json in lockstep with VENDOR.md (ADR-0020)."
+            exit 1
+          fi
