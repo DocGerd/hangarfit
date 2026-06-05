@@ -29,6 +29,8 @@ from hangarfit.collisions import check
 from hangarfit.loader import load_layout
 from hangarfit.models import Aircraft, Placement
 from hangarfit.visualize import (
+    _BAY_LABEL_COLOR,
+    _BAY_WALL_EDGE,
     _BAY_WALL_FACE,
     _CART_DECK_COLOR,
     _CART_PALLET_HALF_EXTENT_M,
@@ -264,6 +266,15 @@ class TestConditionalBayRendering:
         expected = matplotlib.colors.to_rgba(_BAY_WALL_FACE, alpha=face[3])
         assert face == expected, f"closed-bay facecolor must be _BAY_WALL_FACE; got {face!r}"
 
+        # The edge + label colours are #418 changes (brand ink, not the old bay
+        # red / white). Pin them at the DRAW path too: the constant-level parity
+        # test (test_bay_wall_aligns_*) can't catch a stale _draw_maintenance_bay
+        # wiring, the exact regression the banner draw-path guard exists to stop.
+        edge = patch.get_edgecolor()
+        assert edge == matplotlib.colors.to_rgba(_BAY_WALL_EDGE, alpha=edge[3]), (
+            f"closed-bay edgecolor must be _BAY_WALL_EDGE; got {edge!r}"
+        )
+
         ax.text.assert_called_once()
         # ax.text is positional (x, y, s, **kwargs) — the third arg is the label.
         label_string = ax.text.call_args.args[2]
@@ -272,6 +283,9 @@ class TestConditionalBayRendering:
         )
         assert "scheibe_falke" in label_string, (
             f"label must name the occupant; got {label_string!r}"
+        )
+        assert ax.text.call_args.kwargs["color"] == _BAY_LABEL_COLOR, (
+            f"bay label must use _BAY_LABEL_COLOR; got {ax.text.call_args.kwargs.get('color')!r}"
         )
 
     def test_closed_bay_patch_uses_partial_width_back_strip_geometry(self) -> None:

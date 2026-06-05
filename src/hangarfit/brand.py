@@ -120,12 +120,15 @@ CART_DECK_ALPHA: float = 0.85  # cart/dolly pallet squares.
 # sourced from STATUS so 2D and 3D share one maintenance colour (#418), and the
 # hatch + ink edge keep identity off hue alone. This also removes the old
 # off-system bay red (#922b21), which collided with the conflict red. The label is
-# the brand ink (not white): on the lighter violet fill, dark ink stays legible.
+# the brand ink (not white): the fill renders at BAY_WALL_ALPHA=0.55, so it
+# composites to a light violet (~#B6A9CC over white) where dark ink is ~8:1 and
+# white would be only ~2:1 — note this contrast is against the *rendered* fill,
+# not the solid #7B63A3 swatch (where white would win).
 BAY_WALL_FACE: str = STATUS["maint"]  # #7B63A3 — shared with the 3D bay
 BAY_WALL_EDGE: str = INK_EDGE  # #14161A — ink edge (also tints the hatch)
 BAY_WALL_ALPHA: float = 0.55
 BAY_WALL_HATCH: str = "///"
-BAY_LABEL_COLOR: str = INK_EDGE  # #14161A — dark ink, legible on the violet fill
+BAY_LABEL_COLOR: str = INK_EDGE  # #14161A — dark ink, legible on the alpha-0.55 fill
 
 # Hangar / door inks (2D). The hangar edge folds wall/door/datum onto STATUS
 # "wall"; the door is lightened (DOOR_EDGE) so the opening reads as "open".
