@@ -269,6 +269,21 @@ def test_load_scenario_rejects_non_finite_priority(tmp_path):
         load_scenario(p)
 
 
+@pytest.mark.parametrize("yaml_bool", ["true", "false", "yes", "on"])
+def test_load_scenario_rejects_bool_priority(tmp_path, yaml_bool):
+    """`bool` is an int subclass, so float(True)==1.0 would silently parse a
+    fat-fingered `priority: true`/`yes` as a plausible-but-wrong weight. Rejected
+    at _to_float, like the _to_int/_to_bool siblings (silent-failure review)."""
+    from hangarfit.loader import load_scenario
+
+    p = _stage_scenario(
+        tmp_path,
+        f"fleet_in: [aviat_husky]\nconstraints:\n  aviat_husky:\n    priority: {yaml_bool}\n",
+    )
+    with pytest.raises(LoaderError, match="bool"):
+        load_scenario(p)
+
+
 def test_scenario_post_init_backstop_still_fires_on_direct_construction():
     """Direct-construction path: Scenario.__post_init__ still raises ValueError
     when maintenance_plane is not in fleet_in, bypassing the loader guard.

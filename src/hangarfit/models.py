@@ -609,6 +609,12 @@ class PlaneConstraint:
     all ``1.0`` and the search is byte-identical to the pre-#441 behaviour
     (ADR-0003). It never overrides a hard ``pin``. Groundwork for the future
     interactive editor (#442), which exports per-plane priorities.
+
+    It is ``float | None`` (not ``float = 0.0`` like ``SearchConfig.back_bias_weight``)
+    to stay consistent with its optional siblings here (``pin``/``force_on_carts``,
+    where ``None`` means 'free') and to let #442 distinguish 'user never set a
+    priority' from an explicit ``0.0`` on round-trip; both collapse to weight
+    ``1.0`` in the solver today.
     """
 
     pin: Placement | None = None

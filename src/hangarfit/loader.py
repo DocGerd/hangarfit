@@ -71,9 +71,17 @@ def _to_float(value: Any, field_name: str) -> float:
     downstream consumers (e.g. ``_wing_spar_x``) silently propagate them
     into geometry calculations, where NaN comparisons always return False
     and inf values produce nonsensical coordinates.
+
+    ``bool`` is rejected too: it is an ``int`` subclass, so ``float(True)`` is a
+    silent ``1.0`` — the same YAML footgun ``_to_int`` / ``_to_bool`` guard
+    against (``yes``/``on`` coerce to ``True`` under YAML 1.1). Without this a
+    ``priority: true`` (#441) — or any ``true`` fat-fingered into a numeric
+    field — would parse to a plausible-but-wrong number instead of erroring.
     """
     if value is None:
         raise LoaderError(f"{field_name!r}: expected number, got null")
+    if isinstance(value, bool):
+        raise LoaderError(f"{field_name!r}: expected number, got {value!r} (bool)")
     try:
         result = float(value)
     except (TypeError, ValueError) as e:
