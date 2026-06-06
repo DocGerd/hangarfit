@@ -139,7 +139,7 @@ The following steps will be executed in order. No changes have been made yet.
            --title "release: v<version>" \
            --body "..." \
            --assignee DocGerd \
-           --label enhancement \
+           --label release \
            --milestone <MILESTONE_NUMBER>
 [ ] 6. Open back-merge PR into develop:
          gh pr create \
@@ -148,14 +148,13 @@ The following steps will be executed in order. No changes have been made yet.
            --title "chore: back-merge v<version> into develop" \
            --body "..." \
            --assignee DocGerd \
-           --label enhancement \
+           --label release \
            --milestone <MILESTONE_NUMBER>
 [ ] 7. Print both PR URLs.
 [ ] 8. Remind you to tag v<version> AFTER the main PR merges.
 
 NOTE: 'main' is protected — the skill never pushes to main directly.
-NOTE: No 'release' label exists in this repo. Using 'enhancement' for both PRs.
-      TODO: create a dedicated 'release' label in a future PR.
+NOTE: Both the release PR and the back-merge PR use the dedicated 'release' label.
 ```
 
 Where `<current_version>` is the version currently in `pyproject.toml` (read it now if not already known), and `<MILESTONE_NUMBER>` is the resolved integer from Step 3 (or the warning text if unresolved).
@@ -250,7 +249,7 @@ After merging, tag the release:
 PREOF
 )" \
   --assignee DocGerd \
-  --label enhancement \
+  --label release \
   --milestone <MILESTONE_NUMBER>
 ```
 
@@ -286,7 +285,7 @@ This PR should be merged AFTER the main release PR is merged.
 PREOF
 )" \
   --assignee DocGerd \
-  --label enhancement \
+  --label release \
   --milestone <MILESTONE_NUMBER>
 ```
 

@@ -330,9 +330,12 @@ create the actual release branch and PRs.
 PREOF
 )" \
   --assignee DocGerd \
+  --label release \
   --label documentation \
   --milestone <MILESTONE_NUMBER>
 ```
+The prep PR is release-process work that happens to touch docs, so it carries
+both `release` (process) and `documentation` (content).
 If `MILESTONE_NUMBER` is `<unresolved>`, omit the `--milestone` flag and note in
 the PR body that the milestone must be set by hand.
 
