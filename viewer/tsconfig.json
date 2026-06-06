@@ -1,11 +1,13 @@
 {
   "// note": "Strict typecheck pass (npm run typecheck => tsc --noEmit). esbuild does the actual transpile/bundle; tsc never emits. target/module match esbuild's es2022 output (ADR-0020).",
+  "// types": "TS 6.0 changed the `types` default from auto-including every node_modules/@types package to []. `node` must be listed explicitly so the node:test / node:assert units in test/*.ts typecheck (#473). `three` is unaffected — it is resolved via explicit `import`, not the global `types` array.",
   "compilerOptions": {
     "target": "es2022",
     "module": "es2022",
     "moduleResolution": "bundler",
     "allowImportingTsExtensions": true,
     "lib": ["es2022", "dom", "dom.iterable"],
+    "types": ["node"],
     "strict": true,
     "noEmit": true,
     "noUnusedLocals": true,
