@@ -34,7 +34,7 @@ from shapely.geometry import Point, Polygon
 # Importing a sibling-module private is the same pattern as `check as _check`.
 from hangarfit.collisions import _parts_conflict
 from hangarfit.collisions import check as _check
-from hangarfit.geometry import WorldPart, aircraft_parts_world
+from hangarfit.geometry import WorldPart, cached_parts_world
 from hangarfit.models import Aircraft, Conflict, Hangar, Layout, Placement
 
 SegmentKind = Literal["L", "S", "R"]
@@ -976,7 +976,7 @@ def _mover_motion_bounds_conflict(
     door_half = hangar.door.width_m / 2.0
     door_lo = hangar.door.center_x_m - door_half
     door_hi = hangar.door.center_x_m + door_half
-    for world_part in aircraft_parts_world(mover, placement):
+    for world_part in cached_parts_world(mover, placement):
         for x, y in list(world_part.polygon.exterior.coords)[:-1]:
             # Side walls + back wall (unchanged): the static rule is
             # `0 <= x <= width and 0 <= y <= length`.
@@ -1460,7 +1460,7 @@ def _build_obstacles(placed: Layout, *, mover_id: str) -> _Obstacles:
     for placement in placed.placements:
         if placement.plane_id == mover_id:
             continue
-        parts.extend(aircraft_parts_world(placed.fleet[placement.plane_id], placement))
+        parts.extend(cached_parts_world(placed.fleet[placement.plane_id], placement))
     bay = placed.hangar.maintenance_bay
     return _Obstacles(
         world_parts=tuple(parts),
@@ -1511,7 +1511,7 @@ def _motion_clear(mover: Aircraft, pose: Pose, obstacles: _Obstacles, hangar: Ha
     module note above and the safety-net re-check in :func:`plan_path`.
     """
     placement = Placement(mover.id, pose.x_m, pose.y_m, pose.heading_deg, on_carts=False)
-    mover_parts = aircraft_parts_world(mover, placement)
+    mover_parts = cached_parts_world(mover, placement)
 
     # (A) Hangar bounds (front-gap-exempt for the mover).
     if _mover_motion_bounds_conflict(mover, placement, hangar) is not None:

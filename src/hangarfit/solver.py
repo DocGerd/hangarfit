@@ -29,7 +29,7 @@ import time
 from typing import Literal, NamedTuple
 
 from hangarfit.collisions import check as check_layout
-from hangarfit.geometry import WorldPart, aircraft_parts_world
+from hangarfit.geometry import WorldPart, cached_parts_world, pose_cache_scope
 from hangarfit.models import (
     Aircraft,
     CheckResult,
@@ -99,6 +99,44 @@ def solve(
     ``tow_heuristic="euclidean"`` to opt out, or a larger ``tow_max_expansions``
     to widen the per-plane budget. All RNG-free, so determinism holds (ADR-0003).
     """
+    # Per-solve aircraft_parts_world memoization (#453). The #381 profile found
+    # this transform is the pipeline's hot spot, with ≈84 % of calls rebuilding
+    # an already-seen pose. Running the whole solve (placement + spread +
+    # tow-planning) inside one fresh cache collapses those rebuilds; the cache
+    # resets on exit, so a double-run stays byte-identical (ADR-0003). The body
+    # lives in `_run_solve` so this scope wraps every geometry call without a
+    # 197-line reindent.
+    #
+    # Re-baselining against pre-#453 output must pin `max_restarts` (or
+    # `spread=False`): the speedup changes how many restarts fit a wall-clock
+    # `budget_s`, which #267 already scopes OUT of the byte-identical guarantee.
+    with pose_cache_scope():
+        return _run_solve(
+            scenario,
+            budget_s=budget_s,
+            alternatives=alternatives,
+            seed=seed,
+            diversity=diversity,
+            search=search,
+            plan_paths=plan_paths,
+            tow_heuristic=tow_heuristic,
+            tow_max_expansions=tow_max_expansions,
+        )
+
+
+def _run_solve(
+    scenario: Scenario,
+    *,
+    budget_s: float,
+    alternatives: int,
+    seed: int | None,
+    diversity: DiversityConfig | None,
+    search: SearchConfig | None,
+    plan_paths: bool,
+    tow_heuristic: Literal["euclidean", "grid"],
+    tow_max_expansions: int | None,
+) -> SolveResult:
+    """Body of :func:`solve`, run inside an active ``pose_cache_scope`` (#453)."""
     if diversity is None:
         diversity = DiversityConfig()
     if search is None:
@@ -835,7 +873,7 @@ def _inter_plane_energy(
     if len(ids) < 2:
         return 0.0
     world: dict[str, list[WorldPart]] = {
-        pid: aircraft_parts_world(scenario.fleet[pid], placements[pid]) for pid in ids
+        pid: cached_parts_world(scenario.fleet[pid], placements[pid]) for pid in ids
     }
     w = {pid: _priority_weight(scenario, pid) for pid in ids}
     energy = 0.0
@@ -897,7 +935,7 @@ def _spread_quality(
     if len(ids) < 2:
         return (math.inf, 0.0)
     world: dict[str, list[WorldPart]] = {
-        pid: aircraft_parts_world(scenario.fleet[pid], placements[pid]) for pid in ids
+        pid: cached_parts_world(scenario.fleet[pid], placements[pid]) for pid in ids
     }
     w = {pid: _priority_weight(scenario, pid) for pid in ids}
     min_gap = math.inf

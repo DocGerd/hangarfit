@@ -22,6 +22,9 @@ catch any regression — see ``tests/test_geometry.py``.
 from __future__ import annotations
 
 import math
+from collections.abc import Iterator
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass
 
 from shapely.geometry import Polygon
@@ -207,3 +210,80 @@ def aircraft_parts_world(
             )
         )
     return world_parts
+
+
+# ---------------------------------------------------------------------------
+# Per-solve memoization of aircraft_parts_world (#453)
+# ---------------------------------------------------------------------------
+#
+# The #381 profiling spike measured aircraft_parts_world as the solve→tow
+# pipeline's single cross-cutting bottleneck: it rebuilds every part polygon
+# from scratch on *every* collision/clearance check, and 83.8 % of those
+# rebuilds are for a pose already seen this solve. The cure is a per-``solve()``
+# cache, keyed on the pose, consulted at the hot call sites via
+# ``cached_parts_world`` and scoped by ``pose_cache_scope``.
+#
+# Determinism (ADR-0003): the transform above is referentially transparent, so
+# a hit returns the byte-identical WorldParts the pure function would have
+# built. WorldPart is frozen/slots and every consumer is read-only, so sharing
+# the cached objects is safe. The key uses *exact* float equality, so a
+# near-miss is a clean miss (recompute → correct), never a false hit. The cache
+# lives in a ContextVar reset on scope exit, so two sequential solves each get a
+# fresh cache and the determinism-guard's double-run stays byte-identical. It is
+# a plain unbounded dict with NO eviction — an LRU/eviction variant was rejected
+# by the spike (it can perturb basin selection), and a module-global cache would
+# return *stale* geometry if a later scenario reused a plane id for a different
+# aircraft. Hence the per-solve lifetime.
+
+# Cache key: (plane_id, x_m, y_m, heading_deg). ``on_carts`` is deliberately
+# absent — carts do not affect aircraft_parts_world, so it would be an inert
+# (dead) component of the key.
+_PoseKey = tuple[str, float, float, float]
+_pose_cache: ContextVar[dict[_PoseKey, list[WorldPart]] | None] = ContextVar(
+    "aircraft_parts_world_cache", default=None
+)
+
+
+@contextmanager
+def pose_cache_scope() -> Iterator[None]:
+    """Activate a fresh per-solve ``aircraft_parts_world`` cache for the block.
+
+    Inside the ``with`` block, :func:`cached_parts_world` memoizes by pose;
+    outside it (the default) :func:`cached_parts_world` is a pure passthrough.
+    The cache is reset on exit, so nested or sequential scopes never share
+    state — which is what keeps a double-run solve byte-identical (ADR-0003).
+    """
+    token = _pose_cache.set({})
+    try:
+        yield
+    finally:
+        _pose_cache.reset(token)
+
+
+def cached_parts_world(aircraft: Aircraft, placement: Placement) -> list[WorldPart]:
+    """Pose-memoized :func:`aircraft_parts_world` for the active solve scope.
+
+    When a :func:`pose_cache_scope` is active, the result is cached on
+    ``(plane_id, x_m, y_m, heading_deg)`` and reused for the lifetime of that
+    scope; the returned list MUST be treated read-only (it may be shared). When
+    no scope is active this delegates straight to :func:`aircraft_parts_world`,
+    so non-solve callers stay byte-identical (just uncached).
+
+    Caller contract: the key omits the parts/geometry, so within one scope a
+    given ``plane_id`` must always resolve to the same aircraft geometry. That
+    holds because a single ``solve()`` is driven by one fixed ``scenario.fleet``
+    (one :class:`~hangarfit.models.Aircraft` per id) — which is exactly why the
+    cache is per-solve and never module-global.
+    """
+    cache = _pose_cache.get()
+    if cache is None:
+        return aircraft_parts_world(aircraft, placement)
+    key: _PoseKey = (
+        placement.plane_id,
+        placement.x_m,
+        placement.y_m,
+        placement.heading_deg,
+    )
+    if key not in cache:
+        cache[key] = aircraft_parts_world(aircraft, placement)
+    return cache[key]
