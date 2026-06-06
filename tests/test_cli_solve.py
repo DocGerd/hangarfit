@@ -1156,27 +1156,66 @@ class TestSolveRenderPathsSpreadFallback:
         assert out_yaml.exists()
         assert "auto-fallback, see #280" not in out_yaml.read_text()
 
-    @pytest.mark.slow
-    def test_real_solve_spread_fallback_end_to_end(self, tmp_path, capsys):
-        # Real, un-monkeypatched regression for #280. seed=5 on the 3-plane
-        # 30x25 test hangar is exit-3-WITH-spread (fuji blocked) / exit-0-WITHOUT
-        # on develop. The fallback must turn that bare exit 3 into a routed exit 0
-        # with the swap reported on stderr.
+    def test_real_solve_spread_fallback_end_to_end(self, tmp_path, monkeypatch, capsys):
+        # Deterministic, CI-runnable integration of the #280 fallback against the
+        # REAL solver + REAL tow planner.
+        #
+        # The *natural* trigger — a spread layout the bounded Hybrid-A* can't route
+        # while no-spread can — is a narrow band that SHIFTS as towability improves.
+        # This test previously pinned seed=5 to a wall-clock ``--budget`` and rotted
+        # (#457): improved routing made that spread layout directly routable, so the
+        # fallback never fired, stderr was empty, and the assertion failed — yet the
+        # failure stayed invisible because the test was ``@slow`` and CI runs
+        # ``-m 'not slow'``. Determinism is ``max_restarts``-scoped (ADR-0003), NOT
+        # wall-clock-scoped, and the CLI's only knob is ``--budget``, so a real,
+        # ``--budget``-driven trigger is inherently machine-dependent.
+        #
+        # Fix: force ONLY the spread pass to report no plans, via a thin wrapper that
+        # otherwise delegates to the real ``solve()``. That reproduces the #280
+        # condition (all plans ``None`` on the spread layout) deterministically while
+        # keeping the real placement and — crucially — the real no-spread routing, so
+        # the live cli.py fallback wiring (re-solve with spread off → swap → stderr
+        # note → exit 0 → render) is exercised end-to-end without depending on the
+        # fragile trigger band. The fully-mocked sibling tests above cover the same
+        # control flow on synthetic data; this one proves it on a real solve+route,
+        # and is deliberately NOT ``@slow`` so CI actually runs it.
+        import dataclasses
+
+        import hangarfit.solver as solver_mod
+
+        real_solve = solver_mod.solve
+
+        def spread_pass_unroutable(scenario, **kwargs):
+            search = kwargs.get("search")
+            if search is not None and search.spread and kwargs.get("plan_paths"):
+                # The bounded planner "routes nothing" for the spread arrangement —
+                # exactly the case #280's fallback exists to rescue. Run placement
+                # ONLY (skip the expensive Hybrid-A* routing whose result we would
+                # discard anyway — routing a hard spread layout floods the expansion
+                # budget, the very cost #280 sidesteps) and synthesize all-None plans,
+                # one per (valid) layout, so the fallback trigger condition
+                # (`result.layouts and all(plan is None …)`) holds.
+                result = real_solve(scenario, **{**kwargs, "plan_paths": False})
+                return dataclasses.replace(result, plans=tuple(None for _ in result.layouts))
+            return real_solve(scenario, **kwargs)
+
+        monkeypatch.setattr(solver_mod, "solve", spread_pass_unroutable)
+
         out = tmp_path / "real.png"
         rc = main(
             [
                 "solve",
                 str(FIXTURES_DIR / "solve_fresh_alternatives_three.yaml"),
-                "--budget",
-                "15.0",
                 "--seed",
                 "5",
+                "--budget",
+                "1.0",
                 "--render",
                 str(out),
                 "--render-paths",
             ]
         )
-        assert rc == 0, f"expected fallback to route; stderr={capsys.readouterr().err}"
         err = capsys.readouterr().err
+        assert rc == 0, f"expected the real no-spread fallback to route; stderr={err}"
         assert "spread" in err and "re-solved" in err
         assert out.exists() and out.stat().st_size > 0
