@@ -13,11 +13,25 @@ permissions:
 
 jobs:
   analyze:
-    name: Analyze (Python)
+    name: Analyze (${{ matrix.name }})
     runs-on: ubuntu-latest
     permissions:
       security-events: write
       actions: read
+
+    strategy:
+      # Don't let one language's failure cancel the other's analysis.
+      fail-fast: false
+      matrix:
+        include:
+          # Python: unchanged behaviour — scans the repo's Python, no path filter.
+          - language: python
+            name: Python
+          # JavaScript/TypeScript: our viewer source only (see config-file for the
+          # paths / paths-ignore scope that excludes the vendored three.js).
+          - language: javascript-typescript
+            name: JavaScript/TypeScript
+            config-file: ./.github/codeql/javascript-typescript.yml
 
     steps:
       - name: Checkout
@@ -26,9 +40,13 @@ jobs:
       - name: Initialize CodeQL
         uses: github/codeql-action/init@7211b7c8077ea37d8641b6271f6a365a22a5fbfa  # v4.36.0
         with:
-          languages: python
+          languages: ${{ matrix.language }}
+          # Empty for the Python entry (matrix.config-file is unset there) — the
+          # init action treats an empty config-file as "no config", so Python
+          # keeps its default whole-repo scope.
+          config-file: ${{ matrix.config-file }}
 
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@7211b7c8077ea37d8641b6271f6a365a22a5fbfa  # v4.36.0
         with:
-          category: "/language:python"
+          category: "/language:${{ matrix.language }}"
