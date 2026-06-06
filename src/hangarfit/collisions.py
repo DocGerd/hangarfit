@@ -48,14 +48,14 @@ which plane is iterated first.
 
 from __future__ import annotations
 
-from .geometry import WorldPart, aircraft_parts_world, polygon_overlap, polygon_overlap_area
+from .geometry import WorldPart, cached_parts_world, polygon_overlap, polygon_overlap_area
 from .models import CheckResult, Conflict, Hangar, Layout
 
 
 def check(layout: Layout) -> CheckResult:
     """Run all geometric checks and return a :class:`CheckResult`."""
     world_parts: dict[str, list[WorldPart]] = {
-        p.plane_id: aircraft_parts_world(layout.fleet[p.plane_id], p) for p in layout.placements
+        p.plane_id: cached_parts_world(layout.fleet[p.plane_id], p) for p in layout.placements
     }
     conflicts: list[Conflict] = []
     conflicts.extend(_hangar_bounds_conflicts(world_parts, layout.hangar))
