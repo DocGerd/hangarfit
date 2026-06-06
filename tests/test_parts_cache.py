@@ -19,6 +19,8 @@ the ``determinism-guard`` reviewer cares about:
 
 from __future__ import annotations
 
+import pytest
+
 from hangarfit.geometry import aircraft_parts_world, cached_parts_world, pose_cache_scope
 from hangarfit.models import Aircraft, Part, Placement, Wheels
 
@@ -29,7 +31,7 @@ def _probe_aircraft() -> Aircraft:
         name="Probe",
         wing_position="high",
         gear="tailwheel",
-        movement_mode="always_own_gear",  # type: ignore[arg-type]
+        movement_mode="always_own_gear",
         turn_radius_m=5.0,
         measured=False,
         parts=(
@@ -42,6 +44,18 @@ def _probe_aircraft() -> Aircraft:
                 angle_deg=0.0,
                 z_bottom_m=0.0,
                 z_top_m=1.0,
+            ),
+            # A second (wing) part so the cache tests exercise a multi-part
+            # WorldPart list, not just a single polygon.
+            Part(
+                kind="wing",
+                length_m=1.4,
+                width_m=10.0,
+                offset_x_m=0.6,
+                offset_y_m=0.0,
+                angle_deg=0.0,
+                z_bottom_m=1.0,
+                z_top_m=1.3,
             ),
         ),
         wheels=Wheels(main_offset_x_m=0.0, track_m=1.8, third_wheel_offset_x_m=-2.0),
@@ -123,3 +137,20 @@ def test_scope_resets_to_passthrough_on_exit() -> None:
     after_a = cached_parts_world(ac, pl)
     after_b = cached_parts_world(ac, pl)
     assert after_b is not after_a  # no active cache → uncached passthrough
+
+
+def test_scope_resets_after_exception() -> None:
+    """A raise inside the scope still resets the cache (try/finally), so a later
+    solve can never inherit a stale cache from a crashed one."""
+    ac = _probe_aircraft()
+    pl = Placement(plane_id="probe", x_m=3.0, y_m=4.0, heading_deg=30.0, on_carts=False)
+
+    class _Boom(Exception):
+        pass
+
+    with pytest.raises(_Boom), pose_cache_scope():
+        cached_parts_world(ac, pl)
+        raise _Boom
+    after_a = cached_parts_world(ac, pl)
+    after_b = cached_parts_world(ac, pl)
+    assert after_a is not after_b  # finally-reset → passthrough resumed, uncached

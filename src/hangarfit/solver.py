@@ -106,6 +106,10 @@ def solve(
     # resets on exit, so a double-run stays byte-identical (ADR-0003). The body
     # lives in `_run_solve` so this scope wraps every geometry call without a
     # 197-line reindent.
+    #
+    # Re-baselining against pre-#453 output must pin `max_restarts` (or
+    # `spread=False`): the speedup changes how many restarts fit a wall-clock
+    # `budget_s`, which #267 already scopes OUT of the byte-identical guarantee.
     with pose_cache_scope():
         return _run_solve(
             scenario,

@@ -268,6 +268,12 @@ def cached_parts_world(aircraft: Aircraft, placement: Placement) -> list[WorldPa
     scope; the returned list MUST be treated read-only (it may be shared). When
     no scope is active this delegates straight to :func:`aircraft_parts_world`,
     so non-solve callers stay byte-identical (just uncached).
+
+    Caller contract: the key omits the parts/geometry, so within one scope a
+    given ``plane_id`` must always resolve to the same aircraft geometry. That
+    holds because a single ``solve()`` is driven by one fixed ``scenario.fleet``
+    (one :class:`~hangarfit.models.Aircraft` per id) — which is exactly why the
+    cache is per-solve and never module-global.
     """
     cache = _pose_cache.get()
     if cache is None:
