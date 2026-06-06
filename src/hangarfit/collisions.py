@@ -48,14 +48,14 @@ which plane is iterated first.
 
 from __future__ import annotations
 
-from .geometry import WorldPart, aircraft_parts_world, polygon_overlap, polygon_overlap_area
+from .geometry import WorldPart, cached_parts_world, polygon_overlap, polygon_overlap_area
 from .models import CheckResult, Conflict, Hangar, Layout
 
 
 def check(layout: Layout) -> CheckResult:
     """Run all geometric checks and return a :class:`CheckResult`."""
     world_parts: dict[str, list[WorldPart]] = {
-        p.plane_id: aircraft_parts_world(layout.fleet[p.plane_id], p) for p in layout.placements
+        p.plane_id: cached_parts_world(layout.fleet[p.plane_id], p) for p in layout.placements
     }
     conflicts: list[Conflict] = []
     conflicts.extend(_hangar_bounds_conflicts(world_parts, layout.hangar))
@@ -191,6 +191,51 @@ def _first_vertex_in_bay(
     return None
 
 
+def _part_aabb(part: WorldPart) -> tuple[float, float, float, float]:
+    """Axis-aligned plan-view bounding box ``(xmin, ymin, xmax, ymax)`` of a
+    part's polygon. The 4-tuple unpack also asserts the expected arity.
+
+    Precomputed once per part by :func:`_pairwise_conflicts` for the #454
+    broad-phase (mirrors :func:`hangarfit.towplanner._aabb`; kept local to avoid
+    a ``collisions → towplanner`` import cycle)."""
+    xmin, ymin, xmax, ymax = part.polygon.bounds
+    return xmin, ymin, xmax, ymax
+
+
+def _aabbs_separated_beyond_clearance(
+    box_a: tuple[float, float, float, float],
+    box_b: tuple[float, float, float, float],
+    clearance: float,
+) -> bool:
+    """Broad-phase reject (#454): whether two parts' axis-aligned bounding boxes
+    are separated by **strictly more** than ``clearance`` on some axis.
+
+    A per-axis box gap is a provable lower bound on the true polygon
+    edge-to-edge distance (each polygon is contained in its AABB), so when this
+    returns ``True`` the polygon distance also exceeds ``clearance`` and
+    :func:`_parts_conflict` is *guaranteed* to return ``False`` — the exact
+    (and costly) shapely predicate can be skipped. It therefore NEVER skips a
+    pair that would actually conflict, so the filtered :func:`_pairwise_conflicts`
+    returns a byte-identical :class:`~hangarfit.models.CheckResult` (ADR-0003).
+
+    The strict ``>`` is load-bearing at ``clearance == 0``: a touching box edge
+    (gap ``0``) is *not* skipped, so the exact ``intersects``-and-not-``touches``
+    rule still decides it. (With ``>=`` and ``clearance == 0`` every pair would
+    be skipped — wrong.) This mirrors the x/y AABB filter in
+    :func:`hangarfit.towplanner._motion_clear`; its z-prefilter is deliberately
+    NOT copied — ``_parts_conflict``'s own z-clause is cheap float arithmetic,
+    and that prefilter carries a documented divergence trap (a small positive
+    z-gap in ``[0, wing_layer_clearance_m)`` must not be skipped)."""
+    ax_min, ay_min, ax_max, ay_max = box_a
+    bx_min, by_min, bx_max, by_max = box_b
+    return (
+        ax_min - bx_max > clearance
+        or bx_min - ax_max > clearance
+        or ay_min - by_max > clearance
+        or by_min - ay_max > clearance
+    )
+
+
 def _pairwise_conflicts(
     world_parts: dict[str, list[WorldPart]], hangar: Hangar
 ) -> tuple[list[Conflict], float]:
@@ -230,15 +275,37 @@ def _pairwise_conflicts(
     conflicts (polygons within ``clearance_m`` but not actually
     intersecting) contribute 0, matching the spec's "two planes
     overlapping" framing.
+
+    A plan-view AABB broad-phase (#454) rejects clearly-separated part
+    pairs before the exact :func:`_parts_conflict` predicate. Each part's
+    bounding box is computed once (not once per pair); a pair whose boxes
+    are more than ``clearance_m`` apart on any axis cannot conflict (the
+    box gap lower-bounds the true polygon distance — see
+    :func:`_aabbs_separated_beyond_clearance`), so the verdict and the
+    ``total_penetration_m2`` accumulation are byte-identical to the
+    unfiltered loop (ADR-0003).
     """
     out: list[Conflict] = []
     total_penetration_m2 = 0.0
     ids = list(world_parts.keys())
+    clearance = hangar.clearance_m
+    # #454 broad-phase: precompute each part's AABB ONCE (not once per pair) so a
+    # cheap per-axis box-gap reject can skip the costly exact predicate for
+    # clearly-separated pairs. The reject is a provable lower-bound test (see
+    # _aabbs_separated_beyond_clearance), so the conflict set and the
+    # total_penetration_m2 accumulation order are unchanged — byte-identical
+    # CheckResult (ADR-0003).
+    aabbs: dict[str, list[tuple[float, float, float, float]]] = {
+        pid: [_part_aabb(p) for p in parts] for pid, parts in world_parts.items()
+    }
     for i in range(len(ids)):
         for j in range(i + 1, len(ids)):
             a_id, b_id = ids[i], ids[j]
-            for pa in world_parts[a_id]:
-                for pb in world_parts[b_id]:
+            a_boxes, b_boxes = aabbs[a_id], aabbs[b_id]
+            for pa, box_a in zip(world_parts[a_id], a_boxes, strict=True):
+                for pb, box_b in zip(world_parts[b_id], b_boxes, strict=True):
+                    if _aabbs_separated_beyond_clearance(box_a, box_b, clearance):
+                        continue  # provably no conflict — skip the exact predicate
                     if _parts_conflict(pa, pb, hangar):
                         out.append(_build_pairwise_conflict(pa, pb, a_id, b_id, hangar))
                         total_penetration_m2 += polygon_overlap_area(pa.polygon, pb.polygon)

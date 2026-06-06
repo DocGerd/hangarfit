@@ -1326,85 +1326,67 @@ def test_spread_back_fill_packs_planes_deeper_than_spread_only():
     assert _score(layout) == (0, 0.0)
 
 
-def test_plane_footprint_area_does_not_double_count_tail():
-    """Regression guard for #317: a plane with a standalone ``tail`` part
-    must not have its tail length both folded into the reconstructed
-    fuselage span *and* listed separately in the per-part ``lengths`` list.
+def test_plane_parts_total_area_sums_actual_part_rectangles():
+    """#425: the Σ-areas infeasibility gate must sum each part's real
+    footprint rectangle, not the empty-air-inflated bounding box.
 
-    No fleet aircraft has a ``tail`` part today (every fuselage box is a
-    single ``kind: fuselage`` that the loader auto-splits into ``fuselage_
-    front`` + ``fuselage_aft``), so this codepath is dormant in real use.
-    The fix is also behaviorally inert under the current helper: because
-    ``tail`` is in ``fuselage_segs`` it always contributes to ``nose`` /
-    ``tail_x``, so ``fuselage_span ≥ tail.length_m`` and ``max(lengths)``
-    absorbs the duplicate either way. This test locks down the expected
-    return value so a future refactor (e.g. a sum-of-lengths estimate
-    instead of max-of-lengths, or any path that surfaces the duplicate)
-    can't silently regress.
+    A thin-winged glider's bbox is ``fuselage_length × wingspan`` — mostly
+    empty air between the narrow fuselage and the long thin wing — so the
+    old bbox estimate massively over-counted and false-rejected glider
+    fleets (Σ bbox > floor) even when a valid nested layout existed.
+    Summing the actual part rectangles keeps the gate sharp without that
+    inflation. This pins the helper's behavior on a constructed glider.
     """
     from hangarfit.models import Aircraft, Part, Wheels
-    from hangarfit.solver import _plane_footprint_area
+    from hangarfit.solver import _plane_parts_total_area
 
-    # Geometry: post-split fuselage segments + a standalone tail + a wing.
-    # Pick numbers so the reconstructed fuselage span dominates every other
-    # length and a hand-computed expected value is unambiguous.
+    # Glider-like: a long, thin wing (15 m span, 1 m chord) over a short
+    # narrow fuselage. The bounding box (fuselage_span 5.0 × wingspan 15.0
+    # = 75 m²) is almost all empty air; the part rectangles sum to far less.
     fuselage_front = Part(
         kind="fuselage_front",
-        length_m=2.0,
-        width_m=1.0,
-        offset_x_m=1.0,
+        length_m=2.5,
+        width_m=0.7,
+        offset_x_m=1.25,
         offset_y_m=0.0,
         angle_deg=0.0,
         z_bottom_m=0.0,
-        z_top_m=1.5,
+        z_top_m=1.2,
     )
     fuselage_aft = Part(
         kind="fuselage_aft",
-        length_m=2.0,
-        width_m=1.0,
-        offset_x_m=-1.0,
+        length_m=2.5,
+        width_m=0.7,
+        offset_x_m=-1.25,
         offset_y_m=0.0,
         angle_deg=0.0,
         z_bottom_m=0.0,
-        z_top_m=1.5,
-    )
-    tail = Part(
-        kind="tail",
-        length_m=1.5,
-        width_m=0.8,
-        offset_x_m=-3.0,
-        offset_y_m=0.0,
-        angle_deg=0.0,
-        z_bottom_m=0.5,
-        z_top_m=1.8,
+        z_top_m=1.2,
     )
     wing = Part(
         kind="wing",
-        length_m=1.2,
-        width_m=8.0,
-        offset_x_m=0.5,
+        length_m=1.0,
+        width_m=15.0,
+        offset_x_m=0.0,
         offset_y_m=0.0,
         angle_deg=0.0,
-        z_bottom_m=1.5,
-        z_top_m=1.8,
+        z_bottom_m=1.2,
+        z_top_m=1.4,
     )
     plane = Aircraft(
-        id="test_tail_dummy",
-        name="Test (tail double-count)",
+        id="glider_area_dummy",
+        name="Glider (part-area)",
         wing_position="high",
         gear="tailwheel",
         movement_mode="always_own_gear",
-        turn_radius_m=6.0,
+        turn_radius_m=8.0,
         measured=False,
-        parts=(fuselage_front, fuselage_aft, tail, wing),
+        parts=(fuselage_front, fuselage_aft, wing),
         wheels=Wheels(main_offset_x_m=0.0, track_m=1.8, third_wheel_offset_x_m=-2.0),
     )
 
-    # Expected: reconstructed fuselage span runs from the tail's tail-end
-    # (offset_x_m − length_m/2 = −3.0 − 0.75 = −3.75) to the front's nose
-    # (offset_x_m + length_m/2 = 1.0 + 1.0 = 2.0), so span = 5.75 m. Max
-    # width across all parts is the wing's 8.0 m. Expected area = 5.75 ×
-    # 8.0 = 46.0 m². Tail must NOT be counted again via ``lengths``; if it
-    # were, the result would still be 46.0 (span >= 1.5), but the test pins
-    # the value so a future refactor can't surface the duplicate path.
-    assert _plane_footprint_area(plane) == pytest.approx(46.0)
+    # Σ part rects = 2.5×0.7 + 2.5×0.7 + 1.0×15.0 = 1.75 + 1.75 + 15.0 = 18.5
+    assert _plane_parts_total_area(plane) == pytest.approx(18.5)
+    # ...and far below the fuselage-span × wingspan bounding box (5.0 × 15.0
+    # = 75 m²) the old gate used — the whole point of #425.
+    assert _plane_parts_total_area(plane) < 0.3 * (5.0 * 15.0)

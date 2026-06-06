@@ -670,3 +670,167 @@ class TestTotalPenetration:
         # Every conflict here is single-plane (hangar_bounds).
         assert all(len(c.planes) == 1 for c in result.conflicts)
         assert result.total_penetration_m2 == 0.0
+
+
+def _exact_pairwise_no_broadphase(
+    world_parts: dict[str, list],
+    hangar,  # noqa: ANN001 (test-local reference)
+):
+    """Reference implementation of the pre-#454 pairwise loop: every cross-plane
+    part pair goes straight to the exact predicate with NO AABB broad-phase.
+
+    Mirrors :func:`hangarfit.collisions._pairwise_conflicts` minus the #454
+    filter, so any divergence between this and the filtered production loop is
+    precisely an over- or under-skip by the broad-phase.
+    """
+    from hangarfit.collisions import _build_pairwise_conflict, _parts_conflict
+    from hangarfit.geometry import polygon_overlap_area
+
+    out = []
+    pen = 0.0
+    ids = list(world_parts.keys())
+    for i in range(len(ids)):
+        for j in range(i + 1, len(ids)):
+            a_id, b_id = ids[i], ids[j]
+            for pa in world_parts[a_id]:
+                for pb in world_parts[b_id]:
+                    if _parts_conflict(pa, pb, hangar):
+                        out.append(_build_pairwise_conflict(pa, pb, a_id, b_id, hangar))
+                        pen += polygon_overlap_area(pa.polygon, pb.polygon)
+    return out, pen
+
+
+class TestBroadPhaseEquivalence:
+    """#454 — the AABB broad-phase pre-filter in ``_pairwise_conflicts`` is a
+    pure optimization: a per-axis box gap is a provable lower bound on the true
+    polygon edge-to-edge distance, so it skips only pairs the exact predicate
+    would also reject. ``_pairwise_conflicts`` must therefore stay byte-identical
+    to the unfiltered exact loop — same ``Conflict`` tuple, same
+    ``total_penetration_m2`` float (ADR-0003).
+
+    Each scenario is checked against :func:`_exact_pairwise_no_broadphase` on the
+    *same* ``world_parts`` (so the only variable is the filter). The 35° heading
+    cases are load-bearing: an oriented rectangle's AABB is strictly larger than
+    the rectangle (ADR-0002's non-axis-aligned requirement), so the filter must
+    NOT skip a pair whose boxes overlap while the polygons do not actually
+    conflict — it must defer to the exact predicate — and must still catch a
+    genuine overlap whose boxes are close. The clearance-gap case pins the
+    threshold: a pair with a sub-clearance box gap must survive the filter.
+    """
+
+    @staticmethod
+    def _hangar(clearance: float = 0.3, wlc: float = 0.2):
+        from hangarfit.models import Door, Hangar, MaintenanceBay
+
+        return Hangar(
+            length_m=40.0,
+            width_m=40.0,
+            door=Door(center_x_m=20.0, width_m=12.0),
+            maintenance_bay=MaintenanceBay(center_x_m=20.0, width_m=8.0, depth_m=6.0),
+            clearance_m=clearance,
+            wing_layer_clearance_m=wlc,
+        )
+
+    @staticmethod
+    def _wing_plane(pid: str):
+        """A single thin high-wing (0.5 m chord × 4 m span) — a one-rectangle
+        part whose 35°-rotated AABB is much larger than the rectangle itself,
+        which is what stresses the broad-phase."""
+        from hangarfit.models import Part
+
+        wing = Part(
+            kind="wing",
+            length_m=0.5,
+            width_m=4.0,
+            offset_x_m=0.0,
+            offset_y_m=0.0,
+            angle_deg=0.0,
+            z_bottom_m=2.0,
+            z_top_m=2.2,
+        )
+        from tests.conftest import make_test_aircraft
+
+        return make_test_aircraft(id=pid, name=pid, parts=(wing,))
+
+    def _world_parts(self, placements):
+        from hangarfit.geometry import cached_parts_world
+        from hangarfit.models import Placement
+
+        fleet = {pid: self._wing_plane(pid) for pid, *_ in placements}
+        placed = [
+            Placement(plane_id=pid, x_m=x, y_m=y, heading_deg=h, on_carts=False)
+            for pid, x, y, h in placements
+        ]
+        return {p.plane_id: cached_parts_world(fleet[p.plane_id], p) for p in placed}
+
+    # (name, [(plane_id, x_m, y_m, heading_deg), ...])
+    _SCENARIOS = [
+        # Axis-aligned wings overlapping wing-to-wing.
+        ("axis_overlap", [("a", 20.0, 20.0, 0.0), ("b", 20.0, 20.1, 0.0)]),
+        # Sub-clearance gap (0.10 m < 0.30 m): the box gap must NOT trip the
+        # filter — a clearance-only conflict the exact predicate still flags.
+        ("axis_clearance_gap", [("a", 20.0, 20.0, 0.0), ("b", 20.0, 20.6, 0.0)]),
+        # Far apart: the broad-phase skips both pairs; reference agrees (clear).
+        ("axis_far", [("a", 8.0, 8.0, 0.0), ("b", 32.0, 32.0, 0.0)]),
+        # 35°-rotated wings genuinely overlapping (boxes close, polygons overlap).
+        ("angled_overlap", [("a", 20.0, 20.0, 35.0), ("b", 20.3, 20.4, 35.0)]),
+        # 35°-rotated wings whose enlarged AABBs overlap while the thin oriented
+        # rectangles miss each other entirely (polygons well clear, far beyond
+        # clearance) — the filter must DEFER to the exact predicate here (boxes
+        # overlap, so no skip), and the exact predicate then returns no conflict.
+        ("angled_aabb_overlap_polys_clear", [("a", 20.0, 20.0, 35.0), ("b", 22.5, 22.5, 35.0)]),
+    ]
+
+    @pytest.mark.parametrize("name,placements", _SCENARIOS, ids=[s[0] for s in _SCENARIOS])
+    def test_filtered_matches_exact_loop(self, name: str, placements) -> None:
+        from hangarfit.collisions import _pairwise_conflicts
+
+        hangar = self._hangar()
+        world_parts = self._world_parts(placements)
+        got_conflicts, got_pen = _pairwise_conflicts(world_parts, hangar)
+        ref_conflicts, ref_pen = _exact_pairwise_no_broadphase(world_parts, hangar)
+
+        assert got_conflicts == ref_conflicts, f"{name}: broad-phase changed the conflict set"
+        # Exact float identity — the penetration accumulator must be bit-for-bit
+        # equal (it is the solver's secondary scoring key; ADR-0003).
+        assert got_pen == ref_pen, f"{name}: broad-phase changed total_penetration_m2"
+
+    def test_scenarios_exercise_both_paths(self) -> None:
+        """Guard against a vacuous suite: the scenarios must produce at least one
+        genuine conflict (so an over-skipping filter would be caught) and at
+        least one clean pair (so the skip path is actually taken)."""
+        hangar = self._hangar()
+        conflict_counts = [
+            len(_exact_pairwise_no_broadphase(self._world_parts(pl), hangar)[0])
+            for _, pl in self._SCENARIOS
+        ]
+        assert sum(1 for n in conflict_counts if n > 0) >= 2, conflict_counts
+        assert sum(1 for n in conflict_counts if n == 0) >= 1, conflict_counts
+
+    def test_all_layout_fixtures_match_exact_loop(self) -> None:
+        """Sweep every loadable layout fixture (struts, low-wing, multi-part,
+        nesting) and assert the filtered pairwise loop is byte-identical to the
+        unfiltered reference on each — the broadest regression net for #454."""
+        from hangarfit.collisions import _pairwise_conflicts
+        from hangarfit.geometry import cached_parts_world
+
+        loaded = 0
+        had_conflict = 0
+        for path in sorted(FIXTURES_DIR.glob("*.yaml")):
+            try:
+                layout = load_layout(path)
+            except LoaderError:
+                continue  # scenario fixtures and the like are not layouts
+            loaded += 1
+            world_parts = {
+                p.plane_id: cached_parts_world(layout.fleet[p.plane_id], p)
+                for p in layout.placements
+            }
+            got = _pairwise_conflicts(world_parts, layout.hangar)
+            ref = _exact_pairwise_no_broadphase(world_parts, layout.hangar)
+            assert got[0] == ref[0], f"{path.name}: broad-phase changed the conflict set"
+            assert got[1] == ref[1], f"{path.name}: broad-phase changed total_penetration_m2"
+            if got[0]:
+                had_conflict += 1
+        assert loaded >= 5, f"expected to sweep several layout fixtures, loaded {loaded}"
+        assert had_conflict >= 1, "sweep never exercised a conflicting pair — net is too weak"

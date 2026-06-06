@@ -5,12 +5,13 @@ Also covers the _resolve_spread_scale / _spread_quality helpers (#267).
 
 from __future__ import annotations
 
+import dataclasses
 import math
 
 import pytest
 
 from hangarfit.loader import load_scenario
-from hangarfit.models import DiversityConfig, Layout, SearchConfig
+from hangarfit.models import DiversityConfig, Layout, PlaneConstraint, SearchConfig
 from hangarfit.solver import _select_spread_diverse, _SpreadCandidate, solve
 
 
@@ -372,3 +373,95 @@ def test_best_of_all_never_worse_than_first_basin_over_sweep():
         "best-of-all improved no seed over first-basin — the fix is not being "
         "exercised on this fixture (expected several nesting-prone seeds to improve)"
     )
+
+
+# ── #441: soft PlaneConstraint.priority weights the spread repulsion ─────
+
+
+def _with_priority(scenario, **priorities):
+    """A copy of ``scenario`` with ``PlaneConstraint.priority`` set per plane id."""
+    cons = dict(scenario.constraints)
+    for pid, p in priorities.items():
+        cons[pid] = dataclasses.replace(cons.get(pid, PlaneConstraint()), priority=p)
+    return dataclasses.replace(scenario, constraints=cons)
+
+
+def _placements_key(result):
+    return [(p.plane_id, p.x_m, p.y_m, p.heading_deg) for p in result.layouts[0].placements]
+
+
+def test_priority_weight_helper():
+    from hangarfit.solver import _priority_weight
+
+    s = load_scenario("tests/fixtures/solve_fresh_alternatives_three.yaml")
+    pid = sorted(s.fleet_in)[0]
+    assert _priority_weight(s, pid) == 1.0  # unset → neutral 1.0
+    s2 = _with_priority(s, **{pid: 2.0})
+    assert _priority_weight(s2, pid) == 3.0  # 1.0 + 2.0
+    assert _priority_weight(s2, sorted(s.fleet_in)[1]) == 1.0  # others unaffected
+
+
+def test_inter_plane_energy_inert_when_all_priorities_zero():
+    """priority 0.0 on every plane is byte-identical to no constraints (ADR-0003)."""
+    from hangarfit.solver import _inter_plane_energy, _resolve_spread_scale
+
+    s = load_scenario("tests/fixtures/solve_fresh_alternatives_three.yaml")
+    res = solve(s, seed=0, search=SearchConfig(max_restarts=3), plan_paths=False)
+    placements = {p.plane_id: p for p in res.layouts[0].placements}
+    scale = _resolve_spread_scale(s, SearchConfig())
+    base = _inter_plane_energy(placements, s, scale)
+    s0 = _with_priority(s, **{pid: 0.0 for pid in s.fleet_in})
+    assert _inter_plane_energy(placements, s0, scale) == base  # exact, not approx
+
+
+def test_inter_plane_energy_strictly_increases_with_priority():
+    """A positive priority weights that plane's pairs up, raising total energy."""
+    from hangarfit.solver import _inter_plane_energy, _resolve_spread_scale
+
+    s = load_scenario("tests/fixtures/solve_fresh_alternatives_three.yaml")
+    res = solve(s, seed=0, search=SearchConfig(max_restarts=3), plan_paths=False)
+    placements = {p.plane_id: p for p in res.layouts[0].placements}
+    assert len(placements) >= 2
+    scale = _resolve_spread_scale(s, SearchConfig())
+    base = _inter_plane_energy(placements, s, scale)
+    hi = _with_priority(s, **{sorted(s.fleet_in)[0]: 3.0})
+    assert _inter_plane_energy(placements, hi, scale) > base
+
+
+def test_solve_priority_zero_byte_identical_to_no_constraints():
+    """Inert-by-default at solve() level: all-zero priority selects the SAME
+    layout as no priority, same seed (ADR-0003, max_restarts-scoped)."""
+    s = load_scenario("tests/fixtures/solve_fresh_alternatives_three.yaml")
+    base = solve(s, seed=3, search=SearchConfig(max_restarts=4), plan_paths=False)
+    s0 = _with_priority(s, **{pid: 0.0 for pid in s.fleet_in})
+    zero = solve(s0, seed=3, search=SearchConfig(max_restarts=4), plan_paths=False)
+    assert base.layouts and zero.layouts
+    assert _placements_key(base) == _placements_key(zero)
+
+
+def test_solve_with_priority_is_deterministic():
+    """ADR-0003 still holds with priority active: same seed → byte-identical."""
+    base = load_scenario("tests/fixtures/solve_fresh_alternatives_three.yaml")
+    s = _with_priority(base, **{sorted(base.fleet_in)[0]: 6.0})
+    a = solve(s, seed=1, search=SearchConfig(max_restarts=4), plan_paths=False)
+    b = solve(s, seed=1, search=SearchConfig(max_restarts=4), plan_paths=False)
+    assert a.layouts and b.layouts
+    assert _placements_key(a) == _placements_key(b)
+
+
+def test_solve_priority_changes_the_selected_layout():
+    """The soft weight actually influences placement: a large priority on one
+    plane shifts the spread-selected layout away from the no-priority one (same
+    seed). Proves the hook is live, not just inert — distinct from the inertness
+    and determinism guarantees above."""
+    base_s = load_scenario("tests/fixtures/solve_fresh_alternatives_three.yaml")
+    pid = sorted(base_s.fleet_in)[0]
+    base = solve(base_s, seed=0, search=SearchConfig(max_restarts=4), plan_paths=False)
+    hi = solve(
+        _with_priority(base_s, **{pid: 20.0}),
+        seed=0,
+        search=SearchConfig(max_restarts=4),
+        plan_paths=False,
+    )
+    assert base.layouts and hi.layouts
+    assert _placements_key(base) != _placements_key(hi)

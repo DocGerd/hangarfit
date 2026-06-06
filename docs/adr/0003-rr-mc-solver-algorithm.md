@@ -116,7 +116,7 @@ design rationale is in the Phase 2a spec
   `found_partial` (`0 < n < K`, budget exhausted), `exhausted_budget`
   (0 accepted). Plus `trivially_infeasible` from the pre-search gate.
 - **Pre-search infeasibility checks** run before the main loop:
-  (1) per-plane bbox vs. hangar, (2) Σ bbox areas vs. floor area,
+  (1) per-plane bbox vs. hangar, (2) Σ part-footprint areas vs. floor area (#425),
   (3) pin self-collision via `check()` on a pin-only Layout. Catches
   literal impossibilities (a 200 m wingspan typo, two pins on top of
   each other) in milliseconds instead of after the full budget burns.
@@ -354,6 +354,31 @@ taxonomy) is unchanged by this amendment. The amendment block above under
 *Consequences → Positive* ("Reproducibility is bit-identical under a seed")
 remains accurate for the `max_restarts`-bounded path; under a pure `budget_s`
 bound it is timing-scoped as described above.
+
+---
+
+### 2026-06-06 — opt-in spread-stagnation early-exit narrows the timing scope (issue #404 / F7)
+
+The opt-in `SearchConfig.spread_stall_restarts` (see the ADR-0008 amendment
+dated 2026-06-06) terminates the spread-ON restart loop once N consecutive
+restarts fail to improve the selected set's maximin gap by an absolute epsilon.
+This **narrows** — never widens — the wall-clock timing-dependence scoped above:
+
+- The stop condition reads only the seed-fixed restart sequence, the
+  fully-ordered `_select_spread_diverse` pool, and an integer counter. It adds no
+  RNG draws and no wall-clock reads, so under a `max_restarts` bound a run with
+  `spread_stall_restarts` set is **still fully reproducible across machines** —
+  the counter trips at the same restart everywhere.
+- It cannot make a previously-reproducible (`max_restarts`-bounded) run
+  non-reproducible: it only changes the *restart at which the loop stops*, and it
+  stops at a seed-deterministic point. For the wall-clock-bounded spread-ON path
+  it can only cause the loop to stop *earlier* than `budget_s` would — turning a
+  timing-variable tail into a seed-fixed one.
+
+The default (`spread_stall_restarts=None`) preserves the pre-F7 behaviour
+byte-for-byte, so the `tests/test_solver_canaries.py` determinism canaries (which
+run `spread=False`) and the `determinism-guard` contract are unaffected. No
+change to the RR-MC algorithm itself.
 
 ---
 

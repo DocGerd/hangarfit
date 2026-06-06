@@ -252,6 +252,62 @@ def test_reverse_through_door_is_front_gap_exempt(simple_hangar: Hangar) -> None
     assert path_first_conflict(arc, fleet["B"], mover_on_carts=False, placed=placed) is None
 
 
+def test_front_protrusion_through_solid_wall_beside_door_is_a_conflict(
+    simple_hangar: Hangar,
+) -> None:
+    """The front-gap exemption is door-AWARE (#411): a mover may straddle y < 0
+    only THROUGH the door opening, never the solid wall beside it. The spanning
+    plane towed up x = 4 protrudes to y = -2 at x ~= 4 — left of the door opening
+    (door centre 10 +- 3 = [7, 13]) — i.e. through the solid front wall / jamb.
+    That must be a hangar_bounds conflict, NOT exempt (contrast
+    test_front_door_protrusion_is_exempt_for_mover, which puts the same
+    protrusion at the door centre x = 10 and stays exempt)."""
+    fleet = {"B": _spanning_plane("B")}
+    placed = Layout(fleet=fleet, hangar=simple_hangar, placements=())
+    arc = plan_dubins(Pose(4.0, 0.0, 0.0), Pose(4.0, 10.0, 0.0), turn_radius_m=4.0)
+    conflict = path_first_conflict(arc, fleet["B"], mover_on_carts=False, placed=placed)
+    assert conflict is not None
+    assert conflict.kind == "hangar_bounds"
+    assert "B" in conflict.planes
+    # Specifically the front-wall-beside-door gate, not a side/back-wall hit
+    # (both are hangar_bounds) — pins which rule fired.
+    assert "front wall" in conflict.detail
+
+
+def test_front_protrusion_exactly_at_door_edge_is_exempt(simple_hangar: Hangar) -> None:
+    """#411 door-gate boundary: the door interval is INCLUSIVE. A y < 0 vertex
+    landing exactly on the jamb edge (x == door_lo) passes through the doorway,
+    not the solid wall, so it is exempt — guards the ``<=`` vs ``<`` off-by-one.
+    A 2 m-wide origin-spanning fuselage towed up x = 8 in the [7, 13] door puts a
+    y < 0 rear vertex at exactly x = 7.0 == door_lo (and x = 9.0, inside)."""
+    edge_plane = Aircraft(
+        id="B",
+        name="Edge B",
+        wing_position="high",
+        gear="tailwheel",
+        movement_mode="always_own_gear",
+        turn_radius_m=4.0,
+        measured=False,
+        parts=(
+            Part(
+                kind="fuselage_aft",
+                length_m=4.0,
+                width_m=2.0,
+                offset_x_m=0.0,
+                offset_y_m=0.0,
+                angle_deg=0.0,
+                z_bottom_m=0.0,
+                z_top_m=1.0,
+            ),
+        ),
+        wheels=_TAIL_WHEELS,
+    )
+    fleet = {"B": edge_plane}
+    placed = Layout(fleet=fleet, hangar=simple_hangar, placements=())
+    arc = plan_dubins(Pose(8.0, 0.0, 0.0), Pose(8.0, 10.0, 0.0), turn_radius_m=4.0)
+    assert path_first_conflict(arc, fleet["B"], mover_on_carts=False, placed=placed) is None
+
+
 def test_reverse_into_side_wall_still_bounded(simple_hangar: Hangar) -> None:
     """The reverse front-gap exemption removes ONLY the y < 0 front wall. A
     plane backing into a SIDE wall (x < 0) while inside (y ≥ 0) still conflicts

@@ -18,10 +18,10 @@ import math
 from typing import TYPE_CHECKING
 
 from hangarfit import metrics
+from hangarfit.brand import PLANES_DARK
 from hangarfit.geometry import aircraft_parts_world, local_to_world
 from hangarfit.models import CheckResult, Layout, Placement
 from hangarfit.towplanner import back_first_order
-from hangarfit.visualize import PLANES
 
 if TYPE_CHECKING:
     from hangarfit.towplanner import DubinsArc, MovesPlan
@@ -40,10 +40,12 @@ _COORD_NOTE = (
 
 
 def _color_map(plane_ids: list[str]) -> dict[str, str]:
-    """Stable per-plane colour by sorted id — parity with
-    :func:`hangarfit.visualize._plane_colour_map` so 2D and 3D agree."""
+    """Stable per-plane fill by sorted id, dark-lifted for the ``#0D0E10`` 3D
+    surface (``PLANES_DARK``). Same sorted-id index as
+    :func:`hangarfit.visualize._plane_colour_map`, so 2D and 3D keep the same
+    plane->colour identity (ADR-0017 brand parity, #415)."""
     ordered = sorted(set(plane_ids))
-    return {pid: PLANES[i % len(PLANES)] for i, pid in enumerate(ordered)}
+    return {pid: PLANES_DARK[i % len(PLANES_DARK)] for i, pid in enumerate(ordered)}
 
 
 def _hangar_block(layout: Layout) -> dict:

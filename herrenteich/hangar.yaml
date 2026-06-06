@@ -1,0 +1,58 @@
+# Airfield Herrenteich — real hangar (main building).
+#
+# This is the REAL hangar, kept separate from the synthetic placeholder in
+# data/hangar.yaml (which stays as the project's stable demo/test fixture).
+#
+# DIMENSIONS (rectangle + door) measured 2026-06-04 by PK from the
+# architect's DWG of the main building (distances annotated on the floor
+# plan, read to the millimetre and rounded here to the centimetre).
+#
+# ⚠ NON-RECTANGULAR FOOTPRINT IS NOT YET MODELLED. The real hangar is an
+# L-shape: one back corner is notched out by ~2.36 m (x) × ~9.10 m (y) —
+# that corner is office/annex space, NOT hangar floor. The model here is
+# the full BOUNDING RECTANGLE (15.08 × 31.76), so a layout that parks a
+# plane in that back corner is NOT yet rejected even though there is no
+# floor there. Representing the notch in the data model + the containment /
+# solver / tow algorithms is deferred to spike #424. In the coordinate
+# frame below the notch is the back-right corner: x ∈ [12.72, 15.08],
+# y ∈ [22.66, 31.76]. These coords are DERIVED from the rectangle dims —
+# back-right = [width-2.36, width] × [length-9.10, length] — so if length_m /
+# width_m are ever re-surveyed, recompute this box (nothing enforces it).
+#
+# ⚠ NO MAINTENANCE BAY. The real hangar has no modelled curtained bay; the
+# block below is an inert placeholder that only satisfies the schema (the
+# `maintenance_bay` field is required). No layout in this folder names a
+# `maintenance.plane`, so the bay keep-out is never triggered.
+#
+# Coordinates: (0, 0) at the front-left corner of the hangar floor, looking
+# down. +x runs right along the door wall, +y runs deeper into the hangar.
+# The real door is on a side wall of the building; it is mapped here so the
+# door wall is the front wall (y = 0). Front-left (x = 0) corresponds to
+# the DWG's north door-jamb (the 0.55 m flank). See
+# `docs/architecture/08-crosscutting-concepts.md` "The coordinate
+# convention" for the full convention.
+
+length_m: 31.76         # depth from the front (door) wall to the back wall
+width_m: 15.08          # left-to-right span along the door wall
+
+door:
+  center_x_m: 7.28      # door centre along the front wall (x axis): 0.55 m
+                        # of wall to its left (x < 0.55), 1.07 m to its
+                        # right — the opening is slightly off-centre
+  width_m: 13.46        # clear door opening width
+
+maintenance_bay:
+  # INERT PLACEHOLDER — see header. Never triggered (no maintenance plane in
+  # this folder's layouts). Small back-left rectangle, well clear of the
+  # back-right office notch.
+  center_x_m: 2.0
+  width_m: 3.0
+  depth_m: 2.0
+
+clearance_m: 0.3        # minimum horizontal gap between any two aircraft parts
+wing_layer_clearance_m: 0.2  # minimum vertical gap between two parts at the same XY
+
+# Spare carts available to the cart_eligible pool. Bounds how many
+# cart_eligible planes may sit on carts in one layout; always_cart planes
+# get their own carts and do not draw from this pool.
+max_carts: 4

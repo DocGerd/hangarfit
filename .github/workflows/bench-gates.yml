@@ -1,0 +1,77 @@
+name: bench gates
+
+# F6 (#403): promote the three solve→tow correctness invariants — VALIDITY,
+# PATH-VALIDITY, DETERMINISM — plus a SPEED tripwire into an always-on regression
+# gate. The substrate is the committed `bench/` harness (#381): it binds on
+# `max_restarts` (not wall-clock), so the *work* is fixed and the numbers are
+# comparable run-to-run and machine-to-machine. `--gate` runs the FAST regime set
+# and exits non-zero on any invariant failure or a per-regime speed-ceiling breach
+# (the ceilings live in bench/profile_pipeline.py::_SPEED_CEILING_S and are a
+# catastrophic-regression tripwire, not a microbenchmark — see
+# docs/spikes/solve-tow-profiling.md §"F6 — the CI gates").
+#
+# Deliberately a SEPARATE workflow from ci.yml (the Python test/lint matrix): a
+# bench regression is a distinct signal from a unit-test failure, and a separate
+# file keeps each concern independently editable. This job is NOT yet a *required*
+# status check — it runs on every develop/main PR, but the repo owner adds it to
+# branch protection's required set when ready.
+
+on:
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  bench-gates:
+    name: bench gates (validity + path-validity + determinism + speed)
+    # Pin the runner IMAGE (not the floating `ubuntu-latest` label the rest of CI
+    # uses): this job's speed ceilings are calibrated to a specific runner class
+    # (see bench/profile_pipeline.py::_SPEED_CEILING_S), so a silent `ubuntu-latest`
+    # default bump (e.g. the 22.04 → 24.04 rollover) would shift the timing basis
+    # out from under the calibration with no committed file changing to flag it.
+    # Pinning makes a runner-class change a LOUD, deliberate event (image removed →
+    # recalibrate + bump this pin in lockstep with the ceilings). The other CI jobs
+    # are not timing-sensitive, so they stay on `ubuntu-latest`.
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+
+      - name: Set up Python 3.12
+        # The single supported Python (ADR-0009) — the interpreter every other CI
+        # job runs and the one the bench numbers were calibrated against.
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            requirements-dev.txt
+            requirements-build.txt
+
+      - name: Install dev deps (hash-pinned)
+        # Same hash-pinned install dance as ci.yml's test job: the bench harness
+        # imports the runtime deps (shapely / pyyaml) via the hangarfit package.
+        run: pip install --require-hashes -r requirements-dev.txt
+
+      - name: Install build toolchain (hash-pinned)
+        run: pip install --require-hashes -r requirements-build.txt
+
+      - name: Install project (editable, no deps)
+        # MUST run after the build-toolchain install: --no-build-isolation reuses
+        # the hash-verified host setuptools/wheel rather than letting pip refetch
+        # them unpinned (mirrors ci.yml's editable install, same PEP-517 rationale).
+        run: pip install -e . --no-deps --no-build-isolation
+
+      - name: Run bench gates (fast regimes — correctness + speed)
+        # Exit non-zero on any VALIDITY / PATH-VALIDITY / DETERMINISM failure or a
+        # speed-ceiling breach. `bench/` lives outside src/ and ships in no wheel,
+        # so it is invoked as a module, not via the installed console script.
+        run: python -m bench.profile_pipeline --gate

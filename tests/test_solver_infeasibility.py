@@ -77,11 +77,20 @@ def test_solve_trivially_infeasible_when_plane_too_big_for_hangar():
 
 
 def test_solve_trivially_infeasible_when_sum_areas_exceeds_hangar():
-    """All 9 planes in the placeholder hangar → sum of bbox areas > hangar floor."""
+    """All 9 planes in a deliberately-small hangar → Σ *part-footprint* areas
+    (~185 m²) > hangar floor (171 m²) → trivially_infeasible (#425 part-area
+    gate, spec §4.1.2). The hangar's 19 m larger dimension clears the 18 m
+    glider span so check #1 (per-plane bbox) does not fire first."""
     from hangarfit.loader import load_scenario
-    from hangarfit.solver import solve
+    from hangarfit.solver import _check_plane_too_big, solve
 
-    s = load_scenario("tests/fixtures/solve_infeasible_too_big.yaml")
+    s = load_scenario("tests/fixtures/solve_infeasible_sum_areas.yaml")
+    # Guard the fixture's narrow check-#1 margin (worst plane extent 18 m vs the
+    # hangar's 19 m larger dimension): if a future synthetic-fleet edit pushed a
+    # span past 19 m, check #1 would fire first and this test would silently pin
+    # the wrong conflict kind. Assert check #1 DEFERS here so this stays a
+    # check-#2 (Σ part-areas) regression rather than misfiring.
+    assert _check_plane_too_big(s) is None
     r = solve(s, budget_s=5.0, seed=42)
 
     assert r.status == "trivially_infeasible"
@@ -93,6 +102,28 @@ def test_solve_trivially_infeasible_when_sum_areas_exceeds_hangar():
     # Pin the structured kind (downstream consumers branch on this,
     # not the detail string).
     assert bp.conflicts[0].kind == "trivially_infeasible_sum_areas"
+
+
+def test_area_gate_does_not_false_reject_glider_fleet():
+    """#425: a glider-containing fleet whose bounding boxes don't tile the floor
+    (Σ bbox ~654 m² > 450 m²) but whose actual part footprints do (Σ parts
+    ~185 m² < 450 m²) must NOT be trivially rejected by check #2 — the gate
+    sums part footprints now, so the search is allowed to run.
+
+    Asserts the gate directly (`_check_sum_areas` returns None = defers). The
+    old bbox gate returned a `trivially_infeasible_sum_areas` conflict here,
+    never letting the solver search — the exact false-reject #425 fixes."""
+    from hangarfit.loader import load_scenario
+    from hangarfit.solver import _check_plane_too_big, _check_sum_areas
+
+    s = load_scenario("tests/fixtures/solve_infeasible_too_big.yaml")
+
+    # No single plane is too big for the placeholder hangar (check #1 passes),
+    # so the fleet genuinely reaches the Σ-areas gate...
+    assert _check_plane_too_big(s) is None
+    # ...and the Σ-areas gate now DEFERS (part areas fit the floor) instead of
+    # firing on the empty air the bounding boxes invent.
+    assert _check_sum_areas(s) is None
 
 
 def test_solve_trivially_infeasible_when_pins_clash():

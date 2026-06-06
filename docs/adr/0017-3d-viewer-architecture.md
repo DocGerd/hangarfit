@@ -1,6 +1,11 @@
 # ADR-0017: 3D viewer — a `scene/v1` JSON seam fed to a self-contained offline Three.js HTML, with the transform owned by Python
 
-- **Status:** Accepted
+- **Status:** Accepted — the **"No build toolchain" decision driver and the *thin
+  read-only renderer* posture are superseded by [ADR-0020](0020-viewer-typescript-architecture.md)**
+  (the viewer becomes a typed, modular TypeScript application built by a dev-only
+  toolchain). Everything else here — the `scene/v1` seam, the single offline HTML
+  deliverable, and the **load-bearing Python-owned determinant-−1 transform** — is
+  retained and explicitly reaffirmed by ADR-0020.
 
 - **Date:** 2026-06-03
 - **Deciders:** Patrick Kuhn (DocGerd)

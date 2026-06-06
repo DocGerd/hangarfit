@@ -1,12 +1,11 @@
-# All 9 planes in the placeholder hangar. The placeholder 25×18 hangar
-# is known too-tight to fit the full fleet (see CLAUDE.md's
-# "Placeholder hangar can't fit the full fleet" note + the Σ-areas
-# arithmetic). Used to pin solver check #2 (Σ bbox areas > hangar
-# floor, spec §4.1.2).
-#
-# Will start passing once real hangar measurements land (issue #79) —
-# at which point a different fixture will be needed to keep check #2's
-# regression test exercised.
+# All 9 planes in the placeholder 25×18 hangar. Since #425 the Σ-areas
+# gate (solver check #2, spec §4.1.2) sums actual PART footprints, not
+# bounding boxes: the fleet's Σ part area (~185 m²) fits the 450 m² floor,
+# so this fleet is NO LONGER trivially-rejected — it was while the gate
+# summed bounding boxes (Σ bbox ~654 m² > 450). The gate now correctly
+# DEFERS to the search. This fixture pins that #425 fix (the gate must not
+# false-reject a glider-containing fleet); the genuinely-too-big-by-area
+# check-#2 regression moved to solve_infeasible_sum_areas.yaml.
 
 fleet: ../../data/fleet.yaml
 hangar: ../../data/hangar.yaml

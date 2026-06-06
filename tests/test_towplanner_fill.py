@@ -324,3 +324,111 @@ def test_plan_fill_routes_origin_spanning_planes() -> None:
             is None
         )
         placed.append(slot)
+
+
+def test_plane_wider_than_door_is_untowable() -> None:
+    """#411: a plane whose wing span exceeds the door width cannot pass through
+    the door at any admissible entry orientation, so plan_fill reports it
+    un-towable (raises NoFeasiblePlanError naming it) rather than routing a path
+    that clips the solid front wall beside the door. This is the
+    "no orientation fits -> un-towable" half of the door-gate fix.
+    """
+
+    def wide_wing_plane(pid: str) -> Aircraft:
+        # 16 m wing span vs a 12 m door: no heading gets the wing through the gap.
+        return Aircraft(
+            id=pid,
+            name=pid,
+            wing_position="high",
+            gear="tailwheel",
+            movement_mode="always_own_gear",
+            turn_radius_m=5.0,
+            measured=False,
+            parts=(
+                Part(
+                    kind="wing",
+                    length_m=1.5,
+                    width_m=16.0,
+                    offset_x_m=0.0,
+                    offset_y_m=0.0,
+                    angle_deg=0.0,
+                    z_bottom_m=1.8,
+                    z_top_m=2.1,
+                ),
+                Part(
+                    kind="fuselage_aft",
+                    length_m=4.0,
+                    width_m=1.0,
+                    offset_x_m=0.0,
+                    offset_y_m=0.0,
+                    angle_deg=0.0,
+                    z_bottom_m=0.0,
+                    z_top_m=1.2,
+                ),
+            ),
+            wheels=_TAIL_WHEELS,
+        )
+
+    h = Hangar(
+        length_m=30.0,
+        width_m=30.0,
+        door=Door(center_x_m=15.0, width_m=12.0),
+        maintenance_bay=MaintenanceBay(center_x_m=15.0, width_m=2.0, depth_m=2.0),
+        clearance_m=0.3,
+        wing_layer_clearance_m=0.3,
+    )
+    fleet = {"W": wide_wing_plane("W")}
+    target = Layout(
+        fleet=fleet,
+        hangar=h,
+        placements=(Placement(plane_id="W", x_m=15.0, y_m=15.0, heading_deg=0.0, on_carts=False),),
+    )
+    with pytest.raises(NoFeasiblePlanError) as ei:
+        plan_fill(target)
+    assert ei.value.plane_id == "W"
+
+
+def test_off_centre_plane_within_door_still_routes() -> None:
+    """#411 (no over-fire): the door-gate must NOT block a plane whose y<0 entry
+    protrusion stays WITHIN the door opening. A narrow origin-spanning plane
+    parked off-centre — but inside a wide door — tows in cleanly. The gate only
+    rejects protrusions BESIDE the door, not through it; this is the positive
+    mirror of test_plane_wider_than_door_is_untowable.
+    """
+    from hangarfit.towplanner import path_first_conflict
+
+    def span_plane(pid: str) -> Aircraft:
+        return Aircraft(
+            id=pid,
+            name=pid,
+            wing_position="high",
+            gear="tailwheel",
+            movement_mode="always_own_gear",
+            turn_radius_m=4.0,
+            measured=False,
+            parts=(
+                Part(
+                    kind="fuselage_aft",
+                    length_m=3.0,
+                    width_m=0.6,
+                    offset_x_m=0.0,
+                    offset_y_m=0.0,
+                    angle_deg=0.0,
+                    z_bottom_m=0.0,
+                    z_top_m=1.0,
+                ),
+            ),
+            wheels=_TAIL_WHEELS,
+        )
+
+    # Wide door [4, 16]; the narrow plane parks off-centre at x = 6, well inside
+    # it, so its y<0 entry protrusion (x ~ [5.7, 6.3]) passes through the doorway.
+    h = _hangar(width_m=20.0, length_m=30.0, door_center=10.0, door_width=12.0)
+    fleet = {"P": span_plane("P")}
+    target = _layout(fleet, h, Placement("P", x_m=6.0, y_m=12.0, heading_deg=0.0, on_carts=False))
+    plan = plan_fill(target)
+    (move,) = plan.moves
+    assert move.plane_id == "P"
+    # The routed path is oracle-clean: no front-wall-beside-door clip anywhere.
+    empty = Layout(fleet=fleet, hangar=h, placements=())
+    assert path_first_conflict(move.path, fleet["P"], mover_on_carts=False, placed=empty) is None

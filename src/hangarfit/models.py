@@ -595,15 +595,31 @@ class CheckResult:
 
 @dataclass(frozen=True, slots=True)
 class PlaneConstraint:
-    """Per-plane HARD constraints for a Scenario.
+    """Per-plane constraints for a Scenario.
 
-    All fields optional — a constraint with everything None means 'free'
+    ``pin`` and ``force_on_carts`` are HARD constraints; ``priority`` is a SOFT
+    preference. All optional — a constraint with everything None means 'free'
     (the solver may place the plane anywhere within physical / cart-rule
     limits). See spec §3.2 for the rationale.
+
+    ``priority`` (#441) is a non-negative soft importance weight (``None`` ≡ the
+    neutral ``0.0``): the spread post-pass weights each plane-pair's repulsion
+    energy by ``(1 + priority_i)·(1 + priority_j)``, so a higher-priority plane
+    is pushed to more clearance. With every ``priority`` unset the weights are
+    all ``1.0`` and the search is byte-identical to the pre-#441 behaviour
+    (ADR-0003). It never overrides a hard ``pin``. Groundwork for the future
+    interactive editor (#442), which exports per-plane priorities.
+
+    It is ``float | None`` (not ``float = 0.0`` like ``SearchConfig.back_bias_weight``)
+    to stay consistent with its optional siblings here (``pin``/``force_on_carts``,
+    where ``None`` means 'free') and to let #442 distinguish 'user never set a
+    priority' from an explicit ``0.0`` on round-trip; both collapse to weight
+    ``1.0`` in the solver today.
     """
 
     pin: Placement | None = None
     force_on_carts: bool | None = None
+    priority: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -737,6 +753,21 @@ class Scenario:
                     f"{constraint.force_on_carts} disagree (contradictory)"
                 )
 
+            # priority (#441): a non-negative, finite soft weight. A negative
+            # weight would invert the spread repulsion (nonsensical), and a
+            # non-finite one would poison the energy sum.
+            if constraint.priority is not None:
+                if not math.isfinite(constraint.priority):
+                    raise ValueError(
+                        f"Scenario.constraints[{plane_id!r}].priority="
+                        f"{constraint.priority!r} must be finite"
+                    )
+                if constraint.priority < 0.0:
+                    raise ValueError(
+                        f"Scenario.constraints[{plane_id!r}].priority="
+                        f"{constraint.priority!r} must be >= 0.0 (a soft importance weight)"
+                    )
+
         object.__setattr__(self, "fleet", MappingProxyType(dict(self.fleet)))
         # Always copy+wrap constraints — mirrors the unconditional pattern on
         # fleet above (and on Layout.fleet). Skipping the copy when the caller
@@ -811,6 +842,26 @@ class SolverDiagnostics:
     (no pairs). ``valid_basins_found`` is the number of valid spread-polished
     basins the search collected before selection — how much choice best-of-all
     had. Both are advisory.
+
+    ``spread_fallback_applied`` is ``True`` when :func:`hangarfit.solver.solve`
+    re-solved with the inter-plane spread post-pass disabled and substituted
+    that tighter, tow-routable arrangement because the spread layout(s) came
+    back valid but un-routable under ``plan_paths=True`` (the ADR-0016 / #280
+    fallback, promoted into the library in #402 / F5). Always present (``False``
+    in the normal no-swap case) so non-interactive consumers can rely on it.
+    Advisory: the swap changes *which* valid layout is returned, never *whether*
+    it is valid — it does not affect ``status``.
+
+    ``spread_stall_applied`` is ``True`` when the spread-ON restart loop stopped
+    early on pool stagnation rather than running to ``budget_s`` /
+    ``search.max_restarts`` — i.e. ``search.spread_stall_restarts`` consecutive
+    restarts failed to improve the selected set's maximin gap by
+    ``search.spread_stall_epsilon_m`` (the opt-in F7 / #404 early-exit). Always
+    ``False`` under the default ``spread_stall_restarts=None`` and on the
+    ``spread=False`` fast path. Because the early-exit arms only after a complete
+    selection exists, a ``True`` value always accompanies a ``found`` result.
+    Advisory: it changes *when* the search stops, never *whether* the returned
+    layout is valid — it does not affect ``status``.
     """
 
     restarts_attempted: int
@@ -823,6 +874,8 @@ class SolverDiagnostics:
     unroutable_planes: tuple[str, ...] = ()
     min_pairwise_gap_m: tuple[float, ...] = ()
     valid_basins_found: int = 0
+    spread_fallback_applied: bool = False
+    spread_stall_applied: bool = False
 
     def __post_init__(self) -> None:
         if (self.best_partial is None) != (self.best_partial_layout is None):
@@ -964,11 +1017,14 @@ class SearchConfig:
     Useful for cross-machine-deterministic exhaustion canaries that
     can't rely on wall-clock budget cutoffs.
 
-    ``None`` is the only "opt out" sentinel in :class:`SearchConfig` /
-    :class:`DiversityConfig` / :class:`SolverDiagnostics`; all other
-    numeric fields require a concrete positive value. Pass ``None``
-    explicitly to disable the cap; passing ``0`` is rejected (it would
-    skip the search loop entirely)."""
+    ``None`` is the only kind of **opt-out** sentinel in
+    :class:`SearchConfig` / :class:`DiversityConfig` /
+    :class:`SolverDiagnostics`: it means "disabled" on ``max_restarts`` and on
+    ``spread_stall_restarts``. (``spread_scale_m``'s ``None`` is *not* an
+    opt-out — it selects the adaptive default scale rather than disabling
+    anything.) Every other numeric field requires a concrete positive value.
+    Pass ``None`` explicitly to disable the cap; passing ``0`` is rejected (it
+    would skip the search loop entirely)."""
 
     spread: bool = True
     """When True (default), ``solve()`` runs a post-pass spread phase on each
@@ -1008,8 +1064,44 @@ class SearchConfig:
     CLI never builds one). Modeled as ``float = 0.0`` rather than ``float |
     None`` deliberately: ``0.0`` is the exact identity of ``weight · B``
     (contributes nothing), not a degenerate value, so no distinct opt-out
-    sentinel is warranted — ``None`` stays the *only* sentinel in this dataclass
-    (on ``max_restarts``)."""
+    sentinel is warranted — ``None``-means-disabled (on ``max_restarts`` and
+    ``spread_stall_restarts``) stays the only kind of opt-out sentinel in this
+    dataclass; see ``max_restarts``."""
+
+    spread_stall_restarts: int | None = None
+    """(F7 / #404) Opt-in early-exit for the spread-ON restart loop. ``None``
+    (default) preserves the run-to-budget collect-every-basin behaviour, so the
+    determinism canaries (which run ``spread=False``) and the byte-identical
+    default are untouched. When set (must be ``>= 1``), ``solve()`` stops the
+    spread-ON loop once this many *consecutive* restarts fail to improve the
+    selected set's maximin plan-view gap by at least ``spread_stall_epsilon_m``.
+    The counter is armed only *after* a complete (``>= alternatives``) selection
+    exists — so a hard scenario still gets the full budget to find its first
+    answer and the early-exit only trims the polish-the-incumbent tail. The stop
+    depends solely on the seed-fixed restart sequence + an integer counter (never
+    wall-clock), so the selected layout is identical for a given seed across
+    machines: this *narrows* the #267 timing scope rather than widening it
+    (ADR-0003). No effect when ``spread=False`` (that path already first-valid
+    early-exits) — a ``spread=False`` config with this set is a silent no-op by
+    design, *not* an error, mirroring ``back_bias_weight``.
+
+    Calibrated from the F6 benchmark (``bench.profile_pipeline``): on the
+    canonical ``roomy_three_spread_on`` regime the maximin gap reaches ~96 % of
+    its 30-restart value by restart 3 then plateaus for ~17 restarts, so
+    ``spread_stall_restarts=5`` with the default epsilon stops at restart 7
+    (~4x fewer restarts) while keeping the near-best separation. See ADR-0008's
+    F7 amendment."""
+
+    spread_stall_epsilon_m: float = 0.05
+    """(F7 / #404) Minimum maximin-gap improvement (metres) that counts as
+    progress for ``spread_stall_restarts``. A concrete positive value, never an
+    opt-out sentinel (that role is reserved for ``None`` on ``max_restarts`` /
+    ``spread_stall_restarts`` — see ``max_restarts``). Default ``0.05`` m
+    (5 cm): on the F6 ``roomy_three_spread_on`` regime the only post-plateau gains
+    are a negligible +0.048 m bump and a real +0.396 m late basin, so 5 cm treats
+    the former as noise while a genuinely better-separated basin still resets the
+    counter. Inert unless ``spread_stall_restarts`` is set; validated ``> 0``
+    regardless so the field is always a usable threshold."""
 
     def __post_init__(self) -> None:
         if self.candidates_per_iter < 1:
@@ -1046,4 +1138,16 @@ class SearchConfig:
             raise ValueError(
                 f"SearchConfig.back_bias_weight must be >= 0 "
                 f"(0 disables the back-of-hangar fill bias), got {self.back_bias_weight}"
+            )
+        if self.spread_stall_restarts is not None and self.spread_stall_restarts < 1:
+            raise ValueError(
+                f"SearchConfig.spread_stall_restarts must be >= 1 when set "
+                f"(pass ``None`` to disable the spread-stagnation early-exit; "
+                f"``0`` would break before any restart), got {self.spread_stall_restarts}"
+            )
+        if self.spread_stall_epsilon_m <= 0.0:
+            raise ValueError(
+                f"SearchConfig.spread_stall_epsilon_m must be positive "
+                f"(metres of maximin-gap improvement that counts as progress), "
+                f"got {self.spread_stall_epsilon_m}"
             )

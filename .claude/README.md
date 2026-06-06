@@ -6,7 +6,7 @@ This directory holds **team-shared** [Claude Code](https://docs.claude.com/en/do
 
 | File | Status | Purpose |
 |---|---|---|
-| `settings.json` | committed | Team defaults — a `SessionStart` hook that provisions Python 3.12 in web/remote sessions, a `PreToolUse` guard that blocks hand-edits to the hash-pinned `requirements-*.txt` lockfiles, a `PostToolUse` hook that runs `ruff` + `pytest` after edits under `src/hangarfit/` or `tests/`, plus a `Stop` hook that runs `mypy` once when a turn finishes. |
+| `settings.json` | committed | Team defaults — a `SessionStart` hook that provisions Python 3.12 in web/remote sessions, a `PreToolUse` guard that blocks hand-edits to the hash-pinned `requirements-*.txt` lockfiles, a `PostToolUse` hook that runs `ruff` + `pytest` after edits under `src/hangarfit/` or `tests/`, plus a `Stop` hook that runs `mypy` once when a turn finishes. It also lists the team-shared **LSP plugins** under `enabledPlugins` ([see below](#lsp-plugins)). |
 | `hooks/session-start.sh` | committed | The `SessionStart` provisioner script (the one hook complex enough to warrant a file rather than an inline command). |
 | `settings.local.json` | **gitignored** | Optional per-contributor override (see below). |
 | `README.md` | committed | This file. |
@@ -58,6 +58,31 @@ export HANGARFIT_SKIP_MYPY_HOOK=1
 ```
 
 The old `.claude/settings.local.json` opt-out mentioned in earlier drafts of this README does **not** work — Claude Code merges hook arrays across scopes rather than overriding them, so an empty array in local doesn't subtract the project entry. The env-var pattern moves the opt-out into a layer that actually short-circuits.
+
+## LSP plugins
+
+`settings.json` also enables two **language-server plugins** under `enabledPlugins`, so every contributor gets in-editor static analysis (diagnostics, hover, go-to-references) on a fresh clone — the editor-side analogue of the CI lint/type gates. Unlike the hooks above, plugins run only in the editor: they never touch CI, the build, the `scene/v1` contract, or determinism.
+
+| Plugin | Covers | Config |
+|---|---|---|
+| `pyright-lsp@claude-plugins-official` | The repo's Python under the workspace root. | None — there is no `pyrightconfig.json` / `[tool.pyright]`, so Pyright analyzes the repo's Python with defaults. It complements the `Stop` **mypy** hook: `mypy` is the CI gate ([ci.yml](../.github/workflows/ci.yml)), Pyright is the live editor signal. |
+| `typescript-lsp@claude-plugins-official` | `src/hangarfit/_viewer_assets/viewer.js` — the repo's only hand-written first-party JavaScript (the 3D viewer, [ADR-0017](../docs/adr/0017-3d-viewer-architecture.md)). The TypeScript language server analyzes plain `.js`, so `viewer.js` gets diagnostics without being converted to TypeScript. | [`jsconfig.json`](../jsconfig.json) at the repo root scopes the analysis to `viewer.js` and **excludes** the vendored `three/` bundle — the editor never needs to analyze it, because `viewer.js` reaches it only through the runtime `importmap`, not from disk. A small ambient-module shim, [`_lsp_shims.d.ts`](../src/hangarfit/_viewer_assets/_lsp_shims.d.ts), declares the `three` / `three/addons/…` specifiers so the LSP does not raise spurious "cannot find module" errors. CI does **not** lint the *generated* `viewer.js`; the **TypeScript source** under the new top-level `viewer/` project *is* CI-gated — see the note below. |
+
+**The `viewer/` TypeScript toolchain ([ADR-0020](../docs/adr/0020-viewer-typescript-architecture.md), issue #437).** A new top-level `viewer/` directory holds a **dev/CI-only** TypeScript toolchain (esbuild + tsc + eslint) that builds the committed `src/hangarfit/_viewer_assets/viewer.js` from `viewer/src/*.ts`. The `typescript-lsp` plugin + `viewer/tsconfig.json` give live editor diagnostics on that source, and — unlike the generated `viewer.js` — the TS **source** is gated in CI by the `viewer-toolchain` job (`tsc --noEmit` + eslint), so for the source the editor/CI relationship mirrors Pyright/mypy. (The byte-drift gate on the *shipped* `viewer.js` — the closer analogue of mypy-as-final-gate — lands with #439, scope of #438.) The Node toolchain is **never** part of `pip install` / the wheel build / pytest, and is **not** run by the `PostToolUse` hook: after editing `viewer/src/*.ts`, rebuild and commit `viewer.js` yourself (`npm --prefix viewer/ run build`). During the #437 scaffold the shipped `viewer.js` is still the hand-written renderer; the atomic port to `viewer/src/*.ts` is #439.
+
+### Disabling a plugin per contributor
+
+The hooks opt out via env vars; the plugins are toggled through `enabledPlugins` instead. To disable one for yourself without touching the committed default, set it to `false` under `enabledPlugins` in your **gitignored** `.claude/settings.local.json`:
+
+```json
+{
+  "enabledPlugins": {
+    "typescript-lsp@claude-plugins-official": false
+  }
+}
+```
+
+`enabledPlugins` is a JSON object keyed by plugin id, so the most-local scope wins per key — a local `false` overrides the committed `true`. (This is why plugins can opt out via `settings.local.json` even though the hook *arrays* above cannot: object keys are overridden, whereas arrays are merged.)
 
 ## Adding new automations
 

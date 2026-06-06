@@ -26,10 +26,11 @@ import random as _random_module
 import secrets
 import sys
 import time
+from dataclasses import replace
 from typing import Literal, NamedTuple
 
 from hangarfit.collisions import check as check_layout
-from hangarfit.geometry import WorldPart, aircraft_parts_world
+from hangarfit.geometry import WorldPart, cached_parts_world, pose_cache_scope
 from hangarfit.models import (
     Aircraft,
     CheckResult,
@@ -99,6 +100,91 @@ def solve(
     ``tow_heuristic="euclidean"`` to opt out, or a larger ``tow_max_expansions``
     to widen the per-plane budget. All RNG-free, so determinism holds (ADR-0003).
     """
+    # Resolve seed and search ONCE here, above the (possible) two-pass fallback
+    # below, so both passes share an identical, reproducible seed (#402 / F5):
+    # without this, a ``seed=None`` caller would draw a *different* entropy seed
+    # for each pass, making the fallback non-reproducible. A concrete seed
+    # passed down makes ``_run_solve``'s own resolution a pass-through.
+    resolved_seed = seed if seed is not None else secrets.randbits(32)
+    effective_search = search if search is not None else SearchConfig()
+
+    # Per-solve aircraft_parts_world memoization (#453). The #381 profile found
+    # this transform is the pipeline's hot spot, with ≈84 % of calls rebuilding
+    # an already-seen pose. Running the whole solve (placement + spread +
+    # tow-planning) inside one fresh cache collapses those rebuilds; the cache
+    # resets on exit, so a double-run stays byte-identical (ADR-0003). The body
+    # lives in `_run_solve` so this scope wraps every geometry call without a
+    # 197-line reindent. Both fallback passes share the one scope — the cache is
+    # a pure memo of a pure transform, so a warm cache changes speed, not values.
+    #
+    # Re-baselining against pre-#453 output must pin `max_restarts` (or
+    # `spread=False`): the speedup changes how many restarts fit a wall-clock
+    # `budget_s`, which #267 already scopes OUT of the byte-identical guarantee.
+    with pose_cache_scope():
+        result = _run_solve(
+            scenario,
+            budget_s=budget_s,
+            alternatives=alternatives,
+            seed=resolved_seed,
+            diversity=diversity,
+            search=effective_search,
+            plan_paths=plan_paths,
+            tow_heuristic=tow_heuristic,
+            tow_max_expansions=tow_max_expansions,
+        )
+
+        # Spread-vs-towability fallback (#280 → #402 / F5; ADR-0016). The
+        # ADR-0008 spread post-pass (default ON) maximizes inter-plane gaps,
+        # which can push planes into positions the bounded tow planner can no
+        # longer thread from the door cone: every plan comes back ``None`` even
+        # though the SAME fleet+hangar routes cleanly with spread off. When the
+        # caller asked for tow plans, kept spread on, and got valid-but-unroutable
+        # layout(s), re-solve once with spread disabled and prefer the routable
+        # (tighter) arrangement. The re-solve inherits ``effective_search`` with
+        # only ``spread`` flipped off — so it keeps the caller's ``max_restarts``
+        # (deterministic, NOT wall-clock-bound; carried ``back_bias_weight`` is
+        # inert with spread off). RNG-free re-selection: changes WHICH valid
+        # layout is returned, never WHETHER it is valid (the ``(0, 0.0)`` gate is
+        # untouched), so determinism holds end-to-end (ADR-0003).
+        if (
+            plan_paths
+            and effective_search.spread
+            and result.layouts
+            and all(plan is None for plan in result.plans)
+        ):
+            fallback = _run_solve(
+                scenario,
+                budget_s=budget_s,
+                alternatives=alternatives,
+                seed=resolved_seed,
+                diversity=diversity,
+                search=replace(effective_search, spread=False),
+                plan_paths=True,
+                tow_heuristic=tow_heuristic,
+                tow_max_expansions=tow_max_expansions,
+            )
+            if fallback.layouts and any(plan is not None for plan in fallback.plans):
+                return replace(
+                    fallback,
+                    diagnostics=replace(fallback.diagnostics, spread_fallback_applied=True),
+                )
+
+        return result
+
+
+def _run_solve(
+    scenario: Scenario,
+    *,
+    budget_s: float,
+    alternatives: int,
+    seed: int | None,
+    diversity: DiversityConfig | None,
+    search: SearchConfig | None,
+    plan_paths: bool,
+    tow_heuristic: Literal["euclidean", "grid"],
+    tow_max_expansions: int | None,
+) -> SolveResult:
+    """Body of :func:`solve`, run inside an active ``pose_cache_scope`` (#453)."""
     if diversity is None:
         diversity = DiversityConfig()
     if search is None:
@@ -147,6 +233,14 @@ def solve(
     pool: list[_SpreadCandidate] = []
     restart_index = 0
     spread_scale = _resolve_spread_scale(scenario, search)
+
+    # F7 (#404) spread-stagnation early-exit state. Inert unless
+    # ``search.spread_stall_restarts`` is set (see the loop tail): tracks the
+    # best selected-set maximin gap seen so far and how many consecutive
+    # restarts have failed to beat it by ``spread_stall_epsilon_m``.
+    best_stall_gap = float("-inf")
+    stall_count = 0
+    spread_stalled = False
 
     # Outer restart loop. Two independent termination gates; first to
     # trip wins:
@@ -267,6 +361,33 @@ def solve(
             selected_so_far, _ = _select_spread_diverse(pool, alternatives, diversity)
             if len(selected_so_far) >= alternatives:
                 break
+        elif search.spread_stall_restarts is not None:
+            # F7 (#404): opt-in spread-stagnation early-exit. Reached only when
+            # ``search.spread`` is True (the ``if not search.spread`` arm was
+            # False). Arms only once a COMPLETE selected set exists, so a hard
+            # scenario still gets the full budget to find its first answer and
+            # this only trims the polish-the-incumbent tail. Thereafter, stop
+            # once ``spread_stall_restarts`` consecutive restarts fail to improve
+            # the set's maximin gap by ``spread_stall_epsilon_m``. The metric is
+            # ``min(min_gap)`` over the selected basins (the maximin objective,
+            # ADR-0008) — for ``alternatives == 1`` that is the pool's best gap
+            # and strictly monotonic; for ``alternatives > 1`` it need not be
+            # monotonic (the diversity gate can re-pick the set), but
+            # ``best_stall_gap`` tracks the running max, so the stop stays a sound,
+            # deterministic "no improvement in the last N restarts" signal either
+            # way. Seed-fixed restart sequence + an integer counter ⇒ identical
+            # per-seed across machines, narrowing the #267 timing scope (ADR-0003).
+            selected_so_far, _ = _select_spread_diverse(pool, alternatives, diversity)
+            if len(selected_so_far) >= alternatives:
+                current_stall_gap = min(c.min_gap for c in selected_so_far)
+                if current_stall_gap >= best_stall_gap + search.spread_stall_epsilon_m:
+                    best_stall_gap = current_stall_gap
+                    stall_count = 0
+                else:
+                    stall_count += 1
+                    if stall_count >= search.spread_stall_restarts:
+                        spread_stalled = True
+                        break
 
     elapsed = time.monotonic() - start
 
@@ -285,7 +406,11 @@ def solve(
             diversity_impossible=diversity_impossible,
             diversity_rejected_count=diversity_rejected_count,
             valid_basins_found=len(pool),
+            spread_stall_applied=spread_stalled,
         )
+    # ``spread_stalled`` can only be True alongside a complete (non-empty)
+    # selection, so the exhausted branch always leaves the flag at its default
+    # False (the early-exit never fires before the first complete answer).
     return _build_exhausted_result(
         best_partial_layout,
         restart_index=restart_index,
@@ -431,6 +556,7 @@ def _build_found_result(
     diversity_impossible: bool,
     diversity_rejected_count: int,
     valid_basins_found: int,
+    spread_stall_applied: bool,
 ) -> SolveResult:
     """Build the ``found`` / ``found_partial`` :class:`SolveResult`.
 
@@ -463,6 +589,7 @@ def _build_found_result(
             unroutable_planes=unroutable,
             min_pairwise_gap_m=min_gaps,
             valid_basins_found=valid_basins_found,
+            spread_stall_applied=spread_stall_applied,
         ),
     )
 
@@ -564,17 +691,19 @@ def _check_plane_too_big(scenario: Scenario) -> tuple[CheckResult, Layout] | Non
 
 
 def _check_sum_areas(scenario: Scenario) -> tuple[CheckResult, Layout] | None:
-    """Check 2: Σ bbox areas vs hangar floor area.
+    """Check 2: Σ part-footprint areas vs hangar floor area.
 
-    Uses the full-fuselage footprint (not _plane_max_extent) so the fuselage
-    front/aft split (#50/ADR-0012) doesn't shrink the estimate and let an
-    infeasible fleet slip the gate. Returns the conflict paired with the empty
-    Layout, or ``None`` if the summed footprint fits the floor.
+    Sums each plane's actual part rectangles (:func:`_plane_parts_total_area`),
+    not its bounding box: a thin-winged glider's bbox is ``fuselage_span ×
+    wingspan`` — mostly empty air — so the old bbox sum false-rejected glider
+    fleets that a valid nested layout would fit (#425). Returns the conflict
+    paired with the empty Layout, or ``None`` if the summed part footprint fits
+    the floor.
     """
     total_area = 0.0
     for pid in scenario.fleet_in:
         plane = scenario.fleet[pid]
-        total_area += _plane_footprint_area(plane)
+        total_area += _plane_parts_total_area(plane)
     hangar_area = scenario.hangar.length_m * scenario.hangar.width_m
     if total_area > hangar_area:
         check = CheckResult(
@@ -707,40 +836,26 @@ def _plane_max_extent(plane: Aircraft) -> tuple[float, float]:
     return max_length, max_width
 
 
-def _plane_footprint_area(plane: Aircraft) -> float:
-    """A bbox-area lower bound for the Σ-areas infeasibility gate (check #2).
+def _plane_parts_total_area(plane: Aircraft) -> float:
+    """Σ of each part's footprint rectangle — the Σ-areas gate's per-plane term.
 
-    Like :func:`_plane_max_extent` this is a deliberately coarse, offset-
-    ignoring estimate, but it must NOT undercount the fuselage: the loader
-    splits one fuselage box into a ``fuselage_front`` + ``fuselage_aft`` pair
-    (#50/ADR-0012), so a plain ``max(length_m)`` over parts would collapse the
-    fuselage extent to its longer *segment* and shrink the footprint estimate
-    — making a genuinely-infeasible full fleet slip past the gate. Reconstruct
-    the full fuselage span (union of the segments, the same way the area is
-    conserved at load time) before taking the max length.
+    Consumed only by :func:`_check_sum_areas` (check #2). It replaces the old
+    bounding-box estimate (``max_length × max_width``), which multiplied the
+    fuselage span by the *wingspan* and so counted the empty air between a thin
+    wing and a narrow fuselage. For an 18 m-span glider that bbox was ~5× the
+    real footprint, so the gate false-rejected glider fleets that a valid nested
+    layout would fit — the bug this fixes (#425).
 
-    Kept separate from :func:`_plane_max_extent` on purpose: that function also
-    feeds the initial-placement spawn margin, and changing its return value
-    would shift the solver's RNG stream and disturb the determinism canaries.
-    This helper is consumed only by the infeasibility gate, where no RNG flows.
+    Summing the real part rectangles is a much tighter estimate. It is *not* a
+    strict lower bound on the plane's true plan-view footprint: parts that
+    overlap in plan view (a wing sitting over its own z-disjoint fuselage) are
+    counted twice. But that residual over-count is small (≈ one wing-root ×
+    fuselage-width) — it keeps the gate conservative without the empty-air
+    inflation a bbox invents. Like the rest of the gate it is RNG-free and runs
+    before the search, so it cannot perturb the determinism contract
+    (ADR-0003).
     """
-    fuselage_segs = [p for p in plane.parts if p.kind in ("fuselage_front", "fuselage_aft", "tail")]
-    # A standalone ``tail`` part is folded into the reconstructed fuselage span
-    # above, so it must also be excluded from the per-part lengths list — else
-    # an aircraft declaring both fuselage segments and a separate ``tail`` would
-    # have its ``tail`` length counted twice (#317). Dormant today (no fleet/
-    # fixture aircraft has a ``tail`` part) and the direction is fail-safe
-    # (over-count → over-eager rejection), but worth the one-line guard.
-    lengths = [
-        p.length_m for p in plane.parts if p.kind not in ("fuselage_front", "fuselage_aft", "tail")
-    ]
-    if fuselage_segs:
-        nose = max(p.offset_x_m + p.length_m / 2.0 for p in fuselage_segs)
-        tail = min(p.offset_x_m - p.length_m / 2.0 for p in fuselage_segs)
-        lengths.append(nose - tail)
-    max_length = max(lengths)
-    max_width = max(p.width_m for p in plane.parts)
-    return max_length * max_width
+    return sum(p.length_m * p.width_m for p in plane.parts)
 
 
 class _LayoutBuildFailure(Exception):
@@ -810,33 +925,53 @@ def _initial_placement_for_plane(
     )
 
 
+def _priority_weight(scenario: Scenario, pid: str) -> float:
+    """Soft spread weight for plane ``pid``: ``1.0 + priority`` (#441).
+
+    A plane's soft :attr:`~hangarfit.models.PlaneConstraint.priority` (default
+    ``None`` ≡ the neutral ``0.0``) scales how hard the spread post-pass works to
+    clear space around it: each plane-pair's repulsion energy is weighted by
+    ``w_i · w_j``. With every priority unset every weight is exactly ``1.0``, so
+    ``w_i · w_j == 1.0`` and ``1.0 * exp(x) == exp(x)`` — the energy, and hence
+    the whole search, is byte-identical to the pre-#441 behaviour (ADR-0003).
+    The non-negative range is enforced by ``Scenario.__post_init__``.
+    """
+    constraint = scenario.constraints.get(pid)
+    priority = constraint.priority if constraint is not None else None
+    return 1.0 + (priority if priority is not None else 0.0)
+
+
 def _inter_plane_energy(
     placements: dict[str, Placement],
     scenario: Scenario,
     scale: float,
 ) -> float:
-    """Smooth repulsion energy ``E = Σ_{i<j} exp(−gap_ij / scale)`` (spec §4).
+    """Smooth repulsion energy ``E = Σ_{i<j} w_i·w_j·exp(−gap_ij / scale)`` (spec §4).
 
     ``gap_ij`` is the minimum plan-view edge-to-edge distance between plane
     ``i``'s and plane ``j``'s world parts (shapely ``polygon.distance``).
     Lower ``E`` ⇒ planes further apart; close pairs dominate the sum, so
     minimizing it maximizes the *minimum* gap (a smooth maximin surrogate).
-    Returns ``0.0`` when fewer than two planes are present. Ignores z
-    (plan-view only) — see ADR-0008 for the nesting limitation.
+    ``w_i·w_j`` is the soft-priority pair weight (:func:`_priority_weight`, #441);
+    it is identically ``1.0`` when no priorities are set, so this reduces to the
+    unweighted ``Σ exp(−gap/scale)`` byte-for-byte (ADR-0003). Returns ``0.0``
+    when fewer than two planes are present. Ignores z (plan-view only) — see
+    ADR-0008 for the nesting limitation.
     """
     ids = sorted(placements)
     if len(ids) < 2:
         return 0.0
     world: dict[str, list[WorldPart]] = {
-        pid: aircraft_parts_world(scenario.fleet[pid], placements[pid]) for pid in ids
+        pid: cached_parts_world(scenario.fleet[pid], placements[pid]) for pid in ids
     }
+    w = {pid: _priority_weight(scenario, pid) for pid in ids}
     energy = 0.0
     for i in range(len(ids)):
         for j in range(i + 1, len(ids)):
             gap = min(
                 pa.polygon.distance(pb.polygon) for pa in world[ids[i]] for pb in world[ids[j]]
             )
-            energy += math.exp(-gap / scale)
+            energy += w[ids[i]] * w[ids[j]] * math.exp(-gap / scale)
     return energy
 
 
@@ -875,19 +1010,23 @@ def _spread_quality(
     """Return ``(min_gap, energy)`` for a layout in one pass over plane-pairs.
 
     ``min_gap`` is the minimum plan-view edge-to-edge distance between any two
-    planes' world parts (``math.inf`` when <2 planes — no pairs). ``energy``
-    is the same ``Σ exp(−gap/scale)`` repulsion :func:`_inter_plane_energy`
-    computes; returning both from one pairwise sweep avoids paying the
-    (expensive) shapely distances twice when scoring a candidate basin. The
-    hot ``_spread`` loop keeps using the energy-only :func:`_inter_plane_energy`
-    — this is called once per accepted basin, not per perturbation.
+    planes' world parts (``math.inf`` when <2 planes — no pairs); it is the raw
+    geometric gap and is **never** priority-weighted, so basin selection stays
+    maximin-primary (ADR-0008). ``energy`` is the same priority-weighted
+    ``Σ w_i·w_j·exp(−gap/scale)`` repulsion :func:`_inter_plane_energy` computes
+    (#441; identically the unweighted sum when no priorities are set, ADR-0003);
+    returning both from one pairwise sweep avoids paying the (expensive) shapely
+    distances twice when scoring a candidate basin. The hot ``_spread`` loop
+    keeps using the energy-only :func:`_inter_plane_energy` — this is called once
+    per accepted basin, not per perturbation.
     """
     ids = sorted(placements)
     if len(ids) < 2:
         return (math.inf, 0.0)
     world: dict[str, list[WorldPart]] = {
-        pid: aircraft_parts_world(scenario.fleet[pid], placements[pid]) for pid in ids
+        pid: cached_parts_world(scenario.fleet[pid], placements[pid]) for pid in ids
     }
+    w = {pid: _priority_weight(scenario, pid) for pid in ids}
     min_gap = math.inf
     energy = 0.0
     for i in range(len(ids)):
@@ -896,7 +1035,7 @@ def _spread_quality(
                 pa.polygon.distance(pb.polygon) for pa in world[ids[i]] for pb in world[ids[j]]
             )
             min_gap = min(min_gap, gap)
-            energy += math.exp(-gap / scale)
+            energy += w[ids[i]] * w[ids[j]] * math.exp(-gap / scale)
     return (min_gap, energy)
 
 

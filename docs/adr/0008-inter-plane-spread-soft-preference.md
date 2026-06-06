@@ -239,3 +239,53 @@ and does not change the draw count or order (candidate generation is unchanged),
 so same-seed output stays byte-identical (`tests/test_solver_search.py::
 test_spread_back_fill_is_deterministic_for_same_seed`). No `determinism-guard`
 amendment is required.
+
+### 2026-06-06 — opt-in spread-stagnation early-exit (issue #404 / F7)
+
+**Background.** The #267 best-of-all-basins change (above) runs *every* restart
+within budget even after an excellent basin appears early, so a default-spread
+single-alternative solve is "always ~30 s". The F6 profile
+(`bench.profile_pipeline`) made the waste concrete on the canonical
+`roomy_three_spread_on` regime: the selected maximin gap reaches ~96 % of its
+30-restart value by restart 3 (10.09 → 12.05 → 12.06 m) and then sits on a
+~17-restart plateau before two negligible late nudges (+0.048 m at restart 21,
++0.396 m at restart 30). Most of the budget buys nothing.
+
+**Change.** A new **opt-in** `SearchConfig.spread_stall_restarts: int | None`
+(default `None` ≡ today's run-to-budget behaviour) lets the spread-ON restart
+loop stop once `spread_stall_restarts` *consecutive* restarts fail to improve the
+selected set's maximin gap by at least `spread_stall_epsilon_m` (default
+`0.05 m`). The metric is `min(min_gap)` over the `_select_spread_diverse`
+selection — for `alternatives == 1` that is the pool's best gap. The counter is
+armed **only after a complete (`≥ alternatives`) selection exists**, so a hard
+scenario still gets the full budget to find its first answer; the early-exit only
+trims the polish-the-incumbent tail. The improvement test uses Keras-style
+`min_delta` semantics: a restart resets the counter only if it beats the running
+best by `≥ epsilon`, so steady sub-epsilon accumulation eventually crosses the
+threshold and resets rather than triggering a premature exit. No effect when
+`spread=False` (that path already first-valid early-exits per #267).
+
+**Calibration.** `spread_stall_restarts=5` with the default `0.05 m` epsilon
+stops `roomy_three_spread_on` at restart 7 — ~4× fewer restarts while keeping
+12.058 m of the 12.502 m final gap (96 %). `0.05 m` (5 cm) treats the +0.048 m
+plateau bump as noise (operationally negligible for wingtip clearance) while a
+genuinely better-separated basin (the +0.396 m late jump) would reset the
+counter. These are the *recommended* values documented on the fields; the
+shipped default leaves the feature **off** (`None`). The `trivial_single` regime
+(1 plane, `min_gap = math.inf`) confirms the degenerate inf case never stagnates
+and so never early-exits — harmless, since single-plane solves are not the slow
+ones.
+
+**Observability.** `SolverDiagnostics.spread_stall_applied` is `True` when the
+loop stopped on stagnation rather than budget / `max_restarts`. Because the
+early-exit arms only after a complete selection, a `True` value always
+accompanies a `found` result. Advisory — it changes *when* the search stops,
+never *whether* the returned layout is valid.
+
+**Determinism.** The stop depends only on the seed-fixed restart sequence + an
+integer counter (and the existing fully-ordered `_select_spread_diverse` sort) —
+never wall-clock. So under a `max_restarts` bound the selected layout is
+identical for a given seed across machines, which *narrows* the #267 wall-clock
+timing scope rather than widening it (see the ADR-0003 amendment dated
+2026-06-06). The default `None` path is byte-identical to pre-F7, so the
+`spread=False` determinism canaries and `determinism-guard` are untouched.
