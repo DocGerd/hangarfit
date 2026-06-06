@@ -58,12 +58,12 @@ If you find yourself about to write a domain assertion in this file, **don't** �
 ### Per-PR process
 
 1. Branch `feature/<slug>` off `develop`. Work, commit.
-2. Open PR with `gh pr create` — base `develop`, body includes `Closes #N`.
+2. Open the PR **as a draft** (`gh pr create --draft`) — base `develop`, body includes `Closes #N`. A PR stays in draft until its review arc is done; draft signals "not yet for the human's attention."
 3. Invoke `/pr-review` (or the `pr-review-toolkit:review-pr` skill).
 4. Convert each finding into a **review thread on the diff** (via `gh pr review` line comments / `gh api .../pulls/<n>/comments`). Findings never live only in chat.
 5. Resolve every thread: fix the code (preferred) or reply with rationale, then mark resolved.
 6. If the changes were non-trivial, re-run the review.
-7. Tell the user the PR is **clean and ready for final review**. The user approves and merges. **Never `gh pr merge` from Claude.**
+7. When the review arc is clean, flip the PR out of draft (`gh pr ready <n>`) and tell the user it is **clean and ready for final review**. You may mark it ready **even before CI finishes** — readiness tracks the review arc, not the CI run. The user approves and merges. **Never `gh pr merge` from Claude.**
 
 **Stacking PRs (shared-file features).** When a feature splits into PRs that touch
 the same files (parallel branches would conflict), build a linear stack but **base
