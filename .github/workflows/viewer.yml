@@ -1,0 +1,141 @@
+name: Viewer toolchain
+
+# Path-gated extraction of the Node viewer toolchain out of ci.yml (#475).
+#
+# WHY A SEPARATE, PATH-GATED WORKFLOW. This is the only Node toolchain in CI and
+# is irrelevant unless the viewer sources or the committed bundle change, yet it
+# previously ran on EVERY PR into develop/main (docs-only, Python-only — all of
+# it). Moving it into its own workflow with a `paths:` filter on `pull_request`
+# means a non-viewer PR skips it entirely, cutting the always-run CI cost.
+#
+# WHY THE WORKFLOW-LEVEL PATH FILTER IS SAFE *HERE SPECIFICALLY*. A workflow-level
+# `paths:` filter on a workflow that produces a REQUIRED check is a known footgun:
+# the skipped workflow leaves its check stuck "Expected — waiting for status",
+# permanently blocking merge (GitHub: "Troubleshooting required status checks").
+# This job is NOT a required check on develop (required = `test (Python 3.12)`,
+# the three lockfile-drift jobs, `Analyze (Python)`), so a path skip simply makes
+# the check absent / non-blocking — no deadlock. Do NOT add this job to branch
+# protection; keeping it non-required is what makes fail-open correct.
+#
+# FAIL-OPEN / OVER-BROAD FILTER. When in doubt, RUN the toolchain — never silently
+# skip it. A missed glob that skipped the `viewer-build-drift` guard would re-open
+# exactly the ADR-0020 bundle drift the guard exists to close. Hence the push:
+# backstop below runs unfiltered-by-intent on the integration branches.
+
+on:
+  # PR-time: run only when viewer-affecting files change. The check is
+  # non-required, so a skipped run does not block merge (see header).
+  pull_request:
+    branches: [develop, main]
+    paths:
+      # The TypeScript source, package(-lock).json, tsconfig, eslint/esbuild
+      # config, .nvmrc, and node --test units — everything under viewer/.
+      - "viewer/**"
+      # The committed bundle AND the vendored three (incl. VENDOR.md, which the
+      # three<->@types/three<->three(devDep) skew guard parses) — so the
+      # build-drift + skew guards fire when the shipped artifact changes.
+      - "src/hangarfit/_viewer_assets/**"
+      # Edits to this workflow itself must re-trigger it.
+      - ".github/workflows/viewer.yml"
+  # Backstop: on direct pushes / merges into the integration branches, run the
+  # full toolchain so viewer/bundle drift can never ride into a release uncaught
+  # even if the PR-time `paths:` filter above were ever too narrow. Same filter
+  # as the PR trigger — a push that touches no viewer file has nothing to check.
+  push:
+    branches: [develop, main]
+    paths:
+      - "viewer/**"
+      - "src/hangarfit/_viewer_assets/**"
+      - ".github/workflows/viewer.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  viewer-toolchain:
+    # Dev/CI-only TypeScript toolchain for the 3D viewer (ADR-0020, issue #437).
+    # Lives in its own path-gated workflow (#475) rather than inline in ci.yml so
+    # it only runs on viewer-affecting changes. It was always a SEPARATE job from
+    # the Python matrix: a Node failure must never block the Python test / lint /
+    # mypy / lockfile-drift jobs (the viewer is built from a committed bundle the
+    # Python install never touches). This job runs `tsc --noEmit`, eslint, the
+    # three <-> @types/three <-> three(devDep) version-skew guard, the
+    # `viewer-build-drift` byte guard (a rebuild of the committed bundle from
+    # viewer/src must reproduce src/hangarfit/_viewer_assets/viewer.js exactly),
+    # and (since #440) `node --test` for the pure units (affine/anchors/timeline)
+    # — coverage pytest cannot reach. This completes #438.
+    name: viewer toolchain (typecheck + lint + build-drift + node-test)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+
+      - name: Set up Node (pinned via viewer/.nvmrc)
+        uses: actions/setup-node@48b55a011bda9f5d6aeb4c2d9c7362e8dae4041e  # v6.4.0
+        with:
+          node-version-file: viewer/.nvmrc
+          cache: npm
+          cache-dependency-path: viewer/package-lock.json
+
+      - name: Install viewer toolchain (lockfile-authoritative)
+        # `npm ci` installs exactly the committed package-lock.json (integrity-pinned),
+        # the Node analogue of the hash-pinned `pip install --require-hashes` above.
+        run: npm --prefix viewer/ ci
+
+      - name: Typecheck (tsc --noEmit)
+        run: npm --prefix viewer/ run typecheck
+
+      - name: Lint (eslint)
+        run: npm --prefix viewer/ run lint
+
+      - name: Unit tests (node --test, pure affine/anchors/timeline units)
+        # Node-native type-stripping runs the .ts units directly (Node pinned via
+        # .nvmrc). This is coverage pytest cannot reach: the only transform math the
+        # viewer does (affine), the cross-language oracle compare (anchors), and the
+        # timeline state machine. three is a test-only devDep (kept external from the
+        # bundle by esbuild), so the units exercise the SAME three r160 the browser runs.
+        run: npm --prefix viewer/ run test
+
+      - name: viewer-build-drift (rebuilt bundle must equal the committed one)
+        # The Node analogue of the lockfile-drift guards: rebuild the committed
+        # bundle from viewer/src and assert it is byte-identical to what is checked
+        # in. Drift means either a viewer/src edit without a rebuild, or an
+        # unpinned-toolchain change — exactly what the guard should catch. The
+        # bundle is unminified + esbuild/Node are exact-pinned, so a green diff is
+        # deterministic (ADR-0020). Writes the canonical path (VIEWER_OUTFILE unset).
+        run: |
+          npm --prefix viewer/ run build
+          if ! git diff --exit-code -- src/hangarfit/_viewer_assets/viewer.js; then
+            echo "::error::src/hangarfit/_viewer_assets/viewer.js is out of sync with viewer/src. Run 'npm --prefix viewer/ run build' and commit the rebuilt bundle (ADR-0020)."
+            exit 1
+          fi
+
+      - name: three <-> @types/three <-> three(devDep) version-skew guard
+        # Assert the vendored three (VENDOR.md, what the BROWSER runs), the
+        # @types/three the viewer type-checks against, and the test-only `three`
+        # devDep (what `node --test` runs, #440) all agree on major.minor — so the
+        # API the TS is checked against and node-tested against cannot drift from the
+        # three the browser actually runs (ADR-0020).
+        run: |
+          vendor=$(grep -oE 'three@0\.[0-9]+\.[0-9]+' src/hangarfit/_viewer_assets/three/VENDOR.md | head -1 | sed 's/^three@//')
+          types=$(node -p "require('./viewer/package.json').devDependencies['@types/three']")
+          three_dev=$(node -p "require('./viewer/package.json').devDependencies['three']")
+          if [ -z "$vendor" ]; then
+            echo "::error::could not parse the vendored three version from VENDOR.md — update the skew guard in viewer.yml."
+            exit 1
+          fi
+          vendor_mm=${vendor%.*}
+          types_mm=$(printf '%s' "$types" | grep -oE '^[0-9]+\.[0-9]+')
+          three_dev_mm=$(printf '%s' "$three_dev" | grep -oE '^[0-9]+\.[0-9]+')
+          echo "vendored three=$vendor (mm=$vendor_mm); @types/three=$types (mm=$types_mm); three devDep=$three_dev (mm=$three_dev_mm)"
+          if [ "$vendor_mm" != "$types_mm" ]; then
+            echo "::error::@types/three ($types_mm) does not match vendored three ($vendor_mm). Bump @types/three in viewer/package.json in lockstep with VENDOR.md (ADR-0020)."
+            exit 1
+          fi
+          if [ "$vendor_mm" != "$three_dev_mm" ]; then
+            echo "::error::test-only three devDep ($three_dev_mm) does not match vendored three ($vendor_mm). Bump it in viewer/package.json in lockstep with VENDOR.md (ADR-0020)."
+            exit 1
+          fi
