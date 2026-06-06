@@ -1179,6 +1179,18 @@ class TestSolveRenderPathsSpreadFallback:
         # fragile trigger band. The fully-mocked sibling tests above cover the same
         # control flow on synthetic data; this one proves it on a real solve+route,
         # and is deliberately NOT ``@slow`` so CI actually runs it.
+        #
+        # Two choices make the outcome wall-clock-INDEPENDENT (so it cannot flake
+        # under CPU contention the way the old budget-pinned version could):
+        #   1. The trivial single-plane fixture — placement is the same control flow
+        #      regardless of plane count (this test exercises the cli FALLBACK wiring,
+        #      not multi-plane spread geometry, whose coverage #457 established is dead
+        #      anyway), and a one-plane layout is found in the very first restart.
+        #   2. The intercepted spread pass is re-bounded to a deterministic
+        #      ``max_restarts=1`` so a *valid layout* is produced after exactly one
+        #      restart — a fixed amount of WORK, not a wall-clock race. ``--budget``
+        #      is therefore a non-binding ceiling here (the no-spread fallback pass
+        #      first-valid early-exits too), and the test is fast (~0.3 s).
         import dataclasses
 
         import hangarfit.solver as solver_mod
@@ -1192,10 +1204,15 @@ class TestSolveRenderPathsSpreadFallback:
                 # exactly the case #280's fallback exists to rescue. Run placement
                 # ONLY (skip the expensive Hybrid-A* routing whose result we would
                 # discard anyway — routing a hard spread layout floods the expansion
-                # budget, the very cost #280 sidesteps) and synthesize all-None plans,
-                # one per (valid) layout, so the fallback trigger condition
-                # (`result.layouts and all(plan is None …)`) holds.
-                result = real_solve(scenario, **{**kwargs, "plan_paths": False})
+                # budget, the very cost #280 sidesteps), bounded to a single
+                # deterministic restart so producing a valid layout is wall-clock-
+                # independent, then synthesize all-None plans (one per valid layout)
+                # so the fallback trigger (`result.layouts and all(plan is None …)`)
+                # holds.
+                one_restart = dataclasses.replace(search, max_restarts=1)
+                result = real_solve(
+                    scenario, **{**kwargs, "search": one_restart, "plan_paths": False}
+                )
                 return dataclasses.replace(result, plans=tuple(None for _ in result.layouts))
             return real_solve(scenario, **kwargs)
 
@@ -1205,11 +1222,11 @@ class TestSolveRenderPathsSpreadFallback:
         rc = main(
             [
                 "solve",
-                str(FIXTURES_DIR / "solve_fresh_alternatives_three.yaml"),
+                str(FIXTURES_DIR / "solve_trivial_single_plane.yaml"),
                 "--seed",
                 "5",
                 "--budget",
-                "1.0",
+                "5.0",
                 "--render",
                 str(out),
                 "--render-paths",
