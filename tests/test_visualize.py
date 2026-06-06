@@ -168,10 +168,10 @@ class TestRenderLayout:
         _assert_valid_png(out_with_title)
 
     def test_renders_layouts_example(self, tmp_path: Path) -> None:
-        """Issue #6 explicitly names ``layouts/example.yaml`` as the
+        """Issue #6 explicitly names ``examples/layouts/example.yaml`` as the
         smoke-test target. The PR's other tests use fixtures; this one
         ensures the production example file stays renderable."""
-        layout = load_layout(REPO_ROOT / "layouts" / "example.yaml")
+        layout = load_layout(REPO_ROOT / "examples" / "layouts" / "example.yaml")
         out = tmp_path / "example.png"
         render_layout(layout, out)
         _assert_valid_png(out)
@@ -183,7 +183,7 @@ class TestRendererHandlesEdgeCases:
         placements) still renders. The walled-rect dispatch is exercised
         directly in :class:`TestConditionalBayRendering` below.
         """
-        layout = load_layout(REPO_ROOT / "layouts" / "example.yaml")
+        layout = load_layout(REPO_ROOT / "examples" / "layouts" / "example.yaml")
         assert layout.maintenance_plane is not None  # sanity: the case we care about
         out = tmp_path / "maintenance.png"
         render_layout(layout, out)

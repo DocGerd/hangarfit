@@ -35,7 +35,9 @@ def test_view_static_degradation_on_untowable(tmp_path, capsys):
     # fail fast so this exercises the degradation path without burning the full
     # per-plane search budget.
     out = tmp_path / "v.html"
-    rc = main(["view", "layouts/example.yaml", "-o", str(out), "--tow-max-expansions", "300"])
+    rc = main(
+        ["view", "examples/layouts/example.yaml", "-o", str(out), "--tow-max-expansions", "300"]
+    )
     assert rc == 0 and out.exists()
     assert "not tow-routable" in capsys.readouterr().err
 
@@ -58,7 +60,7 @@ def test_view_layout_caps_total_expansions_by_default(tmp_path, monkeypatch):
 
     monkeypatch.setattr(tp, "plan_fill", fake_plan_fill)
     out = tmp_path / "v.html"
-    rc = main(["view", "layouts/example.yaml", "-o", str(out)])
+    rc = main(["view", "examples/layouts/example.yaml", "-o", str(out)])
     assert rc == 0 and out.exists()
     assert captured["max_total_expansions"] == 300
 
@@ -79,7 +81,9 @@ def test_view_tow_max_expansions_overrides_view_cap(tmp_path, monkeypatch):
 
     monkeypatch.setattr(tp, "plan_fill", fake_plan_fill)
     out = tmp_path / "v.html"
-    rc = main(["view", "layouts/example.yaml", "-o", str(out), "--tow-max-expansions", "500"])
+    rc = main(
+        ["view", "examples/layouts/example.yaml", "-o", str(out), "--tow-max-expansions", "500"]
+    )
     assert rc == 0 and out.exists()
     assert captured["max_total_expansions"] == 500
     assert captured["max_expansions"] == 500

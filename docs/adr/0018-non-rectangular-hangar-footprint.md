@@ -13,7 +13,7 @@
 
 The model assumes every hangar floor is the axis-aligned rectangle
 `[0, width_m] × [0, length_m]`. The real Airfield Herrenteich hangar
-(`herrenteich/hangar.yaml`, added in #426) is **not** a rectangle: it is
+(`examples/herrenteich/hangar.yaml`, added in #426) is **not** a rectangle: it is
 L-shaped. Its `15.08 m (x) × 31.76 m (y)` bounding rectangle has an office/annex
 **notch** cut out of the back-right corner — `~2.36 m (x) × ~9.10 m (y)`, i.e.
 `x ∈ [12.72, 15.08]`, `y ∈ [22.66, 31.76]` in the standard coordinate frame
@@ -24,7 +24,7 @@ the notch.
 Today the model records only the bounding rectangle. A layout that parks a plane
 in the notch is therefore a **false-valid**: `collisions.check` happily reports it
 as fine because every vertex is inside `[0, 15.08] × [0, 31.76]`. The notch is
-currently "modelled" only as a prose comment in `herrenteich/hangar.yaml` and is
+currently "modelled" only as a prose comment in `examples/herrenteich/hangar.yaml` and is
 avoided **by hand** when authoring that folder's `layout.yaml`. This ADR answers:
 **how should the data model and the containment algorithm represent a hangar
 floor that is not a single rectangle?**
@@ -110,7 +110,7 @@ kinds" below): they share a rectangle representation and a list, but their
 *activation* differs — the notch is part of the floor's definition; the bay is a
 runtime state. Backward compatibility: a YAML with a scalar `maintenance_bay:`
 maps to a one-element list `[{kind: maintenance_bay, ...}]`; the loader keeps
-accepting today's `herrenteich/hangar.yaml` shape and grows an optional
+accepting today's `examples/herrenteich/hangar.yaml` shape and grows an optional
 `structural_notches:` (or `keep_outs:`) list.
 
 ### Containment algorithm
@@ -240,7 +240,7 @@ streams ADR-0006 deliberately separated). Keep them orthogonal.
 - **No new dependency, no new determinism surface.** Shapely already ships and is
   already used for pairwise overlap; this is the same library doing the same class
   of operation.
-- **The model now describes the real building.** `herrenteich/`'s prose-comment
+- **The model now describes the real building.** `examples/herrenteich/`'s prose-comment
   notch becomes enforced data; the all-8 layout no longer relies on hand-avoidance.
 
 ### Negative / risks to manage
@@ -284,7 +284,7 @@ streams ADR-0006 deliberately separated). Keep them orthogonal.
   representation. Hangars with no notch (the synthetic `data/` placeholders, all
   existing fixtures) derive a floor polygon identical to today's rectangle and
   behave exactly as before.
-- **`data/` placeholders are untouched.** This is a `herrenteich/`-driven realism
+- **`data/` placeholders are untouched.** This is a `examples/herrenteich/`-driven realism
   fix; the synthetic demo/test fixtures keep their rectangular floors.
 
 ## Implementation sketch (NOT implemented in this spike — follow-up issue)
@@ -308,7 +308,7 @@ follow-up issue. Rough shape, in dependency order:
 5. **`solver.py`** — leave seeding rectangular (correctness comes from the oracle);
    *optionally* and separately, add notch-rejection seeding behind a determinism
    re-pin.
-6. **Data** — turn `herrenteich/hangar.yaml`'s prose notch into a real
+6. **Data** — turn `examples/herrenteich/hangar.yaml`'s prose notch into a real
    `structural_notch` rect `[12.72, 22.66, 15.08, 31.76]`.
 7. **`scene/v1` + viewer** — separate follow-up: add a floor-polygon field and draw
    the L-shape (ADR-0017 extension).
@@ -344,8 +344,8 @@ implementing PR lands, compliance is:
   float-stability argument is measured against),
   [ADR-0017](0017-3d-viewer-architecture.md) (the `scene/v1` viewer that needs a
   follow-up to render a non-rect floor).
-- Real data: [`herrenteich/hangar.yaml`](../../herrenteich/hangar.yaml) — records
-  the notch in comments today; [`herrenteich/README.md`](../../herrenteich/README.md).
+- Real data: [`examples/herrenteich/hangar.yaml`](../../examples/herrenteich/hangar.yaml) — records
+  the notch in comments today; [`examples/herrenteich/README.md`](../../examples/herrenteich/README.md).
 - Related issues / PRs: spike **#424** (this design note); the real-data PR that
   surfaced the gap is **#426**; the sibling glider-fleet false-reject is **#425**.
   Implementation is a **separate follow-up issue** (to be filed).
