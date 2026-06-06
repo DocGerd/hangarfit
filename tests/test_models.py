@@ -1115,6 +1115,38 @@ class TestSearchConfig:
         assert SearchConfig(back_bias_weight=0.0).back_bias_weight == 0.0
         assert SearchConfig(back_bias_weight=2.5).back_bias_weight == 2.5
 
+    # ── F7 (#404): opt-in spread-stagnation early-exit ──────────────────────
+    def test_spread_stall_restarts_default_is_none(self) -> None:
+        # Opt-in: None preserves the run-to-budget spread-ON behavior, so the
+        # determinism canaries and byte-identical default are untouched.
+        assert SearchConfig().spread_stall_restarts is None
+
+    def test_spread_stall_restarts_positive_accepted(self) -> None:
+        assert SearchConfig(spread_stall_restarts=1).spread_stall_restarts == 1
+        assert SearchConfig(spread_stall_restarts=8).spread_stall_restarts == 8
+
+    def test_spread_stall_restarts_zero_rejected(self) -> None:
+        with pytest.raises(ValueError, match="spread_stall_restarts"):
+            SearchConfig(spread_stall_restarts=0)
+
+    def test_spread_stall_restarts_negative_rejected(self) -> None:
+        with pytest.raises(ValueError, match="spread_stall_restarts"):
+            SearchConfig(spread_stall_restarts=-1)
+
+    def test_spread_stall_epsilon_default_is_positive(self) -> None:
+        # A concrete positive metres value (not a sentinel): None stays the only
+        # opt-out sentinel in this dataclass (max_restarts / spread_stall_restarts).
+        eps = SearchConfig().spread_stall_epsilon_m
+        assert eps == 0.05
+        assert eps > 0.0
+
+    def test_spread_stall_epsilon_rejects_non_positive(self) -> None:
+        with pytest.raises(ValueError, match="spread_stall_epsilon_m"):
+            SearchConfig(spread_stall_epsilon_m=0.0)
+        with pytest.raises(ValueError, match="spread_stall_epsilon_m"):
+            SearchConfig(spread_stall_epsilon_m=-0.1)
+        assert SearchConfig(spread_stall_epsilon_m=0.25).spread_stall_epsilon_m == 0.25
+
 
 # ---------------------------------------------------------------------------
 # SolveResult.plans — best-effort tow-plan bundle (#197)

@@ -6,6 +6,23 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Opt-in spread-stagnation early-exit for `solve()` (#404 / F7).** Two new
+  `SearchConfig` fields — `spread_stall_restarts: int | None` (default `None`)
+  and `spread_stall_epsilon_m: float` (default `0.05` m) — let a spread-ON solve
+  stop the restart loop once N consecutive restarts fail to improve the selected
+  layout's maximin plan-view gap by epsilon, instead of always running the full
+  budget. The counter arms only after a complete (`≥ alternatives`) selection
+  exists, so hard scenarios still get the full budget to find their first answer.
+  Default (`None`) preserves today's run-to-budget behaviour byte-for-byte (the
+  determinism canaries are untouched); when enabled, the stop depends only on the
+  seed-fixed restart sequence + an integer counter (never wall-clock), so the
+  result is identical per-seed across machines — *narrowing* the #267 timing
+  scope rather than widening it. Calibrated from the F6 benchmark
+  (`bench.profile_pipeline`): `spread_stall_restarts=5` cuts the canonical
+  `roomy_three_spread_on` regime from 30 restarts to 7 (~4×) while keeping 96 %
+  of the achievable separation. New advisory
+  `SolverDiagnostics.spread_stall_applied` reports when the early-exit fired. See
+  ADR-0008 / ADR-0003 (2026-06-06 amendments).
 - **Real Airfield Herrenteich dataset (`herrenteich/`, refs #79).** A
   self-contained real-world dataset kept separate from the synthetic `data/`
   placeholders: the DWG-measured hangar (15.08 m × 31.76 m, 13.46 m door), the

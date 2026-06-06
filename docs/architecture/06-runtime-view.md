@@ -80,7 +80,7 @@ sequenceDiagram
     alt trivially infeasible
         Solver-->>CLI: SolveResult(status=trivially_infeasible)
     else feasible
-        loop restart until budget_s / max_restarts
+        loop restart until budget_s / max_restarts / spread-stall (opt-in, #404)
             Note over Solver: Random initial placement
             loop descent (min-conflicts)
                 Solver->>Coll: check(candidate)

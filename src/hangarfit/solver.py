@@ -234,6 +234,14 @@ def _run_solve(
     restart_index = 0
     spread_scale = _resolve_spread_scale(scenario, search)
 
+    # F7 (#404) spread-stagnation early-exit state. Inert unless
+    # ``search.spread_stall_restarts`` is set (see the loop tail): tracks the
+    # best selected-set maximin gap seen so far and how many consecutive
+    # restarts have failed to beat it by ``spread_stall_epsilon_m``.
+    best_stall_gap = float("-inf")
+    stall_count = 0
+    spread_stalled = False
+
     # Outer restart loop. Two independent termination gates; first to
     # trip wins:
     #   1. Wall-clock budget (`budget_s`) — always present.
@@ -353,6 +361,29 @@ def _run_solve(
             selected_so_far, _ = _select_spread_diverse(pool, alternatives, diversity)
             if len(selected_so_far) >= alternatives:
                 break
+        elif search.spread_stall_restarts is not None:
+            # F7 (#404): opt-in spread-stagnation early-exit. Reached only when
+            # ``search.spread`` is True (the ``if not search.spread`` arm was
+            # False). Arms only once a COMPLETE selected set exists, so a hard
+            # scenario still gets the full budget to find its first answer and
+            # this only trims the polish-the-incumbent tail. Thereafter, stop
+            # once ``spread_stall_restarts`` consecutive restarts fail to improve
+            # the set's maximin gap by ``spread_stall_epsilon_m``. The metric is
+            # ``min(min_gap)`` over the selected basins (the maximin objective,
+            # ADR-0008) — for ``alternatives == 1`` that is the pool's best gap.
+            # Seed-fixed restart sequence + an integer counter ⇒ identical
+            # per-seed across machines, narrowing the #267 timing scope (ADR-0003).
+            selected_so_far, _ = _select_spread_diverse(pool, alternatives, diversity)
+            if len(selected_so_far) >= alternatives:
+                current_stall_gap = min(c.min_gap for c in selected_so_far)
+                if current_stall_gap >= best_stall_gap + search.spread_stall_epsilon_m:
+                    best_stall_gap = current_stall_gap
+                    stall_count = 0
+                else:
+                    stall_count += 1
+                    if stall_count >= search.spread_stall_restarts:
+                        spread_stalled = True
+                        break
 
     elapsed = time.monotonic() - start
 
@@ -371,7 +402,11 @@ def _run_solve(
             diversity_impossible=diversity_impossible,
             diversity_rejected_count=diversity_rejected_count,
             valid_basins_found=len(pool),
+            spread_stall_applied=spread_stalled,
         )
+    # ``spread_stalled`` can only be True alongside a complete (non-empty)
+    # selection, so the exhausted branch always leaves the flag at its default
+    # False (the early-exit never fires before the first complete answer).
     return _build_exhausted_result(
         best_partial_layout,
         restart_index=restart_index,
@@ -517,6 +552,7 @@ def _build_found_result(
     diversity_impossible: bool,
     diversity_rejected_count: int,
     valid_basins_found: int,
+    spread_stall_applied: bool = False,
 ) -> SolveResult:
     """Build the ``found`` / ``found_partial`` :class:`SolveResult`.
 
@@ -549,6 +585,7 @@ def _build_found_result(
             unroutable_planes=unroutable,
             min_pairwise_gap_m=min_gaps,
             valid_basins_found=valid_basins_found,
+            spread_stall_applied=spread_stall_applied,
         ),
     )
 
