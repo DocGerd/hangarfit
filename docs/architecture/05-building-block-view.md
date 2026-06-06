@@ -19,6 +19,7 @@ flowchart TD
     scene["scene.py<br/>scene/v1 builder<br/>precomputed affines + timeline"]
     viewer["viewer.py<br/>self-contained 3D HTML<br/>inlined scene + vendored Three.js"]
     metrics["metrics.py<br/>read-only render annotations<br/>placeholder / gap / clearance / validity"]
+    brand["brand.py<br/>single source of brand tokens<br/>CVD-safe palette / opacity / fonts"]
 
     cli --> loader
     cli --> collisions
@@ -56,6 +57,10 @@ flowchart TD
     visualize --> metrics
     scene --> metrics
     viewer --> metrics
+
+    visualize --> brand
+    scene --> brand
+    viewer --> brand
 ```
 
 Edges point from caller to callee. `models.py` is the lowest-level
@@ -384,10 +389,13 @@ rationale: [ADR-0017](../adr/0017-3d-viewer-architecture.md).
 
 Assembles **one** offline HTML file: it inlines the `scene/v1` JSON plus a
 `data:`-URL import-map for the vendored Three.js (`_viewer_assets/three/`, shipped
-as package data) and the hand-written `_viewer_assets/viewer.js`. The `data:`
+as package data) and the committed `_viewer_assets/viewer.js` bundle — built from
+the typed TypeScript sources under the dev-only top-level `viewer/` by esbuild
+([ADR-0020](../adr/0020-viewer-typescript-architecture.md); the `pip` wheel ships
+the pre-built bundle and never invokes Node). The `data:`
 import-map sidesteps the ES-module `file://` CORS block so a double-clicked page
 loads with zero network. The embedded scene JSON escapes `<` to prevent a
-`</script>` breakout. The thin `viewer.js` consumer (Three.js vendored at r160) builds each plane as a
+`</script>` breakout. The compiled `viewer.js` consumer (Three.js vendored at r160) builds each plane as a
 Three.js `Group` driven per-frame by the affine as a `Matrix4` (`DoubleSide` for
 the reflected det-−1 matrix), with an orbit camera and a scrub/play/step timeline, and a
 load-time self-check of the affine path against the emitted `anchors` **and `gear_anchors`**.
@@ -423,6 +431,18 @@ verified-valid layout. A leaf consumer used by `visualize.py` (2D) and `scene.py
 (3D), with `viewer.py` consuming the shared `PLACEHOLDER_BANNER` string; it never
 enters the collision model, so it adds no determinism or correctness risk to the
 core.
+
+### `brand.py` — single source of brand tokens
+
+The one place every brand token is *defined* — the CVD-safe Okabe–Ito plane
+palette, opacities, darken factors and font stacks
+([ADR-0019](../adr/0019-brand-tokens-single-source.md), #419). The three render
+surfaces *reference* it: `visualize.py` (2D) re-exports the names it always
+exposed, `scene.py` reads `PLANES_DARK`, and `viewer.py` builds its CSS from the
+tokens and injects a canonical `BRAND` JSON blob (separate from the `scene/v1`
+blob) that the compiled `viewer.js` reads instead of hard-coded `0x` literals. A
+leaf of constants + small helpers with no project imports; it never enters the
+collision model, so it carries no determinism or correctness risk.
 
 ### `cli.py` — argparse dispatch + IO + exit codes
 
