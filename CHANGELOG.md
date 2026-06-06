@@ -6,6 +6,24 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [0.11.0] — 2026-06-06
+
+### Added
+
+- **Soft per-plane `priority` weight in `constraints:` (#441).** A new
+  non-negative `priority` (float, `None` ≡ neutral) on `PlaneConstraint` lets a
+  scenario nudge the ADR-0008 spread post-pass to give a more important plane
+  more clearance: each plane-pair's repulsion energy is scaled by
+  `(1 + priority_i)·(1 + priority_j)`, while the maximin basin selection still
+  ranks on the raw geometric gap. It is the first *user-supplied soft*
+  preference (pins and `force_on_carts` stay the only HARD constraints); the
+  loader rejects negative, non-finite, or `bool` values. Determinism-safe and
+  inert by default — with every `priority` unset every weight is exactly `1.0`,
+  so the energy and the whole search stay byte-identical to before (ADR-0003).
 - **Opt-in spread-stagnation early-exit for `solve()` (#404 / F7).** Two new
   `SearchConfig` fields — `spread_stall_restarts: int | None` (default `None`)
   and `spread_stall_epsilon_m: float` (default `0.05` m) — let a spread-ON solve
@@ -39,9 +57,51 @@ All notable changes to this project are documented here. Format follows [Keep a 
   hangarfit brand (DocGerdSoft lineage + the 2D tokens + the 3D dark-surface
   section + the full token table), so the viewer's colours, banners, and
   typography trace to one document.
+- **Profile-first benchmarking — harness + always-on CI gate (#381, #403 / F6).**
+  A committed dev/CI-only `bench/` harness (`python -m bench.profile_pipeline`)
+  splits each regime's wall-clock into placement vs routing across trivial /
+  roomy-multi / tight-placeholder × spread on/off regimes, binding on
+  `max_restarts` (not wall-clock) so the numbers reproduce run-to-run; it lives
+  at the repo root outside `where=["src"]`, so `pip install`, the wheel build,
+  and pytest never touch it. Its headline finding
+  (`docs/spikes/solve-tow-profiling.md`) overturns the prior premise that
+  routing dominates: on the default spread-ON path placement is ~53× routing,
+  almost all of it the spread post-pass rebuilding part geometry on every
+  `collisions.check` — directly seeding the #453/#454 speedups below. F6 (#403)
+  then promotes the harness's correctness, path-validity, determinism, and speed
+  invariants into a dedicated `bench-gates.yml` that fails every `develop`/`main`
+  PR on a regression (the speed ceiling a generous catastrophic-regression
+  tripwire pinned to `ubuntu-24.04`, not a microbenchmark).
 
 ### Changed
 
+- **Spread-off tow fallback promoted into the library `solve()` (#402 / F5).**
+  The ADR-0016/#280 spread-vs-towability rescue used to live in `cli.py`, so any
+  non-CLI caller of `solve(plan_paths=True)` bypassed it and could get a
+  spread-maximized layout that was routable from the CLI but un-routable from the
+  library. `solve()` now resolves the seed and `SearchConfig` once above both
+  passes and, when spread stayed on and every returned layout came back
+  un-routable, re-solves once with `spread=False` (inheriting the caller's
+  `max_restarts`, so still deterministic, not wall-clock-bound). The swap is
+  recorded on a new always-present `SolverDiagnostics.spread_fallback_applied`
+  (default `False`, no schema bump); the CLI drops its own fallback and just
+  surfaces the flag on stderr and in `--json` / `--write-yaml`. The re-selection
+  is RNG-free and the `(0, 0.0)` validity gate is untouched, so the
+  byte-identical determinism contract holds (ADR-0003).
+- **Faster placement search — geometry memoization + a collision broad-phase
+  (#453, #454).** The #381 spike found placement dominates the pipeline (~53×
+  routing), bottlenecked on `aircraft_parts_world` rebuilding Shapely polygons on
+  every collision/clearance check. #453 adds a `ContextVar`-scoped per-`solve()`
+  cache keyed on `(plane_id, x, y, heading)` consulted at the hot call sites,
+  taking the canonical `roomy_three_spread_on` placement from 42.3 s to ~18.7 s
+  (~2.3×). #454 then adds a per-axis AABB broad-phase in
+  `collisions._pairwise_conflicts` that skips the exact Shapely predicate for
+  part-pairs whose bounding boxes are more than `clearance_m` apart — a provable
+  lower bound on true edge-to-edge distance, so no conflicting pair is ever
+  skipped — taking it a further 18.7 s → 15.7 s (−15.8 %). Both are pure-speed
+  levers verified byte-identical against `develop` at fixed `max_restarts` across
+  seeds; the conflict set, penetration accumulation order, and the determinism
+  contract are unchanged (ADR-0003).
 - **3D viewer renders on the DocGerdSoft dark-surface brand (#415).** `hangarfit
   view` now uses the dark-lifted fleet palette (`PLANES_DARK`, keyed by the same
   sorted id so 2D/3D plane identity is preserved), a unified scene shell
@@ -62,9 +122,45 @@ All notable changes to this project are documented here. Format follows [Keep a 
   is byte-identical across re-renders of a given scene, the CVD-safe palette
   (#326) values are unchanged, and the
   collision model / determinant-−1 transform are untouched (ADR-0019).
+- **2D maintenance-bay and placeholder banner aligned to the brand tokens
+  (#418).** Building on #419's centralization, the matplotlib 2D PNG drops two
+  off-system reds the 3D surface had already resolved: the closed maintenance-bay
+  fill now reads the `maint` violet the 3D bay uses (with an ink-dark edge/label
+  — the lighter violet needs dark ink for contrast), and the "PLACEHOLDER DATA"
+  honesty banner now uses the single-source `WARNING` amber, matching the 3D
+  banner for cross-surface parity. Render-only with no collision, determinism, or
+  `scene/v1` impact; the 3D banner value is unchanged, so the viewer HTML stays
+  byte-identical.
+- **Viewer ported to a typed, modular, dev/CI-only TypeScript toolchain (#436).**
+  The single hand-written `_viewer_assets/viewer.js` is now built by an esbuild +
+  `tsc` + eslint toolchain (top-level `viewer/`, ADR-0020) from typed modules
+  under `viewer/src/*.ts`; Node is a dev/CI concern only — `pip install`, the
+  wheel build, and pytest never invoke npm, and the wheel still ships the one
+  committed `viewer.js` bundle. The migration scaffolded the toolchain (#437),
+  atomically ported the renderer (#439), and added typed `scene-contract.ts` /
+  `brand-contract.ts` mirrors with Python key-set parity tests plus node-native
+  unit tests for the pure `affine` / `anchors` / `timeline` units (#440).
+  Equivalence is semantic, not byte-for-byte: the headless render is
+  pixel-identical (same screenshot hash) on a static and an animated fixture.
+  Render-only and determinism-neutral — the `scene/v1` schema is unchanged,
+  `scene.py` / `collisions.py` are untouched, Python still owns the
+  determinant-−1 transform, and a `viewer-build-drift` CI guard byte-pins the
+  committed bundle.
 
 ### Fixed
 
+- **Tow entry respects the door-jamb clearance instead of clipping the wall
+  (#411).** The #222 front-gap exemption dropped the entire front wall for a
+  mover in transit, so a plane straddling `y < 0` *outside* the door opening (an
+  off-centre or too-wide entry) clipped the solid wall/jamb with no rejection —
+  visible in the 3D viewer as a wing through the wall at tow `t=0`. The exemption
+  is now door-aware in the shared motion oracle: a vertex at `y < 0` is legal
+  only when `door_left ≤ x ≤ door_right`, otherwise it is a `hangar_bounds`
+  conflict. The door becomes a true motion gate for the whole tow, so off-centre
+  entries that would clip are filtered (the planner self-selects a centred/angled
+  entry) and a plane wider than the door at every orientation is reported
+  un-towable (best-effort `plans[i]=None`) rather than drawn clipping. RNG-free
+  and closed-form, so the ADR-0003 planner determinism contract holds.
 - **Solver no longer false-rejects glider fleets (#425).** The pre-search
   trivial-infeasibility gate (`solve` check #2) summed each plane's *bounding
   box* (`fuselage_length × wingspan`), which for a thin-winged glider is mostly
@@ -75,6 +171,27 @@ All notable changes to this project are documented here. Format follows [Keep a 
   glider-containing fleets reach the search; only genuinely-too-big fleets still
   short-circuit. RNG-free and pre-search, so the byte-identical determinism
   contract (ADR-0003) is unchanged.
+
+### Security
+
+- **Bumped pip 26.1.1 → 26.1.2 for PYSEC-2026-196 / CVE-2026-8643 (#460).** The
+  `requirements-pip-tools.txt` bootstrap lockfile pinned `pip==26.1.1` (an
+  `--allow-unsafe` transitive of pip-tools), which Scorecard code-scanning
+  flagged as vulnerable (all pip < 26.1.2). The lockfile was regenerated with the
+  canonical command plus `--upgrade-package pip`, bumping pip only to 26.1.2 with
+  fresh hashes — a byte-stable diff under the drift guard, so the lockfile-drift
+  CI jobs pass.
+- **CI supply-chain coverage extended to the viewer TypeScript toolchain (#461,
+  #462, #463).** The dev/CI-only `viewer/` codebase gained the monitoring the
+  Python tree already had: CodeQL became a per-language matrix adding a
+  `javascript-typescript` analysis scoped to `viewer/src` (vendored Three.js
+  excluded), preserving the existing required `Analyze (Python)` check (#461);
+  Dependabot got a weekly `npm` ecosystem entry for `/viewer`, with
+  `three` / `@types/three` ignored because they are pinned in lockstep with
+  vendored r160 (#462); and a PR-time `dependency-review` gate (fail-on high,
+  covering pip + npm) plus `ruff` over the dev-only `bench/` harness landed
+  (#463). All CI / supply-chain only — no runtime, collision, or determinism
+  impact; the actions stay SHA-pinned.
 
 ## [0.10.0] — 2026-06-04
 
@@ -308,7 +425,8 @@ First Phase 1 cut — substrate for arranging the flying club fleet in a stack-s
 - Apache-2.0 license, public-audience README, CI matrix (Python 3.11 + 3.12), branch protection on develop + main (#13, #14, #15, #16).
 - Strut-aware golden tests + all-9-planes fixture using larger test-only hangar to accommodate strut-bracing geometry on placeholder dimensions (#5).
 
-[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.10.0...HEAD
+[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.11.0...HEAD
+[0.11.0]: https://github.com/DocGerd/hangarfit/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/DocGerd/hangarfit/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/DocGerd/hangarfit/compare/v0.8.0...v0.9.0
 [0.8.0]: https://github.com/DocGerd/hangarfit/compare/v0.7.2...v0.8.0
