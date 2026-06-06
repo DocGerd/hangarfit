@@ -712,10 +712,10 @@ class TestBroadPhaseEquivalence:
     *same* ``world_parts`` (so the only variable is the filter). The 35° heading
     cases are load-bearing: an oriented rectangle's AABB is strictly larger than
     the rectangle (ADR-0002's non-axis-aligned requirement), so the filter must
-    NOT skip a pair whose boxes overlap while the polygons are clearance-apart —
-    it must defer to the exact predicate — and must still catch a genuine overlap
-    whose boxes are close. The clearance-gap case pins the threshold: a pair with
-    a sub-clearance box gap must survive the filter.
+    NOT skip a pair whose boxes overlap while the polygons do not actually
+    conflict — it must defer to the exact predicate — and must still catch a
+    genuine overlap whose boxes are close. The clearance-gap case pins the
+    threshold: a pair with a sub-clearance box gap must survive the filter.
     """
 
     @staticmethod
@@ -775,8 +775,9 @@ class TestBroadPhaseEquivalence:
         # 35°-rotated wings genuinely overlapping (boxes close, polygons overlap).
         ("angled_overlap", [("a", 20.0, 20.0, 35.0), ("b", 20.3, 20.4, 35.0)]),
         # 35°-rotated wings whose enlarged AABBs overlap while the thin oriented
-        # rectangles stay clearance-apart — the filter must defer to the exact
-        # predicate here, not skip.
+        # rectangles miss each other entirely (polygons well clear, far beyond
+        # clearance) — the filter must DEFER to the exact predicate here (boxes
+        # overlap, so no skip), and the exact predicate then returns no conflict.
         ("angled_aabb_overlap_polys_clear", [("a", 20.0, 20.0, 35.0), ("b", 22.5, 22.5, 35.0)]),
     ]
 
