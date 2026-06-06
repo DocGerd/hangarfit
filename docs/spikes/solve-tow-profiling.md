@@ -268,6 +268,71 @@ preserving float-summation order in the penetration and energy accumulators.
 
 ---
 
+## F6 — the CI gates (#403)
+
+This spike's harness was always meant to graduate from a one-off measurement into
+an **always-on regression gate** — the single highest-leverage artifact #403/F6
+called for ("correctness is not currently a guarded number"). That graduation now
+ships:
+
+- **The one measured lever** the table pre-committed to — per-solve memoization of
+  `aircraft_parts_world` ([#453](https://github.com/DocGerd/hangarfit/issues/453))
+  — landed byte-identical (2.3× placement on `roomy_three_spread_on`, 42.3 s →
+  18.7 s on the dev machine). That is F6's "exactly one cheap lever"; the broad-phase
+  ([#454](https://github.com/DocGerd/hangarfit/issues/454)) and incremental-`_spread`
+  ([#455](https://github.com/DocGerd/hangarfit/issues/455)) follow-ups stay backlog
+  until re-measured against the post-#453 baseline.
+- **The gate.** A dedicated `.github/workflows/bench-gates.yml` runs
+  `python -m bench.profile_pipeline --gate` on the **fast** regime set on every
+  develop/main PR. `--gate` enforces, and exits non-zero on, four things:
+  **VALIDITY** (every layout scores `(0, 0.0)`), **PATH-VALIDITY** (every committed
+  arc passes `path_first_conflict` at 0.05 m / 1°), **DETERMINISM** (a second run is
+  byte-identical), and **SPEED** (each regime's wall-clock stays under a per-regime
+  ceiling). The first three were already enforced by the harness's exit code since
+  #381; F6 adds the speed ceiling and the workflow.
+
+### The speed gate is a tripwire, not a microbenchmark
+
+The ceilings live in `bench/profile_pipeline.py::_SPEED_CEILING_S` and are
+deliberately **generous**. CI runs on shared 2-vCPU runners with multi-x
+run-to-run variance, so a tight ceiling would flake; the gate's job is to catch a
+**catastrophic, multi-x regression** — e.g. someone reverting #453's memoization,
+which roughly *doubles* `roomy_three_spread_on` placement — not to police a 20 %
+drift. Because the regimes bind on `max_restarts` (not wall-clock), the *work* is
+fixed and the only thing that varies is machine speed, so a generous absolute
+ceiling is a sound, low-flake design. A regime with no ceiling defined is itself a
+gate failure, so a newly added regime cannot silently escape the speed check.
+
+| Regime (fast set) | dev `total_s` (post-#453) | CI median (ubuntu-24.04) | ceiling | headroom |
+|---|---:|---:|---:|---|
+| `trivial_single` | ~0.2 s | 0.6 s | 10 s | catastrophic-only |
+| `roomy_three_spread_on` | ~19 s | **54.6 s** | **100 s** | ~1.8× the CI median |
+| `roomy_three_spread_off` | ~0.9 s | 2.7 s | 20 s | catastrophic-only |
+
+The binding ceiling is `roomy_three_spread_on`. At 100 s it trips on the canonical
+regression — reverting #453's memoization ~2.3×'d that regime's placement, i.e.
+~123 s on this runner — while leaving ~1.8× headroom over the CI median for
+ordinary run-to-run variance. The two tiny regimes keep generous absolute ceilings:
+their small absolute times make proportional jitter larger, so they police a
+catastrophic blow-up (e.g. spread-OFF losing its 1-restart early-exit), not drift.
+
+> **Calibration:** ceilings are sized against the wall-clock the `bench gates`
+> job itself reports on the GitHub-hosted runner (the numbers above were measured
+> on `ubuntu-24.04`, 2026-06-06). Recalibrate only when the regimes change, the
+> lever set changes, or GitHub changes the runner class — and re-confirm the
+> ceiling still trips on a memoization-revert (the canonical regression).
+
+### What F6 deliberately did NOT do
+
+Per #403's escalation gate, the profile pointed at a **cheap** lever (#453), so F6
+shipped it inside this milestone. Had the cheapest sufficient lever been XL (a
+warm-start packer, an incremental collision check — both CUT as
+over-engineered / determinism-fragile), that would have become a separate go/no-go
+milestone decision, not an auto-build. The determinism contract (ADR-0003) is
+**unchanged**: the gate *enforces* byte-identity rather than relaxing it.
+
+---
+
 ## Out of scope (unchanged from #381)
 
 Implementing the speedups (each is its own follow-up issue), CNN approaches
