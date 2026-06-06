@@ -370,8 +370,12 @@ def _run_solve(
             # once ``spread_stall_restarts`` consecutive restarts fail to improve
             # the set's maximin gap by ``spread_stall_epsilon_m``. The metric is
             # ``min(min_gap)`` over the selected basins (the maximin objective,
-            # ADR-0008) — for ``alternatives == 1`` that is the pool's best gap.
-            # Seed-fixed restart sequence + an integer counter ⇒ identical
+            # ADR-0008) — for ``alternatives == 1`` that is the pool's best gap
+            # and strictly monotonic; for ``alternatives > 1`` it need not be
+            # monotonic (the diversity gate can re-pick the set), but
+            # ``best_stall_gap`` tracks the running max, so the stop stays a sound,
+            # deterministic "no improvement in the last N restarts" signal either
+            # way. Seed-fixed restart sequence + an integer counter ⇒ identical
             # per-seed across machines, narrowing the #267 timing scope (ADR-0003).
             selected_so_far, _ = _select_spread_diverse(pool, alternatives, diversity)
             if len(selected_so_far) >= alternatives:
@@ -552,7 +556,7 @@ def _build_found_result(
     diversity_impossible: bool,
     diversity_rejected_count: int,
     valid_basins_found: int,
-    spread_stall_applied: bool = False,
+    spread_stall_applied: bool,
 ) -> SolveResult:
     """Build the ``found`` / ``found_partial`` :class:`SolveResult`.
 

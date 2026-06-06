@@ -1017,12 +1017,14 @@ class SearchConfig:
     Useful for cross-machine-deterministic exhaustion canaries that
     can't rely on wall-clock budget cutoffs.
 
-    ``None`` is the only *kind* of "opt out" sentinel in
+    ``None`` is the only kind of **opt-out** sentinel in
     :class:`SearchConfig` / :class:`DiversityConfig` /
-    :class:`SolverDiagnostics` — used here and by ``spread_stall_restarts``;
-    all other numeric fields require a concrete positive value. Pass ``None``
-    explicitly to disable the cap; passing ``0`` is rejected (it would
-    skip the search loop entirely)."""
+    :class:`SolverDiagnostics`: it means "disabled" on ``max_restarts`` and on
+    ``spread_stall_restarts``. (``spread_scale_m``'s ``None`` is *not* an
+    opt-out — it selects the adaptive default scale rather than disabling
+    anything.) Every other numeric field requires a concrete positive value.
+    Pass ``None`` explicitly to disable the cap; passing ``0`` is rejected (it
+    would skip the search loop entirely)."""
 
     spread: bool = True
     """When True (default), ``solve()`` runs a post-pass spread phase on each
@@ -1062,8 +1064,9 @@ class SearchConfig:
     CLI never builds one). Modeled as ``float = 0.0`` rather than ``float |
     None`` deliberately: ``0.0`` is the exact identity of ``weight · B``
     (contributes nothing), not a degenerate value, so no distinct opt-out
-    sentinel is warranted — ``None`` stays the only *kind* of sentinel in this
-    dataclass (used by ``max_restarts`` and ``spread_stall_restarts``)."""
+    sentinel is warranted — ``None``-means-disabled (on ``max_restarts`` and
+    ``spread_stall_restarts``) stays the only kind of opt-out sentinel in this
+    dataclass; see ``max_restarts``."""
 
     spread_stall_restarts: int | None = None
     """(F7 / #404) Opt-in early-exit for the spread-ON restart loop. ``None``
@@ -1079,7 +1082,8 @@ class SearchConfig:
     wall-clock), so the selected layout is identical for a given seed across
     machines: this *narrows* the #267 timing scope rather than widening it
     (ADR-0003). No effect when ``spread=False`` (that path already first-valid
-    early-exits).
+    early-exits) — a ``spread=False`` config with this set is a silent no-op by
+    design, *not* an error, mirroring ``back_bias_weight``.
 
     Calibrated from the F6 benchmark (``bench.profile_pipeline``): on the
     canonical ``roomy_three_spread_on`` regime the maximin gap reaches ~96 % of
@@ -1090,9 +1094,9 @@ class SearchConfig:
 
     spread_stall_epsilon_m: float = 0.05
     """(F7 / #404) Minimum maximin-gap improvement (metres) that counts as
-    progress for ``spread_stall_restarts``. A concrete positive value, not a
-    sentinel — ``None`` stays the only *kind* of opt-out sentinel in this
-    dataclass (``max_restarts`` / ``spread_stall_restarts``). Default ``0.05`` m
+    progress for ``spread_stall_restarts``. A concrete positive value, never an
+    opt-out sentinel (that role is reserved for ``None`` on ``max_restarts`` /
+    ``spread_stall_restarts`` — see ``max_restarts``). Default ``0.05`` m
     (5 cm): on the F6 ``roomy_three_spread_on`` regime the only post-plateau gains
     are a negligible +0.048 m bump and a real +0.396 m late basin, so 5 cm treats
     the former as noise while a genuinely better-separated basin still resets the

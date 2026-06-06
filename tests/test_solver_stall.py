@@ -94,3 +94,28 @@ def test_spread_stall_exit_is_deterministic_across_runs() -> None:
     assert r1.diagnostics.min_pairwise_gap_m == r2.diagnostics.min_pairwise_gap_m
     for la, lb in zip(r1.layouts, r2.layouts, strict=True):
         assert la.placements == lb.placements
+
+
+def test_spread_stall_with_multiple_alternatives() -> None:
+    """For ``alternatives > 1`` the stagnation metric is ``min(min_gap)`` over the
+    *selected set* (not just the single best basin), so this exercises the
+    multi-element path. A large epsilon forces the early-exit once two diverse
+    basins exist, deterministically, while still returning the full set."""
+    cfg = SearchConfig(
+        spread=True,
+        max_restarts=20,
+        spread_stall_restarts=2,
+        spread_stall_epsilon_m=1000.0,
+    )
+    r1 = solve(_scenario(), budget_s=600.0, alternatives=2, seed=1, plan_paths=False, search=cfg)
+    r2 = solve(_scenario(), budget_s=600.0, alternatives=2, seed=1, plan_paths=False, search=cfg)
+
+    assert r1.status == "found"
+    assert len(r1.layouts) == 2
+    assert r1.diagnostics.spread_stall_applied is True
+    assert r1.diagnostics.restarts_attempted < 20
+    # Same seed + config ⇒ byte-identical, on the multi-alternative metric path.
+    assert r1.diagnostics.restarts_attempted == r2.diagnostics.restarts_attempted
+    assert r1.diagnostics.min_pairwise_gap_m == r2.diagnostics.min_pairwise_gap_m
+    for la, lb in zip(r1.layouts, r2.layouts, strict=True):
+        assert la.placements == lb.placements

@@ -10,7 +10,7 @@ All notable changes to this project are documented here. Format follows [Keep a 
   `SearchConfig` fields — `spread_stall_restarts: int | None` (default `None`)
   and `spread_stall_epsilon_m: float` (default `0.05` m) — let a spread-ON solve
   stop the restart loop once N consecutive restarts fail to improve the selected
-  layout's maximin plan-view gap by epsilon, instead of always running the full
+  set's maximin plan-view gap by epsilon, instead of always running the full
   budget. The counter arms only after a complete (`≥ alternatives`) selection
   exists, so hard scenarios still get the full budget to find their first answer.
   Default (`None`) preserves today's run-to-budget behaviour byte-for-byte (the
