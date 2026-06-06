@@ -303,15 +303,23 @@ fixed and the only thing that varies is machine speed, so a generous absolute
 ceiling is a sound, low-flake design. A regime with no ceiling defined is itself a
 gate failure, so a newly added regime cannot silently escape the speed check.
 
-| Regime (fast set) | dev `total_s` (post-#453) | ceiling | headroom |
-|---|---:|---:|---:|
-| `trivial_single` | ~0.2 s | 10 s | catastrophic-only |
-| `roomy_three_spread_on` | ~19 s | 90 s | ~2× the expected CI median |
-| `roomy_three_spread_off` | ~0.9 s | 20 s | catastrophic-only |
+| Regime (fast set) | dev `total_s` (post-#453) | CI median (ubuntu-24.04) | ceiling | headroom |
+|---|---:|---:|---:|---|
+| `trivial_single` | ~0.2 s | 0.6 s | 10 s | catastrophic-only |
+| `roomy_three_spread_on` | ~19 s | **54.6 s** | **100 s** | ~1.8× the CI median |
+| `roomy_three_spread_off` | ~0.9 s | 2.7 s | 20 s | catastrophic-only |
+
+The binding ceiling is `roomy_three_spread_on`. At 100 s it trips on the canonical
+regression — reverting #453's memoization ~2.3×'d that regime's placement, i.e.
+~123 s on this runner — while leaving ~1.8× headroom over the CI median for
+ordinary run-to-run variance. The two tiny regimes keep generous absolute ceilings:
+their small absolute times make proportional jitter larger, so they police a
+catastrophic blow-up (e.g. spread-OFF losing its 1-restart early-exit), not drift.
 
 > **Calibration:** ceilings are sized against the wall-clock the `bench gates`
-> job itself reports on `ubuntu-latest`. Recalibrate only when the regimes change,
-> the lever set changes, or GitHub changes the runner class — and re-confirm the
+> job itself reports on the GitHub-hosted runner (the numbers above were measured
+> on `ubuntu-24.04`, 2026-06-06). Recalibrate only when the regimes change, the
+> lever set changes, or GitHub changes the runner class — and re-confirm the
 > ceiling still trips on a memoization-revert (the canonical regression).
 
 ### What F6 deliberately did NOT do

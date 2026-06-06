@@ -33,24 +33,32 @@ from .regimes import FAST_REGIMES, REGIMES, regime_by_key
 #
 # Per-regime wall-clock ceilings (seconds) enforced ONLY under ``--gate``. These
 # are a *catastrophic-regression tripwire, not a microbenchmark*: CI runs on
-# shared 2-vCPU runners with multi-x run-to-run variance, so a tight ceiling
-# would flake. The regimes bind on ``max_restarts`` (regimes.py), which fixes the
-# *work*, so the only thing that varies is machine speed — and the ceiling is set
-# with enough headroom (~2-3x the observed CI median) to absorb that while still
-# tripping on a real multi-x regression. Worked example: reverting #453's
-# ``aircraft_parts_world`` memoization roughly *doubled* ``roomy_three_spread_on``
-# placement (18.7 s → 42.3 s on the dev machine) — exactly the class of
-# accidental algorithmic regression this gate exists to catch.
+# shared GitHub-hosted runners with multi-x run-to-run variance, so a tight
+# ceiling would flake. The regimes bind on ``max_restarts`` (regimes.py), which
+# fixes the *work*, so the only thing that varies is machine speed — and each
+# ceiling carries enough headroom to absorb that while still tripping on a real
+# multi-x regression.
 #
-# Calibration: values are sized against the ubuntu-latest runner numbers printed
-# by the ``bench gates`` workflow itself (see docs/spikes/solve-tow-profiling.md,
-# §"F6 — the CI gates"). Recalibrate — and only then — when the regimes change,
-# the lever set changes, or GitHub changes the runner class. The gate refuses to
-# run a regime that has no ceiling defined (see ``_evaluate_gate``) so a newly
-# added regime can never silently escape the speed check.
+# Calibration (2026-06-06, ubuntu-24.04 GitHub-hosted runner, as measured by the
+# ``bench gates`` workflow itself): trivial_single 0.6 s, roomy_three_spread_on
+# 54.6 s, roomy_three_spread_off 2.7 s. The binding ceiling is
+# ``roomy_three_spread_on`` at 100 s (~1.8x the CI median): it trips on the
+# canonical regression — reverting #453's ``aircraft_parts_world`` memoization,
+# which ~2.3x'd that regime's placement (18.7 s → 42.3 s on the dev machine, i.e.
+# ~123 s on this runner) — while tolerating ordinary CI variance. The two tiny
+# regimes keep deliberately generous absolute ceilings: their absolute times are
+# small enough that proportional jitter is larger, and they exist to catch a
+# catastrophic blow-up (e.g. spread-OFF losing its 1-restart early-exit), not to
+# police drift.
+#
+# Recalibrate — and only then — when the regimes change, the lever set changes,
+# or GitHub changes the runner class; re-confirm the ceiling still trips on a
+# memoization-revert. The gate refuses to run a regime that has no ceiling defined
+# (see ``_evaluate_gate``) so a newly added regime can never silently escape it.
+# See docs/spikes/solve-tow-profiling.md §"F6 — the CI gates".
 _SPEED_CEILING_S: dict[str, float] = {
     "trivial_single": 10.0,
-    "roomy_three_spread_on": 90.0,
+    "roomy_three_spread_on": 100.0,
     "roomy_three_spread_off": 20.0,
 }
 
