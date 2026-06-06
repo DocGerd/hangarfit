@@ -840,9 +840,9 @@ def _emit_solve_json(
 
     ``spread_fallback_applied`` is read straight off ``SolverDiagnostics``:
     since #402 / F5 the spread-off re-solve is a library ``solve()`` decision
-    (not a CLI one), so it is a genuine solver fact recorded on the result. It
-    is emitted as an always-present (default False) additive diagnostics field
-    so non-interactive consumers can rely on it without a schema bump.
+    (not a CLI one), so it is a genuine solver fact recorded on the result. See
+    the ``SolverDiagnostics`` docstring for its always-present / no-schema-bump
+    contract.
     """
     d = result.diagnostics
     payload = {
