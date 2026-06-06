@@ -16,11 +16,12 @@ All notable changes to this project are documented here. Format follows [Keep a 
   candidates) and recomputes only the moved plane's pairs — an O(n²)→O(n)
   reduction in pairwise distances per candidate. The energy is still summed over
   all pairs in canonical order, so the result is **byte-for-byte identical** to
-  before (ADR-0003): verified by diffing solve output across 3 fixtures × 5 seeds
-  against the prior `develop`, the determinism canaries, and the bench
-  run-twice check. It is a distance memo, never the bit-divergent delta-update.
-  Measured `roomy_three_spread_on` placement 15.04 s → 14.08 s median (~6 %) at
-  n = 3; the saving grows with fleet size.
+  before (ADR-0003): verified by diffing solve output against the prior `develop`
+  across the two spread-active fixtures (3- and 6-plane) over 5 seeds each, the
+  determinism canaries, and the bench run-twice check. It is a distance memo,
+  never the bit-divergent delta-update. Measured `roomy_three_spread_on`
+  placement 15.04 s → 14.08 s median (~6 %) at n = 3 (baseline itself down from
+  the spike's 40.6 s after #453/#454); the saving grows with fleet size.
 
 - **Consolidated example artifacts under a top-level `examples/` umbrella
   (#448).** The root `layouts/` (hand-authored demo layouts) and `herrenteich/`
