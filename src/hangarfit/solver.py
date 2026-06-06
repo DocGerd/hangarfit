@@ -26,6 +26,7 @@ import random as _random_module
 import secrets
 import sys
 import time
+from dataclasses import replace
 from typing import Literal, NamedTuple
 
 from hangarfit.collisions import check as check_layout
@@ -99,29 +100,76 @@ def solve(
     ``tow_heuristic="euclidean"`` to opt out, or a larger ``tow_max_expansions``
     to widen the per-plane budget. All RNG-free, so determinism holds (ADR-0003).
     """
+    # Resolve seed and search ONCE here, above the (possible) two-pass fallback
+    # below, so both passes share an identical, reproducible seed (#402 / F5):
+    # without this, a ``seed=None`` caller would draw a *different* entropy seed
+    # for each pass, making the fallback non-reproducible. A concrete seed
+    # passed down makes ``_run_solve``'s own resolution a pass-through.
+    resolved_seed = seed if seed is not None else secrets.randbits(32)
+    effective_search = search if search is not None else SearchConfig()
+
     # Per-solve aircraft_parts_world memoization (#453). The #381 profile found
     # this transform is the pipeline's hot spot, with ≈84 % of calls rebuilding
     # an already-seen pose. Running the whole solve (placement + spread +
     # tow-planning) inside one fresh cache collapses those rebuilds; the cache
     # resets on exit, so a double-run stays byte-identical (ADR-0003). The body
     # lives in `_run_solve` so this scope wraps every geometry call without a
-    # 197-line reindent.
+    # 197-line reindent. Both fallback passes share the one scope — the cache is
+    # a pure memo of a pure transform, so a warm cache changes speed, not values.
     #
     # Re-baselining against pre-#453 output must pin `max_restarts` (or
     # `spread=False`): the speedup changes how many restarts fit a wall-clock
     # `budget_s`, which #267 already scopes OUT of the byte-identical guarantee.
     with pose_cache_scope():
-        return _run_solve(
+        result = _run_solve(
             scenario,
             budget_s=budget_s,
             alternatives=alternatives,
-            seed=seed,
+            seed=resolved_seed,
             diversity=diversity,
-            search=search,
+            search=effective_search,
             plan_paths=plan_paths,
             tow_heuristic=tow_heuristic,
             tow_max_expansions=tow_max_expansions,
         )
+
+        # Spread-vs-towability fallback (#280 → #402 / F5; ADR-0016). The
+        # ADR-0008 spread post-pass (default ON) maximizes inter-plane gaps,
+        # which can push planes into positions the bounded tow planner can no
+        # longer thread from the door cone: every plan comes back ``None`` even
+        # though the SAME fleet+hangar routes cleanly with spread off. When the
+        # caller asked for tow plans, kept spread on, and got valid-but-unroutable
+        # layout(s), re-solve once with spread disabled and prefer the routable
+        # (tighter) arrangement. The re-solve inherits ``effective_search`` with
+        # only ``spread`` flipped off — so it keeps the caller's ``max_restarts``
+        # (deterministic, NOT wall-clock-bound; carried ``back_bias_weight`` is
+        # inert with spread off). RNG-free re-selection: changes WHICH valid
+        # layout is returned, never WHETHER it is valid (the ``(0, 0.0)`` gate is
+        # untouched), so determinism holds end-to-end (ADR-0003).
+        if (
+            plan_paths
+            and effective_search.spread
+            and result.layouts
+            and all(plan is None for plan in result.plans)
+        ):
+            fallback = _run_solve(
+                scenario,
+                budget_s=budget_s,
+                alternatives=alternatives,
+                seed=resolved_seed,
+                diversity=diversity,
+                search=replace(effective_search, spread=False),
+                plan_paths=True,
+                tow_heuristic=tow_heuristic,
+                tow_max_expansions=tow_max_expansions,
+            )
+            if fallback.layouts and any(plan is not None for plan in fallback.plans):
+                return replace(
+                    fallback,
+                    diagnostics=replace(fallback.diagnostics, spread_fallback_applied=True),
+                )
+
+        return result
 
 
 def _run_solve(
