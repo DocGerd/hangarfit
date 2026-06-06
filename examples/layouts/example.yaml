@@ -8,11 +8,11 @@
 #
 # This is the canonical smoke test from CLAUDE.md:
 #
-#     hangarfit check layouts/example.yaml --render out.png
+#     hangarfit check examples/layouts/example.yaml --render out.png
 #
 # It must produce ``valid`` (exit 0). A clean PNG is the demo output a
 # first-time user sees. If you want to see the conflict-overlay branch
-# of the visualiser, use ``layouts/example_invalid.yaml`` (a deliberately
+# of the visualiser, use ``examples/layouts/example_invalid.yaml`` (a deliberately
 # bad layout shipped alongside this file for that purpose).
 #
 # Hangar: 18 m wide × 25 m deep (data/hangar.yaml). Maintenance bay
@@ -30,8 +30,8 @@
 #   - cessna_150  (training flight)
 #   - fk9_mkii    (pleasure flight)
 
-fleet: ../data/fleet.yaml
-hangar: ../data/hangar.yaml
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
 
 maintenance:
   plane: scheibe_falke

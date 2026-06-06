@@ -1,4 +1,4 @@
-"""Guards the real Airfield Herrenteich dataset (`herrenteich/`).
+"""Guards the real Airfield Herrenteich dataset (`examples/herrenteich/`).
 
 These are real (DWG-measured hangar + published-spec fleet) files kept
 separate from the synthetic `data/` placeholders. The dataset's promise is
@@ -15,7 +15,7 @@ from hangarfit.geometry import aircraft_parts_world
 from hangarfit.loader import load_fleet, load_hangar, load_layout
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-HERRENTEICH = REPO_ROOT / "herrenteich"
+HERRENTEICH = REPO_ROOT / "examples" / "herrenteich"
 
 # Real office NOTCH (back-right corner): non-floor space the rectangular hangar
 # model does NOT enforce (hangar.yaml + spike #424). Derived from the rectangle
@@ -59,7 +59,7 @@ def test_everyone_home_layout_is_valid() -> None:
     assert {p.plane_id for p in layout.placements} == USUAL_OCCUPANTS
     result = collisions.check(layout)
     assert result.conflicts == (), (
-        f"herrenteich/layout.yaml is no longer valid: {[c.kind for c in result.conflicts]}"
+        f"examples/herrenteich/layout.yaml is no longer valid: {[c.kind for c in result.conflicts]}"
     )
 
 
