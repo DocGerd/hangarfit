@@ -357,6 +357,31 @@ bound it is timing-scoped as described above.
 
 ---
 
+### 2026-06-06 — opt-in spread-stagnation early-exit narrows the timing scope (issue #404 / F7)
+
+The opt-in `SearchConfig.spread_stall_restarts` (see the ADR-0008 amendment
+dated 2026-06-06) terminates the spread-ON restart loop once N consecutive
+restarts fail to improve the selected set's maximin gap by an absolute epsilon.
+This **narrows** — never widens — the wall-clock timing-dependence scoped above:
+
+- The stop condition reads only the seed-fixed restart sequence, the
+  fully-ordered `_select_spread_diverse` pool, and an integer counter. It adds no
+  RNG draws and no wall-clock reads, so under a `max_restarts` bound a run with
+  `spread_stall_restarts` set is **still fully reproducible across machines** —
+  the counter trips at the same restart everywhere.
+- It cannot make a previously-reproducible (`max_restarts`-bounded) run
+  non-reproducible: it only changes the *restart at which the loop stops*, and it
+  stops at a seed-deterministic point. For the wall-clock-bounded spread-ON path
+  it can only cause the loop to stop *earlier* than `budget_s` would — turning a
+  timing-variable tail into a seed-fixed one.
+
+The default (`spread_stall_restarts=None`) preserves the pre-F7 behaviour
+byte-for-byte, so the `tests/test_solver_canaries.py` determinism canaries (which
+run `spread=False`) and the `determinism-guard` contract are unaffected. No
+change to the RR-MC algorithm itself.
+
+---
+
 ### 2026-05-23 — maintenance-plane handling, post-milestone-#9
 
 Two passages in the body above describe how RR-MC handles the
