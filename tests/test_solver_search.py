@@ -221,7 +221,7 @@ def test_score_valid_layout_is_zero_zero():
     from hangarfit.loader import load_layout
     from hangarfit.solver import _score
 
-    layout = load_layout(REPO_ROOT / "layouts" / "example.yaml")
+    layout = load_layout(REPO_ROOT / "examples" / "layouts" / "example.yaml")
     s = _score(layout)
     assert s == (0, 0.0)
 
@@ -230,13 +230,13 @@ def test_score_invalid_layout_is_positive():
     from hangarfit.loader import load_layout
     from hangarfit.solver import _score
 
-    # layouts/example_invalid.yaml is documented in CLAUDE.md as
+    # examples/layouts/example_invalid.yaml is documented in CLAUDE.md as
     # exercising 3 conflict kinds (hangar_bounds + wing_wing_overlap +
     # strut_wing_overlap). At least the wing/wing and strut/wing
     # conflicts produce real overlap area, so penetration is strictly
     # positive — vacuous `>= 0.0` would mask a regression that
     # accidentally returned 0.0 for every conflict.
-    layout = load_layout(REPO_ROOT / "layouts" / "example_invalid.yaml")
+    layout = load_layout(REPO_ROOT / "examples" / "layouts" / "example_invalid.yaml")
     s = _score(layout)
     count, penetration = s
     assert count >= 3, f"expected ≥3 conflicts in example_invalid; got {count}"
@@ -260,7 +260,7 @@ def test_score_lex_ordering_matches_spec():
     from hangarfit.loader import load_layout
     from hangarfit.solver import _score as score_fn
 
-    score = score_fn(load_layout(REPO_ROOT / "layouts" / "example.yaml"))
+    score = score_fn(load_layout(REPO_ROOT / "examples" / "layouts" / "example.yaml"))
     assert isinstance(score, tuple)
     assert isinstance(score[0], int)
     assert isinstance(score[1], float)

@@ -65,17 +65,17 @@ pip install -e .
 hangarfit --version
 
 # Check a hand-authored layout
-hangarfit check layouts/example.yaml
+hangarfit check examples/layouts/example.yaml
 ```
 
-> Note: `layouts/example.yaml` is a deliberate 6-plane subset that fits inside the current placeholder hangar — running `check` on it returns `valid` (exit code 0). To see a conflict diagnosis (red overlay in the PNG render, exit code 1), point at one of the `tests/fixtures/invalid_*.yaml` fixtures. All dimensions in `data/` remain placeholders pending real measurement (see Status), so any verdict on the current data is illustrative.
+> Note: `examples/layouts/example.yaml` is a deliberate 6-plane subset that fits inside the current placeholder hangar — running `check` on it returns `valid` (exit code 0). To see a conflict diagnosis (red overlay in the PNG render, exit code 1), point at one of the `tests/fixtures/invalid_*.yaml` fixtures. All dimensions in `data/` remain placeholders pending real measurement (see Status), so any verdict on the current data is illustrative.
 
 ```bash
 # Render the layout (works on invalid layouts too — conflicts highlighted in red)
-hangarfit check layouts/example.yaml --render out.png
+hangarfit check examples/layouts/example.yaml --render out.png
 
 # Machine-readable output
-hangarfit check layouts/example.yaml --json
+hangarfit check examples/layouts/example.yaml --json
 
 # Override the fleet/hangar (advanced — for layouts without embedded fleet:/hangar: refs)
 hangarfit check my_portable_layout.yaml --fleet path/to/fleet.yaml --hangar path/to/hangar.yaml
@@ -142,11 +142,11 @@ hangarfit view tests/fixtures/valid_left_side_nesting.yaml -o layout3d.html
 hangarfit view --solve tests/fixtures/scenario_minimal.yaml -o solved3d.html
 
 # Static 3D only (skip tow planning), or overlay collision conflicts.
-hangarfit view layouts/example.yaml -o static3d.html --no-animate
+hangarfit view examples/layouts/example.yaml -o static3d.html --no-animate
 hangarfit view some_invalid_layout.yaml -o conflicts3d.html --check --no-animate
 ```
 
-Layout mode best-effort tow-plans for the animation; a layout the planner can't route degrades to a static 3D scene with a stderr note. By default the viewer applies a small deterministic global tow-expansion cap, so an un-routable layout (e.g. the default `layouts/example.yaml`) falls back to the static render in a few seconds rather than grinding through the full disprove budget — a fixed expansion count, **not** a wall-clock deadline ([ADR-0003](docs/adr/0003-rr-mc-solver-algorithm.md)); `--tow-max-expansions` overrides it. The viewer is built from a documented `hangarfit.scene/v1` JSON contract (the seam between the Python core and any renderer) and a pinned, vendored copy of Three.js; the transform stays in Python (per-frame affine matrices), so the viewer never re-derives the determinant-−1 map. See [ADR-0017](docs/adr/0017-3d-viewer-architecture.md) and the schema reference [`docs/architecture/scene-v1-schema.md`](docs/architecture/scene-v1-schema.md).
+Layout mode best-effort tow-plans for the animation; a layout the planner can't route degrades to a static 3D scene with a stderr note. By default the viewer applies a small deterministic global tow-expansion cap, so an un-routable layout (e.g. the default `examples/layouts/example.yaml`) falls back to the static render in a few seconds rather than grinding through the full disprove budget — a fixed expansion count, **not** a wall-clock deadline ([ADR-0003](docs/adr/0003-rr-mc-solver-algorithm.md)); `--tow-max-expansions` overrides it. The viewer is built from a documented `hangarfit.scene/v1` JSON contract (the seam between the Python core and any renderer) and a pinned, vendored copy of Three.js; the transform stays in Python (per-frame affine matrices), so the viewer never re-derives the determinant-−1 map. See [ADR-0017](docs/adr/0017-3d-viewer-architecture.md) and the schema reference [`docs/architecture/scene-v1-schema.md`](docs/architecture/scene-v1-schema.md).
 
 ### JSON schemas
 
@@ -167,8 +167,10 @@ The test suite includes a strut-aware golden set for the collision checker cover
 
 ```
 src/hangarfit/      # models, loader, geometry, collisions, solver, towplanner, visualize, scene, viewer, metrics, cli
-data/               # fleet.yaml, hangar.yaml — placeholder measurements
-layouts/            # hand-authored candidate layouts, one YAML per scenario
+data/               # fleet.yaml, hangar.yaml — synthetic placeholder measurements
+examples/           # demo + real-world example artifacts (not shipped in the wheel)
+  layouts/          #   hand-authored candidate layouts, one YAML per scenario
+  herrenteich/      #   the real DWG-measured Airfield Herrenteich dataset
 tests/              # pytest suite, including strut-aware collision golden tests
 ```
 

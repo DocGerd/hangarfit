@@ -45,7 +45,7 @@ _BACK_FILL_DEFAULT_WEIGHT = 1.0
 # subcommand passes to ``plan_fill`` in layout mode. The default whole-fill
 # budget (towplanner._MAX_FILL_EXPANSIONS, 16000) is tuned to *disprove* a hard
 # fill in bounded time for batch `solve`, but at that scale an un-routable
-# interactive `view` (e.g. layouts/example.yaml) grinds ~2 min before falling
+# interactive `view` (e.g. examples/layouts/example.yaml) grinds ~2 min before falling
 # back to a static scene. A far smaller global cap degrades to static in a few
 # seconds. This bounds the search by a deterministic expansion COUNT, not a
 # wall-clock deadline — a time limit would bail a genuinely-but-slowly-routable
@@ -767,7 +767,7 @@ def _write_yamls(
 ) -> None:
     """Write each layout to PATTERN with ``{i}`` substituted.
 
-    Output format matches ``layouts/example.yaml`` so the file
+    Output format matches ``examples/layouts/example.yaml`` so the file
     round-trips through ``hangarfit check``. Fleet/hangar refs are
     embedded as absolute paths so the written file is location-
     independent.

@@ -8,6 +8,15 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Changed
 
+- **Consolidated example artifacts under a top-level `examples/` umbrella
+  (#448).** The root `layouts/` (hand-authored demo layouts) and `herrenteich/`
+  (the real DWG-measured Airfield Herrenteich dataset) directories moved to
+  `examples/layouts/` and `examples/herrenteich/`, with a new `examples/README.md`
+  index that restates the real-vs-synthetic distinction. The demo layouts' embedded
+  `fleet:`/`hangar:` refs were re-pointed (`../data/…` → `../../data/…`); the
+  synthetic `data/` placeholders are unchanged and stay at the root. No shipped
+  artifact changes — neither directory was ever included in the wheel or sdist.
+
 ### Fixed
 
 ## [0.11.0] — 2026-06-06

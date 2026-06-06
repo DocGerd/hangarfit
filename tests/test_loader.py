@@ -24,7 +24,7 @@ from hangarfit.loader import (
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FLEET_YAML = REPO_ROOT / "data" / "fleet.yaml"
 HANGAR_YAML = REPO_ROOT / "data" / "hangar.yaml"
-EXAMPLE_LAYOUT = REPO_ROOT / "layouts" / "example.yaml"
+EXAMPLE_LAYOUT = REPO_ROOT / "examples" / "layouts" / "example.yaml"
 
 
 def _write(path: Path, text: str) -> Path:
@@ -48,7 +48,7 @@ _MIN_HANGAR = (
 
 
 class TestRealDataFiles:
-    """Loading the actual data/ and layouts/ files in the repo."""
+    """Loading the actual data/ and examples/layouts/ files in the repo."""
 
     def test_bundled_data_files_exist(self) -> None:
         """Sentinel: if a bundled data file is renamed/deleted, every other
