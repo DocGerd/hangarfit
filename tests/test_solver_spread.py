@@ -428,6 +428,71 @@ def test_inter_plane_energy_strictly_increases_with_priority():
     assert _inter_plane_energy(placements, hi, scale) > base
 
 
+# ---------------------------------------------------------------------------
+# Incremental single-plane gap cache in _inter_plane_energy (#455)
+#
+# The spread hill-climb moves ONE plane per iteration and evaluates several
+# candidates for it. Pairs that do NOT involve the moved plane are identical
+# across all candidates, so their (expensive) shapely edge-to-edge distance can
+# be computed once and reused. The SAFE form re-sums ALL pairs in canonical
+# sorted order using cached distances for the unchanged pairs — bit-identical to
+# the full recompute (ADR-0003), unlike a delta-update which drifts ~1e-15 and
+# flips acceptance (#455).
+# ---------------------------------------------------------------------------
+
+
+def _three_plane_placements(scenario):
+    """A valid 3-plane layout's placements dict (plane_id -> Placement)."""
+    res = solve(scenario, seed=0, search=SearchConfig(max_restarts=3), plan_paths=False)
+    return {p.plane_id: p for p in res.layouts[0].placements}
+
+
+def test_gap_cache_byte_identical_to_full_recompute():
+    """A populated gap cache yields the EXACT same energy as the cache-free full
+    recompute — including after moving ONLY the cached ``moved`` plane, where the
+    unchanged pairs stay valid. Bit-identical (``==``), not approximate."""
+    from hangarfit.solver import _inter_plane_energy, _resolve_spread_scale
+
+    s = load_scenario("tests/fixtures/solve_fresh_alternatives_three.yaml")
+    placements = _three_plane_placements(s)
+    scale = _resolve_spread_scale(s, SearchConfig())
+    moved = sorted(placements)[0]
+
+    cache: dict = {}
+    e1 = _inter_plane_energy(placements, s, scale, gap_cache=cache, moved=moved)
+    assert e1 == _inter_plane_energy(placements, s, scale)  # exact, not approx
+
+    # Perturb ONLY ``moved``; the other pair(s) are unchanged, so the cache from
+    # the first call stays valid and the reused result must equal a fresh full
+    # sum (the moved plane's own pairs are always recomputed).
+    shifted = dataclasses.replace(placements[moved], x_m=placements[moved].x_m + 1.0)
+    moved_layout = {**placements, moved: shifted}
+    e2 = _inter_plane_energy(moved_layout, s, scale, gap_cache=cache, moved=moved)
+    assert e2 == _inter_plane_energy(moved_layout, s, scale)  # exact, not approx
+
+
+def test_gap_cache_is_consulted_for_unchanged_pairs():
+    """The cache is actually READ, not accepted-and-ignored: poisoning the cached
+    unchanged-pair distance changes the computed energy. Only the non-``moved``
+    pairs are cached (n=3 with one moved plane => exactly one cacheable pair); the
+    ``moved`` plane's pairs are always recomputed fresh."""
+    from hangarfit.solver import _inter_plane_energy, _resolve_spread_scale
+
+    s = load_scenario("tests/fixtures/solve_fresh_alternatives_three.yaml")
+    placements = _three_plane_placements(s)
+    scale = _resolve_spread_scale(s, SearchConfig())
+    moved = sorted(placements)[0]
+
+    cache: dict = {}
+    e_clean = _inter_plane_energy(placements, s, scale, gap_cache=cache, moved=moved)
+    assert len(cache) == 1  # only the single unchanged (non-moved) pair is cached
+
+    for key in list(cache):
+        cache[key] = 1.0e9  # poison: a huge gap => ~0 repulsion contribution
+    e_poisoned = _inter_plane_energy(placements, s, scale, gap_cache=cache, moved=moved)
+    assert e_poisoned < e_clean  # the cached unchanged pair was consulted
+
+
 def test_solve_priority_zero_byte_identical_to_no_constraints():
     """Inert-by-default at solve() level: all-zero priority selects the SAME
     layout as no priority, same seed (ADR-0003, max_restarts-scoped)."""
