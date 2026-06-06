@@ -63,7 +63,7 @@ If you find yourself about to write a domain assertion in this file, **don't** �
 4. Convert each finding into a **review thread on the diff** (via `gh pr review` line comments / `gh api .../pulls/<n>/comments`). Findings never live only in chat.
 5. Resolve every thread: fix the code (preferred) or reply with rationale, then mark resolved.
 6. If the changes were non-trivial, re-run the review.
-7. When the review arc is clean, flip the PR out of draft (`gh pr ready <n>`) and tell the user it is **clean and ready for final review**. You may mark it ready **even before CI finishes** — readiness tracks the review arc, not the CI run. The user approves and merges. **Never `gh pr merge` from Claude.**
+7. When the review arc is clean, flip the PR out of draft (`gh pr ready <n>`) and tell the user it is **clean and ready for final review**. You may mark it ready **even before CI finishes** — readiness tracks the review arc, not the CI run (the user still cannot merge until the required checks pass, so an early ready flip never risks a premature merge). The user approves and merges. **Never `gh pr merge` from Claude.**
 
 **Stacking PRs (shared-file features).** When a feature splits into PRs that touch
 the same files (parallel branches would conflict), build a linear stack but **base
@@ -330,5 +330,7 @@ git switch develop && git pull
 git switch -c feature/<slug>
 # ... work ...
 git push -u origin feature/<slug>
-gh pr create --base develop --title "..." --body "Closes #N ..."
+gh pr create --draft --base develop --title "..." --body "Closes #N ..."
+# ... review arc; then flip out of draft when clean ...
+gh pr ready <n>
 ```
