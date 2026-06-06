@@ -58,10 +58,12 @@ jobs:
         run: pip install -e . --no-deps --no-build-isolation
 
       - name: Lint with ruff
-        run: ruff check src/ tests/
+        # bench/ is the dev-only solve→tow profiling harness (#381): not shipped
+        # in any wheel, but linted here for consistency with src/ and tests/ (#463).
+        run: ruff check src/ tests/ bench/
 
       - name: Check formatting with ruff
-        run: ruff format --check src/ tests/
+        run: ruff format --check src/ tests/ bench/
 
       - name: Type-check with mypy
         run: mypy src/hangarfit
@@ -79,6 +81,36 @@ jobs:
           files: ./coverage.xml
           fail_ci_if_error: false
           token: ${{ secrets.CODECOV_TOKEN }}
+
+  dependency-review:
+    # PR-time supply-chain gate (#463): fails a PR that introduces a dependency
+    # carrying a known vulnerability, covering BOTH the pip deps (pyproject.toml /
+    # requirements-*.txt) and the npm viewer deps (viewer/package-lock.json). This
+    # complements — does not replace — the two existing layers: Dependabot (which
+    # opens UPDATE PRs for already-landed vulnerable deps) and the weekly OpenSSF
+    # Scorecard osv-scan (which catches vulns already sitting on develop). Without
+    # this gate a vulnerable dep can sit on develop for up to a week before the
+    # weekly scan flags it — the window that surfaced PYSEC-2026-196 (#459). The
+    # action diffs the dependency graph between the PR base and head, so it ONLY
+    # works on pull_request events (it errors on push); since this workflow also
+    # triggers on push to develop/main, the event guard below skips it there.
+    name: dependency review
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      # Read the dependency graph to diff base..head. No PR comment is posted
+      # (comment-summary-in-pr is left off), so pull-requests: write is not needed.
+      contents: read
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+
+      - name: Dependency review (fail on known-vulnerable deps)
+        uses: actions/dependency-review-action@a1d282b36b6f3519aa1f3fc636f609c47dddb294  # v5.0.0
+        with:
+          # Fail the PR when an introduced dependency has a known advisory of
+          # this severity or higher. `high` is the release-blocking bar; tighten
+          # to `moderate` to also gate medium-severity advisories.
+          fail-on-severity: high
 
   lockfile-drift:
     # Guards the silent-failure path created by `pip install -e . --no-deps`
