@@ -1,0 +1,27 @@
+# CodeQL configuration for the `javascript-typescript` analysis (issue #461).
+#
+# The viewer toolchain (ADR-0020, #436) added a real TypeScript codebase under
+# `viewer/src/*.ts`, compiled by esbuild into the committed, wheel-shipped bundle
+# `src/hangarfit/_viewer_assets/viewer.js`. This config scopes CodeQL to OUR
+# source so static analysis covers the code we author, not the vendored r160
+# three.js that ships alongside it.
+#
+# `paths` / `paths-ignore` here are CodeQL's code-scanning path filters (applied
+# to interpreted / uncompiled languages such as JS/TS) — NOT the workflow's
+# `on.<push|pull_request>.paths`. They apply ONLY to this analysis, because the
+# config-file is wired to the `javascript-typescript` matrix entry alone; the
+# Python analysis carries no config-file and keeps scanning the whole repo.
+name: "hangarfit javascript-typescript"
+
+# Analyze only our hand-written viewer TypeScript source. The committed bundle
+# `src/hangarfit/_viewer_assets/viewer.js` is generated from these sources, so
+# scoping to `viewer/src` is sufficient (and avoids double-reporting on the
+# minified build output).
+paths:
+  - viewer/src
+
+# Exclude the vendored, third-party three.js (r160) that ships under the wheel's
+# assets directory — it is not our code. (It already falls outside the `paths`
+# allowlist above; this is an explicit belt-and-suspenders exclusion.)
+paths-ignore:
+  - src/hangarfit/_viewer_assets/three
