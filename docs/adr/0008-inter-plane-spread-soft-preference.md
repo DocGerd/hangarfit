@@ -289,3 +289,37 @@ identical for a given seed across machines, which *narrows* the #267 wall-clock
 timing scope rather than widening it (see the ADR-0003 amendment dated
 2026-06-06). The default `None` path is byte-identical to pre-F7, so the
 `spread=False` determinism canaries and `determinism-guard` are untouched.
+
+### 2026-06-07 — incremental single-plane gap cache (issue #455)
+
+**Background.** The F6 profile (`bench.profile_pipeline`) confirmed the spread
+post-pass is ~99 % of placement on the canonical `roomy_three_spread_on` regime,
+and that within it the repulsion energy (`_inter_plane_energy`) is ~25 % (the rest
+is the per-candidate validity `collisions.check`, which #453's geometry
+memoization already attacks). Each `_spread` iteration perturbs **one** plane and
+scores several candidate positions for it, yet the energy recomputed the
+(expensive) shapely `polygon.distance` for *all* O(n²) pairs on every candidate —
+even the pairs whose gap cannot have changed because neither endpoint moved.
+
+**Change.** `_inter_plane_energy` takes an optional `gap_cache` + `moved` plane.
+For every pair **not** touching `moved` it memoizes the edge-to-edge distance and
+reuses it across the candidates that share the cache (one per `_spread`
+iteration); the `moved` plane's pairs are always recomputed. This turns the
+per-candidate energy cost from O(n²) to O(n) pairwise shapely distances. Every
+caller outside `_spread` passes `gap_cache=None` and gets the original full sweep.
+
+**Determinism — the safe form, NOT a delta-update.** The energy is still summed
+over **all** pairs in canonical `sorted`-id order; only the *source* of each
+pair's gap changes (cache vs. fresh), and a cached gap is the identical float
+(same unchanged poses, deterministic shapely). So the sum is **byte-for-byte
+identical** to the cache-free recompute (ADR-0003) — verified empirically by
+diffing solve output for 3 fixtures × 5 seeds against the pre-change `develop`
+(all identical), plus the two `test_gap_cache_*` unit assertions and the bench
+run-twice determinism check. **Do not** convert this to a delta-update
+("subtract the moved plane's old pair energies, add the new"): the #455 review
+measured that form diverging ~1e-15 in ~29 % of moves, which — because energy is
+the primary acceptance key — flips candidate acceptance and breaks the contract.
+The `back_bias` term (#320) is a per-plane sum with no pairs, so it is always
+re-summed in full. Measured: `roomy_three_spread_on` placement 15.04 s → 14.08 s
+median (~6 %) at n = 3; the saving is O(n²)→O(n) in plane count, so it grows with
+fleet size.

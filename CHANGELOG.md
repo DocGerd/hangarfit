@@ -8,6 +8,20 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Changed
 
+- **Incremental single-plane gap cache in the spread post-pass (#455).** The
+  ADR-0008 spread hill-climb perturbs one plane per iteration and scores several
+  candidate positions for it; the repulsion energy (`_inter_plane_energy`) now
+  memoizes the expensive shapely edge-to-edge distance for the plane pairs that
+  do *not* involve the moved plane (their gap is invariant across those
+  candidates) and recomputes only the moved plane's pairs — an O(n²)→O(n)
+  reduction in pairwise distances per candidate. The energy is still summed over
+  all pairs in canonical order, so the result is **byte-for-byte identical** to
+  before (ADR-0003): verified by diffing solve output across 3 fixtures × 5 seeds
+  against the prior `develop`, the determinism canaries, and the bench
+  run-twice check. It is a distance memo, never the bit-divergent delta-update.
+  Measured `roomy_three_spread_on` placement 15.04 s → 14.08 s median (~6 %) at
+  n = 3; the saving grows with fleet size.
+
 - **Consolidated example artifacts under a top-level `examples/` umbrella
   (#448).** The root `layouts/` (hand-authored demo layouts) and `herrenteich/`
   (the real DWG-measured Airfield Herrenteich dataset) directories moved to
