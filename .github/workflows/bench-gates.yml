@@ -32,7 +32,15 @@ concurrency:
 jobs:
   bench-gates:
     name: bench gates (validity + path-validity + determinism + speed)
-    runs-on: ubuntu-latest
+    # Pin the runner IMAGE (not the floating `ubuntu-latest` label the rest of CI
+    # uses): this job's speed ceilings are calibrated to a specific runner class
+    # (see bench/profile_pipeline.py::_SPEED_CEILING_S), so a silent `ubuntu-latest`
+    # default bump (e.g. the 22.04 → 24.04 rollover) would shift the timing basis
+    # out from under the calibration with no committed file changing to flag it.
+    # Pinning makes a runner-class change a LOUD, deliberate event (image removed →
+    # recalibrate + bump this pin in lockstep with the ceilings). The other CI jobs
+    # are not timing-sensitive, so they stay on `ubuntu-latest`.
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
 
