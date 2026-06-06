@@ -5,6 +5,28 @@
 - **Date:** 2026-06-02
 - **Deciders:** Patrick Kuhn (DocGerd)
 
+> **2026-06-06 amendment ([#402](https://github.com/DocGerd/hangarfit/issues/402) / F5 — promoted into the library `solve()`).**
+> The fallback below originally lived entirely in the CLI (`cmd_solve`) — as the
+> title and "Decision Outcome" still read. #402 moved it **into the library
+> `hangarfit.solver.solve()`** so that *every* caller of `solve(plan_paths=True)`,
+> not just the CLI, gets the tow-routable arrangement: a non-CLI caller previously
+> bypassed the rescue and got a tow-hostile, spread-maximized layout (routable from
+> the CLI, un-routable from the library — an inconsistency). The decision, trigger,
+> guard, and determinism argument are unchanged; only the **layer** moved:
+> - The trigger now fires inside `solve()` when `plan_paths=True`, the effective
+>   `search.spread` is on, the layout(s) are valid, and every plan is `None`.
+> - The re-solve uses `dataclasses.replace(effective_search, spread=False)` rather
+>   than a fresh `SearchConfig(spread=False)`, so it **inherits the caller's
+>   `max_restarts`** (deterministic, not wall-clock-bound). The carried
+>   `back_bias_weight` is inert with spread off, so the result is unchanged for the
+>   CLI's parameter regime.
+> - The swap is now a **solver fact** recorded on the new
+>   `SolverDiagnostics.spread_fallback_applied` field. The CLI no longer
+>   orchestrates the two passes; it reads that flag for the stderr note and the
+>   `--json` / `--write-yaml` provenance.
+> - **Seed-once** now happens in `solve()` (not `cmd_solve`), so the shared-seed
+>   determinism property holds for direct library callers too.
+
 ## Context & Problem Statement
 
 `hangarfit solve --render-paths` should produce "a valid layout **plus** a valid

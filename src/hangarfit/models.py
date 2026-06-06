@@ -842,6 +842,15 @@ class SolverDiagnostics:
     (no pairs). ``valid_basins_found`` is the number of valid spread-polished
     basins the search collected before selection — how much choice best-of-all
     had. Both are advisory.
+
+    ``spread_fallback_applied`` is ``True`` when :func:`hangarfit.solver.solve`
+    re-solved with the inter-plane spread post-pass disabled and substituted
+    that tighter, tow-routable arrangement because the spread layout(s) came
+    back valid but un-routable under ``plan_paths=True`` (the ADR-0016 / #280
+    fallback, promoted into the library in #402 / F5). Always present (``False``
+    in the normal no-swap case) so non-interactive consumers can rely on it.
+    Advisory: the swap changes *which* valid layout is returned, never *whether*
+    it is valid — it does not affect ``status``.
     """
 
     restarts_attempted: int
@@ -854,6 +863,7 @@ class SolverDiagnostics:
     unroutable_planes: tuple[str, ...] = ()
     min_pairwise_gap_m: tuple[float, ...] = ()
     valid_basins_found: int = 0
+    spread_fallback_applied: bool = False
 
     def __post_init__(self) -> None:
         if (self.best_partial is None) != (self.best_partial_layout is None):
