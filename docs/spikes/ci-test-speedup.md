@@ -10,19 +10,21 @@ separate implementation issue.
 
 ## TL;DR
 
-The `test (Python 3.12)` job is the dominant per-PR wall-clock (~569 s median),
-and **94.8 % of it is `pytest` itself** (601 s of 634 s). So only a lever that
-attacks the test run matters.
+The `test (Python 3.12)` job is the dominant per-PR wall-clock (~569 s median,
+493–634 s). **`pytest` itself is essentially the entire job** — in the slowest
+(634 s) run it was 601 s = 94.8 %, with install + lint + mypy + upload only
+~20–30 s. So only a lever that attacks the test run matters.
 
 | Lever | Verdict | Why |
 |---|---|---|
 | **1. `pytest-xdist`** | **GO** | Measured **3.0×** (`352 s → 117 s`) at 4 workers; the suite parallelises near-linearly at CI's core count. One hard constraint (the wall-clock determinism canaries) has a clean, robust mitigation. Filed as a follow-up impl issue. |
 | **2. install speed / `uv`** | **NO-GO** | Install is ~12 s = **2 %** of the job; `actions/setup-python` pip-cache is already on. `uv` would shave a few seconds at the cost of the `--require-hashes` / `--no-build-isolation` integrity story. Not worth it. |
-| **3. coverage cost** | **NO-GO (keep `--cov`)** | Coverage adds only ~22 s and removing it forfeits the `codecov/patch` signal. Under xdist the whole run is ~117 s; coverage is a minor slice. |
+| **3. coverage cost** | **NO-GO (keep `--cov`)** | Coverage adds only ~21 s and removing it forfeits the `codecov/patch` signal. Under xdist the whole run is ~117 s; coverage is a minor slice. |
 
-**Projected impact of the GO lever:** the `pytest` step drops `~601 s → ~200 s` on
-the real 4-vCPU runner, taking the **whole job from ~634 s to ~235 s (~2.7×, ≈400 s
-saved on every PR)**.
+**Projected impact of the GO lever:** the `pytest` step drops `~601 s → ~200 s`
+(3.0× on 4 vCPU, projected from the `taskset -c 0-3` 118 s proxy — not yet a
+measured CI run), taking the **whole job from ~569 s median (~634 s worst) to
+~235 s — roughly 2.4–2.7× (~330–400 s saved) on every PR**.
 
 ---
 
@@ -33,7 +35,7 @@ saved on every PR)**.
 | | seconds |
 |---|---|
 | `test (Python 3.12)` job wall-clock | min 493 · **median 569** · max 634 |
-| — `pytest --cov …` step (median run) | **601 (94.8 %)** |
+| — `pytest --cov …` step (slowest, 634 s run) | **601 (94.8 %)** |
 | — install dev+build deps (hash-pinned) | ~12 |
 | — mypy | ~6 · ruff ~0 · cov upload ~3 |
 
@@ -52,7 +54,11 @@ with `taskset -c 0-3 -n 4`. develop @ `48def1c`, 1277 tests (8 `@slow` deselecte
 | `pytest --cov -n 4` | **117 s** | **3.0×** | 32-core box, 4 workers |
 | `pytest -n 4` (no `--cov`) | 96 s | 3.7× | coverage = **+21 s** (~18 % of the parallel wall) |
 | `taskset -c 0-3 pytest --cov -n 4` | **118 s** | 3.0× | **CI-representative** (4 cores saturated) — equals the un-pinned `-n 4`, confirming it was already worker-bound |
-| `pytest -n auto` (32 workers, no cov) | 54 s | ~6.1× | parallel **ceiling**; 4→32 workers buys only 1.8× ⇒ an Amdahl floor set by a handful of heavy `budget_s` solver tests |
+| `pytest -n auto` (32 workers, no cov) | 54 s | ~6.5×† | parallel **ceiling**; 4→32 workers buys only 1.8× (`96→54`, both no-cov) ⇒ an Amdahl floor set by a handful of heavy `budget_s` solver tests |
+
+† vs serial **+cov** (`352/54`); a cov-vs-no-cov ratio, hence approximate. The
+clean apples-to-apples scaling figure is the no-cov `96 s → 54 s` (1.8×) in the
+same row's note.
 
 The key read: at **CI's 4 cores we are well above the ~54 s floor** (96–118 s), so
 4-way parallelism gets the near-full 3× — the floor only bites far past 4 workers.
@@ -93,12 +99,15 @@ in the parallel pool — independent of the (un-pin-downable) flake probability.
   (e.g. `@pytest.mark.serial`) and split the CI step in two:
 
   ```bash
-  pytest -n auto -m "not serial" --cov=hangarfit --cov-report= --cov-report=xml
-  pytest        -m "serial"      --cov=hangarfit --cov-append --cov-report=term-missing
+  pytest -n auto -m "not serial" --cov=hangarfit --cov-report=xml
+  pytest        -m "serial"      --cov=hangarfit --cov-append --cov-report=xml --cov-report=term-missing
   ```
 
   The serial step runs only the ~3 canaries (~10 s); coverage is stitched with
-  `--cov-append`. This makes xdist correctness **independent** of the timing race
+  `--cov-append`, and **both** passes must emit `--cov-report=xml` so the
+  `coverage.xml` Codecov consumes includes the serial canaries (the second pass's
+  `xml` overwrites the first with the appended total). This makes xdist
+  correctness **independent** of the timing race
   and preserves *all* current coverage. (An alternative — converting the canary
   from `budget_s` to a `max_restarts` bound — would make it load-independent but
   duplicate the existing `test_solve_deterministic_best_partial_under_max_restarts`
@@ -116,8 +125,9 @@ keeping those canaries serial. The `bench-gates` workflow's determinism assertio
 
 ### Projected CI impact
 
-`pytest` step `~601 s → ~200 s` (3.0× on 4 vCPU) + a ~10 s serial-canary step ⇒ job
-**~634 s → ~235 s (~2.7×)**, on **every** PR. Implementation cost: add `pytest-xdist`
+`pytest` step `~601 s → ~200 s` (3.0× projected from the `taskset` proxy, to be
+confirmed on a real CI run) + a ~10 s serial-canary step ⇒ job **~569 s median
+(~634 s worst) → ~235 s (~2.4–2.7×)**, on **every** PR. Implementation cost: add `pytest-xdist`
 to the dev extra (+ regenerate `requirements-dev.txt`), mark the canaries `serial`,
 split the CI step. Filed as **[#492](https://github.com/DocGerd/hangarfit/issues/492)**.
 
