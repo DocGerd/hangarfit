@@ -246,6 +246,42 @@ jobs:
 
           ls -la dist/
 
+      - name: Build release notes from the CHANGELOG section
+        # The published Release description should carry this version's
+        # CHANGELOG block, not the bare tag annotation (which `--notes-from-tag`
+        # would otherwise use — leaving the page showing only "Release vX.Y.Z").
+        # We run on the tag's checked-out commit, so CHANGELOG.md is the tagged
+        # version's. Extract `## [X.Y.Z]` up to the next `## [` heading via a
+        # literal-prefix match (so the dotted version needs no regex escaping),
+        # then append the compare-link footer. If the section is absent (a tag
+        # with no changelog entry), fall back to a minimal pointer so the
+        # release still publishes rather than failing on empty notes.
+        env:
+          TAG: ${{ steps.tag.outputs.name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          NOTES_FILE="$RUNNER_TEMP/release-notes.md"
+          awk -v h="## [${VERSION}] " '
+            index($0, h) == 1 { f = 1; next }
+            /^## \[/          { if (f) exit }
+            f                 { print }
+          ' CHANGELOG.md > "$NOTES_FILE"
+          # Drop the blank line(s) left under the consumed heading.
+          sed -i '/./,$!d' "$NOTES_FILE"
+          # Append the "Full changelog" compare link if CHANGELOG defines one.
+          link_line=$(grep -m1 -F "[${VERSION}]: http" CHANGELOG.md || true)
+          if [ -n "$link_line" ]; then
+            printf '\n---\n**Full changelog:** %s\n' "${link_line#*: }" >> "$NOTES_FILE"
+          fi
+          # Never publish empty notes — fall back to a pointer if absent.
+          if [ ! -s "$NOTES_FILE" ]; then
+            echo "WARNING: no CHANGELOG section for $VERSION; using minimal fallback notes." >&2
+            printf 'Release %s.\n\nSee [CHANGELOG.md](https://github.com/DocGerd/hangarfit/blob/%s/CHANGELOG.md) for details.\n' "$TAG" "$TAG" > "$NOTES_FILE"
+          fi
+          echo "NOTES_FILE=$NOTES_FILE" >> "$GITHUB_ENV"
+          { echo "--- release notes preview ---"; cat "$NOTES_FILE"; } >&2
+
       - name: Create or reuse a draft GitHub Release
         # Immutable-releases contract: a PUBLISHED release is sealed — its
         # assets can no longer be uploaded (the upload step would 422).
@@ -286,6 +322,8 @@ jobs:
             }
             if [ "$is_draft" = "true" ]; then
               echo "Draft release for $TAG already exists; reusing it."
+              # Refresh notes so a re-run picks up any CHANGELOG edits.
+              gh release edit "$TAG" --notes-file "$NOTES_FILE"
             else
               echo "A PUBLISHED (immutable) release for $TAG already exists;" >&2
               echo "its assets cannot be modified. Delete it first, then re-run" >&2
@@ -297,7 +335,7 @@ jobs:
             gh release create "$TAG" \
               --draft \
               --title "$TAG" \
-              --notes-from-tag
+              --notes-file "$NOTES_FILE"
           else
             echo "gh release view failed (rc=$view_rc) with unexpected output:" >&2
             echo "$view_out" >&2
