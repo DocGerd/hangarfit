@@ -246,6 +246,59 @@ jobs:
 
           ls -la dist/
 
+      - name: Build release notes from the CHANGELOG section
+        # The published Release description should carry this version's
+        # CHANGELOG block, not the bare tag annotation (which `--notes-from-tag`
+        # would otherwise use — leaving the page showing only "Release vX.Y.Z").
+        # We run on the tag's checked-out commit, so CHANGELOG.md is the tagged
+        # version's. Extract the `## [X.Y.Z]` block (details + edge cases inline
+        # below), append the compare-link footer, and — if the section is absent
+        # (a tag/CHANGELOG mismatch) — fall back to a minimal pointer with a loud
+        # warning so the release still publishes rather than failing on empty
+        # notes.
+        env:
+          TAG: ${{ steps.tag.outputs.name }}
+        run: |
+          set -euo pipefail
+          VERSION="${TAG#v}"
+          NOTES_FILE="$RUNNER_TEMP/release-notes.md"
+          # Extract the section body up to the next version heading OR the bottom
+          # `[x.y.z]: …` link-reference block — so the file's LAST section does
+          # not sweep in the link list. Literal-prefix match → the dotted version
+          # needs no regex escaping; the trailing space pins it to
+          # `## [X.Y.Z] — DATE` and stops `0.1.0` matching `0.10.0`.
+          section="$(awk -v h="## [${VERSION}] " '
+            index($0, h) == 1            { f = 1; next }
+            /^## \[/ || /^\[[^]]+\]: /   { if (f) exit }
+            f                            { print }
+          ' CHANGELOG.md)"
+          # $() already strips trailing blank lines; drop the leading ones too.
+          section="$(printf '%s\n' "$section" | sed '/./,$!d')"
+          if [ -n "$section" ]; then
+            printf '%s\n' "$section" > "$NOTES_FILE"
+            # Append the "Full changelog" compare link if CHANGELOG defines one.
+            # `|| true` only softens grep's rc=1 (link not defined yet); a real
+            # read error can't reach here — the awk above already read the file.
+            link_line=$(grep -m1 -F "[${VERSION}]: http" CHANGELOG.md || true)
+            if [ -n "$link_line" ]; then
+              printf '\n---\n**Full changelog:** %s\n' "${link_line#*: }" >> "$NOTES_FILE"
+            fi
+          else
+            # No usable section. Publish a minimal pointer rather than blocking a
+            # signed release — but make the degraded path LOUD (a stderr line on
+            # a green job is too easy to miss) and say WHICH failure it was.
+            if grep -qF "## [${VERSION}]" CHANGELOG.md; then
+              msg="found a '## [${VERSION}]' heading but no body — check the heading format ('## [${VERSION}] — DATE') or an empty section"
+            else
+              msg="no '## [${VERSION}]' section in CHANGELOG.md"
+            fi
+            echo "::warning title=Release notes::${msg}; published ${TAG} with minimal fallback notes."
+            echo "⚠️ Release ${TAG} published with FALLBACK notes — ${msg}." >> "$GITHUB_STEP_SUMMARY"
+            printf 'Release %s.\n\nSee [CHANGELOG.md](https://github.com/DocGerd/hangarfit/blob/%s/CHANGELOG.md) for details.\n' "$TAG" "$TAG" > "$NOTES_FILE"
+          fi
+          echo "NOTES_FILE=$NOTES_FILE" >> "$GITHUB_ENV"
+          { echo "--- release notes preview ---"; cat "$NOTES_FILE"; } >&2
+
       - name: Create or reuse a draft GitHub Release
         # Immutable-releases contract: a PUBLISHED release is sealed — its
         # assets can no longer be uploaded (the upload step would 422).
@@ -286,6 +339,8 @@ jobs:
             }
             if [ "$is_draft" = "true" ]; then
               echo "Draft release for $TAG already exists; reusing it."
+              # Refresh notes so a re-run picks up any CHANGELOG edits.
+              gh release edit "$TAG" --notes-file "$NOTES_FILE"
             else
               echo "A PUBLISHED (immutable) release for $TAG already exists;" >&2
               echo "its assets cannot be modified. Delete it first, then re-run" >&2
@@ -297,7 +352,7 @@ jobs:
             gh release create "$TAG" \
               --draft \
               --title "$TAG" \
-              --notes-from-tag
+              --notes-file "$NOTES_FILE"
           else
             echo "gh release view failed (rc=$view_rc) with unexpected output:" >&2
             echo "$view_out" >&2
