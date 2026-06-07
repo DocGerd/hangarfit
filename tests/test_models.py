@@ -792,6 +792,18 @@ class TestLayout:
         with pytest.raises(ValueError, match="max_carts must be non-negative"):
             _ok_hangar(max_carts=-1)
 
+    def test_apron_depth_defaults_to_zero(self) -> None:
+        """A hangar built without apron_depth_m defaults to 0, reproducing the
+        no-apron model byte-for-byte (the backward-compat anchor, ADR-0021)."""
+        assert _ok_hangar().apron_depth_m == 0.0
+
+    def test_apron_depth_accepts_positive(self) -> None:
+        assert dataclasses.replace(_ok_hangar(), apron_depth_m=5.0).apron_depth_m == 5.0
+
+    def test_apron_depth_negative_rejected(self) -> None:
+        with pytest.raises(ValueError, match="apron_depth_m must be non-negative"):
+            dataclasses.replace(_ok_hangar(), apron_depth_m=-1.0)
+
     def test_maintenance_plane_must_be_in_fleet(self) -> None:
         a = _ok_aircraft("foo", movement_mode="always_own_gear", turn_radius_m=5.0)
         with pytest.raises(ValueError, match="not in fleet"):
