@@ -16,7 +16,13 @@ from __future__ import annotations
 
 import dataclasses
 import math
+import os
+import subprocess
+import sys
+from pathlib import Path
 from types import MappingProxyType
+
+import pytest
 
 from hangarfit.loader import load_scenario
 from hangarfit.models import Placement, PlaneConstraint, Scenario, SearchConfig
@@ -123,3 +129,81 @@ def test_solve_reports_nose_out_flips_per_layout_and_prefers_out() -> None:
     # At least one parked plane lands within 90° of nose-out (heading 180).
     headings = [p.heading_deg for p in r.layouts[0].placements]
     assert any(_heading_delta_short_arc(h, 180.0) < 90.0 for h in headings)
+
+
+def test_nose_out_on_is_byte_identical_for_same_seed() -> None:
+    """RNG-free ⇒ two ``nose_out=True`` solves are byte-identical (strictly
+    stronger than ``spread``, which only guarantees this when off). Bound on
+    ``max_restarts`` (NOT ``budget_s``) so it is load-independent (ADR-0003)."""
+    cfg = SearchConfig(max_restarts=10, nose_out=True)
+    r1 = solve(
+        _load_roomy_three(), budget_s=1000.0, alternatives=1, seed=42, search=cfg, plan_paths=False
+    )
+    r2 = solve(
+        _load_roomy_three(), budget_s=1000.0, alternatives=1, seed=42, search=cfg, plan_paths=False
+    )
+    assert len(r1.layouts) == len(r2.layouts)
+    for la, lb in zip(r1.layouts, r2.layouts, strict=True):
+        assert la.placements == lb.placements
+    assert r1.diagnostics.nose_out_flips == r2.diagnostics.nose_out_flips
+
+
+def test_nose_out_off_is_byte_identical_to_pre_feature() -> None:
+    """``nose_out=False`` never calls ``_nose_out`` ⇒ the RNG stream and selected
+    layout are byte-identical to the pre-feature solver (the opt-out contract,
+    mirroring ``spread=False``)."""
+    cfg = SearchConfig(max_restarts=10, nose_out=False)
+    r1 = solve(
+        _load_roomy_three(), budget_s=1000.0, alternatives=1, seed=42, search=cfg, plan_paths=False
+    )
+    r2 = solve(
+        _load_roomy_three(), budget_s=1000.0, alternatives=1, seed=42, search=cfg, plan_paths=False
+    )
+    for la, lb in zip(r1.layouts, r2.layouts, strict=True):
+        assert la.placements == lb.placements
+    assert (
+        r1.diagnostics.nose_out_flips == (0,) * len(r1.layouts) or not r1.diagnostics.nose_out_flips
+    )
+
+
+_NOSE_OUT_HASH_SNIPPET = """
+import hashlib
+from hangarfit.loader import load_scenario
+from hangarfit.solver import solve
+from hangarfit.models import SearchConfig
+s = load_scenario("tests/fixtures/solve_fresh_alternatives_three.yaml")
+r = solve(s, budget_s=1000.0, alternatives=1, seed=42,
+          search=SearchConfig(max_restarts=10, nose_out=True), plan_paths=False)
+blob = repr([
+    [(p.plane_id, p.x_m, p.y_m, p.heading_deg, p.on_carts) for p in L.placements]
+    for L in r.layouts
+] + [list(r.diagnostics.nose_out_flips)])
+print(hashlib.sha256(blob.encode()).hexdigest())
+"""
+
+
+@pytest.mark.serial
+def test_nose_out_byte_identical_across_processes() -> None:
+    """``nose_out=True`` must be byte-identical across fresh processes with
+    different ``PYTHONHASHSEED`` — pins the new ``sorted(...)`` movable-plane
+    iteration in ``_nose_out`` against a set/hash-seed-order leak that an
+    in-process ``==`` cannot catch (the analogue of the apron cross-process
+    canary)."""
+    repo_root = Path(__file__).resolve().parent.parent
+
+    def _run(hashseed: str) -> str:
+        env = dict(os.environ)
+        env["PYTHONHASHSEED"] = hashseed
+        proc = subprocess.run(
+            [sys.executable, "-c", _NOSE_OUT_HASH_SNIPPET],
+            capture_output=True,
+            text=True,
+            cwd=repo_root,
+            env=env,
+            check=True,
+        )
+        return proc.stdout.strip()
+
+    h1 = _run("111")
+    h2 = _run("777")
+    assert h1 and h1 == h2, f"nose_out solve diverged across processes: {h1!r} != {h2!r}"

@@ -80,10 +80,14 @@ def test_solve_deterministic_given_seed(fixture):
     instances loaded from the same file).
     """
     s1 = load_scenario(fixture)
-    r1 = solve(s1, budget_s=5.0, alternatives=1, seed=42, search=SearchConfig(spread=False))
+    r1 = solve(
+        s1, budget_s=5.0, alternatives=1, seed=42, search=SearchConfig(spread=False, nose_out=False)
+    )
 
     s2 = load_scenario(fixture)
-    r2 = solve(s2, budget_s=5.0, alternatives=1, seed=42, search=SearchConfig(spread=False))
+    r2 = solve(
+        s2, budget_s=5.0, alternatives=1, seed=42, search=SearchConfig(spread=False, nose_out=False)
+    )
 
     # Status + seed must match.
     assert r1.status == r2.status
@@ -166,7 +170,7 @@ def test_solve_deterministic_best_partial_under_max_restarts() -> None:
         budget_s=30.0,
         alternatives=1,
         seed=seed,
-        search=SearchConfig(max_restarts=max_restarts, spread=False),
+        search=SearchConfig(max_restarts=max_restarts, spread=False, nose_out=False),
     )
 
     s2 = load_scenario(fixture)
@@ -175,7 +179,7 @@ def test_solve_deterministic_best_partial_under_max_restarts() -> None:
         budget_s=30.0,
         alternatives=1,
         seed=seed,
-        search=SearchConfig(max_restarts=max_restarts, spread=False),
+        search=SearchConfig(max_restarts=max_restarts, spread=False, nose_out=False),
     )
 
     # The max_restarts cap (not wall-clock) must be the gate that trips —

@@ -476,7 +476,7 @@ def test_solve_is_deterministic_through_descent_loop():
     from hangarfit.solver import solve
 
     s = load_scenario(REPO_ROOT / "tests" / "fixtures" / "solve_fresh_six_planes.yaml")
-    cfg = SearchConfig(spread=False, max_restarts=20)
+    cfg = SearchConfig(spread=False, max_restarts=20, nose_out=False)
     r1 = solve(s, budget_s=30.0, alternatives=1, seed=42, search=cfg)
     r2 = solve(s, budget_s=30.0, alternatives=1, seed=42, search=cfg)
 
