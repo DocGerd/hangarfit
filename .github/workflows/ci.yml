@@ -69,10 +69,23 @@ jobs:
         run: mypy src/hangarfit
 
       - name: Run tests
-        # `-m "not slow"` lives in pyproject.toml's addopts so local
-        # `pytest` and CI behave identically. Override with `pytest -m slow`
-        # to run the solver-search stress fixtures.
-        run: pytest --cov=hangarfit --cov-report=xml --cov-report=term-missing
+        # Two-pass split (#492). Pass 1 parallelizes the bulk of the suite
+        # across CPU cores with pytest-xdist (`-n auto`) for the CI speedup
+        # (~3× at 4 workers per spike #476). Pass 2 runs the `serial`-marked
+        # wall-clock determinism canaries OUTSIDE the xdist pool, single-process:
+        # they run solve() twice in-process under a `budget_s` deadline and
+        # would flake under sibling-worker CPU starvation (`xdist_group` /
+        # `--dist loadgroup` is insufficient — it co-locates a group on one
+        # worker but does not stop the others saturating the CPU). The two
+        # selectors are disjoint and exhaustive over the non-slow suite:
+        # pass 1 excludes `serial`, pass 2 selects only `serial`, so every
+        # non-slow test runs exactly once. The `-m "not slow"` default in
+        # pyproject.toml's addopts is overridden here by each pass's explicit
+        # `-m`. `--cov-append` on the second pass merges into the first pass's
+        # coverage.xml, so the Codecov upload below gets COMBINED coverage.
+        run: |
+          pytest -n auto -m "not slow and not serial" --cov=hangarfit --cov-report=xml
+          pytest -m "serial" --cov=hangarfit --cov-append --cov-report=xml --cov-report=term-missing
 
       - name: Upload coverage to Codecov
         if: always()
