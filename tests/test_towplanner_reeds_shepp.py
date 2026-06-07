@@ -22,7 +22,6 @@ import math
 import pytest
 
 from hangarfit.towplanner import (
-    _REVERSE_COST_FACTOR,
     CUSP_PENALTY,
     Pose,
     Segment,
@@ -188,10 +187,11 @@ def test_reeds_shepp_roundtrip_grid(start_heading, goal, end_heading, radius) ->
 # --- cost model: prefer forward --------------------------------------------
 
 
-def test_reverse_cost_factor_value() -> None:
-    # Pinned so a casual retune to 2.0 (which would suppress the measured
-    # nose-out reverse win) trips this and forces an ADR update.
-    assert _REVERSE_COST_FACTOR == 1.5
+def test_cusp_penalty_value() -> None:
+    # Pinned so a casual retune trips this and forces an ADR-0010 update. Must
+    # stay < 14 m to keep the measured 1-cusp nose-out back-in (~18 m) beating
+    # the forward loop (~32 m); large enough to dominate small length ties (#480).
+    assert CUSP_PENALTY == 10.0
 
 
 def test_rs_solve_normalised_cusp_penalty_never_increases_cusps() -> None:
@@ -307,10 +307,11 @@ def test_cart_reverse_straight_backs_out() -> None:
 def test_cart_prefers_forward_when_not_cheaper_to_reverse() -> None:
     """Mirror of :func:`test_cart_reverse_straight_backs_out`: a goal directly
     AHEAD (same heading) is a single FORWARD "S" leg. Backing in would cost a
-    180° pivot + a reverse straight (×_REVERSE_COST_FACTOR) + a 180° pivot, so
-    the forward option is strictly cheaper and `_plan_cart`'s `min((forward,
-    reverse), …)` must keep it — pinning the prefer-forward tie-break (ADR-0003
-    determinism: no gratuitous reverse)."""
+    180° pivot + a reverse straight + a 180° pivot (the extra pivots make it
+    strictly longer, #480: reverse itself is no longer taxed), so the forward
+    option is cheaper and `_plan_cart`'s `min((forward, reverse), …)` must keep
+    it — pinning the prefer-forward tie-break (ADR-0003 determinism: no
+    gratuitous reverse)."""
     start = Pose(5.0, 3.0, 0.0)
     end = Pose(5.0, 8.0, 0.0)  # 5 m straight ahead (heading 0 ⇒ +y)
     arc = plan_reeds_shepp(start, end, turn_radius_m=0.0)

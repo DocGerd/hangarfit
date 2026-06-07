@@ -8,11 +8,13 @@ found by a deterministic Hybrid-A* search (:func:`plan_path`, #222) over
 unobstructed plane finishes in one closed-form Reeds–Shepp shot (the search's
 analytic expansion). Reeds–Shepp = Dubins (forward arc-line-arc) **plus reverse
 arcs/straights** (:func:`plan_reeds_shepp`, #261), so a plane can back up to
-reorient instead of driving a full turning-circle loop; reverse legs cost
-:data:`_REVERSE_COST_FACTOR`× their length so forward motion is preferred. The
-closed form is still deterministic, preserving the ADR-0003 byte-identical-plan
-contract. See ADR-0002 (heading convention), ADR-0010 (Reeds–Shepp motion model,
-supersedes ADR-0007 fork-2 "Dubins-only"), ADR-0007 (cart = own-gear, r=0), and
+reorient instead of driving a full turning-circle loop. The planner minimises
+*moves*: cost is ``length + CUSP_PENALTY × cusps`` (#480), so a direction change
+is what's penalised, not reverse distance — forward is preferred only as the
+deterministic tie-break. The closed form is still deterministic, preserving the
+ADR-0003 byte-identical-plan contract. See ADR-0002 (heading convention),
+ADR-0010 (Reeds–Shepp motion model, supersedes ADR-0007 fork-2 "Dubins-only";
+amended for the #480 cusp-cost model), ADR-0007 (cart = own-gear, r=0), and
 docs/spikes/tow-path-planning.md.
 """
 
@@ -431,10 +433,11 @@ def _plan_cart(start: Pose, end: Pose, *, allow_reverse: bool) -> DubinsArc:
 
     With ``allow_reverse`` (Reeds–Shepp), the straight leg may be driven in
     reverse — pivot to the *reverse* bearing, back straight, pivot to the final
-    heading — and the cheaper of the forward/reverse option is returned under
-    the reverse cost weighting (:data:`_REVERSE_COST_FACTOR`). Without it
-    (Dubins) only the forward option is considered, preserving the exact
-    forward-only behaviour ``plan_dubins`` shipped.
+    heading — and the cheaper of the forward/reverse option is returned by
+    unweighted length (#480: no per-metre reverse tax; both options are single
+    0-cusp drives, so forward wins only on an exact tie). Without it (Dubins)
+    only the forward option is considered, preserving the exact forward-only
+    behaviour ``plan_dubins`` shipped.
     """
     dx = end.x_m - start.x_m
     dy = end.y_m - start.y_m
@@ -522,24 +525,22 @@ def _cart_seg_weight(seg: Segment) -> float:
 # ---------------------------------------------------------------------------
 
 
-# Reverse legs cost 1.5× their length. Justification (a measured nose-out case):
-# 18 m reverse vs 32 m forward. At 1.5× the reverse weighs 27 m, still beating
-# the 32 m forward loop, so the reverse win is kept — while a gratuitous short
-# reverse is discouraged. At 2.0× the reverse would weigh 36 m and be SUPPRESSED
-# in favour of the longer forward path, defeating the whole point of Reeds–Shepp.
-# Pinned by test_reverse_cost_factor_value; changing it requires an ADR-0010 update.
-_REVERSE_COST_FACTOR = 1.5
-
-
-# Additive per-cusp penalty (metres) — the #480 "fewest-moves" cost model.
-# A "cusp" is a travel-direction reversal (forward<->reverse) between consecutive
-# TRANSLATING legs; moves = cusps + 1. Cost is `length + CUSP_PENALTY * cusps` at
-# all three sites (search g-cost, Reeds–Shepp word selection, cart choice),
-# replacing the multiplicative _REVERSE_COST_FACTOR above (removed once every
-# site has migrated — #480 Task 6). Reverse is no longer taxed per-metre; instead
+# Additive per-cusp penalty (metres) — the #480 "fewest-moves" cost model
+# (supersedes the old multiplicative reverse-length factor, ADR-0010 #480
+# amendment). A "cusp" is a travel-direction reversal (forward<->reverse) between
+# consecutive TRANSLATING legs; moves = cusps + 1. Cost is
+# `length + CUSP_PENALTY * cusps` at all three sites (search g-cost, Reeds–Shepp
+# word selection, cart choice). Reverse is no longer taxed per-metre; instead
 # each direction change costs a fixed, large-but-finite amount, so the planner
-# minimises *moves* and forward preference survives only as the
-# enumeration-order tie-break (forward primitives/words enumerated first).
+# minimises *moves* and forward preference survives only as the enumeration-order
+# tie-break (forward primitives/words enumerated first).
+#
+# Why 10.0 m? It must (a) keep a genuine nose-out win — a back-in via a
+# rear-entry seed is 0 cusps and wins on length alone, and where a 1-cusp back-in
+# (~18 m) replaces a forward loop (~32 m) we need CUSP_PENALTY < 14 m — and
+# (b) dominate the small length differences between equal-move alternatives so
+# the planner doesn't trade a direction change for a couple of saved metres.
+# 10 m (order of a plane length / the hangar's short dimension) satisfies both.
 # Pinned by test_cusp_penalty_value; changing it requires an ADR-0010 update.
 CUSP_PENALTY = 10.0
 
