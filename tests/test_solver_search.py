@@ -397,6 +397,19 @@ def test_solve_finds_layout_for_fresh_six_planes():
     assert check(r.layouts[0]).valid
 
 
+# Marked `serial` (#492) for the same reason as the test_solver_canaries.py
+# wall-clock determinism canaries: it runs solve() twice in-process under a
+# `budget_s` deadline and compares the two results, so it must run outside the
+# `-n auto` xdist pool where sibling-worker CPU starvation could perturb a run.
+# It happens to be load-SAFE today only because its single-plane fixture makes
+# selection load-independent (with <2 planes _spread_quality is (inf, 0.0), so
+# the _select_spread_diverse key collapses to the restart_index tie-break and
+# the first valid basin always wins regardless of how many basins a run
+# accumulates). That safety is a fragile property of the fixture — switching to
+# a multi-plane scenario would make spread selection restart-count-dependent
+# and reintroduce a parallel-pool flake — so we pin it serial rather than rely
+# on the tie-break.
+@pytest.mark.serial
 def test_solve_is_deterministic_for_same_seed():
     """seed=42 → identical SolveResult across calls.
 

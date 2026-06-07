@@ -76,16 +76,18 @@ jobs:
         # they run solve() twice in-process under a `budget_s` deadline and
         # would flake under sibling-worker CPU starvation (`xdist_group` /
         # `--dist loadgroup` is insufficient — it co-locates a group on one
-        # worker but does not stop the others saturating the CPU). The two
-        # selectors are disjoint and exhaustive over the non-slow suite:
-        # pass 1 excludes `serial`, pass 2 selects only `serial`, so every
-        # non-slow test runs exactly once. The `-m "not slow"` default in
-        # pyproject.toml's addopts is overridden here by each pass's explicit
-        # `-m`. `--cov-append` on the second pass merges into the first pass's
+        # worker but does not stop the others saturating the CPU). Both
+        # selectors are strict subsets of `not slow` (`@slow` wins over
+        # `@serial`: a hypothetical slow+serial test stays excluded in CI,
+        # matching the addopts default), and they are mutually disjoint, so
+        # every non-slow test runs in exactly one pass — none dropped, none
+        # double-counted. The `-m "not slow"` default in pyproject.toml's
+        # addopts is overridden here by each pass's explicit `-m`.
+        # `--cov-append` on the second pass merges into the first pass's
         # coverage.xml, so the Codecov upload below gets COMBINED coverage.
         run: |
           pytest -n auto -m "not slow and not serial" --cov=hangarfit --cov-report=xml
-          pytest -m "serial" --cov=hangarfit --cov-append --cov-report=xml --cov-report=term-missing
+          pytest -m "serial and not slow" --cov=hangarfit --cov-append --cov-report=xml --cov-report=term-missing
 
       - name: Upload coverage to Codecov
         if: always()
