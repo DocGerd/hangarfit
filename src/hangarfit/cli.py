@@ -64,6 +64,25 @@ _BACK_FILL_DEFAULT_WEIGHT = 1.0
 _VIEW_TOW_MAX_TOTAL_EXPANSIONS = 300
 
 
+def _apron_depth_arg(value: str) -> float | str:
+    """argparse type for ``--apron-depth``: a finite non-negative metre value, or
+    the literal ``"auto"`` (fleet-derived depth, resolved by the loader, ADR-0021).
+    Rejects garbage / negatives at parse time with an exit-2 ArgumentTypeError."""
+    if value.strip().lower() == "auto":
+        return "auto"
+    try:
+        depth = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"--apron-depth must be a number or 'auto', got {value!r}"
+        ) from None
+    if not math.isfinite(depth) or depth < 0:
+        raise argparse.ArgumentTypeError(
+            f"--apron-depth must be a finite, non-negative number or 'auto', got {value!r}"
+        )
+    return depth
+
+
 def build_parser() -> argparse.ArgumentParser:
     """Build the argparse parser with the ``check`` and ``solve`` subcommands."""
     parser = argparse.ArgumentParser(
@@ -204,6 +223,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override the hangar's spare-cart count for the cart_eligible pool (default: the hangar.yaml value, or 1 if unset).",  # noqa: E501
     )
     solve.add_argument(
+        "--apron-depth",
+        type=_apron_depth_arg,
+        metavar="N|auto",
+        default=None,
+        dest="apron_depth",
+        help=(
+            "Staging-apron depth (m) in front of the door (ADR-0021): each tow "
+            "path starts outside the hangar and slides in. 'auto' derives "
+            "~max(plane length)+max(turn radius) from the fleet. Default: the "
+            "hangar.yaml value, or 0 (no apron, today's behaviour)."
+        ),
+    )
+    solve.add_argument(
         "--no-spread",
         action="store_false",
         dest="spread",
@@ -290,6 +322,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         dest="max_carts",
         help="Override the hangar's spare-cart count for the cart_eligible pool.",
+    )
+    view.add_argument(
+        "--apron-depth",
+        type=_apron_depth_arg,
+        metavar="N|auto",
+        default=None,
+        dest="apron_depth",
+        help=(
+            "Staging-apron depth (m): each plane slides in from outside the door "
+            "in the animation (ADR-0021). 'auto' derives from the fleet. "
+            "Default: the hangar.yaml value, or 0 (no apron)."
+        ),
     )
     view.add_argument(
         "--check",
@@ -560,6 +604,7 @@ def cmd_solve(args: argparse.Namespace) -> int:
             fleet=fleet_override,
             hangar=hangar_override,
             max_carts=args.max_carts,
+            apron_depth=args.apron_depth,
         )
     except LoaderError as e:
         print(f"error: {e}", file=sys.stderr)
@@ -919,6 +964,7 @@ def cmd_view(args: argparse.Namespace) -> int:
                 fleet=fleet_override,
                 hangar=hangar_override,
                 max_carts=args.max_carts,
+                apron_depth=args.apron_depth,
             )
             result = solve(
                 scenario,
@@ -945,6 +991,7 @@ def cmd_view(args: argparse.Namespace) -> int:
                 fleet=fleet_override,
                 hangar=hangar_override,
                 max_carts=args.max_carts,
+                apron_depth=args.apron_depth,
             )
             if args.check:
                 check_result = collisions.check(layout)
