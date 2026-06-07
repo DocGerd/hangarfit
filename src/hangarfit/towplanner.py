@@ -21,7 +21,7 @@ from __future__ import annotations
 import heapq
 import math
 import typing
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Literal
 
@@ -850,6 +850,39 @@ def back_first_order(placements: tuple[Placement, ...]) -> tuple[Placement, ...]
     spike Q2). Shallower slots become obstacles for deeper ones, so deeper
     planes enter first."""
     return tuple(sorted(placements, key=lambda p: (-p.y_m, p.x_m, p.plane_id)))
+
+
+# ---------------------------------------------------------------------------
+# Staging apron (#412 / ADR-0021): the y < 0 start-region in front of the door
+# ---------------------------------------------------------------------------
+
+
+def _plane_fore_aft_length_m(aircraft: Aircraft) -> float:
+    """Fore-aft (plane-local x) extent of a plane from its parts.
+
+    Approximates per-part rotation away (e.g. struts) — adequate for the opt-in
+    ``auto`` apron depth, which is a convenience knob, not a tight bound. Pure
+    and RNG-free.
+    """
+    fronts = [p.offset_x_m + p.length_m / 2.0 for p in aircraft.parts]
+    backs = [p.offset_x_m - p.length_m / 2.0 for p in aircraft.parts]
+    return max(fronts) - min(backs)
+
+
+def derive_apron_depth(fleet: Mapping[str, Aircraft]) -> float:
+    """Fleet-derived staging-apron depth — the opt-in ``auto`` value (ADR-0021).
+
+    ``≈ max(plane fore-aft length) + max(own-gear turn radius)``: the run-up room
+    one plane needs to align and slide in through the door. A pure function of
+    the fleet (RNG-free), so the resolved depth is deterministic. An empty fleet
+    (or an all-cart fleet with no own-gear turn radius) yields just the length
+    term; an empty fleet yields ``0.0``.
+    """
+    if not fleet:
+        return 0.0
+    max_len = max(_plane_fore_aft_length_m(a) for a in fleet.values())
+    radii = [a.turn_radius_m for a in fleet.values() if a.turn_radius_m is not None]
+    return max_len + (max(radii) if radii else 0.0)
 
 
 # ---------------------------------------------------------------------------
