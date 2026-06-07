@@ -1366,6 +1366,66 @@ def test_solve_result_rejects_misaligned_min_pairwise_gap_m():
         )
 
 
+def test_nose_out_model_fields_defaults_and_overrides():
+    """#263: SearchConfig.nose_out (default ON), PlaneConstraint.nose_out
+    (tri-state), SolverDiagnostics.nose_out_flips (default ())."""
+    from hangarfit.models import PlaneConstraint, SearchConfig, SolverDiagnostics
+
+    assert SearchConfig().nose_out is True
+    assert SearchConfig(nose_out=False).nose_out is False
+
+    assert PlaneConstraint().nose_out is None
+    assert PlaneConstraint(nose_out=True).nose_out is True
+    assert PlaneConstraint(nose_out=False).nose_out is False
+
+    assert (
+        SolverDiagnostics(
+            restarts_attempted=1,
+            wall_time_s=0.0,
+            best_partial=None,
+            best_partial_layout=None,
+            seed=1,
+        ).nose_out_flips
+        == ()
+    )
+
+
+def test_solver_diagnostics_rejects_negative_nose_out_flips():
+    import pytest
+
+    from hangarfit.models import SolverDiagnostics
+
+    with pytest.raises(ValueError, match="nose_out_flips"):
+        SolverDiagnostics(
+            restarts_attempted=1,
+            wall_time_s=0.0,
+            best_partial=None,
+            best_partial_layout=None,
+            seed=1,
+            nose_out_flips=(0, -1),
+        )
+
+
+def test_solve_result_rejects_misaligned_nose_out_flips():
+    """SolveResult.__post_init__ rejects non-empty nose_out_flips whose length
+    differs from layouts (the #263 parity guard, mirroring min_pairwise_gap_m)."""
+    import pytest
+
+    from hangarfit.models import SolverDiagnostics, SolveResult
+
+    layout = _make_valid_layout()
+    diag = SolverDiagnostics(
+        restarts_attempted=1,
+        wall_time_s=0.1,
+        best_partial=None,
+        best_partial_layout=None,
+        seed=42,
+        nose_out_flips=(0, 1),  # 2 counts but 1 layout — mismatch
+    )
+    with pytest.raises(ValueError, match="nose_out_flips"):
+        SolveResult(status="found", layouts=(layout,), plans=(None,), diagnostics=diag)
+
+
 class TestWheels:
     def test_monowheel_positions_single(self) -> None:
         w = Wheels(main_offset_x_m=0.0, track_m=None, third_wheel_offset_x_m=None)

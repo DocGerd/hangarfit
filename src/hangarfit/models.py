@@ -639,11 +639,20 @@ class PlaneConstraint:
     where ``None`` means 'free') and to let #442 distinguish 'user never set a
     priority' from an explicit ``0.0`` on round-trip; both collapse to weight
     ``1.0`` in the solver today.
+
+    ``nose_out`` (#263 / ADR-0022) is the per-plane override of the global
+    :attr:`SearchConfig.nose_out` preference. **Its ``None`` semantics differ from
+    its optional siblings:** ``pin``/``force_on_carts`` ``None`` means 'free/unset',
+    but ``nose_out`` ``None`` means 'follow the global ``SearchConfig.nose_out``'.
+    ``True`` ⇒ always prefer nose-out for this plane; ``False`` ⇒ never flip it —
+    the legitimate nose-IN exemption (e.g. a low-wing tucked under a high-wing's
+    tail). Soft: it only re-orients, never overrides validity or a hard ``pin``.
     """
 
     pin: Placement | None = None
     force_on_carts: bool | None = None
     priority: float | None = None
+    nose_out: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -897,6 +906,11 @@ class SolverDiagnostics:
     basins the search collected before selection — how much choice best-of-all
     had. Both are advisory.
 
+    ``nose_out_flips`` is index-aligned with :attr:`SolveResult.layouts`: the
+    number of nose-out heading flips the RNG-free ``_nose_out`` post-pass applied
+    to that returned layout (#263, ADR-0022). ``0`` for a layout where no plane was
+    flipped (or with ``nose_out`` disabled). Advisory / RNG-free.
+
     ``spread_fallback_applied`` is ``True`` when :func:`hangarfit.solver.solve`
     re-solved with the inter-plane spread post-pass disabled and substituted
     that tighter, tow-routable arrangement because the spread layout(s) came
@@ -945,6 +959,7 @@ class SolverDiagnostics:
     spread_fallback_applied: bool = False
     spread_stall_applied: bool = False
     apron_shallow_drops: tuple[ApronShallowDrop, ...] = ()
+    nose_out_flips: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         if (self.best_partial is None) != (self.best_partial_layout is None):
@@ -973,6 +988,11 @@ class SolverDiagnostics:
             raise ValueError(
                 "SolverDiagnostics.min_pairwise_gap_m entries must be non-negative "
                 f"(math.inf allowed for <2-plane layouts), got {self.min_pairwise_gap_m!r}"
+            )
+        if any(n < 0 for n in self.nose_out_flips):
+            raise ValueError(
+                "SolverDiagnostics.nose_out_flips entries must be >= 0, "
+                f"got {self.nose_out_flips!r}"
             )
 
 
@@ -1030,6 +1050,14 @@ class SolveResult:
                 "SolveResult.diagnostics.min_pairwise_gap_m, when populated, must be "
                 f"index-aligned with layouts: got {len(self.diagnostics.min_pairwise_gap_m)} "
                 f"gaps for {len(self.layouts)} layouts"
+            )
+        if self.diagnostics.nose_out_flips and len(self.diagnostics.nose_out_flips) != len(
+            self.layouts
+        ):
+            raise ValueError(
+                "SolveResult.diagnostics.nose_out_flips, when populated, must be "
+                f"index-aligned with layouts: got {len(self.diagnostics.nose_out_flips)} "
+                f"counts for {len(self.layouts)} layouts"
             )
 
 
@@ -1171,6 +1199,21 @@ class SearchConfig:
     the former as noise while a genuinely better-separated basin still resets the
     counter. Inert unless ``spread_stall_restarts`` is set; validated ``> 0``
     regardless so the field is always a usable threshold."""
+
+    nose_out: bool = True
+    """(#263 / ADR-0022) When True (default), ``solve()`` runs the RNG-free
+    ``_nose_out`` post-pass on each valid basin (after ``_spread``): it flips a
+    movable plane's parked heading 180° toward nose-out (heading 180, toward the
+    door) when that is strictly more nose-out AND keeps the layout valid. A soft
+    preference — never overrides validity, never moves a plane, never un-parks one
+    (ADR-0008's discipline). **RNG-free ⇒ byte-identical determinism holds even
+    with it ON** (strictly stronger than ``spread``); set False for the
+    pre-feature heading behaviour. Runs independently of ``spread`` (a placement
+    concern), so it also applies on the ``spread=False`` fast path and the
+    spread→no-spread fallback. Per-plane override via
+    :attr:`PlaneConstraint.nose_out`. A plain ``bool`` (not ``bool | None``):
+    ``None`` stays reserved as the disable sentinel for
+    ``max_restarts``/``spread_stall_restarts`` (see ``max_restarts``)."""
 
     def __post_init__(self) -> None:
         if self.candidates_per_iter < 1:
