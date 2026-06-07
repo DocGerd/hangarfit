@@ -47,6 +47,14 @@ def test_solve_bundles_a_plan_per_layout(solvable_scenario):
     assert result.diagnostics.unroutable_planes == ()
 
 
+# Marked `serial` (#492): a wall-clock `budget_s`-bounded double-solve determinism
+# assert — it runs solve() twice and compares, so it must run outside the `-n auto`
+# xdist pool (same rationale as tests/test_solver_canaries.py and
+# test_solver_search.py::test_solve_is_deterministic_for_same_seed). Load-safe today
+# only via the single-plane `solvable_scenario` fixture (selection collapses to the
+# restart-index tie-break, _spread no-ops on a lone plane); pinned serial so a future
+# multi-plane fixture cannot silently reintroduce a parallel-pool flake.
+@pytest.mark.serial
 def test_solve_bundle_is_deterministic_for_a_seed(solvable_scenario):
     from hangarfit.solver import solve
 

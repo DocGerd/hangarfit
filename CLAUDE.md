@@ -175,18 +175,26 @@ pytest -m slow
 # Or run everything regardless of marker
 pytest -m ""
 
-# GOTCHA: tests/test_solver_canaries.py::test_solve_deterministic_given_seed uses
-# a wall-clock `budget_s` (not max_restarts), so under heavy concurrent CPU load
-# (e.g. running the full suite alongside several subagents) the two in-process
-# solves can complete different restart counts and it flakes — re-run it in
-# isolation before treating a failure as a regression. The max_restarts-scoped
-# companion (test_solve_deterministic_best_partial_under_max_restarts) is the
+# GOTCHA: the wall-clock determinism canaries (the `serial`-marked double-solve
+# tests in tests/test_solver_canaries.py, tests/test_solver_search.py, and
+# tests/test_solver_towplanner.py) use a wall-clock `budget_s` (not
+# max_restarts) and run solve() twice in-process, so under heavy concurrent CPU
+# load the two solves can complete different restart counts and the result can
+# diverge. Since #492 they carry the `serial` marker and CI runs them in a
+# dedicated serial pass OUTSIDE the `pytest -n auto` xdist pool. The marker only
+# protects the CI invocation: a local bare `pytest -n auto` still drops them into
+# the parallel pool and can re-expose the flake — to mirror CI locally run
+# `pytest -n auto -m "not slow and not serial"` then `pytest -m "serial and not
+# slow"`, or just re-run a flagged canary in isolation before treating a failure
+# as a regression. The max_restarts-scoped companion
+# (test_solve_deterministic_best_partial_under_max_restarts) is the
 # load-independent determinism check.
 
-# GOTCHA: CI runs `pytest -m 'not slow'` and derives coverage from THAT run, so
-# marking a test @slow drops it from coverage too. If a @slow test is the only
-# one covering a new code path, the `codecov/patch` PR check fails — keep >=1
-# non-slow test per new path.
+# GOTCHA: CI runs the suite in two passes (#492) — `pytest -n auto -m "not slow
+# and not serial"` then `pytest -m "serial and not slow" --cov-append` — and
+# derives coverage from the COMBINED run, so marking a test @slow drops it from
+# coverage too. If a @slow test is the only one covering a new code path, the
+# `codecov/patch` PR check fails — keep >=1 non-slow test per new path.
 
 # Lint + format check (CI also runs these)
 ruff check src/ tests/

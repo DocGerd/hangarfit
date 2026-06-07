@@ -19,7 +19,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=7.4", "pytest-cov>=4.0", "ruff>=0.7.0", "mypy>=1.0", "types-PyYAML", "types-shapely", "hypothesis>=6.100"]
+dev = ["pytest>=7.4", "pytest-cov>=4.0", "pytest-xdist>=3.5", "ruff>=0.7.0", "mypy>=1.0", "types-PyYAML", "types-shapely", "hypothesis>=6.100"]
 
 [project.scripts]
 hangarfit = "hangarfit.cli:main"
@@ -52,6 +52,7 @@ testpaths = ["tests"]
 addopts = "-ra -m 'not slow'"
 markers = [
     "slow: tests that may exceed the default 5 s per-fixture solve budget (excluded by default via addopts; run on demand via `pytest -m slow`)",
+    "serial: wall-clock-budget determinism canaries that run solve() twice in-process under a `budget_s` deadline and assert bit-identical output — they MUST run OUTSIDE the `-n auto` pytest-xdist pool (CI runs them in a separate serial pass, #492). Under CPU starvation the two in-process solves can complete different restart counts within the same wall-clock budget and diverge, so xdist sibling-worker contention would flake them. `@pytest.mark.xdist_group`/`--dist loadgroup` is INSUFFICIENT: it co-locates a group on one worker but does NOT stop the other workers from saturating the CPU, so the wall-clock budget still races.",
 ]
 
 [tool.coverage.run]
