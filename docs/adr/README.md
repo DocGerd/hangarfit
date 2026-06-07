@@ -98,3 +98,4 @@ manual workflow above is canonical.
 | 0018 | [Model the non-rectangular hangar footprint — list of keep-out rects + derived Shapely floor polygon for containment](0018-non-rectangular-hangar-footprint.md) | Proposed |
 | 0019 | [Brand tokens live in one Python module (`brand.py`), injected into the viewer as a canonical BRAND blob](0019-brand-tokens-single-source.md) | Proposed |
 | 0020 | [The viewer is a typed, modular TypeScript application built by a dev-only toolchain; the Python-owned transform is retained](0020-viewer-typescript-architecture.md) | Proposed |
+| 0021 | [Tow-planner staging apron — a bounded entry-staging start-region in front of the door; rearrangement holding-area deferred](0021-tow-planner-staging-apron.md) | Proposed |
