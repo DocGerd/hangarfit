@@ -8,6 +8,7 @@ import pytest
 
 from hangarfit.models import (
     Aircraft,
+    ApronShallowDrop,
     CheckResult,
     Conflict,
     Door,
@@ -956,6 +957,27 @@ class TestLayout:
         layout = Layout(fleet={}, hangar=_ok_hangar(), placements=())
         assert layout.placements == ()
         assert len(layout.fleet) == 0
+
+
+class TestApronShallowDrop:
+    def test_valid_construction(self) -> None:
+        drop = ApronShallowDrop(plane_id="A", min_depth_m=8.0)
+        assert drop.plane_id == "A"
+        assert drop.min_depth_m == 8.0
+
+    def test_zero_min_depth_accepted(self) -> None:
+        # Non-negative is the gate (mirrors the module's other distance fields);
+        # a real footprint extent is always > 0, but 0 is not rejected.
+        assert ApronShallowDrop(plane_id="A", min_depth_m=0.0).min_depth_m == 0.0
+
+    def test_empty_plane_id_rejected(self) -> None:
+        with pytest.raises(ValueError, match="plane_id must be non-empty"):
+            ApronShallowDrop(plane_id="", min_depth_m=8.0)
+
+    @pytest.mark.parametrize("bad_depth", [-1.0, float("nan"), float("inf")])
+    def test_non_finite_or_negative_min_depth_rejected(self, bad_depth: float) -> None:
+        with pytest.raises(ValueError, match="min_depth_m must be finite and >= 0"):
+            ApronShallowDrop(plane_id="A", min_depth_m=bad_depth)
 
 
 class TestConflict:
