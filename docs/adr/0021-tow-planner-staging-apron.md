@@ -79,12 +79,14 @@ extending `entry_poses` and seeded into the existing Hybrid-A\* search.
 Concretely:
 
 - **Geometry.** The apron is the rectangle `x ∈ [0, width_m]`, `y ∈ [−apron_depth_m, 0)`.
-  `apron_depth_m` is a new optional `Hangar` scalar on `data/hangar.yaml` (default `0`
-  / absent ⇒ today's no-apron behaviour reproduced byte-for-byte; the loader supplies a
-  derived default `≈ max_plane_length + max_turn_radius` for real datasets),
-  overridable by a `--apron-depth N` CLI flag — the [#210 `max_carts`](0007-tow-path-planner-v1-scope.md)
-  site-equipment precedent. The apron spans the full hangar frontage in `x` so the grid
-  only extends *south*, never sideways.
+  `apron_depth_m` is a new optional `Hangar` scalar on `data/hangar.yaml` (default `0`;
+  **absent ⇒ `0` ⇒ today's no-apron behaviour reproduced byte-for-byte**). A site opts
+  into an apron by setting it explicitly, or requests a fleet-derived depth
+  (`≈ max(plane length) + max(turn_radius_m)`) via an explicit `auto` value — the derived
+  depth is opt-in, **never auto-injected on absence** (which would break byte-identity).
+  `--apron-depth N` overrides per run — the [#210 `max_carts`](0007-tow-path-planner-v1-scope.md)
+  site-equipment precedent (whose default `1` likewise reproduces today). The apron spans
+  the full hangar frontage in `x` so the grid only extends *south*, never sideways.
 - **Order.** Staging order **is** the existing `back_first_order` tow order; exactly
   one plane is staged on the apron per move. `MovesPlan`'s shape is **unchanged** — each
   `Move` still carries one `DubinsArc`, whose `start` now sits at `y < 0`.
@@ -97,7 +99,11 @@ Concretely:
 - **Determinism.** The apron-pose grid is a fixed 3 × N_y × 5 set of `(x, y, heading)`
   samples in a fixed emit order, exact-float deduplicated, multi-start-seeded at `g = 0`
   with the existing monotonic-counter heap tie-break. Bounded depth ⇒ a finite,
-  reproducible grid. No RNG, no clock. Budgets stay deterministic *counts*.
+  reproducible grid. No RNG, no clock. Budgets stay deterministic *counts*. The grid
+  heuristic (`_build_grid_heuristic`) already extends a fixed `_GRID_H_Y_PAD_M = 6.0 m`
+  south-pad and already treats `y < 0` as free space (the jamb gate lives only in the
+  `_mover_motion_bounds_conflict` oracle), so the southward change *reconciles/parameterises*
+  that existing pad with `apron_depth_m` rather than adding it from scratch.
 - **#263.** The apron + reverse motion (ADR-0010) make nose-out *routable* (back the
   plane in tail-first); the goal heading stays an upstream input and a layout is never
   rejected for being nose-in. Reverse-entry start headings (near `180°`) may join the
@@ -122,9 +128,10 @@ Unboundedness buys arbitrarily-far-from-door manoeuvring the entry case never ne
 A derived-only depth (compute from the fleet, store nothing) denies the site an
 authoring knob: one hangar fronts a wide apron, another a tight taxiway. The apron is a
 property of the *site*, like `clearance_m` and `max_carts`, so it belongs on the hangar
-floor plan. A stored scalar with a derived default gives both zero-config sanity and a
-per-site override; a default of `0` makes the no-apron model the clean
-`apron_depth_m = 0` special case — the best possible migration story.
+floor plan. A stored scalar (absent ⇒ `0`) plus an opt-in `auto` derived value gives
+both a per-site authoring knob and zero-config sanity when wanted; the default `0` makes
+the no-apron model the clean `apron_depth_m = 0` special case — the best possible
+migration story.
 
 ### Why not an implicit single `y < 0` start with no apron model (fork 2)?
 
@@ -154,8 +161,9 @@ rearrangement tier's extra needs named (spike Q7) so they are not foreclosed.
   *routable*, removing the last manoeuvring-room coupling that blocked it — without
   deciding the soft-preference mechanism.
 - Small, additive, code-mostly footprint: one optional `Hangar` scalar (default `0`
-  reproduces today exactly), a generalised front-wall rule, a wider entry-pose grid, a
-  southward grid extension. No solver change, no new motion math, no probabilistic
+  reproduces today exactly), a generalised front-wall rule, a wider entry-pose grid, and
+  a southward grid-heuristic bound (reconciling the existing `_GRID_H_Y_PAD_M = 6.0 m`
+  pad with `apron_depth_m`). No solver change, no new motion math, no probabilistic
   component.
 - The planner stays **deterministic by construction** (fixed pose grid, bounded grid,
   RNG-free), so the bundled `(Layout, MovesPlan)` output preserves the ADR-0003
