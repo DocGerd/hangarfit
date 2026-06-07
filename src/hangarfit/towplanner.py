@@ -925,9 +925,12 @@ def entry_poses(target: Placement, hangar: Hangar) -> tuple[Pose, ...]:
       at the door line — *exactly the pre-apron behaviour, reproduced
       byte-for-byte* (the ``(x, y, heading)`` key collapses to the old
       ``(x, heading)`` key when ``y`` is the constant ``0.0``).
-    - **With an apron** (``apron_depth_m > 0``): three samples
-      ``{0, −apron_depth_m/2, −apron_depth_m}`` — the door line plus two depths
-      into the apron, so each plane can stage outside and slide in.
+    - **With an apron** (``apron_depth_m > 0``): two samples
+      ``{−apron_depth_m/2, −apron_depth_m}`` *on the apron* — the ``y = 0`` door
+      line is **excluded** so every plane originates outside the hangar and
+      visibly slides in through the door (the #412 viewer motivation; user
+      decision 2026-06-07). Were ``y = 0`` kept, the shortest path would always
+      pick the door-line start and show no slide-in.
 
     **Headings**:
 
@@ -966,10 +969,13 @@ def entry_poses(target: Placement, hangar: Hangar) -> tuple[Pose, ...]:
     x_samples = (x_centre, x_target, x_mid)
 
     # Apron extension (ADR-0021). depth == 0 ⇒ the single y = 0 sample + the
-    # forward cone only ⇒ byte-identical to the pre-apron grid.
+    # forward cone only ⇒ byte-identical to the pre-apron grid. depth > 0 ⇒ the
+    # start is forced ONTO the apron (the y = 0 door line is excluded) so every
+    # plane originates outside and slides in (#412 viewer motivation; user
+    # decision 2026-06-07) — otherwise the shortest path keeps picking y = 0.
     depth = hangar.apron_depth_m
     if depth > 0.0:
-        y_samples: tuple[float, ...] = (0.0, -depth / 2.0, -depth)
+        y_samples: tuple[float, ...] = (-depth / 2.0, -depth)
         headings: tuple[float, ...] = _CONE_HEADINGS + _REVERSE_CONE_HEADINGS
     else:
         y_samples = (0.0,)

@@ -20,6 +20,9 @@ from hangarfit.towplanner import (
     _mover_motion_bounds_conflict,
     derive_apron_depth,
     entry_poses,
+    path_first_conflict,
+    plan_fill,
+    plan_reeds_shepp,
 )
 
 _TAIL_WHEELS = Wheels(main_offset_x_m=0.20, track_m=1.8, third_wheel_offset_x_m=-2.0)
@@ -112,11 +115,13 @@ def test_entry_poses_depth_zero_exact_order_unchanged() -> None:
     assert list(entry_poses(slot, h)) == expected
 
 
-def test_entry_poses_with_apron_adds_y_offsets_and_reverse_headings() -> None:
+def test_entry_poses_with_apron_forces_start_onto_apron_and_adds_reverse_headings() -> None:
     h = _hangar(door_center=10.0, door_width=6.0, apron_depth_m=6.0)
     slot = _slot("A", x=10.0, y=12.0, h=0.0)
     poses = entry_poses(slot, h)
-    assert {p.y_m for p in poses} == {0.0, -3.0, -6.0}  # {0, -d/2, -d}
+    # y=0 (door line) is excluded — every start is ON the apron (#412 slide-in).
+    assert {p.y_m for p in poses} == {-3.0, -6.0}  # {-d/2, -d}
+    assert all(p.y_m < 0.0 for p in poses)
     headings = {p.heading_deg for p in poses}
     assert {330.0, 345.0, 0.0, 15.0, 30.0} <= headings  # forward cone retained
     assert {150.0, 165.0, 180.0, 195.0, 210.0} <= headings  # reverse cone added
@@ -134,7 +139,7 @@ def test_entry_poses_apron_emit_order_x_outer_y_middle_heading_inner() -> None:
     slot = _slot("A", x=10.0, y=12.0, h=0.0)  # x_centre == x_target == x_mid == 10 ⇒ 1 x-sample
     poses = list(entry_poses(slot, h))
     headings = (330.0, 345.0, 0.0, 15.0, 30.0, 150.0, 165.0, 180.0, 195.0, 210.0)
-    expected = [Pose(x_m=10.0, y_m=y, heading_deg=hd) for y in (0.0, -2.0, -4.0) for hd in headings]
+    expected = [Pose(x_m=10.0, y_m=y, heading_deg=hd) for y in (-2.0, -4.0) for hd in headings]
     assert poses == expected
 
 
@@ -202,3 +207,67 @@ def test_grid_heuristic_south_pad_reconciles_with_apron_depth() -> None:
     )
     assert min(iy for _, iy in field_shallow) == -round(_GRID_H_Y_PAD_M / _GRID_XY_M)  # -12
     assert min(iy for _, iy in field_deep) == -round(10.0 / _GRID_XY_M)  # -20
+
+
+# ── Task 6: integration — apron fill, byte-identity, reverse-into-apron canary ─
+
+
+def test_apron_fill_routes_plane_from_outside_the_door() -> None:
+    """The whole point of #412: with an apron the tow STARTS outside the hangar
+    (first sample y < 0) and slides in to the slot, oracle-clean."""
+    h = _hangar(width_m=20.0, length_m=30.0, door_center=10.0, door_width=6.0, apron_depth_m=6.0)
+    fleet = {"A": _box_plane("A")}
+    target = _layout(fleet, h, _slot("A", 10.0, 12.0, 0.0))
+    plan = plan_fill(target)
+    arc = plan.moves[0].path
+    first = list(arc.sample(step_m=0.25, step_deg=5.0))[0]
+    last = arc.pose_at(arc.length_m)
+    assert first.y_m < 0.0  # originates OUTSIDE the hangar (the slide-in)
+    assert last.x_m == pytest.approx(10.0, abs=1e-6)
+    assert last.y_m == pytest.approx(12.0, abs=1e-6)
+    assert (
+        path_first_conflict(arc, fleet["A"], mover_on_carts=False, placed=_layout(fleet, h)) is None
+    )
+
+
+def test_apron_gate_both_ways_depth_zero_at_door_line_apron_outside() -> None:
+    """Depth 0 keeps the pre-apron door-line start; depth>0 originates outside."""
+    fleet = {"A": _box_plane("A")}
+    slot = _slot("A", 10.0, 12.0, 0.0)
+    p0 = plan_fill(_layout(fleet, _hangar(apron_depth_m=0.0), slot))
+    p6 = plan_fill(_layout(fleet, _hangar(apron_depth_m=6.0), slot))
+    first0 = list(p0.moves[0].path.sample(step_m=0.25, step_deg=5.0))[0]
+    first6 = list(p6.moves[0].path.sample(step_m=0.25, step_deg=5.0))[0]
+    assert first0.y_m == 0.0  # pre-apron behaviour: starts on the door line
+    assert first6.y_m < 0.0  # apron: originates outside
+
+
+def test_apron_movesplan_is_byte_deterministic() -> None:
+    h = _hangar(apron_depth_m=6.0)
+    fleet = {"A": _box_plane("A"), "B": _box_plane("B")}
+    target = _layout(fleet, h, _slot("A", 8.0, 8.0, 0.0), _slot("B", 12.0, 22.0, 0.0))
+    assert plan_fill(target) == plan_fill(target)
+
+
+def test_apron_depth_absent_equals_explicit_zero() -> None:
+    """Migration anchor: absent apron_depth_m ⇒ 0 ⇒ identical to explicit 0."""
+    fleet = {"A": _box_plane("A"), "B": _box_plane("B")}
+    slots = (_slot("A", 8.0, 8.0, 0.0), _slot("B", 12.0, 22.0, 0.0))
+    h_absent = _hangar(width_m=20.0, length_m=30.0)  # apron_depth_m default 0.0
+    h_explicit0 = _hangar(width_m=20.0, length_m=30.0, apron_depth_m=0.0)
+    assert plan_fill(_layout(fleet, h_absent, *slots)) == plan_fill(
+        _layout(fleet, h_explicit0, *slots)
+    )
+
+
+def test_reverse_into_apron_sign_canary() -> None:
+    """ADR-0002 sign-flip guard for a y<0 reverse-into-apron start pose: backing
+    in from the apron (heading ~180, nose-out) must reach the deep nose-out goal,
+    not flip into the wrong quadrant. Backstops the new y<0 start poses against
+    the symmetric Reeds–Shepp word matrix."""
+    start = Pose(x_m=10.0, y_m=-4.0, heading_deg=180.0)  # on the apron, nose toward -y
+    goal = Pose(x_m=10.0, y_m=6.0, heading_deg=180.0)  # parked deep, nose-out
+    arc = plan_reeds_shepp(start, goal, turn_radius_m=4.0)
+    last = arc.pose_at(arc.length_m)
+    assert last.x_m == pytest.approx(10.0, abs=1e-3)
+    assert last.y_m == pytest.approx(6.0, abs=1e-3)
