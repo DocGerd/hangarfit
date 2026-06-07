@@ -555,19 +555,24 @@ def test_obstacle_detour_off_side_cone_yields_legal_strict_win() -> None:
     steeply-angled off-side slot, this pins its win when a placed plane blocks the
     v1 lane.
 
-    A wide-winged plane ``B`` is parked broadside (heading 90°) across the v1
-    straight-in lane between the door and the deep slot. v1 clamps its single
-    entry to ``x = 10`` (the target x, inside the door interval [6, 18]) and shoots
-    straight in — but plane B's 6 m span sits squarely on that lane, so v1 must
-    swing the long way around it. The cone additionally fans entries at three door
-    x-samples; the door-centre entry (``x = 12``, heading 0°) starts the search one
-    lane over, on the open side of B's wing, and threads a shorter total arc whose
-    swept footprint stays clear of B, the walls and the door opening (legal under
-    the #411 gate). The winning start is therefore an *offset* cone pose, NOT v1's
-    clamped-x straight-in — i.e. the cone's fan is what delivers the win.
+    A plane ``B`` is parked broadside (heading 90°) across the v1 straight-in lane
+    between the door and the deep slot. v1 clamps its single entry to ``x = 10`` (the
+    target x, inside the door interval [6, 18]) and shoots straight in — but B's
+    broadside **fuselage** (z 0–1.4 m, ~1 m across the lane after the 90° rotation)
+    sits squarely on that lane, so v1 must swing the long way around it. (B is a
+    high-wing plane, but its wing at z 1.4–1.8 m is *inert* here: the mover's
+    fuselage tops out at z 1.0 m, leaving a 0.4 m layer gap ≥ the 0.2 m
+    ``wing_layer_clearance_m``, so the mover tows clean *under* B's wing — the detour
+    is driven by B's fuselage, not its span.) The cone additionally fans entries at
+    three door x-samples; an offset door entry (here the door-centre ``x = 12``,
+    heading 0°) starts the search one lane over, off the fuselage, and threads a
+    shorter total arc whose swept footprint stays clear of B, the walls and the door
+    opening (legal under the #411 gate). The winning start is therefore an *offset*
+    cone pose, NOT v1's clamped-x straight-in — i.e. the cone's fan delivers the win.
 
     Chosen config (hangar 24×26, door centre 12 width 12, ``turn_radius_m`` 4):
-    slot A at (10, 20) heading 0°; obstacle B (6 m span) at (10, 10) heading 90°.
+    slot A at (10, 20) heading 0°; obstacle B at (10, 10) heading 90° (its broadside
+    fuselage, not its 6 m wing span, is the blocker — see above).
     Measured ``len_v1`` ≈ 20.530 m, ``len_cone`` ≈ 20.178 m → margin ≈ 0.352 m,
     ~7× the 0.05 m threshold. The win survives ±0.25 m obstacle jitter in every
     cell of the 3×3 perturbation grid (worst-case margin ≈ 0.12 m, all legal), so
@@ -583,11 +588,14 @@ def test_obstacle_detour_off_side_cone_yields_legal_strict_win() -> None:
       this fixture the cone can even be *longer* than v1 despite the cone fan
       containing the v1 pose. Do NOT add a "the cone is never worse than v1" test;
       it would be wrong.
-    - **The win is tied to the obstacle blocking the v1 lane.** Slide B off the
+    - **The win is tied to B's fuselage blocking the v1 lane.** Slide B off the
       lane and v1 no longer detours, so the win shrinks (that is the point — it is
-      an obstacle-detour win). If this breaks after a geometry / ``_box_plane`` /
-      ``_wide_plane`` change, re-derive a winning fixture (re-sweep slot +
-      obstacle placement for a robust margin); do NOT just lower the threshold.
+      an obstacle-detour win). The blocker is B's broadside *fuselage* (its z-range
+      0–1.4 m overlaps the mover's 0–1.0 m); B's high wing is inert, so changing
+      ``_wide_plane``'s ``span_m`` will NOT move the margin. If this breaks after a
+      geometry / ``_box_plane`` / ``_wide_plane`` change, re-derive by re-sweeping
+      the slot + obstacle *placement* (or the fuselage z-range), not the span, for a
+      robust margin; do NOT just lower the threshold.
     """
     from hangarfit.towplanner import path_first_conflict
 
@@ -609,6 +617,19 @@ def test_obstacle_detour_off_side_cone_yields_legal_strict_win() -> None:
     v1_entry = entry_pose(slot, h)
     arc_v1 = plan_path(mover, v1_entry, goal, hangar=h, placed=placed, mover_on_carts=False)
 
+    # Premise anchor (#431): confirm the obstacle genuinely FORCES the v1 detour.
+    # Without B on the lane v1 shoots straight in; B adds ~0.53 m. This makes the
+    # guard fail loud if a future geometry change stops B blocking the lane, rather
+    # than silently degrading into a duplicate of the #420 open-space case.
+    placed_clear = Layout(fleet={"A": mover, "B": obstacle}, hangar=h, placements=())
+    arc_v1_clear = plan_path(
+        mover, v1_entry, goal, hangar=h, placed=placed_clear, mover_on_carts=False
+    )
+    assert arc_v1.length_m > arc_v1_clear.length_m + 0.1, (
+        f"obstacle B must force a v1 detour: with-B v1 {arc_v1.length_m:.4f} m should "
+        f"exceed the no-obstacle v1 {arc_v1_clear.length_m:.4f} m"
+    )
+
     # Cone: the multi-start fan (includes v1's straight-in among its poses).
     cone = entry_poses(slot, h)
     arc_cone = plan_path(
@@ -626,8 +647,10 @@ def test_obstacle_detour_off_side_cone_yields_legal_strict_win() -> None:
         f"{arc_v1.length_m:.4f} m on this obstacle-detour case"
     )
     # The winning start is an OFFSET cone entry, not v1's clamped-x straight-in —
-    # i.e. the cone's fan (here the door-centre x-sample) delivers the win, not the
-    # v1 pose it also holds.
+    # i.e. the cone's fan (here the door-centre x=12 sample) delivers the win, not
+    # the v1 pose it also holds. We assert only "offset != v1" (not the exact winning
+    # sample) to stay robust to which fan pose wins; exact float `!=` is safe on these
+    # door-geometry literals (won x=12.0 vs v1 x=10.0).
     won = arc_cone.start
     assert won.x_m != v1_entry.x_m or won.heading_deg != v1_entry.heading_deg, (
         f"winning cone start ({won.x_m:.3f}, {won.heading_deg:.1f}) should differ "
