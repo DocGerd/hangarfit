@@ -54,6 +54,15 @@ re-check.
   layouts, `placement_s + routing_s` is a faithful decomposition of the
   end-to-end wall-clock.
 
+* **Apron regimes (#499/ADR-0021).** `Regime.apron_depth` applies a staging
+  apron to the scenario's hangar (`0` ⇒ no apron, the load path stays
+  byte-identical; a number or `"auto"` ⇒ apron on). It enlarges the per-plane tow
+  start set and lengthens each path, so it characterises the apron's
+  routing-cost effect. Finding: the apron is planner-only (placement unchanged),
+  feasible fills route at the default budgets, and the un-routable disprove rises
+  only modestly — no budget re-tune needed. See the
+  [profiling spike §6](../docs/spikes/solve-tow-profiling.md).
+
 The regimes themselves are defined in [`regimes.py`](regimes.py); they reference
 committed `tests/fixtures/*.yaml` scenarios so the harness has no private data.
 

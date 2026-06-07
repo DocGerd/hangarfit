@@ -121,8 +121,14 @@ class RegimeResult:
 
 
 def load_regime_scenario(regime: Regime) -> Scenario:
-    """Load a regime's scenario (relative fleet/hangar refs resolve correctly)."""
-    return load_scenario(regime.scenario)
+    """Load a regime's scenario (relative fleet/hangar refs resolve correctly).
+
+    A non-zero ``apron_depth`` (#499/ADR-0021) is applied to the resolved hangar;
+    ``0`` passes ``apron_depth=None`` so the no-apron regimes keep the original
+    load path (and their numbers) byte-identical.
+    """
+    apron = regime.apron_depth if regime.apron_depth else None
+    return load_scenario(regime.scenario, apron_depth=apron)
 
 
 def _search_config(regime: Regime) -> SearchConfig:
