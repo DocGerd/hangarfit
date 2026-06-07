@@ -38,7 +38,7 @@ import difflib
 import math
 from collections.abc import Collection, Iterable, Mapping
 from pathlib import Path
-from typing import Any
+from typing import Any, Literal
 
 import yaml
 
@@ -166,8 +166,9 @@ def _resolve_apron_depth(
     if isinstance(value, str) and value.strip().lower() == "auto":
         if not fleet:
             raise LoaderError(
-                f"{field_name!r}: 'auto' requires a fleet to derive from; "
-                f"load via a scenario/layout, not load_hangar() alone"
+                f"{field_name!r}: 'auto' needs a fleet to derive the depth from. "
+                f"Use it in a scenario/layout (whose fleet resolves it), pass --fleet "
+                f"alongside a --hangar override, or author a numeric depth instead."
             )
         return derive_apron_depth(fleet)
     return _to_float(value, field_name)
@@ -238,7 +239,7 @@ def load_layout(
     fleet: dict[str, Aircraft] | None = None,
     hangar: Hangar | None = None,
     max_carts: int | None = None,
-    apron_depth: float | str | None = None,
+    apron_depth: float | Literal["auto"] | None = None,
 ) -> Layout:
     """Load a layout YAML.
 
@@ -360,7 +361,7 @@ def load_scenario(
     fleet: dict[str, Aircraft] | None = None,
     hangar: Hangar | None = None,
     max_carts: int | None = None,
-    apron_depth: float | str | None = None,
+    apron_depth: float | Literal["auto"] | None = None,
 ) -> Scenario:
     """Load a scenario YAML into a validated :class:`Scenario`.
 

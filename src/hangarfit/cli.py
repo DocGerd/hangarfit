@@ -18,7 +18,7 @@ import argparse
 import json
 import math
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from hangarfit import __version__, collisions, visualize
 from hangarfit.loader import LoaderError, load_fleet, load_hangar, load_layout
@@ -64,7 +64,7 @@ _BACK_FILL_DEFAULT_WEIGHT = 1.0
 _VIEW_TOW_MAX_TOTAL_EXPANSIONS = 300
 
 
-def _apron_depth_arg(value: str) -> float | str:
+def _apron_depth_arg(value: str) -> float | Literal["auto"]:
     """argparse type for ``--apron-depth``: a finite non-negative metre value, or
     the literal ``"auto"`` (fleet-derived depth, resolved by the loader, ADR-0021).
     Rejects garbage / negatives at parse time with an exit-2 ArgumentTypeError."""
@@ -444,7 +444,9 @@ def cmd_check(args: argparse.Namespace) -> int:
     """Run the ``check`` subcommand. See spec §4 for the data flow."""
     try:
         fleet_override = load_fleet(args.fleet) if args.fleet is not None else None
-        hangar_override = load_hangar(args.hangar) if args.hangar is not None else None
+        hangar_override = (
+            load_hangar(args.hangar, fleet=fleet_override) if args.hangar is not None else None
+        )
         layout = load_layout(
             args.layout,
             fleet=fleet_override,
@@ -598,7 +600,9 @@ def cmd_solve(args: argparse.Namespace) -> int:
 
     try:
         fleet_override = load_fleet(args.fleet) if args.fleet is not None else None
-        hangar_override = load_hangar(args.hangar) if args.hangar is not None else None
+        hangar_override = (
+            load_hangar(args.hangar, fleet=fleet_override) if args.hangar is not None else None
+        )
         scenario = load_scenario(
             args.scenario,
             fleet=fleet_override,
@@ -954,7 +958,9 @@ def cmd_view(args: argparse.Namespace) -> int:
         )
     try:
         fleet_override = load_fleet(args.fleet) if args.fleet is not None else None
-        hangar_override = load_hangar(args.hangar) if args.hangar is not None else None
+        hangar_override = (
+            load_hangar(args.hangar, fleet=fleet_override) if args.hangar is not None else None
+        )
         if args.solve:
             from hangarfit.loader import load_scenario
             from hangarfit.solver import solve

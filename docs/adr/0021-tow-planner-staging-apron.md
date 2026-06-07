@@ -121,8 +121,10 @@ Concretely:
   verbatim**. Side and back walls are enforced unchanged. The static
   `collisions.check` oracle is **untouched** (it still forbids `y < 0` entirely); the
   final parked slot remains a fully in-bounds placement.
-- **Determinism.** The apron-pose grid is a fixed 3 × N_y × 5 set of `(x, y, heading)`
-  samples in a fixed emit order, exact-float deduplicated, multi-start-seeded at `g = 0`
+- **Determinism.** The apron-pose grid is a fixed `3 × N_y × N_h` set of `(x, y, heading)`
+  samples (`N_h = 5` forward-cone headings with no apron; `10` once the rear-entry cone
+  joins it per implementation note #2) in a fixed emit order, exact-float deduplicated,
+  multi-start-seeded at `g = 0`
   with the existing monotonic-counter heap tie-break. Bounded depth ⇒ a finite,
   reproducible grid. No RNG, no clock. Budgets stay deterministic *counts*. The grid
   heuristic (`_build_grid_heuristic`) already extends a fixed `_GRID_H_Y_PAD_M = 6.0 m`

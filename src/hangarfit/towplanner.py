@@ -984,7 +984,7 @@ def entry_poses(target: Placement, hangar: Hangar) -> tuple[Pose, ...]:
     seen: set[tuple[float, float, float]] = set()
     poses: list[Pose] = []
     for x in x_samples:  # outer: x (door centre, clamped target, midpoint)
-        for y in y_samples:  # middle: y (0, then deeper into the apron)
+        for y in y_samples:  # middle: y (door line at depth 0; apron -d/2,-d when set)
             for h in headings:  # inner: headings (forward cone, then reverse cone)
                 key = (x, y, h)
                 if key in seen:
@@ -1378,6 +1378,12 @@ _MAX_FILL_EXPANSIONS = 16000  # GLOBAL expansion budget across one whole fill (#
 # across every plan_path call — failed candidates included — bounds that: the
 # same fill bails at the cap in ~334 s (< the 400 s perf gate), while a routable
 # fill (seed=1: ~8.4k total) finishes well under it. Deterministic / RNG-free.
+# A staging apron (#412) quadruples the per-plane start set (15 → up to 60 cone
+# poses: forward+reverse headings × the apron y-samples), so the same un-routable
+# six-plane disprove rises to ~346 s — still under the 400 s gate, and the bound
+# that stays deterministic is the expansion COUNT, not the wall-clock. Re-tune the
+# budget VALUE (not the count) with the profiling harness if a real apron site
+# needs it; bound a hard apron fill per-run with ``--tow-max-expansions``.
 # Overridable via the ``max_total_expansions`` param on ``plan_fill()``.
 # Sampling resolution for the FAST in-search `_motion_clear` validity checks
 # (edges + the analytic-shot screen). Coarser than the exact oracle's default

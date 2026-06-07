@@ -36,6 +36,55 @@ def test_view_with_apron_writes_html(tmp_path):
     assert out.read_text(encoding="utf-8").lstrip().startswith("<!DOCTYPE html>")
 
 
+def test_view_layout_mode_apron_threads_to_loader(tmp_path, monkeypatch):
+    """Layout-mode `view` must thread --apron-depth into load_layout (cli.py
+    binds load_layout at module top, so spy there)."""
+    import hangarfit.cli as cli
+
+    captured: dict = {}
+    real = cli.load_layout
+
+    def spy(path, **kw):
+        captured["apron_depth"] = kw.get("apron_depth")
+        return real(path, **kw)
+
+    monkeypatch.setattr(cli, "load_layout", spy)
+    main(["view", NESTING, "-o", str(tmp_path / "v.html"), "--apron-depth", "6", "--no-animate"])
+    assert captured["apron_depth"] == 6.0
+
+
+def test_view_solve_mode_apron_threads_to_loader(tmp_path, monkeypatch):
+    """Solve-mode `view` must thread --apron-depth into load_scenario (imported
+    locally in cmd_view, so spy on the loader module)."""
+    import hangarfit.loader as loader
+
+    captured: dict = {}
+    real = loader.load_scenario
+
+    def spy(path, **kw):
+        captured["apron_depth"] = kw.get("apron_depth")
+        return real(path, **kw)
+
+    monkeypatch.setattr(loader, "load_scenario", spy)
+    main(
+        [
+            "view",
+            "--solve",
+            "tests/fixtures/scenario_minimal.yaml",
+            "-o",
+            str(tmp_path / "v.html"),
+            "--apron-depth",
+            "auto",
+            "--no-animate",
+            "--seed",
+            "1",
+            "--budget",
+            "5",
+        ]
+    )
+    assert captured["apron_depth"] == "auto"
+
+
 def test_view_layout_writes_html(tmp_path, capsys):
     out = tmp_path / "v.html"
     rc = main(["view", NESTING, "-o", str(out)])

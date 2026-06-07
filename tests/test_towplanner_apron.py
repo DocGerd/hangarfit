@@ -12,6 +12,11 @@ test files); the box plane's fuselage is mounted forward (offset_x_m=0.5,
 length_m=1.0 ⇒ at heading 0 the body occupies world y ∈ [ref, ref + 1]).
 """
 
+import os
+import subprocess
+import sys
+from pathlib import Path
+
 import pytest
 
 from hangarfit.models import Aircraft, Door, Hangar, MaintenanceBay, Part, Placement, Wheels
@@ -58,6 +63,48 @@ def _box_plane(plane_id: str, *, turn_radius_m: float = 4.0) -> Aircraft:
     )
 
 
+def _always_cart_plane(plane_id: str) -> Aircraft:
+    """A cart-borne plane (turn_radius_m None) — for the all-cart derive branch."""
+    return Aircraft(
+        id=plane_id,
+        name=f"Cart {plane_id}",
+        wing_position="high",
+        gear="tailwheel",
+        movement_mode="always_cart",
+        turn_radius_m=None,
+        measured=False,
+        parts=(_fuselage_box(),),
+        wheels=_TAIL_WHEELS,
+    )
+
+
+def _wide_box_plane(plane_id: str, *, body_width_m: float) -> Aircraft:
+    """A plane whose fuselage is ``body_width_m`` wide (lateral). At heading 0 the
+    body spans world x ∈ [ref_x − body_width_m/2, ref_x + body_width_m/2]; used to
+    test a footprint wider than the door."""
+    part = Part(
+        kind="fuselage_aft",
+        length_m=1.0,
+        width_m=body_width_m,
+        offset_x_m=0.5,
+        offset_y_m=0.0,
+        angle_deg=0.0,
+        z_bottom_m=0.0,
+        z_top_m=1.0,
+    )
+    return Aircraft(
+        id=plane_id,
+        name=f"Wide {plane_id}",
+        wing_position="high",
+        gear="tailwheel",
+        movement_mode="always_own_gear",
+        turn_radius_m=4.0,
+        measured=False,
+        parts=(part,),
+        wheels=_TAIL_WHEELS,
+    )
+
+
 def _hangar(
     width_m: float = 20.0,
     length_m: float = 30.0,
@@ -97,6 +144,18 @@ def test_derive_apron_depth_is_max_length_plus_max_turn_radius() -> None:
 
 def test_derive_apron_depth_empty_fleet_is_zero() -> None:
     assert derive_apron_depth({}) == 0.0
+
+
+def test_derive_apron_depth_all_cart_fleet_is_length_only() -> None:
+    # All planes are always_cart (turn_radius_m is None) ⇒ no radius term, just
+    # the longest fore-aft length (1.0). Exercises the `is not None` filter branch.
+    fleet = {"G": _always_cart_plane("G"), "H": _always_cart_plane("H")}
+    assert derive_apron_depth(fleet) == pytest.approx(1.0)
+
+
+def test_derive_apron_depth_mixed_fleet_skips_cart_radius() -> None:
+    fleet = {"G": _always_cart_plane("G"), "A": _box_plane("A", turn_radius_m=5.0)}
+    assert derive_apron_depth(fleet) == pytest.approx(1.0 + 5.0)
 
 
 # ── Task 3: entry_poses apron grid (byte-identical at depth 0) ────────────────
@@ -178,6 +237,28 @@ def test_door_passage_through_opening_allowed_with_apron() -> None:
     plane = _box_plane("A")
     # Body y ∈ [-0.5, 0.5] straddles y=0 but within the door opening (x ≈ 10).
     placement = _slot("A", x=10.0, y=-0.5, h=0.0)
+    with_apron = _hangar(door_center=10.0, door_width=6.0, apron_depth_m=5.0)
+    assert _mover_motion_bounds_conflict(plane, placement, with_apron) is None
+
+
+def test_wide_part_free_on_apron_but_conflicts_straddling() -> None:
+    """The headline apron contract at its defining boundary: a footprint WIDER
+    than the door (8 m body > 6 m door) is open ground when wholly staged on the
+    apron, but conflicts when it straddles the wall (it cannot thread the door)."""
+    plane = _wide_box_plane("W", body_width_m=8.0)  # body x-span 8 m, door is 6 m
+    with_apron = _hangar(width_m=20.0, door_center=10.0, door_width=6.0, apron_depth_m=5.0)
+    # Wholly on the apron (body y ∈ [-2, -1]), centred at the door x ⇒ x ∈ [6, 14]
+    # exceeds the door [7, 13] but is within the side walls [0, 20]: open ground.
+    assert _mover_motion_bounds_conflict(plane, _slot("W", 10.0, -2.0, 0.0), with_apron) is None
+    # Straddling y=0: the y<0 corners at x≈6 and x≈14 sit beside the door ⇒ conflict.
+    assert _mover_motion_bounds_conflict(plane, _slot("W", 10.0, -0.5, 0.0), with_apron) is not None
+
+
+def test_footprint_tangent_at_y_zero_is_free_with_apron() -> None:
+    """Boundary at the `y >= 0` branch: a body tangent at y=0 from below (y ∈
+    [-1, 0]) beside the door does not straddle (ymax == 0, not > 0) ⇒ free."""
+    plane = _box_plane("A")
+    placement = _slot("A", x=3.0, y=-1.0, h=0.0)  # body y ∈ [-1, 0], beside the door
     with_apron = _hangar(door_center=10.0, door_width=6.0, apron_depth_m=5.0)
     assert _mover_motion_bounds_conflict(plane, placement, with_apron) is None
 
@@ -271,3 +352,45 @@ def test_reverse_into_apron_sign_canary() -> None:
     last = arc.pose_at(arc.length_m)
     assert last.x_m == pytest.approx(10.0, abs=1e-3)
     assert last.y_m == pytest.approx(6.0, abs=1e-3)
+
+
+_APRON_PLAN_HASH_SNIPPET = """
+import hashlib
+from tests.test_towplanner_apron import _box_plane, _hangar, _slot, _layout
+from hangarfit.towplanner import plan_fill
+h = _hangar(width_m=20.0, length_m=30.0, apron_depth_m=6.0)
+f = {"A": _box_plane("A"), "B": _box_plane("B")}
+p = plan_fill(_layout(f, h, _slot("A", 6.0, 8.0, 0.0), _slot("B", 14.0, 16.0, 180.0)))
+blob = repr([
+    (m.plane_id, m.target_slot, m.path.start, m.path.end, m.path.turn_radius_m, m.path.segments)
+    for m in p.moves
+])
+print(hashlib.sha256(blob.encode()).hexdigest())
+"""
+
+
+@pytest.mark.serial
+def test_apron_movesplan_byte_identical_across_processes() -> None:
+    """The depth>0 apron plan must be byte-identical across fresh processes with
+    different PYTHONHASHSEED — the set()-iteration-order / hash-seed guard that an
+    in-process ``==`` cannot catch (the analogue of the solver double-solve
+    canary). The apron's only set (`entry_poses` dedup) is membership-only, so
+    this should hold; this pins it permanently."""
+    repo_root = Path(__file__).resolve().parent.parent
+
+    def _run(hashseed: str) -> str:
+        env = dict(os.environ)
+        env["PYTHONHASHSEED"] = hashseed
+        proc = subprocess.run(
+            [sys.executable, "-c", _APRON_PLAN_HASH_SNIPPET],
+            capture_output=True,
+            text=True,
+            cwd=repo_root,
+            env=env,
+            check=True,
+        )
+        return proc.stdout.strip()
+
+    h1 = _run("111")
+    h2 = _run("777")
+    assert h1 and h1 == h2, f"apron MovesPlan diverged across processes: {h1!r} != {h2!r}"
