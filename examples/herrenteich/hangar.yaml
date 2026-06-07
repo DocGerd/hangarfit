@@ -56,3 +56,9 @@ wing_layer_clearance_m: 0.2  # minimum vertical gap between two parts at the sam
 # cart_eligible planes may sit on carts in one layout; always_cart planes
 # get their own carts and do not draw from this pool.
 max_carts: 4
+
+# Staging-apron depth (m) in front of the door (ADR-0021). Kept at the default
+# (absent => 0 => no apron) — the real apron in front of Herrenteich's door has
+# not been measured. Set a number or `auto` to model the tow slide-in; does not
+# affect static `hangarfit check` validity.
+# apron_depth_m: 0

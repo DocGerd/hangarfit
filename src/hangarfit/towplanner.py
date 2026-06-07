@@ -21,7 +21,7 @@ from __future__ import annotations
 import heapq
 import math
 import typing
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Literal
 
@@ -853,6 +853,39 @@ def back_first_order(placements: tuple[Placement, ...]) -> tuple[Placement, ...]
 
 
 # ---------------------------------------------------------------------------
+# Staging apron (#412 / ADR-0021): the y < 0 start-region in front of the door
+# ---------------------------------------------------------------------------
+
+
+def _plane_fore_aft_length_m(aircraft: Aircraft) -> float:
+    """Fore-aft (plane-local x) extent of a plane from its parts.
+
+    Approximates per-part rotation away (e.g. struts) — adequate for the opt-in
+    ``auto`` apron depth, which is a convenience knob, not a tight bound. Pure
+    and RNG-free.
+    """
+    fronts = [p.offset_x_m + p.length_m / 2.0 for p in aircraft.parts]
+    backs = [p.offset_x_m - p.length_m / 2.0 for p in aircraft.parts]
+    return max(fronts) - min(backs)
+
+
+def derive_apron_depth(fleet: Mapping[str, Aircraft]) -> float:
+    """Fleet-derived staging-apron depth — the opt-in ``auto`` value (ADR-0021).
+
+    ``≈ max(plane fore-aft length) + max(own-gear turn radius)``: the run-up room
+    one plane needs to align and slide in through the door. A pure function of
+    the fleet (RNG-free), so the resolved depth is deterministic. An empty fleet
+    (or an all-cart fleet with no own-gear turn radius) yields just the length
+    term; an empty fleet yields ``0.0``.
+    """
+    if not fleet:
+        return 0.0
+    max_len = max(_plane_fore_aft_length_m(a) for a in fleet.values())
+    radii = [a.turn_radius_m for a in fleet.values() if a.turn_radius_m is not None]
+    return max_len + (max(radii) if radii else 0.0)
+
+
+# ---------------------------------------------------------------------------
 # Door-cone entry poses (spike Q6 / ADR-0007 / #262: the door is a motion gate)
 # ---------------------------------------------------------------------------
 
@@ -861,16 +894,22 @@ def back_first_order(placements: tuple[Placement, ...]) -> tuple[Placement, ...]
 # Rear-entry headings (near 180°) are out of scope here — see issue #261.
 _CONE_HEADINGS: tuple[float, ...] = (330.0, 345.0, 0.0, 15.0, 30.0)
 
+# The five rear-entry (nose-out / back-in) headings: 180° ± 30° in 15° steps.
+# Emitted ONLY when an apron exists (apron_depth_m > 0): backing a plane in
+# tail-first needs the apron run-up room (#263, unblocked by the apron — ADR-0021).
+# Gating on depth > 0 keeps the no-apron pose set — and thus the MovesPlan —
+# byte-identical (ADR-0003); they are additional deterministic seed poses the
+# search chooses among on cost, never a forced orientation.
+_REVERSE_CONE_HEADINGS: tuple[float, ...] = (150.0, 165.0, 180.0, 195.0, 210.0)
+
 
 def entry_poses(target: Placement, hangar: Hangar) -> tuple[Pose, ...]:
-    """All door-cone entry poses for a plane heading to ``target`` (#262).
+    """All entry / apron start poses for a plane heading to ``target`` (#262, #412).
 
-    Returns a **fixed, deterministic grid** of up to 15 candidate start poses
-    (3 x-samples × 5 headings, deduplicated):
-
-    **Headings** — the 5-heading forward-admissible cone:
-    ``{330°, 345°, 0°, 15°, 30°}`` (straight-in ±30° in 15° steps; all point
-    generally inward).  Near-180° rear-entry headings are out of scope here (#261).
+    Returns a **fixed, deterministic grid** of candidate start poses for the
+    multi-start Hybrid-A\\* search. The grid is a 3 × N_y × N_h cross product
+    (x-samples × y-samples × headings), deduplicated by exact-float
+    ``(x, y, heading)`` key in a fixed emit order.
 
     **X-samples** — three values within the door interval
     ``[center − width/2, center + width/2]``:
@@ -879,27 +918,40 @@ def entry_poses(target: Placement, hangar: Hangar) -> tuple[Pose, ...]:
     2. The clamped target x — same as :func:`entry_pose`'s output (the v1 choice).
     3. The midpoint between those two.
 
-    All three are clamped into the door interval; duplicates (when the target x
-    equals the centre or its midpoint) are removed while preserving the
-    deterministic order: x-outer loop, heading-inner loop, emit in
-    ``(x_sample_idx_asc, heading_idx_asc)`` order.
+    **Y-samples** — depend on the staging apron (``hangar.apron_depth_m``,
+    ADR-0021):
 
-    **Emit order** (fixed for ADR-0003 determinism):
+    - **No apron** (``apron_depth_m == 0`` / absent): a single ``y = 0`` sample
+      at the door line — *exactly the pre-apron behaviour, reproduced
+      byte-for-byte* (the ``(x, y, heading)`` key collapses to the old
+      ``(x, heading)`` key when ``y`` is the constant ``0.0``).
+    - **With an apron** (``apron_depth_m > 0``): two samples
+      ``{−apron_depth_m/2, −apron_depth_m}`` *on the apron* — the ``y = 0`` door
+      line is **excluded** so every plane originates outside the hangar and
+      visibly slides in through the door (the #412 viewer motivation; user
+      decision 2026-06-07). Were ``y = 0`` kept, the shortest path would always
+      pick the door-line start and show no slide-in.
 
-    - Outer loop: x-sample index 0 (door centre), 1 (clamped target), 2 (midpoint).
-    - Inner loop: headings in ``_CONE_HEADINGS`` order (330°, 345°, 0°, 15°, 30°).
-    - Duplicate ``(x, heading)`` pairs (exact float equality) are skipped on the
-      second occurrence.
+    **Headings**:
+
+    - **No apron**: the 5-heading forward-admissible cone
+      ``{330°, 345°, 0°, 15°, 30°}`` only (straight-in ±30°).
+    - **With an apron**: the forward cone **followed by** the rear-entry cone
+      ``{150°, 165°, 180°, 195°, 210°}`` (180° ± 30°), so the search may choose
+      to back a plane in tail-first from the apron (#263, never forced).
+
+    **Emit order** (fixed for ADR-0003 determinism): x-outer, y-middle,
+    heading-inner; duplicate ``(x, y, heading)`` triples (exact float equality)
+    are skipped on the second occurrence.
 
     The caller (:func:`plan_path` via ``entries=`` and :func:`plan_fill`) filters
-    candidates that clip the side/back walls, or protrude in front of the solid
-    wall beside the door (the door-gated front-gap exemption, #411), before
-    seeding the search; a straight-in centre pose is always the final fallback so
-    the search has at least one start (which may itself be infeasible — e.g. a
-    plane wider than the door — leaving the plane un-towable).
+    candidates that clip the side/back walls, fall past the apron south bound, or
+    cross the solid front wall beside the door (the apron-aware front-gap rule,
+    #411/#412), before seeding the search; a straight-in centre pose is always
+    present so the search has at least one start (which may itself be infeasible —
+    e.g. a plane wider than the door — leaving the plane un-towable).
 
-    Returns a non-empty :class:`tuple` of :class:`Pose` objects, each with
-    ``y_m = 0.0`` and ``heading_deg`` from ``_CONE_HEADINGS``.
+    Returns a non-empty :class:`tuple` of :class:`Pose` objects.
     """
     door = hangar.door
     half = door.width_m / 2.0
@@ -916,15 +968,29 @@ def entry_poses(target: Placement, hangar: Hangar) -> tuple[Pose, ...]:
 
     x_samples = (x_centre, x_target, x_mid)
 
-    seen: set[tuple[float, float]] = set()
+    # Apron extension (ADR-0021). depth == 0 ⇒ the single y = 0 sample + the
+    # forward cone only ⇒ byte-identical to the pre-apron grid. depth > 0 ⇒ the
+    # start is forced ONTO the apron (the y = 0 door line is excluded) so every
+    # plane originates outside and slides in (#412 viewer motivation; user
+    # decision 2026-06-07) — otherwise the shortest path keeps picking y = 0.
+    depth = hangar.apron_depth_m
+    if depth > 0.0:
+        y_samples: tuple[float, ...] = (-depth / 2.0, -depth)
+        headings: tuple[float, ...] = _CONE_HEADINGS + _REVERSE_CONE_HEADINGS
+    else:
+        y_samples = (0.0,)
+        headings = _CONE_HEADINGS
+
+    seen: set[tuple[float, float, float]] = set()
     poses: list[Pose] = []
-    for x in x_samples:
-        for h in _CONE_HEADINGS:
-            key = (x, h)
-            if key in seen:
-                continue
-            seen.add(key)
-            poses.append(Pose(x_m=x, y_m=0.0, heading_deg=h))
+    for x in x_samples:  # outer: x (door centre, clamped target, midpoint)
+        for y in y_samples:  # middle: y (door line at depth 0; apron -d/2,-d when set)
+            for h in headings:  # inner: headings (forward cone, then reverse cone)
+                key = (x, y, h)
+                if key in seen:
+                    continue
+                seen.add(key)
+                poses.append(Pose(x_m=x, y_m=y, heading_deg=h))
 
     return tuple(poses)
 
@@ -965,8 +1031,22 @@ def _mover_motion_bounds_conflict(
     when ``door_lo ≤ x ≤ door_hi``; a ``y < 0`` vertex *beside* the door clips the
     solid front wall / jamb (an off-centre entry, or a plane wider than the door)
     and is a conflict — making the door a true motion gate and matching what the
-    renderer draws. Unlike the static :func:`hangarfit.collisions.check` oracle
-    (which forbids ``y < 0`` entirely), only the door-gap protrusion is exempt.
+    renderer draws.
+
+    **Staging apron (#412 / ADR-0021):** when the site has an apron
+    (``hangar.apron_depth_m > 0``) the front-gap exemption widens from a transient
+    door-width dip to *originating and manoeuvring* in the full apron rectangle
+    ``x ∈ [0, width], y ∈ [−apron_depth_m, 0)``. The wall barrier stays: a
+    footprint that **crosses** the front-wall line (vertices both at ``y < 0`` and
+    ``y > 0``) must still pass its ``y < 0`` portion through the door opening
+    (the **#411 jamb rejection, retained verbatim** for crossings); a footprint
+    **wholly** in front of the wall (all ``y ≤ 0`` — staged on the apron) does not
+    cross, so the door-gate does not apply to it — only the apron south bound
+    ``y ≥ −apron_depth_m`` and the side walls. With ``apron_depth_m == 0`` the
+    apron branch is unreachable and this is the verbatim pre-apron #411 rule.
+
+    Unlike the static :func:`hangarfit.collisions.check` oracle (which forbids
+    ``y < 0`` entirely), the apron / door-gap protrusion is exempt here only.
     The side walls (``0 ≤ x ≤ width``) and the back wall (``y ≤ length``) are
     enforced unchanged; the mover's final slot is itself a valid static placement,
     so full bounds hold at rest. Reuses the canonical
@@ -976,7 +1056,20 @@ def _mover_motion_bounds_conflict(
     door_half = hangar.door.width_m / 2.0
     door_lo = hangar.door.center_x_m - door_half
     door_hi = hangar.door.center_x_m + door_half
-    for world_part in cached_parts_world(mover, placement):
+    apron_depth = hangar.apron_depth_m
+
+    world_parts = list(cached_parts_world(mover, placement))
+    # Does the footprint cross the front-wall line (vertices on both sides of
+    # y=0)? Only a crossing must thread the door (#411); a footprint wholly in
+    # front (all y<=0) is staged on the apron and does not cross. Computed only
+    # when an apron exists; at depth 0 the door-gate below is the verbatim #411
+    # per-vertex rule and this flag stays False.
+    straddles_front_wall = False
+    if apron_depth > 0.0:
+        ys = [y for wp in world_parts for _, y in list(wp.polygon.exterior.coords)[:-1]]
+        straddles_front_wall = any(y < 0.0 for y in ys) and any(y > 0.0 for y in ys)
+
+    for world_part in world_parts:
         for x, y in list(world_part.polygon.exterior.coords)[:-1]:
             # Side walls + back wall (unchanged): the static rule is
             # `0 <= x <= width and 0 <= y <= length`.
@@ -990,16 +1083,43 @@ def _mover_motion_bounds_conflict(
                         f"(0..{hangar.width_m:g} x ..{hangar.length_m:g})"
                     ),
                 )
-            # Front wall is solid except the door gap (#411): a vertex in front of
-            # the hangar (y < 0) is legal only when it passes *through* the door
-            # opening; beside the door it clips the solid front wall / jamb.
-            if y < 0.0 and not (door_lo <= x <= door_hi):
+            if y >= 0.0:
+                continue
+            if apron_depth <= 0.0:
+                # Front wall is solid except the door gap (#411): a vertex in
+                # front of the hangar (y < 0) is legal only when it passes
+                # *through* the door opening; beside the door it clips the jamb.
+                if not (door_lo <= x <= door_hi):
+                    return Conflict.single(
+                        kind="hangar_bounds",
+                        plane=mover.id,
+                        detail=(
+                            f"part {world_part.kind!r} vertex ({x:.3f}, {y:.3f}) "
+                            f"clips the solid front wall beside the door during tow "
+                            f"(door opening x in {door_lo:g}..{door_hi:g})"
+                        ),
+                    )
+                continue
+            # Apron open below y=0 down to the south bound (#412).
+            if y < -apron_depth:
                 return Conflict.single(
                     kind="hangar_bounds",
                     plane=mover.id,
                     detail=(
                         f"part {world_part.kind!r} vertex ({x:.3f}, {y:.3f}) "
-                        f"clips the solid front wall beside the door during tow "
+                        f"past the apron south bound during tow "
+                        f"(apron y >= {-apron_depth:g})"
+                    ),
+                )
+            # Crossing the solid front wall beside the door is still a conflict
+            # (#411): a straddling footprint's y<0 vertices must thread the door.
+            if straddles_front_wall and not (door_lo <= x <= door_hi):
+                return Conflict.single(
+                    kind="hangar_bounds",
+                    plane=mover.id,
+                    detail=(
+                        f"part {world_part.kind!r} vertex ({x:.3f}, {y:.3f}) "
+                        f"crosses the solid front wall beside the door during tow "
                         f"(door opening x in {door_lo:g}..{door_hi:g})"
                     ),
                 )
@@ -1258,6 +1378,12 @@ _MAX_FILL_EXPANSIONS = 16000  # GLOBAL expansion budget across one whole fill (#
 # across every plan_path call — failed candidates included — bounds that: the
 # same fill bails at the cap in ~334 s (< the 400 s perf gate), while a routable
 # fill (seed=1: ~8.4k total) finishes well under it. Deterministic / RNG-free.
+# A staging apron (#412) quadruples the per-plane start set (15 → up to 60 cone
+# poses: forward+reverse headings × the apron y-samples), so the same un-routable
+# six-plane disprove rises to ~346 s — still under the 400 s gate, and the bound
+# that stays deterministic is the expansion COUNT, not the wall-clock. Re-tune the
+# budget VALUE (not the count) with the profiling harness if a real apron site
+# needs it; bound a hard apron fill per-run with ``--tow-max-expansions``.
 # Overridable via the ``max_total_expansions`` param on ``plan_fill()``.
 # Sampling resolution for the FAST in-search `_motion_clear` validity checks
 # (edges + the analytic-shot screen). Coarser than the exact oracle's default
@@ -1607,9 +1733,16 @@ def _build_grid_heuristic(
     Obstacles are the placed planes' footprints (un-inflated, point-robot) plus
     the closed maintenance bay; the side/back walls bound the grid (the front
     ``y < 0`` apron is open during tow). RNG-free and pure ⇒ ADR-0003-safe.
+
+    The southward extent reconciles the historic fixed ``_GRID_H_Y_PAD_M = 6 m``
+    pad with the site's staging apron (``hangar.apron_depth_m``, #412/ADR-0021):
+    the field reaches ``max(_GRID_H_Y_PAD_M, apron_depth_m)`` south of the door,
+    so a deep apron is covered while a no-apron (or shallow-apron ≤ 6 m) site
+    keeps the historic ``-12``-row floor byte-for-byte. ``apron_depth_m`` is
+    bounded, so the grid stays finite and deterministic.
     """
     ix_max = round(hangar.width_m / _GRID_XY_M)
-    iy_min = -round(_GRID_H_Y_PAD_M / _GRID_XY_M)
+    iy_min = -round(max(_GRID_H_Y_PAD_M, hangar.apron_depth_m) / _GRID_XY_M)
     iy_max = round(hangar.length_m / _GRID_XY_M)
 
     # Union the static obstacle footprints once for fast point-in-region tests.

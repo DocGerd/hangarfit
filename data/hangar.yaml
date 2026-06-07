@@ -31,3 +31,11 @@ wing_layer_clearance_m: 0.2  # minimum vertical gap between two parts at the sam
 # get their own carts and do not draw from this pool. Absent => 1 (the
 # original single-cart rule). Overridable per-invocation with --max-carts.
 max_carts: 1
+
+# Staging-apron depth in metres in front of the door (the y < 0 region the tow
+# planner stages each plane in before sliding it through the door; ADR-0021).
+# Absent => 0 => no apron, reproducing the pre-apron tow plan byte-for-byte.
+# Set a number to model the apron, or `auto` to derive it from the fleet
+# (~ max plane length + max turn radius). Overridable with --apron-depth.
+# A site property, like max_carts; does NOT affect `hangarfit check` validity.
+# apron_depth_m: 0

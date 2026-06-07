@@ -38,6 +38,7 @@ class TestSolveSubparser:
         assert args.json is False
         assert args.fleet is None
         assert args.hangar is None
+        assert args.apron_depth is None
 
     def test_solve_subcommand_explicit_flags(self):
         parser = build_parser()
@@ -1231,3 +1232,47 @@ class TestSolveRenderPathsSpreadFallback:
         assert rc == 0, f"expected the real no-spread fallback to route; stderr={err}"
         assert "spread" in err and "re-solved" in err
         assert out.exists() and out.stat().st_size > 0
+
+
+class TestSolveApronDepth:
+    """``solve --apron-depth N|auto`` threads to the scenario load (#412)."""
+
+    _SCEN = str(FIXTURES_DIR / "solve_trivial_single_plane.yaml")
+
+    def _spy(self, monkeypatch):
+        import hangarfit.loader as loader
+
+        captured: dict[str, object] = {}
+        real = loader.load_scenario
+
+        def spy(path, **kw):
+            captured["apron_depth"] = kw.get("apron_depth")
+            return real(path, **kw)
+
+        monkeypatch.setattr(loader, "load_scenario", spy)
+        return captured
+
+    def test_numeric_threads_to_loader(self, monkeypatch):
+        captured = self._spy(monkeypatch)
+        main(["solve", self._SCEN, "--apron-depth", "5", "--budget", "1.0", "--seed", "1"])
+        assert captured["apron_depth"] == 5.0
+
+    def test_auto_threads_to_loader(self, monkeypatch):
+        captured = self._spy(monkeypatch)
+        main(["solve", self._SCEN, "--apron-depth", "auto", "--budget", "1.0", "--seed", "1"])
+        assert captured["apron_depth"] == "auto"
+
+    def test_default_is_none(self, monkeypatch):
+        captured = self._spy(monkeypatch)
+        main(["solve", self._SCEN, "--budget", "1.0", "--seed", "1"])
+        assert captured["apron_depth"] is None
+
+    def test_garbage_rejected_exit_2(self):
+        with pytest.raises(SystemExit) as exc:
+            main(["solve", self._SCEN, "--apron-depth", "wat"])
+        assert exc.value.code == 2
+
+    def test_negative_rejected_exit_2(self):
+        with pytest.raises(SystemExit) as exc:
+            main(["solve", self._SCEN, "--apron-depth=-3"])
+        assert exc.value.code == 2
