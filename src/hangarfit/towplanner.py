@@ -37,7 +37,7 @@ from shapely.geometry import Point, Polygon
 from hangarfit.collisions import _parts_conflict
 from hangarfit.collisions import check as _check
 from hangarfit.geometry import WorldPart, cached_parts_world
-from hangarfit.models import Aircraft, Conflict, Hangar, Layout, Placement
+from hangarfit.models import Aircraft, ApronShallowDrop, Conflict, Hangar, Layout, Placement
 
 SegmentKind = Literal["L", "S", "R"]
 _VALID_SEGMENT_KINDS = frozenset(typing.get_args(SegmentKind))
@@ -1282,6 +1282,7 @@ def plan_fill(
     heuristic: Literal["euclidean", "grid"] = "grid",
     max_expansions: int | None = None,
     max_total_expansions: int | None = None,
+    apron_dropped_out: list[ApronShallowDrop] | None = None,
 ) -> MovesPlan:
     """Plan a collision-free entry order + per-plane path for an empty fill.
 
@@ -1300,6 +1301,19 @@ def plan_fill(
     (~per-plane × scan-retries); the global cap bounds that worst case so the
     planner bails in bounded time instead of running away, while a routable fill
     finishes well under it. RNG-free, so the cap is seed-deterministic (#336).
+
+    ``apron_dropped_out`` is an optional diagnostics-only **out-param** (#503,
+    mirroring how ``plan_path``'s ``stats`` out-dict works): when supplied, it is
+    populated — in committed-move order — with an :class:`ApronShallowDrop` for
+    each committed plane that towed via the ``y = 0`` door-line fallback despite an
+    apron being set (``hangar.apron_depth_m > 0``), i.e. whose footprint was too
+    deep for the apron so every apron start pose was filtered (it shows no
+    slide-in). Each drop's ``min_depth_m`` is the plane's fore-aft footprint extent
+    (:func:`_plane_fore_aft_length_m`) — a conservative sufficient depth to engage
+    it, NOT the exact minimum. Purely observational: it is **never** read back into
+    the :class:`MovesPlan`, so the plan stays byte-identical whether or not the
+    list is passed (ADR-0003). ``None`` (the default) collects nothing. The caller
+    (CLI / solver) emits the user-facing warning from this data, deduped.
 
     Walks :func:`back_first_order` (deepest slot first); for each plane searches
     for an in-bounds path from the door-cone entry poses (:func:`entry_poses`) to
@@ -1336,6 +1350,7 @@ def plan_fill(
     while ordered:
         chosen: int | None = None
         chosen_arc: DubinsArc | None = None
+        chosen_apron_fallback = False
         # The deepest unplaced plane is scanned first, so its conflict (if it
         # is rejected) is the one reported when the whole scan finds nothing.
         deepest_conflict: Conflict | None = None
@@ -1397,6 +1412,10 @@ def plan_fill(
             exp = stats.get("expansions", 0)
             total_used += exp if isinstance(exp, int) else 0
             chosen, chosen_arc = idx, arc
+            # Only the COMMITTED candidate's fallback matters: the rejected
+            # candidates of the scan are not in the plan, so their stats are
+            # irrelevant to what the user sees (#503).
+            chosen_apron_fallback = stats.get("apron_fallback") is True
             break
         if chosen is None:
             # Every remaining plane conflicts: greedy back-first is stuck. The
@@ -1408,6 +1427,20 @@ def plan_fill(
         assert chosen_arc is not None
         moves.append(Move(slot.plane_id, Pose.from_placement(slot), chosen_arc))
         placed.append(slot)
+        # #503: record (plan-inert) the planes that towed via the y=0 door-line
+        # fallback DESPITE an apron being set — their footprint is too deep for the
+        # apron, so every apron start pose was filtered and they show no slide-in.
+        # Populated in committed-move order (the deterministic move order, ADR-0003)
+        # only when the caller passed `apron_dropped_out`; the suggested min depth
+        # is the per-plane FOOTPRINT extent, NOT the fleet-wide `auto` over-margin
+        # (derive_apron_depth). Never read back into the plan.
+        if chosen_apron_fallback and apron_dropped_out is not None:
+            apron_dropped_out.append(
+                ApronShallowDrop(
+                    plane_id=slot.plane_id,
+                    min_depth_m=_plane_fore_aft_length_m(fleet[slot.plane_id]),
+                )
+            )
 
     return MovesPlan(target_layout=target, moves=tuple(moves))
 
@@ -1965,6 +1998,11 @@ def plan_path(
     ``found``, ``budget_exhausted`` (hit ``max_expansions``) vs ``space_exhausted``
     (open heap emptied first ⇒ genuine local infeasibility), ``start_poses``, and
     the ``heuristic`` used — the #332 routability characterisation harness reads it.
+    It additionally carries ``apron_fallback=True`` (#503) when the site has an
+    apron (``hangar.apron_depth_m > 0``) but every apron start pose was filtered,
+    so this plane fell back to the ``y = 0`` door line and shows no slide-in. The
+    key is set ONLY in that case (absent otherwise), and is purely observational —
+    it never affects the returned :class:`DubinsArc` or the plan (ADR-0003).
     """
     r = mover.effective_turn_radius_m()
     # Static obstacle set, computed once: placed planes don't move while this one
@@ -2023,6 +2061,15 @@ def plan_path(
             # start. It is NOT guaranteed feasible — a plane wider than the door
             # clips even here, and the search then finds no valid path (#411).
             start_poses = (Pose(x_m=hangar.door.center_x_m, y_m=0.0, heading_deg=0.0),)
+            # #503 signal (observational, plan-inert): when the site HAS an apron
+            # (apron_depth_m > 0) but every apron start pose was filtered, this
+            # plane tows via the y=0 door line and shows no slide-in — and that is
+            # silent in the MovesPlan. Record it in `stats` (a diagnostics-only
+            # out-param, never the plan) so the caller (:func:`plan_fill`) can warn,
+            # naming the plane. Suppressed at depth 0, where the door-line start is
+            # the correct pre-apron behaviour, not a dropped slide-in.
+            if stats is not None and hangar.apron_depth_m > 0.0:
+                stats["apron_fallback"] = True
 
     # ── Cost-aware start-seed analytic expansion (#480) ──────────────────────
     # A nose-out slot's cheap fix is a START-SEED analytic shot: back in from the

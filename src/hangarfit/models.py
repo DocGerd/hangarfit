@@ -788,6 +788,36 @@ class Scenario:
         object.__setattr__(self, "constraints", MappingProxyType(dict(self.constraints)))
 
 
+@dataclass(frozen=True, slots=True)
+class ApronShallowDrop:
+    """One plane that tows via the ``y = 0`` door line despite an apron being set,
+    because the apron is too shallow for its footprint (#503 / ADR-0021).
+
+    Plan-inert diagnostics produced by :func:`hangarfit.towplanner.plan_fill`:
+    when ``hangar.apron_depth_m > 0`` but every apron start pose was filtered for
+    a plane (its fore-aft footprint overflows the apron south bound), the plane
+    falls back to the door-line start and shows no slide-in — silent in the
+    :class:`~hangarfit.towplanner.MovesPlan`. This records that drop so the CLI
+    can warn at the boundary.
+
+    ``min_depth_m`` is the plane's fore-aft footprint extent — a *conservative
+    (sufficient) upper bound* on the apron depth needed to engage it, NOT the
+    exact minimum: the true per-plane engagement gate is ≈ ``2·min(fore, aft)``
+    of the footprint about its reference, so a deeper-than-necessary suggestion
+    is always safe. RNG-free, so it does not affect determinism (ADR-0003)."""
+
+    plane_id: str
+    min_depth_m: float
+
+    def __post_init__(self) -> None:
+        if not self.plane_id:
+            raise ValueError("ApronShallowDrop.plane_id must be non-empty")
+        if not math.isfinite(self.min_depth_m) or self.min_depth_m < 0.0:
+            raise ValueError(
+                f"ApronShallowDrop.min_depth_m must be finite and >= 0, got {self.min_depth_m!r}"
+            )
+
+
 SolveStatus = Literal[
     "found",
     "found_partial",
@@ -874,6 +904,20 @@ class SolverDiagnostics:
     selection exists, a ``True`` value always accompanies a ``found`` result.
     Advisory: it changes *when* the search stops, never *whether* the returned
     layout is valid — it does not affect ``status``.
+
+    ``apron_shallow_drops`` is a flat, advisory tuple of :class:`ApronShallowDrop`
+    for the planes that towed via the ``y = 0`` door line — showing no slide-in —
+    because the site's apron (``hangar.apron_depth_m > 0``) was too shallow for
+    their footprint (#503 / ADR-0021). It collects the drops of *every* returned
+    layout's tow plan, in returned-layout-then-move order; a plane may appear more
+    than once (once per layout it is dropped in), so the CLI dedups by plane id
+    before warning. Empty when no returned layout had a too-shallow drop, or when
+    tow-planning was not attempted (``solve(..., plan_paths=False)``) / no apron is
+    set. Crucially it carries only the *returned* result's drops: the discarded
+    spread-fallback pass (#280 / F5) never contributes, since its diagnostics are
+    not the ones returned. Advisory: the drop is observational — the layout is
+    still valid and the plan still routes (via the door line), so it does not
+    affect ``status``. RNG-free ⇒ ADR-0003-safe.
     """
 
     restarts_attempted: int
@@ -888,6 +932,7 @@ class SolverDiagnostics:
     valid_basins_found: int = 0
     spread_fallback_applied: bool = False
     spread_stall_applied: bool = False
+    apron_shallow_drops: tuple[ApronShallowDrop, ...] = ()
 
     def __post_init__(self) -> None:
         if (self.best_partial is None) != (self.best_partial_layout is None):
