@@ -241,6 +241,15 @@ class Aircraft:
     parts: tuple[Part, ...]
     wheels: Wheels
     notes: str = ""
+    tow_pivotable: bool = False
+    """(#263 / ADR-0022) When True, this plane is planned with the pivot-in-place
+    *towing* motion: :meth:`effective_turn_radius_m` returns ``0.0`` so the tow
+    planner routes it with the zero-radius cart-pivot fan (no new motion
+    primitive). Models a free-castering tailwheel or a tail-down nose-lift pivot.
+    Orthogonal to ``movement_mode`` — a flagged own-gear plane stays
+    ``on_carts=False`` and the cart-pool accounting is untouched. The declared
+    ``turn_radius_m`` is retained (powered-taxi semantics); only the tow radius is
+    overridden. Default ``False``."""
 
     def __post_init__(self) -> None:
         if not self.id:
@@ -297,15 +306,18 @@ class Aircraft:
         return self.turn_radius_m
 
     def effective_turn_radius_m(self) -> float:
-        """Turn radius for path planning: ``0.0`` for cart-borne planes
-        (a pivot-in-place), else the own-gear ``required_turn_radius_m()``.
+        """Turn radius for path planning: ``0.0`` for cart-borne *or*
+        ``tow_pivotable`` planes (a pivot-in-place), else the own-gear
+        ``required_turn_radius_m()``.
 
         This is the accessor the tow-path planner consumes (ADR-0007): a
-        cart-borne plane is modelled as own-gear with a zero turn radius.
-        Unlike :meth:`required_turn_radius_m`, this never raises — callers
-        that legitimately handle carts (the Dubins planner) use this one.
+        cart-borne plane is modelled as own-gear with a zero turn radius, and a
+        ``tow_pivotable`` plane (free-castering / nose-lift, #263) likewise pivots
+        in place when towed. Unlike :meth:`required_turn_radius_m`, this never
+        raises — callers that legitimately handle carts (the Dubins planner) use
+        this one.
         """
-        if self.movement_mode == "always_cart":
+        if self.movement_mode == "always_cart" or self.tow_pivotable:
             return 0.0
         return self.required_turn_radius_m()
 

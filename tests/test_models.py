@@ -295,6 +295,22 @@ class TestAircraft:
         a = _ok_aircraft(movement_mode="cart_eligible", turn_radius_m=9.5)
         assert a.effective_turn_radius_m() == 9.5
 
+    def test_tow_pivotable_defaults_false(self) -> None:
+        a = _ok_aircraft(movement_mode="always_own_gear", turn_radius_m=5.0)
+        assert a.tow_pivotable is False
+        assert a.effective_turn_radius_m() == 5.0
+
+    def test_tow_pivotable_overrides_effective_radius_to_zero(self) -> None:
+        a = _ok_aircraft(movement_mode="always_own_gear", turn_radius_m=5.0, tow_pivotable=True)
+        # The declared turn radius is retained (powered-taxi); only the *tow*
+        # radius is overridden to a pivot-in-place 0.0.
+        assert a.turn_radius_m == 5.0
+        assert a.effective_turn_radius_m() == 0.0
+
+    def test_tow_pivotable_overrides_cart_eligible_too(self) -> None:
+        a = _ok_aircraft(movement_mode="cart_eligible", turn_radius_m=4.0, tow_pivotable=True)
+        assert a.effective_turn_radius_m() == 0.0
+
     @pytest.mark.parametrize("wing_position", ["", "middle", "High", "MID", "bottom"])
     def test_invalid_wing_position_rejected(self, wing_position: str) -> None:
         with pytest.raises(ValueError, match="wing_position must be one of"):
