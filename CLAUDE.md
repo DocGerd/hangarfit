@@ -175,9 +175,9 @@ pytest -m slow
 # Or run everything regardless of marker
 pytest -m ""
 
-# GOTCHA: the wall-clock determinism canaries (tests/test_solver_canaries.py::
-# test_solve_deterministic_given_seed and test_solver_search.py::
-# test_solve_is_deterministic_for_same_seed) use a wall-clock `budget_s` (not
+# GOTCHA: the wall-clock determinism canaries (the `serial`-marked double-solve
+# tests in tests/test_solver_canaries.py, tests/test_solver_search.py, and
+# tests/test_solver_towplanner.py) use a wall-clock `budget_s` (not
 # max_restarts) and run solve() twice in-process, so under heavy concurrent CPU
 # load the two solves can complete different restart counts and the result can
 # diverge. Since #492 they carry the `serial` marker and CI runs them in a
