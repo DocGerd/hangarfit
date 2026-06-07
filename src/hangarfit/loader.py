@@ -55,6 +55,7 @@ from .models import (
     StrutsSpec,
     Wheels,
 )
+from .towplanner import derive_apron_depth
 
 
 class LoaderError(Exception):
@@ -150,8 +151,37 @@ def load_fleet(path: Path | str) -> dict[str, Aircraft]:
     return fleet
 
 
-def load_hangar(path: Path | str) -> Hangar:
-    """Load ``hangar.yaml`` into a :class:`Hangar`."""
+def _resolve_apron_depth(
+    value: Any, fleet: Mapping[str, Aircraft] | None, *, field_name: str = "apron_depth_m"
+) -> float:
+    """Resolve a raw apron-depth value to a float (ADR-0021).
+
+    The literal ``"auto"`` derives a fleet-based depth via
+    :func:`~hangarfit.towplanner.derive_apron_depth`; any other value is coerced
+    with :func:`_to_float`. ``"auto"`` without a fleet is a hard error — it cannot
+    be derived from nothing — so authoring ``apron_depth_m: auto`` in a bare
+    ``hangar.yaml`` and loading it without a fleet (e.g. :func:`load_hangar`
+    directly) fails loudly rather than silently defaulting.
+    """
+    if isinstance(value, str) and value.strip().lower() == "auto":
+        if not fleet:
+            raise LoaderError(
+                f"{field_name!r}: 'auto' requires a fleet to derive from; "
+                f"load via a scenario/layout, not load_hangar() alone"
+            )
+        return derive_apron_depth(fleet)
+    return _to_float(value, field_name)
+
+
+def load_hangar(path: Path | str, *, fleet: Mapping[str, Aircraft] | None = None) -> Hangar:
+    """Load ``hangar.yaml`` into a :class:`Hangar`.
+
+    ``fleet`` is only consulted to resolve an ``apron_depth_m: auto`` value
+    (ADR-0021) into a concrete fleet-derived depth; a numeric ``apron_depth_m``
+    (or its absence) needs no fleet. The scenario/layout loaders pass the fleet
+    they have already resolved; a bare ``load_hangar`` call has none, so
+    ``apron_depth_m: auto`` is rejected there.
+    """
     path = Path(path)
     raw = _read_yaml(path)
     if not isinstance(raw, dict):
@@ -196,6 +226,7 @@ def load_hangar(path: Path | str) -> Hangar:
                 raw.get("wing_layer_clearance_m", 0.2), "wing_layer_clearance_m"
             ),
             max_carts=_to_int(raw.get("max_carts", 1), "max_carts"),
+            apron_depth_m=_resolve_apron_depth(raw.get("apron_depth_m", 0.0), fleet),
         )
     except (ValueError, TypeError) as e:
         raise LoaderError(f"{path}: {e}") from e
@@ -207,6 +238,7 @@ def load_layout(
     fleet: dict[str, Aircraft] | None = None,
     hangar: Hangar | None = None,
     max_carts: int | None = None,
+    apron_depth: float | str | None = None,
 ) -> Layout:
     """Load a layout YAML.
 
@@ -246,7 +278,7 @@ def load_layout(
             raise LoaderError(
                 f"{path}: 'hangar' field is required when no hangar override is provided"
             )
-        hangar = load_hangar((path.parent / hangar_ref).resolve())
+        hangar = load_hangar((path.parent / hangar_ref).resolve(), fleet=fleet)
     elif "hangar" in raw:
         raise LoaderError(
             f"{path}: 'hangar' field is set in YAML but a hangar override was also "
@@ -264,6 +296,17 @@ def load_layout(
     if max_carts is not None:
         try:
             hangar = dataclasses.replace(hangar, max_carts=max_carts)
+        except ValueError as e:
+            raise LoaderError(f"{path}: {e}") from e
+
+    # A ``--apron-depth`` override (CLI) similarly reaches the planner via the
+    # hangar. ``"auto"`` derives from the resolved fleet; a number is coerced.
+    # ``replace`` re-runs ``Hangar.__post_init__`` so a negative value is wrapped
+    # into a LoaderError, not a raw ValueError. See ADR-0021 / #412.
+    if apron_depth is not None:
+        resolved_apron = _resolve_apron_depth(apron_depth, fleet, field_name="apron_depth_m")
+        try:
+            hangar = dataclasses.replace(hangar, apron_depth_m=resolved_apron)
         except ValueError as e:
             raise LoaderError(f"{path}: {e}") from e
 
@@ -317,6 +360,7 @@ def load_scenario(
     fleet: dict[str, Aircraft] | None = None,
     hangar: Hangar | None = None,
     max_carts: int | None = None,
+    apron_depth: float | str | None = None,
 ) -> Scenario:
     """Load a scenario YAML into a validated :class:`Scenario`.
 
@@ -372,7 +416,7 @@ def load_scenario(
             raise LoaderError(
                 f"{path}: 'hangar' field is required when no hangar override is provided"
             )
-        hangar = load_hangar((path.parent / hangar_ref).resolve())
+        hangar = load_hangar((path.parent / hangar_ref).resolve(), fleet=fleet)
     elif "hangar" in raw:
         raise LoaderError(
             f"{path}: 'hangar' field is set in YAML but a hangar override was also "
@@ -388,6 +432,17 @@ def load_scenario(
     if max_carts is not None:
         try:
             hangar = dataclasses.replace(hangar, max_carts=max_carts)
+        except ValueError as e:
+            raise LoaderError(f"{path}: {e}") from e
+
+    # A ``--apron-depth`` override (CLI) reaches the planner via ``scenario.hangar``.
+    # ``"auto"`` derives from the resolved fleet; a number is coerced. ``replace``
+    # re-runs ``Hangar.__post_init__`` so a negative value is wrapped into a
+    # LoaderError, not a raw ValueError. See ADR-0021 / #412.
+    if apron_depth is not None:
+        resolved_apron = _resolve_apron_depth(apron_depth, fleet, field_name="apron_depth_m")
+        try:
+            hangar = dataclasses.replace(hangar, apron_depth_m=resolved_apron)
         except ValueError as e:
             raise LoaderError(f"{path}: {e}") from e
 

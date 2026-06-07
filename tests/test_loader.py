@@ -228,6 +228,57 @@ class TestHangarMaxCarts:
             load_scenario(fixture, max_carts=-1)
 
 
+class TestHangarApronDepth:
+    """Loader handling of the optional `apron_depth_m` site scalar (#412)."""
+
+    _TRIVIAL_SCENARIO = REPO_ROOT / "tests" / "fixtures" / "solve_trivial_single_plane.yaml"
+
+    def test_absent_defaults_to_zero(self, tmp_path: Path) -> None:
+        """A hangar.yaml with no apron_depth_m loads as 0 — the no-apron model,
+        reproduced byte-for-byte (ADR-0021)."""
+        path = _write(tmp_path / "h.yaml", _MIN_HANGAR)
+        assert load_hangar(path).apron_depth_m == 0.0
+
+    def test_explicit_numeric(self, tmp_path: Path) -> None:
+        path = _write(tmp_path / "h.yaml", _MIN_HANGAR + "apron_depth_m: 4.5\n")
+        assert load_hangar(path).apron_depth_m == 4.5
+
+    @pytest.mark.parametrize("bad", ['"deep"', "true", "null"])
+    def test_non_number_rejected(self, tmp_path: Path, bad: str) -> None:
+        path = _write(tmp_path / "h.yaml", _MIN_HANGAR + f"apron_depth_m: {bad}\n")
+        with pytest.raises(LoaderError, match="apron_depth_m"):
+            load_hangar(path)
+
+    def test_negative_rejected(self, tmp_path: Path) -> None:
+        path = _write(tmp_path / "h.yaml", _MIN_HANGAR + "apron_depth_m: -1\n")
+        with pytest.raises(LoaderError, match="apron_depth_m must be non-negative"):
+            load_hangar(path)
+
+    def test_auto_without_fleet_rejected(self, tmp_path: Path) -> None:
+        """'auto' needs a fleet to derive from; bare load_hangar has none."""
+        path = _write(tmp_path / "h.yaml", _MIN_HANGAR + "apron_depth_m: auto\n")
+        with pytest.raises(LoaderError, match="'auto' requires a fleet"):
+            load_hangar(path)
+
+    def test_auto_with_fleet_derives_positive(self, tmp_path: Path) -> None:
+        path = _write(tmp_path / "h.yaml", _MIN_HANGAR + "apron_depth_m: auto\n")
+        depth = load_hangar(path, fleet=load_fleet(FLEET_YAML)).apron_depth_m
+        assert depth > 0.0
+
+    def test_load_scenario_numeric_override(self) -> None:
+        assert load_scenario(self._TRIVIAL_SCENARIO, apron_depth=7.0).hangar.apron_depth_m == 7.0
+
+    def test_load_scenario_auto_override_derives(self) -> None:
+        assert load_scenario(self._TRIVIAL_SCENARIO, apron_depth="auto").hangar.apron_depth_m > 0.0
+
+    def test_load_scenario_negative_override_rejected(self) -> None:
+        with pytest.raises(LoaderError, match="apron_depth_m must be non-negative"):
+            load_scenario(self._TRIVIAL_SCENARIO, apron_depth=-2.0)
+
+    def test_load_layout_numeric_override(self) -> None:
+        assert load_layout(EXAMPLE_LAYOUT, apron_depth=5.0).hangar.apron_depth_m == 5.0
+
+
 # ----------------------------------------------------------------------------
 # File-level loader errors.
 # ----------------------------------------------------------------------------
