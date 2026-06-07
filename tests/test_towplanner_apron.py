@@ -175,3 +175,30 @@ def test_door_passage_through_opening_allowed_with_apron() -> None:
     placement = _slot("A", x=10.0, y=-0.5, h=0.0)
     with_apron = _hangar(door_center=10.0, door_width=6.0, apron_depth_m=5.0)
     assert _mover_motion_bounds_conflict(plane, placement, with_apron) is None
+
+
+# ── Task 5: grid-heuristic south-pad reconciliation ──────────────────────────
+
+
+def test_grid_heuristic_south_pad_reconciles_with_apron_depth() -> None:
+    """The free-space grid extends south by ``max(_GRID_H_Y_PAD_M, apron_depth_m)``
+    rows: a shallow apron (<= 6 m) leaves the historic -12 floor; a deep apron
+    (> 6 m) extends the field further south."""
+    from hangarfit.towplanner import (
+        _GRID_H_Y_PAD_M,
+        _GRID_XY_M,
+        _build_grid_heuristic,
+        _build_obstacles,
+    )
+
+    goal = Pose(x_m=4.0, y_m=10.0, heading_deg=0.0)
+    h_shallow = _hangar(apron_depth_m=3.0)  # <= 6 ⇒ pad stays 6
+    h_deep = _hangar(apron_depth_m=10.0)  # > 6 ⇒ pad = 10
+    field_shallow = _build_grid_heuristic(
+        goal, _build_obstacles(_layout({}, h_shallow), mover_id="A"), h_shallow
+    )
+    field_deep = _build_grid_heuristic(
+        goal, _build_obstacles(_layout({}, h_deep), mover_id="A"), h_deep
+    )
+    assert min(iy for _, iy in field_shallow) == -round(_GRID_H_Y_PAD_M / _GRID_XY_M)  # -12
+    assert min(iy for _, iy in field_deep) == -round(10.0 / _GRID_XY_M)  # -20

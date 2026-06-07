@@ -1721,9 +1721,16 @@ def _build_grid_heuristic(
     Obstacles are the placed planes' footprints (un-inflated, point-robot) plus
     the closed maintenance bay; the side/back walls bound the grid (the front
     ``y < 0`` apron is open during tow). RNG-free and pure ⇒ ADR-0003-safe.
+
+    The southward extent reconciles the historic fixed ``_GRID_H_Y_PAD_M = 6 m``
+    pad with the site's staging apron (``hangar.apron_depth_m``, #412/ADR-0021):
+    the field reaches ``max(_GRID_H_Y_PAD_M, apron_depth_m)`` south of the door,
+    so a deep apron is covered while a no-apron (or shallow-apron ≤ 6 m) site
+    keeps the historic ``-12``-row floor byte-for-byte. ``apron_depth_m`` is
+    bounded, so the grid stays finite and deterministic.
     """
     ix_max = round(hangar.width_m / _GRID_XY_M)
-    iy_min = -round(_GRID_H_Y_PAD_M / _GRID_XY_M)
+    iy_min = -round(max(_GRID_H_Y_PAD_M, hangar.apron_depth_m) / _GRID_XY_M)
     iy_max = round(hangar.length_m / _GRID_XY_M)
 
     # Union the static obstacle footprints once for fast point-in-region tests.
