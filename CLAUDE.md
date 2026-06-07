@@ -31,6 +31,7 @@ This file is the durable **operational** context for the project: how we work, w
 | Diversity metric (edit-count, thresholds) | [ADR-0004](docs/adr/0004-diversity-metric.md) |
 | **The spread post-pass** (maximize inter-plane gap once valid) | [ADR-0008](docs/adr/0008-inter-plane-spread-soft-preference.md) |
 | **The tow-path planner** (empty-hangar fill, Reeds–Shepp arcs, `solve --render-paths`, exit-3 tow-routability) | [§5 Building Block View](docs/architecture/05-building-block-view.md) (`towplanner`) + [ADR-0007](docs/adr/0007-tow-path-planner-v1-scope.md) (v1 scope) + [ADR-0010](docs/adr/0010-reeds-shepp-motion-model.md) (v2 Reeds–Shepp motion) |
+| **The staging apron** (`hangar.apron_depth_m` / `--apron-depth N\|auto`, slide-in from outside the door, reverse nose-out seeds, depth-0 byte-identical) | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#the-door-is-a-visual-marker-only) + [ADR-0021](docs/adr/0021-tow-planner-staging-apron.md). `collisions.check` is apron-inert (forbids `y<0`); the apron is a planner-level motion concept |
 | **The 3D viewer** (`hangarfit view`, interactive offline HTML, whole-fill tow timeline, the `scene/v1` JSON seam, Python-owned transform) | [§5 Building Block View](docs/architecture/05-building-block-view.md) (`scene`, `viewer`) + [ADR-0017](docs/adr/0017-3d-viewer-architecture.md) + the schema reference [docs/architecture/scene-v1-schema.md](docs/architecture/scene-v1-schema.md) |
 | Why the project targets a single Python (3.12), not a range | [ADR-0009](docs/adr/0009-single-supported-python-version.md) |
 | All architecture decisions, including superseded ones | [`docs/adr/`](docs/adr/) |
@@ -140,6 +141,8 @@ After cloning and running `claude`, use the `/mcp` command. The `github` and `co
 Allowed but not the default. Use only when two feature branches need parallel work (e.g., long-running test suite while writing the visualizer). For sequential issue flow, plain branch checkout is simpler.
 
 **Worktree gotcha:** the editable install's `.pth` points at the **main** checkout, so a bare `pytest` / `python` / `hangarfit` run *inside* a worktree imports the wrong `src` (the PostToolUse hook's pytest included) — run `PYTHONPATH=$PWD/src python -m pytest …` instead. There is no `__main__.py` (the CLI entry point is `hangarfit.cli:main`), so `python -m hangarfit` fails — invoke the CLI as `PYTHONPATH=$PWD/src python -c "from hangarfit.cli import main; main(['view', …])"`.
+
+**`EnterWorktree` base-ref trap:** this *clone's* local `origin/HEAD` ref is unset (the remote default is `develop`, but the clone didn't set the local tracking ref), so the native `EnterWorktree` tool falls back to the wrong base — observed branching off `origin/main` (the last release) instead of `develop`, silently producing a feature branch missing recent develop work (and `worktree.baseRef head` was *not* honored). One-shot remedy: `git remote set-head origin -a` (points local `origin/HEAD` at `develop`). Per-worktree safety net: right after `EnterWorktree`, verify with `git merge-base --is-ancestor origin/develop HEAD` (must succeed); if it doesn't, `git fetch origin develop && git rebase origin/develop` *before* working/pushing (clean while the branch is unpushed). The native tool's auto-cleanup also won't delete a branch you `git branch -m`-renamed, so `git branch -d` it after the worktree is removed.
 
 ---
 
@@ -297,6 +300,14 @@ hangarfit view tests/fixtures/valid_left_side_nesting.yaml -o out.html
 google-chrome --headless=new --use-gl=angle --use-angle=swiftshader \
   --enable-unsafe-swiftshader --virtual-time-budget=8000 \
   --screenshot=out.png "file://$PWD/out.html"
+
+# #412 staging apron (ADR-0021): with apron_depth_m > 0 each tow path starts
+# OUTSIDE the door (y<0) and slides in. Set it on the hangar.yaml or override
+# per run with --apron-depth N|auto (auto = ~max plane length + max turn radius)
+# on BOTH solve and view (not check — collisions.check is apron-inert). Default
+# 0/absent reproduces the no-apron plan byte-for-byte (gated behind depth>0).
+hangarfit solve tests/fixtures/scenario_minimal.yaml --render out.png --render-paths --apron-depth auto
+hangarfit view tests/fixtures/valid_left_side_nesting.yaml -o out.html --apron-depth 6
 
 # Solve→tow profiling harness (DEV/CI-ONLY, #381 — top-level `bench/`, NOT shipped
 # in the wheel; `pip install` / `python -m build` / pytest never touch it). Splits
