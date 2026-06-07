@@ -486,12 +486,15 @@ def _plan_cart(start: Pose, end: Pose, *, allow_reverse: bool) -> DubinsArc:
 
 
 def _cart_seg_weight(seg: Segment) -> float:
-    """Weighted cost of one cart segment for the forward-vs-reverse choice: a
-    pivot's radians (cheap, gear-agnostic) or a straight's metres scaled by the
-    reverse factor when backing."""
+    """Unweighted cost of one cart segment for the forward-vs-reverse choice: a
+    pivot's radians (cheap, gear-agnostic) or a straight's metres. Reverse is no
+    longer taxed per-metre (#480) — both the forward and reverse
+    pivot-straight-pivot candidates are single drives (0 cusps under the
+    translating-legs-only rule), so :func:`_plan_cart`'s ``min`` reduces to a
+    pure length comparison with forward kept on an exact tie (forward first)."""
     if seg.kind != "S":
         return seg.length_m  # pivot: length_m is radians
-    return seg.length_m * (_REVERSE_COST_FACTOR if seg.gear == -1 else 1.0)
+    return seg.length_m
 
 
 # ---------------------------------------------------------------------------
