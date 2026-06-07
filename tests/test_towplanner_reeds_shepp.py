@@ -25,6 +25,7 @@ from hangarfit.towplanner import (
     _REVERSE_COST_FACTOR,
     Pose,
     Segment,
+    _wrap180,
     plan_reeds_shepp,
 )
 
@@ -32,6 +33,17 @@ from hangarfit.towplanner import (
 def _heading_close(a: float, b: float, tol: float = 0.5) -> bool:
     d = (a - b + 180.0) % 360.0 - 180.0
     return abs(d) <= tol
+
+
+def test_wrap180_folds_to_half_open_interval() -> None:
+    # Canonical interval is (-180, 180]: +180 stays +180, -180 maps to +180.
+    assert _wrap180(0.0) == 0.0
+    assert _wrap180(180.0) == 180.0
+    assert _wrap180(181.0) == -179.0
+    assert _wrap180(-180.0) == 180.0
+    assert _wrap180(360.0) == 0.0
+    assert _wrap180(540.0) == 180.0
+    assert _wrap180(-90.0) == -90.0
 
 
 # --- Segment gear field -----------------------------------------------------

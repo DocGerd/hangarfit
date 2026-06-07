@@ -245,6 +245,15 @@ def math_rad_to_compass(theta_rad: float) -> float:
     return (90.0 - math.degrees(theta_rad)) % 360.0
 
 
+def _wrap180(deg: float) -> float:
+    """Fold an angle (degrees) into the half-open interval ``(-180, 180]``.
+
+    Canonical at the boundary: ``+180`` stays ``+180`` and ``-180`` maps to
+    ``+180`` (used by the #480 nose-out gate, which measures distance from 180°)."""
+    w = (deg + 180.0) % 360.0 - 180.0
+    return 180.0 if w == -180.0 else w
+
+
 def _mod2pi(theta: float) -> float:
     """Normalise an angle (radians) to ``[0, 2π)``."""
     two_pi = 2.0 * math.pi
