@@ -14,6 +14,7 @@ import { banner, byId } from './dom.ts';
 import { createRenderer } from './renderer.ts';
 import { addHangar } from './hangar.ts';
 import { addPlanes } from './planes.ts';
+import { addTowPaths } from './paths.ts';
 import { checkAnchors } from './anchors.ts';
 import { createTimeline } from './timeline.ts';
 import { startHud } from './hud.ts';
@@ -56,6 +57,14 @@ labelsToggle.addEventListener('change', () => {
   for (const m of labelMeshes) m.visible = on;
   for (const m of noseMeshes) m.visible = on;
 });
+
+// floor tow paths (#505) + paths toggle. One coloured floor line per plane's
+// tow route (the 3D analogue of `solve --render-paths`), default ON so the route
+// — and the apron slide-in (ty<0) — is legible at a glance. A static / un-routed
+// scene draws no lines; the toggle stays harmlessly inert in that case.
+const { setVisible: setPathsVisible } = addTowPaths(scene, SCENE, BRAND);
+const pathsToggle = byId<HTMLInputElement>('paths');
+pathsToggle.addEventListener('change', () => setPathsVisible(pathsToggle.checked));
 
 // ── load-time anchor self-check ──────────────────────────────────────────────
 // Must FAIL LOUD (banner), never throw — a throw here aborts module evaluation
