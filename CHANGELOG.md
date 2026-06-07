@@ -8,6 +8,22 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Changed
 
+- **Fewest-moves tow routing — nose-out slots are backed in (#480, ADR-0010
+  amendment).** The tow planner now minimises **moves** (direction changes), not
+  reverse distance: word/path cost is `length + CUSP_PENALTY × cusps` (a *cusp* is
+  a forward↔reverse change), replacing the old `_REVERSE_COST_FACTOR = 1.5`
+  reverse-length penalty; forward motion is now preferred only as the
+  deterministic tie-break. The door entry cone emits its rear-entry (nose-out)
+  headings whenever the *target* parked heading is nose-out — independent of the
+  staging apron — and a cost-aware start-seed analytic expansion returns the
+  cheapest collision-clean approach, so a nose-out slot is **backed in** (in-hangar
+  reorientation drops from ~160° to a near-straight slide-in) instead of
+  pirouetting in the back corner. Determinism (ADR-0003) is preserved; this
+  re-baselines the depth-0 tow grid for **nose-out** targets only, superseding the
+  #412 depth-0 cross-version byte-identity for that case (the same-input contract
+  is unchanged). Obstructed nose-out approaches that need mid-search maneuvering
+  remain best-effort.
+
 ### Fixed
 
 ## [0.12.0] — 2026-06-07

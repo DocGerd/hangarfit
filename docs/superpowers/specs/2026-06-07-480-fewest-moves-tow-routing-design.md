@@ -179,6 +179,17 @@ selects the best Reeds–Shepp **word** for the remaining leg.
   pulling it forward, and is chosen iff genuinely shorter (no per-meter reverse
   tax). The old ×1.5 was the only thing biasing against an equal-length back-in.
 
+> **Implementation outcome (2026-06-07):** the greedy analytic expansion this
+> §3e note assumed was *insufficient* — it returned the first collision-clean
+> shot (a forward-enumerated seed) before the cheaper back-in was evaluated, so
+> nose-out slots still pirouetted. The shipped fix is a **cost-aware start-seed
+> analytic expansion**: evaluate every surviving start seed's completion up front
+> and return the cheapest collision-clean one (the back-in is a start-seed shot),
+> else fall through to the greedy node-level search. A full cost-aware search
+> (every node) was prototyped and rejected on perf (13–26 s/`plan_path` under the
+> loose euclidean heuristic). Obstructed nose-out is best-effort. See the
+> [ADR-0010 #480 amendment](../../adr/0010-reeds-shepp-motion-model.md).
+
 ### 3e (note). The analytic-expansion boundary cusp is not separately charged
 
 The returned path is `reconstructed search prefix + analytic suffix`. Cusps
