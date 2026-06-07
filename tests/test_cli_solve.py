@@ -595,6 +595,36 @@ def test_solve_back_fill_defaults_on_and_no_back_fill_opts_out():
     assert build_parser().parse_args(["solve", "s.yaml", "--no-back-fill"]).back_fill is False
 
 
+def test_solve_nose_out_defaults_on_and_no_nose_out_opts_out():
+    """`--no-nose-out` flips the ``nose_out`` namespace default (#263); absent,
+    it defaults ON (the solver prefers nose-out parked headings)."""
+    from hangarfit.cli import build_parser
+
+    assert build_parser().parse_args(["solve", "s.yaml"]).nose_out is True
+    assert build_parser().parse_args(["solve", "s.yaml", "--no-nose-out"]).nose_out is False
+
+
+def test_view_nose_out_defaults_on_and_no_nose_out_opts_out():
+    from hangarfit.cli import build_parser
+
+    assert build_parser().parse_args(["view", "s.yaml", "-o", "x.html"]).nose_out is True
+    assert (
+        build_parser().parse_args(["view", "s.yaml", "-o", "x.html", "--no-nose-out"]).nose_out
+        is False
+    )
+
+
+def test_solve_json_includes_nose_out_flips(capsys):
+    """The --json diagnostics payload carries the per-layout nose_out_flips list
+    (#263), additive and backward-compatible."""
+    rc = main(["solve", SMOKE_FIXTURE, "--budget", "2.0", "--seed", "42", "--json"])
+    assert rc == 0
+    d = json.loads(capsys.readouterr().out)["diagnostics"]
+    assert "nose_out_flips" in d
+    assert isinstance(d["nose_out_flips"], list)
+    assert all(isinstance(n, int) for n in d["nose_out_flips"])
+
+
 def test_solve_no_back_fill_flag_accepted_and_runs(tmp_path):
     """`--no-back-fill` is accepted on `solve` and drives a successful run."""
     from hangarfit.cli import main
