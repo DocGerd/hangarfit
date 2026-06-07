@@ -1,11 +1,36 @@
 # ADR-0021: Tow-planner staging apron — a bounded entry-staging start-region in front of the door; rearrangement holding-area deferred
 
-- **Status:** Proposed
-  <!-- Proposed at PR-open; Accepted at PR-merge. Extends (does not supersede)
-       ADR-0007's v1 fill scope. -->
+- **Status:** Accepted
+  <!-- Proposed at the spike (#494); Accepted on implementation (#412). Extends
+       (does not supersede) ADR-0007's v1 fill scope. -->
 
 - **Date:** 2026-06-07
 - **Deciders:** Patrick Kuhn (DocGerd)
+
+> **Implementation notes (#412, 2026-06-07).** Five choices the spike left open
+> were settled with the deciders during implementation:
+>
+> 1. **`auto` derived depth — shipped.** `apron_depth_m` accepts a number or the
+>    keyword `auto` (≈ `max(plane fore-aft length) + max(turn_radius_m)`), both in
+>    `hangar.yaml` and via `--apron-depth`. `auto` is resolved by the loader once
+>    the fleet is known and is **never** injected on absence (absent ⇒ `0`).
+> 2. **Reverse-entry seed headings — shipped, gated on `apron_depth_m > 0`.** The
+>    apron-pose grid adds the rear-entry cone `{150°, 165°, 180°, 195°, 210°}` so a
+>    plane can back in tail-first (unblocks [#263](https://github.com/DocGerd/hangarfit/issues/263)
+>    routing; an additional deterministic seed, never a forced orientation). Gating
+>    on depth keeps the no-apron pose set — and the `MovesPlan` — byte-identical.
+> 3. **The `y = 0` door-line start is *excluded* when an apron exists.** The spike
+>    sketched apron y-samples `{0, −d/2, −d}`, but with all starts seeded at `g = 0`
+>    the shortest path always wins, so the `y = 0` start would always be chosen and
+>    **no plane would visibly slide in** — defeating the issue's motivation. The
+>    implementation uses `{−d/2, −d}` (no `y = 0`) so every plane originates outside
+>    and slides in. Depth 0 is unaffected (single `y = 0` sample ⇒ byte-identical).
+> 4. **Viewer apron *ground* (the additive `scene/v1` `hangar.apron` field) —
+>    deferred** to a render-only follow-up. The slide-in *motion* needs no schema
+>    change (the first timeline sample simply has `ty < 0`); drawing the ground so
+>    the plane does not float over bare space is a separate cosmetic ticket.
+> 5. **`--apron-depth` is on `solve` *and* `view`** (both tow-plan); not on `check`
+>    (the static `collisions.check` oracle is apron-inert by design).
 
 > **Scope of this ADR.** It **extends** [ADR-0007](0007-tow-path-planner-v1-scope.md)
 > by adding a geometric staging apron in the `y < 0` region in front of the door, so

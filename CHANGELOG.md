@@ -6,6 +6,23 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Tow-planner staging apron (#412, ADR-0021).** New optional `Hangar`
+  scalar `apron_depth_m` (in `hangar.yaml`; default `0`) models a bounded
+  staging apron in the `y ∈ [−apron_depth_m, 0)` region in front of the door.
+  When set, the tow planner routes each plane **apron → door → slot** so the
+  path begins *outside* the hangar and slides in through the door — including in
+  the 3D viewer animation, with no `scene/v1` change (the first timeline sample
+  simply sits at `ty < 0`). The depth may be authored as a number or the keyword
+  `auto` (fleet-derived ≈ `max(plane length) + max(turn radius)`), and overridden
+  per run with `--apron-depth N|auto` on both `solve` and `view`. The apron-pose
+  grid adds rear-entry (nose-out) seed headings so a plane can back in tail-first,
+  making nose-out parking *routable* (unblocks #263 without deciding it). The
+  static `collisions.check` oracle is **untouched** (it still forbids `y < 0`),
+  and the #411 jamb rejection is retained verbatim for footprints crossing the
+  front wall. **`apron_depth_m = 0` / absent reproduces the pre-apron tow plan
+  byte-for-byte** (ADR-0003); the apron logic lives entirely behind an
+  `apron_depth_m > 0` gate.
+
 ### Changed
 
 - **Incremental single-plane gap cache in the spread post-pass (#455).** The

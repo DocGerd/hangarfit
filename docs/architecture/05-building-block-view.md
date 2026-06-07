@@ -321,6 +321,20 @@ the **empty-hangar fill** case — every plane enters once (ADR-0007).
   parts / hangar-bounds / bay rules are honoured *during* the tow, not
   just at the destination. The front gap at the door is exempt during
   motion (§8 *The door*).
+- **Staging apron** ([ADR-0021](../adr/0021-tow-planner-staging-apron.md),
+  [#412](https://github.com/DocGerd/hangarfit/issues/412)) — the optional
+  `Hangar.apron_depth_m` scalar (default `0`) adds a bounded start-region in the
+  `y ∈ [−apron_depth_m, 0)` strip in front of the door. When set, `entry_poses`
+  emits apron start poses (the door-cone extended south, plus rear-entry
+  headings so a plane can back in tail-first) and the `y = 0` door-line start is
+  excluded, so every plane originates *outside* and slides in. The front-wall
+  oracle (`_mover_motion_bounds_conflict`) treats the apron rectangle as open
+  ground while keeping the front wall solid (a footprint *crossing* `y = 0` beside
+  the door is still rejected — the #411 jamb rule), and the grid heuristic's
+  south-pad reconciles with the depth. `derive_apron_depth(fleet)` backs the
+  opt-in `auto` value. Default `0` reproduces the no-apron `MovesPlan`
+  byte-for-byte (the whole apron lives behind an `apron_depth_m > 0` gate;
+  ADR-0003); `collisions.check` is untouched (§8 *The door*).
 - **Failure is honest** — a layout it cannot route raises
   `NoFeasiblePlanError` naming the offending plane; `solve` records it
   best-effort (see the bundling bullet above), and the CLI's
