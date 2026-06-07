@@ -37,6 +37,12 @@ class Regime:
     (``plan_fill``'s ``max_total_expansions``). ``None`` on either means the
     ``towplanner`` module default. ``heavy`` regimes are excluded from the
     default fast set (they do substantial — sometimes un-routable — routing).
+
+    ``apron_depth`` (#412/ADR-0021) sets the staging-apron depth applied to the
+    scenario's hangar (``0`` ⇒ no apron, the pre-apron path, byte-identical;
+    ``"auto"`` ⇒ fleet-derived). It enlarges the per-plane tow start set (forward
+    + reverse cones × the apron y-samples) and lengthens each path, so it is the
+    knob that characterises the apron's routing-cost effect (#499).
     """
 
     key: str
@@ -51,6 +57,7 @@ class Regime:
     tow_max_expansions: int | None = None
     tow_max_total_expansions: int | None = None
     heavy: bool = False
+    apron_depth: float | Literal["auto"] = 0.0
 
 
 REGIMES: tuple[Regime, ...] = (
@@ -104,6 +111,37 @@ REGIMES: tuple[Regime, ...] = (
         spread=True,
         n_planes=6,
         tow_max_total_expansions=4000,
+        heavy=True,
+    ),
+    Regime(
+        # Apron routing-cost characterisation (#499/ADR-0021). Same placement as
+        # roomy_three_spread_on (apron is planner-only ⇒ placement unchanged); the
+        # apron enlarges the tow start set (forward+reverse cones × y-samples) and
+        # lengthens each path. 14 m ≈ derive_apron_depth(fleet)=14.98 m here, deep
+        # enough that ALL three planes engage the apron (a shallower apron silently
+        # falls back to the door line for the longer planes — see the #499 spike).
+        key="roomy_three_apron",
+        description="3 planes, 30x25 m hangar, 14 m staging apron — slide-in routing cost",
+        scenario=FIXTURES / "solve_fresh_alternatives_three.yaml",
+        seed=1,
+        max_restarts=30,
+        spread=True,
+        n_planes=3,
+        apron_depth=14.0,
+    ),
+    Regime(
+        # The apron's effect on the un-routable disprove (the expensive failure
+        # mode): the tight 6-plane placeholder fill with a 10 m apron. The global
+        # cap bounds the bail; heavy ⇒ excluded from the gated fast set.
+        key="tight_six_apron",
+        description="6 planes, 25x18 m placeholder, 10 m apron — un-routable disprove cost",
+        scenario=FIXTURES / "solve_fresh_six_planes.yaml",
+        seed=1,
+        max_restarts=6,
+        spread=True,
+        n_planes=6,
+        tow_max_total_expansions=4000,
+        apron_depth=10.0,
         heavy=True,
     ),
 )
