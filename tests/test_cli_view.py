@@ -165,6 +165,56 @@ def test_view_tow_max_expansions_overrides_view_cap(tmp_path, monkeypatch):
     assert captured["max_expansions"] == 500
 
 
+def test_view_layout_mode_warns_apron_shallow_once(tmp_path, monkeypatch, capsys):
+    # #503: layout-mode view calls plan_fill directly (no SolverDiagnostics), so it
+    # collects the too-shallow-apron drops via the plan-inert out-param and warns
+    # once per plane at the CLI. Stub plan_fill to populate the out-param (the same
+    # plane TWICE, as if dropped across passes) and return a real MovesPlan; the
+    # CLI must dedup ⇒ exactly one warning naming the plane + suggested depth.
+    import hangarfit.towplanner as tp
+    from hangarfit.models import ApronShallowDrop
+    from hangarfit.towplanner import DubinsArc, Move, MovesPlan, Pose, Segment
+
+    def fake_plan_fill(target, *, apron_dropped_out=None, **kwargs):
+        if apron_dropped_out is not None:
+            apron_dropped_out.append(ApronShallowDrop(plane_id="z", min_depth_m=8.0))
+            apron_dropped_out.append(ApronShallowDrop(plane_id="z", min_depth_m=8.0))
+        start = Pose(x_m=2.0, y_m=0.0, heading_deg=0.0)
+        end = Pose(x_m=2.0, y_m=5.0, heading_deg=0.0)
+        arc = DubinsArc(start=start, end=end, turn_radius_m=1.0, segments=(Segment("S", 5.0),))
+        return MovesPlan(
+            target_layout=target, moves=(Move(plane_id="z", target_slot=end, path=arc),)
+        )
+
+    monkeypatch.setattr(tp, "plan_fill", fake_plan_fill)
+    out = tmp_path / "v.html"
+    rc = main(["view", NESTING, "-o", str(out), "--apron-depth", "6"])
+    assert rc == 0 and out.exists()
+    err = capsys.readouterr().err
+    assert err.count("apron too shallow") == 1  # deduped — one warning per plane
+    assert "'z'" in err and "8.0 m" in err
+
+
+def test_view_layout_mode_no_apron_drop_no_warning(tmp_path, monkeypatch, capsys):
+    # No drop recorded (deep enough apron / no apron) ⇒ no warning.
+    import hangarfit.towplanner as tp
+    from hangarfit.towplanner import DubinsArc, Move, MovesPlan, Pose, Segment
+
+    def fake_plan_fill(target, *, apron_dropped_out=None, **kwargs):
+        start = Pose(x_m=2.0, y_m=0.0, heading_deg=0.0)
+        end = Pose(x_m=2.0, y_m=5.0, heading_deg=0.0)
+        arc = DubinsArc(start=start, end=end, turn_radius_m=1.0, segments=(Segment("S", 5.0),))
+        return MovesPlan(
+            target_layout=target, moves=(Move(plane_id="z", target_slot=end, path=arc),)
+        )
+
+    monkeypatch.setattr(tp, "plan_fill", fake_plan_fill)
+    out = tmp_path / "v.html"
+    rc = main(["view", NESTING, "-o", str(out)])
+    assert rc == 0 and out.exists()
+    assert "apron too shallow" not in capsys.readouterr().err
+
+
 def test_view_check_overlay(tmp_path):
     # --no-animate: we are testing the conflict overlay, not the tow animation
     # (and tow-planning an invalid layout would just burn the search budget).

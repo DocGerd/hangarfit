@@ -20,7 +20,6 @@ from __future__ import annotations
 
 import heapq
 import math
-import sys
 import typing
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
@@ -36,7 +35,7 @@ from shapely.geometry import Point, Polygon
 from hangarfit.collisions import _parts_conflict
 from hangarfit.collisions import check as _check
 from hangarfit.geometry import WorldPart, cached_parts_world
-from hangarfit.models import Aircraft, Conflict, Hangar, Layout, Placement
+from hangarfit.models import Aircraft, ApronShallowDrop, Conflict, Hangar, Layout, Placement
 
 SegmentKind = Literal["L", "S", "R"]
 _VALID_SEGMENT_KINDS = frozenset(typing.get_args(SegmentKind))
@@ -1215,6 +1214,7 @@ def plan_fill(
     heuristic: Literal["euclidean", "grid"] = "grid",
     max_expansions: int | None = None,
     max_total_expansions: int | None = None,
+    apron_dropped_out: list[ApronShallowDrop] | None = None,
 ) -> MovesPlan:
     """Plan a collision-free entry order + per-plane path for an empty fill.
 
@@ -1233,6 +1233,19 @@ def plan_fill(
     (~per-plane × scan-retries); the global cap bounds that worst case so the
     planner bails in bounded time instead of running away, while a routable fill
     finishes well under it. RNG-free, so the cap is seed-deterministic (#336).
+
+    ``apron_dropped_out`` is an optional diagnostics-only **out-param** (#503,
+    mirroring how ``plan_path``'s ``stats`` out-dict works): when supplied, it is
+    populated — in committed-move order — with an :class:`ApronShallowDrop` for
+    each committed plane that towed via the ``y = 0`` door-line fallback despite an
+    apron being set (``hangar.apron_depth_m > 0``), i.e. whose footprint was too
+    deep for the apron so every apron start pose was filtered (it shows no
+    slide-in). Each drop's ``min_depth_m`` is the plane's fore-aft footprint extent
+    (:func:`_plane_fore_aft_length_m`) — a conservative sufficient depth to engage
+    it, NOT the exact minimum. Purely observational: it is **never** read back into
+    the :class:`MovesPlan`, so the plan stays byte-identical whether or not the
+    list is passed (ADR-0003). ``None`` (the default) collects nothing. The caller
+    (CLI / solver) emits the user-facing warning from this data, deduped.
 
     Walks :func:`back_first_order` (deepest slot first); for each plane searches
     for an in-bounds path from the door-cone entry poses (:func:`entry_poses`) to
@@ -1265,12 +1278,6 @@ def plan_fill(
 
     placed: list[Placement] = []
     moves: list[Move] = []
-    # #503: planes that tow via the y=0 door-line fallback DESPITE an apron being
-    # set (their footprint is too deep for the apron, so every apron start pose was
-    # filtered). Collected in commit order and warned about once the fill is built,
-    # so the order is the deterministic move order (ADR-0003). Observational only —
-    # never read back into the plan.
-    apron_dropped: list[str] = []
 
     while ordered:
         chosen: int | None = None
@@ -1352,34 +1359,22 @@ def plan_fill(
         assert chosen_arc is not None
         moves.append(Move(slot.plane_id, Pose.from_placement(slot), chosen_arc))
         placed.append(slot)
-        if chosen_apron_fallback:
-            apron_dropped.append(slot.plane_id)
+        # #503: record (plan-inert) the planes that towed via the y=0 door-line
+        # fallback DESPITE an apron being set — their footprint is too deep for the
+        # apron, so every apron start pose was filtered and they show no slide-in.
+        # Populated in committed-move order (the deterministic move order, ADR-0003)
+        # only when the caller passed `apron_dropped_out`; the suggested min depth
+        # is the per-plane FOOTPRINT extent, NOT the fleet-wide `auto` over-margin
+        # (derive_apron_depth). Never read back into the plan.
+        if chosen_apron_fallback and apron_dropped_out is not None:
+            apron_dropped_out.append(
+                ApronShallowDrop(
+                    plane_id=slot.plane_id,
+                    min_depth_m=_plane_fore_aft_length_m(fleet[slot.plane_id]),
+                )
+            )
 
-    _warn_apron_too_shallow(apron_dropped, fleet)
     return MovesPlan(target_layout=target, moves=tuple(moves))
-
-
-def _warn_apron_too_shallow(dropped_plane_ids: list[str], fleet: Mapping[str, Aircraft]) -> None:
-    """Emit one deterministic stderr warning per plane that tows via the ``y = 0``
-    door-line fallback despite an apron being set (#503).
-
-    Such a plane's footprint is too deep for the apron, so every apron start pose
-    was filtered and it shows no slide-in — silent in the :class:`MovesPlan`. The
-    suggested minimum depth is the plane's fore-aft footprint extent
-    (:func:`_plane_fore_aft_length_m`) — the per-plane FOOTPRINT depth the apron
-    must clear, NOT the fleet-wide ``auto`` over-margin (:func:`derive_apron_depth`).
-
-    Purely observational: writes to ``stderr`` (never the plan, never stdout), in
-    the caller-supplied (deterministic move) order. RNG-free ⇒ ADR-0003-safe.
-    """
-    for plane_id in dropped_plane_ids:
-        suggested = _plane_fore_aft_length_m(fleet[plane_id])
-        print(
-            f"warning: apron too shallow for plane {plane_id!r}: it tows in via the "
-            f"door line (no slide-in). Increase the apron depth to >= {suggested:.1f} m "
-            f"(its footprint extent) so it engages the apron.",
-            file=sys.stderr,
-        )
 
 
 # ── Hybrid-A* tow-path search (spike Q3 v2, #222) ───────────────────────────

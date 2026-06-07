@@ -33,6 +33,7 @@ from hangarfit.collisions import check as check_layout
 from hangarfit.geometry import WorldPart, cached_parts_world, pose_cache_scope
 from hangarfit.models import (
     Aircraft,
+    ApronShallowDrop,
     CheckResult,
     Conflict,
     DiversityConfig,
@@ -489,46 +490,69 @@ def _tow_plan_layouts(
     plan_paths: bool,
     tow_heuristic: Literal["euclidean", "grid"],
     tow_max_expansions: int | None,
-) -> tuple[tuple[MovesPlan | None, ...], tuple[str, ...]]:
+) -> tuple[tuple[MovesPlan | None, ...], tuple[str, ...], tuple[ApronShallowDrop, ...]]:
     """Tow-plan every returned layout (best-effort enrichment, #197).
 
-    Returns ``(plans, unroutable)`` index-aligned with ``accepted_layouts``.
-    The v2 planner (Reeds–Shepp arcs + bounded Hybrid-A* — #222/#261 under
-    ADR-0007 + ADR-0010) cannot route dense multi-plane fills and has documented
-    false-negatives, so an un-routable layout is recorded as ``plans[i]=None``
-    rather than discarding the otherwise-valid static arrangement — the layout is
-    the headline answer; the tow plan is advisory (spike Risk #8). RNG-free, so
-    it preserves the ADR-0003 determinism contract.
+    Returns ``(plans, unroutable, apron_drops)``. ``plans`` is index-aligned with
+    ``accepted_layouts``. The v2 planner (Reeds–Shepp arcs + bounded Hybrid-A* —
+    #222/#261 under ADR-0007 + ADR-0010) cannot route dense multi-plane fills and
+    has documented false-negatives, so an un-routable layout is recorded as
+    ``plans[i]=None`` rather than discarding the otherwise-valid static arrangement
+    — the layout is the headline answer; the tow plan is advisory (spike Risk #8).
+    RNG-free, so it preserves the ADR-0003 determinism contract.
+
+    ``apron_drops`` is the flat, advisory list of every returned layout's
+    too-shallow-apron drops (#503): a plane that towed via the ``y = 0`` door line
+    despite an apron being set, because the apron was too shallow for its footprint
+    (one :class:`ApronShallowDrop` per dropped plane per layout, in
+    layout-then-move order). Because this collects only the layouts ACTUALLY
+    returned in the :class:`SolveResult`, a discarded spread-fallback pass's drops
+    never surface — only the chosen result's diagnostics are built (see
+    :func:`solve`). Empty when no returned layout had a too-shallow drop.
 
     With ``plan_paths=False`` no planning runs and ``plans`` is all-``None``
-    (still index-aligned), with no ``unroutable`` planes.
+    (still index-aligned), with no ``unroutable`` planes and no ``apron_drops``.
     """
     if not plan_paths:
-        return (None,) * len(accepted_layouts), ()
+        return (None,) * len(accepted_layouts), (), ()
 
     built: list[MovesPlan | None] = []
     unroutable: list[str] = []
+    apron_drops: list[ApronShallowDrop] = []
     for layout in accepted_layouts:
+        # Diagnostics-only out-param (#503): plan_fill populates this with the
+        # too-shallow-apron drops of THIS layout's tow plan, plan-inert — it is
+        # never read back into the MovesPlan, so the plan stays byte-identical
+        # whether or not the list is passed (ADR-0003). A fresh list per layout
+        # keeps the per-layout drops in their own scope; we extend the flat
+        # collection so a plane dropped across multiple layouts appears once per
+        # layout (the CLI dedups by plane id before warning).
+        layout_drops: list[ApronShallowDrop] = []
         try:
-            # Default path calls ``plan_fill(layout)`` with NO kwargs, so the
-            # ADR-0003 determinism canaries — and any test that stubs
-            # ``plan_fill`` with a target-only signature — stay untouched. Since
+            # Default path calls ``plan_fill(layout)`` with NO budget kwargs (only
+            # the plan-inert diagnostics out-param), so the ADR-0003 determinism
+            # canaries are unaffected (the out-param never changes the plan). Since
             # #336 the shipped default is grid + the module budgets, which is
             # exactly what a bare ``plan_fill(layout)`` applies; an explicit
             # euclidean / custom budget takes the kwargs path below.
             if tow_heuristic == "grid" and tow_max_expansions is None:
-                built.append(plan_fill(layout))
+                built.append(plan_fill(layout, apron_dropped_out=layout_drops))
             else:
                 built.append(
                     plan_fill(
                         layout,
                         heuristic=tow_heuristic,
                         max_expansions=tow_max_expansions,
+                        apron_dropped_out=layout_drops,
                     )
                 )
+            apron_drops.extend(layout_drops)
         except NoFeasiblePlanError as e:
             built.append(None)
             unroutable.append(e.plane_id)
+            # A NoFeasiblePlanError means this layout produced no plan at all, so
+            # any partial drops collected before the bail describe a plan the user
+            # never receives — discard them (don't extend apron_drops).
             # Log the conflict kind/detail too, not just the plane: it
             # distinguishes a genuinely-boxed-in plane from a Hybrid-A* budget
             # exhaustion (a known false-negative class), which call for different
@@ -540,7 +564,7 @@ def _tow_plan_layouts(
                 e.conflict.kind,
                 e.conflict.detail,
             )
-    return tuple(built), tuple(unroutable)
+    return tuple(built), tuple(unroutable), tuple(apron_drops)
 
 
 def _build_found_result(
@@ -568,7 +592,7 @@ def _build_found_result(
     accepted_layouts = [c.layout for c in selected]
     min_gaps = tuple(c.min_gap for c in selected)
     status: SolveStatus = "found" if len(accepted_layouts) >= alternatives else "found_partial"
-    plans, unroutable = _tow_plan_layouts(
+    plans, unroutable, apron_drops = _tow_plan_layouts(
         accepted_layouts,
         plan_paths=plan_paths,
         tow_heuristic=tow_heuristic,
@@ -590,6 +614,7 @@ def _build_found_result(
             min_pairwise_gap_m=min_gaps,
             valid_basins_found=valid_basins_found,
             spread_stall_applied=spread_stall_applied,
+            apron_shallow_drops=apron_drops,
         ),
     )
 

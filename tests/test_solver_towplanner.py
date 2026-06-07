@@ -73,7 +73,7 @@ def test_solve_best_effort_none_when_a_layout_is_untowable(solvable_scenario, mo
     from hangarfit.solver import solve
     from hangarfit.towplanner import NoFeasiblePlanError
 
-    def boom(target):
+    def boom(target, **kwargs):
         raise NoFeasiblePlanError("A", Conflict.single(kind="parts_overlap", plane="A", detail="x"))
 
     monkeypatch.setattr(solver_mod, "plan_fill", boom)
@@ -92,7 +92,7 @@ def test_solve_plan_paths_false_skips_planning(solvable_scenario, monkeypatch):
     import hangarfit.solver as solver_mod
     from hangarfit.solver import solve
 
-    def fail_if_called(target):
+    def fail_if_called(target, **kwargs):
         raise AssertionError("plan_fill must not be called when plan_paths=False")
 
     monkeypatch.setattr(solver_mod, "plan_fill", fail_if_called)
@@ -179,7 +179,7 @@ def test_solve_k_gt_1_bundle_alignment_with_mixed_routability(monkeypatch):
 
     calls = {"n": 0}
 
-    def fail_second_only(target):
+    def fail_second_only(target, **kwargs):
         calls["n"] += 1
         if calls["n"] == 2:
             pid = target.placements[0].plane_id

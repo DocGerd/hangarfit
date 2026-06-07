@@ -36,7 +36,7 @@ def _stub_towplanning(monkeypatch):
     from hangarfit.towplanner import MovesPlan
 
     monkeypatch.setattr(
-        solver_mod, "plan_fill", lambda target: MovesPlan(target_layout=target, moves=())
+        solver_mod, "plan_fill", lambda target, **kwargs: MovesPlan(target_layout=target, moves=())
     )
 
 

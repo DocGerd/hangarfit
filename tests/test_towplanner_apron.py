@@ -19,7 +19,16 @@ from pathlib import Path
 
 import pytest
 
-from hangarfit.models import Aircraft, Door, Hangar, MaintenanceBay, Part, Placement, Wheels
+from hangarfit.models import (
+    Aircraft,
+    ApronShallowDrop,
+    Door,
+    Hangar,
+    MaintenanceBay,
+    Part,
+    Placement,
+    Wheels,
+)
 from hangarfit.towplanner import (
     Pose,
     _mover_motion_bounds_conflict,
@@ -426,77 +435,83 @@ def test_apron_movesplan_byte_identical_across_processes() -> None:
     assert h1 and h1 == h2, f"apron MovesPlan diverged across processes: {h1!r} != {h2!r}"
 
 
-# ── #503: too-shallow-apron warning (observational stderr; plan byte-identical) ─
+# ── #503: too-shallow-apron drops (plan-inert out-param; plan byte-identical) ──
 # When apron_depth_m > 0 but is too shallow for a given plane's footprint, ALL of
 # that plane's apron start poses are filtered and plan_path silently falls back to
-# the y=0 door-line pose (no slide-in). plan_fill emits a deterministic stderr
-# warning naming the plane + a suggested minimum depth. The warning is purely
-# observational: it never touches the MovesPlan (the apron byte-identity canaries
-# above remain the determinism proof).
+# the y=0 door-line pose (no slide-in). plan_fill records the drop into the
+# OPTIONAL `apron_dropped_out` list (plane id + suggested min depth) — it does NOT
+# print. The data is purely observational: it never touches the MovesPlan (the
+# apron byte-identity canaries above remain the determinism proof). The CLI emits
+# the user-facing warning from this data (see tests/test_cli_solve.py /
+# tests/test_cli_view.py).
 
 
-def test_shallow_apron_warns_naming_plane_and_min_depth(capsys) -> None:
+def test_shallow_apron_populates_drop_naming_plane_and_min_depth() -> None:
     """The fuji-at-6 m analogue (#503): an 8 m-long plane in a 6 m apron has all
-    apron start poses filtered → it tows via the y=0 door line. plan_fill warns on
-    stderr, names the plane, and suggests a minimum depth ≈ its 8 m footprint."""
+    apron start poses filtered → it tows via the y=0 door line. plan_fill records
+    one ApronShallowDrop naming the plane with a suggested depth ≈ its 8 m
+    footprint — and never prints."""
     h = _hangar(width_m=20.0, length_m=30.0, door_center=10.0, door_width=6.0, apron_depth_m=6.0)
     fleet = {"A": _long_box_plane("A", body_length_m=8.0)}
     target = _layout(fleet, h, _slot("A", 10.0, 12.0, 0.0))
-    plan = plan_fill(target)
+    drops: list[ApronShallowDrop] = []
+    plan = plan_fill(target, apron_dropped_out=drops)
     # The plane is still routed (best-effort) — via the door line, not the apron.
     first = list(plan.moves[0].path.sample(step_m=0.25, step_deg=5.0))[0]
     assert first.y_m == 0.0  # door-line fallback, NOT a slide-in
-    err = capsys.readouterr().err
-    assert "warning:" in err
-    assert "'A'" in err  # names the plane
-    assert "apron" in err
-    assert "8" in err  # suggests ~the 8 m footprint depth
+    assert len(drops) == 1
+    assert drops[0].plane_id == "A"
+    assert drops[0].min_depth_m == pytest.approx(8.0)  # the 8 m footprint extent
 
 
-def test_deep_apron_does_not_warn(capsys) -> None:
+def test_deep_apron_records_no_drop() -> None:
     """A 14 m apron clears the 8 m plane's footprint → it slides in from the apron,
-    so NO too-shallow warning fires."""
+    so NO drop is recorded."""
     h = _hangar(width_m=20.0, length_m=30.0, door_center=10.0, door_width=6.0, apron_depth_m=14.0)
     fleet = {"A": _long_box_plane("A", body_length_m=8.0)}
     target = _layout(fleet, h, _slot("A", 10.0, 12.0, 0.0))
-    plan = plan_fill(target)
+    drops: list[ApronShallowDrop] = []
+    plan = plan_fill(target, apron_dropped_out=drops)
     first = list(plan.moves[0].path.sample(step_m=0.25, step_deg=5.0))[0]
     assert first.y_m < 0.0  # slides in from the apron
-    assert "warning:" not in capsys.readouterr().err
+    assert drops == []
 
 
-def test_no_apron_never_warns(capsys) -> None:
+def test_no_apron_records_no_drop() -> None:
     """With no apron (depth 0) the y=0 door-line start is the CORRECT behaviour,
-    not a dropped slide-in — so the too-shallow warning must never fire."""
+    not a dropped slide-in — so no drop is recorded."""
     h = _hangar(width_m=20.0, length_m=30.0, door_center=10.0, door_width=6.0, apron_depth_m=0.0)
     fleet = {"A": _long_box_plane("A", body_length_m=8.0)}
     target = _layout(fleet, h, _slot("A", 10.0, 12.0, 0.0))
-    plan_fill(target)
-    assert "warning:" not in capsys.readouterr().err
+    drops: list[ApronShallowDrop] = []
+    plan_fill(target, apron_dropped_out=drops)
+    assert drops == []
 
 
-def test_shallow_apron_warning_only_for_the_dropped_plane(capsys) -> None:
+def test_shallow_apron_drop_only_for_the_dropped_plane() -> None:
     """Mixed fleet (the #499 §6 observation): the long plane drops to the door
-    line and warns; the short plane engages the apron and does not. Exactly one
-    warning, naming the long plane only."""
+    line; the short plane engages the apron. Exactly one drop, naming the long
+    plane only."""
     h = _hangar(width_m=20.0, length_m=30.0, door_center=10.0, door_width=6.0, apron_depth_m=6.0)
     fleet = {
         "LONG": _long_box_plane("LONG", body_length_m=8.0),
         "SHORT": _box_plane("SHORT"),
     }
     target = _layout(fleet, h, _slot("LONG", 6.0, 22.0, 0.0), _slot("SHORT", 14.0, 8.0, 0.0))
-    plan_fill(target)
-    err = capsys.readouterr().err
-    assert err.count("warning:") == 1
-    assert "'LONG'" in err
-    assert "'SHORT'" not in err
+    drops: list[ApronShallowDrop] = []
+    plan_fill(target, apron_dropped_out=drops)
+    assert [d.plane_id for d in drops] == ["LONG"]
 
 
-def test_shallow_apron_warning_does_not_change_the_plan() -> None:
-    """The warning is observational: the MovesPlan is identical whether or not the
-    warning path runs (it always runs at depth 6 here). Byte-identity across two
-    in-process calls — the warning is a side channel, never part of the plan."""
+def test_shallow_apron_out_param_does_not_change_the_plan() -> None:
+    """The out-param is observational: the MovesPlan is byte-identical whether or
+    not it is passed (it is plan-inert). Both branches — with and without the
+    out-param — yield the same plan, and equal to each other."""
     h = _hangar(width_m=20.0, length_m=30.0, door_center=10.0, door_width=6.0, apron_depth_m=6.0)
     fleet = {"A": _long_box_plane("A", body_length_m=8.0)}
     target = _layout(fleet, h, _slot("A", 10.0, 12.0, 0.0))
-    assert plan_fill(target) == plan_fill(target)
+    drops: list[ApronShallowDrop] = []
+    with_out = plan_fill(target, apron_dropped_out=drops)
+    without_out = plan_fill(target)
+    assert with_out == without_out == plan_fill(target)
+    assert len(drops) == 1  # the out-param was still populated

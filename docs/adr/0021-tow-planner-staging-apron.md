@@ -224,11 +224,20 @@ rearrangement tier's extra needs named (spike Q7) so they are not foreclosed.
   the `auto` depth (`max plane length + max turn radius`) is a fleet-wide over-margin, so a
   hand-set apron that "looks deep enough" can still leave the longest plane too deep to fit,
   silently dropping it back to the `y = 0` door line (no slide-in). Since
-  [#503](https://github.com/DocGerd/hangarfit/issues/503) `plan_fill` emits an observational
-  **stderr** warning naming each such plane and the minimum depth (≈ its footprint extent) it
-  would need — output-only, so the `MovesPlan` stays byte-identical (ADR-0003). Prefer
-  `auto`, or raise `--apron-depth` past the warned value. Auto-deepening the apron to fit the
-  deepest plane (which *would* change the plan) is deferred (#503 Option 2).
+  [#503](https://github.com/DocGerd/hangarfit/issues/503) this is surfaced as an observational
+  **stderr** warning naming each such plane and a suggested minimum depth. The warning is
+  **emitted once at the CLI boundary for the *returned* result**, deduped per plane (mirroring
+  `cli._warn_unroutable`): the library `plan_fill` no longer prints — it only *exposes* the
+  drops, plan-inert, via an optional `apron_dropped_out` out-param (and `solve()` folds those
+  into `SolverDiagnostics.apron_shallow_drops` for the layouts it actually returns). Keying on
+  the returned result means a discarded spread-fallback pass (#280 / F5) never warns about a
+  layout the user does not receive, and `--alternatives N` warns each plane once, not once per
+  layout × pass. The suggested depth is the plane's fore-aft footprint extent — a *conservative
+  (sufficient) upper bound*, not the exact minimum (the true engagement gate is
+  ≈ `2·min(fore, aft)` of the footprint about its reference), so a deeper-than-needed suggestion
+  is always safe. The `MovesPlan` stays byte-identical regardless (ADR-0003). Prefer `auto`, or
+  raise `--apron-depth` past the warned value. Auto-deepening the apron to fit the deepest plane
+  (which *would* change the plan) is deferred (#503 Option 2).
 
 ## Compliance
 
