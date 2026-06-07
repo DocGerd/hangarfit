@@ -143,6 +143,10 @@ _HUD = (
     '<button id="reset">reset view</button>'
     '<label><input id="walls" type="checkbox" checked> walls</label>'
     '<label><input id="labels" type="checkbox" checked> labels</label>'
+    # #505 floor tow-path overlay toggle. Default ON: the 3D analogue of the 2D
+    # `solve --render-paths` overlay; drawing the route makes the apron slide-in
+    # (ty<0) and the in-hangar maneuvering legible. Inert on a static scene.
+    '<label><input id="paths" type="checkbox" checked> paths</label>'
     '<span id="readouts"></span>'
     '<span id="legend"></span>'
 )

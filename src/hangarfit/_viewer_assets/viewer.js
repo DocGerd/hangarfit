@@ -308,14 +308,46 @@ function addPlanes(scene2, SCENE2, BRAND2) {
   return { groups: groups2, labelMeshes: labelMeshes2, noseMeshes: noseMeshes2 };
 }
 
+// src/paths.ts
+import * as THREE6 from "three";
+var TX = 2;
+var TY = 5;
+function pathPoints(seg) {
+  return seg.samples.map((s) => [s[TX], s[TY]]);
+}
+function addTowPaths(scene2, SCENE2, BRAND2) {
+  const Z_OFFSET = 0.02;
+  const segByPlane = {};
+  for (const s of SCENE2.timeline.segments) segByPlane[s.plane_id] = s;
+  const lines = [];
+  for (const p of SCENE2.planes) {
+    const seg = segByPlane[p.id];
+    if (!seg) continue;
+    const pts = pathPoints(seg);
+    if (pts.length < 2) continue;
+    const conflicted = SCENE2.conflicts.includes(p.id);
+    const colour = new THREE6.Color(conflicted ? BRAND2.conflict : p.color);
+    const geom = new THREE6.BufferGeometry().setFromPoints(
+      pts.map(([x, y]) => new THREE6.Vector3(x, y, Z_OFFSET))
+    );
+    const line = new THREE6.Line(geom, new THREE6.LineBasicMaterial({ color: colour }));
+    scene2.add(line);
+    lines.push(line);
+  }
+  const setVisible = (on) => {
+    for (const l of lines) l.visible = on;
+  };
+  return { lines, setVisible };
+}
+
 // src/anchors.ts
-import * as THREE7 from "three";
+import * as THREE8 from "three";
 
 // src/affine.ts
-import * as THREE6 from "three";
+import * as THREE7 from "three";
 function affineMatrix(aff) {
   const [a, b, tx, c, d, ty] = aff;
-  const m = new THREE6.Matrix4();
+  const m = new THREE7.Matrix4();
   m.set(
     a,
     b,
@@ -343,7 +375,7 @@ function applyAffine(aff, u, v) {
 
 // src/anchors.ts
 function boxCornersLocal(b) {
-  const h = THREE7.MathUtils.degToRad(b.angle_deg);
+  const h = THREE8.MathUtils.degToRad(b.angle_deg);
   const cs = Math.cos(h), sn = Math.sin(h);
   const hl = b.length_m / 2, hw = b.width_m / 2;
   const corners = [[hl, -hw], [hl, hw], [-hl, hw], [-hl, -hw]];
@@ -519,6 +551,9 @@ labelsToggle.addEventListener("change", () => {
   for (const m of labelMeshes) m.visible = on;
   for (const m of noseMeshes) m.visible = on;
 });
+var { setVisible: setPathsVisible } = addTowPaths(scene, SCENE, BRAND);
+var pathsToggle = byId("paths");
+pathsToggle.addEventListener("change", () => setPathsVisible(pathsToggle.checked));
 try {
   const { structural, maxErr } = checkAnchors(SCENE);
   if (structural) {
