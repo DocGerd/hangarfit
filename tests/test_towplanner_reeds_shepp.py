@@ -23,8 +23,10 @@ import pytest
 
 from hangarfit.towplanner import (
     _REVERSE_COST_FACTOR,
+    CUSP_PENALTY,
     Pose,
     Segment,
+    _count_cusps,
     _wrap180,
     plan_reeds_shepp,
 )
@@ -44,6 +46,41 @@ def test_wrap180_folds_to_half_open_interval() -> None:
     assert _wrap180(360.0) == 0.0
     assert _wrap180(540.0) == 180.0
     assert _wrap180(-90.0) == -90.0
+
+
+# --- cusp counting (#480): travel-direction reversals among translating legs ---
+
+
+def test_count_cusps_pure_forward_is_zero() -> None:
+    assert _count_cusps([(1, True), (1, True), (1, True)]) == 0
+
+
+def test_count_cusps_pure_reverse_is_zero() -> None:
+    # A single-direction reverse drive is "one move", zero cusps.
+    assert _count_cusps([(-1, True), (-1, True)]) == 0
+
+
+def test_count_cusps_one_reversal() -> None:
+    assert _count_cusps([(1, True), (-1, True)]) == 1
+
+
+def test_count_cusps_forward_reverse_forward_is_two() -> None:
+    assert _count_cusps([(1, True), (-1, True), (1, True)]) == 2
+
+
+def test_count_cusps_excludes_nontranslating_pivots() -> None:
+    # Cart: pivot (non-translating), reverse straight, pivot -> a single reverse
+    # drive, 0 cusps. In-place pivots are free reorientations, not moves.
+    assert _count_cusps([(1, False), (-1, True), (1, False)]) == 0
+
+
+def test_count_cusps_empty_is_zero() -> None:
+    assert _count_cusps([]) == 0
+
+
+def test_cusp_penalty_is_positive_finite() -> None:
+    # Large-but-finite (not lexicographic): a deterministic scalar (#480).
+    assert 0.0 < CUSP_PENALTY < float("inf")
 
 
 # --- Segment gear field -----------------------------------------------------

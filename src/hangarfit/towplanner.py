@@ -528,6 +528,37 @@ def _cart_seg_weight(seg: Segment) -> float:
 _REVERSE_COST_FACTOR = 1.5
 
 
+# Additive per-cusp penalty (metres) — the #480 "fewest-moves" cost model.
+# A "cusp" is a travel-direction reversal (forward<->reverse) between consecutive
+# TRANSLATING legs; moves = cusps + 1. Cost is `length + CUSP_PENALTY * cusps` at
+# all three sites (search g-cost, Reeds–Shepp word selection, cart choice),
+# replacing the multiplicative _REVERSE_COST_FACTOR above (removed once every
+# site has migrated — #480 Task 6). Reverse is no longer taxed per-metre; instead
+# each direction change costs a fixed, large-but-finite amount, so the planner
+# minimises *moves* and forward preference survives only as the
+# enumeration-order tie-break (forward primitives/words enumerated first).
+# Pinned by test_cusp_penalty_value; changing it requires an ADR-0010 update.
+CUSP_PENALTY = 10.0
+
+
+def _count_cusps(legs: list[tuple[int, bool]]) -> int:
+    """Number of travel-direction reversals among the TRANSLATING legs (#480).
+
+    ``legs`` is ``(gear, translates)`` in travel order. Non-translating legs
+    (in-place cart pivots — ``r == 0`` turns) are skipped: they are free
+    reorientations, not moves. The result is the count of ``gear`` sign-changes
+    between consecutive *translating* legs."""
+    cusps = 0
+    prev: int | None = None
+    for gear, translates in legs:
+        if not translates:
+            continue
+        if prev is not None and gear != prev:
+            cusps += 1
+        prev = gear
+    return cusps
+
+
 @dataclass(frozen=True, slots=True)
 class _RSElement:
     """One normalised Reeds–Shepp leg: steering ``L``/``S``/``R``, ``gear``
