@@ -1025,8 +1025,22 @@ def _mover_motion_bounds_conflict(
     when ``door_lo ≤ x ≤ door_hi``; a ``y < 0`` vertex *beside* the door clips the
     solid front wall / jamb (an off-centre entry, or a plane wider than the door)
     and is a conflict — making the door a true motion gate and matching what the
-    renderer draws. Unlike the static :func:`hangarfit.collisions.check` oracle
-    (which forbids ``y < 0`` entirely), only the door-gap protrusion is exempt.
+    renderer draws.
+
+    **Staging apron (#412 / ADR-0021):** when the site has an apron
+    (``hangar.apron_depth_m > 0``) the front-gap exemption widens from a transient
+    door-width dip to *originating and manoeuvring* in the full apron rectangle
+    ``x ∈ [0, width], y ∈ [−apron_depth_m, 0)``. The wall barrier stays: a
+    footprint that **crosses** the front-wall line (vertices both at ``y < 0`` and
+    ``y > 0``) must still pass its ``y < 0`` portion through the door opening
+    (the **#411 jamb rejection, retained verbatim** for crossings); a footprint
+    **wholly** in front of the wall (all ``y ≤ 0`` — staged on the apron) does not
+    cross, so the door-gate does not apply to it — only the apron south bound
+    ``y ≥ −apron_depth_m`` and the side walls. With ``apron_depth_m == 0`` the
+    apron branch is unreachable and this is the verbatim pre-apron #411 rule.
+
+    Unlike the static :func:`hangarfit.collisions.check` oracle (which forbids
+    ``y < 0`` entirely), the apron / door-gap protrusion is exempt here only.
     The side walls (``0 ≤ x ≤ width``) and the back wall (``y ≤ length``) are
     enforced unchanged; the mover's final slot is itself a valid static placement,
     so full bounds hold at rest. Reuses the canonical
@@ -1036,7 +1050,20 @@ def _mover_motion_bounds_conflict(
     door_half = hangar.door.width_m / 2.0
     door_lo = hangar.door.center_x_m - door_half
     door_hi = hangar.door.center_x_m + door_half
-    for world_part in cached_parts_world(mover, placement):
+    apron_depth = hangar.apron_depth_m
+
+    world_parts = list(cached_parts_world(mover, placement))
+    # Does the footprint cross the front-wall line (vertices on both sides of
+    # y=0)? Only a crossing must thread the door (#411); a footprint wholly in
+    # front (all y<=0) is staged on the apron and does not cross. Computed only
+    # when an apron exists; at depth 0 the door-gate below is the verbatim #411
+    # per-vertex rule and this flag stays False.
+    straddles_front_wall = False
+    if apron_depth > 0.0:
+        ys = [y for wp in world_parts for _, y in list(wp.polygon.exterior.coords)[:-1]]
+        straddles_front_wall = any(y < 0.0 for y in ys) and any(y > 0.0 for y in ys)
+
+    for world_part in world_parts:
         for x, y in list(world_part.polygon.exterior.coords)[:-1]:
             # Side walls + back wall (unchanged): the static rule is
             # `0 <= x <= width and 0 <= y <= length`.
@@ -1050,16 +1077,43 @@ def _mover_motion_bounds_conflict(
                         f"(0..{hangar.width_m:g} x ..{hangar.length_m:g})"
                     ),
                 )
-            # Front wall is solid except the door gap (#411): a vertex in front of
-            # the hangar (y < 0) is legal only when it passes *through* the door
-            # opening; beside the door it clips the solid front wall / jamb.
-            if y < 0.0 and not (door_lo <= x <= door_hi):
+            if y >= 0.0:
+                continue
+            if apron_depth <= 0.0:
+                # Front wall is solid except the door gap (#411): a vertex in
+                # front of the hangar (y < 0) is legal only when it passes
+                # *through* the door opening; beside the door it clips the jamb.
+                if not (door_lo <= x <= door_hi):
+                    return Conflict.single(
+                        kind="hangar_bounds",
+                        plane=mover.id,
+                        detail=(
+                            f"part {world_part.kind!r} vertex ({x:.3f}, {y:.3f}) "
+                            f"clips the solid front wall beside the door during tow "
+                            f"(door opening x in {door_lo:g}..{door_hi:g})"
+                        ),
+                    )
+                continue
+            # Apron open below y=0 down to the south bound (#412).
+            if y < -apron_depth:
                 return Conflict.single(
                     kind="hangar_bounds",
                     plane=mover.id,
                     detail=(
                         f"part {world_part.kind!r} vertex ({x:.3f}, {y:.3f}) "
-                        f"clips the solid front wall beside the door during tow "
+                        f"past the apron south bound during tow "
+                        f"(apron y >= {-apron_depth:g})"
+                    ),
+                )
+            # Crossing the solid front wall beside the door is still a conflict
+            # (#411): a straddling footprint's y<0 vertices must thread the door.
+            if straddles_front_wall and not (door_lo <= x <= door_hi):
+                return Conflict.single(
+                    kind="hangar_bounds",
+                    plane=mover.id,
+                    detail=(
+                        f"part {world_part.kind!r} vertex ({x:.3f}, {y:.3f}) "
+                        f"crosses the solid front wall beside the door during tow "
                         f"(door opening x in {door_lo:g}..{door_hi:g})"
                     ),
                 )

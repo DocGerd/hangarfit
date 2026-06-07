@@ -15,7 +15,12 @@ length_m=1.0 ⇒ at heading 0 the body occupies world y ∈ [ref, ref + 1]).
 import pytest
 
 from hangarfit.models import Aircraft, Door, Hangar, MaintenanceBay, Part, Placement, Wheels
-from hangarfit.towplanner import Pose, derive_apron_depth, entry_poses
+from hangarfit.towplanner import (
+    Pose,
+    _mover_motion_bounds_conflict,
+    derive_apron_depth,
+    entry_poses,
+)
 
 _TAIL_WHEELS = Wheels(main_offset_x_m=0.20, track_m=1.8, third_wheel_offset_x_m=-2.0)
 
@@ -131,3 +136,42 @@ def test_entry_poses_apron_emit_order_x_outer_y_middle_heading_inner() -> None:
     headings = (330.0, 345.0, 0.0, 15.0, 30.0, 150.0, 165.0, 180.0, 195.0, 210.0)
     expected = [Pose(x_m=10.0, y_m=y, heading_deg=hd) for y in (0.0, -2.0, -4.0) for hd in headings]
     assert poses == expected
+
+
+# ── Task 4: apron-aware front-wall rule (#411 jamb retained) ─────────────────
+# _box_plane at heading 0 occupies world x ∈ [ref_x-0.3, ref_x+0.3],
+# y ∈ [ref_y, ref_y+1]. Door interval below is [7, 13]; x=3 is beside the door.
+
+
+def test_apron_open_pose_beside_door_free_with_apron_but_conflict_without() -> None:
+    plane = _box_plane("A")
+    # Wholly in front of the wall (body y ∈ [-2, -1], all < 0), off to the side.
+    placement = _slot("A", x=3.0, y=-2.0, h=0.0)
+    no_apron = _hangar(door_center=10.0, door_width=6.0)
+    with_apron = _hangar(door_center=10.0, door_width=6.0, apron_depth_m=5.0)
+    assert _mover_motion_bounds_conflict(plane, placement, no_apron) is not None  # #411 jamb clip
+    assert _mover_motion_bounds_conflict(plane, placement, with_apron) is None  # open apron ground
+
+
+def test_straddling_front_wall_beside_door_still_conflicts_with_apron() -> None:
+    plane = _box_plane("A")
+    # Body y ∈ [-0.5, 0.5] straddles y=0, beside the door (x ≈ 3) ⇒ crosses solid wall.
+    placement = _slot("A", x=3.0, y=-0.5, h=0.0)
+    with_apron = _hangar(door_center=10.0, door_width=6.0, apron_depth_m=5.0)
+    assert _mover_motion_bounds_conflict(plane, placement, with_apron) is not None
+
+
+def test_beyond_apron_south_bound_conflicts() -> None:
+    plane = _box_plane("A")
+    # Body y ∈ [-7, -6], past the apron south bound y = -apron_depth = -5.
+    placement = _slot("A", x=10.0, y=-7.0, h=0.0)
+    with_apron = _hangar(door_center=10.0, door_width=6.0, apron_depth_m=5.0)
+    assert _mover_motion_bounds_conflict(plane, placement, with_apron) is not None
+
+
+def test_door_passage_through_opening_allowed_with_apron() -> None:
+    plane = _box_plane("A")
+    # Body y ∈ [-0.5, 0.5] straddles y=0 but within the door opening (x ≈ 10).
+    placement = _slot("A", x=10.0, y=-0.5, h=0.0)
+    with_apron = _hangar(door_center=10.0, door_width=6.0, apron_depth_m=5.0)
+    assert _mover_motion_bounds_conflict(plane, placement, with_apron) is None
