@@ -310,6 +310,22 @@ def test_load_scenario_nose_out_parsed(tmp_path, yaml_bool, expected):
     assert s.constraints["aviat_husky"].nose_out is expected
 
 
+@pytest.mark.parametrize("typo", ["nose-out", "noseout", "nose_in", "tow_pivotable"])
+def test_load_scenario_rejects_unknown_constraint_key(tmp_path, typo):
+    """A misspelled constraint key (e.g. `nose-out`) must be REJECTED, not
+    silently dropped — for `nose_out` a silent drop inverts the user's nose-IN
+    exemption (the field's None means 'follow global', which defaults ON). Mirrors
+    the strict `wheels:` allowlist; #263 silent-failure-hunter HIGH finding."""
+    from hangarfit.loader import load_scenario
+
+    p = _stage_scenario(
+        tmp_path,
+        f"fleet_in: [aviat_husky]\nconstraints:\n  aviat_husky:\n    {typo}: false\n",
+    )
+    with pytest.raises(LoaderError, match="unknown constraint key"):
+        load_scenario(p)
+
+
 def test_load_scenario_rejects_quoted_bool_nose_out(tmp_path):
     """`nose_out: "true"` (quoted) would silently be truthy via bool(); rejected
     by the strict _to_bool, like force_on_carts/measured."""

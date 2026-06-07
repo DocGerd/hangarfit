@@ -32,8 +32,9 @@ plane in), trading exit ease for entry cost. **#480 (ADR-0010 amendment) cleared
 this empirically**: the cusp-penalty cost model + nose-out-gated rear-entry cone +
 cost-aware start-seed now **back a nose-out plane in** (tail-first) at ~zero extra
 entry cost — a direct probe on the roomy-3 fixture routed the two flippable planes
-at **−0.00 m** and **+0.17 m** vs. their nose-in cost; the ADR-0010 amendment pins
-the in-hangar swept turn dropping **162° → <45°** with `expansions = 0`. #480
+at **−0.00 m** and **+0.17 m** vs. their nose-in cost (the cost-aware start-seed
+closes the back-in analytically, so the probe saw `expansions = 0`); the ADR-0010
+amendment pins the in-hangar swept turn dropping **162° → <45°**. #480
 shipped the routing half ("make a nose-out slot cheap to *reach*"); this ADR is
 the solver-preference half ("make the solver *prefer* to pick it").
 
@@ -158,9 +159,12 @@ touch); `tow_pivotable` must **not** be sold as a dense-fill fix.
 - A flip changes the swept polygon and thus `min_pairwise_gap_m`, so it can change
   *which* basin `_select_spread_diverse` picks — a deterministic, validity-neutral
   re-rank, never an invalid output.
-- Default-ON re-baselines fixture *headings* only — in practice **zero** existing
-  tests changed (the determinism canaries are run-twice-diff, and behaviour tests
-  assert validity/gap/status, which the position-neutral flip preserves).
+- Default-ON would re-baseline fixture *headings* only — in practice **no existing
+  test's assertions changed** (the determinism canaries are run-twice-diff, and
+  behaviour tests assert validity/gap/status, which the position-neutral flip
+  preserves). Five determinism canaries were nonetheless pinned to `nose_out=False`
+  so they keep exercising the pre-feature RNG path explicitly (they pass either
+  way).
 
 ## Compliance
 
@@ -176,7 +180,9 @@ touch); `tow_pivotable` must **not** be sold as a dense-fill fix.
 - **`tests/test_towplanner_pivot.py`** — `tow_pivotable` routes via the
   `turn_radius_m == 0` pivot fan, reaches the goal collision-free, deterministic.
 - **`tests/test_models.py` / `tests/test_loader*.py` / `tests/test_cli_solve.py`**
-  — the new model fields + validation, the loader tri-state + strict bool, and the
+  — the new model fields + validation, the loader tri-state + strict bool, the
+  strict unknown-constraint-key allowlist (a misspelled `nose_out` is rejected, not
+  silently dropped — the silent drop would invert the nose-IN exemption), and the
   `--no-nose-out` flags + `--json` `nose_out_flips`.
 
 ## More Information

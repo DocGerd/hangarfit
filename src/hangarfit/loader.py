@@ -507,6 +507,9 @@ def load_scenario(
         raise LoaderError(f"{path}: {e}") from e
 
 
+_ALLOWED_CONSTRAINT_KEYS = frozenset({"pin", "force_on_carts", "priority", "nose_out"})
+
+
 def _build_plane_constraint(plane_id: str, data: Any) -> PlaneConstraint:
     """Build a :class:`PlaneConstraint` from one entry in a scenario YAML
     ``constraints:`` block.
@@ -542,6 +545,19 @@ def _build_plane_constraint(plane_id: str, data: Any) -> PlaneConstraint:
     """
     if not isinstance(data, dict):
         raise LoaderError(f"must be a mapping, got {type(data).__name__}")
+
+    # Strict unknown-key allowlist (mirrors the `wheels:` block). Without it a
+    # misspelled key is silently dropped — harmless for pin/force_on_carts/priority
+    # (whose absence means "free"), but for `nose_out` a silent drop INVERTS intent:
+    # its None means "follow the global SearchConfig.nose_out" (default ON), so a
+    # fat-fingered nose-IN exemption (`nose_out: false`) would silently flip the
+    # plane nose-OUT (#263). Reject loudly instead.
+    unknown = set(data) - _ALLOWED_CONSTRAINT_KEYS
+    if unknown:
+        raise LoaderError(
+            f"unknown constraint key(s) {sorted(unknown)}; "
+            f"allowed: {sorted(_ALLOWED_CONSTRAINT_KEYS)}"
+        )
 
     pin_data = data.get("pin")
     pin: Placement | None = None
