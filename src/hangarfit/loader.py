@@ -870,6 +870,7 @@ def _build_aircraft(entry: Any) -> Aircraft:
         movement_mode=entry["movement_mode"],
         turn_radius_m=turn_radius_m,
         measured=_to_bool(entry.get("measured", False), "measured"),
+        tow_pivotable=_to_bool(entry.get("tow_pivotable", False), "tow_pivotable"),
         parts=tuple(parts),
         notes=entry.get("notes", ""),
         wheels=_parse_wheels(entry.get("wheels"), entry["gear"]),
