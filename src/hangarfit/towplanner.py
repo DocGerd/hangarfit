@@ -904,12 +904,21 @@ def derive_apron_depth(fleet: Mapping[str, Aircraft]) -> float:
 _CONE_HEADINGS: tuple[float, ...] = (330.0, 345.0, 0.0, 15.0, 30.0)
 
 # The five rear-entry (nose-out / back-in) headings: 180° ± 30° in 15° steps.
-# Emitted ONLY when an apron exists (apron_depth_m > 0): backing a plane in
-# tail-first needs the apron run-up room (#263, unblocked by the apron — ADR-0021).
-# Gating on depth > 0 keeps the no-apron pose set — and thus the MovesPlan —
-# byte-identical (ADR-0003); they are additional deterministic seed poses the
-# search chooses among on cost, never a forced orientation.
+# Emitted iff the TARGET parked heading is nose-out-ish (#480), independent of
+# the apron: a nose-out slot can then be backed in tail-first rather than
+# pirouetting in the back corner. A nose-in slot never wins a rear-entry seed,
+# so it keeps the forward cone only (no wasted expansions). These remain
+# additional deterministic seed poses the search chooses among on cost, never a
+# forced orientation. Un-gating from the apron deliberately changes the depth-0
+# grid for nose-out targets, superseding the #412 depth-0 cross-version
+# byte-identity for that case (the ADR-0003 same-input determinism contract is
+# intact). See ADR-0010 (#480 amendment).
 _REVERSE_CONE_HEADINGS: tuple[float, ...] = (150.0, 165.0, 180.0, 195.0, 210.0)
+
+# Nose-out gate half-angle (#480): the rear cone is emitted iff
+# |_wrap180(target.heading_deg - 180)| <= this. ~45° covers the rear cone's own
+# ±30° span plus margin (so headings in [135, 225] qualify).
+_REAR_CONE_HALF_ANGLE_DEG = 45.0
 
 
 def entry_poses(target: Placement, hangar: Hangar) -> tuple[Pose, ...]:
@@ -941,13 +950,17 @@ def entry_poses(target: Placement, hangar: Hangar) -> tuple[Pose, ...]:
       decision 2026-06-07). Were ``y = 0`` kept, the shortest path would always
       pick the door-line start and show no slide-in.
 
-    **Headings**:
+    **Headings** (independent of the apron — #480):
 
-    - **No apron**: the 5-heading forward-admissible cone
+    - **Nose-in target**: the 5-heading forward-admissible cone
       ``{330°, 345°, 0°, 15°, 30°}`` only (straight-in ±30°).
-    - **With an apron**: the forward cone **followed by** the rear-entry cone
-      ``{150°, 165°, 180°, 195°, 210°}`` (180° ± 30°), so the search may choose
-      to back a plane in tail-first from the apron (#263, never forced).
+    - **Nose-out target** (``|wrap180(target.heading − 180)| ≤
+      _REAR_CONE_HALF_ANGLE_DEG``): the forward cone **followed by** the
+      rear-entry cone ``{150°, 165°, 180°, 195°, 210°}`` (180° ± 30°), so the
+      search may choose to back the plane in tail-first (#263/#480, never
+      forced). This applies with or without an apron, and so changes the depth-0
+      grid for nose-out targets (superseding the #412 depth-0 byte-identity for
+      that case; the ADR-0003 same-input contract is intact).
 
     **Emit order** (fixed for ADR-0003 determinism): x-outer, y-middle,
     heading-inner; duplicate ``(x, y, heading)`` triples (exact float equality)
@@ -977,18 +990,20 @@ def entry_poses(target: Placement, hangar: Hangar) -> tuple[Pose, ...]:
 
     x_samples = (x_centre, x_target, x_mid)
 
-    # Apron extension (ADR-0021). depth == 0 ⇒ the single y = 0 sample + the
-    # forward cone only ⇒ byte-identical to the pre-apron grid. depth > 0 ⇒ the
-    # start is forced ONTO the apron (the y = 0 door line is excluded) so every
-    # plane originates outside and slides in (#412 viewer motivation; user
+    # Y-samples — apron only (ADR-0021). depth == 0 ⇒ the single y = 0 door-line
+    # sample (byte-identical to the pre-apron grid for a nose-in target). depth >
+    # 0 ⇒ the start is forced ONTO the apron (the y = 0 door line is excluded) so
+    # every plane originates outside and slides in (#412 viewer motivation; user
     # decision 2026-06-07) — otherwise the shortest path keeps picking y = 0.
     depth = hangar.apron_depth_m
-    if depth > 0.0:
-        y_samples: tuple[float, ...] = (-depth / 2.0, -depth)
-        headings: tuple[float, ...] = _CONE_HEADINGS + _REVERSE_CONE_HEADINGS
-    else:
-        y_samples = (0.0,)
-        headings = _CONE_HEADINGS
+    y_samples: tuple[float, ...] = (-depth / 2.0, -depth) if depth > 0.0 else (0.0,)
+
+    # Headings — forward cone always; rear-entry cone iff the target parked
+    # heading is nose-out-ish (#480), independent of the apron. A nose-out slot
+    # can then be backed in (cheap under the cusp cost, ADR-0010 #480 amendment)
+    # instead of pirouetting inside; a nose-in slot keeps the forward cone only.
+    nose_out = abs(_wrap180(target.heading_deg - 180.0)) <= _REAR_CONE_HALF_ANGLE_DEG
+    headings: tuple[float, ...] = _CONE_HEADINGS + (_REVERSE_CONE_HEADINGS if nose_out else ())
 
     seen: set[tuple[float, float, float]] = set()
     poses: list[Pose] = []
