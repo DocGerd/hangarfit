@@ -6,6 +6,14 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [0.12.0] — 2026-06-07
+
+### Added
+
 - **Tow-planner staging apron (#412, ADR-0021).** New optional `Hangar`
   scalar `apron_depth_m` (in `hangar.yaml`; default `0`) models a bounded
   staging apron in the `y ∈ [−apron_depth_m, 0)` region in front of the door.
@@ -466,7 +474,8 @@ First Phase 1 cut — substrate for arranging the flying club fleet in a stack-s
 - Apache-2.0 license, public-audience README, CI matrix (Python 3.11 + 3.12), branch protection on develop + main (#13, #14, #15, #16).
 - Strut-aware golden tests + all-9-planes fixture using larger test-only hangar to accommodate strut-bracing geometry on placeholder dimensions (#5).
 
-[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.11.0...HEAD
+[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.12.0...HEAD
+[0.12.0]: https://github.com/DocGerd/hangarfit/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/DocGerd/hangarfit/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/DocGerd/hangarfit/compare/v0.9.0...v0.10.0
 [0.9.0]: https://github.com/DocGerd/hangarfit/compare/v0.8.0...v0.9.0
