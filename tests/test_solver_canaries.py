@@ -63,6 +63,16 @@ CANARY_FIXTURES = [
 ]
 
 
+# `serial` pins these wall-clock-budget canaries OUTSIDE the `-n auto`
+# pytest-xdist pool (CI runs them in a separate serial pass, #492). Each call
+# runs solve() twice in-process under a `budget_s=5.0` deadline and asserts
+# bit-identical output; under CPU starvation the two solves can complete
+# different restart counts within the same budget and diverge. `xdist_group` /
+# `--dist loadgroup` is INSUFFICIENT — it only co-locates a group on one worker,
+# it does not stop sibling workers from saturating the CPU, so the wall-clock
+# race persists. The max_restarts-scoped companion below is load-independent and
+# stays in the parallel pool.
+@pytest.mark.serial
 @pytest.mark.parametrize("fixture", CANARY_FIXTURES)
 def test_solve_deterministic_given_seed(fixture):
     """``solve(scenario, seed=42)`` must yield bit-for-bit identical

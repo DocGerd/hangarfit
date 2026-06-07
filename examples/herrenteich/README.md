@@ -7,10 +7,10 @@ CLI paths — point the tools at these files explicitly.
 
 ```bash
 # Validate the "everyone home" layout (all eight usual occupants):
-hangarfit check herrenteich/layout.yaml --render herrenteich.png
+hangarfit check examples/herrenteich/layout.yaml --render herrenteich.png
 
 # 3D viewer:
-hangarfit view herrenteich/layout.yaml -o herrenteich.html
+hangarfit view examples/herrenteich/layout.yaml -o herrenteich.html
 ```
 
 ## Files

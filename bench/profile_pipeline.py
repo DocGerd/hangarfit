@@ -60,6 +60,10 @@ _SPEED_CEILING_S: dict[str, float] = {
     "trivial_single": 10.0,
     "roomy_three_spread_on": 100.0,
     "roomy_three_spread_off": 20.0,
+    # Same placement as roomy_three_spread_on (apron is planner-only) plus the
+    # apron's heavier routing (~5 s dev / ~15-20 s CI for the 14 m deep fill), so
+    # a touch above the spread-on ceiling. Tripwire, not a microbenchmark (#499).
+    "roomy_three_apron": 120.0,
 }
 
 

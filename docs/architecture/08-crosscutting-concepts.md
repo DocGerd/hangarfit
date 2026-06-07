@@ -220,6 +220,22 @@ headings (near 180°) are out of scope here; they belong to the Reeds–Shepp
 motion issue (#261). This replaces the earlier v1 single-ray reduction (one
 clamped target-x, heading 0°) described in ADR-0007 Q6.
 
+**The staging apron** ([ADR-0021](../adr/0021-tow-planner-staging-apron.md),
+#412) generalises this when the site has one (`Hangar.apron_depth_m > 0`). The
+door-cone grid extends *south* into the apron rectangle (`y ∈ [−apron_depth_m,
+0)`, full frontage in `x`), the `y = 0` door-line start is **excluded** (so every
+plane originates outside and visibly slides in), and the rear-entry cone `{150°,
+165°, 180°, 195°, 210°}` joins the grid as additional deterministic seeds (a plane
+may back in tail-first — the rear-entry headings that are out of scope *without* an
+apron become routable *with* one). The front-gap exemption widens accordingly:
+during motion the whole apron rectangle is open ground, but the front wall at
+`y = 0` stays solid except for the door gap — a footprint that *crosses* the wall
+line beside the door (vertices on both sides of `y = 0` outside the door interval)
+is still a conflict (the **#411 jamb rejection, retained verbatim**), while a
+footprint wholly on the apron is free. `collisions.check` is still untouched (it
+forbids `y < 0` entirely; the final parked slot is a fully in-bounds placement),
+and `apron_depth_m = 0`/absent reproduces the pre-apron behaviour byte-for-byte.
+
 The motion vocabulary and the door entry-cone the planner searches over:
 
 ```text

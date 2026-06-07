@@ -945,6 +945,9 @@ def _inter_plane_energy(
     placements: dict[str, Placement],
     scenario: Scenario,
     scale: float,
+    *,
+    gap_cache: dict[tuple[str, str], float] | None = None,
+    moved: str | None = None,
 ) -> float:
     """Smooth repulsion energy ``E = Σ_{i<j} w_i·w_j·exp(−gap_ij / scale)`` (spec §4).
 
@@ -957,6 +960,19 @@ def _inter_plane_energy(
     unweighted ``Σ exp(−gap/scale)`` byte-for-byte (ADR-0003). Returns ``0.0``
     when fewer than two planes are present. Ignores z (plan-view only) — see
     ADR-0008 for the nesting limitation.
+
+    Incremental single-plane re-scoring (#455): the :func:`_spread` hill-climb
+    perturbs ONE plane (``moved``) per iteration and scores several candidate
+    positions for it. Every pair that does *not* involve ``moved`` is identical
+    across those candidates, so when ``gap_cache`` is supplied this memoizes the
+    expensive ``gap_ij`` (the shapely distance) for exactly those pairs and
+    reuses it. The energy is still accumulated over **all** pairs in canonical
+    ``sorted``-id order, so a cached gap (the same float, recomputed from the same
+    unchanged poses) makes the result **byte-for-byte identical** to the cache-free
+    full recompute (ADR-0003) — this is a distance memo, never the bit-divergent
+    delta-update (#455). Pairs touching ``moved`` are always recomputed and never
+    cached (``moved`` moves between calls). With ``gap_cache=None`` (every caller
+    outside ``_spread``) this is exactly the original full pairwise sweep.
     """
     ids = sorted(placements)
     if len(ids) < 2:
@@ -968,10 +984,17 @@ def _inter_plane_energy(
     energy = 0.0
     for i in range(len(ids)):
         for j in range(i + 1, len(ids)):
-            gap = min(
-                pa.polygon.distance(pb.polygon) for pa in world[ids[i]] for pb in world[ids[j]]
-            )
-            energy += w[ids[i]] * w[ids[j]] * math.exp(-gap / scale)
+            a, b = ids[i], ids[j]
+            # A pair is cacheable iff neither endpoint is the perturbed plane:
+            # only then is its gap invariant across the candidates sharing the cache.
+            cache = gap_cache if (moved != a and moved != b) else None
+            if cache is not None and (a, b) in cache:
+                gap = cache[(a, b)]
+            else:
+                gap = min(pa.polygon.distance(pb.polygon) for pa in world[a] for pb in world[b])
+                if cache is not None:
+                    cache[(a, b)] = gap
+            energy += w[a] * w[b] * math.exp(-gap / scale)
     return energy
 
 
@@ -1070,11 +1093,18 @@ def _spread(
         # lone plane is still pulled to the back wall, so we do NOT bail there.
         return placements
 
-    def _energy(trial: dict[str, Placement]) -> float:
+    def _energy(
+        trial: dict[str, Placement],
+        *,
+        gap_cache: dict[tuple[str, str], float] | None = None,
+        moved: str | None = None,
+    ) -> float:
         # Spread repulsion, plus the #320 back-of-hangar bias when active. The
         # back-bias re-ranks candidates *within* this hill-climb; basin selection
-        # stays min-gap-primary (ADR-0008 amended).
-        e = _inter_plane_energy(trial, scenario, scale)
+        # stays min-gap-primary (ADR-0008 amended). gap_cache/moved memoize the
+        # unchanged-pair distances within one iteration (#455, byte-identical);
+        # the back-bias is a per-plane sum (no pairs) so it is always re-summed.
+        e = _inter_plane_energy(trial, scenario, scale, gap_cache=gap_cache, moved=moved)
         if back_fill:
             e += search.back_bias_weight * _back_bias_energy(trial, scenario)
         return e
@@ -1100,6 +1130,10 @@ def _spread(
         # Pick the lowest-(energy, displacement) VALID candidate. Adopt it
         # only if its energy is strictly below current (so the stall counter
         # advances on non-improving iterations — no plateau-wander livelock).
+        # Per-iteration distance memo (#455): only `target` moves across these
+        # candidates, so the pairs not touching it have an invariant gap — compute
+        # each once and reuse. Re-summed in canonical order ⇒ byte-identical.
+        gap_cache: dict[tuple[str, str], float] = {}
         best_key: tuple[float, float] | None = None
         best_placements = placements
         for cand in candidates:
@@ -1124,7 +1158,7 @@ def _spread(
                 continue
             if _score(trial_layout) != (0, 0.0):
                 continue  # must STAY valid
-            e = _energy(trial)
+            e = _energy(trial, gap_cache=gap_cache, moved=target)
             disp = (
                 (cand.x_m - placements[target].x_m) ** 2 + (cand.y_m - placements[target].y_m) ** 2
             ) ** 0.5

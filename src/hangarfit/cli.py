@@ -18,7 +18,7 @@ import argparse
 import json
 import math
 import sys
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from hangarfit import __version__, collisions, visualize
 from hangarfit.loader import LoaderError, load_fleet, load_hangar, load_layout
@@ -45,7 +45,7 @@ _BACK_FILL_DEFAULT_WEIGHT = 1.0
 # subcommand passes to ``plan_fill`` in layout mode. The default whole-fill
 # budget (towplanner._MAX_FILL_EXPANSIONS, 16000) is tuned to *disprove* a hard
 # fill in bounded time for batch `solve`, but at that scale an un-routable
-# interactive `view` (e.g. layouts/example.yaml) grinds ~2 min before falling
+# interactive `view` (e.g. examples/layouts/example.yaml) grinds ~2 min before falling
 # back to a static scene. A far smaller global cap degrades to static in a few
 # seconds. This bounds the search by a deterministic expansion COUNT, not a
 # wall-clock deadline — a time limit would bail a genuinely-but-slowly-routable
@@ -62,6 +62,25 @@ _BACK_FILL_DEFAULT_WEIGHT = 1.0
 # layouts (an accepted tradeoff: such a layout shows static rather than an
 # animation). `view --solve` is unaffected — it routes via solve(), not here.
 _VIEW_TOW_MAX_TOTAL_EXPANSIONS = 300
+
+
+def _apron_depth_arg(value: str) -> float | Literal["auto"]:
+    """argparse type for ``--apron-depth``: a finite non-negative metre value, or
+    the literal ``"auto"`` (fleet-derived depth, resolved by the loader, ADR-0021).
+    Rejects garbage / negatives at parse time with an exit-2 ArgumentTypeError."""
+    if value.strip().lower() == "auto":
+        return "auto"
+    try:
+        depth = float(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"--apron-depth must be a number or 'auto', got {value!r}"
+        ) from None
+    if not math.isfinite(depth) or depth < 0:
+        raise argparse.ArgumentTypeError(
+            f"--apron-depth must be a finite, non-negative number or 'auto', got {value!r}"
+        )
+    return depth
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -204,6 +223,19 @@ def build_parser() -> argparse.ArgumentParser:
         help="Override the hangar's spare-cart count for the cart_eligible pool (default: the hangar.yaml value, or 1 if unset).",  # noqa: E501
     )
     solve.add_argument(
+        "--apron-depth",
+        type=_apron_depth_arg,
+        metavar="N|auto",
+        default=None,
+        dest="apron_depth",
+        help=(
+            "Staging-apron depth (m) in front of the door (ADR-0021): each tow "
+            "path starts outside the hangar and slides in. 'auto' derives "
+            "~max(plane length)+max(turn radius) from the fleet. Default: the "
+            "hangar.yaml value, or 0 (no apron, today's behaviour)."
+        ),
+    )
+    solve.add_argument(
         "--no-spread",
         action="store_false",
         dest="spread",
@@ -290,6 +322,18 @@ def build_parser() -> argparse.ArgumentParser:
         default=None,
         dest="max_carts",
         help="Override the hangar's spare-cart count for the cart_eligible pool.",
+    )
+    view.add_argument(
+        "--apron-depth",
+        type=_apron_depth_arg,
+        metavar="N|auto",
+        default=None,
+        dest="apron_depth",
+        help=(
+            "Staging-apron depth (m): each plane slides in from outside the door "
+            "in the animation (ADR-0021). 'auto' derives from the fleet. "
+            "Default: the hangar.yaml value, or 0 (no apron)."
+        ),
     )
     view.add_argument(
         "--check",
@@ -400,7 +444,9 @@ def cmd_check(args: argparse.Namespace) -> int:
     """Run the ``check`` subcommand. See spec §4 for the data flow."""
     try:
         fleet_override = load_fleet(args.fleet) if args.fleet is not None else None
-        hangar_override = load_hangar(args.hangar) if args.hangar is not None else None
+        hangar_override = (
+            load_hangar(args.hangar, fleet=fleet_override) if args.hangar is not None else None
+        )
         layout = load_layout(
             args.layout,
             fleet=fleet_override,
@@ -554,12 +600,15 @@ def cmd_solve(args: argparse.Namespace) -> int:
 
     try:
         fleet_override = load_fleet(args.fleet) if args.fleet is not None else None
-        hangar_override = load_hangar(args.hangar) if args.hangar is not None else None
+        hangar_override = (
+            load_hangar(args.hangar, fleet=fleet_override) if args.hangar is not None else None
+        )
         scenario = load_scenario(
             args.scenario,
             fleet=fleet_override,
             hangar=hangar_override,
             max_carts=args.max_carts,
+            apron_depth=args.apron_depth,
         )
     except LoaderError as e:
         print(f"error: {e}", file=sys.stderr)
@@ -767,7 +816,7 @@ def _write_yamls(
 ) -> None:
     """Write each layout to PATTERN with ``{i}`` substituted.
 
-    Output format matches ``layouts/example.yaml`` so the file
+    Output format matches ``examples/layouts/example.yaml`` so the file
     round-trips through ``hangarfit check``. Fleet/hangar refs are
     embedded as absolute paths so the written file is location-
     independent.
@@ -909,7 +958,9 @@ def cmd_view(args: argparse.Namespace) -> int:
         )
     try:
         fleet_override = load_fleet(args.fleet) if args.fleet is not None else None
-        hangar_override = load_hangar(args.hangar) if args.hangar is not None else None
+        hangar_override = (
+            load_hangar(args.hangar, fleet=fleet_override) if args.hangar is not None else None
+        )
         if args.solve:
             from hangarfit.loader import load_scenario
             from hangarfit.solver import solve
@@ -919,6 +970,7 @@ def cmd_view(args: argparse.Namespace) -> int:
                 fleet=fleet_override,
                 hangar=hangar_override,
                 max_carts=args.max_carts,
+                apron_depth=args.apron_depth,
             )
             result = solve(
                 scenario,
@@ -945,6 +997,7 @@ def cmd_view(args: argparse.Namespace) -> int:
                 fleet=fleet_override,
                 hangar=hangar_override,
                 max_carts=args.max_carts,
+                apron_depth=args.apron_depth,
             )
             if args.check:
                 check_result = collisions.check(layout)

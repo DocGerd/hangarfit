@@ -84,13 +84,15 @@ at 0.05 m / 1° against the faithful back-first obstacle context), and
 
 ### Regimes
 
-| Regime | Scenario | Planes | Hangar | Spread | Restarts |
-|---|---|---:|---|---|---:|
-| `trivial_single` | `solve_trivial_single_plane` | 1 | 30×25 | on | 20 |
-| `roomy_three_spread_on` | `solve_fresh_alternatives_three` | 3 | 30×25 | on | 30 |
-| `roomy_three_spread_off` | `solve_fresh_alternatives_three` | 3 | 30×25 | off | 30 |
-| `full_nine_spread_on` | `solve_all_nine_large_hangar` | 9 | 30×25 | on | 4 |
-| `tight_six_placeholder` | `solve_fresh_six_planes` | 6 | 25×18 | on | 6 |
+| Regime | Scenario | Planes | Hangar | Spread | Restarts | Apron |
+|---|---|---:|---|---|---:|---:|
+| `trivial_single` | `solve_trivial_single_plane` | 1 | 30×25 | on | 20 | — |
+| `roomy_three_spread_on` | `solve_fresh_alternatives_three` | 3 | 30×25 | on | 30 | — |
+| `roomy_three_spread_off` | `solve_fresh_alternatives_three` | 3 | 30×25 | off | 30 | — |
+| `full_nine_spread_on` | `solve_all_nine_large_hangar` | 9 | 30×25 | on | 4 | — |
+| `tight_six_placeholder` | `solve_fresh_six_planes` | 6 | 25×18 | on | 6 | — |
+| `roomy_three_apron` (#499) | `solve_fresh_alternatives_three` | 3 | 30×25 | on | 30 | 14 m |
+| `tight_six_apron` (#499, heavy) | `solve_fresh_six_planes` | 6 | 25×18 | on | 6 | 10 m |
 
 ---
 
@@ -192,6 +194,52 @@ parts constant within a `plan_path`, but everything else — every placement-sid
 `_motion_clear` — rebuilds parts from scratch with **no memoization and no
 broad-phase**. A single un-routable 9-plane fill still constructs **8.6 million**
 shapely polygons. That one function is the lever.
+
+### 6. The staging apron (#412 / ADR-0021) — routing-cost characterisation (#499)
+
+The apron enlarges the per-plane tow start set (forward **and** reverse cones ×
+the apron y-samples) and lengthens each path, so #499 added two regimes to track
+its cost. Measured (dev machine, 2026-06-07):
+
+| Regime | place_s | route_s | total_s | routed | det |
+|---|---:|---:|---:|---|---|
+| `roomy_three_spread_on` (no apron) | 14.05 | 0.76 | 14.81 | 1/1 | ok |
+| `roomy_three_apron` (14 m) | 13.94 | **4.97** | 18.91 | 1/1 | ok |
+| `tight_six_placeholder` (no apron) | 5.73 | 67.39 | 73.11 | 0/1 | ok |
+| `tight_six_apron` (10 m) | 5.80 | **73.42** | 79.22 | 0/1 | ok |
+
+- **Apron is planner-only — placement is unchanged** (14.05↔13.94, 5.73↔5.80; the
+  solver never reads `apron_depth_m`). This is the empirical proof of the
+  ADR-0021 gating claim.
+- **Feasible fills route at the default budgets.** `roomy_three_apron` is 1/1
+  routed at the shipped `_MAX_EXPANSIONS`/`_MAX_FILL_EXPANSIONS`; routing rises
+  0.76 → 4.97 s (~6.5×) for the fully-engaged 14 m apron, but the absolute cost
+  is small and well under the gate. No feasible apron fill bailed from budget.
+- **The un-routable disprove rises only modestly and stays bounded:** tight-6
+  67.4 → 73.4 s (+9 %), capped by the global expansion cap. Determinism holds
+  (`det=ok`) for both apron regimes.
+- **Slide-in engagement is depth-gated, per-plane.** An apron only engages a
+  plane when it is deep enough for that plane's footprint to fit *inside* the
+  apron at a start pose — i.e. a function of the plane's **footprint depth**
+  (driven by its fore-aft extent and where the reference origin sits), **not** its
+  turn radius (the radius does not enter the per-plane `_mover_motion_bounds_conflict`
+  south-bound filter). At 6 m, `fuji` (7.98 m long) has *all* its apron start poses
+  filtered (footprint overflows the apron south bound) and **silently falls back
+  to the `y = 0` door line** (the `plan_path` fallback), while the two shorter
+  planes slide in; measured, all three roomy-3 planes engage by ~7 m. The opt-in
+  `auto` depth (`≈ max plane length + max turn radius` = 14.98 m here) is a
+  deliberate *over-margin* that clears every plane's gate comfortably — not the
+  minimum. **`auto` is the safe default; a too-shallow hand-set apron is the
+  footgun** — a candidate follow-up is to warn
+  (or auto-deepen) when every apron pose for a plane filters out.
+
+**Budget decision (the #499 question): keep `_MAX_EXPANSIONS` /
+`_MAX_FILL_EXPANSIONS` as-is.** The apron's routing cost is modest, bounded by
+the global cap, and feasible fills route at the defaults; raising the budgets
+would buy nothing here and risks shifting the non-apron routability knee (a
+byte-divergence hazard for existing outputs — see the determinism section). A
+hard apron fill is bounded per-run with `--tow-max-expansions`, exactly as
+ADR-0021 anticipated.
 
 ---
 

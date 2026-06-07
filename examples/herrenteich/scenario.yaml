@@ -1,7 +1,7 @@
 # Airfield Herrenteich — "everyone home" scenario: all eight usual occupants
 # in the hangar at once. This is the canonical solver INPUT.
 #
-# NOTE: `hangarfit solve` does NOT produce herrenteich/layout.yaml from this
+# NOTE: `hangarfit solve` does NOT produce examples/herrenteich/layout.yaml from this
 # scenario. (#425 — fixed — once made its bounding-box trivial-infeasibility
 # gate reject this glider-heavy fleet outright: Σ bbox ≈ 606 m² > the 479 m²
 # rectangular floor. The gate now sums actual part footprints, Σ ≈ 160 m² «

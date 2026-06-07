@@ -25,12 +25,13 @@ This file is the durable **operational** context for the project: how we work, w
 | **The maintenance bay rule** (current `bay_intrusion` semantics) | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#the-maintenance-bay-rule) + [ADR-0006](docs/adr/0006-bay-intrusion-maintenance-rule.md). The Phase 1 predecessor is preserved as [ADR-0005](docs/adr/0005-maintenance-bay-rule.md) (Superseded by ADR-0006). |
 | Fleet composition (per-plane wing type, gear, movement mode, struts, canonical wheel positions) | [`data/fleet.yaml`](data/fleet.yaml) — the source of truth; §8 calls out the strut-braced subset and the only low-wing. Wheel positions are canonical per-aircraft data ([ADR-0013](docs/adr/0013-wheels-canonical-data.md)), not renderer heuristics |
 | Hangar dimensions, door, maintenance bay rectangle | [`data/hangar.yaml`](data/hangar.yaml) — all values currently placeholders pending real measurement |
-| **The real Airfield Herrenteich dataset** (DWG-measured hangar + published-spec, second-source-verified fleet incl. a folded Stemme S10 + a valid all-8 `layout.yaml`), kept **separate** from the synthetic `data/` placeholders | [`herrenteich/`](herrenteich/README.md) — real data; `data/` stays the synthetic demo/test fixtures |
+| **The real Airfield Herrenteich dataset** (DWG-measured hangar + published-spec, second-source-verified fleet incl. a folded Stemme S10 + a valid all-8 `layout.yaml`), kept **separate** from the synthetic `data/` placeholders | [`examples/herrenteich/`](examples/herrenteich/README.md) — real data; `data/` stays the synthetic demo/test fixtures |
 | Default clearances (`clearance_m`, `wing_layer_clearance_m`) | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#default-clearances) |
 | RR-MC solver algorithm and the determinism contract | [ADR-0003](docs/adr/0003-rr-mc-solver-algorithm.md) |
 | Diversity metric (edit-count, thresholds) | [ADR-0004](docs/adr/0004-diversity-metric.md) |
 | **The spread post-pass** (maximize inter-plane gap once valid) | [ADR-0008](docs/adr/0008-inter-plane-spread-soft-preference.md) |
 | **The tow-path planner** (empty-hangar fill, Reeds–Shepp arcs, `solve --render-paths`, exit-3 tow-routability) | [§5 Building Block View](docs/architecture/05-building-block-view.md) (`towplanner`) + [ADR-0007](docs/adr/0007-tow-path-planner-v1-scope.md) (v1 scope) + [ADR-0010](docs/adr/0010-reeds-shepp-motion-model.md) (v2 Reeds–Shepp motion) |
+| **The staging apron** (`hangar.apron_depth_m` / `--apron-depth N\|auto`, slide-in from outside the door, reverse nose-out seeds, depth-0 byte-identical) | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#the-door-is-a-visual-marker-only) + [ADR-0021](docs/adr/0021-tow-planner-staging-apron.md). `collisions.check` is apron-inert (forbids `y<0`); the apron is a planner-level motion concept |
 | **The 3D viewer** (`hangarfit view`, interactive offline HTML, whole-fill tow timeline, the `scene/v1` JSON seam, Python-owned transform) | [§5 Building Block View](docs/architecture/05-building-block-view.md) (`scene`, `viewer`) + [ADR-0017](docs/adr/0017-3d-viewer-architecture.md) + the schema reference [docs/architecture/scene-v1-schema.md](docs/architecture/scene-v1-schema.md) |
 | Why the project targets a single Python (3.12), not a range | [ADR-0009](docs/adr/0009-single-supported-python-version.md) |
 | All architecture decisions, including superseded ones | [`docs/adr/`](docs/adr/) |
@@ -141,6 +142,8 @@ Allowed but not the default. Use only when two feature branches need parallel wo
 
 **Worktree gotcha:** the editable install's `.pth` points at the **main** checkout, so a bare `pytest` / `python` / `hangarfit` run *inside* a worktree imports the wrong `src` (the PostToolUse hook's pytest included) — run `PYTHONPATH=$PWD/src python -m pytest …` instead. There is no `__main__.py` (the CLI entry point is `hangarfit.cli:main`), so `python -m hangarfit` fails — invoke the CLI as `PYTHONPATH=$PWD/src python -c "from hangarfit.cli import main; main(['view', …])"`.
 
+**`EnterWorktree` base-ref trap:** this *clone's* local `origin/HEAD` ref is unset (the remote default is `develop`, but the clone didn't set the local tracking ref), so the native `EnterWorktree` tool falls back to the wrong base — observed branching off `origin/main` (the last release) instead of `develop`, silently producing a feature branch missing recent develop work (and `worktree.baseRef head` was *not* honored). One-shot remedy: `git remote set-head origin -a` (points local `origin/HEAD` at `develop`). Per-worktree safety net: right after `EnterWorktree`, verify with `git merge-base --is-ancestor origin/develop HEAD` (must succeed); if it doesn't, `git fetch origin develop && git rebase origin/develop` *before* working/pushing (clean while the branch is unpushed). The native tool's auto-cleanup also won't delete a branch you `git branch -m`-renamed, so `git branch -d` it after the worktree is removed.
+
 ---
 
 ## Security policy & Scorecard rationale
@@ -152,12 +155,12 @@ Vulnerability reporting lives in [SECURITY.md](SECURITY.md). The rationale for t
 ## Open questions / TBD before trusting output
 
 - **`data/` is synthetic.** Every aircraft (`measured: false` in `fleet.yaml`) and the hangar in `data/hangar.yaml` are eyeballed placeholders — kept deliberately as the stable demo/test fixtures.
-- **Real data lives in [`herrenteich/`](herrenteich/README.md)** (since #426): the DWG-measured hangar (15.08 × 31.76 m, 13.46 m door) and the eight usual occupants on published-spec, second-source-verified dimensions (still `measured: false` — published specs, not on-site). Two gaps it surfaced — one modelling, one solver-gate bug (the latter now fixed):
+- **Real data lives in [`examples/herrenteich/`](examples/herrenteich/README.md)** (since #426): the DWG-measured hangar (15.08 × 31.76 m, 13.46 m door) and the eight usual occupants on published-spec, second-source-verified dimensions (still `measured: false` — published specs, not on-site). Two gaps it surfaced — one modelling, one solver-gate bug (the latter now fixed):
   - **The real hangar is L-shaped; the model is a rectangle.** Its back-right office **notch** (~2.36 × 9.10 m) is recorded only in comments and avoided by hand; teaching the model the notch is **spike #424**.
   - **`hangarfit solve`'s glider area-gate (#425 — fixed).** The trivial-infeasibility gate now sums actual *part footprints*, not bounding boxes, so an 18 m-span glider no longer trips it (Σ part-area « floor) and glider fleets reach the search instead of being false-rejected. (The Herrenteich `layout.yaml` was still built by driving `collisions.check` directly; whether `solve` finds an all-eight layout *within budget* is a separate search-feasibility question.)
-- **Placeholder hangar can't fit the full fleet.** The placeholder hangar in [`data/hangar.yaml`](data/hangar.yaml) is too tight to fit every aircraft at once under the placeholder clearance budget. The default [`layouts/example.yaml`](layouts/example.yaml) is a deliberate 6-plane subset; test fixtures that need the full fleet use [`tests/fixtures/test_hangar_large.yaml`](tests/fixtures/test_hangar_large.yaml).
+- **Placeholder hangar can't fit the full fleet.** The placeholder hangar in [`data/hangar.yaml`](data/hangar.yaml) is too tight to fit every aircraft at once under the placeholder clearance budget. The default [`examples/layouts/example.yaml`](examples/layouts/example.yaml) is a deliberate 6-plane subset; test fixtures that need the full fleet use [`tests/fixtures/test_hangar_large.yaml`](tests/fixtures/test_hangar_large.yaml).
 
-The collision checker will run on the `data/` placeholders, but until those are real, output on them is illustrative only (the `herrenteich/` hangar is real; its fleet is published-spec).
+The collision checker will run on the `data/` placeholders, but until those are real, output on them is illustrative only (the `examples/herrenteich/` hangar is real; its fleet is published-spec).
 
 ---
 
@@ -175,18 +178,26 @@ pytest -m slow
 # Or run everything regardless of marker
 pytest -m ""
 
-# GOTCHA: tests/test_solver_canaries.py::test_solve_deterministic_given_seed uses
-# a wall-clock `budget_s` (not max_restarts), so under heavy concurrent CPU load
-# (e.g. running the full suite alongside several subagents) the two in-process
-# solves can complete different restart counts and it flakes — re-run it in
-# isolation before treating a failure as a regression. The max_restarts-scoped
-# companion (test_solve_deterministic_best_partial_under_max_restarts) is the
+# GOTCHA: the wall-clock determinism canaries (the `serial`-marked double-solve
+# tests in tests/test_solver_canaries.py, tests/test_solver_search.py, and
+# tests/test_solver_towplanner.py) use a wall-clock `budget_s` (not
+# max_restarts) and run solve() twice in-process, so under heavy concurrent CPU
+# load the two solves can complete different restart counts and the result can
+# diverge. Since #492 they carry the `serial` marker and CI runs them in a
+# dedicated serial pass OUTSIDE the `pytest -n auto` xdist pool. The marker only
+# protects the CI invocation: a local bare `pytest -n auto` still drops them into
+# the parallel pool and can re-expose the flake — to mirror CI locally run
+# `pytest -n auto -m "not slow and not serial"` then `pytest -m "serial and not
+# slow"`, or just re-run a flagged canary in isolation before treating a failure
+# as a regression. The max_restarts-scoped companion
+# (test_solve_deterministic_best_partial_under_max_restarts) is the
 # load-independent determinism check.
 
-# GOTCHA: CI runs `pytest -m 'not slow'` and derives coverage from THAT run, so
-# marking a test @slow drops it from coverage too. If a @slow test is the only
-# one covering a new code path, the `codecov/patch` PR check fails — keep >=1
-# non-slow test per new path.
+# GOTCHA: CI runs the suite in two passes (#492) — `pytest -n auto -m "not slow
+# and not serial"` then `pytest -m "serial and not slow" --cov-append` — and
+# derives coverage from the COMBINED run, so marking a test @slow drops it from
+# coverage too. If a @slow test is the only one covering a new code path, the
+# `codecov/patch` PR check fails — keep >=1 non-slow test per new path.
 
 # Lint + format check (CI also runs these)
 ruff check src/ tests/
@@ -268,14 +279,14 @@ pip-compile --generate-hashes --no-strip-extras --allow-unsafe -o requirements-p
 # reports but does not by itself block merge (see the @slow gotcha above).
 
 # Phase 1 acceptance smoke test
-hangarfit check layouts/example.yaml --render out.png
+hangarfit check examples/layouts/example.yaml --render out.png
 
 # Phase 3a/3b: solve + tow-path overlay. Best-effort: a layout the planner
 # can't fully route renders without paths (blocking plane named on stderr);
 # exit 3 only if NO candidate layout is tow-routable.
 hangarfit solve tests/fixtures/scenario_minimal.yaml --render out.png --render-paths
 
-# Phase 4: 3D viewer (self-contained offline HTML). layouts/example.yaml is NOT
+# Phase 4: 3D viewer (self-contained offline HTML). examples/layouts/example.yaml is NOT
 # tow-routable → it falls back to a static 3D render. Since #398 (F1), layout-mode
 # `view` passes a small deterministic GLOBAL tow-expansion cap
 # (_VIEW_TOW_MAX_TOTAL_EXPANSIONS=300) to the planner, so an un-routable layout
@@ -289,6 +300,14 @@ hangarfit view tests/fixtures/valid_left_side_nesting.yaml -o out.html
 google-chrome --headless=new --use-gl=angle --use-angle=swiftshader \
   --enable-unsafe-swiftshader --virtual-time-budget=8000 \
   --screenshot=out.png "file://$PWD/out.html"
+
+# #412 staging apron (ADR-0021): with apron_depth_m > 0 each tow path starts
+# OUTSIDE the door (y<0) and slides in. Set it on the hangar.yaml or override
+# per run with --apron-depth N|auto (auto = ~max plane length + max turn radius)
+# on BOTH solve and view (not check — collisions.check is apron-inert). Default
+# 0/absent reproduces the no-apron plan byte-for-byte (gated behind depth>0).
+hangarfit solve tests/fixtures/scenario_minimal.yaml --render out.png --render-paths --apron-depth auto
+hangarfit view tests/fixtures/valid_left_side_nesting.yaml -o out.html --apron-depth 6
 
 # Solve→tow profiling harness (DEV/CI-ONLY, #381 — top-level `bench/`, NOT shipped
 # in the wheel; `pip install` / `python -m build` / pytest never touch it). Splits

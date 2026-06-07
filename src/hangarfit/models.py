@@ -370,6 +370,15 @@ class Hangar:
     carts in a single :class:`Layout` (``always_cart`` planes get their
     own carts and never draw from this pool). Defaults to ``1``, which
     reproduces the original hard-coded single-cart rule.
+
+    ``apron_depth_m`` is the depth (in metres) of the staging apron in front
+    of the door — the ``y ∈ [−apron_depth_m, 0)`` region from which the tow
+    planner slides each plane in through the door (ADR-0021). A property of
+    the *site*, like ``max_carts``. Defaults to ``0`` (absent ⇒ ``0``), which
+    reproduces the no-apron model byte-for-byte: the planner only uses it when
+    it is positive. The loader resolves the opt-in ``auto`` keyword to a
+    fleet-derived depth before construction, so this field is always a plain
+    resolved float.
     """
 
     length_m: float
@@ -379,6 +388,7 @@ class Hangar:
     clearance_m: float
     wing_layer_clearance_m: float
     max_carts: int = 1
+    apron_depth_m: float = 0.0
 
     def __post_init__(self) -> None:
         if self.length_m <= 0:
@@ -394,6 +404,8 @@ class Hangar:
             )
         if self.max_carts < 0:
             raise ValueError(f"Hangar.max_carts must be non-negative, got {self.max_carts}")
+        if self.apron_depth_m < 0:
+            raise ValueError(f"Hangar.apron_depth_m must be non-negative, got {self.apron_depth_m}")
         door_left = self.door.center_x_m - self.door.width_m / 2
         door_right = self.door.center_x_m + self.door.width_m / 2
         if door_left < 0 or door_right > self.width_m:

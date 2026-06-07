@@ -153,7 +153,7 @@ at zero (only a header comment) and the break a single derived value.
   auto-split as the canonical authoring path; explicit segments are the escape
   hatch for asymmetric fuselages.
 - Verdicts that depended on a wing-over-front-fuselage being legal change
-  (intended): the default `layouts/example.yaml` was re-nudged and several
+  (intended): the default `examples/layouts/example.yaml` was re-nudged and several
   fixtures' expected conflict-kind sets were re-pinned.
 
 ### Neutral

@@ -1,7 +1,7 @@
 # Deliberately invalid example — drives the conflict-overlay demo.
 #
 # Run:
-#     hangarfit check layouts/example_invalid.yaml --render bad.png
+#     hangarfit check examples/layouts/example_invalid.yaml --render bad.png
 #
 # Expected: ``invalid: 4 conflicts``, exit 1, and a PNG with each
 # conflicting plane outlined in red. Exercises three different
@@ -13,14 +13,14 @@
 #   - strut_wing_overlap — the same wing-wing situation also brings each
 #     plane's wing close to the other's strut
 #
-# Companion to the all-valid ``layouts/example.yaml``. If you only want
+# Companion to the all-valid ``examples/layouts/example.yaml``. If you only want
 # the demo of a clean PNG, run the default example instead.
 #
 # Hangar: 18 m wide × 25 m deep (data/hangar.yaml). Coordinate
 # convention: (0, 0) front-left, +x right along door, +y deeper.
 
-fleet: ../data/fleet.yaml
-hangar: ../data/hangar.yaml
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
 
 maintenance:
   plane: scheibe_falke

@@ -6,7 +6,7 @@ candidate layout (`hangarfit check`), searching for a valid layout
 the interactive 3D viewer (`hangarfit view`). All are short-lived CLI
 invocations — there is no daemon, no long-running process, no stateful session.
 
-## Scenario 1: `hangarfit check layouts/example.yaml --render out.png`
+## Scenario 1: `hangarfit check examples/layouts/example.yaml --render out.png`
 
 The Phase 1 acceptance path. The operator has a candidate layout YAML
 and wants a yes/no plus a visual.
@@ -238,7 +238,7 @@ HTML view of a candidate layout — with the whole-fill tow animation when the
 layout is tow-routable. In layout mode the CLI best-effort tow-plans the layout
 to drive the animation, but caps the **global** fill budget at a small
 deterministic expansion count (`_VIEW_TOW_MAX_TOTAL_EXPANSIONS = 300`, #398) so
-an un-routable layout (e.g. the default `layouts/example.yaml`) degrades to a
+an un-routable layout (e.g. the default `examples/layouts/example.yaml`) degrades to a
 **static** 3D render in a few seconds instead of grinding through the full
 disprove budget (~2 min). This is a deterministic expansion-count cap, **not** a
 wall-clock deadline ([ADR-0003](../adr/0003-rr-mc-solver-algorithm.md));
