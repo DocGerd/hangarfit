@@ -1556,8 +1556,9 @@ def _cell(pose: Pose) -> tuple[int, int, int]:
     whose gear would have avoided a downstream cusp — an accepted Hybrid-A\\*
     approximation (same spirit as the pose-binning), kept to bound the state
     space / expansion budget. The dominant nose-out win comes from the
-    rear-entry seed (a near-0-cusp reverse approach), not mid-search gear
-    switches, so this rarely bites in practice."""
+    rear-entry seed (a near-0-cusp reverse approach handled by the cost-aware
+    start-seed pre-pass in :func:`plan_path`), not mid-search gear switches, so
+    the measured nose-out cases do not exercise this approximation."""
     return (
         round(pose.x_m / _GRID_XY_M),
         round(pose.y_m / _GRID_XY_M),

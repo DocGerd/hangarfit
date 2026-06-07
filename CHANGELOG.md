@@ -17,7 +17,7 @@ All notable changes to this project are documented here. Format follows [Keep a 
   headings whenever the *target* parked heading is nose-out — independent of the
   staging apron — and a cost-aware start-seed analytic expansion returns the
   cheapest collision-clean approach, so a nose-out slot is **backed in** (in-hangar
-  reorientation drops from ~160° to a near-straight slide-in) instead of
+  reorientation drops from ~162° to a near-straight slide-in) instead of
   pirouetting in the back corner. Determinism (ADR-0003) is preserved; this
   re-baselines the depth-0 tow grid for **nose-out** targets only, superseding the
   #412 depth-0 cross-version byte-identity for that case (the same-input contract
