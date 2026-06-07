@@ -219,6 +219,16 @@ rearrangement tier's extra needs named (spike Q7) so they are not foreclosed.
 - An optional additive `hangar.apron` `scene/v1` field (render-only apron ground) may be
   added later, mirroring the additive [#399/#400/#401](0017-3d-viewer-architecture.md)
   viewer fields; the contract stays backward-compatible.
+- **Apron engagement is per-plane FOOTPRINT-gated, not the `auto` formula.** A plane only
+  slides in if the apron is deep enough for *its* footprint to fit at an apron start pose;
+  the `auto` depth (`max plane length + max turn radius`) is a fleet-wide over-margin, so a
+  hand-set apron that "looks deep enough" can still leave the longest plane too deep to fit,
+  silently dropping it back to the `y = 0` door line (no slide-in). Since
+  [#503](https://github.com/DocGerd/hangarfit/issues/503) `plan_fill` emits an observational
+  **stderr** warning naming each such plane and the minimum depth (≈ its footprint extent) it
+  would need — output-only, so the `MovesPlan` stays byte-identical (ADR-0003). Prefer
+  `auto`, or raise `--apron-depth` past the warned value. Auto-deepening the apron to fit the
+  deepest plane (which *would* change the plan) is deferred (#503 Option 2).
 
 ## Compliance
 

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import heapq
 import math
+import sys
 import typing
 from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
@@ -1264,10 +1265,17 @@ def plan_fill(
 
     placed: list[Placement] = []
     moves: list[Move] = []
+    # #503: planes that tow via the y=0 door-line fallback DESPITE an apron being
+    # set (their footprint is too deep for the apron, so every apron start pose was
+    # filtered). Collected in commit order and warned about once the fill is built,
+    # so the order is the deterministic move order (ADR-0003). Observational only —
+    # never read back into the plan.
+    apron_dropped: list[str] = []
 
     while ordered:
         chosen: int | None = None
         chosen_arc: DubinsArc | None = None
+        chosen_apron_fallback = False
         # The deepest unplaced plane is scanned first, so its conflict (if it
         # is rejected) is the one reported when the whole scan finds nothing.
         deepest_conflict: Conflict | None = None
@@ -1329,6 +1337,10 @@ def plan_fill(
             exp = stats.get("expansions", 0)
             total_used += exp if isinstance(exp, int) else 0
             chosen, chosen_arc = idx, arc
+            # Only the COMMITTED candidate's fallback matters: the rejected
+            # candidates of the scan are not in the plan, so their stats are
+            # irrelevant to what the user sees (#503).
+            chosen_apron_fallback = stats.get("apron_fallback") is True
             break
         if chosen is None:
             # Every remaining plane conflicts: greedy back-first is stuck. The
@@ -1340,8 +1352,34 @@ def plan_fill(
         assert chosen_arc is not None
         moves.append(Move(slot.plane_id, Pose.from_placement(slot), chosen_arc))
         placed.append(slot)
+        if chosen_apron_fallback:
+            apron_dropped.append(slot.plane_id)
 
+    _warn_apron_too_shallow(apron_dropped, fleet)
     return MovesPlan(target_layout=target, moves=tuple(moves))
+
+
+def _warn_apron_too_shallow(dropped_plane_ids: list[str], fleet: Mapping[str, Aircraft]) -> None:
+    """Emit one deterministic stderr warning per plane that tows via the ``y = 0``
+    door-line fallback despite an apron being set (#503).
+
+    Such a plane's footprint is too deep for the apron, so every apron start pose
+    was filtered and it shows no slide-in — silent in the :class:`MovesPlan`. The
+    suggested minimum depth is the plane's fore-aft footprint extent
+    (:func:`_plane_fore_aft_length_m`) — the per-plane FOOTPRINT depth the apron
+    must clear, NOT the fleet-wide ``auto`` over-margin (:func:`derive_apron_depth`).
+
+    Purely observational: writes to ``stderr`` (never the plan, never stdout), in
+    the caller-supplied (deterministic move) order. RNG-free ⇒ ADR-0003-safe.
+    """
+    for plane_id in dropped_plane_ids:
+        suggested = _plane_fore_aft_length_m(fleet[plane_id])
+        print(
+            f"warning: apron too shallow for plane {plane_id!r}: it tows in via the "
+            f"door line (no slide-in). Increase the apron depth to >= {suggested:.1f} m "
+            f"(its footprint extent) so it engages the apron.",
+            file=sys.stderr,
+        )
 
 
 # ── Hybrid-A* tow-path search (spike Q3 v2, #222) ───────────────────────────
@@ -1871,6 +1909,11 @@ def plan_path(
     ``found``, ``budget_exhausted`` (hit ``max_expansions``) vs ``space_exhausted``
     (open heap emptied first ⇒ genuine local infeasibility), ``start_poses``, and
     the ``heuristic`` used — the #332 routability characterisation harness reads it.
+    It additionally carries ``apron_fallback=True`` (#503) when the site has an
+    apron (``hangar.apron_depth_m > 0``) but every apron start pose was filtered,
+    so this plane fell back to the ``y = 0`` door line and shows no slide-in. The
+    key is set ONLY in that case (absent otherwise), and is purely observational —
+    it never affects the returned :class:`DubinsArc` or the plan (ADR-0003).
     """
     r = mover.effective_turn_radius_m()
     # Static obstacle set, computed once: placed planes don't move while this one
@@ -1929,6 +1972,15 @@ def plan_path(
             # start. It is NOT guaranteed feasible — a plane wider than the door
             # clips even here, and the search then finds no valid path (#411).
             start_poses = (Pose(x_m=hangar.door.center_x_m, y_m=0.0, heading_deg=0.0),)
+            # #503 signal (observational, plan-inert): when the site HAS an apron
+            # (apron_depth_m > 0) but every apron start pose was filtered, this
+            # plane tows via the y=0 door line and shows no slide-in — and that is
+            # silent in the MovesPlan. Record it in `stats` (a diagnostics-only
+            # out-param, never the plan) so the caller (:func:`plan_fill`) can warn,
+            # naming the plane. Suppressed at depth 0, where the door-line start is
+            # the correct pre-apron behaviour, not a dropped slide-in.
+            if stats is not None and hangar.apron_depth_m > 0.0:
+                stats["apron_fallback"] = True
 
     # ── Seed the open heap with all surviving start poses ───────────────────
     # Heuristic: ``_h`` — straight-line Euclidean distance by default (deliberately
