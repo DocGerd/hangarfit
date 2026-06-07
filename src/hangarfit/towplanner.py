@@ -768,17 +768,21 @@ _RS_BASE_SOLVERS: tuple[Callable[[float, float, float], _RSWord | None], ...] = 
 )
 
 
-def _rs_solve_normalised(x: float, y: float, phi: float) -> _RSWord:
-    """Shortest feasible Reeds–Shepp word for a normalised goal ``(x, y, phi)``.
+def _rs_solve_normalised(
+    x: float, y: float, phi: float, *, cusp_penalty_normalised: float
+) -> _RSWord:
+    """Fewest-moves feasible Reeds–Shepp word for a normalised goal ``(x, y, phi)``.
 
     Enumerates :data:`_RS_BASE_SOLVERS` under the timeflip / reflect goal
     symmetries (the standard mechanical generation of the classical word
-    family), scoring each feasible word by weighted normalised length (reverse
-    legs ×:data:`_REVERSE_COST_FACTOR`) and returning the minimum with a
-    strict-``<`` tie-break so an exact tie deterministically keeps the
-    earliest-enumerated word (determinism, ADR-0003). A Reeds–Shepp path always
-    exists between any two poses, so some word is always feasible — proven
-    exhaustively by ``test_reeds_shepp_roundtrip_grid``.
+    family), scoring each feasible word by ``Σ|leg| + cusp_penalty_normalised ×
+    cusps`` (#480) — gear-agnostic length plus a fixed per-cusp penalty — and
+    returning the minimum with a strict-``<`` tie-break so an exact tie
+    deterministically keeps the earliest-enumerated word (determinism, ADR-0003).
+    ``cusp_penalty_normalised`` is :data:`CUSP_PENALTY` ``/ r`` (the caller's turn
+    radius), so the normalised choice agrees with the metre-space objective. A
+    Reeds–Shepp path always exists between any two poses, so some word is always
+    feasible — proven exhaustively by ``test_reeds_shepp_roundtrip_grid``.
 
     Every generated word is gated by :func:`_rs_word_reaches` (an independent
     re-integration) before it can be chosen: a base-formula sign error then
@@ -801,7 +805,8 @@ def _rs_solve_normalised(x: float, y: float, phi: float) -> _RSWord:
         for word in _candidates_for(base):
             if not _rs_word_reaches(word, x, y, phi):
                 continue
-            cost = math.fsum(e.t * (_REVERSE_COST_FACTOR if e.gear == -1 else 1.0) for e in word)
+            cusps = _count_cusps([(e.gear, True) for e in word])  # every RS leg translates
+            cost = math.fsum(e.t for e in word) + cusp_penalty_normalised * cusps
             if best is None or cost < best[0]:
                 best = (cost, word)
     if best is None:  # pragma: no cover - a Reeds–Shepp path always exists
@@ -837,15 +842,16 @@ def _rs_word_reaches(word: _RSWord, x: float, y: float, phi: float) -> bool:
 
 
 def plan_reeds_shepp(start: Pose, end: Pose, *, turn_radius_m: float) -> DubinsArc:
-    """Closed-form shortest Reeds–Shepp path from ``start`` to ``end`` (ADR-0010).
+    """Closed-form fewest-moves Reeds–Shepp path from ``start`` to ``end`` (ADR-0010).
 
     Reeds–Shepp extends Dubins with reverse arcs and straights, so a plane can
     back up to reorient rather than driving a full turning-circle loop. Word
-    selection minimises Σ(``|leg|`` × factor) with reverse legs weighted by
-    :data:`_REVERSE_COST_FACTOR` (prefer forward). Still closed-form and RNG-free,
-    so the ADR-0003 byte-identical-plan contract holds. ``turn_radius_m == 0`` is
-    the cart case and delegates to :func:`_plan_cart` with reverse enabled (a
-    carted plane may back straight out of a slot).
+    selection minimises ``Σ|leg| + CUSP_PENALTY × cusps`` (#480): gear-agnostic
+    length plus a fixed per-cusp (direction-change) penalty, so reverse is not
+    taxed per-metre and forward is preferred only as the tie-break. Still
+    closed-form and RNG-free, so the ADR-0003 byte-identical-plan contract holds.
+    ``turn_radius_m == 0`` is the cart case and delegates to :func:`_plan_cart`
+    with reverse enabled (a carted plane may back straight out of a slot).
 
     Works in the standard math frame: positions pass through unchanged; headings
     convert via :func:`compass_to_math_rad`. The integrated endpoint
@@ -871,7 +877,10 @@ def plan_reeds_shepp(start: Pose, end: Pose, *, turn_radius_m: float) -> DubinsA
     y = -s * dx + c * dy
     phi = _rs_mod2pi(theta1 - theta0)
 
-    word = _rs_solve_normalised(x, y, phi)
+    # CUSP_PENALTY is in metres; the word is scored in normalised units (×r to
+    # metres), so the normalised per-cusp penalty is CUSP_PENALTY / r — making the
+    # word choice agree with the metre-space fewest-moves objective (#480).
+    word = _rs_solve_normalised(x, y, phi, cusp_penalty_normalised=CUSP_PENALTY / r)
     raw = tuple(Segment(e.steering, e.t * r, gear=e.gear) for e in word)
     # Collapse zero-length legs (a collinear same-heading path degenerates to a
     # single straight); keep at least one segment.

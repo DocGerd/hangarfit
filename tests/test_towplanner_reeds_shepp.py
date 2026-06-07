@@ -194,10 +194,31 @@ def test_reverse_cost_factor_value() -> None:
     assert _REVERSE_COST_FACTOR == 1.5
 
 
+def test_rs_solve_normalised_cusp_penalty_never_increases_cusps() -> None:
+    """#480 fewest-moves invariant: scoring is ``Σt + cusp_penalty_normalised *
+    cusps``, so raising the cusp penalty must never INCREASE the chosen word's
+    cusp count vs a zero penalty. Pins the new signature + the objective."""
+    from hangarfit.towplanner import _rs_solve_normalised
+
+    def _cusps(word: object) -> int:
+        return _count_cusps([(e.gear, True) for e in word])  # type: ignore[attr-defined]
+
+    goals = [
+        (1.5, 0.8, math.radians(200.0)),
+        (-1.2, 0.5, math.radians(160.0)),
+        (0.5, -0.9, math.radians(170.0)),
+        (2.0, -1.3, math.radians(135.0)),
+    ]
+    for x, y, phi in goals:
+        zero = _rs_solve_normalised(x, y, phi, cusp_penalty_normalised=0.0)
+        high = _rs_solve_normalised(x, y, phi, cusp_penalty_normalised=100.0)
+        assert _cusps(high) <= _cusps(zero), f"goal {(x, y, phi)}: high-penalty word added cusps"
+
+
 def test_collinear_forward_goal_stays_pure_forward_straight() -> None:
     """When the goal is straight ahead on the same heading, RS must NOT pick a
-    reverse maneuver — a forward "S" is both shortest and cheapest. Guards that
-    the reverse-cost weighting actually biases toward forward."""
+    reverse maneuver — a forward "S" is both shortest (0 cusps, same length) and
+    wins the forward-first tie-break (#480 cusp cost)."""
     arc = plan_reeds_shepp(Pose(0.0, 0.0, 0.0), Pose(0.0, 8.0, 0.0), turn_radius_m=4.0)
     assert all(s.gear == 1 for s in arc.segments)
     assert [s.kind for s in arc.segments] == ["S"]
@@ -215,8 +236,8 @@ def test_reverse_beats_forward_loop_for_short_backup() -> None:
     rs = plan_reeds_shepp(start, end, turn_radius_m=2.0)
     dubins = plan_dubins(start, end, turn_radius_m=2.0)
     assert any(s.gear == -1 for s in rs.segments)
-    # Weighted RS length (6 m reverse × 1.5 = 9 m) still crushes the forward
-    # loop (≳ 4πr ≈ 25 m for a same-heading reversal at r = 2).
+    # The straight back-up is 6 m, 0 cusps (#480: no per-metre reverse tax), so it
+    # crushes the forward loop (≳ 4πr ≈ 25 m for a same-heading reversal at r = 2).
     assert rs.length_m < dubins.length_m
 
 
