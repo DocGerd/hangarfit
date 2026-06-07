@@ -22,9 +22,11 @@ import math
 import pytest
 
 from hangarfit.towplanner import (
-    _REVERSE_COST_FACTOR,
+    CUSP_PENALTY,
     Pose,
     Segment,
+    _count_cusps,
+    _wrap180,
     plan_reeds_shepp,
 )
 
@@ -32,6 +34,52 @@ from hangarfit.towplanner import (
 def _heading_close(a: float, b: float, tol: float = 0.5) -> bool:
     d = (a - b + 180.0) % 360.0 - 180.0
     return abs(d) <= tol
+
+
+def test_wrap180_folds_to_half_open_interval() -> None:
+    # Canonical interval is (-180, 180]: +180 stays +180, -180 maps to +180.
+    assert _wrap180(0.0) == 0.0
+    assert _wrap180(180.0) == 180.0
+    assert _wrap180(181.0) == -179.0
+    assert _wrap180(-180.0) == 180.0
+    assert _wrap180(360.0) == 0.0
+    assert _wrap180(540.0) == 180.0
+    assert _wrap180(-90.0) == -90.0
+
+
+# --- cusp counting (#480): travel-direction reversals among translating legs ---
+
+
+def test_count_cusps_pure_forward_is_zero() -> None:
+    assert _count_cusps([(1, True), (1, True), (1, True)]) == 0
+
+
+def test_count_cusps_pure_reverse_is_zero() -> None:
+    # A single-direction reverse drive is "one move", zero cusps.
+    assert _count_cusps([(-1, True), (-1, True)]) == 0
+
+
+def test_count_cusps_one_reversal() -> None:
+    assert _count_cusps([(1, True), (-1, True)]) == 1
+
+
+def test_count_cusps_forward_reverse_forward_is_two() -> None:
+    assert _count_cusps([(1, True), (-1, True), (1, True)]) == 2
+
+
+def test_count_cusps_excludes_nontranslating_pivots() -> None:
+    # Cart: pivot (non-translating), reverse straight, pivot -> a single reverse
+    # drive, 0 cusps. In-place pivots are free reorientations, not moves.
+    assert _count_cusps([(1, False), (-1, True), (1, False)]) == 0
+
+
+def test_count_cusps_empty_is_zero() -> None:
+    assert _count_cusps([]) == 0
+
+
+def test_cusp_penalty_is_positive_finite() -> None:
+    # Large-but-finite (not lexicographic): a deterministic scalar (#480).
+    assert 0.0 < CUSP_PENALTY < float("inf")
 
 
 # --- Segment gear field -----------------------------------------------------
@@ -139,16 +187,66 @@ def test_reeds_shepp_roundtrip_grid(start_heading, goal, end_heading, radius) ->
 # --- cost model: prefer forward --------------------------------------------
 
 
-def test_reverse_cost_factor_value() -> None:
-    # Pinned so a casual retune to 2.0 (which would suppress the measured
-    # nose-out reverse win) trips this and forces an ADR update.
-    assert _REVERSE_COST_FACTOR == 1.5
+def test_cusp_penalty_value() -> None:
+    # Pinned so a casual retune trips this and forces an ADR-0010 update. Must
+    # stay < 14 m to keep the measured 1-cusp nose-out back-in (~18 m) beating
+    # the forward loop (~32 m); large enough to dominate small length ties (#480).
+    assert CUSP_PENALTY == 10.0
+
+
+def test_rs_solve_normalised_cusp_penalty_never_increases_cusps() -> None:
+    """#480 fewest-moves invariant: scoring is ``Σt + cusp_penalty_normalised *
+    cusps``, so raising the cusp penalty must never INCREASE the chosen word's
+    cusp count vs a zero penalty. Pins the new signature + the objective."""
+    from hangarfit.towplanner import _rs_solve_normalised
+
+    def _cusps(word: object) -> int:
+        return _count_cusps([(e.gear, True) for e in word])  # type: ignore[attr-defined]
+
+    goals = [
+        (1.5, 0.8, math.radians(200.0)),
+        (-1.2, 0.5, math.radians(160.0)),
+        (0.5, -0.9, math.radians(170.0)),
+        (2.0, -1.3, math.radians(135.0)),
+    ]
+    for x, y, phi in goals:
+        zero = _rs_solve_normalised(x, y, phi, cusp_penalty_normalised=0.0)
+        high = _rs_solve_normalised(x, y, phi, cusp_penalty_normalised=100.0)
+        assert _cusps(high) <= _cusps(zero), f"goal {(x, y, phi)}: high-penalty word added cusps"
+
+
+def test_seg_cost_reverse_not_taxed_per_metre() -> None:
+    """#480: the Hybrid-A* search g-cost is gear-agnostic — a reverse leg costs
+    the same per-metre as forward (direction changes are charged once as
+    CUSP_PENALTY in the expansion loop, not per-metre here)."""
+    from hangarfit.towplanner import _seg_cost
+
+    fwd = Segment("S", 4.0, gear=1)
+    rev = Segment("S", 4.0, gear=-1)
+    assert _seg_cost(rev, 2.0) == _seg_cost(fwd, 2.0) == 4.0
+    # A reverse arc costs the same as the forward arc (length + turn penalty).
+    fwd_arc = Segment("L", 3.0, gear=1)
+    rev_arc = Segment("L", 3.0, gear=-1)
+    assert _seg_cost(rev_arc, 2.0) == _seg_cost(fwd_arc, 2.0)
+
+
+def test_cart_seg_weight_reverse_straight_not_taxed_per_metre() -> None:
+    """#480: a cart's reverse straight is no longer ×1.5 — both forward and
+    reverse pivot-straight-pivot are single 0-cusp drives, so the choice reduces
+    to length with forward as the tie-break. A pivot stays its radians."""
+    from hangarfit.towplanner import _cart_seg_weight
+
+    fwd_straight = Segment("S", 4.0, gear=1)
+    rev_straight = Segment("S", 4.0, gear=-1)
+    assert _cart_seg_weight(rev_straight) == _cart_seg_weight(fwd_straight) == 4.0
+    pivot = Segment("L", 1.0)  # length_m is radians for a cart pivot
+    assert _cart_seg_weight(pivot) == 1.0
 
 
 def test_collinear_forward_goal_stays_pure_forward_straight() -> None:
     """When the goal is straight ahead on the same heading, RS must NOT pick a
-    reverse maneuver — a forward "S" is both shortest and cheapest. Guards that
-    the reverse-cost weighting actually biases toward forward."""
+    reverse maneuver — a forward "S" is both shortest (0 cusps, same length) and
+    wins the forward-first tie-break (#480 cusp cost)."""
     arc = plan_reeds_shepp(Pose(0.0, 0.0, 0.0), Pose(0.0, 8.0, 0.0), turn_radius_m=4.0)
     assert all(s.gear == 1 for s in arc.segments)
     assert [s.kind for s in arc.segments] == ["S"]
@@ -166,8 +264,8 @@ def test_reverse_beats_forward_loop_for_short_backup() -> None:
     rs = plan_reeds_shepp(start, end, turn_radius_m=2.0)
     dubins = plan_dubins(start, end, turn_radius_m=2.0)
     assert any(s.gear == -1 for s in rs.segments)
-    # Weighted RS length (6 m reverse × 1.5 = 9 m) still crushes the forward
-    # loop (≳ 4πr ≈ 25 m for a same-heading reversal at r = 2).
+    # The straight back-up is 6 m, 0 cusps (#480: no per-metre reverse tax), so it
+    # crushes the forward loop (≳ 4πr ≈ 25 m for a same-heading reversal at r = 2).
     assert rs.length_m < dubins.length_m
 
 
@@ -209,10 +307,11 @@ def test_cart_reverse_straight_backs_out() -> None:
 def test_cart_prefers_forward_when_not_cheaper_to_reverse() -> None:
     """Mirror of :func:`test_cart_reverse_straight_backs_out`: a goal directly
     AHEAD (same heading) is a single FORWARD "S" leg. Backing in would cost a
-    180° pivot + a reverse straight (×_REVERSE_COST_FACTOR) + a 180° pivot, so
-    the forward option is strictly cheaper and `_plan_cart`'s `min((forward,
-    reverse), …)` must keep it — pinning the prefer-forward tie-break (ADR-0003
-    determinism: no gratuitous reverse)."""
+    180° pivot + a reverse straight + a 180° pivot (the extra pivots make it
+    strictly longer, #480: reverse itself is no longer taxed), so the forward
+    option is cheaper and `_plan_cart`'s `min((forward, reverse), …)` must keep
+    it — pinning the prefer-forward tie-break (ADR-0003 determinism: no
+    gratuitous reverse)."""
     start = Pose(5.0, 3.0, 0.0)
     end = Pose(5.0, 8.0, 0.0)  # 5 m straight ahead (heading 0 ⇒ +y)
     arc = plan_reeds_shepp(start, end, turn_radius_m=0.0)

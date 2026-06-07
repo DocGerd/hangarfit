@@ -175,15 +175,17 @@ def test_entry_poses_depth_zero_exact_order_unchanged() -> None:
 
 
 def test_entry_poses_with_apron_forces_start_onto_apron_and_adds_reverse_headings() -> None:
+    # Nose-out target (h=180): the apron forces the start onto the apron AND, since
+    # the target is nose-out, the rear cone is emitted (#480 gates it on nose-out).
     h = _hangar(door_center=10.0, door_width=6.0, apron_depth_m=6.0)
-    slot = _slot("A", x=10.0, y=12.0, h=0.0)
+    slot = _slot("A", x=10.0, y=12.0, h=180.0)
     poses = entry_poses(slot, h)
     # y=0 (door line) is excluded — every start is ON the apron (#412 slide-in).
     assert {p.y_m for p in poses} == {-3.0, -6.0}  # {-d/2, -d}
     assert all(p.y_m < 0.0 for p in poses)
     headings = {p.heading_deg for p in poses}
     assert {330.0, 345.0, 0.0, 15.0, 30.0} <= headings  # forward cone retained
-    assert {150.0, 165.0, 180.0, 195.0, 210.0} <= headings  # reverse cone added
+    assert {150.0, 165.0, 180.0, 195.0, 210.0} <= headings  # rear cone (nose-out target)
 
 
 def test_entry_poses_with_apron_is_deterministic() -> None:
@@ -193,13 +195,59 @@ def test_entry_poses_with_apron_is_deterministic() -> None:
 
 
 def test_entry_poses_apron_emit_order_x_outer_y_middle_heading_inner() -> None:
-    """The fixed emit order is x-outer, y-middle, heading-inner (ADR-0003)."""
+    """The fixed emit order is x-outer, y-middle, heading-inner (ADR-0003).
+
+    Uses a nose-out target (h=180) so the rear cone is emitted (#480 gates the
+    rear cone on a nose-out target, not on the apron)."""
     h = _hangar(door_center=10.0, door_width=6.0, apron_depth_m=4.0)
-    slot = _slot("A", x=10.0, y=12.0, h=0.0)  # x_centre == x_target == x_mid == 10 ⇒ 1 x-sample
+    slot = _slot("A", x=10.0, y=12.0, h=180.0)  # x_centre == x_target == x_mid == 10 ⇒ 1 x-sample
     poses = list(entry_poses(slot, h))
     headings = (330.0, 345.0, 0.0, 15.0, 30.0, 150.0, 165.0, 180.0, 195.0, 210.0)
     expected = [Pose(x_m=10.0, y_m=y, heading_deg=hd) for y in (-2.0, -4.0) for hd in headings]
     assert poses == expected
+
+
+# ── #480: rear-entry cone is gated on a NOSE-OUT target, not on the apron ──────
+
+
+def test_entry_poses_rear_cone_for_nose_out_target_without_apron() -> None:
+    """#480: a nose-out target (heading ~180) gets the rear-entry cone even with
+    NO apron — so the plane can be backed in rather than pirouetting inside.
+    This deliberately changes the depth-0 grid for nose-out targets (superseding
+    the #412 depth-0 cross-version byte-identity for that case)."""
+    h = _hangar(door_center=10.0, door_width=6.0)  # no apron
+    slot = _slot("A", x=10.0, y=12.0, h=180.0)  # nose-out
+    poses = entry_poses(slot, h)
+    assert {p.y_m for p in poses} == {0.0}  # still the door line (no apron)
+    headings = {p.heading_deg for p in poses}
+    assert {330.0, 345.0, 0.0, 15.0, 30.0} <= headings  # forward cone
+    assert {150.0, 165.0, 180.0, 195.0, 210.0} <= headings  # rear cone, no apron needed
+
+
+def test_entry_poses_no_rear_cone_for_nose_in_target_even_with_apron() -> None:
+    """#480: a nose-in target (heading ~0) keeps the forward cone only, even with
+    an apron — a nose-in slot never wins a rear-entry seed, so don't waste it."""
+    h = _hangar(door_center=10.0, door_width=6.0, apron_depth_m=6.0)
+    slot = _slot("A", x=10.0, y=12.0, h=0.0)  # nose-in
+    poses = entry_poses(slot, h)
+    assert all(p.y_m < 0.0 for p in poses)  # apron still forces the start onto the apron
+    headings = {p.heading_deg for p in poses}
+    assert headings == {330.0, 345.0, 0.0, 15.0, 30.0}  # forward cone ONLY, no rear cone
+
+
+def test_entry_poses_nose_out_gate_boundary() -> None:
+    """#480: the rear cone is emitted iff |wrap180(h-180)| <= 45 (covers the rear
+    cone's own +/-30 span plus margin). h=135 and h=225 are in; h=134/226 are out."""
+    h = _hangar(door_center=10.0, door_width=6.0)
+    rear = {150.0, 165.0, 180.0, 195.0, 210.0}
+
+    def _headings(target_h: float) -> set[float]:
+        return {p.heading_deg for p in entry_poses(_slot("A", x=10.0, y=12.0, h=target_h), h)}
+
+    assert rear <= _headings(135.0)  # boundary in
+    assert rear <= _headings(225.0)  # boundary in (symmetric)
+    assert not (rear & _headings(134.0))  # just outside
+    assert not (rear & _headings(226.0))  # just outside
 
 
 # ── Task 4: apron-aware front-wall rule (#411 jamb retained) ─────────────────

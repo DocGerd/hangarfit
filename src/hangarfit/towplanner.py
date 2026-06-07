@@ -8,11 +8,13 @@ found by a deterministic Hybrid-A* search (:func:`plan_path`, #222) over
 unobstructed plane finishes in one closed-form Reeds–Shepp shot (the search's
 analytic expansion). Reeds–Shepp = Dubins (forward arc-line-arc) **plus reverse
 arcs/straights** (:func:`plan_reeds_shepp`, #261), so a plane can back up to
-reorient instead of driving a full turning-circle loop; reverse legs cost
-:data:`_REVERSE_COST_FACTOR`× their length so forward motion is preferred. The
-closed form is still deterministic, preserving the ADR-0003 byte-identical-plan
-contract. See ADR-0002 (heading convention), ADR-0010 (Reeds–Shepp motion model,
-supersedes ADR-0007 fork-2 "Dubins-only"), ADR-0007 (cart = own-gear, r=0), and
+reorient instead of driving a full turning-circle loop. The planner minimises
+*moves*: cost is ``length + CUSP_PENALTY × cusps`` (#480), so a direction change
+is what's penalised, not reverse distance — forward is preferred only as the
+deterministic tie-break. The closed form is still deterministic, preserving the
+ADR-0003 byte-identical-plan contract. See ADR-0002 (heading convention),
+ADR-0010 (Reeds–Shepp motion model, supersedes ADR-0007 fork-2 "Dubins-only";
+amended for the #480 cusp-cost model), ADR-0007 (cart = own-gear, r=0), and
 docs/spikes/tow-path-planning.md.
 """
 
@@ -245,6 +247,15 @@ def math_rad_to_compass(theta_rad: float) -> float:
     return (90.0 - math.degrees(theta_rad)) % 360.0
 
 
+def _wrap180(deg: float) -> float:
+    """Fold an angle (degrees) into the half-open interval ``(-180, 180]``.
+
+    Canonical at the boundary: ``+180`` stays ``+180`` and ``-180`` maps to
+    ``+180`` (used by the #480 nose-out gate, which measures distance from 180°)."""
+    w = (deg + 180.0) % 360.0 - 180.0
+    return 180.0 if w == -180.0 else w
+
+
 def _mod2pi(theta: float) -> float:
     """Normalise an angle (radians) to ``[0, 2π)``."""
     two_pi = 2.0 * math.pi
@@ -422,10 +433,11 @@ def _plan_cart(start: Pose, end: Pose, *, allow_reverse: bool) -> DubinsArc:
 
     With ``allow_reverse`` (Reeds–Shepp), the straight leg may be driven in
     reverse — pivot to the *reverse* bearing, back straight, pivot to the final
-    heading — and the cheaper of the forward/reverse option is returned under
-    the reverse cost weighting (:data:`_REVERSE_COST_FACTOR`). Without it
-    (Dubins) only the forward option is considered, preserving the exact
-    forward-only behaviour ``plan_dubins`` shipped.
+    heading — and the cheaper of the forward/reverse option is returned by
+    unweighted length (#480: no per-metre reverse tax; both options are single
+    0-cusp drives, so forward wins only on an exact tie). Without it (Dubins)
+    only the forward option is considered, preserving the exact forward-only
+    behaviour ``plan_dubins`` shipped.
     """
     dx = end.x_m - start.x_m
     dy = end.y_m - start.y_m
@@ -477,12 +489,15 @@ def _plan_cart(start: Pose, end: Pose, *, allow_reverse: bool) -> DubinsArc:
 
 
 def _cart_seg_weight(seg: Segment) -> float:
-    """Weighted cost of one cart segment for the forward-vs-reverse choice: a
-    pivot's radians (cheap, gear-agnostic) or a straight's metres scaled by the
-    reverse factor when backing."""
+    """Unweighted cost of one cart segment for the forward-vs-reverse choice: a
+    pivot's radians (cheap, gear-agnostic) or a straight's metres. Reverse is no
+    longer taxed per-metre (#480) — both the forward and reverse
+    pivot-straight-pivot candidates are single drives (0 cusps under the
+    translating-legs-only rule), so :func:`_plan_cart`'s ``min`` reduces to a
+    pure length comparison with forward kept on an exact tie (forward first)."""
     if seg.kind != "S":
         return seg.length_m  # pivot: length_m is radians
-    return seg.length_m * (_REVERSE_COST_FACTOR if seg.gear == -1 else 1.0)
+    return seg.length_m
 
 
 # ---------------------------------------------------------------------------
@@ -510,13 +525,42 @@ def _cart_seg_weight(seg: Segment) -> float:
 # ---------------------------------------------------------------------------
 
 
-# Reverse legs cost 1.5× their length. Justification (a measured nose-out case):
-# 18 m reverse vs 32 m forward. At 1.5× the reverse weighs 27 m, still beating
-# the 32 m forward loop, so the reverse win is kept — while a gratuitous short
-# reverse is discouraged. At 2.0× the reverse would weigh 36 m and be SUPPRESSED
-# in favour of the longer forward path, defeating the whole point of Reeds–Shepp.
-# Pinned by test_reverse_cost_factor_value; changing it requires an ADR-0010 update.
-_REVERSE_COST_FACTOR = 1.5
+# Additive per-cusp penalty (metres) — the #480 "fewest-moves" cost model
+# (supersedes the old multiplicative reverse-length factor, ADR-0010 #480
+# amendment). A "cusp" is a travel-direction reversal (forward<->reverse) between
+# consecutive TRANSLATING legs; moves = cusps + 1. Cost is
+# `length + CUSP_PENALTY * cusps` at all three sites (search g-cost, Reeds–Shepp
+# word selection, cart choice). Reverse is no longer taxed per-metre; instead
+# each direction change costs a fixed, large-but-finite amount, so the planner
+# minimises *moves* and forward preference survives only as the enumeration-order
+# tie-break (forward primitives/words enumerated first).
+#
+# Why 10.0 m? It must (a) keep a genuine nose-out win — a back-in via a
+# rear-entry seed is 0 cusps and wins on length alone, and where a 1-cusp back-in
+# (~18 m) replaces a forward loop (~32 m) we need CUSP_PENALTY < 14 m — and
+# (b) dominate the small length differences between equal-move alternatives so
+# the planner doesn't trade a direction change for a couple of saved metres.
+# 10 m (order of a plane length / the hangar's short dimension) satisfies both.
+# Pinned by test_cusp_penalty_value; changing it requires an ADR-0010 update.
+CUSP_PENALTY = 10.0
+
+
+def _count_cusps(legs: list[tuple[int, bool]]) -> int:
+    """Number of travel-direction reversals among the TRANSLATING legs (#480).
+
+    ``legs`` is ``(gear, translates)`` in travel order. Non-translating legs
+    (in-place cart pivots — ``r == 0`` turns) are skipped: they are free
+    reorientations, not moves. The result is the count of ``gear`` sign-changes
+    between consecutive *translating* legs."""
+    cusps = 0
+    prev: int | None = None
+    for gear, translates in legs:
+        if not translates:
+            continue
+        if prev is not None and gear != prev:
+            cusps += 1
+        prev = gear
+    return cusps
 
 
 @dataclass(frozen=True, slots=True)
@@ -728,17 +772,21 @@ _RS_BASE_SOLVERS: tuple[Callable[[float, float, float], _RSWord | None], ...] = 
 )
 
 
-def _rs_solve_normalised(x: float, y: float, phi: float) -> _RSWord:
-    """Shortest feasible Reeds–Shepp word for a normalised goal ``(x, y, phi)``.
+def _rs_solve_normalised(
+    x: float, y: float, phi: float, *, cusp_penalty_normalised: float
+) -> _RSWord:
+    """Fewest-moves feasible Reeds–Shepp word for a normalised goal ``(x, y, phi)``.
 
     Enumerates :data:`_RS_BASE_SOLVERS` under the timeflip / reflect goal
     symmetries (the standard mechanical generation of the classical word
-    family), scoring each feasible word by weighted normalised length (reverse
-    legs ×:data:`_REVERSE_COST_FACTOR`) and returning the minimum with a
-    strict-``<`` tie-break so an exact tie deterministically keeps the
-    earliest-enumerated word (determinism, ADR-0003). A Reeds–Shepp path always
-    exists between any two poses, so some word is always feasible — proven
-    exhaustively by ``test_reeds_shepp_roundtrip_grid``.
+    family), scoring each feasible word by ``Σ|leg| + cusp_penalty_normalised ×
+    cusps`` (#480) — gear-agnostic length plus a fixed per-cusp penalty — and
+    returning the minimum with a strict-``<`` tie-break so an exact tie
+    deterministically keeps the earliest-enumerated word (determinism, ADR-0003).
+    ``cusp_penalty_normalised`` is :data:`CUSP_PENALTY` ``/ r`` (the caller's turn
+    radius), so the normalised choice agrees with the metre-space objective. A
+    Reeds–Shepp path always exists between any two poses, so some word is always
+    feasible — proven exhaustively by ``test_reeds_shepp_roundtrip_grid``.
 
     Every generated word is gated by :func:`_rs_word_reaches` (an independent
     re-integration) before it can be chosen: a base-formula sign error then
@@ -761,7 +809,8 @@ def _rs_solve_normalised(x: float, y: float, phi: float) -> _RSWord:
         for word in _candidates_for(base):
             if not _rs_word_reaches(word, x, y, phi):
                 continue
-            cost = math.fsum(e.t * (_REVERSE_COST_FACTOR if e.gear == -1 else 1.0) for e in word)
+            cusps = _count_cusps([(e.gear, True) for e in word])  # every RS leg translates
+            cost = math.fsum(e.t for e in word) + cusp_penalty_normalised * cusps
             if best is None or cost < best[0]:
                 best = (cost, word)
     if best is None:  # pragma: no cover - a Reeds–Shepp path always exists
@@ -797,15 +846,16 @@ def _rs_word_reaches(word: _RSWord, x: float, y: float, phi: float) -> bool:
 
 
 def plan_reeds_shepp(start: Pose, end: Pose, *, turn_radius_m: float) -> DubinsArc:
-    """Closed-form shortest Reeds–Shepp path from ``start`` to ``end`` (ADR-0010).
+    """Closed-form fewest-moves Reeds–Shepp path from ``start`` to ``end`` (ADR-0010).
 
     Reeds–Shepp extends Dubins with reverse arcs and straights, so a plane can
     back up to reorient rather than driving a full turning-circle loop. Word
-    selection minimises Σ(``|leg|`` × factor) with reverse legs weighted by
-    :data:`_REVERSE_COST_FACTOR` (prefer forward). Still closed-form and RNG-free,
-    so the ADR-0003 byte-identical-plan contract holds. ``turn_radius_m == 0`` is
-    the cart case and delegates to :func:`_plan_cart` with reverse enabled (a
-    carted plane may back straight out of a slot).
+    selection minimises ``Σ|leg| + CUSP_PENALTY × cusps`` (#480): gear-agnostic
+    length plus a fixed per-cusp (direction-change) penalty, so reverse is not
+    taxed per-metre and forward is preferred only as the tie-break. Still
+    closed-form and RNG-free, so the ADR-0003 byte-identical-plan contract holds.
+    ``turn_radius_m == 0`` is the cart case and delegates to :func:`_plan_cart`
+    with reverse enabled (a carted plane may back straight out of a slot).
 
     Works in the standard math frame: positions pass through unchanged; headings
     convert via :func:`compass_to_math_rad`. The integrated endpoint
@@ -831,7 +881,10 @@ def plan_reeds_shepp(start: Pose, end: Pose, *, turn_radius_m: float) -> DubinsA
     y = -s * dx + c * dy
     phi = _rs_mod2pi(theta1 - theta0)
 
-    word = _rs_solve_normalised(x, y, phi)
+    # CUSP_PENALTY is in metres; the word is scored in normalised units (×r to
+    # metres), so the normalised per-cusp penalty is CUSP_PENALTY / r — making the
+    # word choice agree with the metre-space fewest-moves objective (#480).
+    word = _rs_solve_normalised(x, y, phi, cusp_penalty_normalised=CUSP_PENALTY / r)
     raw = tuple(Segment(e.steering, e.t * r, gear=e.gear) for e in word)
     # Collapse zero-length legs (a collinear same-heading path degenerates to a
     # single straight); keep at least one segment.
@@ -895,12 +948,21 @@ def derive_apron_depth(fleet: Mapping[str, Aircraft]) -> float:
 _CONE_HEADINGS: tuple[float, ...] = (330.0, 345.0, 0.0, 15.0, 30.0)
 
 # The five rear-entry (nose-out / back-in) headings: 180° ± 30° in 15° steps.
-# Emitted ONLY when an apron exists (apron_depth_m > 0): backing a plane in
-# tail-first needs the apron run-up room (#263, unblocked by the apron — ADR-0021).
-# Gating on depth > 0 keeps the no-apron pose set — and thus the MovesPlan —
-# byte-identical (ADR-0003); they are additional deterministic seed poses the
-# search chooses among on cost, never a forced orientation.
+# Emitted iff the TARGET parked heading is nose-out-ish (#480), independent of
+# the apron: a nose-out slot can then be backed in tail-first rather than
+# pirouetting in the back corner. A nose-in slot never wins a rear-entry seed,
+# so it keeps the forward cone only (no wasted expansions). These remain
+# additional deterministic seed poses the search chooses among on cost, never a
+# forced orientation. Un-gating from the apron deliberately changes the depth-0
+# grid for nose-out targets, superseding the #412 depth-0 cross-version
+# byte-identity for that case (the ADR-0003 same-input determinism contract is
+# intact). See ADR-0010 (#480 amendment).
 _REVERSE_CONE_HEADINGS: tuple[float, ...] = (150.0, 165.0, 180.0, 195.0, 210.0)
+
+# Nose-out gate half-angle (#480): the rear cone is emitted iff
+# |_wrap180(target.heading_deg - 180)| <= this. ~45° covers the rear cone's own
+# ±30° span plus margin (so headings in [135, 225] qualify).
+_REAR_CONE_HALF_ANGLE_DEG = 45.0
 
 
 def entry_poses(target: Placement, hangar: Hangar) -> tuple[Pose, ...]:
@@ -932,13 +994,17 @@ def entry_poses(target: Placement, hangar: Hangar) -> tuple[Pose, ...]:
       decision 2026-06-07). Were ``y = 0`` kept, the shortest path would always
       pick the door-line start and show no slide-in.
 
-    **Headings**:
+    **Headings** (independent of the apron — #480):
 
-    - **No apron**: the 5-heading forward-admissible cone
+    - **Nose-in target**: the 5-heading forward-admissible cone
       ``{330°, 345°, 0°, 15°, 30°}`` only (straight-in ±30°).
-    - **With an apron**: the forward cone **followed by** the rear-entry cone
-      ``{150°, 165°, 180°, 195°, 210°}`` (180° ± 30°), so the search may choose
-      to back a plane in tail-first from the apron (#263, never forced).
+    - **Nose-out target** (``|wrap180(target.heading − 180)| ≤
+      _REAR_CONE_HALF_ANGLE_DEG``): the forward cone **followed by** the
+      rear-entry cone ``{150°, 165°, 180°, 195°, 210°}`` (180° ± 30°), so the
+      search may choose to back the plane in tail-first (#263/#480, never
+      forced). This applies with or without an apron, and so changes the depth-0
+      grid for nose-out targets (superseding the #412 depth-0 byte-identity for
+      that case; the ADR-0003 same-input contract is intact).
 
     **Emit order** (fixed for ADR-0003 determinism): x-outer, y-middle,
     heading-inner; duplicate ``(x, y, heading)`` triples (exact float equality)
@@ -968,18 +1034,20 @@ def entry_poses(target: Placement, hangar: Hangar) -> tuple[Pose, ...]:
 
     x_samples = (x_centre, x_target, x_mid)
 
-    # Apron extension (ADR-0021). depth == 0 ⇒ the single y = 0 sample + the
-    # forward cone only ⇒ byte-identical to the pre-apron grid. depth > 0 ⇒ the
-    # start is forced ONTO the apron (the y = 0 door line is excluded) so every
-    # plane originates outside and slides in (#412 viewer motivation; user
+    # Y-samples — apron only (ADR-0021). depth == 0 ⇒ the single y = 0 door-line
+    # sample (byte-identical to the pre-apron grid for a nose-in target). depth >
+    # 0 ⇒ the start is forced ONTO the apron (the y = 0 door line is excluded) so
+    # every plane originates outside and slides in (#412 viewer motivation; user
     # decision 2026-06-07) — otherwise the shortest path keeps picking y = 0.
     depth = hangar.apron_depth_m
-    if depth > 0.0:
-        y_samples: tuple[float, ...] = (-depth / 2.0, -depth)
-        headings: tuple[float, ...] = _CONE_HEADINGS + _REVERSE_CONE_HEADINGS
-    else:
-        y_samples = (0.0,)
-        headings = _CONE_HEADINGS
+    y_samples: tuple[float, ...] = (-depth / 2.0, -depth) if depth > 0.0 else (0.0,)
+
+    # Headings — forward cone always; rear-entry cone iff the target parked
+    # heading is nose-out-ish (#480), independent of the apron. A nose-out slot
+    # can then be backed in (cheap under the cusp cost, ADR-0010 #480 amendment)
+    # instead of pirouetting inside; a nose-in slot keeps the forward cone only.
+    nose_out = abs(_wrap180(target.heading_deg - 180.0)) <= _REAR_CONE_HALF_ANGLE_DEG
+    headings: tuple[float, ...] = _CONE_HEADINGS + (_REVERSE_CONE_HEADINGS if nose_out else ())
 
     seen: set[tuple[float, float, float]] = set()
     poses: list[Pose] = []
@@ -1454,25 +1522,43 @@ def _seg_cost(seg: Segment, turn_radius_m: float) -> float:
     ``length_m`` metres plus penalty over ``length_m / r`` radians. Pivot
     ``r == 0``: no translation, penalty over ``length_m`` radians.
 
-    A **reverse** leg (``gear == -1``) multiplies the cost by
-    :data:`_REVERSE_COST_FACTOR` (ADR-0010), so the search prefers forward
-    motion and only backs up when it is genuinely cheaper (the nose-out win).
-    The factor scales the whole leg cost — translation and turn penalty alike —
-    so a reverse arc is penalised consistently with a reverse straight. (The
-    cart fan no longer emits reverse pivots — see :func:`_primitives` — so for
-    ``r == 0`` the factor only ever applies to the reverse straight.)
-    """
-    factor = _REVERSE_COST_FACTOR if seg.gear == -1 else 1.0
+    Gear-agnostic (#480): a reverse leg costs the same per-metre as a forward
+    leg — reverse is no longer taxed here. Direction changes are charged once, as
+    an additive :data:`CUSP_PENALTY` per cusp, in the expansion loop (which knows
+    the parent's travel direction); a single segment has no cusp. Forward
+    preference survives as the fixed primitive-order tie-break."""
     if seg.kind == "S":
-        return factor * seg.length_m
+        return seg.length_m
     if turn_radius_m > 0.0:
-        return factor * (seg.length_m + _TURN_PENALTY * (seg.length_m / turn_radius_m))
-    return factor * _TURN_PENALTY * seg.length_m  # cart pivot: length_m is radians
+        return seg.length_m + _TURN_PENALTY * (seg.length_m / turn_radius_m)
+    return _TURN_PENALTY * seg.length_m  # cart pivot: length_m is radians
+
+
+def _segments_cost(segs: tuple[Segment, ...], turn_radius_m: float) -> float:
+    """Fewest-moves cost of a complete segment run (#480): Σ ``_seg_cost`` +
+    ``CUSP_PENALTY`` per cusp. Used to rank start-seed analytic completions so the
+    cheapest collision-clean one wins — e.g. a nose-out slot's reverse back-in
+    (short, 0 cusps) beats a forward entry that pirouettes inside. A standalone
+    run has no prior travel, so there is no boundary cusp to charge."""
+    legs: list[tuple[int, bool]] = [
+        (seg.gear, not (turn_radius_m == 0.0 and seg.kind in ("L", "R"))) for seg in segs
+    ]
+    seg_sum = math.fsum(_seg_cost(seg, turn_radius_m) for seg in segs)
+    return seg_sum + CUSP_PENALTY * _count_cusps(legs)
 
 
 def _cell(pose: Pose) -> tuple[int, int, int]:
     """Bin a pose into the search grid: ``(x, y)`` rounded to ``_GRID_XY_M`` and
-    heading rounded to ``_GRID_DEG`` (wrapped into ``_HEADING_BINS``)."""
+    heading rounded to ``_GRID_DEG`` (wrapped into ``_HEADING_BINS``).
+
+    Deliberately does NOT include the travel direction (#480 ``last_drive_gear``),
+    so the ``best_g`` domination check may occasionally prune a higher-g node
+    whose gear would have avoided a downstream cusp — an accepted Hybrid-A\\*
+    approximation (same spirit as the pose-binning), kept to bound the state
+    space / expansion budget. The dominant nose-out win comes from the
+    rear-entry seed (a near-0-cusp reverse approach handled by the cost-aware
+    start-seed pre-pass in :func:`plan_path`), not mid-search gear switches, so
+    the measured nose-out cases do not exercise this approximation."""
     return (
         round(pose.x_m / _GRID_XY_M),
         round(pose.y_m / _GRID_XY_M),
@@ -1493,12 +1579,20 @@ class _SearchNode:
     bug of mutating ``g`` in place after a node is on the heap, which would
     silently corrupt the ``best_g`` stale-entry check. **Invariant:** ``seg`` is
     ``None`` iff ``parent`` is ``None`` (the start node); every child carries
-    both — :func:`_reconstruct_segments` relies on this to stop at the root."""
+    both — :func:`_reconstruct_segments` relies on this to stop at the root.
+
+    ``last_drive_gear`` (#480) is the gear (+1/−1) of the most recent TRANSLATING
+    leg on this node's branch, or ``0`` at the root (no travel yet). The
+    expansion loop reads it to charge a :data:`CUSP_PENALTY` when the next
+    translating primitive reverses direction — counting cusps incrementally
+    without walking the parent chain. A non-translating cart pivot inherits the
+    parent's value unchanged."""
 
     pose: Pose
     g: float
     seg: Segment | None
     parent: _SearchNode | None
+    last_drive_gear: int
 
 
 def _reconstruct_segments(node: _SearchNode) -> list[Segment]:
@@ -1930,6 +2024,47 @@ def plan_path(
             # clips even here, and the search then finds no valid path (#411).
             start_poses = (Pose(x_m=hangar.door.center_x_m, y_m=0.0, heading_deg=0.0),)
 
+    # ── Cost-aware start-seed analytic expansion (#480) ──────────────────────
+    # A nose-out slot's cheap fix is a START-SEED analytic shot: back in from the
+    # rear-entry cone rather than entering forward and pirouetting in the back
+    # corner. Evaluate every surviving start seed's closed-form completion up front
+    # and take the cheapest collision-clean one, so the back-in beats an
+    # earlier-enumerated forward entry. Bounded work (≤ the cone size): the
+    # closed-form cost is computed first and the expensive screen + EXACT oracle
+    # are paid only when a seed could beat the best found. Forward preference is the
+    # strict-< tie-break (entry_poses enumerates the forward cone first). If no seed
+    # closes cleanly (an obstructed approach), fall through to the greedy node-level
+    # Hybrid-A* search below — that case stays best-effort, not cost-optimised, and
+    # keeps the pre-#480 routing speed (returns at the first clean shot).
+    best_seed: tuple[float, DubinsArc] | None = None
+    for start_pose in start_poses:
+        seed_arc = plan_reeds_shepp(start_pose, goal, turn_radius_m=r)
+        seed_cost = _segments_cost(seed_arc.segments, r)
+        if best_seed is not None and seed_cost >= best_seed[0]:
+            continue  # can't beat the best clean seed — skip the costly checks
+        if not all(
+            _motion_clear(mover, p, obstacles, hangar)
+            for p in seed_arc.sample(step_m=_SEARCH_STEP_M, step_deg=_SEARCH_STEP_DEG)
+        ):
+            continue
+        candidate = DubinsArc(start_pose, goal, r, seed_arc.segments)
+        if (
+            path_first_conflict(candidate, mover, mover_on_carts=mover_on_carts, placed=placed)
+            is None
+        ):
+            best_seed = (seed_cost, candidate)
+    if best_seed is not None:
+        if stats is not None:
+            stats.update(
+                expansions=0,
+                found=True,
+                budget_exhausted=False,
+                space_exhausted=False,
+                start_poses=len(start_poses),
+                heuristic=heuristic,
+            )
+        return best_seed[1]
+
     # ── Seed the open heap with all surviving start poses ───────────────────
     # Heuristic: ``_h`` — straight-line Euclidean distance by default (deliberately
     # looser than the spec's Dubins-distance suggestion — Euclidean ≤ Dubins length
@@ -1941,7 +2076,7 @@ def plan_path(
     open_heap: list[tuple[float, int, _SearchNode]] = []
     best_g: dict[tuple[int, int, int], float] = {}
     for start_pose in start_poses:
-        start_node = _SearchNode(start_pose, 0.0, None, None)
+        start_node = _SearchNode(start_pose, 0.0, None, None, 0)
         start_key = _cell(start_pose)
         h_start = _h(start_pose)
         # Only seed if not already dominated by a cheaper start in the same cell.
@@ -2020,7 +2155,15 @@ def plan_path(
                 for p in edge.sample(step_m=_SEARCH_STEP_M, step_deg=_SEARCH_STEP_DEG)
             ):
                 continue
-            child_g = node.g + _seg_cost(seg, r)
+            # Cusp charge (#480): a primitive that TRANSLATES and reverses the
+            # branch's last travel direction costs one CUSP_PENALTY. In-place cart
+            # pivots (r == 0 turns) don't translate — they inherit the parent's
+            # last_drive_gear and never charge a cusp. Own-gear (r > 0) primitives
+            # all translate, so this is just parent-gear vs this-gear.
+            translates = not (r == 0.0 and seg.kind in ("L", "R"))
+            is_cusp = translates and node.last_drive_gear != 0 and node.last_drive_gear != seg.gear
+            child_drive_gear = seg.gear if translates else node.last_drive_gear
+            child_g = node.g + _seg_cost(seg, r) + (CUSP_PENALTY if is_cusp else 0.0)
             child_key = _cell(child_pose)
             if child_g < best_g.get(child_key, math.inf) - 1e-9:
                 best_g[child_key] = child_g
@@ -2028,7 +2171,11 @@ def plan_path(
                 h = _h(child_pose)
                 heapq.heappush(
                     open_heap,
-                    (child_g + h, counter, _SearchNode(child_pose, child_g, seg, node)),
+                    (
+                        child_g + h,
+                        counter,
+                        _SearchNode(child_pose, child_g, seg, node, child_drive_gear),
+                    ),
                 )
 
     # The per-edge / analytic validity checks use the fast `_motion_clear`, which
