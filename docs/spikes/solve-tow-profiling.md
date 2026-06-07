@@ -219,12 +219,18 @@ its cost. Measured (dev machine, 2026-06-07):
   67.4 → 73.4 s (+9 %), capped by the global expansion cap. Determinism holds
   (`det=ok`) for both apron regimes.
 - **Slide-in engagement is depth-gated, per-plane.** An apron only engages a
-  plane when its depth ≳ that plane's (fore-aft length + turn radius): at 6 m,
-  `fuji` (7.98 m) has *all* its apron start poses filtered (footprint overflows
-  the apron south bound) and **silently falls back to the `y = 0` door line** (the
-  `plan_path` fallback), while the two shorter planes slide in. At ≈14 m (or
-  `auto` = 14.98 m here) all three engage. **`auto` is the safe default; a
-  too-shallow hand-set apron is the footgun** — a candidate follow-up is to warn
+  plane when it is deep enough for that plane's footprint to fit *inside* the
+  apron at a start pose — i.e. a function of the plane's **footprint depth**
+  (driven by its fore-aft extent and where the reference origin sits), **not** its
+  turn radius (the radius does not enter the per-plane `_mover_motion_bounds_conflict`
+  south-bound filter). At 6 m, `fuji` (7.98 m long) has *all* its apron start poses
+  filtered (footprint overflows the apron south bound) and **silently falls back
+  to the `y = 0` door line** (the `plan_path` fallback), while the two shorter
+  planes slide in; measured, all three roomy-3 planes engage by ~7 m. The opt-in
+  `auto` depth (`≈ max plane length + max turn radius` = 14.98 m here) is a
+  deliberate *over-margin* that clears every plane's gate comfortably — not the
+  minimum. **`auto` is the safe default; a too-shallow hand-set apron is the
+  footgun** — a candidate follow-up is to warn
   (or auto-deepen) when every apron pose for a plane filters out.
 
 **Budget decision (the #499 question): keep `_MAX_EXPANSIONS` /

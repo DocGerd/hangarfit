@@ -117,9 +117,10 @@ REGIMES: tuple[Regime, ...] = (
         # Apron routing-cost characterisation (#499/ADR-0021). Same placement as
         # roomy_three_spread_on (apron is planner-only ⇒ placement unchanged); the
         # apron enlarges the tow start set (forward+reverse cones × y-samples) and
-        # lengthens each path. 14 m ≈ derive_apron_depth(fleet)=14.98 m here, deep
-        # enough that ALL three planes engage the apron (a shallower apron silently
-        # falls back to the door line for the longer planes — see the #499 spike).
+        # lengthens each path. 14 m matches the opt-in derive_apron_depth(fleet)=
+        # 14.98 m over-margin and clears every plane's per-plane footprint gate with
+        # room to spare, so ALL three engage the apron (the longer planes fall back
+        # to the door line at a too-shallow depth like 6 m — see the #499 spike).
         key="roomy_three_apron",
         description="3 planes, 30x25 m hangar, 14 m staging apron — slide-in routing cost",
         scenario=FIXTURES / "solve_fresh_alternatives_three.yaml",
