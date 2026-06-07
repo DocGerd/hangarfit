@@ -284,6 +284,45 @@ def test_load_scenario_rejects_bool_priority(tmp_path, yaml_bool):
         load_scenario(p)
 
 
+# ── #263: per-plane PlaneConstraint.nose_out tri-state in scenario YAML ───
+
+
+def test_load_scenario_nose_out_absent_is_none(tmp_path):
+    from hangarfit.loader import load_scenario
+
+    p = _stage_scenario(
+        tmp_path,
+        "fleet_in: [aviat_husky]\nconstraints:\n  aviat_husky:\n    priority: 1.0\n",
+    )
+    s = load_scenario(p)
+    assert s.constraints["aviat_husky"].nose_out is None
+
+
+@pytest.mark.parametrize("yaml_bool, expected", [("true", True), ("false", False)])
+def test_load_scenario_nose_out_parsed(tmp_path, yaml_bool, expected):
+    from hangarfit.loader import load_scenario
+
+    p = _stage_scenario(
+        tmp_path,
+        f"fleet_in: [aviat_husky]\nconstraints:\n  aviat_husky:\n    nose_out: {yaml_bool}\n",
+    )
+    s = load_scenario(p)
+    assert s.constraints["aviat_husky"].nose_out is expected
+
+
+def test_load_scenario_rejects_quoted_bool_nose_out(tmp_path):
+    """`nose_out: "true"` (quoted) would silently be truthy via bool(); rejected
+    by the strict _to_bool, like force_on_carts/measured."""
+    from hangarfit.loader import load_scenario
+
+    p = _stage_scenario(
+        tmp_path,
+        'fleet_in: [aviat_husky]\nconstraints:\n  aviat_husky:\n    nose_out: "true"\n',
+    )
+    with pytest.raises(LoaderError, match="nose_out"):
+        load_scenario(p)
+
+
 def test_scenario_post_init_backstop_still_fires_on_direct_construction():
     """Direct-construction path: Scenario.__post_init__ still raises ValueError
     when maintenance_plane is not in fleet_in, bypassing the loader guard.

@@ -520,6 +520,7 @@ def _build_plane_constraint(plane_id: str, data: Any) -> PlaneConstraint:
             pin: { x_m: <float>, y_m: <float>, heading_deg: <float>, on_carts: <bool> }
             force_on_carts: <bool>
             priority: <float>   # soft, >= 0 (#441)
+            nose_out: <bool>    # soft tri-state; omit ⇒ follow global (#263)
 
     ``pin``, ``force_on_carts`` and ``priority`` are all optional. Omitting all
     yields a "free" constraint (the solver may place the plane anywhere
@@ -571,7 +572,16 @@ def _build_plane_constraint(plane_id: str, data: Any) -> PlaneConstraint:
     if priority is not None:
         priority = _to_float(priority, "priority")
 
-    return PlaneConstraint(pin=pin, force_on_carts=force_on_carts, priority=priority)
+    # Per-plane nose-out override (#263). Tri-state: None ⇒ follow the global
+    # SearchConfig.nose_out; True ⇒ prefer-out; False ⇒ never flip (nose-IN
+    # exemption). Strict bool coercion, like force_on_carts.
+    nose_out = data.get("nose_out")
+    if nose_out is not None:
+        nose_out = _to_bool(nose_out, "nose_out")
+
+    return PlaneConstraint(
+        pin=pin, force_on_carts=force_on_carts, priority=priority, nose_out=nose_out
+    )
 
 
 def _extract_maintenance_plane(raw: dict, path: Path) -> str | None:
