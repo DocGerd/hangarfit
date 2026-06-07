@@ -894,16 +894,22 @@ def derive_apron_depth(fleet: Mapping[str, Aircraft]) -> float:
 # Rear-entry headings (near 180°) are out of scope here — see issue #261.
 _CONE_HEADINGS: tuple[float, ...] = (330.0, 345.0, 0.0, 15.0, 30.0)
 
+# The five rear-entry (nose-out / back-in) headings: 180° ± 30° in 15° steps.
+# Emitted ONLY when an apron exists (apron_depth_m > 0): backing a plane in
+# tail-first needs the apron run-up room (#263, unblocked by the apron — ADR-0021).
+# Gating on depth > 0 keeps the no-apron pose set — and thus the MovesPlan —
+# byte-identical (ADR-0003); they are additional deterministic seed poses the
+# search chooses among on cost, never a forced orientation.
+_REVERSE_CONE_HEADINGS: tuple[float, ...] = (150.0, 165.0, 180.0, 195.0, 210.0)
+
 
 def entry_poses(target: Placement, hangar: Hangar) -> tuple[Pose, ...]:
-    """All door-cone entry poses for a plane heading to ``target`` (#262).
+    """All entry / apron start poses for a plane heading to ``target`` (#262, #412).
 
-    Returns a **fixed, deterministic grid** of up to 15 candidate start poses
-    (3 x-samples × 5 headings, deduplicated):
-
-    **Headings** — the 5-heading forward-admissible cone:
-    ``{330°, 345°, 0°, 15°, 30°}`` (straight-in ±30° in 15° steps; all point
-    generally inward).  Near-180° rear-entry headings are out of scope here (#261).
+    Returns a **fixed, deterministic grid** of candidate start poses for the
+    multi-start Hybrid-A\\* search. The grid is a 3 × N_y × N_h cross product
+    (x-samples × y-samples × headings), deduplicated by exact-float
+    ``(x, y, heading)`` key in a fixed emit order.
 
     **X-samples** — three values within the door interval
     ``[center − width/2, center + width/2]``:
@@ -912,27 +918,37 @@ def entry_poses(target: Placement, hangar: Hangar) -> tuple[Pose, ...]:
     2. The clamped target x — same as :func:`entry_pose`'s output (the v1 choice).
     3. The midpoint between those two.
 
-    All three are clamped into the door interval; duplicates (when the target x
-    equals the centre or its midpoint) are removed while preserving the
-    deterministic order: x-outer loop, heading-inner loop, emit in
-    ``(x_sample_idx_asc, heading_idx_asc)`` order.
+    **Y-samples** — depend on the staging apron (``hangar.apron_depth_m``,
+    ADR-0021):
 
-    **Emit order** (fixed for ADR-0003 determinism):
+    - **No apron** (``apron_depth_m == 0`` / absent): a single ``y = 0`` sample
+      at the door line — *exactly the pre-apron behaviour, reproduced
+      byte-for-byte* (the ``(x, y, heading)`` key collapses to the old
+      ``(x, heading)`` key when ``y`` is the constant ``0.0``).
+    - **With an apron** (``apron_depth_m > 0``): three samples
+      ``{0, −apron_depth_m/2, −apron_depth_m}`` — the door line plus two depths
+      into the apron, so each plane can stage outside and slide in.
 
-    - Outer loop: x-sample index 0 (door centre), 1 (clamped target), 2 (midpoint).
-    - Inner loop: headings in ``_CONE_HEADINGS`` order (330°, 345°, 0°, 15°, 30°).
-    - Duplicate ``(x, heading)`` pairs (exact float equality) are skipped on the
-      second occurrence.
+    **Headings**:
+
+    - **No apron**: the 5-heading forward-admissible cone
+      ``{330°, 345°, 0°, 15°, 30°}`` only (straight-in ±30°).
+    - **With an apron**: the forward cone **followed by** the rear-entry cone
+      ``{150°, 165°, 180°, 195°, 210°}`` (180° ± 30°), so the search may choose
+      to back a plane in tail-first from the apron (#263, never forced).
+
+    **Emit order** (fixed for ADR-0003 determinism): x-outer, y-middle,
+    heading-inner; duplicate ``(x, y, heading)`` triples (exact float equality)
+    are skipped on the second occurrence.
 
     The caller (:func:`plan_path` via ``entries=`` and :func:`plan_fill`) filters
-    candidates that clip the side/back walls, or protrude in front of the solid
-    wall beside the door (the door-gated front-gap exemption, #411), before
-    seeding the search; a straight-in centre pose is always the final fallback so
-    the search has at least one start (which may itself be infeasible — e.g. a
-    plane wider than the door — leaving the plane un-towable).
+    candidates that clip the side/back walls, fall past the apron south bound, or
+    cross the solid front wall beside the door (the apron-aware front-gap rule,
+    #411/#412), before seeding the search; a straight-in centre pose is always
+    present so the search has at least one start (which may itself be infeasible —
+    e.g. a plane wider than the door — leaving the plane un-towable).
 
-    Returns a non-empty :class:`tuple` of :class:`Pose` objects, each with
-    ``y_m = 0.0`` and ``heading_deg`` from ``_CONE_HEADINGS``.
+    Returns a non-empty :class:`tuple` of :class:`Pose` objects.
     """
     door = hangar.door
     half = door.width_m / 2.0
@@ -949,15 +965,26 @@ def entry_poses(target: Placement, hangar: Hangar) -> tuple[Pose, ...]:
 
     x_samples = (x_centre, x_target, x_mid)
 
-    seen: set[tuple[float, float]] = set()
+    # Apron extension (ADR-0021). depth == 0 ⇒ the single y = 0 sample + the
+    # forward cone only ⇒ byte-identical to the pre-apron grid.
+    depth = hangar.apron_depth_m
+    if depth > 0.0:
+        y_samples: tuple[float, ...] = (0.0, -depth / 2.0, -depth)
+        headings: tuple[float, ...] = _CONE_HEADINGS + _REVERSE_CONE_HEADINGS
+    else:
+        y_samples = (0.0,)
+        headings = _CONE_HEADINGS
+
+    seen: set[tuple[float, float, float]] = set()
     poses: list[Pose] = []
-    for x in x_samples:
-        for h in _CONE_HEADINGS:
-            key = (x, h)
-            if key in seen:
-                continue
-            seen.add(key)
-            poses.append(Pose(x_m=x, y_m=0.0, heading_deg=h))
+    for x in x_samples:  # outer: x (door centre, clamped target, midpoint)
+        for y in y_samples:  # middle: y (0, then deeper into the apron)
+            for h in headings:  # inner: headings (forward cone, then reverse cone)
+                key = (x, y, h)
+                if key in seen:
+                    continue
+                seen.add(key)
+                poses.append(Pose(x_m=x, y_m=y, heading_deg=h))
 
     return tuple(poses)
 

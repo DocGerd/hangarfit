@@ -15,7 +15,7 @@ length_m=1.0 ⇒ at heading 0 the body occupies world y ∈ [ref, ref + 1]).
 import pytest
 
 from hangarfit.models import Aircraft, Door, Hangar, MaintenanceBay, Part, Placement, Wheels
-from hangarfit.towplanner import derive_apron_depth
+from hangarfit.towplanner import Pose, derive_apron_depth, entry_poses
 
 _TAIL_WHEELS = Wheels(main_offset_x_m=0.20, track_m=1.8, third_wheel_offset_x_m=-2.0)
 
@@ -89,3 +89,45 @@ def test_derive_apron_depth_is_max_length_plus_max_turn_radius() -> None:
 
 def test_derive_apron_depth_empty_fleet_is_zero() -> None:
     assert derive_apron_depth({}) == 0.0
+
+
+# ── Task 3: entry_poses apron grid (byte-identical at depth 0) ────────────────
+
+
+def test_entry_poses_depth_zero_exact_order_unchanged() -> None:
+    """Depth 0 reproduces the pre-apron grid EXACTLY: same poses, same order,
+    all at y=0, forward cone only (the ADR-0003 byte-identity anchor)."""
+    h = _hangar(door_center=10.0, door_width=6.0)  # door interval [7, 13]
+    slot = _slot("A", x=8.0, y=12.0, h=0.0)  # x_centre=10, x_target=8, x_mid=9
+    expected = [
+        Pose(x_m=x, y_m=0.0, heading_deg=hd)
+        for x in (10.0, 8.0, 9.0)
+        for hd in (330.0, 345.0, 0.0, 15.0, 30.0)
+    ]
+    assert list(entry_poses(slot, h)) == expected
+
+
+def test_entry_poses_with_apron_adds_y_offsets_and_reverse_headings() -> None:
+    h = _hangar(door_center=10.0, door_width=6.0, apron_depth_m=6.0)
+    slot = _slot("A", x=10.0, y=12.0, h=0.0)
+    poses = entry_poses(slot, h)
+    assert {p.y_m for p in poses} == {0.0, -3.0, -6.0}  # {0, -d/2, -d}
+    headings = {p.heading_deg for p in poses}
+    assert {330.0, 345.0, 0.0, 15.0, 30.0} <= headings  # forward cone retained
+    assert {150.0, 165.0, 180.0, 195.0, 210.0} <= headings  # reverse cone added
+
+
+def test_entry_poses_with_apron_is_deterministic() -> None:
+    h = _hangar(apron_depth_m=6.0)
+    slot = _slot("A", x=8.0, y=12.0, h=0.0)
+    assert entry_poses(slot, h) == entry_poses(slot, h)
+
+
+def test_entry_poses_apron_emit_order_x_outer_y_middle_heading_inner() -> None:
+    """The fixed emit order is x-outer, y-middle, heading-inner (ADR-0003)."""
+    h = _hangar(door_center=10.0, door_width=6.0, apron_depth_m=4.0)
+    slot = _slot("A", x=10.0, y=12.0, h=0.0)  # x_centre == x_target == x_mid == 10 ⇒ 1 x-sample
+    poses = list(entry_poses(slot, h))
+    headings = (330.0, 345.0, 0.0, 15.0, 30.0, 150.0, 165.0, 180.0, 195.0, 210.0)
+    expected = [Pose(x_m=10.0, y_m=y, heading_deg=hd) for y in (0.0, -2.0, -4.0) for hd in headings]
+    assert poses == expected
