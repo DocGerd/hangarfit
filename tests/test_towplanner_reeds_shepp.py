@@ -215,6 +215,21 @@ def test_rs_solve_normalised_cusp_penalty_never_increases_cusps() -> None:
         assert _cusps(high) <= _cusps(zero), f"goal {(x, y, phi)}: high-penalty word added cusps"
 
 
+def test_seg_cost_reverse_not_taxed_per_metre() -> None:
+    """#480: the Hybrid-A* search g-cost is gear-agnostic — a reverse leg costs
+    the same per-metre as forward (direction changes are charged once as
+    CUSP_PENALTY in the expansion loop, not per-metre here)."""
+    from hangarfit.towplanner import _seg_cost
+
+    fwd = Segment("S", 4.0, gear=1)
+    rev = Segment("S", 4.0, gear=-1)
+    assert _seg_cost(rev, 2.0) == _seg_cost(fwd, 2.0) == 4.0
+    # A reverse arc costs the same as the forward arc (length + turn penalty).
+    fwd_arc = Segment("L", 3.0, gear=1)
+    rev_arc = Segment("L", 3.0, gear=-1)
+    assert _seg_cost(rev_arc, 2.0) == _seg_cost(fwd_arc, 2.0)
+
+
 def test_cart_seg_weight_reverse_straight_not_taxed_per_metre() -> None:
     """#480: a cart's reverse straight is no longer ×1.5 — both forward and
     reverse pivot-straight-pivot are single 0-cusp drives, so the choice reduces

@@ -1521,25 +1521,29 @@ def _seg_cost(seg: Segment, turn_radius_m: float) -> float:
     ``length_m`` metres plus penalty over ``length_m / r`` radians. Pivot
     ``r == 0``: no translation, penalty over ``length_m`` radians.
 
-    A **reverse** leg (``gear == -1``) multiplies the cost by
-    :data:`_REVERSE_COST_FACTOR` (ADR-0010), so the search prefers forward
-    motion and only backs up when it is genuinely cheaper (the nose-out win).
-    The factor scales the whole leg cost — translation and turn penalty alike —
-    so a reverse arc is penalised consistently with a reverse straight. (The
-    cart fan no longer emits reverse pivots — see :func:`_primitives` — so for
-    ``r == 0`` the factor only ever applies to the reverse straight.)
-    """
-    factor = _REVERSE_COST_FACTOR if seg.gear == -1 else 1.0
+    Gear-agnostic (#480): a reverse leg costs the same per-metre as a forward
+    leg — reverse is no longer taxed here. Direction changes are charged once, as
+    an additive :data:`CUSP_PENALTY` per cusp, in the expansion loop (which knows
+    the parent's travel direction); a single segment has no cusp. Forward
+    preference survives as the fixed primitive-order tie-break."""
     if seg.kind == "S":
-        return factor * seg.length_m
+        return seg.length_m
     if turn_radius_m > 0.0:
-        return factor * (seg.length_m + _TURN_PENALTY * (seg.length_m / turn_radius_m))
-    return factor * _TURN_PENALTY * seg.length_m  # cart pivot: length_m is radians
+        return seg.length_m + _TURN_PENALTY * (seg.length_m / turn_radius_m)
+    return _TURN_PENALTY * seg.length_m  # cart pivot: length_m is radians
 
 
 def _cell(pose: Pose) -> tuple[int, int, int]:
     """Bin a pose into the search grid: ``(x, y)`` rounded to ``_GRID_XY_M`` and
-    heading rounded to ``_GRID_DEG`` (wrapped into ``_HEADING_BINS``)."""
+    heading rounded to ``_GRID_DEG`` (wrapped into ``_HEADING_BINS``).
+
+    Deliberately does NOT include the travel direction (#480 ``last_drive_gear``),
+    so the ``best_g`` domination check may occasionally prune a higher-g node
+    whose gear would have avoided a downstream cusp — an accepted Hybrid-A\\*
+    approximation (same spirit as the pose-binning), kept to bound the state
+    space / expansion budget. The dominant nose-out win comes from the
+    rear-entry seed (a near-0-cusp reverse approach), not mid-search gear
+    switches, so this rarely bites in practice."""
     return (
         round(pose.x_m / _GRID_XY_M),
         round(pose.y_m / _GRID_XY_M),
@@ -1560,12 +1564,20 @@ class _SearchNode:
     bug of mutating ``g`` in place after a node is on the heap, which would
     silently corrupt the ``best_g`` stale-entry check. **Invariant:** ``seg`` is
     ``None`` iff ``parent`` is ``None`` (the start node); every child carries
-    both — :func:`_reconstruct_segments` relies on this to stop at the root."""
+    both — :func:`_reconstruct_segments` relies on this to stop at the root.
+
+    ``last_drive_gear`` (#480) is the gear (+1/−1) of the most recent TRANSLATING
+    leg on this node's branch, or ``0`` at the root (no travel yet). The
+    expansion loop reads it to charge a :data:`CUSP_PENALTY` when the next
+    translating primitive reverses direction — counting cusps incrementally
+    without walking the parent chain. A non-translating cart pivot inherits the
+    parent's value unchanged."""
 
     pose: Pose
     g: float
     seg: Segment | None
     parent: _SearchNode | None
+    last_drive_gear: int
 
 
 def _reconstruct_segments(node: _SearchNode) -> list[Segment]:
@@ -2008,7 +2020,7 @@ def plan_path(
     open_heap: list[tuple[float, int, _SearchNode]] = []
     best_g: dict[tuple[int, int, int], float] = {}
     for start_pose in start_poses:
-        start_node = _SearchNode(start_pose, 0.0, None, None)
+        start_node = _SearchNode(start_pose, 0.0, None, None, 0)
         start_key = _cell(start_pose)
         h_start = _h(start_pose)
         # Only seed if not already dominated by a cheaper start in the same cell.
@@ -2087,7 +2099,15 @@ def plan_path(
                 for p in edge.sample(step_m=_SEARCH_STEP_M, step_deg=_SEARCH_STEP_DEG)
             ):
                 continue
-            child_g = node.g + _seg_cost(seg, r)
+            # Cusp charge (#480): a primitive that TRANSLATES and reverses the
+            # branch's last travel direction costs one CUSP_PENALTY. In-place cart
+            # pivots (r == 0 turns) don't translate — they inherit the parent's
+            # last_drive_gear and never charge a cusp. Own-gear (r > 0) primitives
+            # all translate, so this is just parent-gear vs this-gear.
+            translates = not (r == 0.0 and seg.kind in ("L", "R"))
+            is_cusp = translates and node.last_drive_gear != 0 and node.last_drive_gear != seg.gear
+            child_drive_gear = seg.gear if translates else node.last_drive_gear
+            child_g = node.g + _seg_cost(seg, r) + (CUSP_PENALTY if is_cusp else 0.0)
             child_key = _cell(child_pose)
             if child_g < best_g.get(child_key, math.inf) - 1e-9:
                 best_g[child_key] = child_g
@@ -2095,7 +2115,11 @@ def plan_path(
                 h = _h(child_pose)
                 heapq.heappush(
                     open_heap,
-                    (child_g + h, counter, _SearchNode(child_pose, child_g, seg, node)),
+                    (
+                        child_g + h,
+                        counter,
+                        _SearchNode(child_pose, child_g, seg, node, child_drive_gear),
+                    ),
                 )
 
     # The per-edge / analytic validity checks use the fast `_motion_clear`, which
