@@ -1534,6 +1534,19 @@ def _seg_cost(seg: Segment, turn_radius_m: float) -> float:
     return _TURN_PENALTY * seg.length_m  # cart pivot: length_m is radians
 
 
+def _segments_cost(segs: tuple[Segment, ...], turn_radius_m: float) -> float:
+    """Fewest-moves cost of a complete segment run (#480): Σ ``_seg_cost`` +
+    ``CUSP_PENALTY`` per cusp. Used to rank start-seed analytic completions so the
+    cheapest collision-clean one wins — e.g. a nose-out slot's reverse back-in
+    (short, 0 cusps) beats a forward entry that pirouettes inside. A standalone
+    run has no prior travel, so there is no boundary cusp to charge."""
+    legs: list[tuple[int, bool]] = [
+        (seg.gear, not (turn_radius_m == 0.0 and seg.kind in ("L", "R"))) for seg in segs
+    ]
+    seg_sum = math.fsum(_seg_cost(seg, turn_radius_m) for seg in segs)
+    return seg_sum + CUSP_PENALTY * _count_cusps(legs)
+
+
 def _cell(pose: Pose) -> tuple[int, int, int]:
     """Bin a pose into the search grid: ``(x, y)`` rounded to ``_GRID_XY_M`` and
     heading rounded to ``_GRID_DEG`` (wrapped into ``_HEADING_BINS``).
@@ -2009,6 +2022,47 @@ def plan_path(
             # start. It is NOT guaranteed feasible — a plane wider than the door
             # clips even here, and the search then finds no valid path (#411).
             start_poses = (Pose(x_m=hangar.door.center_x_m, y_m=0.0, heading_deg=0.0),)
+
+    # ── Cost-aware start-seed analytic expansion (#480) ──────────────────────
+    # A nose-out slot's cheap fix is a START-SEED analytic shot: back in from the
+    # rear-entry cone rather than entering forward and pirouetting in the back
+    # corner. Evaluate every surviving start seed's closed-form completion up front
+    # and take the cheapest collision-clean one, so the back-in beats an
+    # earlier-enumerated forward entry. Bounded work (≤ the cone size): the
+    # closed-form cost is computed first and the expensive screen + EXACT oracle
+    # are paid only when a seed could beat the best found. Forward preference is the
+    # strict-< tie-break (entry_poses enumerates the forward cone first). If no seed
+    # closes cleanly (an obstructed approach), fall through to the greedy node-level
+    # Hybrid-A* search below — that case stays best-effort, not cost-optimised, and
+    # keeps the pre-#480 routing speed (returns at the first clean shot).
+    best_seed: tuple[float, DubinsArc] | None = None
+    for start_pose in start_poses:
+        seed_arc = plan_reeds_shepp(start_pose, goal, turn_radius_m=r)
+        seed_cost = _segments_cost(seed_arc.segments, r)
+        if best_seed is not None and seed_cost >= best_seed[0]:
+            continue  # can't beat the best clean seed — skip the costly checks
+        if not all(
+            _motion_clear(mover, p, obstacles, hangar)
+            for p in seed_arc.sample(step_m=_SEARCH_STEP_M, step_deg=_SEARCH_STEP_DEG)
+        ):
+            continue
+        candidate = DubinsArc(start_pose, goal, r, seed_arc.segments)
+        if (
+            path_first_conflict(candidate, mover, mover_on_carts=mover_on_carts, placed=placed)
+            is None
+        ):
+            best_seed = (seed_cost, candidate)
+    if best_seed is not None:
+        if stats is not None:
+            stats.update(
+                expansions=0,
+                found=True,
+                budget_exhausted=False,
+                space_exhausted=False,
+                start_poses=len(start_poses),
+                heuristic=heuristic,
+            )
+        return best_seed[1]
 
     # ── Seed the open heap with all surviving start poses ───────────────────
     # Heuristic: ``_h`` — straight-line Euclidean distance by default (deliberately
