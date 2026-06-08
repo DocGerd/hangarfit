@@ -127,3 +127,25 @@ def test_real_hangar_notch_is_enforced() -> None:
     )
     kinds = {c.kind for c in collisions.check(layout).conflicts}
     assert "structural_notch" in kinds, kinds
+
+
+def test_demo_scenario_is_a_solvable_subset() -> None:
+    """`scenario_demo.yaml` is a 3-aircraft subset of the fleet that the solver
+    places into a valid layout — the working end-to-end demo. (Full tow-routing
+    via the CLI's spread-off fallback, ADR-0016, is exercised in the README
+    command; here we pin the load-independent claim: a valid 3-plane solve.)
+    """
+    from hangarfit.loader import load_scenario
+    from hangarfit.models import SearchConfig
+    from hangarfit.solver import solve
+
+    scn = load_scenario(HERRENTEICH / "scenario_demo.yaml")
+    assert set(scn.fleet_in) <= USUAL_OCCUPANTS
+    assert len(scn.fleet_in) == 3
+    # Pin max_restarts (not budget_s) for load-independence; budget_s high so the
+    # restart count is the sole gate even on a slow runner (cf. #531).
+    result = solve(
+        scn, seed=3, budget_s=120.0, search=SearchConfig(max_restarts=6), plan_paths=False
+    )
+    assert result.layouts and len(result.layouts[0].placements) == 3
+    assert collisions.check(result.layouts[0]).valid

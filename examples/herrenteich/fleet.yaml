@@ -6,89 +6,115 @@
 # Stemme S10 (hangared WINGS-FOLDED), Zlin Savage. (Fuji and the Cessna 150
 # are not based here.)
 #
-# DIMENSIONS were looked up from published manufacturer / type-certificate /
-# reference specs on 2026-06-04 and each was independently second-source
-# verified (web research + cross-check). Span / length / height below reflect
-# those published figures (in metres). Verified primary dims:
+# DIMENSIONS — provenance refresh 2026-06-08 (#536). The primary envelope
+# (span / length / height) was looked up from published manufacturer /
+# type-certificate specs on 2026-06-04 and second-source verified. This refresh
+# additionally SOURCED the part-level dimensions that ARE published — wing chord
+# (= wing area ÷ span), fuselage/cabin width, a few tail spans, and a few gear
+# track/wheelbase figures — from EASA/FAA TCDS, manufacturer maintenance manuals,
+# and flight manuals (citations per-field below). Verified primary dims:
 #
 #   id             span(m)  len(m)  height(m)  notes
 #   cessna_140     10.16    6.55    1.91       strut high-wing taildragger
-#   ctsl            8.59    6.60    2.34       cantilever high-wing, nosewheel
-#   wild_thing      9.15    6.49    1.90       ULBI Wild Thing WT-02, strut
+#   ctsl            8.59    6.60    2.34       cantilever high-wing, nosewheel (EASA TCDS)
+#   wild_thing      9.15    6.49    1.90       ULBI Wild Thing WT-02, strut (WT-01 baseline)
 #   aviat_husky    10.82    6.88    2.26       Husky A-1C, strut taildragger
-#   scheibe_falke  18.00    7.58    1.85       SF-25E Super Falke motor glider
+#   scheibe_falke  18.00    7.58    1.85       SF-25E motor glider (real LOW wing; modelled HIGH — tilt)
 #   fk9_mkii        9.85    5.85    2.15       FK9 Mk II, strut high-wing
-#   stemme_s10     23.00*   8.42    1.80       *11.40 m FOLDED (hangar config)
+#   stemme_s10     23.00*   8.42    1.80       *11.40 m FOLDED (hangar config); TAILDRAGGER
 #   zlin_savage     9.31    6.39    2.03       Savage Cub, strut taildragger
 #
-# measured: false is kept on every entry — these are PUBLISHED specs, not
-# on-site tape/laser measurements, so they still raise the viewer's
-# "PLACEHOLDER DATA" honesty banner. Flip to true once verified on site.
+# CONFIG CORRECTIONS applied this refresh (sources disagreed with the prior
+# model; primary TCDS/manufacturer sources win):
+# - stemme_s10: the S10 is a TAILDRAGGER (two inward-retracting narrow-track main
+#   wheels, track 1.15 m, + a steered tailwheel; main→tail wheelbase 5.40 m), NOT a
+#   monowheel (EASA TCDS A.054; maintenance manual). Modelled here on its extended
+#   gear in the wings-folded hangar configuration.
+# - ctsl: the CTSL tail is CONVENTIONAL-low (a fuselage-roof all-moving stabilator;
+#   EASA TCDS A.537 + Flight Design maintenance manual), NOT cruciform (that was a
+#   secondary-source label). Geometry unchanged — the stabilator already sits low.
+#
+# NOTE NOT applied (deliberate modelling abstraction kept): the real SF-25E is a
+# LOW-wing aircraft (EASA TCDS A.098 — lowered from the SF-25B on), but its wing
+# stays modelled in the HIGH z-layer. The SF-25E is a tiltable monowheel glider:
+# resting on its single mainwheel it raises one wingtip high (the other drops onto
+# a tip outrigger), so a raised half-wing CAN overhang a neighbour. The single-z
+# parts model can only represent that nesting by placing the wing high; a flat
+# 18 m LOW wing would instead be a wall that no all-eight arrangement can clear
+# (verified: extensive search finds no valid all-8 with the wing low). So the wing
+# is modelled high as a deliberate tilt simplification — its DIMENSIONS are real,
+# only the z-layer is a modelling choice. Revisit when a tilt-aware model exists.
+#
+# measured: false is kept on every entry — these are PUBLISHED/SOURCED specs, not
+# on-site tape/laser measurements, so they still raise the viewer's "PLACEHOLDER
+# DATA" honesty banner. Flip to true once verified on site.
+#
+# WHAT IS STILL DERIVED/ESTIMATED (genuinely unpublished for these light types —
+# no accessible dimensioned three-view): the part STATIONS (offset_x fore-aft
+# positions), most tail chords, all fin chords, and all lift-strut attach points.
+# These are geometrically derived from the sourced envelope and flagged inline.
+# A fully-measured fleet needs on-site survey or the actual TCDS three-view.
 #
 # MODELLING NOTES (see data/fleet.yaml header for the full parts-model
 # conventions and ADR-0012/0013):
 # - Each Part is an oriented rectangle: length_m along plane +x (fore-aft),
-#   width_m along plane +y (lateral = wingspan for the wing part).
-# - Part z_bottom/z_top encode the vertical layer that the nesting rule uses
-#   (a high wing may legally overhang a neighbour's lower tail/fuselage when
-#   z-disjoint). High wings sit ~1.9-2.3 m; fuselages ~0-1.5 m.
-# - scheibe_falke (SF-25E) is a MONOWHEEL motor glider: resting on its single
-#   main wheel it can be TILTED — raising one wingtip high while the other
-#   drops onto a tip outrigger/skid. It is a seesaw: one wing up necessarily
-#   means the other goes down. That tilt lets a raised half-wing overhang a
-#   neighbour AND a lowered half-wing tuck under another aircraft's high wing.
-#   The single-z parts model cannot express the tilt, so the FULL 18 m wing is
-#   modelled in the high z-layer. This is a deliberate simplification that
-#   slightly OVERSTATES the nestable span (physically only the up-tilted ~half
-#   is high at any moment). Revisit when a tilt-aware model exists.
-# - stemme_s10 is modelled in its WINGS-FOLDED hangar configuration: the
-#   wing part width is the folded 11.40 m span (unfolded 23 m would not enter
-#   the 13.46 m door). Folded outer panels raise the effective height.
+#   width_m along plane +y (lateral = wingspan for the wing part). Wing length_m
+#   is the chord; wing width_m is the span.
+# - Part z_bottom/z_top encode the vertical layer the nesting rule uses (a high
+#   wing may legally overhang a neighbour's lower tail/fuselage when z-disjoint).
+#   High wings sit ~1.9-2.3 m; fuselages ~0-1.5 m.
+# - stemme_s10 is modelled in its WINGS-FOLDED hangar configuration: the wing part
+#   width is the folded 11.40 m span (unfolded 23 m would not enter the 13.46 m
+#   door). Folded outer panels raise the effective height.
 # - Empennage (ADR-0023, #518/#519/#520): each aircraft carries a `tail` (the
 #   horizontal stabilizer) + a `vertical_stabilizer` (fin+rudder rising to the
-#   published height column above, into the wing layer). stemme_s10 is the one
-#   T-tail (stabilizer at the fin top); ctsl is cruciform (stabilizer kept below
-#   the wing layer); all others are conventional-low. Spans/chords are estimates;
-#   tail configs + heights are sourced. All measured: false.
+#   published height column above). stemme_s10 is the one T-tail (stabilizer at
+#   the fin top); all others (incl. ctsl, corrected) are conventional-low. Tail
+#   configs + heights + the listed tail spans (cessna, ctsl) are sourced; other
+#   tail spans and all tail/fin chords are estimates. All measured: false.
 
 aircraft:
   # ----------------------------------------------------------------------------
   # MOTORGLIDER — Scheibe SF-25E Super Falke. 18 m span (longest in the fleet);
   # too wide for the 15.08 m hangar nose-in, so it parks lengthwise. Cantilever,
-  # monowheel + outriggers, always on carts.
+  # monowheel + outriggers + tailwheel, always on carts. The real SF-25E is a
+  # LOW-wing aircraft (EASA TCDS A.098), but its wing is modelled in the HIGH
+  # z-layer here — see the tilt note in the header (the monowheel tilts one wing
+  # up to nest, which the single-z model can only represent by placing the wing
+  # high; a flat low wing would be an 18 m wall no all-8 arrangement can clear).
   # ----------------------------------------------------------------------------
   - id: scheibe_falke
     name: "Scheibe SF-25E Super Falke"
-    wing_position: high
-    gear: monowheel
+    wing_position: high     # real aircraft is LOW-wing (EASA TCDS); modelled HIGH for the tilt — see header
+    gear: monowheel         # central monowheel + under-wing outriggers + tailwheel (TCDS-confirmed)
     movement_mode: always_cart
     turn_radius_m: null  # always_cart → towplanner uses 0 (pivot); see ADR-0007
     measured: false
-    notes: "18 m span (kept assembled here; folds to ~10 m per spec, incidental/unverified). Monowheel → tiltable (one wing up, the other down on a tip outrigger). Full wing modelled in the high z-layer to represent the up-tilted wing's nesting; see header caveat."
+    notes: "18 m span (EASA TCDS A.098). Cantilever wing; real aircraft is low-wing but modelled high to represent the monowheel TILT (see header). Central monowheel + outriggers + tailwheel; parks lengthwise (too wide nose-in)."
     parts:
       - kind: fuselage
-        length_m: 7.58
-        width_m: 1.1
+        length_m: 7.58        # EASA TCDS A.098 (length)
+        width_m: 1.1          # side-by-side cabin, est. (external fuselage width unpublished)
         offset_x_m: 0.0
         offset_y_m: 0.0
         z_bottom_m: 0.0
         z_top_m: 1.5
-      - kind: wing
-        length_m: 1.0
-        width_m: 18.0
+      - kind: wing            # modelled HIGH (z 1.9-2.1) for the monowheel tilt — real aircraft is low-wing
+        length_m: 1.01        # mean chord = area 18.20 m² / span 18.00 m (EASA TCDS A.098)
+        width_m: 18.0         # span (EASA TCDS A.098)
         offset_x_m: 1.5
         offset_y_m: 0.0
         z_bottom_m: 1.9
         z_top_m: 2.1
-      - kind: tail            # horizontal stabilizer (conventional low; ~2.6 m span est.)
-        length_m: 0.9
-        width_m: 2.6
+      - kind: tail            # horizontal stabilizer (conventional-low; ~2.6 m span est.)
+        length_m: 0.9         # chord est. (unpublished)
+        width_m: 2.6          # span est.
         offset_x_m: -3.34
         offset_y_m: 0.0
         z_bottom_m: 1.2
         z_top_m: 1.5
-      - kind: vertical_stabilizer  # fin+rudder to overall height 1.85 m (Super Falke)
-        length_m: 1.1
+      - kind: vertical_stabilizer  # fin+rudder to overall height 1.85 m (Jane's)
+        length_m: 1.1         # fin chord est.
         width_m: 0.15
         offset_x_m: -3.24
         offset_y_m: 0.0
@@ -99,40 +125,41 @@ aircraft:
 
   # ----------------------------------------------------------------------------
   # SELF-LAUNCHING MOTORGLIDER — Stemme S10. Hangared WINGS FOLDED (11.4 m span;
-  # 23 m unfolded). Cantilever, retractable monowheel, on own gear.
+  # 23 m unfolded). Cantilever, TAILDRAGGER (twin retractable mains + tailwheel),
+  # on own gear.
   # ----------------------------------------------------------------------------
   - id: stemme_s10
     name: "Stemme S10"
     wing_position: high
-    gear: monowheel
+    gear: tailwheel         # twin inward-retracting mains (track 1.15 m) + tailwheel (EASA TCDS A.054)
     movement_mode: always_own_gear
-    turn_radius_m: 10.0  # monowheel → no wheelbase cross-check; towplanner own-gear radius
+    turn_radius_m: 10.0
     measured: false
-    notes: "Two-seat self-launching motor glider. WINGS-FOLDED config: wing width = 11.4 m folded span (23 m unfolded). Length 8.42 m, the longest fuselage in the fleet."
+    notes: "Two-seat self-launching motor glider, T-tail. WINGS-FOLDED config: wing width = 11.4 m folded span (23 m unfolded; EASA TCDS A.054). Length 8.42 m, longest fuselage in the fleet. Taildragger (corrected from monowheel)."
     parts:
       - kind: fuselage
-        length_m: 8.42
-        width_m: 1.18
+        length_m: 8.42        # EASA TCDS A.054 (length)
+        width_m: 1.18         # fuselage width (Stemme maintenance manual)
         offset_x_m: -1.5
         offset_y_m: 0.0
         z_bottom_m: 0.0
         z_top_m: 1.4
       - kind: wing
-        length_m: 0.82
-        width_m: 11.4
+        length_m: 0.815       # mean chord = area 18.74 m² / span 23.0 m (EASA TCDS A.054)
+        width_m: 11.4         # FOLDED span (manufacturer; unfolded 23.0 m, EASA TCDS)
         offset_x_m: 0.0
         offset_y_m: 0.0
         z_bottom_m: 1.9
         z_top_m: 2.1
-      - kind: tail            # T-TAIL: horizontal stabilizer HIGH, at the fin top (~2.8 m span est.)
-        length_m: 0.8
-        width_m: 2.8
+      - kind: tail            # T-TAIL: horizontal stabilizer HIGH, at the fin top (~2.6 m span est.)
+        length_m: 0.8         # chord est. (unpublished)
+        width_m: 2.6          # span est. (low confidence)
         offset_x_m: -5.31
         offset_y_m: 0.0
         z_bottom_m: 1.5
         z_top_m: 1.8
-      - kind: vertical_stabilizer  # fin to overall height 1.80 m (folded config; tops 0.1 m below a 1.9 m wing — within the 0.2 m clearance band, so a wing nested over it still conflicts)
-        length_m: 1.0
+      - kind: vertical_stabilizer  # fin to overall height 1.80 m (folded config)
+        length_m: 1.0         # fin chord est.
         width_m: 0.15
         offset_x_m: -5.21
         offset_y_m: 0.0
@@ -140,6 +167,8 @@ aircraft:
         z_top_m: 1.8
     wheels:
       main_offset_x_m: 0.0
+      track_m: 1.15           # main gear track (de.Wikipedia; narrow inward-retracting mains)
+      third_wheel_offset_x_m: -5.40  # tailwheel: main→tail wheelbase 5.40 m (de.Wikipedia)
 
   # ----------------------------------------------------------------------------
   # TAILWHEEL HIGH-WING — Aviat Husky A-1C, strut-braced, always on own gear
@@ -153,34 +182,34 @@ aircraft:
     measured: false
     parts:
       - kind: fuselage
-        length_m: 6.88
-        width_m: 0.85
+        length_m: 6.88        # Aviat manufacturer (22 ft 7 in)
+        width_m: 0.75         # narrow tandem; cabin 0.686 m (AOPA) + structure, external est.
         offset_x_m: -1.72
         offset_y_m: 0.0
         z_bottom_m: 0.0
         z_top_m: 1.5
       - kind: wing
-        length_m: 1.4
-        width_m: 10.82
+        length_m: 1.57        # constant chord = area 17.0 m² / span 10.82 m (Aviat; Jane's "constant-chord")
+        width_m: 10.82        # span (Aviat manufacturer)
         offset_x_m: -0.52
         offset_y_m: 0.0
         z_bottom_m: 2.0
         z_top_m: 2.3
-      - kind: tail            # horizontal stabilizer (conventional low; ~3.0 m span est.)
-        length_m: 1.0
-        width_m: 3.0
+      - kind: tail            # horizontal stabilizer (conventional-low; ~3.0 m span est.)
+        length_m: 1.0         # chord est. (unpublished)
+        width_m: 3.0          # span est.
         offset_x_m: -4.66
         offset_y_m: 0.0
         z_bottom_m: 1.2
         z_top_m: 1.5
       - kind: vertical_stabilizer  # fin+rudder to overall height 2.26 m (A-1C; into the wing layer)
-        length_m: 1.3
+        length_m: 1.3         # fin chord est.
         width_m: 0.15
         offset_x_m: -4.51
         offset_y_m: 0.0
         z_bottom_m: 1.5
         z_top_m: 2.26
-    struts:
+    struts:                   # V-strut per side; attach stations est. (unpublished)
       fuselage_attach_x_m: -1.22
       fuselage_attach_y_m: 0.425
       fuselage_attach_z_m: 0.5
@@ -188,7 +217,7 @@ aircraft:
       width_m: 0.05
     wheels:
       main_offset_x_m: 0.20
-      track_m: 2.0
+      track_m: 2.0            # est. (unpublished)
       third_wheel_offset_x_m: -4.80
 
   # ----------------------------------------------------------------------------
@@ -201,36 +230,37 @@ aircraft:
     movement_mode: always_cart
     turn_radius_m: null  # always_cart → towplanner uses 0 (pivot); see ADR-0007
     measured: false
+    notes: "WT-01 baseline dims used (length 6.49 m, height 1.90 m); the WT-02 nosewheel variant is reported taller/longer (~6.9 m / ~2.3 m) by one pilot-report — unconfirmed."
     parts:
       - kind: fuselage
-        length_m: 6.49
-        width_m: 0.85
+        length_m: 6.49        # WT-01 baseline (Wikipedia; WT-02 may be ~6.9 m)
+        width_m: 1.15         # cabin width 1.15 m (ultraligero.net / sfc-greifswald.de)
         offset_x_m: -0.33
         offset_y_m: 0.0
         z_bottom_m: 0.0
         z_top_m: 1.4
       - kind: wing
-        length_m: 1.2
-        width_m: 9.15
+        length_m: 1.54        # constant chord (ultraligero.net / sfc-greifswald.de "Flächentiefe 1.54 m")
+        width_m: 9.15         # span (Wikipedia; some sources 9.20 m)
         offset_x_m: 0.67
         offset_y_m: 0.0
         z_bottom_m: 2.0
         z_top_m: 2.2
-      - kind: tail            # horizontal stabilizer (conventional low; ~2.9 m span est.)
-        length_m: 0.9
-        width_m: 2.9
+      - kind: tail            # horizontal stabilizer (conventional-low; ~2.9 m span est.)
+        length_m: 0.9         # chord est. (unpublished)
+        width_m: 2.9          # span est.
         offset_x_m: -3.13
         offset_y_m: 0.0
         z_bottom_m: 1.1
         z_top_m: 1.4
       - kind: vertical_stabilizer  # fin+rudder to overall height 1.90 m
-        length_m: 1.0
+        length_m: 1.0         # fin chord est.
         width_m: 0.15
         offset_x_m: -3.08
         offset_y_m: 0.0
         z_bottom_m: 1.4
         z_top_m: 1.9
-    struts:
+    struts:                   # attach stations est. (unpublished)
       fuselage_attach_x_m: 0.07
       fuselage_attach_y_m: 0.425
       fuselage_attach_z_m: 0.5
@@ -238,7 +268,7 @@ aircraft:
       width_m: 0.05
     wheels:
       main_offset_x_m: -0.10
-      track_m: 1.5
+      track_m: 1.5            # est. (unpublished)
       third_wheel_offset_x_m: 1.40
 
   # ----------------------------------------------------------------------------
@@ -253,34 +283,34 @@ aircraft:
     measured: false
     parts:
       - kind: fuselage
-        length_m: 6.39
-        width_m: 0.8
+        length_m: 6.39        # Zlin flight manual (639 cm)
+        width_m: 0.69         # cabin width 69 cm (Zlin flight manual); narrow tube-and-fabric
         offset_x_m: -1.60
         offset_y_m: 0.0
         z_bottom_m: 0.0
         z_top_m: 1.5
       - kind: wing
-        length_m: 1.5
-        width_m: 9.31
+        length_m: 1.56        # constant rectangular chord 156 cm (Zlin flight manual / Savage brochure)
+        width_m: 9.31         # span (Zlin flight manual 931 cm)
         offset_x_m: -0.50
         offset_y_m: 0.0
         z_bottom_m: 1.9
         z_top_m: 2.2
-      - kind: tail            # horizontal stabilizer (conventional low; ~2.8 m span est.)
-        length_m: 0.9
-        width_m: 2.8
+      - kind: tail            # horizontal stabilizer (conventional-low; ~2.8 m span est.)
+        length_m: 0.9         # chord est. (unpublished)
+        width_m: 2.8          # span est.
         offset_x_m: -4.35
         offset_y_m: 0.0
         z_bottom_m: 1.2
         z_top_m: 1.5
       - kind: vertical_stabilizer  # fin+rudder to overall height 2.03 m
-        length_m: 1.1
+        length_m: 1.1         # fin chord est.
         width_m: 0.15
         offset_x_m: -4.25
         offset_y_m: 0.0
         z_bottom_m: 1.5
         z_top_m: 2.03
-    struts:
+    struts:                   # twin lift struts + jury per side; attach stations est. (unpublished)
       fuselage_attach_x_m: -1.20
       fuselage_attach_y_m: 0.4
       fuselage_attach_z_m: 0.5
@@ -288,8 +318,8 @@ aircraft:
       width_m: 0.05
     wheels:
       main_offset_x_m: 0.20
-      track_m: 1.8
-      third_wheel_offset_x_m: -4.30
+      track_m: 1.8            # main gear track 180 cm (Savage Classic flight manual)
+      third_wheel_offset_x_m: -4.19  # tailwheel: main→tail wheelbase 4.39 m (Zlin W&B station arms)
 
   # ----------------------------------------------------------------------------
   # CART-ELIGIBLE — Cessna 140, high-wing tailwheel, strut-braced
@@ -304,34 +334,34 @@ aircraft:
     notes: "V-strut treated as one strut per side"
     parts:
       - kind: fuselage
-        length_m: 6.55
-        width_m: 0.85
+        length_m: 6.55        # Wikipedia (21 ft 6 in); cross-checked
+        width_m: 1.0          # cabin width 40 in = 1.016 m (AviatorInsider)
         offset_x_m: -1.64
         offset_y_m: 0.0
         z_bottom_m: 0.0
         z_top_m: 1.5
       - kind: wing
-        length_m: 1.55
-        width_m: 10.16
+        length_m: 1.46        # mean chord = area 14.80 m² / span 10.16 m (constant-chord)
+        width_m: 10.16        # span (33 ft 4 in)
         offset_x_m: -0.54
         offset_y_m: 0.0
         z_bottom_m: 2.0
         z_top_m: 2.3
-      - kind: tail            # horizontal stabilizer (conventional low; ~3.2 m span est.)
-        length_m: 1.1
-        width_m: 3.2
+      - kind: tail            # horizontal stabilizer (conventional-low; 2.69 m span SOURCED)
+        length_m: 0.95        # chord est. (from span + AR~3)
+        width_m: 2.69         # tailplane span 8 ft 10 in (skytamer / Jane's-style)
         offset_x_m: -4.37
         offset_y_m: 0.0
         z_bottom_m: 1.2
         z_top_m: 1.5
       - kind: vertical_stabilizer  # fin+rudder to overall height 1.91 m
-        length_m: 1.2
+        length_m: 1.2         # fin chord est.
         width_m: 0.15
         offset_x_m: -4.32
         offset_y_m: 0.0
         z_bottom_m: 1.5
         z_top_m: 1.91
-    struts:
+    struts:                   # single lift strut per side; attach stations est. (unpublished)
       fuselage_attach_x_m: -1.14
       fuselage_attach_y_m: 0.425
       fuselage_attach_z_m: 0.5
@@ -339,8 +369,8 @@ aircraft:
       width_m: 0.05
     wheels:
       main_offset_x_m: 0.50
-      track_m: 2.1
-      third_wheel_offset_x_m: -3.80
+      track_m: 1.96           # main gear track 6 ft 5 in (skytamer / Jane's-style)
+      third_wheel_offset_x_m: -4.55  # tailwheel: main→tail wheelbase 5.05 m (TCDS A-768 station arms)
 
   # ----------------------------------------------------------------------------
   # CART-ELIGIBLE — Flight Design CTSL, high-wing nosewheel, cantilever (no struts)
@@ -352,31 +382,31 @@ aircraft:
     movement_mode: cart_eligible
     turn_radius_m: 4.0
     measured: false
-    notes: "Cantilever wing (no struts)"
+    notes: "Cantilever wing (no struts). Span/length/height from EASA TCDS A.537."
     parts:
       - kind: fuselage
-        length_m: 6.60
-        width_m: 1.0
+        length_m: 6.60        # EASA TCDS A.537 (6.604 m)
+        width_m: 1.24         # cabin width 49 in = 1.24 m (Flight Design USA)
         offset_x_m: -0.33
         offset_y_m: 0.0
         z_bottom_m: 0.0
         z_top_m: 1.4
       - kind: wing
-        length_m: 1.4
-        width_m: 8.59
+        length_m: 1.16        # mean chord = area 9.98 m² / span 8.594 m (EASA TCDS A.537 / POH)
+        width_m: 8.59         # span (EASA TCDS A.537: 8.594 m)
         offset_x_m: 0.67
         offset_y_m: 0.0
         z_bottom_m: 1.9
         z_top_m: 2.2
-      - kind: tail            # CRUCIFORM tail — stabilator low/mid, kept below the wing layer (~2.6 m span est.)
-        length_m: 0.9
-        width_m: 2.6
+      - kind: tail            # CONVENTIONAL-low all-moving stabilator (EASA/MM; 2.33 m span SOURCED)
+        length_m: 0.69        # stabilator mean chord (CTLS MM: area 1.60 m² ÷ span 2.33 m)
+        width_m: 2.33         # stabilator span (CTLS MM: area 1.60 m², AR 3.38 → 2.33 m)
         offset_x_m: -3.18
         offset_y_m: 0.0
         z_bottom_m: 1.1
         z_top_m: 1.4
-      - kind: vertical_stabilizer  # tall fin+rudder to overall height 2.34 m (well into the wing layer)
-        length_m: 1.2
+      - kind: vertical_stabilizer  # tall fin+rudder to overall height 2.34 m (EASA TCDS; into the wing layer)
+        length_m: 1.2         # fin chord est.
         width_m: 0.15
         offset_x_m: -3.03
         offset_y_m: 0.0
@@ -384,7 +414,7 @@ aircraft:
         z_top_m: 2.34
     wheels:
       main_offset_x_m: -0.10
-      track_m: 1.7
+      track_m: 1.7            # est. (unpublished)
       third_wheel_offset_x_m: 1.40
 
   # ----------------------------------------------------------------------------
@@ -399,34 +429,34 @@ aircraft:
     measured: false
     parts:
       - kind: fuselage
-        length_m: 5.85
-        width_m: 0.85
+        length_m: 5.85        # type table (Mk IV airframe, shared; Wikipedia / lightsportaircraft.ca)
+        width_m: 1.20         # cabin/fuselage external width ~1.20 m (technicalparameters.eu; interior 1.08 m)
         offset_x_m: -0.29
         offset_y_m: 0.0
         z_bottom_m: 0.0
         z_top_m: 1.4
       - kind: wing
-        length_m: 1.3
-        width_m: 9.85
+        length_m: 1.18        # mean chord = area 11.60 m² / span 9.85 m (all-aero, Mk II)
+        width_m: 9.85         # span (all-aero, Mk II)
         offset_x_m: 0.71
         offset_y_m: 0.0
         z_bottom_m: 1.9
         z_top_m: 2.2
-      - kind: tail            # horizontal stabilizer (conventional low; ~3.2 m span est.)
-        length_m: 0.9
-        width_m: 3.2
+      - kind: tail            # horizontal stabilizer (conventional-low; ~3.2 m span est.)
+        length_m: 0.9         # chord est. (unpublished)
+        width_m: 3.2          # span est.
         offset_x_m: -2.77
         offset_y_m: 0.0
         z_bottom_m: 1.1
         z_top_m: 1.4
       - kind: vertical_stabilizer  # fin+rudder to overall height 2.15 m
-        length_m: 1.1
+        length_m: 1.1         # fin chord est.
         width_m: 0.15
         offset_x_m: -2.67
         offset_y_m: 0.0
         z_bottom_m: 1.4
         z_top_m: 2.15
-    struts:
+    struts:                   # attach stations est. (unpublished)
       fuselage_attach_x_m: 0.11
       fuselage_attach_y_m: 0.425
       fuselage_attach_z_m: 0.5
@@ -434,5 +464,5 @@ aircraft:
       width_m: 0.05
     wheels:
       main_offset_x_m: -0.10
-      track_m: 1.4
+      track_m: 1.4            # est. (unpublished)
       third_wheel_offset_x_m: 1.40
