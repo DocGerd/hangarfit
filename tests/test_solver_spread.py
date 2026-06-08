@@ -90,9 +90,19 @@ def test_solve_default_enables_spread():
     from hangarfit.solver import solve
 
     scenario = load_scenario("tests/fixtures/scenario_minimal.yaml")
-    default = solve(scenario, seed=7, search=SearchConfig(max_restarts=5), plan_paths=False)
+    # budget_s well above the max_restarts wall-clock so the restart count is the
+    # sole termination gate even on a loaded runner — else budget_s can trip first
+    # at a different restart count between the two solves and they diverge (#538,
+    # the #531-class flake; ADR-0003 determinism is max_restarts-scoped).
+    default = solve(
+        scenario, seed=7, budget_s=120.0, search=SearchConfig(max_restarts=5), plan_paths=False
+    )
     explicit_on = solve(
-        scenario, seed=7, search=SearchConfig(spread=True, max_restarts=5), plan_paths=False
+        scenario,
+        seed=7,
+        budget_s=120.0,
+        search=SearchConfig(spread=True, max_restarts=5),
+        plan_paths=False,
     )
     assert default.layouts and explicit_on.layouts
     assert [(p.x_m, p.y_m, p.heading_deg) for p in default.layouts[0].placements] == [
@@ -310,8 +320,9 @@ def test_solve_populates_spread_diagnostics():
 def test_solve_spread_selection_is_deterministic():
     scenario = load_scenario("tests/fixtures/scenario_minimal.yaml")
     cfg = SearchConfig(max_restarts=5)
-    a = solve(scenario, seed=7, search=cfg, plan_paths=False)
-    b = solve(scenario, seed=7, search=cfg, plan_paths=False)
+    # budget_s pinned high so max_restarts is the sole gate (load-independent, #538).
+    a = solve(scenario, seed=7, budget_s=120.0, search=cfg, plan_paths=False)
+    b = solve(scenario, seed=7, budget_s=120.0, search=cfg, plan_paths=False)
     assert a.diagnostics.min_pairwise_gap_m == b.diagnostics.min_pairwise_gap_m
     assert [_layout_key(lay) for lay in a.layouts] == [_layout_key(lay) for lay in b.layouts]
 
@@ -497,9 +508,10 @@ def test_solve_priority_zero_byte_identical_to_no_constraints():
     """Inert-by-default at solve() level: all-zero priority selects the SAME
     layout as no priority, same seed (ADR-0003, max_restarts-scoped)."""
     s = load_scenario("tests/fixtures/solve_fresh_alternatives_three.yaml")
-    base = solve(s, seed=3, search=SearchConfig(max_restarts=4), plan_paths=False)
+    # budget_s pinned high so max_restarts is the sole gate (load-independent, #538).
+    base = solve(s, seed=3, budget_s=120.0, search=SearchConfig(max_restarts=4), plan_paths=False)
     s0 = _with_priority(s, **{pid: 0.0 for pid in s.fleet_in})
-    zero = solve(s0, seed=3, search=SearchConfig(max_restarts=4), plan_paths=False)
+    zero = solve(s0, seed=3, budget_s=120.0, search=SearchConfig(max_restarts=4), plan_paths=False)
     assert base.layouts and zero.layouts
     assert _placements_key(base) == _placements_key(zero)
 
@@ -508,8 +520,9 @@ def test_solve_with_priority_is_deterministic():
     """ADR-0003 still holds with priority active: same seed → byte-identical."""
     base = load_scenario("tests/fixtures/solve_fresh_alternatives_three.yaml")
     s = _with_priority(base, **{sorted(base.fleet_in)[0]: 6.0})
-    a = solve(s, seed=1, search=SearchConfig(max_restarts=4), plan_paths=False)
-    b = solve(s, seed=1, search=SearchConfig(max_restarts=4), plan_paths=False)
+    # budget_s pinned high so max_restarts is the sole gate (load-independent, #538).
+    a = solve(s, seed=1, budget_s=120.0, search=SearchConfig(max_restarts=4), plan_paths=False)
+    b = solve(s, seed=1, budget_s=120.0, search=SearchConfig(max_restarts=4), plan_paths=False)
     assert a.layouts and b.layouts
     assert _placements_key(a) == _placements_key(b)
 
