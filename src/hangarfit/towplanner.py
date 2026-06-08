@@ -1458,9 +1458,21 @@ _MAX_EXPANSIONS = 8000  # node-expansion budget per plane before bailing (#336).
 # seed=1) was "un-routable even at 4000 — genuine tight-geometry exhaustion."
 # That was a HEURISTIC artifact, NOT infeasibility: euclidean ignores walls and
 # floods the frontier, needing ~13.5k expansions, whereas the obstacle-aware grid
-# heuristic threads the same maneuver in ~6062. So with grid the routability knee
-# moves to ~6100, and 8000 gives headroom to route it (the seed=1 fill reaches
-# 5/5, ~8.4k total expansions).
+# heuristic threaded the same maneuver in ~6062 with grid-default + #336 budgets.
+#
+# #512 — the ~6062 figure is PRE-#480. #480's fewest-moves cost model (an additive
+# CUSP_PENALTY per direction reversal) roughly DOUBLED the per-plane expansion cost
+# of the deep, heading-hard slots: aviat_husky now needs ~12515 (measured), and
+# ctsl — cheap pre-#480 — exceeds even a 13000 cap. So the seed=1 spread=False
+# six-plane fill is NO LONGER fully tow-routable at these budgets; routing it would
+# need per-plane ~20k + global ~35k, pushing the un-routable-disprove wall-clock
+# (the very thing _MAX_FILL_EXPANSIONS bounds) past the ~400 s perf intent. That is
+# an ACCEPTED realism-over-routability trade of #480 (ADR-0010), NOT a budget that
+# wants raising — see test_six_plane_fresh_fill_partial_routing_post_480 and #512.
+# The budgets are kept at 8000/16000 so an un-routable fill still disproves fast.
+# (The ~12515/~13000 figures are indicative, not asserted — re-measure after any
+# CUSP_PENALTY or fixture-geometry change; the binding contract is that test's
+# qualitative best-effort assertion, not these numbers.)
 #
 # Deterministic (machine-independent) bound on worst-case per-plane search cost.
 # Budget exhaustion can still report a genuinely-feasible-but-hard layout as

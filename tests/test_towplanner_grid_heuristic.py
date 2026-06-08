@@ -21,11 +21,18 @@ primitive default stays ``euclidean`` — callers choose). The earlier "grid is
 inert, so no 'grid beats euclidean' test can exist" conclusion was a budget-700/
 2000 artifact: at those budgets BOTH heuristics cap out on the tight cases, so
 grid bought no extra *routed count*. But grid roughly halves the *expansions*
-(aviat_husky ~13.5k euclidean → ~6062 grid), which converts to a routed plane once
-the per-plane budget clears ~6100 (#336 raised it to 8000). The end-to-end "grid
-routes a tight fill euclidean cannot, at the shipped default budget" proof now
-lives in ``tests/test_solver_towplanner.py::
-test_six_plane_fresh_fill_fully_routes_at_shipped_defaults``.
+(aviat_husky ~13.5k euclidean → ~6062 grid pre-#480), which converted to a routed
+plane once the per-plane budget cleared ~6100 (#336 raised it to 8000).
+
+#512: that ~6062 grid figure is PRE-#480. #480's fewest-moves cost model (an
+additive ``CUSP_PENALTY`` per direction reversal) ~doubled the per-plane cost of
+the deep, heading-hard slots — aviat_husky → ~12515, and ctsl (cheap pre-#480) →
+> 13000 — so the seed=1 six-plane fill is no longer *fully* routable at the
+8000/16000 budgets — an accepted realism-over-routability trade (raising the
+budgets enough would breach the un-routable-disprove perf intent). The
+grid-still-beats-euclidean property holds; the end-to-end behaviour is now pinned
+(as best-effort partial routing) by ``tests/test_solver_towplanner.py::
+test_six_plane_fresh_fill_partial_routing_post_480``.
 """
 
 from __future__ import annotations

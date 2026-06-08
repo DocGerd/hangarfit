@@ -133,16 +133,29 @@ def test_solve_best_effort_real_planner_on_untowable_fill():
 
 
 @pytest.mark.slow
-def test_six_plane_fresh_fill_fully_routes_at_shipped_defaults():
-    """#336: a tow-friendly (spread=False) fill of ``solve_fresh_six_planes``
-    (seed=1) is **fully** tow-routable under the SHIPPED default planner — the
-    obstacle-aware grid heuristic + the raised per-plane budget. Previously
-    un-routable: euclidean@2000 capped out on ``aviat_husky`` (which needs
-    ~6062 grid expansions to thread its 10.82 m wing into the back corner).
+def test_six_plane_fresh_fill_partial_routing_post_480():
+    """#512: post-#480, the tow-friendly (spread=False) fill of
+    ``solve_fresh_six_planes`` (seed=1) is NO LONGER fully tow-routable at shipped
+    defaults — an ACCEPTED realism-over-routability trade, not a bug.
 
-    Scope: this asserts the *planner* improvement on a tow-friendly layout. The
-    default ``spread=True`` fill remaining hard is the separate #280 placement
-    tension (back-fill #320), not this issue. Slow (real per-plane search).
+    #336 originally shipped this as a *full*-routing guarantee: the obstacle-aware
+    grid heuristic threaded ``aviat_husky``'s 10.82 m wing into the back corner in
+    ~6062 expansions, and the seed=1 fill reached 5/5 at ~8.4 k total. #480's
+    fewest-moves cost model (an additive ``CUSP_PENALTY`` per direction reversal,
+    ADR-0010) roughly DOUBLED the per-plane cost of the deep, heading-hard slots:
+    ``aviat_husky`` now needs ~12515 (measured, > the 8000 per-plane cap) and
+    ``ctsl`` — cheap pre-#480 — exceeds even a 13000 cap. Routing the fill again
+    would need per-plane ~20 k + global ~35 k, pushing the un-routable-disprove
+    wall-clock past the ~400 s perf intent the 16000 global cap exists to hold (see
+    the ``_MAX_EXPANSIONS`` comment in towplanner.py). So the budgets stay at
+    8000/16000 and the solve is BEST-EFFORT here: it returns the valid static
+    layout with the over-budget plane's plan ``None`` and that plane named in
+    ``unroutable_planes``, rather than failing the whole solve.
+
+    (Was ``test_six_plane_fresh_fill_fully_routes_at_shipped_defaults``, which
+    asserted full routing under the pre-#480 ~6062-expansion path.) Slow (real
+    per-plane search to the budget). The separate ``spread=True`` placement tension
+    is #280 / back-fill #320, not this.
     """
     from hangarfit.loader import load_scenario
     from hangarfit.models import SearchConfig
@@ -152,13 +165,19 @@ def test_six_plane_fresh_fill_fully_routes_at_shipped_defaults():
     result = solve(
         scenario, budget_s=15.0, alternatives=1, seed=1, search=SearchConfig(spread=False)
     )
+    # The static layout is still found (a valid placement exists) — only its tow
+    # plan is best-effort.
     assert result.status in ("found", "found_partial")
     assert len(result.layouts) == 1
-    assert all(p is not None for p in result.plans), (
-        f"fill not fully routed at shipped defaults: "
-        f"unroutable={result.diagnostics.unroutable_planes}"
+    assert len(result.plans) == len(result.layouts)
+    # Best-effort: at least one plane exceeds the shipped tow budget post-#480, so
+    # its plan is None and it is named in unroutable_planes — the valid layout is
+    # preserved, the whole solve does not fail.
+    assert any(p is None for p in result.plans), (
+        f"expected best-effort partial routing post-#480; plans={result.plans}"
     )
-    assert result.diagnostics.unroutable_planes == ()
+    assert result.diagnostics.unroutable_planes  # non-empty: names the blocking plane(s)
+    assert len(result.diagnostics.unroutable_planes) == sum(1 for p in result.plans if p is None)
 
 
 def test_solve_k_gt_1_bundle_alignment_with_mixed_routability(monkeypatch):
