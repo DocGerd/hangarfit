@@ -280,7 +280,9 @@ unjustified**, and the cheap planner levers that dig surfaced were adopted:
   (`plan_path`'s primitive default stays `euclidean`; callers choose). Euclidean
   ignores walls and floods the frontier in tight quarters (`aviat_husky`: ~13.5k
   expansions); the obstacle-aware grid geodesic threads the same maneuver in
-  ~6062. Pass `--tow-heuristic euclidean` to opt out.
+  ~6062 (pre-#480 cost — #480's cusp penalty later ~doubled it to ~12515; the
+  grid-beats-euclidean *relative* point still holds, see #512). Pass
+  `--tow-heuristic euclidean` to opt out.
 - **Per-plane `_MAX_EXPANSIONS` raised 2000 → 8000** — the budget grid needs to
   route the tight-but-feasible cases (the earlier "infeasible even at 4000" note
   was a euclidean-heuristic artifact, not geometry).

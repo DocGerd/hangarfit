@@ -26,12 +26,13 @@ plane once the per-plane budget cleared ~6100 (#336 raised it to 8000).
 
 #512: that ~6062 grid figure is PRE-#480. #480's fewest-moves cost model (an
 additive ``CUSP_PENALTY`` per direction reversal) ~doubled the per-plane cost of
-the deep, heading-hard slots (aviat_husky → ~12515, ctsl → > 13000), so the seed=1
-six-plane fill is no longer *fully* routable at the 8000/16000 budgets — an
-accepted realism-over-routability trade (raising the budgets enough would breach
-the un-routable-disprove perf intent). The grid-still-beats-euclidean property
-holds; the end-to-end behaviour is now pinned (as best-effort partial routing) by
-``tests/test_solver_towplanner.py::test_six_plane_fresh_fill_partial_routing_post_480``.
+the deep, heading-hard slots — aviat_husky → ~12515, and ctsl (cheap pre-#480) →
+> 13000 — so the seed=1 six-plane fill is no longer *fully* routable at the
+8000/16000 budgets — an accepted realism-over-routability trade (raising the
+budgets enough would breach the un-routable-disprove perf intent). The
+grid-still-beats-euclidean property holds; the end-to-end behaviour is now pinned
+(as best-effort partial routing) by ``tests/test_solver_towplanner.py::
+test_six_plane_fresh_fill_partial_routing_post_480``.
 """
 
 from __future__ import annotations

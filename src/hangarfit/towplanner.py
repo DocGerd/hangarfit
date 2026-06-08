@@ -1470,6 +1470,9 @@ _MAX_EXPANSIONS = 8000  # node-expansion budget per plane before bailing (#336).
 # an ACCEPTED realism-over-routability trade of #480 (ADR-0010), NOT a budget that
 # wants raising — see test_six_plane_fresh_fill_partial_routing_post_480 and #512.
 # The budgets are kept at 8000/16000 so an un-routable fill still disproves fast.
+# (The ~12515/~13000 figures are indicative, not asserted — re-measure after any
+# CUSP_PENALTY or fixture-geometry change; the binding contract is that test's
+# qualitative best-effort assertion, not these numbers.)
 #
 # Deterministic (machine-independent) bound on worst-case per-plane search cost.
 # Budget exhaustion can still report a genuinely-feasible-but-hard layout as
