@@ -568,11 +568,14 @@ def test_solve_no_spread_flag_accepted_and_runs(tmp_path):
     """`--no-spread` is accepted on `solve` and drives a successful no-spread run."""
     from hangarfit.cli import main
 
+    # Easy 2-plane fixture so rc==0 is load-robust: it finds a valid layout
+    # immediately rather than risking budget exhaustion under heavy parallel CI
+    # load (which #519/#520 tail surfaces made worse on the old 9-plane fill).
     out = tmp_path / "layout.yaml"
     rc = main(
         [
             "solve",
-            "tests/fixtures/solve_all_nine_large_hangar.yaml",
+            "tests/fixtures/scenario_minimal.yaml",
             "--seed",
             "42",
             "--budget",
@@ -629,11 +632,14 @@ def test_solve_no_back_fill_flag_accepted_and_runs(tmp_path):
     """`--no-back-fill` is accepted on `solve` and drives a successful run."""
     from hangarfit.cli import main
 
+    # Easy 2-plane fixture so rc==0 is load-robust (finds a valid layout at once,
+    # rather than risking budget exhaustion under heavy parallel CI load that
+    # #519/#520 tail surfaces aggravated on the old 9-plane fill).
     out = tmp_path / "layout.yaml"
     rc = main(
         [
             "solve",
-            "tests/fixtures/solve_all_nine_large_hangar.yaml",
+            "tests/fixtures/scenario_minimal.yaml",
             "--seed",
             "42",
             "--budget",
