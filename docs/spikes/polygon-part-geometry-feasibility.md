@@ -30,9 +30,10 @@
 2. **The value is real but narrow — hence PARTIAL, not GO.** A measured
    rectangle-vs-tapered-polygon experiment on the real Herrenteich layout shows a
    tapered **glider** wingtip nests where its bounding rectangle falsely conflicts —
-   a robust **0.10–0.30 m flip window**. But the flip is **glider-specific**: ~6 of
-   the 8 fleet aircraft are published **constant-chord** light types where a taper
-   polygon ≈ the rectangle (a clean negative control confirmed no flip there).
+   a robust **0.10–0.30 m flip window** (measured on the Scheibe wing over the
+   Stemme empennage). But the value is **taper-specific**: ~6 of the 8 fleet
+   aircraft are published **constant-chord** light types where a taper polygon ≈
+   the rectangle (a clean negative control confirmed no flip there).
 3. **The cost is concentrated, not in the checker.** It sits in **data authoring**,
    a **load-time vertex-canonicalization determinism invariant**, and the
    **`scene/v1`→`scene/v2` viewer seam** (the largest single piece). The collision
@@ -96,11 +97,14 @@ footprint at the tip and falsely rejects a physically-valid nest** — genuine
 *validity* value (eliminating false NO-conflicts), not cosmetics, exactly where the
 tool nests tightest. `metrics.min_wing_over_tail_clearance_m` sharpens for free.
 
-**But the value is concentrated**: the flip appears only for the **tapered
-gliders** (Scheibe SF-25E AR 17.8, Stemme S10 AR 14.0), and only in a thin
-crowding band. The negative control and the data research (below) confirm ~6 of 8
-fleet aircraft are constant-chord, where polygon fidelity buys essentially nothing.
-→ This is the empirical basis for **PARTIAL**.
+**But the value is concentrated and thin.** The flip was measured on the **Scheibe**
+wing (one of the two realistically-tapered gliders — Scheibe SF-25E AR 17.8, Stemme
+S10 AR 14.0), in one crowding direction, across a ~0.22 m band; the Stemme's tested
+crowding directions did not flip in this layout (they share the same
+taper-vs-rectangle footprint gap, but no neighbour sat in the flip band). The
+negative control and the data research (below) confirm ~6 of 8 fleet aircraft are
+constant-chord, where polygon fidelity buys essentially nothing. → A real but
+narrow, taper-specific win — the empirical basis for **PARTIAL**.
 
 ---
 
@@ -157,8 +161,8 @@ centroid shortcut).
 
 ## Approaches — ranked by effort vs realized fidelity (factoring Q8)
 
-| # | Approach | Fidelity gain | Effort | Verdict |
-|---|---|---|---|---|
+| Approach | Fidelity gain | Effort | Verdict |
+|---|---|---|---|
 | **(c)** opt-in N-gon parts where data exists (mixed scalar/polygon fleet) | tunable | **Low–Med** | **RECOMMENDED** — rectangle parts stay byte-identical; lowest blast radius; best determinism story |
 | **(d-param)** parametrized planform (root/tip chord + taper) the loader expands | medium (gliders) | **Med** | **RECOMMENDED with (c)** — machine-usable from what TCDS actually publish; YAML-ergonomic like `struts:` |
 | (a) per-part convex polygon outline | med–high | Med | viable; drops into the checker; convex keeps Shapely cheap |
