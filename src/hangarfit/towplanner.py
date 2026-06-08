@@ -27,7 +27,7 @@ from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass
 from typing import Literal
 
-from shapely import union_all
+from shapely import box, union_all
 from shapely.geometry import Point, Polygon
 
 # `_parts_conflict` is the exact oracle's per-pair predicate (collisions.py). The
@@ -36,7 +36,7 @@ from shapely.geometry import Point, Polygon
 # Importing a sibling-module private is the same pattern as `check as _check`.
 from hangarfit.collisions import _parts_conflict
 from hangarfit.collisions import check as _check
-from hangarfit.geometry import WorldPart, cached_parts_world
+from hangarfit.geometry import WorldPart, cached_parts_world, polygon_overlap
 from hangarfit.models import Aircraft, ApronShallowDrop, Conflict, Hangar, Layout, Placement
 
 SegmentKind = Literal["L", "S", "R"]
@@ -1683,7 +1683,8 @@ def _root_pose(node: _SearchNode) -> Pose:
 @dataclass(frozen=True, slots=True)
 class _Obstacles:
     """Precomputed static geometry for one plane-search: placed planes' world
-    parts and the (optional) maintenance-bay keep-out rectangle.
+    parts, the (optional) maintenance-bay keep-out rectangle, and the always-on
+    structural notch keep-outs (ADR-0018).
 
     Placed planes do not move while a single plane is routed, so this is built
     once per :func:`plan_path` invocation and reused for every sampled pose.
@@ -1699,6 +1700,11 @@ class _Obstacles:
     bay_xmax: float
     bay_ymin: float
     bay_active: bool
+    # Structural notch keep-out boxes (Shapely), built once from
+    # ``hangar.structural_notches``. Empty for the common rectangular hangar, in
+    # which case every notch check below is a no-op (byte-identical to pre-notch
+    # routing). Unlike the bay these are ALWAYS on — there is no state gate.
+    notch_boxes: tuple[Polygon, ...] = ()
 
     def __post_init__(self) -> None:
         # The parallel-array pairing is load-bearing: _motion_clear zips
@@ -1720,6 +1726,10 @@ def _build_obstacles(placed: Layout, *, mover_id: str) -> _Obstacles:
     the thing being moved, not an obstacle. The maintenance occupant is absent
     from ``placed.placements`` by Layout invariant, so the mover is correctly
     subject to the bay keep-out (it is never the occupant).
+
+    The structural notch keep-outs (ADR-0018) are built here too, once, from
+    ``hangar.structural_notches`` — always on (no state gate), and empty (a no-op
+    downstream) for the common rectangular hangar.
     """
     parts: list[WorldPart] = []
     for placement in placed.placements:
@@ -1734,6 +1744,10 @@ def _build_obstacles(placed: Layout, *, mover_id: str) -> _Obstacles:
         bay_xmax=bay.center_x_m + bay.width_m / 2,
         bay_ymin=placed.hangar.length_m - bay.depth_m,
         bay_active=placed.maintenance_plane is not None,
+        notch_boxes=tuple(
+            box(n.x_min_m, n.y_min_m, n.x_max_m, n.y_max_m)
+            for n in placed.hangar.structural_notches
+        ),
     )
 
 
@@ -1767,6 +1781,12 @@ def _motion_clear(mover: Aircraft, pose: Pose, obstacles: _Obstacles, hangar: Ha
         exactly (strict ``<`` on left/right/front edges; no upper-``y`` test —
         the back edge is the hangar wall) when the bay is closed.
 
+    (D) **Structural notch** — the mover may not overhang an always-on floor
+        keep-out (ADR-0018). Polygon overlap (not per-vertex) so an edge crossing
+        a notch with no vertex inside is caught, matching the static
+        :func:`collisions._hangar_bounds_conflicts` ``floor.covers`` test. No-op
+        when ``hangar.structural_notches`` is empty.
+
     ``on_carts`` is fixed to ``False`` here: :func:`~hangarfit.geometry.aircraft_parts_world`
     derives part geometry from pose only (``x``/``y``/``heading``) and the parts,
     NOT from ``on_carts``, so the part polygons are identical to the oracle's
@@ -1790,6 +1810,15 @@ def _motion_clear(mover: Aircraft, pose: Pose, obstacles: _Obstacles, hangar: Ha
             for x, y in list(mp.polygon.exterior.coords)[:-1]:
                 if obstacles.bay_xmin < x < obstacles.bay_xmax and y > obstacles.bay_ymin:
                     return False
+
+        # (D) Structural notch (always-on floor keep-out, ADR-0018): the mover
+        # may not overhang a notch. Polygon overlap (intersects-and-not-touches —
+        # the same boundary-inclusive predicate the static floor uses) so a part
+        # EDGE crossing a notch with no vertex inside is caught too, and a part
+        # flush against a notch wall stays clear. No-op when there are no notches.
+        for nb in obstacles.notch_boxes:
+            if polygon_overlap(mp.polygon, nb):
+                return False
 
         # (B) Pairwise overlap against each placed-plane part.
         if obstacles.world_parts:
@@ -1869,9 +1898,10 @@ def _build_grid_heuristic(
     heuristic there, so the field only ever RE-PRIORITISES the frontier, it
     never makes a pose un-expandable.
 
-    Obstacles are the placed planes' footprints (un-inflated, point-robot) plus
-    the closed maintenance bay; the side/back walls bound the grid (the front
-    ``y < 0`` apron is open during tow). RNG-free and pure ⇒ ADR-0003-safe.
+    Obstacles are the placed planes' footprints (un-inflated, point-robot), the
+    closed maintenance bay, and the always-on structural notch(es) (ADR-0018);
+    the side/back walls bound the grid (the front ``y < 0`` apron is open during
+    tow). RNG-free and pure ⇒ ADR-0003-safe.
 
     The southward extent reconciles the historic fixed ``_GRID_H_Y_PAD_M = 6 m``
     pad with the site's staging apron (``hangar.apron_depth_m``, #412/ADR-0021):
@@ -1900,6 +1930,12 @@ def _build_grid_heuristic(
         if obstacles.bay_active and (
             obstacles.bay_xmin < cx < obstacles.bay_xmax and cy > obstacles.bay_ymin
         ):
+            return False
+        # Structural notch keep-out (always on, ADR-0018): route the geodesic
+        # around the dead pocket. A cell whose centre is in a notch interior is
+        # blocked (boundary cells stay free — the notch edge is floor). No-op
+        # when there are no notches.
+        if any(nb.contains(Point(cx, cy)) for nb in obstacles.notch_boxes):
             return False
         return blocked_geom is None or not blocked_geom.contains(Point(cx, cy))
 
