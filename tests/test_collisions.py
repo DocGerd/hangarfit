@@ -997,3 +997,129 @@ class TestEmpennage:
         )
         assert not result.valid
         assert "fuselage_aft_tail_overlap" in _conflict_kinds(result), result.conflicts
+
+
+class TestStructuralNotch:
+    """The ``structural_notch`` rule (ADR-0018): an always-on rectangular
+    keep-out cut from the floor. A part overhanging a notch is rejected with a
+    ``structural_notch`` conflict — *including* a thin part whose edge crosses
+    the notch with neither endpoint inside it (the blind spot of the legacy
+    per-vertex bounds test). A hangar with no notch keeps the byte-identical
+    rectangle path.
+    """
+
+    # Herrenteich-shaped notch: back-right corner of a 15.08 x 31.76 hangar.
+    _NOTCH = (12.72, 22.66, 15.08, 31.76)
+
+    def _hangar(self, *, with_notch: bool):
+        from hangarfit.models import Door, Hangar, MaintenanceBay, StructuralNotch
+
+        notches = (StructuralNotch(*self._NOTCH),) if with_notch else ()
+        return Hangar(
+            length_m=31.76,
+            width_m=15.08,
+            door=Door(center_x_m=7.28, width_m=13.46),
+            maintenance_bay=MaintenanceBay(center_x_m=2.0, width_m=3.0, depth_m=2.0),
+            clearance_m=0.3,
+            wing_layer_clearance_m=0.2,
+            structural_notches=notches,
+        )
+
+    def _layout(self, *, probe_xy, with_notch: bool):
+        """Minimal 1-plane layout: a 1x1 m wing centered on the part origin, so
+        at heading 0 its world footprint centers on the placement coords."""
+        from hangarfit.models import Aircraft, Layout, Part, Placement, Wheels
+
+        probe = Aircraft(
+            id="probe",
+            name="Probe",
+            wing_position="high",
+            gear="tailwheel",
+            movement_mode="always_own_gear",
+            turn_radius_m=5.0,
+            measured=False,
+            parts=(
+                Part(
+                    kind="wing",
+                    length_m=1.0,
+                    width_m=1.0,
+                    offset_x_m=0.0,
+                    offset_y_m=0.0,
+                    angle_deg=0.0,
+                    z_bottom_m=2.0,
+                    z_top_m=2.3,
+                ),
+            ),
+            wheels=Wheels(main_offset_x_m=0.0, track_m=1.8, third_wheel_offset_x_m=-2.0),
+        )
+        x, y = probe_xy
+        return Layout(
+            fleet={"probe": probe},
+            hangar=self._hangar(with_notch=with_notch),
+            placements=(
+                Placement(plane_id="probe", x_m=x, y_m=y, heading_deg=0.0, on_carts=False),
+            ),
+            maintenance_plane=None,
+        )
+
+    def test_part_in_notch_rejected(self) -> None:
+        """A wing parked inside the office corner overhangs the notch."""
+        result = check(self._layout(probe_xy=(13.8, 27.0), with_notch=True))
+        assert "structural_notch" in _conflict_kinds(result), result.conflicts
+
+    def test_back_left_strip_accepted(self) -> None:
+        """Deep in the back of the hangar but well left of the notch
+        (x < 12.72) is real floor -> valid."""
+        result = check(self._layout(probe_xy=(3.0, 27.0), with_notch=True))
+        assert result.valid, result.conflicts
+
+    def test_no_notch_accepts_same_region(self) -> None:
+        """Byte-identical legacy path: with no notch configured, the same
+        in-corner placement the notch rejects is accepted (plain rectangle),
+        and ``floor_polygon`` stays ``None``."""
+        layout = self._layout(probe_xy=(13.8, 27.0), with_notch=False)
+        assert layout.hangar.floor_polygon is None
+        assert check(layout).valid
+
+    def test_edge_crossing_with_no_vertex_inside_rejected(self) -> None:
+        """The bug ADR-0018 fixes: a thin part whose two endpoints both lie
+        OUTSIDE the notch but whose body slices through it has no vertex inside,
+        so the per-vertex test passed it. ``floor.covers`` rejects it."""
+        from shapely.geometry import Polygon
+
+        from hangarfit.collisions import _hangar_bounds_conflicts
+        from hangarfit.geometry import WorldPart
+
+        hangar = self._hangar(with_notch=True)
+        crossing = WorldPart(
+            polygon=Polygon([(12.0, 31.0), (14.5, 20.0), (14.6, 20.1), (12.1, 31.1)]),
+            z_bottom_m=2.0,
+            z_top_m=2.3,
+            plane_id="p",
+            kind="wing",
+        )
+        x0, y0, x1, y1 = self._NOTCH
+        assert not any(
+            x0 <= vx <= x1 and y0 <= vy <= y1 for vx, vy in crossing.polygon.exterior.coords
+        ), "test setup: no vertex should lie inside the notch"
+        conflicts = _hangar_bounds_conflicts({"p": [crossing]}, hangar)
+        assert [c.kind for c in conflicts] == ["structural_notch"], conflicts
+
+    def test_part_flush_against_notch_edge_accepted(self) -> None:
+        """A part touching the notch's left wall from outside is on floor and
+        accepted (boundary-inclusive ``covers``), mirroring the flush-with-
+        outer-wall convention."""
+        from shapely.geometry import box
+
+        from hangarfit.collisions import _hangar_bounds_conflicts
+        from hangarfit.geometry import WorldPart
+
+        hangar = self._hangar(with_notch=True)
+        flush = WorldPart(
+            polygon=box(11.5, 24.0, 12.72, 25.0),
+            z_bottom_m=2.0,
+            z_top_m=2.3,
+            plane_id="p",
+            kind="wing",
+        )
+        assert _hangar_bounds_conflicts({"p": [flush]}, hangar) == []

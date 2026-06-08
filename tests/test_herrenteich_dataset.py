@@ -17,9 +17,10 @@ from hangarfit.loader import load_fleet, load_hangar, load_layout
 REPO_ROOT = Path(__file__).resolve().parent.parent
 HERRENTEICH = REPO_ROOT / "examples" / "herrenteich"
 
-# Real office NOTCH (back-right corner): non-floor space the rectangular hangar
-# model does NOT enforce (hangar.yaml + spike #424). Derived from the rectangle
-# dims: [width-2.36, width] x [length-9.10, length].
+# Real office NOTCH (back-right corner): non-floor space. Since ADR-0018 (#527)
+# it is MODELLED in hangar.yaml (`structural_notches`) and enforced by
+# collisions.check. Derived from the rectangle dims:
+# [width-2.36, width] x [length-9.10, length].
 NOTCH = (12.72, 22.66, 15.08, 31.76)  # x_min, y_min, x_max, y_max
 
 USUAL_OCCUPANTS = {
@@ -63,13 +64,13 @@ def test_everyone_home_layout_is_valid() -> None:
     )
 
 
-def test_layout_clears_unmodelled_office_notch() -> None:
-    """No plane may sit in the back-right office notch.
+def test_layout_clears_office_notch() -> None:
+    """No plane sits in the back-right office notch.
 
-    ``collisions.check`` only validates the bounding rectangle, so a layout
-    edit could drift a plane into the (real, non-floor) office corner and the
-    validity test above would stay green. Pin the clearance the rectangular
-    model cannot see (#424).
+    The notch is now modelled and ``collisions.check`` enforces it (ADR-0018),
+    but this independent, model-free vertex scan double-checks the *shipped*
+    layout — so a future layout edit that drifts a plane into the (real,
+    non-floor) office corner trips here too, with a geometry-level message.
     """
     layout = load_layout(HERRENTEICH / "layout.yaml")
     x0, y0, x1, y1 = NOTCH
@@ -79,5 +80,50 @@ def test_layout_clears_unmodelled_office_notch() -> None:
             for x, y in part.polygon.exterior.coords:
                 assert not (x0 <= x <= x1 and y0 <= y <= y1), (
                     f"{placement.plane_id} {part.kind} vertex ({x:.2f}, {y:.2f}) "
-                    f"is inside the unmodelled office notch — non-floor space"
+                    f"is inside the office notch — non-floor space"
                 )
+
+
+def test_real_hangar_notch_is_enforced() -> None:
+    """The real hangar.yaml carries a modelled notch (ADR-0018), and
+    ``collisions.check`` rejects a part parked in the office corner — a layout
+    the old rectangular model accepted. Exercises the loader → model → checker
+    path on the actual data file.
+    """
+    from hangarfit.models import Aircraft, Layout, Part, Placement, Wheels
+
+    hangar = load_hangar(HERRENTEICH / "hangar.yaml")
+    assert hangar.floor_polygon is not None, "notch should be modelled"
+    # 1x1 m wing centered at (13.9, 27.0) — wholly inside the office corner.
+    probe = Aircraft(
+        id="probe",
+        name="Probe",
+        wing_position="high",
+        gear="tailwheel",
+        movement_mode="always_own_gear",
+        turn_radius_m=5.0,
+        measured=False,
+        parts=(
+            Part(
+                kind="wing",
+                length_m=1.0,
+                width_m=1.0,
+                offset_x_m=0.0,
+                offset_y_m=0.0,
+                angle_deg=0.0,
+                z_bottom_m=2.0,
+                z_top_m=2.3,
+            ),
+        ),
+        wheels=Wheels(main_offset_x_m=0.0, track_m=1.8, third_wheel_offset_x_m=-2.0),
+    )
+    layout = Layout(
+        fleet={"probe": probe},
+        hangar=hangar,
+        placements=(
+            Placement(plane_id="probe", x_m=13.9, y_m=27.0, heading_deg=0.0, on_carts=False),
+        ),
+        maintenance_plane=None,
+    )
+    kinds = {c.kind for c in collisions.check(layout).conflicts}
+    assert "structural_notch" in kinds, kinds
