@@ -89,7 +89,7 @@ manual workflow above is canonical.
 | 0009 | [Single supported Python — 3.12, anchored to the distro LTS](0009-single-supported-python-version.md) | Accepted |
 | 0010 | [Reeds–Shepp motion model — towplanner v2](0010-reeds-shepp-motion-model.md) | Accepted |
 | 0011 | [Linear history strategy under GitFlow — squash feature merges, accept release merge commits, target a clean first-parent mainline](0011-linear-history-strategy-under-gitflow.md) | Superseded by [ADR-0014](0014-merge-commit-only-history-strategy.md) |
-| 0012 | [Split the fuselage into front/aft so a wing may overhang a tail but not a cockpit](0012-fuselage-front-aft-split.md) | Accepted |
+| 0012 | [Split the fuselage into front/aft so a wing may overhang a tail but not a cockpit](0012-fuselage-front-aft-split.md) | Accepted (tail-fold-in neutral consequence amended by [ADR-0023](0023-empennage-tail-surfaces.md)) |
 | 0013 | [Wheel positions are canonical per-aircraft data; turn_radius_m stays empirical, cross-checked at load](0013-wheels-canonical-data.md) | Accepted |
 | 0014 | [Merge-commit-only history under GitFlow — squash/rebase disabled as a release-safety guardrail](0014-merge-commit-only-history-strategy.md) | Accepted |
 | 0015 | [Wheels do not participate in the static collision model (gear stays render/motion data)](0015-wheels-not-in-collision-model.md) | Accepted |
@@ -100,3 +100,4 @@ manual workflow above is canonical.
 | 0020 | [The viewer is a typed, modular TypeScript application built by a dev-only toolchain; the Python-owned transform is retained](0020-viewer-typescript-architecture.md) | Proposed |
 | 0021 | [Tow-planner staging apron — a bounded entry-staging start-region in front of the door; rearrangement holding-area deferred](0021-tow-planner-staging-apron.md) | Proposed |
 | 0022 | [Nose-out parked heading — RNG-free 180° flip post-pass (default on), plus the `tow_pivotable` towing-motion flag](0022-nose-out-parked-heading.md) | Accepted |
+| 0023 | [Model the empennage as explicit tail surfaces so a vertical fin in the wing layer can block wing-over-tail nesting](0023-empennage-tail-surfaces.md) | Proposed |
