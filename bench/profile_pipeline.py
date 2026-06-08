@@ -54,13 +54,24 @@ from .regimes import FAST_REGIMES, REGIMES, regime_by_key
 #   cost (decided 2026-06-08: keep default-ON, re-baseline the ceilings), NOT a
 #   regression, so the ceilings are raised to fit it. The two tiny regimes (trivial,
 #   spread_off — the latter's lone 1-restart fill barely flips) are unaffected.
+# * 2026-06-08 (#524): the empennage model (#518/#519/#520, ADR-0023) gives every
+#   aircraft two more parts (a horizontal ``tail`` + a ``vertical_stabilizer``), so
+#   every Hybrid-A*/Reeds–Shepp tow expansion validates more part pairs and per-check
+#   cost rose. The route-heavy apron regime absorbed the most: the empennage-merge
+#   run that tripped the old 240 s ceiling **peaked at ~269 s**, and post-fix runs
+#   land **~207–213 s** (median ~210), while all three correctness verdicts stayed
+#   green. This is the heavier shipped model's real cost (a sanctioned re-baseline,
+#   not a regression), so the apron ceiling is raised to 380 s — ~1.8x the observed
+#   ~210 s median (≈1.4x the ~269 s pre-fix peak). spread_on keeps ample headroom
+#   under 130 and is left unchanged.
 #
 # The ceilings remain a *catastrophic-regression tripwire, not a microbenchmark*:
 # spread_on at 130 s sits above CI machine-speed jitter (~1.5x the 84.5 s median —
 # the regimes bind on ``max_restarts``, so only machine speed varies) yet still
 # below a #453 memoization-revert (which adds ~+68 s of placement → ~152 s here),
-# so the canonical regression still trips. apron at 240 s is ~1.4x its 170.5 s
-# median.
+# so the canonical regression still trips. apron at 380 s is ~1.8x its observed
+# post-empennage CI range (~207–213 s; the pre-fix run that tripped 240 peaked at
+# ~269 s) (#524).
 #
 # Recalibrate — and only then — when the regimes change, the lever set / a default
 # changes, or GitHub changes the runner class; re-confirm spread_on still trips on
@@ -73,9 +84,11 @@ _SPEED_CEILING_S: dict[str, float] = {
     "roomy_three_spread_off": 20.0,
     # Same placement as roomy_three_spread_on (apron is planner-only) plus the
     # apron's heavier routing — and since #263 the nose-out back-in from the apron's
-    # enlarged start set dominates (CI ~170 s for the 14 m deep fill). Tripwire, not
-    # a microbenchmark (#499 / #263).
-    "roomy_three_apron": 240.0,
+    # enlarged start set dominates. Post-empennage (#518/#519/#520) the per-expansion
+    # part-pair validation cost rose, so this 14 m deep fill now lands ~207–213 s on
+    # CI (the pre-fix run that tripped the old 240 s ceiling peaked at ~269 s; was
+    # ~170 s pre-empennage). Tripwire, not a microbenchmark (#499 / #263 / #524).
+    "roomy_three_apron": 380.0,
 }
 
 

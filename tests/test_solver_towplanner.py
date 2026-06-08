@@ -192,7 +192,7 @@ def test_solve_k_gt_1_bundle_alignment_with_mixed_routability(monkeypatch):
     """
     import hangarfit.solver as solver_mod
     from hangarfit.loader import load_scenario
-    from hangarfit.models import Conflict
+    from hangarfit.models import Conflict, SearchConfig
     from hangarfit.solver import solve
     from hangarfit.towplanner import MovesPlan, NoFeasiblePlanError
 
@@ -210,7 +210,16 @@ def test_solve_k_gt_1_bundle_alignment_with_mixed_routability(monkeypatch):
     monkeypatch.setattr(solver_mod, "plan_fill", fail_second_only)
 
     scenario = load_scenario("tests/fixtures/solve_fresh_alternatives_three.yaml")
-    result = solve(scenario, budget_s=10.0, alternatives=3, seed=0)
+    # Pin max_restarts (not budget_s) so the search WORK is load-independent
+    # (ADR-0003): a wall-clock budget here found <2 basins on a loaded CI runner
+    # once the empennage model made each restart heavier (#531). max_restarts=6
+    # yields all 3 diverse layouts for this fixture+seed regardless of machine
+    # speed (measured: >=4 restarts is sufficient; 6 for margin). budget_s is set
+    # well above the 6-restart wall-clock (~5 s local, ~14 s CI) so max_restarts is
+    # the sole termination gate even on a very slow runner — no latent budget flake.
+    result = solve(
+        scenario, budget_s=120.0, search=SearchConfig(max_restarts=6), alternatives=3, seed=0
+    )
 
     # This fixture+seed must yield at least 2 diverse layouts for the test to
     # be meaningful; fail loudly (not vacuously) if the search regresses.
