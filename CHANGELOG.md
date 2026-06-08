@@ -6,6 +6,13 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Theme-aware README hero (#514).** The README banner now serves two
+  brand-tuned SVG variants via an HTML `<picture>` element with
+  `prefers-color-scheme` media queries — `docs/assets/banner-light.svg` (light
+  theme / safe fallback) and `docs/assets/banner-dark.svg` (dark theme) — so
+  GitHub picks the on-brand variant for each viewer's color scheme. Same
+  composition, theme-appropriate BRAND.md tokens (recolour, not redesign); the
+  original `docs/assets/banner.svg` is retained. Pure docs, no code impact.
 - **Nose-out parked heading preference (#263, ADR-0022).** The solver now prefers
   to park each plane pointing **out** (nose toward the door) for an easy
   straight-out exit: an RNG-free `_nose_out` post-pass flips a plane's parked
