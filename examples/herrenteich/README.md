@@ -11,16 +11,22 @@ hangarfit check examples/herrenteich/layout.yaml --render herrenteich.png
 
 # 3D viewer:
 hangarfit view examples/herrenteich/layout.yaml -o herrenteich.html
+
+# Full toolchain end-to-end on a solvable + tow-routable subset:
+hangarfit solve examples/herrenteich/scenario_demo.yaml \
+    --render demo.png --render-paths --seed 3   # solve + tow paths around the notch
+hangarfit view  examples/herrenteich/scenario_demo.yaml -o demo.html --seed 3
 ```
 
 ## Files
 
 | File | What it is |
 |---|---|
-| `hangar.yaml` | The real hangar — **15.08 m × 31.76 m**, door **13.46 m** wide. Measured 2026-06-04 from the architect's DWG. |
-| `fleet.yaml`  | The eight aircraft usually hangared here. Dimensions looked up from published specs and second-source verified (2026-06-04). |
+| `hangar.yaml` | The real hangar — **15.08 m × 31.76 m**, door **13.46 m** wide. Measured 2026-06-04 from the architect's DWG. L-shaped (back-right office notch). |
+| `fleet.yaml`  | The eight aircraft usually hangared here. Envelope (span/length/height) from published specs; part-level dimensions (wing chord, fuselage width, tail spans, gear track/wheelbase) sourced from EASA/FAA TCDS + manufacturer manuals where published (refreshed 2026-06-08, #536); the rest derived/estimated and flagged inline. |
 | `layout.yaml` | A **valid** arrangement with all eight planes parked at once (`hangarfit check` → exit 0). |
-| `scenario.yaml` | The solver input for the "everyone home" scenario. |
+| `scenario.yaml` | The solver input for the all-eight "everyone home" scenario (does not fully route — see below). |
+| `scenario_demo.yaml` | A 3-aircraft subset that **solves and fully tow-routes** end-to-end in the L-shaped hangar — the working toolchain demo. |
 
 ## Two things this dataset is honest about
 
@@ -33,27 +39,30 @@ earlier rectangular model kept planes clear of the notch only by hand; spike
 **#424** designed the fix and **#528** shipped it.
 
 **2. `layout.yaml` is the tool's arrangement, not the club's real parking.**
-The product solver (`hangarfit solve`) cannot produce this layout. (**#425**
-— fixed — once made its trivial-infeasibility gate sum *bounding boxes*, Σ ≈
-606 m² > the 479 m² rectangular floor, and bail, because an 18 m-span motor
-glider is mostly empty air; the gate now sums actual part footprints, Σ ≈
-160 m² « 479, and no longer bails.) It still won't reproduce this layout: even
-though the checker now enforces the office **notch** (#528), finding an
-all-eight nested arrangement within budget is a separate search-feasibility
-question. The real, part-based collision checker accepts a nested layout, so
-this one was found by driving that checker directly. Replace the placements with
-the club's real parking positions when known.
+The product solver (`hangarfit solve`) cannot produce the **all-eight** layout:
+finding an eight-way nested arrangement (around an 18 m glider, in a narrow
+L-shaped hangar) within budget is beyond the search. The all-eight `layout.yaml`
+was found by driving the real, part-based collision checker directly. **A
+solvable + tow-routable subset is `scenario_demo.yaml`** — three aircraft the
+solver places clear of the notch and the tow planner routes from the door around
+it (the end-to-end demo above). Replace the all-eight placements with the club's
+real parking positions when known.
 
 ## Notable aircraft
 
 - **Scheibe SF-25E Super Falke** — 18 m span, wider than the 15.08 m hangar
-  width, so it parks lengthwise. Being a monowheel it can be *tilted* (one wing up,
-  the other down), which is how a glider that wide nests with its neighbours;
-  the single-layer wing model is a simplification of that tilt (see
-  `fleet.yaml` header).
+  width, so it parks lengthwise. It is really a **low-wing** glider (EASA TCDS),
+  but its wing is modelled in the high layer: as a tiltable monowheel it raises
+  one wingtip high to nest over neighbours, and the single-z model can only
+  represent that by placing the wing high. A flat *low* wing would be an 18 m
+  wall no all-eight arrangement can clear (search-verified) — so the z-layer is a
+  deliberate tilt abstraction while the *dimensions* are real (see `fleet.yaml`
+  header).
 - **Stemme S10** — hangared **wings folded** (11.4 m span; 23 m unfolded), which
-  is what lets a 23 m glider through a 13.46 m door.
+  is what lets a 23 m glider through a 13.46 m door. A **taildragger** (twin
+  retractable mains + tailwheel, EASA TCDS) — corrected from monowheel this refresh.
 
-> All fleet dimensions carry `measured: false` — they are published specs, not
-> on-site measurements, so the viewer/PNG show the "PLACEHOLDER DATA" honesty
-> banner. The hangar rectangle itself is from the DWG.
+> All fleet dimensions carry `measured: false` — the envelope is published spec
+> and the part-level dimensions are 3-view/TCDS-**sourced** but not on-site
+> surveyed, so the viewer/PNG still show the "PLACEHOLDER DATA" honesty banner.
+> The hangar rectangle itself is from the DWG.

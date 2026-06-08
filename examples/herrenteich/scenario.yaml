@@ -1,16 +1,15 @@
 # Airfield Herrenteich — "everyone home" scenario: all eight usual occupants
 # in the hangar at once. This is the canonical solver INPUT.
 #
-# NOTE: `hangarfit solve` does NOT produce examples/herrenteich/layout.yaml from this
-# scenario. (#425 — fixed — once made its bounding-box trivial-infeasibility
-# gate reject this glider-heavy fleet outright: Σ bbox ≈ 606 m² > the 479 m²
-# rectangular floor. The gate now sums actual part footprints, Σ ≈ 160 m² «
-# 479, so it no longer rejects.) Two reasons solve still won't reproduce this
-# layout: the rectangular model ignores the back-right office NOTCH (#424)
-# that the committed layout keeps clear by hand, and finding an all-eight
-# nested arrangement within budget is a separate search-feasibility question.
-# The committed layout was found by driving the real, part-based collision
-# checker directly.
+# NOTE: `hangarfit solve` does NOT produce examples/herrenteich/layout.yaml from
+# this all-eight scenario. (#425 — fixed — once made its bounding-box gate reject
+# this glider-heavy fleet outright; it now sums actual part footprints and no
+# longer rejects.) The notch IS now modelled and enforced (#528, ADR-0018), but
+# finding an eight-way nested arrangement (around an 18 m glider, in a narrow
+# L-shaped hangar) within budget is a separate search-feasibility question the
+# solver does not crack — the committed all-eight layout was found by driving the
+# real, part-based collision checker directly. For a subset that DOES solve and
+# fully tow-route end-to-end, see scenario_demo.yaml.
 #
 fleet: fleet.yaml
 hangar: hangar.yaml
