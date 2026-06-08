@@ -93,7 +93,9 @@ class TestPart:
         with pytest.raises(ValueError, match="Part.kind must be one of"):
             _ok_part(kind=kind)  # type: ignore[arg-type]
 
-    @pytest.mark.parametrize("kind", ["fuselage_front", "fuselage_aft", "wing", "strut", "tail"])
+    @pytest.mark.parametrize(
+        "kind", ["fuselage_front", "fuselage_aft", "wing", "strut", "tail", "vertical_stabilizer"]
+    )
     def test_all_valid_kinds_accepted(self, kind: str) -> None:
         p = _ok_part(kind=kind)  # type: ignore[arg-type]
         assert p.kind == kind
