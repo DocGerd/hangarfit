@@ -36,6 +36,7 @@ function makeScene(aff: Affine, b: BoxData, wheel: [number, number]): SceneV1 {
       length_m: 10,
       door: { center_x_m: 5, width_m: 4 },
       maintenance_bay: { center_x_m: 5, width_m: 2, depth_m: 2, closed: false, plane_id: null },
+      structural_notches: [],
     },
     planes: [{ id: 'p', color: '#ffffff', boxes: [b], wheels: [wheel], on_carts: false }],
     conflicts: [],

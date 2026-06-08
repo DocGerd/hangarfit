@@ -59,6 +59,23 @@ def test_hangar_block_shape():
         "width_m": lay.hangar.door.width_m,
     }
     assert h["maintenance_bay"]["closed"] is (lay.maintenance_plane is not None)
+    # structural_notches is always emitted; the default layout's hangar has none.
+    assert h["structural_notches"] == []
+
+
+def test_hangar_block_emits_structural_notches():
+    """A notched hangar emits each notch rectangle for the viewer (ADR-0018)."""
+    import dataclasses
+
+    from hangarfit.models import StructuralNotch
+
+    lay = load_layout(LAYOUT)  # 22 x 25 hangar
+    notch = StructuralNotch(x_min_m=18.0, y_min_m=20.0, x_max_m=22.0, y_max_m=25.0)
+    notched = dataclasses.replace(lay.hangar, structural_notches=(notch,))
+    h = scene._hangar_block(dataclasses.replace(lay, hangar=notched))
+    assert h["structural_notches"] == [
+        {"x_min_m": 18.0, "y_min_m": 20.0, "x_max_m": 22.0, "y_max_m": 25.0}
+    ]
 
 
 # ── Task 2: plane boxes ──────────────────────────────────────────────────────
