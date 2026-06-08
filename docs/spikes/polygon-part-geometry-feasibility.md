@@ -195,18 +195,22 @@ The central claim holds (safety core is free, work is additive) and the value is
 scalars — the `measured: false` flag and the viewer "PLACEHOLDER DATA" banner stay
 truthful.
 
-### Filed follow-up issues (proposed — not yet filed, pending review)
+### Filed follow-up issues
 
-- **ADR + Phase-1 epic:** refine ADR-0001's mesh deferral → optional polygon parts
-  (c + d-param); `Part.local_vertices` + load-time canonicalization;
-  `aircraft_parts_world` build-path branch; glider taper data. *(Validity win,
-  byte-identical for scalar fleets.)*
-- **`scene/v2` viewer seam:** schema delta + `viewer.js` ExtrudeGeometry rebuild +
-  oracle/guard updates. *(Phase 2.)*
-- **Fuselage-outline (approach b):** `_split_fuselage` box-interval → Shapely clip,
-  if/when pursued. *(Re-opens ADR-0012 D2 at the loader, not the predicate.)*
-- **Bay-test hardening:** `_first_vertex_in_bay` → polygon-vs-bay intersection
-  (mirror the ADR-0018 `floor.covers` fix). *(Pre-existing; tracked.)*
+- [#548](https://github.com/DocGerd/hangarfit/issues/548) **Phase 1 / ADR + epic:**
+  refine ADR-0001's mesh deferral → optional polygon parts (c + d-param);
+  `Part.local_vertices` + load-time canonicalization; `aircraft_parts_world`
+  build-path branch; glider taper data. *(Validity win, byte-identical for scalar
+  fleets.)*
+- [#549](https://github.com/DocGerd/hangarfit/issues/549) **`scene/v2` viewer seam
+  (Phase 2):** schema delta + `viewer.js` ExtrudeGeometry rebuild + oracle/guard
+  updates. Blocked by #548.
+- [#550](https://github.com/DocGerd/hangarfit/issues/550) **Fuselage-outline
+  (approach b):** `_split_fuselage` box-interval → Shapely clip, if/when pursued.
+  *(Re-opens ADR-0012 D2 at the loader, not the predicate.)* Blocked by #548.
+- [#551](https://github.com/DocGerd/hangarfit/issues/551) **Bay-test hardening:**
+  `_first_vertex_in_bay` → polygon-vs-bay intersection (mirror the ADR-0018
+  `floor.covers` fix). *(Pre-existing; tracked.)*
 
 ---
 
