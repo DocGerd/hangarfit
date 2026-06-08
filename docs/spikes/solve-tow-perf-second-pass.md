@@ -143,7 +143,8 @@ On the fuller `full_nine_spread_on` (R=4) the mix shifts: `_pairwise_conflicts`
 rises to 25.5 % and `_parts_conflict` to 6.6 % (more planes → more pairs, and
 descent runs on conflicted layouts where fewer pairs AABB-reject) — so the
 narrow-phase levers have *more* headroom on full fills, but geometry construction
-(~30 %) stays comparable.
+(`cached_parts_world` + `oriented_rect` + `polygon_overlap[_area]` ≈ 30 %; vs the
+~36 % `cached_parts_world`-alone bucket on roomy-3) stays comparable.
 
 ### 3. The part-pair census — the STRtree-killer
 
@@ -151,8 +152,13 @@ Instrumented counts over the two parts-heaviest **valid** layouts:
 
 | Layout | world-parts | cross-plane part-pairs | AABB-rejected | reached exact predicate |
 |---|---:|---:|---:|---:|
-| all-nine synthetic fixture | 57 | 1,180 | 1,152 (**97.6 %**) | 28 (2.4 %) |
-| Herrenteich real all-8 | ~46 | 1,090 | 1,081 (**99.2 %**) | 9 (0.8 %) |
+| `full_nine` fixture (8 placed, valid) | 52 | 1,180 | 1,152 (**97.6 %**) | 28 (2.4 %) |
+| Herrenteich real all-8 | 46 | 1,090 | 1,081 (**99.2 %**) | 9 (0.8 %) |
+
+(The `full_nine` fixture's `fleet_in` is 9 distinct aircraft — theoretical max 57
+world-parts / **1,440** cross-plane part-pairs; the seed-1 R=4 solve returned a
+valid layout with 8 of them placed, so the censused figures are the 8-plane
+52 / 1,180.)
 
 The #454 AABB broad-phase rejects **97.6–99.2 %** of part-pairs at a few float
 comparisons each; only **9–28** pairs reach the exact shapely predicate. An
@@ -217,8 +223,20 @@ parallel ≡ serial-reseeded **byte-for-byte**. That is a determinism *re-base*
   hangarfit uses everywhere; a 2-thread micro-probe ran **5× slower**. Only a
   ProcessPool delivers speedup.
 
-`★` The decisive result: **4.5× at 8 workers, byte-identical to a re-seeded serial
-baseline.** Determinism is preserved; the cost is a one-time re-golden.
+**What the prototype proved vs what the implementation must still preserve.** The
+byte-identity result is over the **selected layout's placements at
+`alternatives=1`** (the prototype's merge is a single total-order `min`, matching
+`_select_spread_diverse` only for one alternative). The implementation issue must
+additionally preserve, under the re-base, the two cross-restart pieces the prototype
+did not exercise: the **`best_partial_layout`** accumulator (deterministically
+reconstructible as a tie-broken min over per-restart partials) and the
+**`alternatives > 1` diversity-gated** `_select_spread_diverse` selection. Both are
+reconstructible deterministically from per-restart outputs — but they are
+obligations to verify, not yet-measured facts.
+
+`★` The decisive result: **4.5× at 8 workers (placement-only), byte-identical to a
+re-seeded serial baseline** for the selected layout. Determinism is preserved; the
+cost is a one-time re-golden.
 
 ### 5. Tow heuristic / ordering / early-exit (Q5–Q7)
 
@@ -253,7 +271,7 @@ new golden) / breaks.
 | Default-on spread-stall early-exit + CLI flag (Q7) | low-medium wall-clock, high *perceived* responsiveness | `max_restarts`-reproducible (a defaulting choice) | **FILE** (low priority) |
 | Footprint-inflated grid heuristic (Q6) | medium *for tight/un-routable routing only*; uncertain it fully recovers seed-1 six-plane | breaks tow-canary byte-identity (heap-pop order) | **DEFER** — gated on an isolated expansion-count probe |
 | Make `Scenario` picklable | enabler for the parallel lever | byte-identical (no behaviour change) | **FILE** (blocks parallel restarts) |
-| Empennage-heavy placement bench regime (`full_nine_placement`) | guards parts²-scaling as the model grows (all-nine fixture already maximizes part-pairs at 1,440; `fleet_in`-uniqueness caps it) | n/a (measurement) | **FILE** (optional regression guard) |
+| Empennage-heavy placement bench regime (`full_nine_placement`) | guards parts²-scaling as the model grows (the `full_nine` fixture already maximizes part-pairs — 1,440 theoretical for all 9; `fleet_in`-uniqueness caps it) | n/a (measurement) | **FILE** (optional regression guard) |
 | Incremental conflict-tracking in `_spread` | **low** — attacks `_pairwise_conflicts` (9.7 % on roomy-3, 25.5 % on full-9); the 36 % geometry residual is untouched | safe-with-care (canonical re-sum only; delta-update breaks via `total_penetration_m2` float order) | **DEFER/borderline** — only if a fuller-fill profile re-confirms a material share |
 | Placement-side STRtree / grid index | **~0/negative** — 97.6–99.2 % AABB-reject; tree build > the float-compares it saves at N≤57 | safe-with-care (canonical re-sort) | **REJECT** (measurement-killed) |
 | Routing-side static-obstacle STRtree | untested; routing bottleneck is geometry, not the sweep | byte-identical (RNG-free planner) | **DEFER** — own probe |
@@ -285,7 +303,11 @@ deliberate, documented re-base.**
 
 - _(primary, the central GO)_ **Parallel restarts via per-restart-index reseed +
   ordered merge (ProcessPool).** Determinism: re-base (re-golden canaries +
-  ADR-0003 amendment). Measured 4.5× @ 8 workers.
+  ADR-0003 amendment). Measured 4.5× @ 8 workers. **Must also preserve, under the
+  re-base, the `best_partial_layout` accumulator and the `alternatives > 1`
+  diversity-gated `_select_spread_diverse` selection** — both unexercised by the
+  prototype (which proved the `alternatives=1` selected layout) and reconstructible
+  deterministically, but obligations to verify in the implementation.
 - _(enabler, blocks the above)_ **Make `Scenario` picklable** (drop the
   `mappingproxy`, or provide `__getstate__`/`__setstate__`).
 - _(low priority)_ **Default-on spread-stall early-exit + `--spread-stall-restarts`
