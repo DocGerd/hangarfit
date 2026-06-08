@@ -132,8 +132,9 @@ def test_real_hangar_notch_is_enforced() -> None:
 def test_demo_scenario_is_a_solvable_subset() -> None:
     """`scenario_demo.yaml` is a 3-aircraft subset of the fleet that the solver
     places into a valid layout — the working end-to-end demo. (Full tow-routing
-    via the CLI's spread-off fallback, ADR-0016, is exercised in the README
-    command; here we pin the load-independent claim: a valid 3-plane solve.)
+    is exercised by the README's ``solve --render-paths`` command — it routes
+    under the default spread-on path, with the ADR-0016 spread-off re-solve as a
+    backstop; here we pin the load-independent claim: a valid 3-plane solve.)
     """
     from hangarfit.loader import load_scenario
     from hangarfit.models import SearchConfig

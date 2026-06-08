@@ -158,7 +158,9 @@ aircraft:
         offset_y_m: 0.0
         z_bottom_m: 1.5
         z_top_m: 1.8
-      - kind: vertical_stabilizer  # fin to overall height 1.80 m (folded config)
+      - kind: vertical_stabilizer  # fin to overall height 1.80 m (folded config); fin top 1.8 m
+                                   # sits 0.1 m below a 1.9 m wing — inside the 0.2 m clearance
+                                   # band, so a wing nested over it still conflicts
         length_m: 1.0         # fin chord est.
         width_m: 0.15
         offset_x_m: -5.21
@@ -429,7 +431,8 @@ aircraft:
     measured: false
     parts:
       - kind: fuselage
-        length_m: 5.85        # type table (Mk IV airframe, shared; Wikipedia / lightsportaircraft.ca)
+        length_m: 5.85        # Mk IV spec, reused for the Mk II (shared airframe; no separate Mk II
+                              # length is published) — Wikipedia / lightsportaircraft.ca
         width_m: 1.20         # cabin/fuselage external width ~1.20 m (technicalparameters.eu; interior 1.08 m)
         offset_x_m: -0.29
         offset_y_m: 0.0
