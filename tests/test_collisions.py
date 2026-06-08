@@ -834,3 +834,152 @@ class TestBroadPhaseEquivalence:
                 had_conflict += 1
         assert loaded >= 5, f"expected to sweep several layout fixtures, loaded {loaded}"
         assert had_conflict >= 1, "sweep never exercised a conflicting pair — net is too weak"
+
+
+class TestEmpennage:
+    """ADR-0023 / #518: the empennage as explicit tail surfaces.
+
+    The collision predicate is unchanged — these lock that honest tail
+    z-extents produce the physically correct verdict: a fin in the wing layer
+    blocks a nest that passes over it; a wing that clears the fin still nests;
+    a realistic-width tailplane clips a neighbour's low part. Built from
+    synthetic inline aircraft (not the placeholder fleet) so the geometry is
+    fully controlled. Heading 0 maps plane-local +x -> world +y and plane-local
+    +y -> world +x (det(-1), ADR-0002); offsets below are chosen against that.
+    """
+
+    def _layout(
+        self,
+        *,
+        nester_xy: tuple[float, float],
+        nester_kind: str = "wing",
+        nester_z: tuple[float, float] = (2.0, 2.3),
+        nester_size: tuple[float, float] = (4.0, 4.0),
+    ):
+        from hangarfit.models import (
+            Aircraft,
+            Door,
+            Hangar,
+            Layout,
+            MaintenanceBay,
+            Part,
+            Placement,
+            Wheels,
+        )
+
+        # HOST parked at world (10, 10): low aft fuselage (z 0..1.5), a low wide
+        # tailplane (`tail`, z 1.2..1.5, world x 8.5..11.5 / y 6.7..7.7), and a
+        # tall thin centreline fin (`vertical_stabilizer`, z 1.5..2.4 reaching
+        # into the 2.0..2.3 wing band, world x ~9.93..10.08 / y 6.6..7.8).
+        host = Aircraft(
+            id="host",
+            name="Host",
+            wing_position="high",
+            gear="tailwheel",
+            movement_mode="always_own_gear",
+            turn_radius_m=5.0,
+            measured=False,
+            parts=(
+                Part(
+                    kind="fuselage_aft",
+                    length_m=3.0,
+                    width_m=0.85,
+                    offset_x_m=-1.5,
+                    offset_y_m=0.0,
+                    angle_deg=0.0,
+                    z_bottom_m=0.0,
+                    z_top_m=1.5,
+                ),
+                Part(
+                    kind="tail",
+                    length_m=1.0,
+                    width_m=3.0,
+                    offset_x_m=-2.8,
+                    offset_y_m=0.0,
+                    angle_deg=0.0,
+                    z_bottom_m=1.2,
+                    z_top_m=1.5,
+                ),
+                Part(
+                    kind="vertical_stabilizer",
+                    length_m=1.2,
+                    width_m=0.15,
+                    offset_x_m=-2.8,
+                    offset_y_m=0.0,
+                    angle_deg=0.0,
+                    z_bottom_m=1.5,
+                    z_top_m=2.4,
+                ),
+            ),
+            wheels=Wheels(main_offset_x_m=0.0, track_m=1.8, third_wheel_offset_x_m=-3.0),
+        )
+        nx, ny = nester_xy
+        nl, nw = nester_size
+        nester = Aircraft(
+            id="nester",
+            name="Nester",
+            wing_position="high",
+            gear="tailwheel",
+            movement_mode="always_own_gear",
+            turn_radius_m=5.0,
+            measured=False,
+            parts=(
+                Part(
+                    kind=nester_kind,  # type: ignore[arg-type]
+                    length_m=nl,
+                    width_m=nw,
+                    offset_x_m=0.0,
+                    offset_y_m=0.0,
+                    angle_deg=0.0,
+                    z_bottom_m=nester_z[0],
+                    z_top_m=nester_z[1],
+                ),
+            ),
+            wheels=Wheels(main_offset_x_m=0.0, track_m=1.8, third_wheel_offset_x_m=-3.0),
+        )
+        hangar = Hangar(
+            length_m=40.0,
+            width_m=20.0,
+            door=Door(center_x_m=10.0, width_m=12.0),
+            maintenance_bay=MaintenanceBay(center_x_m=10.0, width_m=8.0, depth_m=9.0),
+            clearance_m=0.3,
+            wing_layer_clearance_m=0.2,
+        )
+        return Layout(
+            fleet={"host": host, "nester": nester},
+            hangar=hangar,
+            placements=(
+                Placement(plane_id="host", x_m=10.0, y_m=10.0, heading_deg=0.0, on_carts=False),
+                Placement(plane_id="nester", x_m=nx, y_m=ny, heading_deg=0.0, on_carts=False),
+            ),
+            maintenance_plane=None,
+        )
+
+    def test_fin_blocks_wing_nesting(self) -> None:
+        """#520 safety case: a wing footprint passing OVER the host's centreline
+        fin (fin z_top 2.4 in the wing band) conflicts — silently valid today."""
+        result = check(self._layout(nester_xy=(10.0, 7.0)))
+        assert not result.valid
+        assert _conflict_kinds(result) == {"vertical_stabilizer_wing_overlap"}, result.conflicts
+
+    def test_wing_clears_fin_laterally_is_valid(self) -> None:
+        """#520 nuance: a wing whose footprint passes OUTBOARD of the thin
+        centreline fin (no plan-view overlap with it) still nests over the
+        host's low tailplane at a disjoint height -> valid."""
+        result = check(self._layout(nester_xy=(13.0, 7.0)))
+        assert result.valid, result.conflicts
+
+    def test_wide_tailplane_clips_neighbour_low_part(self) -> None:
+        """#519: a neighbour's low part (fuselage_aft at z 0..1.5) overlapping
+        the host's realistic ~3 m tailplane in plan view at a shared z-band
+        conflicts — free space under the old fuselage-tube-width model."""
+        result = check(
+            self._layout(
+                nester_xy=(8.3, 7.2),
+                nester_kind="fuselage_aft",
+                nester_z=(0.0, 1.5),
+                nester_size=(1.5, 1.5),
+            )
+        )
+        assert not result.valid
+        assert "fuselage_aft_tail_overlap" in _conflict_kinds(result), result.conflicts
