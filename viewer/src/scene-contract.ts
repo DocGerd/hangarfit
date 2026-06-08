@@ -47,11 +47,21 @@ export interface MaintenanceBay {
   plane_id: string | null; // the absent occupant, or null
 }
 
+// An always-on rectangular floor keep-out (ADR-0018): a corner/edge of the
+// bounding rectangle that is NOT hangar floor (e.g. the Herrenteich office annex).
+export interface StructuralNotchData {
+  x_min_m: number;
+  y_min_m: number;
+  x_max_m: number;
+  y_max_m: number;
+}
+
 export interface HangarData {
   width_m: number;
   length_m: number;
   door: DoorData;
   maintenance_bay: MaintenanceBay; // always emitted (a dict; `closed` distinguishes occupied)
+  structural_notches: StructuralNotchData[]; // always emitted (empty for a rectangular hangar)
 }
 
 export interface SegmentData {

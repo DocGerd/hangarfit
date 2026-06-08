@@ -62,12 +62,22 @@ plane's group.
     "center_x_m": 13.5, "width_m": 9.0, "depth_m": 9.0,
     "closed": true,            // true iff layout.maintenance_plane is set
     "plane_id": "fk9_mkii"     // the absent occupant, or null
-  }
+  },
+  "structural_notches": [      // always emitted; empty for a rectangular hangar
+    { "x_min_m": 12.72, "y_min_m": 22.66, "x_max_m": 15.08, "y_max_m": 31.76 }
+  ]
 }
 ```
 
 The bay is back-anchored: it spans `y ∈ [length_m − depth_m, length_m]`. The viewer
 draws it as a translucent red box only when `closed`.
+
+`structural_notches` is the list of always-on rectangular floor keep-outs (ADR-0018)
+— corners/edges of the bounding rectangle that are **not** hangar floor (e.g. the
+Herrenteich office annex). Each is the axis-aligned rectangle
+`[x_min_m, x_max_m] × [y_min_m, y_max_m]`. The viewer cuts each from the floor
+(rendering the L-shaped footprint) and raises the notch's interior-facing walls.
+The list is always present and is empty for the common rectangular hangar.
 
 ## `planes[]`
 

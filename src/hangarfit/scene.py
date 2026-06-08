@@ -62,6 +62,18 @@ def _hangar_block(layout: Layout) -> dict:
             "closed": layout.maintenance_plane is not None,
             "plane_id": layout.maintenance_plane,
         },
+        # Always-on floor keep-outs (ADR-0018). Always emitted (empty list for the
+        # common rectangular hangar); the viewer cuts each from the floor and
+        # raises interior walls, rendering the L-shaped footprint.
+        "structural_notches": [
+            {
+                "x_min_m": n.x_min_m,
+                "y_min_m": n.y_min_m,
+                "x_max_m": n.x_max_m,
+                "y_max_m": n.y_max_m,
+            }
+            for n in h.structural_notches
+        ],
     }
 
 
