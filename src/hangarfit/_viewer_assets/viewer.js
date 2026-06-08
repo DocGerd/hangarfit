@@ -74,15 +74,34 @@ import * as THREE2 from "three";
 var WALL_H = 3;
 function addHangar(scene2, H2, BRAND2, span2) {
   const wallMeshes2 = [];
-  const floor = new THREE2.Mesh(
-    new THREE2.PlaneGeometry(H2.width_m, H2.length_m),
-    new THREE2.MeshStandardMaterial({
-      color: new THREE2.Color(BRAND2.floor),
-      roughness: 1,
-      side: THREE2.DoubleSide
-    })
-  );
-  floor.position.set(H2.width_m / 2, H2.length_m / 2, 0);
+  const notches = H2.structural_notches ?? [];
+  const floorMat = new THREE2.MeshStandardMaterial({
+    color: new THREE2.Color(BRAND2.floor),
+    roughness: 1,
+    side: THREE2.DoubleSide
+  });
+  let floor;
+  if (notches.length === 0) {
+    floor = new THREE2.Mesh(new THREE2.PlaneGeometry(H2.width_m, H2.length_m), floorMat);
+    floor.position.set(H2.width_m / 2, H2.length_m / 2, 0);
+  } else {
+    const shape = new THREE2.Shape();
+    shape.moveTo(0, 0);
+    shape.lineTo(H2.width_m, 0);
+    shape.lineTo(H2.width_m, H2.length_m);
+    shape.lineTo(0, H2.length_m);
+    shape.closePath();
+    for (const n of notches) {
+      const hole = new THREE2.Path();
+      hole.moveTo(n.x_min_m, n.y_min_m);
+      hole.lineTo(n.x_max_m, n.y_min_m);
+      hole.lineTo(n.x_max_m, n.y_max_m);
+      hole.lineTo(n.x_min_m, n.y_max_m);
+      hole.closePath();
+      shape.holes.push(hole);
+    }
+    floor = new THREE2.Mesh(new THREE2.ShapeGeometry(shape), floorMat);
+  }
   floor.receiveShadow = true;
   scene2.add(floor);
   const grid = new THREE2.GridHelper(
@@ -114,6 +133,17 @@ function addHangar(scene2, H2, BRAND2, span2) {
   const dr = H2.door.center_x_m + H2.door.width_m / 2;
   if (dl > 1e-6) addWall(dl, t, dl / 2, 0);
   if (dr < H2.width_m - 1e-6) addWall(H2.width_m - dr, t, (dr + H2.width_m) / 2, 0);
+  const eps = 1e-6;
+  for (const n of notches) {
+    const cx = (n.x_min_m + n.x_max_m) / 2;
+    const cy = (n.y_min_m + n.y_max_m) / 2;
+    const w = n.x_max_m - n.x_min_m;
+    const l = n.y_max_m - n.y_min_m;
+    if (n.x_min_m > eps) addWall(t, l, n.x_min_m, cy);
+    if (n.x_max_m < H2.width_m - eps) addWall(t, l, n.x_max_m, cy);
+    if (n.y_min_m > eps) addWall(w, t, cx, n.y_min_m);
+    if (n.y_max_m < H2.length_m - eps) addWall(w, t, cx, n.y_max_m);
+  }
   const bay = H2.maintenance_bay;
   if (bay && bay.closed) {
     const bm = new THREE2.Mesh(

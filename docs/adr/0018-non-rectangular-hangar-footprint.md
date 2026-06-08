@@ -11,10 +11,10 @@
 - **Date:** 2026-06-04 (accepted 2026-06-08)
 - **Deciders:** Patrick Kuhn (DocGerd)
 
-## Implementation note (2026-06-08, #527/#528)
+## Implementation note (2026-06-08, #527/#528/#529)
 
-The implementation deviates from this ADR's "generalize `maintenance_bay` into a
-tagged keep-out list" sketch in one deliberate way, decided during build:
+The implementation deviates from this ADR's sketch in two deliberate ways,
+decided during build:
 
 - **Orthogonal field, not a generalized list.** `Hangar` gains a new, separate
   `structural_notches: tuple[StructuralNotch, ...]` field; `maintenance_bay` is
@@ -33,6 +33,18 @@ tagged keep-out list" sketch in one deliberate way, decided during build:
 - **Distinct conflict kind.** A notch overhang is reported as `structural_notch`
   (not `hangar_bounds`), so the tow planner's mover-bounds exemption can never
   silently swallow it (#529) and the taxonomy stays self-documenting.
+- **Tow: a separate keep-out, not "route the in-transit bounds through the floor
+  polygon" (#529).** This ADR sketched routing the mover's in-transit bounds
+  through the derived floor polygon. Implementation deviates: a moving plane is
+  allowed to protrude the front door at `y < 0` during entry (#411/#412), but the
+  floor polygon excludes `y < 0`, so `floor.covers(mover)` would wrongly reject
+  every legitimate door/apron protrusion. Instead the notch is carried as an
+  always-on keep-out alongside the maintenance bay — checked in `_motion_clear`
+  (polygon overlap, so an edge crossing the notch is caught) and the grid
+  heuristic — which preserves the door-gap exemption. The final-path oracle
+  (`path_first_conflict`) still enforces the notch for the mover for free: it
+  skips only the oracle's `hangar_bounds` verdict, so the distinct
+  `structural_notch` conflict surfaces.
 
 ## Context & Problem Statement
 
