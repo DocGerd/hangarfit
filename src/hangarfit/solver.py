@@ -1155,18 +1155,16 @@ def _nose_out(
         )
         trial = dict(placements)
         trial[pid] = flipped
-        try:
-            trial_layout = Layout(
-                fleet=scenario.fleet,
-                hangar=scenario.hangar,
-                placements=tuple(trial.values()),
-                maintenance_plane=scenario.maintenance_plane,
-            )
-        except ValueError:
-            # Defensive, mirroring _spread: the flip preserves on_carts so the
-            # cart rule cannot trip; a ValueError would be a structural bug — skip
-            # it (the layout is re-validated by the _score gate below regardless).
-            continue
+        # A heading-only flip preserves plane_id / x / y / on_carts, so it cannot
+        # trip any Layout cross-reference invariant (cart rule, on_carts
+        # consistency, duplicate placements) — build directly. A ValueError here
+        # would be a structural bug, so let it propagate rather than silently skip.
+        trial_layout = Layout(
+            fleet=scenario.fleet,
+            hangar=scenario.hangar,
+            placements=tuple(trial.values()),
+            maintenance_plane=scenario.maintenance_plane,
+        )
         if _score(trial_layout) != (0, 0.0):
             continue
         placements[pid] = flipped
