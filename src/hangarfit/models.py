@@ -452,7 +452,11 @@ class Hangar:
     the collision checker uses for containment. Defaults to empty, in which
     case ``floor_polygon`` is ``None`` and the checker keeps its fast,
     byte-identical per-vertex rectangle test — so a hangar with no notch
-    behaves exactly as before.
+    behaves exactly as before. Each notch is validated to fit inside the
+    rectangle and to leave some floor; coherence *between* keep-outs (a notch
+    overlapping the door opening, the maintenance bay, or another notch) is the
+    author's responsibility and is **not** validated — overlaps are geometrically
+    harmless (the floor is a set difference) but may indicate a data error.
     """
 
     length_m: float
@@ -528,6 +532,14 @@ class Hangar:
                     ]
                 )
             )
+            # A notch (or union) covering the whole floor would otherwise leave an
+            # empty polygon that ``covers`` rejects for *every* part — a baffling
+            # "all planes out of bounds" instead of a clear construction error.
+            if floor.is_empty:
+                raise ValueError(
+                    "structural_notches leave no usable hangar floor "
+                    f"(outer {self.width_m:g} x {self.length_m:g} fully covered)"
+                )
         object.__setattr__(self, "_floor_polygon", floor)
 
     @property

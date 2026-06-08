@@ -2035,6 +2035,20 @@ class TestStructuralNotchesLoading:
         assert hangar.structural_notches == ()
         assert hangar.floor_polygon is None
 
+    def test_explicit_null_treated_as_empty(self, tmp_path: Path) -> None:
+        # A bare `structural_notches:` (YAML null) means "none", like constraints:.
+        path = _write(tmp_path / "h.yaml", _MIN_HANGAR + "structural_notches:\n")
+        assert load_hangar(path).structural_notches == ()
+
+    def test_unknown_notch_key_rejected(self, tmp_path: Path) -> None:
+        path = _write(
+            tmp_path / "h.yaml",
+            _MIN_HANGAR + "structural_notches: "
+            "[{x_min_m: 14.0, y_min_m: 20.0, x_max_m: 18.0, y_max_m: 25.0, x_mn_m: 9.0}]\n",
+        )
+        with pytest.raises(LoaderError, match="unknown key"):
+            load_hangar(path)
+
     def test_single_notch_parsed(self, tmp_path: Path) -> None:
         path = _write(
             tmp_path / "h.yaml",

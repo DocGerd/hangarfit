@@ -644,6 +644,12 @@ class TestHangarFloorPolygon:
             # x_max 16.0 exceeds width 15.08
             self._hangar((StructuralNotch(x_min_m=12.0, y_min_m=22.0, x_max_m=16.0, y_max_m=31.0),))
 
+    def test_full_floor_notch_rejected(self) -> None:
+        # A notch covering the whole floor would leave an empty polygon that
+        # `covers` rejects for every part — caught at construction instead.
+        with pytest.raises(ValueError, match="no usable hangar floor"):
+            self._hangar((StructuralNotch(x_min_m=0.0, y_min_m=0.0, x_max_m=15.08, y_max_m=31.76),))
+
     def test_floor_polygon_excluded_from_equality_and_hash(self) -> None:
         notch = StructuralNotch(x_min_m=12.72, y_min_m=22.66, x_max_m=15.08, y_max_m=31.76)
         h1, h2 = self._hangar((notch,)), self._hangar((notch,))

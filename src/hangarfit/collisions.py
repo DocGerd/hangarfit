@@ -96,10 +96,12 @@ def _hangar_bounds_conflicts(
       ADR-0018). A notch overhang is reported as a ``structural_notch``
       conflict; escaping the outer rectangle stays ``hangar_bounds``.
 
-    Emits one conflict per offending **part** (not per plane), with the
-    first out-of-bounds vertex of that part. Reporting per-part means a
-    plane whose wing sticks out the front *and* tail sticks out the back
-    surfaces both, instead of having one masked behind the other.
+    Emits one conflict per offending **part** (not per plane): a
+    ``hangar_bounds`` conflict names the first out-of-bounds vertex; a
+    ``structural_notch`` conflict names the overhung notch (the edge-crossing
+    case has no vertex inside to name). Reporting per-part means a plane whose
+    wing sticks out the front *and* tail sticks out the back surfaces both,
+    instead of having one masked behind the other.
     """
     floor = hangar.floor_polygon
     out: list[Conflict] = []
@@ -147,9 +149,11 @@ def _notch_intrusion_detail(part: WorldPart, hangar: Hangar) -> str:
     first notch whose rectangle the part's bounding box overlaps.
 
     The part has already failed ``floor.covers`` while sitting inside the outer
-    rectangle, so it must overhang *some* notch; the AABB scan just identifies
-    which one for the message (a fallback covers the rare AABB-overlap-only
-    case)."""
+    rectangle, so it must overhang *some* notch — and a true overhang always
+    overlaps that notch's AABB, so the scan finds it. The trailing generic
+    ``return`` is an unreachable defensive default. (With multiple notches whose
+    boxes overlap the part, the broad-phase names the first match, which is fine
+    for a human-readable message.)"""
     pxmin, pymin, pxmax, pymax = _part_aabb(part)
     for n in hangar.structural_notches:
         if pxmin < n.x_max_m and pxmax > n.x_min_m and pymin < n.y_max_m and pymax > n.y_min_m:
