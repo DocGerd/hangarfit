@@ -319,6 +319,13 @@ def _is_wing_over_cockpit(pa: WorldPart, pb: WorldPart) -> bool:
     pairwise loop iterates one ordering only, but a symmetric helper is
     robust to a future reorder). This is the one pair whose height clause is
     dropped — see :func:`_parts_conflict` and ADR-0012 (D1).
+
+    NB ``vertical_stabilizer`` (the fin) is deliberately NOT here (ADR-0023):
+    it keeps the uniform two-clause rule, so a wing conflicts with a fin only
+    when it both overlaps the thin centreline fin in plan view AND their
+    z-bands meet — i.e. wing-over-tail nesting stays legal iff the wing clears
+    the fin laterally. The fin earns no z-drop because, unlike a cockpit, the
+    obstruction is geometric (lateral clearance), not categorical.
     """
     kinds = {pa.kind, pb.kind}
     return kinds == {"wing", "fuselage_front"}

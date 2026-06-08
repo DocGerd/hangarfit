@@ -23,10 +23,13 @@ of the *same* aircraft are never checked against each other — a
 Husky's wing and its own strut share a plan-view column by design.
 
 **The fuselage front/aft exception.** The fuselage is split into two
-kinds, `fuselage_front` (cockpit / nose) and `fuselage_aft` (cabin-aft
-+ tail), so the rule can tell a wing-over-cockpit from a wing-over-tail.
+kinds, `fuselage_front` (cockpit / nose) and `fuselage_aft` (the
+cabin-aft tube), so the rule can tell a wing-over-cockpit from a
+wing-over-tail. (The tail *surfaces* are now explicit `tail` +
+`vertical_stabilizer` parts, no longer folded into `fuselage_aft` — see
+"The empennage" below and [ADR-0023](../adr/0023-empennage-tail-surfaces.md).)
 `wing × fuselage_aft` keeps the two-clause rule above (a wing may
-overhang another plane's tail when the heights are disjoint). But
+overhang another plane's aft fuselage when the heights are disjoint). But
 `wing × fuselage_front` is a **hard conflict on plan-view overlap
 alone — the height clause (2) is dropped**: a wing over a cockpit blocks
 the canopy / prop arc / pilot ingress at *any* nesting height. This is
@@ -69,22 +72,39 @@ gap is irrelevant -- the cockpit rule drops clause (2) entirely (ADR-0012, D1).
                         | z-gap >= wing_layer_clearance_m
          B fuselage  [############]   (lower layer)
 ```
-*A wingtip may overhang a parked plane's aft fuselage / tail (Case A: legal when heights are disjoint, the two-clause `wing × fuselage_aft` rule) but never its cockpit / front fuselage (Case B: a hard `fuselage_front_wing_overlap` conflict at any nesting height). The loader auto-splits a `fuselage` part at the wing trailing edge `x_break`; front is the nose side, aft the tail side.*
+*A wingtip may overhang a parked plane's aft fuselage / low tailplane (Case A: legal when heights are disjoint, the two-clause `wing × fuselage_aft` rule) but never its cockpit / front fuselage (Case B: a hard `fuselage_front_wing_overlap` conflict at any nesting height). The loader auto-splits a `fuselage` part at the wing trailing edge `x_break`; front is the nose side, aft the tail side. Since [ADR-0023](../adr/0023-empennage-tail-surfaces.md) Case A also requires the wing to clear the plane's centreline `vertical_stabilizer` (fin), which rises into the wing layer — see "The empennage" below.*
 
 The closed set of `PartKind` values is `{"fuselage_front",
-"fuselage_aft", "wing", "strut", "tail"}`. The legacy `"fuselage"` is
-**not** a constructed kind — it survives only as a transient YAML keyword
-the loader auto-splits at the wing trailing-edge station
-(`wing.offset_x_m − wing.length_m/2`, the #282 wing-spar precedent),
-emitting an area-conserving `fuselage_front` + `fuselage_aft` pair whose
-union is the original box. An aircraft with a `fuselage` part but no
-`wing` part is a load error (nothing to derive the break from); explicit
-`fuselage_front`/`fuselage_aft` parts in YAML are a valid override the
-loader does not split. Adding a new structural element (engine nacelle,
-ventral fin) is a code change in `src/hangarfit/models.py`, not just a
-YAML edit — see [ADR-0001](../adr/0001-aircraft-parts-model.md) for the
+"fuselage_aft", "wing", "strut", "tail", "vertical_stabilizer"}`. The
+legacy `"fuselage"` is **not** a constructed kind — it survives only as a
+transient YAML keyword the loader auto-splits at the wing trailing-edge
+station (`wing.offset_x_m − wing.length_m/2`, the #282 wing-spar
+precedent), emitting an area-conserving `fuselage_front` + `fuselage_aft`
+pair whose union is the original box. An aircraft with a `fuselage` part
+but no `wing` part is a load error (nothing to derive the break from);
+explicit `fuselage_front`/`fuselage_aft` parts in YAML are a valid
+override the loader does not split. Adding a new structural element (e.g.
+an engine nacelle) is a code change in `src/hangarfit/models.py`, not just
+a YAML edit — see [ADR-0001](../adr/0001-aircraft-parts-model.md) for the
 parts-not-bbox rationale and [ADR-0012](../adr/0012-fuselage-front-aft-split.md)
 for the front/aft refinement.
+
+**The empennage** ([ADR-0023](../adr/0023-empennage-tail-surfaces.md)).
+Each aircraft carries two explicit tail surfaces: `tail` (the horizontal
+stabilizer — wide, ~2.5–3.5 m span, at a per-aircraft height) and
+`vertical_stabilizer` (the fin + rudder — thin, on the centreline, rising
+from the fuselage top to the published overall height, *into* the wing
+layer). No collision-rule change is needed: the same two-clause predicate
+makes a wing nested over a neighbour's tail conflict with that plane's fin
+**only when the wing also overlaps the thin centreline fin in plan view** —
+i.e. wing-over-tail nesting stays legal exactly when the wing clears the
+fin laterally. Per-part z expresses every tail configuration with no
+per-type code: conventional / cruciform tails sit the horizontal
+stabilizer *below* the wing layer (z-disjoint from an overhanging high
+wing, so it stays overhangable); a T-tail (the Stemme S10) sits it at the
+fin top *inside* the wing layer (so an overhanging wing conflicts).
+The fin is never overhangable; `metrics._OVERHANGABLE` keeps only `tail`
+and `fuselage_aft`.
 
 **Fleet composition relevant to the parts model.** Of the nine
 aircraft in `data/fleet.yaml`, six are **strut-braced** (the Aviat
@@ -96,10 +116,11 @@ which plane is low-wing — drive the operationally interesting cases
 of the collision rule: strut-braced planes block another plane's
 wing from nesting through their wing volume, and the only low-wing
 allows a high-wing's wingtip to legally project over its **aft
-fuselage / tail** in plan view (the height-disjoint pass-through case)
-— but *not* over its **cockpit / front fuselage**, which is a hard
-conflict regardless of height (the front/aft split, ADR-0012).
-Per-plane dimensions, gear types, and movement modes live in
+fuselage / low tailplane** in plan view (the height-disjoint pass-through
+case) — but *not* over its **cockpit / front fuselage**, which is a hard
+conflict regardless of height (the front/aft split, ADR-0012), and *not*
+over its **fin** (`vertical_stabilizer`), which rises into the wing layer
+(ADR-0023). Per-plane dimensions, gear types, and movement modes live in
 `data/fleet.yaml` as the source of truth.
 
 ### The maintenance bay rule
@@ -425,12 +446,15 @@ amendment).
 The two-clause predicate is symmetric in the two clearances: a
 collision requires *both* the plan-view and the height-gap thresholds
 to be violated simultaneously. This is what lets a high-wing's
-wingtip legally project over a low-wing's **aft fuselage / tail**
+wingtip legally project over a low-wing's **aft fuselage / low tailplane**
 (close in plan view, far in height) — see ADR-0001. The **one
 exception** is `wing × fuselage_front`: a wing over a cockpit is a hard
 conflict on plan-view overlap alone, with the height clause dropped
 (ADR-0012). `wing_layer_clearance_m` therefore governs every pair
-*except* wing-over-cockpit.
+*except* wing-over-cockpit — including `wing × vertical_stabilizer`, where
+the fin's reach *into* the wing layer is exactly what makes the height
+gap small enough to bite when a wing passes over the centreline fin
+(ADR-0023).
 
 ## Data integrity: frozen dataclasses + `__post_init__` invariants
 

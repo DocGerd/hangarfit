@@ -17,9 +17,11 @@ from hangarfit import collisions
 from hangarfit.geometry import WorldPart, aircraft_parts_world
 from hangarfit.models import CheckResult, Layout
 
-# Parts a wing may legally overhang: a wingtip may overhang a low-winger's tail or
-# aft fuselage, never its cockpit (ADR-0012). The vertical clearance there is the
-# actionable "how close did that overhang come" number an operator should eyeball.
+# Parts a wing may legally overhang: a wingtip may overhang a low-winger's tail
+# (the horizontal stabilizer) or aft fuselage, never its cockpit (ADR-0012). The
+# vertical clearance there is the actionable "how close did that overhang come"
+# number an operator should eyeball. vertical_stabilizer (the fin) is deliberately
+# absent: a wing over a fin is a conflict, not an overhang (ADR-0023).
 _OVERHANGABLE = frozenset({"tail", "fuselage_aft"})
 
 # The single source of the honesty-banner wording, shared by the 2D PNG
