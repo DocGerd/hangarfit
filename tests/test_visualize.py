@@ -480,6 +480,31 @@ class TestDrawPartHandlesTailKind:
         ax.add_patch.assert_called_once()
 
 
+class TestDrawPartHandlesVerticalStabilizer:
+    """``vertical_stabilizer`` (the fin, #520/ADR-0023) renders via its own
+    branch in ``_draw_part``, not the fail-loud ``else``. The fin rises into /
+    above the wing layer, so it is drawn opaque on top as a height cue."""
+
+    def test_vertical_stabilizer_kind_renders_without_exception(self) -> None:
+        from unittest.mock import MagicMock
+
+        from shapely.geometry import Polygon
+
+        from hangarfit.geometry import WorldPart
+        from hangarfit.visualize import _draw_part
+
+        fin_part = WorldPart(
+            polygon=Polygon([(0, 0), (0.15, 0), (0.15, 1.2), (0, 1.2)]),
+            z_bottom_m=1.5,
+            z_top_m=2.4,
+            plane_id="probe",
+            kind="vertical_stabilizer",
+        )
+        ax = MagicMock()
+        _draw_part(ax, fin_part, "#0079B5")
+        ax.add_patch.assert_called_once()
+
+
 class TestDrawTowPaths:
     """`_draw_tow_paths` overlays each plane's tow path as a polyline, one
     colour per plane, at the conflict-overlay z-tier (#192). Companion to
