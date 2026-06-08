@@ -61,15 +61,15 @@ from .regimes import FAST_REGIMES, REGIMES, regime_by_key
 #   ~170.5 → ~269 s (~58 %), tripping the old 240 s ceiling, while all three
 #   correctness verdicts stayed green. This is the heavier shipped model's real cost
 #   (a sanctioned re-baseline, not a regression), so the apron ceiling is raised to
-#   380 s (~1.4x the ~269 s CI median). spread_on (CI ~78 s) keeps ample headroom
-#   under 130 and is left unchanged.
+#   380 s (~1.4x the ~269 s worst-observed CI run; a faster run measured ~207 s).
+#   spread_on (CI ~78 s) keeps ample headroom under 130 and is left unchanged.
 #
 # The ceilings remain a *catastrophic-regression tripwire, not a microbenchmark*:
 # spread_on at 130 s sits above CI machine-speed jitter (~1.5x the 84.5 s median —
 # the regimes bind on ``max_restarts``, so only machine speed varies) yet still
 # below a #453 memoization-revert (which adds ~+68 s of placement → ~152 s here),
 # so the canonical regression still trips. apron at 380 s is ~1.4x its ~269 s
-# post-empennage median (#524).
+# worst-observed post-empennage CI run (#524).
 #
 # Recalibrate — and only then — when the regimes change, the lever set / a default
 # changes, or GitHub changes the runner class; re-confirm spread_on still trips on
