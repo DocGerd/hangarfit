@@ -10,8 +10,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import yaml
 
 from hangarfit.loader import (
+    _ALLOWED_AIRCRAFT_KEYS,
     LoaderError,
     _resolve_known_plane_id,
     _suggest_plane_id,
@@ -533,14 +535,35 @@ aircraft:
         ["tow_pivot", "towpivotable", "tow-pivotable", "turn_radius", "note", "bogus_field"],
     )
     def test_unknown_aircraft_key_rejected(self, tmp_path: Path, typo: str) -> None:
-        """A misspelled aircraft field key must be REJECTED, not silently dropped
-        to its default. PR #511 (#263) widened this gap with ``tow_pivotable``:
-        ``tow_pivot: true`` silently parsed as ``tow_pivotable=False``, denying
-        the pivot capability the author tried to grant. Mirrors the strict
-        ``wheels:`` and constraint-key allowlists (#513)."""
+        """A misspelled aircraft field key must be REJECTED (#513), not silently
+        dropped to its default. PR #511 (#263) added a new field (``tow_pivotable``)
+        that newly exposed this pre-existing gap: ``tow_pivot: true`` silently parsed
+        as ``tow_pivotable=False``, denying the pivot capability the author tried to
+        grant. Mirrors the strict ``wheels:`` and constraint-key allowlists. The
+        ``match`` also pins the ``aircraft '<id>':`` attribution prefix so a refactor
+        can't silently drop the file/id context while keeping the 'unknown key' text."""
         path = _write(tmp_path / "f.yaml", self._pivot_fleet(f"    {typo}: true\n"))
-        with pytest.raises(LoaderError, match="unknown aircraft key"):
+        with pytest.raises(LoaderError, match=r"aircraft 'foo': unknown aircraft key"):
             load_fleet(path)
+
+    def test_unknown_struts_key_rejected(self, tmp_path: Path) -> None:
+        """The nested ``struts:`` block also rejects unknown keys (#513), mirroring
+        ``wheels:``. All struts keys are required, so a typo of one fails loudly as
+        'missing'; this catches a misspelled near-duplicate alongside the correct key
+        (e.g. ``wing_atttach_y_m:``) that would otherwise be silently dropped."""
+        body = self._pivot_fleet("    tow_pivotable: false\n").replace(
+            "    wheels:\n",
+            "    struts:\n"
+            "      fuselage_attach_x_m: -1.22\n"
+            "      fuselage_attach_y_m: 0.425\n"
+            "      fuselage_attach_z_m: 0.5\n"
+            "      wing_attach_y_m: 1.8\n"
+            "      width_m: 0.05\n"
+            "      wing_atttach_y_m: 1.8\n"  # typo'd near-duplicate
+            "    wheels:\n",
+        )
+        with pytest.raises(LoaderError, match=r"'struts' block has unknown key\(s\)"):
+            load_fleet(_write(tmp_path / "f.yaml", body))
 
     def test_all_allowed_aircraft_keys_load(self, tmp_path: Path) -> None:
         """Completeness guard for the allowlist: an aircraft declaring EVERY
@@ -580,6 +603,15 @@ aircraft:
       track_m: 1.8
       third_wheel_offset_x_m: -2.0
 """
+        # Self-enforcing: the fixture must exercise EVERY allowed key, so adding a
+        # new key to _ALLOWED_AIRCRAFT_KEYS without extending this fixture fails here
+        # (closing the "forgot the fixture line" hole that a hand-maintained guard has).
+        entry_keys = set(yaml.safe_load(body)["aircraft"][0])
+        assert entry_keys == _ALLOWED_AIRCRAFT_KEYS, (
+            f"fixture must cover the full allowlist; "
+            f"missing={sorted(_ALLOWED_AIRCRAFT_KEYS - entry_keys)} "
+            f"extra={sorted(entry_keys - _ALLOWED_AIRCRAFT_KEYS)}"
+        )
         fleet = load_fleet(_write(tmp_path / "f.yaml", body))
         assert fleet["foo"].tow_pivotable is True
         assert fleet["foo"].notes == "a strut-braced high-winger"

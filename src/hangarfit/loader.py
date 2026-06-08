@@ -821,10 +821,12 @@ def _validate_wheels_vs_turn_radius(aircraft: Aircraft) -> None:
 # Strict unknown-key allowlist for an `aircraft:` entry (#513). Mirrors the
 # `wheels:` (:func:`_parse_wheels`) and constraint-key (:data:`_ALLOWED_CONSTRAINT_KEYS`)
 # guards. These are the YAML *schema* keys — note `struts` is a YAML-only convenience
-# block (expanded into `parts` below), NOT an Aircraft field, so the allowlist is the
-# accepted-input set, not the dataclass fields. Without it a misspelled key is silently
-# dropped to its default: e.g. `tow_pivot: true` (the #511/#263 widening) parses as
-# `tow_pivotable=False`, silently denying the pivot capability the author tried to grant.
+# block (expanded into `parts` by :func:`_expand_struts`), NOT an Aircraft field, so the
+# allowlist is the accepted-input set, not the dataclass fields. Without it a misspelled
+# key is silently dropped to its default: e.g. `tow_pivot: true` (the #511/#263 widening)
+# parses as `tow_pivotable=False`, silently denying the pivot capability the author tried
+# to grant. Keep in sync with the keys read in :func:`_build_aircraft`;
+# ``test_all_allowed_aircraft_keys_load`` guards the too-strict direction.
 _ALLOWED_AIRCRAFT_KEYS = frozenset(
     {
         "id",
@@ -969,6 +971,13 @@ def _build_struts_spec(data: dict[str, Any]) -> StrutsSpec:
     for key in required:
         if key not in data:
             raise LoaderError(f"'struts' missing required field {key!r}")
+    # Reject unknown/misspelled nested keys (#513), mirroring the `wheels:` block
+    # (:func:`_parse_wheels`). All struts keys are required, so a typo of one fails
+    # loudly above as "missing"; this additionally catches a misspelled near-duplicate
+    # (e.g. `wing_attach_ym:` alongside a correct key) that would otherwise be dropped.
+    unknown = set(data) - set(required)
+    if unknown:
+        raise LoaderError(f"'struts' block has unknown key(s): {sorted(unknown)}")
     return StrutsSpec(
         fuselage_attach_x_m=_to_float(data["fuselage_attach_x_m"], "struts.fuselage_attach_x_m"),
         fuselage_attach_y_m=_to_float(data["fuselage_attach_y_m"], "struts.fuselage_attach_y_m"),
