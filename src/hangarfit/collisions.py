@@ -71,37 +71,67 @@ def check(layout: Layout) -> CheckResult:
 def _hangar_bounds_conflicts(
     world_parts: dict[str, list[WorldPart]], hangar: Hangar
 ) -> list[Conflict]:
-    """Flag any world part with a vertex outside the hangar rectangle
-    ``[0, width_m] × [0, length_m]``.
+    """Flag any world part that is not fully inside the hangar floor.
 
-    Uses **per-vertex bounds**, not ``polygon.contains(...)``. The Shapely
-    contains check has touching-vs-overlap subtleties at the boundary that
-    would either over- or under-report walls flush with the hangar edge.
-    Per-vertex bounds give "every corner inside" with no surprise semantics
-    — a vertex exactly at ``x = 0`` or ``x = hangar.width_m`` counts as inside.
+    Two regimes, selected by whether the hangar has a structural notch:
 
-    Emits one conflict per offending **part** (not per plane), with the
-    first out-of-bounds vertex of that part. Reporting per-part means a
-    plane whose wing sticks out the front *and* tail sticks out the back
-    surfaces both, instead of having one masked behind the other.
+    * **No notch (the common case)** — the floor is the plain rectangle
+      ``[0, width_m] × [0, length_m]`` and a part is in-bounds iff every
+      vertex lies inside it. Uses **per-vertex bounds**, not
+      ``polygon.contains(...)``: the Shapely contains check has
+      touching-vs-overlap subtleties at the boundary that would over- or
+      under-report walls flush with the hangar edge; per-vertex bounds give
+      "every corner inside", with a vertex exactly at ``x = 0`` or
+      ``x = hangar.width_m`` counting as inside. This path is byte-identical
+      to the pre-notch checker.
+
+    * **With one or more** :class:`~hangarfit.models.StructuralNotch` — the
+      floor is the L-shaped :attr:`~hangarfit.models.Hangar.floor_polygon`
+      (outer rectangle minus the notches) and a part is in-bounds iff
+      ``floor.covers(part.polygon)``. ``covers`` (not ``contains``) keeps the
+      same boundary-inclusive semantics — a part flush with an outer wall
+      *or* with a notch edge is inside — while correctly rejecting a part that
+      overhangs a notch, **including a thin part whose edge crosses a notch
+      with neither endpoint inside it** (the per-vertex test's blind spot,
+      ADR-0018). A notch overhang is reported as a ``structural_notch``
+      conflict; escaping the outer rectangle stays ``hangar_bounds``.
+
+    Emits one conflict per offending **part** (not per plane): a
+    ``hangar_bounds`` conflict names the first out-of-bounds vertex; a
+    ``structural_notch`` conflict names the overhung notch (the edge-crossing
+    case has no vertex inside to name). Reporting per-part means a plane whose
+    wing sticks out the front *and* tail sticks out the back surfaces both,
+    instead of having one masked behind the other.
     """
+    floor = hangar.floor_polygon
     out: list[Conflict] = []
     for plane_id, parts in world_parts.items():
         for part in parts:
             bad = _first_out_of_bounds_vertex(part, hangar)
-            if bad is None:
-                continue
-            x, y = bad
-            out.append(
-                Conflict.single(
-                    kind="hangar_bounds",
-                    plane=plane_id,
-                    detail=(
-                        f"part {part.kind!r} vertex ({x:.3f}, {y:.3f}) outside hangar "
-                        f"0..{hangar.width_m:g} x 0..{hangar.length_m:g}"
-                    ),
+            if bad is not None:
+                x, y = bad
+                out.append(
+                    Conflict.single(
+                        kind="hangar_bounds",
+                        plane=plane_id,
+                        detail=(
+                            f"part {part.kind!r} vertex ({x:.3f}, {y:.3f}) outside hangar "
+                            f"0..{hangar.width_m:g} x 0..{hangar.length_m:g}"
+                        ),
+                    )
                 )
-            )
+                continue
+            # Inside the outer rectangle but possibly overhanging a notch. Only
+            # reached when the hangar has notches (``floor`` is then non-None);
+            # the ``covers`` test also catches edge-crossings with no vertex inside.
+            if floor is not None and not floor.covers(part.polygon):
+                out.append(
+                    Conflict.single(
+                        kind="structural_notch",
+                        plane=plane_id,
+                        detail=_notch_intrusion_detail(part, hangar),
+                    )
+                )
     return out
 
 
@@ -112,6 +142,27 @@ def _first_out_of_bounds_vertex(part: WorldPart, hangar: Hangar) -> tuple[float,
         if not (0.0 <= x <= hangar.width_m and 0.0 <= y <= hangar.length_m):
             return x, y
     return None
+
+
+def _notch_intrusion_detail(part: WorldPart, hangar: Hangar) -> str:
+    """Human-readable detail for a ``structural_notch`` conflict, naming the
+    first notch whose rectangle the part's bounding box overlaps.
+
+    The part has already failed ``floor.covers`` while sitting inside the outer
+    rectangle, so it must overhang *some* notch — and a true overhang always
+    overlaps that notch's AABB, so the scan finds it. The trailing generic
+    ``return`` is an unreachable defensive default. (With multiple notches whose
+    boxes overlap the part, the broad-phase names the first match, which is fine
+    for a human-readable message.)"""
+    pxmin, pymin, pxmax, pymax = _part_aabb(part)
+    for n in hangar.structural_notches:
+        if pxmin < n.x_max_m and pxmax > n.x_min_m and pymin < n.y_max_m and pymax > n.y_min_m:
+            return (
+                f"part {part.kind!r} overhangs structural notch "
+                f"(no floor at x ∈ [{n.x_min_m:g}, {n.x_max_m:g}], "
+                f"y ∈ [{n.y_min_m:g}, {n.y_max_m:g}])"
+            )
+    return f"part {part.kind!r} overhangs a structural notch"
 
 
 def _bay_intrusion_conflicts(

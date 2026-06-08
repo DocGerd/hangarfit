@@ -20,6 +20,7 @@ from hangarfit.models import (
     SearchConfig,
     SolverDiagnostics,
     SolveResult,
+    StructuralNotch,
     StrutsSpec,
     Wheels,
 )
@@ -589,6 +590,71 @@ class TestHangar:
             wing_layer_clearance_m=0.2,
         )
         assert h.maintenance_bay.center_x_m == 14.0
+
+
+class TestStructuralNotch:
+    """The always-on floor keep-out (ADR-0018): a rectangle validated for
+    sane corners on its own, and for fit-in-hangar by :class:`Hangar`."""
+
+    def test_valid_construction(self) -> None:
+        n = StructuralNotch(x_min_m=12.72, y_min_m=22.66, x_max_m=15.08, y_max_m=31.76)
+        assert (n.x_min_m, n.y_min_m, n.x_max_m, n.y_max_m) == (12.72, 22.66, 15.08, 31.76)
+
+    @pytest.mark.parametrize("x_min,y_min", [(-1.0, 0.0), (0.0, -2.0)])
+    def test_negative_corner_rejected(self, x_min: float, y_min: float) -> None:
+        with pytest.raises(ValueError, match="must be non-negative"):
+            StructuralNotch(x_min_m=x_min, y_min_m=y_min, x_max_m=5.0, y_max_m=5.0)
+
+    def test_non_increasing_x_rejected(self) -> None:
+        with pytest.raises(ValueError, match="x_max_m .* must be greater than"):
+            StructuralNotch(x_min_m=5.0, y_min_m=0.0, x_max_m=5.0, y_max_m=5.0)
+
+    def test_non_increasing_y_rejected(self) -> None:
+        with pytest.raises(ValueError, match="y_max_m .* must be greater than"):
+            StructuralNotch(x_min_m=0.0, y_min_m=5.0, x_max_m=5.0, y_max_m=4.0)
+
+
+class TestHangarFloorPolygon:
+    """The derived :attr:`Hangar.floor_polygon` (ADR-0018) — ``None`` without a
+    notch (fast rectangle path), an L-shape with one, and a fit guard."""
+
+    def _hangar(self, notches: tuple[StructuralNotch, ...]) -> Hangar:
+        return Hangar(
+            length_m=31.76,
+            width_m=15.08,
+            door=Door(center_x_m=7.28, width_m=13.46),
+            maintenance_bay=MaintenanceBay(center_x_m=2.0, width_m=3.0, depth_m=2.0),
+            clearance_m=0.3,
+            wing_layer_clearance_m=0.2,
+            structural_notches=notches,
+        )
+
+    def test_floor_polygon_none_without_notch(self) -> None:
+        assert self._hangar(()).floor_polygon is None
+
+    def test_floor_polygon_area_reduced_by_notch(self) -> None:
+        notch = StructuralNotch(x_min_m=12.72, y_min_m=22.66, x_max_m=15.08, y_max_m=31.76)
+        floor = self._hangar((notch,)).floor_polygon
+        assert floor is not None
+        expected = 15.08 * 31.76 - (15.08 - 12.72) * (31.76 - 22.66)
+        assert floor.area == pytest.approx(expected)
+
+    def test_notch_outside_hangar_rejected(self) -> None:
+        with pytest.raises(ValueError, match="doesn't fit in hangar"):
+            # x_max 16.0 exceeds width 15.08
+            self._hangar((StructuralNotch(x_min_m=12.0, y_min_m=22.0, x_max_m=16.0, y_max_m=31.0),))
+
+    def test_full_floor_notch_rejected(self) -> None:
+        # A notch covering the whole floor would leave an empty polygon that
+        # `covers` rejects for every part — caught at construction instead.
+        with pytest.raises(ValueError, match="no usable hangar floor"):
+            self._hangar((StructuralNotch(x_min_m=0.0, y_min_m=0.0, x_max_m=15.08, y_max_m=31.76),))
+
+    def test_floor_polygon_excluded_from_equality_and_hash(self) -> None:
+        notch = StructuralNotch(x_min_m=12.72, y_min_m=22.66, x_max_m=15.08, y_max_m=31.76)
+        h1, h2 = self._hangar((notch,)), self._hangar((notch,))
+        assert h1 == h2
+        assert hash(h1) == hash(h2)
 
 
 class TestPlacement:

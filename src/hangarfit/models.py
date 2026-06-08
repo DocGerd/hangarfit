@@ -19,6 +19,9 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, cast
 
+from shapely import box, union_all
+from shapely.geometry.base import BaseGeometry
+
 if TYPE_CHECKING:
     from hangarfit.towplanner import MovesPlan
 
@@ -375,6 +378,49 @@ class MaintenanceBay:
 
 
 @dataclass(frozen=True, slots=True)
+class StructuralNotch:
+    """An always-on rectangular keep-out cut from the hangar floor.
+
+    Unlike :class:`MaintenanceBay` — a *state-gated* operational
+    reservation that only bites when a plane occupies it — a structural
+    notch is a **permanent absence of floor**: e.g. the Airfield
+    Herrenteich hangar's back-right office annex, which makes the real
+    building L-shaped rather than rectangular (ADR-0018). It is subtracted
+    from the hangar's derived :attr:`Hangar.floor_polygon`, so the
+    collision checker rejects any part that overhangs it — including a thin
+    part whose *edge* crosses the notch with neither endpoint inside it (a
+    case the legacy per-vertex bounds test missed).
+
+    Axis-aligned, in hangar coordinates: the rectangle
+    ``[x_min_m, x_max_m] × [y_min_m, y_max_m]``. The notch-fits-in-hangar
+    check (``x_max_m ≤ width_m``, ``y_max_m ≤ length_m``) lives on
+    :class:`Hangar` because it needs the hangar dimensions.
+    """
+
+    x_min_m: float
+    y_min_m: float
+    x_max_m: float
+    y_max_m: float
+
+    def __post_init__(self) -> None:
+        if self.x_min_m < 0 or self.y_min_m < 0:
+            raise ValueError(
+                f"StructuralNotch corners must be non-negative, got "
+                f"min=({self.x_min_m}, {self.y_min_m})"
+            )
+        if self.x_max_m <= self.x_min_m:
+            raise ValueError(
+                f"StructuralNotch.x_max_m ({self.x_max_m}) must be greater than "
+                f"x_min_m ({self.x_min_m})"
+            )
+        if self.y_max_m <= self.y_min_m:
+            raise ValueError(
+                f"StructuralNotch.y_max_m ({self.y_max_m}) must be greater than "
+                f"y_min_m ({self.y_min_m})"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class Hangar:
     """The hangar floor plan.
 
@@ -398,6 +444,19 @@ class Hangar:
     it is positive. The loader resolves the opt-in ``auto`` keyword to a
     fleet-derived depth before construction, so this field is always a plain
     resolved float.
+
+    ``structural_notches`` is an optional tuple of always-on rectangular
+    keep-outs cut from the floor (ADR-0018) — e.g. the real Herrenteich
+    hangar's back-right office annex, which makes the building L-shaped. When
+    present, they are subtracted from the derived :attr:`floor_polygon`, which
+    the collision checker uses for containment. Defaults to empty, in which
+    case ``floor_polygon`` is ``None`` and the checker keeps its fast,
+    byte-identical per-vertex rectangle test — so a hangar with no notch
+    behaves exactly as before. Each notch is validated to fit inside the
+    rectangle and to leave some floor; coherence *between* keep-outs (a notch
+    overlapping the door opening, the maintenance bay, or another notch) is the
+    author's responsibility and is **not** validated — overlaps are geometrically
+    harmless (the floor is a set difference) but may indicate a data error.
     """
 
     length_m: float
@@ -408,6 +467,13 @@ class Hangar:
     wing_layer_clearance_m: float
     max_carts: int = 1
     apron_depth_m: float = 0.0
+    structural_notches: tuple[StructuralNotch, ...] = ()
+    # Derived L-shaped floor outline (outer rectangle minus the notches),
+    # computed once in __post_init__ and cached here. ``None`` when there are
+    # no notches (the common case) so the checker stays on its rectangle path.
+    # Excluded from equality/hash/repr (a Shapely geometry is not hashable and
+    # is fully determined by the other fields).
+    _floor_polygon: BaseGeometry | None = field(init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.length_m <= 0:
@@ -446,6 +512,46 @@ class Hangar:
                 f"must be strictly less than Hangar.length_m={self.length_m} "
                 f"(otherwise no non-bay parking area remains)"
             )
+        for notch in self.structural_notches:
+            if notch.x_max_m > self.width_m or notch.y_max_m > self.length_m:
+                raise ValueError(
+                    f"StructuralNotch (x ∈ [{notch.x_min_m:g}, {notch.x_max_m:g}], "
+                    f"y ∈ [{notch.y_min_m:g}, {notch.y_max_m:g}]) doesn't fit in hangar "
+                    f"{self.width_m:g} x {self.length_m:g}"
+                )
+        # Derive the floor outline once. Only build the (more expensive) polygon
+        # when there is something to subtract; otherwise leave it ``None`` and
+        # let the checker stay on the fast rectangle path.
+        floor: BaseGeometry | None = None
+        if self.structural_notches:
+            floor = box(0.0, 0.0, self.width_m, self.length_m).difference(
+                union_all(
+                    [
+                        box(n.x_min_m, n.y_min_m, n.x_max_m, n.y_max_m)
+                        for n in self.structural_notches
+                    ]
+                )
+            )
+            # A notch (or union) covering the whole floor would otherwise leave an
+            # empty polygon that ``covers`` rejects for *every* part — a baffling
+            # "all planes out of bounds" instead of a clear construction error.
+            if floor.is_empty:
+                raise ValueError(
+                    "structural_notches leave no usable hangar floor "
+                    f"(outer {self.width_m:g} x {self.length_m:g} fully covered)"
+                )
+        object.__setattr__(self, "_floor_polygon", floor)
+
+    @property
+    def floor_polygon(self) -> BaseGeometry | None:
+        """The hangar floor as a Shapely polygon (outer rectangle minus any
+        :class:`StructuralNotch`), or ``None`` when there are no notches.
+
+        ``None`` is the signal to the collision checker that the floor is a
+        plain rectangle and the fast per-vertex bounds test applies; a non-None
+        value is the L-shaped outline against which parts are tested with
+        ``covers`` (ADR-0018)."""
+        return self._floor_polygon
 
 
 @dataclass(frozen=True, slots=True)

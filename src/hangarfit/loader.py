@@ -52,6 +52,7 @@ from .models import (
     Placement,
     PlaneConstraint,
     Scenario,
+    StructuralNotch,
     StrutsSpec,
     Wheels,
 )
@@ -209,6 +210,34 @@ def load_hangar(path: Path | str, *, fleet: Mapping[str, Aircraft] | None = None
         if key not in bay_data:
             raise LoaderError(f"{path}: missing required field 'maintenance_bay.{key}'")
 
+    # Optional always-on floor keep-outs (ADR-0018). Absent — or an explicit
+    # null (`structural_notches:` with no value) — ⇒ rectangular hangar, unchanged
+    # behaviour (mirrors load_scenario's None→{} handling for `constraints:`).
+    # Each entry is an axis-aligned rectangle in hangar coords.
+    notches_data = raw.get("structural_notches")
+    if notches_data is None:
+        notches_data = []
+    if not isinstance(notches_data, list):
+        raise LoaderError(f"{path}: 'structural_notches' must be a list of rectangles")
+    _notch_keys = ("x_min_m", "y_min_m", "x_max_m", "y_max_m")
+    _allowed_notch_keys = frozenset(_notch_keys)
+    for i, notch in enumerate(notches_data):
+        if not isinstance(notch, dict):
+            raise LoaderError(
+                f"{path}: structural_notches[{i}] must be a mapping with {', '.join(_notch_keys)}"
+            )
+        # Reject unknown keys loudly — a misspelled coord must not be silently
+        # dropped (same discipline as _ALLOWED_AIRCRAFT_KEYS / _parse_wheels).
+        unknown = set(notch) - _allowed_notch_keys
+        if unknown:
+            raise LoaderError(
+                f"{path}: structural_notches[{i}] has unknown key(s) {sorted(unknown)}; "
+                f"allowed: {list(_notch_keys)}"
+            )
+        for key in _notch_keys:
+            if key not in notch:
+                raise LoaderError(f"{path}: missing required field 'structural_notches[{i}].{key}'")
+
     try:
         return Hangar(
             length_m=_to_float(raw["length_m"], "length_m"),
@@ -228,6 +257,15 @@ def load_hangar(path: Path | str, *, fleet: Mapping[str, Aircraft] | None = None
             ),
             max_carts=_to_int(raw.get("max_carts", 1), "max_carts"),
             apron_depth_m=_resolve_apron_depth(raw.get("apron_depth_m", 0.0), fleet),
+            structural_notches=tuple(
+                StructuralNotch(
+                    x_min_m=_to_float(notch["x_min_m"], f"structural_notches[{i}].x_min_m"),
+                    y_min_m=_to_float(notch["y_min_m"], f"structural_notches[{i}].y_min_m"),
+                    x_max_m=_to_float(notch["x_max_m"], f"structural_notches[{i}].x_max_m"),
+                    y_max_m=_to_float(notch["y_max_m"], f"structural_notches[{i}].y_max_m"),
+                )
+                for i, notch in enumerate(notches_data)
+            ),
         )
     except (ValueError, TypeError) as e:
         raise LoaderError(f"{path}: {e}") from e

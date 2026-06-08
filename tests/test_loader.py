@@ -2023,3 +2023,72 @@ def test_load_fleet_rejects_non_utf8_file(tmp_path: Path) -> None:
     bad.write_bytes(b"\xff\xfe\x00bad bytes not utf-8")
     with pytest.raises(LoaderError, match="UTF-8"):
         load_fleet(bad)
+
+
+class TestStructuralNotchesLoading:
+    """`load_hangar` parses the optional `structural_notches:` list (ADR-0018).
+    Absent ⇒ rectangular hangar, byte-identical behaviour."""
+
+    def test_absent_defaults_to_empty(self, tmp_path: Path) -> None:
+        path = _write(tmp_path / "h.yaml", _MIN_HANGAR)
+        hangar = load_hangar(path)
+        assert hangar.structural_notches == ()
+        assert hangar.floor_polygon is None
+
+    def test_explicit_null_treated_as_empty(self, tmp_path: Path) -> None:
+        # A bare `structural_notches:` (YAML null) means "none", like constraints:.
+        path = _write(tmp_path / "h.yaml", _MIN_HANGAR + "structural_notches:\n")
+        assert load_hangar(path).structural_notches == ()
+
+    def test_unknown_notch_key_rejected(self, tmp_path: Path) -> None:
+        path = _write(
+            tmp_path / "h.yaml",
+            _MIN_HANGAR + "structural_notches: "
+            "[{x_min_m: 14.0, y_min_m: 20.0, x_max_m: 18.0, y_max_m: 25.0, x_mn_m: 9.0}]\n",
+        )
+        with pytest.raises(LoaderError, match="unknown key"):
+            load_hangar(path)
+
+    def test_single_notch_parsed(self, tmp_path: Path) -> None:
+        path = _write(
+            tmp_path / "h.yaml",
+            _MIN_HANGAR + "structural_notches: "
+            "[{x_min_m: 14.0, y_min_m: 20.0, x_max_m: 18.0, y_max_m: 25.0}]\n",
+        )
+        hangar = load_hangar(path)
+        assert len(hangar.structural_notches) == 1
+        n = hangar.structural_notches[0]
+        assert (n.x_min_m, n.y_min_m, n.x_max_m, n.y_max_m) == (14.0, 20.0, 18.0, 25.0)
+        assert hangar.floor_polygon is not None
+
+    def test_missing_key_rejected(self, tmp_path: Path) -> None:
+        path = _write(
+            tmp_path / "h.yaml",
+            _MIN_HANGAR + "structural_notches: [{x_min_m: 14.0, y_min_m: 20.0, x_max_m: 18.0}]\n",
+        )
+        with pytest.raises(LoaderError, match=r"structural_notches\[0\].y_max_m"):
+            load_hangar(path)
+
+    def test_non_list_rejected(self, tmp_path: Path) -> None:
+        path = _write(tmp_path / "h.yaml", _MIN_HANGAR + "structural_notches: {x_min_m: 1.0}\n")
+        with pytest.raises(LoaderError, match="must be a list"):
+            load_hangar(path)
+
+    def test_notch_outside_hangar_rejected(self, tmp_path: Path) -> None:
+        # x_max 20.0 exceeds width 18.0 — a model error wrapped as LoaderError.
+        path = _write(
+            tmp_path / "h.yaml",
+            _MIN_HANGAR + "structural_notches: "
+            "[{x_min_m: 14.0, y_min_m: 20.0, x_max_m: 20.0, y_max_m: 25.0}]\n",
+        )
+        with pytest.raises(LoaderError, match="doesn't fit in hangar"):
+            load_hangar(path)
+
+    def test_degenerate_notch_rejected(self, tmp_path: Path) -> None:
+        path = _write(
+            tmp_path / "h.yaml",
+            _MIN_HANGAR + "structural_notches: "
+            "[{x_min_m: 14.0, y_min_m: 20.0, x_max_m: 14.0, y_max_m: 25.0}]\n",
+        )
+        with pytest.raises(LoaderError, match="must be greater than"):
+            load_hangar(path)

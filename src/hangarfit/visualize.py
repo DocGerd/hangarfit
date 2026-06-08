@@ -243,14 +243,16 @@ def nose_direction(heading_deg: float) -> tuple[float, float]:
 
 
 def _draw_hangar(ax: Any, layout: Layout) -> None:
-    """Hangar rectangle with a gap in the front wall for the door and a
-    conditional maintenance-bay overlay (closed-bay only)."""
+    """Hangar rectangle with a gap in the front wall for the door, a
+    conditional maintenance-bay overlay (closed-bay only), and an always-on
+    hatched overlay for any structural notch (ADR-0018)."""
     hangar = layout.hangar
     door_left = hangar.door.center_x_m - hangar.door.width_m / 2
     door_right = hangar.door.center_x_m + hangar.door.width_m / 2
 
-    # Bay overlay first (zorder=0) so walls and aircraft layer on top.
+    # Keep-out overlays first (zorder=0) so walls and aircraft layer on top.
     _draw_maintenance_bay(ax, layout)
+    _draw_structural_notches(ax, layout)
 
     # Back, left, right walls — solid.
     ax.plot(
@@ -318,6 +320,30 @@ def _draw_maintenance_bay(ax: Any, layout: Layout) -> None:
         color=_BAY_LABEL_COLOR,
         zorder=4,
     )
+
+
+def _draw_structural_notches(ax: Any, layout: Layout) -> None:
+    """Overlay each always-on structural notch (ADR-0018) as a cross-hatched
+    keep-out — the slice of the bounding rectangle that is *not* floor (e.g. the
+    Herrenteich back-right office annex). Drawn unconditionally whenever notches
+    are present, unlike the state-gated maintenance bay, and rendered in the
+    wall ink (no fill) so it reads as "structure, not parkable floor"."""
+    for notch in layout.hangar.structural_notches:
+        patch = MplPolygon(
+            [
+                (notch.x_min_m, notch.y_min_m),
+                (notch.x_max_m, notch.y_min_m),
+                (notch.x_max_m, notch.y_max_m),
+                (notch.x_min_m, notch.y_max_m),
+            ],
+            closed=True,
+            facecolor="none",
+            edgecolor=_HANGAR_EDGE,
+            hatch="xx",
+            lw=1.5,
+            zorder=0,
+        )
+        ax.add_patch(patch)
 
 
 def _draw_aircraft(ax: Any, layout: Layout) -> None:
