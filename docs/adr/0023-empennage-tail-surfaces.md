@@ -1,6 +1,6 @@
 # ADR-0023: Model the empennage as explicit tail surfaces so a vertical fin in the wing layer can block wing-over-tail nesting
 
-- **Status:** Proposed
+- **Status:** Accepted
 
 - **Date:** 2026-06-08
 - **Deciders:** [@DocGerd](https://github.com/DocGerd)
