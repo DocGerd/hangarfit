@@ -159,8 +159,18 @@ def test_solve_deterministic_best_partial_under_max_restarts() -> None:
         ``1 < 2`` (the predicate is strictly ``<``, not ``<=``), so
         the canary keeps working — but headroom drops to one restart
         and is one regression away from breaking.
+
+        Re-calibrated 2026-06-08 for #519/#520 (ADR-0023): widening
+        ``data/hangar.yaml`` 18 -> 22 m (so the demo keeps its full plane
+        set with the bulkier tail surfaces) made the shared
+        ``solve_fresh_six_planes.yaml`` *solvable* within ``max_restarts=1``,
+        flipping this canary to ``status=found``. It now uses a dedicated
+        tight 18 m hangar fixture (``solve_canary_six_planes_tight.yaml`` ->
+        ``canary_hangar_tight_18m.yaml``) so the fill stays un-fully-solvable
+        within the cap — decoupling the canary from ``data/hangar.yaml``'s
+        width so future demo-hangar tweaks cannot re-break it.
     """
-    fixture = "tests/fixtures/solve_fresh_six_planes.yaml"
+    fixture = "tests/fixtures/solve_canary_six_planes_tight.yaml"
     max_restarts = 1
     seed = 256
 

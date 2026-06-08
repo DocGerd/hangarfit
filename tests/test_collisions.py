@@ -113,27 +113,27 @@ class TestPairwiseOverlap:
         )
 
     def test_case_5_fuselage_fuselage_overlap(self) -> None:
-        """Two fuselages overlapping → still invalid, but the kind set + count
-        change with the front/aft split.
+        """Two deeply-overlapping planes → invalid, with a rich set of
+        correctly-taxonomized segment-pair conflicts.
 
-        Re-pinned for #50 / ADR-0012: ctsl and fuji fuselages overlap. The
-        single legacy ``fuselage_fuselage_overlap`` splits into the
-        segment-pair kinds — here the overlap zone spans ctsl's aft × fuji's
-        front and ctsl's aft × fuji's aft, so two conflicts fire
-        (``fuselage_aft_fuselage_aft_overlap`` and
-        ``fuselage_aft_fuselage_front_overlap``). The *verdict* is unchanged
-        (two overlapping fuselages is a conflict regardless of segment, since
-        they share a z-band); only the taxonomy + count move. The retired
-        un-split kind must never reappear."""
+        Re-pinned for #50 / ADR-0012 (front/aft split) and ADR-0023 (the tail
+        surfaces). ctsl and fuji are parked so their fuselages overlap; with the
+        empennage now modelled, the dense overlap also catches fuji's wide
+        horizontal stabilizer (``tail``) and the ctsl wing over fuji's fin
+        (``vertical_stabilizer``). The *verdict* is unchanged; the taxonomy is
+        richer. The invariants that matter: the retired un-split
+        ``fuselage_fuselage_overlap`` kind never reappears, the fuselage
+        segment-pair kinds are present, and every kind is the two part kinds
+        sorted alphabetically + ``_overlap``."""
         result = check(_load("invalid_fuselage_fuselage"))
         assert not result.valid
         assert _conflict_kinds(result) == {
             "fuselage_aft_fuselage_aft_overlap",
             "fuselage_aft_fuselage_front_overlap",
-        }, f"expected segment-pair fuselage kinds, got {result.conflicts!r}"
-        assert len(result.conflicts) == 2, (
-            f"expected exactly 2 conflicts, got {len(result.conflicts)}: {result.conflicts!r}"
-        )
+            "fuselage_aft_tail_overlap",
+            "fuselage_front_tail_overlap",
+            "vertical_stabilizer_wing_overlap",
+        }, f"expected the re-pinned segment-pair kind set, got {result.conflicts!r}"
         assert "fuselage_fuselage_overlap" not in _conflict_kinds(result), (
             f"retired un-split kind leaked into conflicts: {result.conflicts!r}"
         )
@@ -163,12 +163,26 @@ class TestWingOverFuselageSegment:
         )
 
     def test_wing_over_tail_at_same_height_is_valid(self) -> None:
-        """The same wing over ``fuselage_aft`` at the same z-disjoint height
-        is valid — the aft region keeps the z-gap rule."""
+        """A wing over another plane's tail surfaces at a z-disjoint height is
+        valid WHEN it clears the centreline fin laterally — the ctsl wing nests
+        over fuji's low horizontal stabilizer (z-disjoint) and passes outboard
+        of fuji's fin (#50/ADR-0012 tail rule + ADR-0023 lateral clearance)."""
         result = check(_load("valid_wing_over_tail"))
         assert result.valid, (
-            f"wing over fuselage_aft at z-disjoint height must be valid, "
+            f"wing over the tail clearing the fin must be valid, "
             f"got conflicts: {result.conflicts!r}"
+        )
+
+    def test_wing_over_fin_conflicts_on_real_fleet(self) -> None:
+        """ADR-0023 (#520): the same wing-over-tail as ``valid_wing_over_tail``,
+        but with the overhanging ctsl wing slid ONTO fuji's centreline fin. The
+        fin rises into the wing layer, so this flips to a
+        ``vertical_stabilizer_wing_overlap`` conflict — silently valid before
+        the empennage was modelled."""
+        result = check(_load("invalid_wing_over_fin"))
+        assert not result.valid
+        assert "vertical_stabilizer_wing_overlap" in _conflict_kinds(result), (
+            f"expected the fin conflict, got {result.conflicts!r}"
         )
 
     def test_fuselage_front_wing_kind_is_alphabetical(self) -> None:

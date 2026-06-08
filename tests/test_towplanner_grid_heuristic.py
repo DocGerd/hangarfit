@@ -170,8 +170,14 @@ def test_default_heuristic_and_stats_do_not_change_the_path() -> None:
 
 
 def test_grid_heuristic_is_deterministic() -> None:
-    """``heuristic="grid"`` is RNG-free ⇒ byte-identical across repeat runs."""
-    layout = load_layout("tests/fixtures/valid_all_nine_planes.yaml")
+    """``heuristic="grid"`` is RNG-free ⇒ byte-identical across repeat runs.
+
+    Uses a sparse 2-plane nesting fixture: since ADR-0023 added realistic tail
+    surfaces (#519/#520), the packed 9-plane ``valid_all_nine_planes`` fill is
+    statically valid but no longer tow-routable (the wide tailplanes block every
+    corridor). This test only needs *a* routable plane to exercise the grid
+    heuristic's determinism."""
+    layout = load_layout("tests/fixtures/valid_left_side_nesting.yaml")
     mover = min(layout.placements, key=lambda p: p.y_m).plane_id  # a shallow, routable plane
     stats: dict[str, object] = {}
     a = _route_one(layout, mover, heuristic="grid", stats=stats)
@@ -191,7 +197,9 @@ def test_grid_heuristic_is_deterministic() -> None:
 
 
 def test_grid_path_is_oracle_clean() -> None:
-    layout = load_layout("tests/fixtures/valid_all_nine_planes.yaml")
+    # Sparse 2-plane fixture: the packed 9-plane fill is no longer tow-routable
+    # once the empennage is modelled (ADR-0023); a routable plane suffices here.
+    layout = load_layout("tests/fixtures/valid_left_side_nesting.yaml")
     mover = min(layout.placements, key=lambda p: p.y_m).plane_id
     others = tuple(p for p in layout.placements if p.plane_id != mover)
     placed = Layout(
@@ -352,9 +360,11 @@ def test_plan_fill_global_cap_bails_in_bounded_total_expansions() -> None:
     """``max_total_expansions`` caps the SUM of expansions across the whole fill
     (#336). A tiny global cap forces a fast, bounded bail with the cap-exhausted
     conflict — instead of paying per-plane-budget × scan-retries on a fill the
-    bounded planner cannot route. ``valid_two_separated`` leads with the 18 m-wing
-    scheibe_falke, which cannot route in 10 expansions, so the global cap trips."""
-    layout = load_layout("tests/fixtures/valid_two_separated.yaml")
+    bounded planner cannot route. Uses the packed 9-plane fill, which since
+    ADR-0023 added realistic tail surfaces (#519/#520) is no longer tow-routable
+    (the wide tailplanes block every corridor): the planes consume expansions
+    until the global SUM cap trips."""
+    layout = load_layout("tests/fixtures/valid_all_nine_planes.yaml")
     with pytest.raises(NoFeasiblePlanError) as ei:
         plan_fill(layout, max_total_expansions=10)
     assert "global fill expansion budget" in ei.value.conflict.detail

@@ -9,18 +9,22 @@
 # "The coordinate convention" for the full convention.
 
 length_m: 25.0          # depth from front wall (door side) to back wall
-width_m: 18.0           # left-to-right span
+width_m: 22.0           # left-to-right span (widened from 18 m for #519/#520:
+                        # realistic ~3 m tailplanes + fins consume lateral room,
+                        # so the canonical demo needs ~4 m more width to keep its
+                        # full plane set valid. Placeholder — real survey resets it.)
 
 door:
   center_x_m: 9.0       # door center along the front wall (x axis)
   width_m: 12.0         # door opening width
 
 maintenance_bay:
-  # Partial-width, back-anchored rectangle. PLACEHOLDER values — real
-  # measurements will reset all three. Right-corner bay so the partial-width
-  # path is exercised by the canonical layout.
-  center_x_m: 13.5      # right side of the 18 m hangar (placeholder)
-  width_m: 9.0          # right half (placeholder)
+  # Partial-width, back-anchored keep-out rectangle spanning x ∈ [9, 18],
+  # y ∈ [16, 25]. PLACEHOLDER values — real measurements will reset all three.
+  # Kept at its original absolute x-range (center 13.5, width 9) after the hangar
+  # widened to 22 m, so it now leaves aisles on BOTH sides (still partial-width).
+  center_x_m: 13.5      # bay x ∈ [9, 18] (unchanged absolute position)
+  width_m: 9.0          # partial width (placeholder)
   depth_m: 9.0          # back nine meters (placeholder)
 
 clearance_m: 0.3        # minimum horizontal gap between any two aircraft parts
