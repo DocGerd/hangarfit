@@ -974,7 +974,7 @@ def _build_struts_spec(data: dict[str, Any]) -> StrutsSpec:
     # Reject unknown/misspelled nested keys (#513), mirroring the `wheels:` block
     # (:func:`_parse_wheels`). All struts keys are required, so a typo of one fails
     # loudly above as "missing"; this additionally catches a misspelled near-duplicate
-    # (e.g. `wing_attach_ym:` alongside a correct key) that would otherwise be dropped.
+    # (e.g. `wing_atttach_y_m:` alongside a correct key) that would otherwise be dropped.
     unknown = set(data) - set(required)
     if unknown:
         raise LoaderError(f"'struts' block has unknown key(s): {sorted(unknown)}")
