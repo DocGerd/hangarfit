@@ -79,7 +79,7 @@
       <tspan x="0" dy="32">hangar-parking layouts — from above.</tspan>
     </text>
 
-    <!-- Mono command block, ~16px, graphite. $ in accent, check + verdict in valid green. -->
+    <!-- Mono command block, ~16px, graphite. $ in accent, verdict in valid green. -->
     <text x="0" y="206" font-family="'Geist Mono', ui-monospace, 'SF Mono', 'JetBrains Mono', Menlo, monospace"
           font-size="16" fill="#5E646B">
       <tspan fill="#0079B5">$</tspan><tspan> hangarfit check examples/layouts/example.yaml</tspan>

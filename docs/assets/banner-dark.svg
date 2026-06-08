@@ -10,8 +10,9 @@
       wall+datum #3B4046 / maint #7B63A3 / valid #0F7C72 (status inks fixed across
       surfaces) / plane tiles = PLANES_DARK fills with an #ECEEF1 ink edge (the
       "never hue alone" outline, lifted to read on dark paper).
-    On-brand vector stopgap; wordmark falls back to system-ui (Geist not installed
-    locally) so this is NOT pixel-identical to the design comp. Canvas 1280x400.
+    On-brand vector stopgap (the pixel-accurate PNG is the deferred canonical
+    deliverable); wordmark falls back to system-ui (Geist not installed locally)
+    so this is NOT pixel-identical to the design comp. Canvas 1280x400.
     No (R)/(TM); DocGerdSoft is a personal brand, not a company.
   -->
   <defs>
@@ -41,7 +42,7 @@
   <g transform="translate(760,60)" opacity="0.9">
     <!-- floor (the surface token; the raised plane the fleet sits on) -->
     <rect x="0" y="0" width="560" height="280" fill="#15171A" stroke="none"/>
-    <!-- back-strip maintenance bay (maint violet; opacity lifted to read on dark floor, per BRAND.md §4 bay 0.32) -->
+    <!-- back-strip maintenance bay (maint violet; opacity lifted to read on the dark floor) -->
     <rect x="0" y="0" width="560" height="46" fill="#7B63A3" opacity="0.30"/>
     <!-- back wall -->
     <line x1="0" y1="0" x2="560" y2="0" stroke="#3B4046" stroke-width="3"/>
