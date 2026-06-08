@@ -131,7 +131,7 @@ aircraft:
         offset_y_m: 0.0
         z_bottom_m: 1.5
         z_top_m: 1.8
-      - kind: vertical_stabilizer  # fin to overall height 1.80 m (folded config; below the 2.0 m wing layer)
+      - kind: vertical_stabilizer  # fin to overall height 1.80 m (folded config; tops 0.1 m below a 1.9 m wing — within the 0.2 m clearance band, so a wing nested over it still conflicts)
         length_m: 1.0
         width_m: 0.15
         offset_x_m: -5.21

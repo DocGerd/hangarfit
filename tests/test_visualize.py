@@ -505,6 +505,36 @@ class TestDrawPartHandlesVerticalStabilizer:
         ax.add_patch.assert_called_once()
 
 
+class TestDrawPartExhaustiveOverClosedKinds:
+    """Every member of the closed ``PartKind`` set must reach a real
+    ``_draw_part`` branch — not the fail-loud ``else``. This converts the
+    "PartKind grew; the renderer didn't" footgun into a test failure the day a
+    seventh kind is added without a render branch (the membership-set analogue
+    of the ``else: raise`` guard; ADR-0023 review)."""
+
+    def test_every_part_kind_renders_without_raising(self) -> None:
+        from unittest.mock import MagicMock
+
+        from shapely.geometry import Polygon
+
+        from hangarfit.geometry import WorldPart
+        from hangarfit.models import _VALID_PART_KINDS
+        from hangarfit.visualize import _draw_part
+
+        square = Polygon([(0, 0), (1, 0), (1, 1), (0, 1)])
+        for kind in sorted(_VALID_PART_KINDS):
+            part = WorldPart(
+                polygon=square,
+                z_bottom_m=0.0,
+                z_top_m=1.0,
+                plane_id="probe",
+                kind=kind,  # type: ignore[arg-type]
+            )
+            ax = MagicMock()
+            _draw_part(ax, part, "#0079B5")  # must not raise for any closed kind
+            ax.add_patch.assert_called_once()
+
+
 class TestDrawTowPaths:
     """`_draw_tow_paths` overlays each plane's tow path as a polyline, one
     colour per plane, at the conflict-overlay z-tier (#192). Companion to

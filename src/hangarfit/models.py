@@ -25,6 +25,9 @@ if TYPE_CHECKING:
 WingPosition = Literal["high", "mid", "low"]
 Gear = Literal["tailwheel", "nosewheel", "monowheel"]
 MovementMode = Literal["always_cart", "always_own_gear", "cart_eligible"]
+# `tail` denotes the horizontal stabilizer specifically (a wide, usually-low
+# overhangable surface — see metrics._OVERHANGABLE); `vertical_stabilizer` is the
+# fin (thin, tall, never overhangable). Empennage split per ADR-0023.
 PartKind = Literal["fuselage_front", "fuselage_aft", "wing", "strut", "tail", "vertical_stabilizer"]
 
 _VALID_PART_KINDS = frozenset(typing.get_args(PartKind))
