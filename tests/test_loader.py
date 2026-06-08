@@ -528,6 +528,64 @@ aircraft:
         with pytest.raises(LoaderError, match="'tow_pivotable': expected boolean"):
             load_fleet(path)
 
+    @pytest.mark.parametrize(
+        "typo",
+        ["tow_pivot", "towpivotable", "tow-pivotable", "turn_radius", "note", "bogus_field"],
+    )
+    def test_unknown_aircraft_key_rejected(self, tmp_path: Path, typo: str) -> None:
+        """A misspelled aircraft field key must be REJECTED, not silently dropped
+        to its default. PR #511 (#263) widened this gap with ``tow_pivotable``:
+        ``tow_pivot: true`` silently parsed as ``tow_pivotable=False``, denying
+        the pivot capability the author tried to grant. Mirrors the strict
+        ``wheels:`` and constraint-key allowlists (#513)."""
+        path = _write(tmp_path / "f.yaml", self._pivot_fleet(f"    {typo}: true\n"))
+        with pytest.raises(LoaderError, match="unknown aircraft key"):
+            load_fleet(path)
+
+    def test_all_allowed_aircraft_keys_load(self, tmp_path: Path) -> None:
+        """Completeness guard for the allowlist: an aircraft declaring EVERY
+        valid key (including the YAML-only ``struts:`` block, which is expanded
+        into ``parts`` and is *not* an ``Aircraft`` field, plus ``notes``) loads
+        without error — so the allowlist can never be too strict."""
+        body = """
+aircraft:
+  - id: foo
+    name: Foo
+    notes: a strut-braced high-winger
+    wing_position: high
+    gear: tailwheel
+    movement_mode: always_own_gear
+    turn_radius_m: 5.0
+    measured: false
+    tow_pivotable: true
+    parts:
+      - kind: fuselage
+        length_m: 7.0
+        width_m: 0.8
+        z_bottom_m: 0.0
+        z_top_m: 1.5
+      - kind: wing
+        length_m: 1.4
+        width_m: 9.0
+        z_bottom_m: 2.0
+        z_top_m: 2.3
+    struts:
+      fuselage_attach_x_m: -1.22
+      fuselage_attach_y_m: 0.425
+      fuselage_attach_z_m: 0.5
+      wing_attach_y_m: 1.8
+      width_m: 0.05
+    wheels:
+      main_offset_x_m: 0.20
+      track_m: 1.8
+      third_wheel_offset_x_m: -2.0
+"""
+        fleet = load_fleet(_write(tmp_path / "f.yaml", body))
+        assert fleet["foo"].tow_pivotable is True
+        assert fleet["foo"].notes == "a strut-braced high-winger"
+        # struts expanded into parts (no `struts` Aircraft field).
+        assert any(p.kind == "strut" for p in fleet["foo"].parts)
+
     def test_invalid_movement_mode_caught(self, tmp_path: Path) -> None:
         """Typo in movement_mode used to leak silently past the Layout cart
         rule (Aircraft.__post_init__ now validates the Literal set)."""

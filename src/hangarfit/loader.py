@@ -818,9 +818,43 @@ def _validate_wheels_vs_turn_radius(aircraft: Aircraft) -> None:
         )
 
 
+# Strict unknown-key allowlist for an `aircraft:` entry (#513). Mirrors the
+# `wheels:` (:func:`_parse_wheels`) and constraint-key (:data:`_ALLOWED_CONSTRAINT_KEYS`)
+# guards. These are the YAML *schema* keys — note `struts` is a YAML-only convenience
+# block (expanded into `parts` below), NOT an Aircraft field, so the allowlist is the
+# accepted-input set, not the dataclass fields. Without it a misspelled key is silently
+# dropped to its default: e.g. `tow_pivot: true` (the #511/#263 widening) parses as
+# `tow_pivotable=False`, silently denying the pivot capability the author tried to grant.
+_ALLOWED_AIRCRAFT_KEYS = frozenset(
+    {
+        "id",
+        "name",
+        "wing_position",
+        "gear",
+        "movement_mode",
+        "turn_radius_m",
+        "measured",
+        "parts",
+        "wheels",
+        "notes",
+        "struts",
+        "tow_pivotable",
+    }
+)
+
+
 def _build_aircraft(entry: Any) -> Aircraft:
     if not isinstance(entry, dict):
         raise LoaderError(f"aircraft entry must be a mapping, got {type(entry).__name__}")
+
+    # Reject unknown/misspelled keys loudly (#513) before any field is read, so a
+    # typo'd required key (e.g. `nam:`) surfaces as the offending key rather than a
+    # downstream "missing required field" for the key the author thought they spelled.
+    unknown = set(entry) - _ALLOWED_AIRCRAFT_KEYS
+    if unknown:
+        raise LoaderError(
+            f"unknown aircraft key(s) {sorted(unknown)}; allowed: {sorted(_ALLOWED_AIRCRAFT_KEYS)}"
+        )
 
     required = ("id", "name", "wing_position", "gear", "movement_mode")
     for key in required:
