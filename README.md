@@ -72,7 +72,7 @@ hangarfit --version
 hangarfit check examples/layouts/example.yaml
 ```
 
-> Note: `examples/layouts/example.yaml` is a deliberate 6-plane subset that fits inside the current placeholder hangar — running `check` on it returns `valid` (exit code 0). To see a conflict diagnosis (red overlay in the PNG render, exit code 1), point at one of the `tests/fixtures/invalid_*.yaml` fixtures. All dimensions in `data/` remain placeholders pending real measurement (see Status), so any verdict on the current data is illustrative.
+> Note: `examples/layouts/example.yaml` is a deliberate 5-plane subset (plus the Scheibe in the maintenance bay) that fits inside the current placeholder hangar — running `check` on it returns `valid` (exit code 0). To see a conflict diagnosis (red overlay in the PNG render, exit code 1), point at one of the `tests/fixtures/invalid_*.yaml` fixtures. All dimensions in `data/` remain placeholders pending real measurement (see Status), so any verdict on the current data is illustrative.
 
 ```bash
 # Render the layout (works on invalid layouts too — conflicts highlighted in red)

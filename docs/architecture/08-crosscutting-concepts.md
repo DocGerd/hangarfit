@@ -144,8 +144,10 @@ Top-down, with the placeholder `data/hangar.yaml` values made concrete
 ```text
  TOP-DOWN.  +x along the door; +y runs deeper into the hangar, drawn DOWNWARD
  (door at top) to match the §8 convention box and the renderer.  Placeholder
- data/hangar.yaml: length_m=25, width_m=18; bay center_x_m=13.5, width_m=9,
- depth_m=9  ->  x in (9.0, 18.0),  y in (16.0, 25.0].
+ data/hangar.yaml: length_m=25, width_m=22; bay center_x_m=13.5, width_m=9,
+ depth_m=9  ->  x in (9.0, 18.0),  y in (16.0, 25.0].  (Schematic, not to scale:
+ the box below draws the bay flush to its right edge x=18; the right wall is now
+ x=22 — a ~4 m aisle, x in (18, 22), is elided.)
  x=0          door center_x=9.0, width=12.0  (x in [3, 15])               x=18
   +=========================[  door  ]=======================================+   y = 0.0   front wall
   |        +x runs right along the door --->        +y runs into hangar      |
@@ -156,8 +158,8 @@ Top-down, with the placeholder `data/hangar.yaml` values made concrete
   |                                          |#  MAINTENANCE BAY (closed)  #|   a vertex ON x=9 or
   |          normal hangar floor             |#  back-anchored, partial-w  #|   y=16 is OUTSIDE the bay)
   |                                          |#  x in (9.0, 18.0)          #|
-  |                                          |#  y in (16.0, 25.0]         #|   right edge x=18
-  |                                          |#  any non-occupant vertex   #|   == hangar wall
+  |                                          |#  y in (16.0, 25.0]         #|   bay right edge x=18
+  |                                          |#  any non-occupant vertex   #|   (~4 m aisle to x=22 wall)
   |                                          |#  STRICTLY inside  =>  one   #|
   |                                          |#  bay_intrusion per part    #|
   +==========================================+#############################+   y = 25.0  [INSIDE]
@@ -168,7 +170,7 @@ Top-down, with the placeholder `data/hangar.yaml` values made concrete
    strict < on the left / right / front edges; inclusive <= on the back edge
    (inherited from _hangar_bounds_conflicts, so y = 25 is not re-tested here)
 ```
-*Maintenance-bay geometry on the placeholder hangar (`length_m`=25, `width_m`=18; bay `center_x_m`=13.5, `width_m`=9, `depth_m`=9): the back-right 9×9 m corner, `x ∈ (9.0, 18.0)`, `y ∈ (16.0, 25.0]`. The left/right/front edges are strict `<` (a vertex on the edge is in the aisle, not the bay); the back-`y` edge is inclusive because it coincides with the hangar back wall and is inherited from `_hangar_bounds_conflicts`. When a maintenance occupant is set, any non-occupant part vertex strictly inside fires one `bay_intrusion` conflict per offending part.*
+*Maintenance-bay geometry on the placeholder hangar (`length_m`=25, `width_m`=22; bay `center_x_m`=13.5, `width_m`=9, `depth_m`=9): the back-right 9×9 m corner, `x ∈ (9.0, 18.0)`, `y ∈ (16.0, 25.0]` (the bay's x=18 right edge now sits ~4 m inside the widened x=22 wall — that aisle is elided from the schematic above). The left/right/front edges are strict `<` (a vertex on the edge is in the aisle, not the bay); the back-`y` edge is inclusive because it coincides with the hangar back wall and is inherited from `_hangar_bounds_conflicts`. When a maintenance occupant is set, any non-occupant part vertex strictly inside fires one `bay_intrusion` conflict per offending part.*
 
 This rule replaced the earlier "fuselage centroid in the back strip"
 rule during the bay-walling work that completed in
@@ -634,7 +636,7 @@ otherwise the default-fast invariant erodes.
 ### Test-only fixtures live alongside the production ones
 
 Files like `tests/fixtures/test_hangar_large.yaml` (30 × 25 m) exist
-because the placeholder production hangar (25 × 18 m in
+because the placeholder production hangar (25 × 22 m in
 `data/hangar.yaml`) cannot fit all nine aircraft simultaneously
 under the placeholder clearance budget. The fixture header explains
 the reason; the all-nine-planes test uses this larger hangar. When

@@ -6,6 +6,38 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [0.13.0] — 2026-06-09
+
+### Added
+
+- **L-shaped hangar / structural-notch support (#528/#529/#530, epic #527,
+  ADR-0018).** A hangar may now declare an optional `structural_notches:` list of
+  always-on rectangular floor keep-outs in `hangar.yaml`, modelling a
+  non-rectangular footprint (the real Airfield Herrenteich back-right office notch
+  — `x ∈ [12.72, 15.08]`, `y ∈ [22.66, 31.76]` — is now recorded as data instead
+  of avoided by hand). End to end: (1) **static containment (#528)** —
+  `collisions.check` derives a Shapely floor polygon (bounding rectangle − notches)
+  and rejects any part that parks in *or overhangs* a notch, reported as a distinct
+  `structural_notch` conflict (escaping the outer wall stays `hangar_bounds`);
+  (2) **tow keep-out (#529)** — the tow planner honours the notch for the plane
+  *in transit* (polygon-overlap pose rejection + grid-heuristic cells blocked so a
+  route bends around the dead pocket; a tow ending in the notch surfaces as a
+  `structural_notch` conflict on the mover), treating the notch as a separate
+  keep-out so the #411/#412 `y < 0` door/apron protrusion exemption is preserved;
+  (3) **3D viewer (#530)** — `hangarfit view` renders the footprint as a true floor
+  cutout (`ShapeGeometry`) plus interior walls, and `scene/v1` gains an
+  always-emitted `structural_notches` array on the hangar block (empty for a
+  rectangular hangar, documented in `scene-v1-schema.md`). The 2D PNG draws each
+  notch as a cross-hatched keep-out overlay, and the same `covers` containment
+  closes a latent vertex-only edge-crossing bug. **Inert and byte-identical when no
+  notch is configured** (ADR-0003): the fast per-vertex bounds path and the
+  original rectangular floor/render are retained for every synthetic `data/`
+  hangar, test fixture, determinism canary, and the bench — only a notched hangar
+  pays the `covers` cost.
 - **Theme-aware README hero (#514).** The README banner now serves two
   brand-tuned SVG variants via an HTML `<picture>` element with
   `prefers-color-scheme` media queries — `docs/assets/banner-light.svg` (light
@@ -29,6 +61,33 @@ All notable changes to this project are documented here. Format follows [Keep a 
   fan — no new motion primitive). Set for `aviat_husky`, `ctsl`, `fk9_mkii`. A
   realism flag (these types genuinely pivot when towed), orthogonal to
   `movement_mode`.
+- **Tow paths on the 3D viewer floor (#505).** `hangarfit view` now draws each
+  placed plane's full tow route as a coloured line on the hangar floor (`z ≈ 0`),
+  one colour per plane — the 3D analogue of the 2D `solve --render-paths` overlay
+  (#192/#193). Each line uses the plane's own viewer hue (`PLANES_DARK`, the same
+  swatch as its boxes, nose cone, and legend entry; conflicted planes use the
+  conflict ink), so the apron slide-in, in-hangar maneuvering, and tow order are
+  legible at a glance — and path quality (e.g. a forward-then-reverse cusp) that a
+  bare animation hides becomes visible. The apron lead-in is drawn verbatim: with
+  `--apron-depth > 0` the line extends to `ty < 0` outside the door, and at depth 0
+  it starts at the door (`y = 0`); a static / un-routed scene draws no line. A new
+  `paths` HUD checkbox (next to `walls` / `labels`), **default ON**, shows or hides
+  the routes. The route is derived from the existing `timeline.segments[].samples`
+  affines with **no `scene/v1` schema change** (the ADR-0017 seam stays stable).
+- **Too-shallow-apron observability warning (#503, ADR-0021).** With a staging
+  apron (`apron_depth_m > 0`), a plane only slides in if the apron is deep enough
+  for *its* footprint at an apron start pose; a plane too deep to fit was silently
+  routed via the `y = 0` door line (no slide-in) with zero signal. The tow path now
+  emits a deterministic, deduped **stderr** warning naming each such plane and a
+  suggested minimum depth (its fore-aft footprint extent — a conservative
+  sufficient bound, not the `auto` over-margin), on `solve --render-paths` and
+  `view --animate`; `solve --json` additionally carries an additive
+  `apron_shallow_drops` list (no schema bump). Emission lives at the CLI boundary
+  keyed on the *returned* result and deduped per plane, so a discarded
+  spread-fallback pass never warns and `--alternatives N` warns each plane once.
+  **Output-only — the `MovesPlan` is byte-identical** (ADR-0003); raise
+  `--apron-depth` past the warned value (or prefer `auto`) to engage the apron.
+  Auto-deepening the apron is deferred (#503 Option 2).
 
 ### Changed
 
@@ -67,8 +126,42 @@ All notable changes to this project are documented here. Format follows [Keep a 
   #412 depth-0 cross-version byte-identity for that case (the same-input contract
   is unchanged). Obstructed nose-out approaches that need mid-search maneuvering
   remain best-effort.
+- **Herrenteich fleet refreshed to TCDS / 3-view-sourced dimensions + a working
+  demo scenario (#536, refs ADR-0023 / ADR-0018).** The eight real-data occupants
+  in `examples/herrenteich/fleet.yaml` move from estimated part dimensions to
+  figures **sourced** from EASA/FAA TCDS + manufacturer manuals where published
+  (wing chord, fuselage/cabin width, horizontal-stabilizer span, gear track +
+  wheelbase; per-field provenance recorded inline). Two configurations are
+  corrected against primary sources: the **Stemme S10 → taildragger** (twin
+  retractable mains + tailwheel; EASA TCDS A.054), and the **CTSL tail →
+  conventional-low** all-moving stabilator (was the secondary-source "cruciform"
+  label; geometry unchanged). The Scheibe SF-25E's real **low** wing stays modelled
+  **high** as the deliberate monowheel-tilt abstraction (a flat 18 m low wing is
+  unclearable for any all-eight arrangement — search-verified across 40+ seeds;
+  dimensions are real, only the z-layer is the modelling choice). The hand-built
+  all-eight `examples/herrenteich/layout.yaml` stays **valid** (0 conflicts) under
+  the refreshed dimensions, and a new **`examples/herrenteich/scenario_demo.yaml`**
+  — a 3-aircraft subset — **solves and fully tow-routes** end-to-end
+  (`solve --render-paths`, spread-off fallback ADR-0016) around the office notch,
+  with the commands shown in the dataset README. Part fore-aft stations, most tail
+  chords, all fin chords, and strut attach points remain honestly derived /
+  estimated (unpublished for these light types); `measured: false` is retained
+  (sourced, not on-site surveyed). Real-data only — `data/fleet.yaml` stays the
+  synthetic placeholder and no `src/` behaviour changes.
 
 ### Fixed
+
+- **Strict unknown-key allowlist on fleet aircraft entries (#513).** A misspelled
+  field key in an `aircraft:` entry — e.g. `tow_pivot:` / `towpivotable:` /
+  `tow-pivotable:` for the new `tow_pivotable` flag, or `turn_radius:` for
+  `turn_radius_m:` — used to be **silently dropped to its default**, denying the
+  capability the author tried to grant. `_build_aircraft` now validates each entry
+  against a strict key allowlist *before any field is read* and raises an
+  attributed `LoaderError` (`aircraft '<id>': unknown aircraft key(s) …`), so a
+  typo of a *required* key surfaces as the offending key rather than a downstream
+  "missing field". The nested `struts:` block gets the same guard, catching a
+  misspelled near-duplicate alongside a correct key. Mirrors the existing strict
+  `wheels:` and constraint-key allowlists.
 
 ## [0.12.0] — 2026-06-07
 
@@ -534,7 +627,8 @@ First Phase 1 cut — substrate for arranging the flying club fleet in a stack-s
 - Apache-2.0 license, public-audience README, CI matrix (Python 3.11 + 3.12), branch protection on develop + main (#13, #14, #15, #16).
 - Strut-aware golden tests + all-9-planes fixture using larger test-only hangar to accommodate strut-bracing geometry on placeholder dimensions (#5).
 
-[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.12.0...HEAD
+[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.13.0...HEAD
+[0.13.0]: https://github.com/DocGerd/hangarfit/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/DocGerd/hangarfit/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/DocGerd/hangarfit/compare/v0.10.0...v0.11.0
 [0.10.0]: https://github.com/DocGerd/hangarfit/compare/v0.9.0...v0.10.0

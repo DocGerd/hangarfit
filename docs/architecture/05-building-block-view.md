@@ -105,8 +105,9 @@ maintenance-plane-is-in-fleet rule, the
 maintenance-plane-is-not-in-placements rule. A constructed instance is
 guaranteed structurally valid; nothing downstream re-checks.
 
-`PartKind` is a closed `Literal` set (`"fuselage"`, `"wing"`,
-`"strut"`, `"tail"`). The `Conflict.kind` taxonomy is also closed —
+`PartKind` is a closed `Literal` set (`"fuselage_front"`,
+`"fuselage_aft"`, `"wing"`, `"strut"`, `"tail"`,
+`"vertical_stabilizer"`). The `Conflict.kind` taxonomy is also closed —
 adding a new conflict kind is a code change here, not just a string
 constant elsewhere.
 
