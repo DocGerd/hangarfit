@@ -356,7 +356,7 @@ gate failure, so a newly added regime cannot silently escape the speed check.
 | `trivial_single` | 0.8 s | 10 s | catastrophic-only |
 | `roomy_three_spread_on` | **84.5 s** | **130 s** | ~1.5× the CI median |
 | `roomy_three_spread_off` | 7.3 s | 20 s | catastrophic-only |
-| `roomy_three_apron` | **~269 s** (post-empennage, worst observed) | **380 s** | ~1.4× the worst CI run |
+| `roomy_three_apron` | **~210 s** (post-empennage median; ~269 s pre-fix peak) | **380 s** | ~1.8× the CI median |
 
 The binding ceiling is `roomy_three_spread_on`. At 130 s it still trips on the
 canonical regression — reverting #453's memoization adds ~+68 s of placement on
@@ -384,12 +384,13 @@ not drift.
 > **Re-baselined again 2026-06-08 (#524):** the empennage model (#518/#519/#520,
 > ADR-0023) added two parts per aircraft (a horizontal `tail` + a
 > `vertical_stabilizer`), so every tow expansion validates more part pairs and
-> per-check cost rose. The route-heavy `roomy_three_apron` regime crept from
-> ~170.5 → ~269 s on CI (~58 %), tripping the old 240 s ceiling while the three
-> correctness verdicts stayed green — a model-change re-baseline, not a regression.
-> The apron ceiling is raised to **380 s** (~1.4× the ~269 s worst-observed
-> post-empennage CI run; a faster run measured ~207 s);
-> `roomy_three_spread_on` (CI ~78 s) keeps headroom under 130 and is unchanged. This
+> per-check cost rose. The route-heavy `roomy_three_apron` regime's
+> empennage-merge run that tripped the old 240 s ceiling peaked at ~269 s; post-fix
+> runs land ~207–213 s (median ~210), while the three correctness verdicts stayed
+> green — a model-change re-baseline, not a regression.
+> The apron ceiling is raised to **380 s** (~1.8× the observed ~210 s median;
+> ≈1.4× the ~269 s pre-fix peak); `roomy_three_spread_on` keeps headroom under 130
+> and is unchanged. This
 > is the same wall-clock-vs-CI-variance class that bit the CLI solve smoke tests in
 > #522 — the bench binds on `max_restarts`, so only machine speed varies, but the
 > ceilings are absolute seconds and must track the (heavier) shipped model.

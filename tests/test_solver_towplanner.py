@@ -214,8 +214,12 @@ def test_solve_k_gt_1_bundle_alignment_with_mixed_routability(monkeypatch):
     # (ADR-0003): a wall-clock budget here found <2 basins on a loaded CI runner
     # once the empennage model made each restart heavier (#531). max_restarts=6
     # yields all 3 diverse layouts for this fixture+seed regardless of machine
-    # speed (measured: >=4 restarts is sufficient; 6 for margin).
-    result = solve(scenario, search=SearchConfig(max_restarts=6), alternatives=3, seed=0)
+    # speed (measured: >=4 restarts is sufficient; 6 for margin). budget_s is set
+    # well above the 6-restart wall-clock (~5 s local, ~14 s CI) so max_restarts is
+    # the sole termination gate even on a very slow runner — no latent budget flake.
+    result = solve(
+        scenario, budget_s=120.0, search=SearchConfig(max_restarts=6), alternatives=3, seed=0
+    )
 
     # This fixture+seed must yield at least 2 diverse layouts for the test to
     # be meaningful; fail loudly (not vacuously) if the search regresses.
