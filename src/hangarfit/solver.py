@@ -302,8 +302,16 @@ def _run_solve(
                         budget_s=budget_s,
                         pinned_planes=pinned_planes,
                     )
-                # _spread preserves every Layout invariant; a ValueError here
-                # would be a structural bug, so let it propagate.
+                # Nose-out preference (#263 / ADR-0022): RNG-free, runs after
+                # _spread and independently of it (also on the spread=False fast
+                # path). Flips parked headings toward the door where valid.
+                n_flips = 0
+                if search.nose_out:
+                    placements, n_flips = _nose_out(
+                        placements, scenario, search, pinned_planes=pinned_planes
+                    )
+                # _spread / _nose_out preserve every Layout invariant; a ValueError
+                # here would be a structural bug, so let it propagate.
                 candidate_layout = Layout(
                     fleet=scenario.fleet,
                     hangar=scenario.hangar,
@@ -317,6 +325,7 @@ def _run_solve(
                         min_gap=min_gap,
                         energy=energy,
                         restart_index=restart_index,
+                        nose_out_flips=n_flips,
                     )
                 )
                 break  # restart to seek a different basin
@@ -591,6 +600,7 @@ def _build_found_result(
     """
     accepted_layouts = [c.layout for c in selected]
     min_gaps = tuple(c.min_gap for c in selected)
+    nose_out_flips = tuple(c.nose_out_flips for c in selected)
     status: SolveStatus = "found" if len(accepted_layouts) >= alternatives else "found_partial"
     plans, unroutable, apron_drops = _tow_plan_layouts(
         accepted_layouts,
@@ -615,6 +625,7 @@ def _build_found_result(
             valid_basins_found=valid_basins_found,
             spread_stall_applied=spread_stall_applied,
             apron_shallow_drops=apron_drops,
+            nose_out_flips=nose_out_flips,
         ),
     )
 
@@ -1085,6 +1096,80 @@ def _spread_quality(
             min_gap = min(min_gap, gap)
             energy += w[ids[i]] * w[ids[j]] * math.exp(-gap / scale)
     return (min_gap, energy)
+
+
+def _nose_out(
+    placements: dict[str, Placement],
+    scenario: Scenario,
+    search: SearchConfig,
+    *,
+    pinned_planes: frozenset[str],
+) -> tuple[dict[str, Placement], int]:
+    """RNG-free post-pass: flip movable planes' parked headings toward nose-out.
+
+    For each movable plane in ``sorted(plane_id)`` order, apply the
+    zero-displacement antipodal flip ``(h + 180) % 360`` (preserving
+    x/y/on_carts) iff it is **strictly more nose-out** (closer to heading 180,
+    toward the door per ADR-0002) AND the layout stays valid
+    (``_score == (0, 0.0)``). Each flip is re-validated against the CURRENT
+    (possibly already-flipped) set, one plane at a time, so two
+    individually-valid flips can never jointly invalidate. Returns
+    ``(placements, n_flips)``.
+
+    Soft preference (#263 / ADR-0022), mirroring :func:`_spread`'s discipline but
+    **RNG-free** — it takes no ``rng`` and consumes no RNG draw, so the seeded
+    stream (and thus the ADR-0003 byte-identical contract) is unchanged even with
+    the feature ON.
+
+    Per-plane override via :attr:`PlaneConstraint.nose_out` (tri-state): ``None``
+    ⇒ follow the global ``search.nose_out``; ``True`` ⇒ prefer-out; ``False`` ⇒
+    never flip (the nose-IN exemption, e.g. a low-wing tucked under a high-wing
+    tail).
+    """
+    movable = sorted(pid for pid in placements if pid not in pinned_planes)
+    flips = 0
+    for pid in movable:
+        constraint = scenario.constraints.get(pid)
+        want = (
+            constraint.nose_out
+            if constraint is not None and constraint.nose_out is not None
+            else search.nose_out
+        )
+        if not want:
+            continue
+        current = placements[pid]
+        flipped_heading = (current.heading_deg + 180.0) % 360.0
+        # Strictly more nose-out. Because the flip is the exact antipode and
+        # short_arc(antipode, 180) == 180 - short_arc(h, 180), this is identical
+        # to "the flip lands in the nose-out hemisphere (< 90°)".
+        if _heading_delta_short_arc(flipped_heading, 180.0) >= _heading_delta_short_arc(
+            current.heading_deg, 180.0
+        ):
+            continue
+        flipped = Placement(
+            plane_id=current.plane_id,
+            x_m=current.x_m,
+            y_m=current.y_m,
+            heading_deg=flipped_heading,
+            on_carts=current.on_carts,
+        )
+        trial = dict(placements)
+        trial[pid] = flipped
+        # A heading-only flip preserves plane_id / x / y / on_carts, so it cannot
+        # trip any Layout cross-reference invariant (cart rule, on_carts
+        # consistency, duplicate placements) — build directly. A ValueError here
+        # would be a structural bug, so let it propagate rather than silently skip.
+        trial_layout = Layout(
+            fleet=scenario.fleet,
+            hangar=scenario.hangar,
+            placements=tuple(trial.values()),
+            maintenance_plane=scenario.maintenance_plane,
+        )
+        if _score(trial_layout) != (0, 0.0):
+            continue
+        placements[pid] = flipped
+        flips += 1
+    return placements, flips
 
 
 def _spread(
@@ -1607,6 +1692,7 @@ class _SpreadCandidate(NamedTuple):
     min_gap: float
     energy: float
     restart_index: int
+    nose_out_flips: int = 0
 
 
 def _select_spread_diverse(

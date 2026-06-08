@@ -6,6 +6,23 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Nose-out parked heading preference (#263, ADR-0022).** The solver now prefers
+  to park each plane pointing **out** (nose toward the door) for an easy
+  straight-out exit: an RNG-free `_nose_out` post-pass flips a plane's parked
+  heading 180° toward the door when that stays collision-valid (soft — never
+  overrides fit, never moves a plane, never un-parks one). **Default ON**;
+  `--no-nose-out` to disable, or a per-plane `constraints.<id>.nose_out: false`
+  for the nose-in exemption (e.g. a low-wing under a high-wing tail). Byte-identical
+  determinism is preserved **even with the feature on** (the post-pass draws no
+  RNG). Builds on #480, which makes a nose-out slot cheap to back into. Adds the
+  per-layout `diagnostics.nose_out_flips` count (surfaced in `--json`).
+- **`tow_pivotable` aircraft flag (#263, ADR-0022).** A per-plane flag marking a
+  free-castering / nose-lift plane that pivots in place when **towed**
+  (`effective_turn_radius_m() → 0`, routed via the existing zero-radius cart-pivot
+  fan — no new motion primitive). Set for `aviat_husky`, `ctsl`, `fk9_mkii`. A
+  realism flag (these types genuinely pivot when towed), orthogonal to
+  `movement_mode`.
+
 ### Changed
 
 - **Fewest-moves tow routing — nose-out slots are backed in (#480, ADR-0010

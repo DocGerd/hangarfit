@@ -482,6 +482,52 @@ aircraft:
         with pytest.raises(LoaderError, match="'measured': expected boolean"):
             load_fleet(path)
 
+    @staticmethod
+    def _pivot_fleet(tow_pivotable_line: str) -> str:
+        """A valid one-aircraft fleet body; ``tow_pivotable_line`` is inserted
+        (already indented under the aircraft entry) or empty for the default."""
+        return f"""
+aircraft:
+  - id: foo
+    name: Foo
+    wing_position: high
+    gear: tailwheel
+    movement_mode: always_own_gear
+    turn_radius_m: 5.0
+    measured: false
+{tow_pivotable_line}    parts:
+      - kind: fuselage
+        length_m: 7.0
+        width_m: 0.8
+        z_bottom_m: 0.0
+        z_top_m: 1.5
+      - kind: wing
+        length_m: 1.4
+        width_m: 9.0
+        z_bottom_m: 2.0
+        z_top_m: 2.3
+    wheels:
+      main_offset_x_m: 0.20
+      track_m: 1.8
+      third_wheel_offset_x_m: -2.0
+"""
+
+    def test_tow_pivotable_defaults_false(self, tmp_path: Path) -> None:
+        path = _write(tmp_path / "f.yaml", self._pivot_fleet(""))
+        fleet = load_fleet(path)
+        assert fleet["foo"].tow_pivotable is False
+
+    def test_tow_pivotable_true_parsed(self, tmp_path: Path) -> None:
+        path = _write(tmp_path / "f.yaml", self._pivot_fleet("    tow_pivotable: true\n"))
+        fleet = load_fleet(path)
+        assert fleet["foo"].tow_pivotable is True
+
+    def test_quoted_bool_for_tow_pivotable_rejected(self, tmp_path: Path) -> None:
+        """`tow_pivotable: "true"` (quoted) would silently be True via bool()."""
+        path = _write(tmp_path / "f.yaml", self._pivot_fleet('    tow_pivotable: "true"\n'))
+        with pytest.raises(LoaderError, match="'tow_pivotable': expected boolean"):
+            load_fleet(path)
+
     def test_invalid_movement_mode_caught(self, tmp_path: Path) -> None:
         """Typo in movement_mode used to leak silently past the Layout cart
         rule (Aircraft.__post_init__ now validates the Literal set)."""

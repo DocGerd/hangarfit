@@ -507,6 +507,9 @@ def load_scenario(
         raise LoaderError(f"{path}: {e}") from e
 
 
+_ALLOWED_CONSTRAINT_KEYS = frozenset({"pin", "force_on_carts", "priority", "nose_out"})
+
+
 def _build_plane_constraint(plane_id: str, data: Any) -> PlaneConstraint:
     """Build a :class:`PlaneConstraint` from one entry in a scenario YAML
     ``constraints:`` block.
@@ -520,6 +523,7 @@ def _build_plane_constraint(plane_id: str, data: Any) -> PlaneConstraint:
             pin: { x_m: <float>, y_m: <float>, heading_deg: <float>, on_carts: <bool> }
             force_on_carts: <bool>
             priority: <float>   # soft, >= 0 (#441)
+            nose_out: <bool>    # soft tri-state; omit ⇒ follow global (#263)
 
     ``pin``, ``force_on_carts`` and ``priority`` are all optional. Omitting all
     yields a "free" constraint (the solver may place the plane anywhere
@@ -541,6 +545,19 @@ def _build_plane_constraint(plane_id: str, data: Any) -> PlaneConstraint:
     """
     if not isinstance(data, dict):
         raise LoaderError(f"must be a mapping, got {type(data).__name__}")
+
+    # Strict unknown-key allowlist (mirrors the `wheels:` block). Without it a
+    # misspelled key is silently dropped — harmless for pin/force_on_carts/priority
+    # (whose absence means "free"), but for `nose_out` a silent drop INVERTS intent:
+    # its None means "follow the global SearchConfig.nose_out" (default ON), so a
+    # fat-fingered nose-IN exemption (`nose_out: false`) would silently flip the
+    # plane nose-OUT (#263). Reject loudly instead.
+    unknown = set(data) - _ALLOWED_CONSTRAINT_KEYS
+    if unknown:
+        raise LoaderError(
+            f"unknown constraint key(s) {sorted(unknown)}; "
+            f"allowed: {sorted(_ALLOWED_CONSTRAINT_KEYS)}"
+        )
 
     pin_data = data.get("pin")
     pin: Placement | None = None
@@ -571,7 +588,16 @@ def _build_plane_constraint(plane_id: str, data: Any) -> PlaneConstraint:
     if priority is not None:
         priority = _to_float(priority, "priority")
 
-    return PlaneConstraint(pin=pin, force_on_carts=force_on_carts, priority=priority)
+    # Per-plane nose-out override (#263). Tri-state: None ⇒ follow the global
+    # SearchConfig.nose_out; True ⇒ prefer-out; False ⇒ never flip (nose-IN
+    # exemption). Strict bool coercion, like force_on_carts.
+    nose_out = data.get("nose_out")
+    if nose_out is not None:
+        nose_out = _to_bool(nose_out, "nose_out")
+
+    return PlaneConstraint(
+        pin=pin, force_on_carts=force_on_carts, priority=priority, nose_out=nose_out
+    )
 
 
 def _extract_maintenance_plane(raw: dict, path: Path) -> str | None:
@@ -870,6 +896,7 @@ def _build_aircraft(entry: Any) -> Aircraft:
         movement_mode=entry["movement_mode"],
         turn_radius_m=turn_radius_m,
         measured=_to_bool(entry.get("measured", False), "measured"),
+        tow_pivotable=_to_bool(entry.get("tow_pivotable", False), "tow_pivotable"),
         parts=tuple(parts),
         notes=entry.get("notes", ""),
         wheels=_parse_wheels(entry.get("wheels"), entry["gear"]),

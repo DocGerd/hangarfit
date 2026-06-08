@@ -77,6 +77,7 @@ aircraft:
     wing_position: high
     gear: tailwheel
     movement_mode: always_own_gear
+    tow_pivotable: true  # free-castering tailwheel — pivots in place when towed (#263)
     turn_radius_m: 5.0
     measured: false
     parts:
@@ -289,6 +290,7 @@ aircraft:
     wing_position: high
     gear: nosewheel
     movement_mode: cart_eligible
+    tow_pivotable: true  # tail-down nose-lift pivot when towed (#263)
     turn_radius_m: 4.0
     measured: false
     notes: "Cantilever wing (no struts)"
@@ -320,6 +322,7 @@ aircraft:
     wing_position: high
     gear: nosewheel
     movement_mode: cart_eligible
+    tow_pivotable: true  # tail-down nose-lift pivot when towed (#263)
     turn_radius_m: 4.0
     measured: false
     parts:

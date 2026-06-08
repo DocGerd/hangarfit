@@ -262,6 +262,18 @@ def build_parser() -> argparse.ArgumentParser:
             "with --no-spread, since the bias rides on the spread post-pass.)"
         ),
     )
+    solve.add_argument(
+        "--no-nose-out",
+        action="store_false",
+        dest="nose_out",
+        default=True,
+        help=(
+            "Disable the nose-out parked-heading preference (#263). By default the "
+            "solver flips each plane's parked heading toward the door (for an easy "
+            "straight-out exit) when that stays collision-valid; pass this to keep "
+            "the packing-chosen heading. Per-plane override: constraints.<id>.nose_out."
+        ),
+    )
     # ── Tow-planner knobs (grid heuristic default + global fill cap since #336;
     # spike #332). --tow-heuristic defaults to the shipped grid planner and
     # --tow-max-expansions widens the per-plane budget; both RNG-free (ADR-0003).
@@ -362,6 +374,16 @@ def build_parser() -> argparse.ArgumentParser:
             "Solve mode: keep the inter-plane spread post-pass ON. Default is OFF "
             "for `view --solve` because spread routinely defeats the bounded tow "
             "planner, leaving the animation static (#280)."
+        ),
+    )
+    view.add_argument(
+        "--no-nose-out",
+        action="store_false",
+        dest="nose_out",
+        default=True,
+        help=(
+            "Solve mode: disable the nose-out parked-heading preference (#263). "
+            "By default the solver prefers headings that face the door."
         ),
     )
     view.add_argument(
@@ -633,6 +655,7 @@ def cmd_solve(args: argparse.Namespace) -> int:
         seed=args.seed,
         search=SearchConfig(
             spread=args.spread,
+            nose_out=args.nose_out,
             back_bias_weight=_BACK_FILL_DEFAULT_WEIGHT if args.back_fill else 0.0,
         ),
         plan_paths=args.render_paths,
@@ -978,6 +1001,9 @@ def _emit_solve_json(
                 {"plane": drop.plane_id, "min_depth_m": drop.min_depth_m}
                 for drop in d.apron_shallow_drops
             ],
+            # Additive (#263): nose-out heading flips applied per returned layout.
+            # Backward-compatible — no schema bump.
+            "nose_out_flips": list(d.nose_out_flips),
         },
     }
     print(json.dumps(payload, indent=2))
@@ -1030,7 +1056,7 @@ def cmd_view(args: argparse.Namespace) -> int:
                 budget_s=args.budget,
                 alternatives=1,
                 seed=args.seed,
-                search=SearchConfig(spread=args.spread),
+                search=SearchConfig(spread=args.spread, nose_out=args.nose_out),
                 plan_paths=args.animate,
                 tow_max_expansions=args.tow_max_expansions,
             )

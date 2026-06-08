@@ -39,31 +39,43 @@ from .regimes import FAST_REGIMES, REGIMES, regime_by_key
 # ceiling carries enough headroom to absorb that while still tripping on a real
 # multi-x regression.
 #
-# Calibration (2026-06-06, ubuntu-24.04 GitHub-hosted runner, as measured by the
-# ``bench gates`` workflow itself): trivial_single 0.6 s, roomy_three_spread_on
-# 54.6 s, roomy_three_spread_off 2.7 s. The binding ceiling is
-# ``roomy_three_spread_on`` at 100 s (~1.8x the CI median): it trips on the
-# canonical regression — reverting #453's ``aircraft_parts_world`` memoization,
-# which ~2.3x'd that regime's placement (18.7 s → 42.3 s on the dev machine, i.e.
-# ~123 s on this runner) — while tolerating ordinary CI variance. The two tiny
-# regimes keep deliberately generous absolute ceilings: their absolute times are
-# small enough that proportional jitter is larger, and they exist to catch a
-# catastrophic blow-up (e.g. spread-OFF losing its 1-restart early-exit), not to
-# police drift.
+# Calibration history (ubuntu-24.04 GitHub-hosted runner, as measured by the
+# ``bench gates`` workflow itself):
 #
-# Recalibrate — and only then — when the regimes change, the lever set changes,
-# or GitHub changes the runner class; re-confirm the ceiling still trips on a
-# memoization-revert. The gate refuses to run a regime that has no ceiling defined
+# * 2026-06-06: trivial_single 0.6 s, roomy_three_spread_on 54.6 s,
+#   roomy_three_spread_off 2.7 s; binding ceiling spread_on at 100 s (~1.8x median).
+# * 2026-06-08 (#263): nose-out parked heading is **default ON**, so every regime
+#   now routes nose-out goals by **backing the plane in during the fill** — #480's
+#   cheap analytic back-in only fires for a clear approach, so a multi-plane fill
+#   pays node-level search per back-in. Measured impact: roomy_three_spread_on
+#   ROUTING ~doubled (CI total 54.6 → 84.5 s) and roomy_three_apron ROUTING ~tripled
+#   (CI total 170.5 s, was ~108 s) — the apron's enlarged start set (reverse cones ×
+#   apron y-samples) compounds the back-in cost. This is the shipped default's real
+#   cost (decided 2026-06-08: keep default-ON, re-baseline the ceilings), NOT a
+#   regression, so the ceilings are raised to fit it. The two tiny regimes (trivial,
+#   spread_off — the latter's lone 1-restart fill barely flips) are unaffected.
+#
+# The ceilings remain a *catastrophic-regression tripwire, not a microbenchmark*:
+# spread_on at 130 s sits above CI machine-speed jitter (~1.5x the 84.5 s median —
+# the regimes bind on ``max_restarts``, so only machine speed varies) yet still
+# below a #453 memoization-revert (which adds ~+68 s of placement → ~152 s here),
+# so the canonical regression still trips. apron at 240 s is ~1.4x its 170.5 s
+# median.
+#
+# Recalibrate — and only then — when the regimes change, the lever set / a default
+# changes, or GitHub changes the runner class; re-confirm spread_on still trips on
+# a memoization-revert. The gate refuses to run a regime with no ceiling defined
 # (see ``_evaluate_gate``) so a newly added regime can never silently escape it.
 # See docs/spikes/solve-tow-profiling.md §"F6 — the CI gates".
 _SPEED_CEILING_S: dict[str, float] = {
     "trivial_single": 10.0,
-    "roomy_three_spread_on": 100.0,
+    "roomy_three_spread_on": 130.0,
     "roomy_three_spread_off": 20.0,
     # Same placement as roomy_three_spread_on (apron is planner-only) plus the
-    # apron's heavier routing (~5 s dev / ~15-20 s CI for the 14 m deep fill), so
-    # a touch above the spread-on ceiling. Tripwire, not a microbenchmark (#499).
-    "roomy_three_apron": 120.0,
+    # apron's heavier routing — and since #263 the nose-out back-in from the apron's
+    # enlarged start set dominates (CI ~170 s for the 14 m deep fill). Tripwire, not
+    # a microbenchmark (#499 / #263).
+    "roomy_three_apron": 240.0,
 }
 
 

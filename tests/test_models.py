@@ -295,6 +295,22 @@ class TestAircraft:
         a = _ok_aircraft(movement_mode="cart_eligible", turn_radius_m=9.5)
         assert a.effective_turn_radius_m() == 9.5
 
+    def test_tow_pivotable_defaults_false(self) -> None:
+        a = _ok_aircraft(movement_mode="always_own_gear", turn_radius_m=5.0)
+        assert a.tow_pivotable is False
+        assert a.effective_turn_radius_m() == 5.0
+
+    def test_tow_pivotable_overrides_effective_radius_to_zero(self) -> None:
+        a = _ok_aircraft(movement_mode="always_own_gear", turn_radius_m=5.0, tow_pivotable=True)
+        # The declared turn radius is retained (powered-taxi); only the *tow*
+        # radius is overridden to a pivot-in-place 0.0.
+        assert a.turn_radius_m == 5.0
+        assert a.effective_turn_radius_m() == 0.0
+
+    def test_tow_pivotable_overrides_cart_eligible_too(self) -> None:
+        a = _ok_aircraft(movement_mode="cart_eligible", turn_radius_m=4.0, tow_pivotable=True)
+        assert a.effective_turn_radius_m() == 0.0
+
     @pytest.mark.parametrize("wing_position", ["", "middle", "High", "MID", "bottom"])
     def test_invalid_wing_position_rejected(self, wing_position: str) -> None:
         with pytest.raises(ValueError, match="wing_position must be one of"):
@@ -1348,6 +1364,66 @@ def test_solve_result_rejects_misaligned_min_pairwise_gap_m():
             plans=(None,),
             diagnostics=diag,
         )
+
+
+def test_nose_out_model_fields_defaults_and_overrides():
+    """#263: SearchConfig.nose_out (default ON), PlaneConstraint.nose_out
+    (tri-state), SolverDiagnostics.nose_out_flips (default ())."""
+    from hangarfit.models import PlaneConstraint, SearchConfig, SolverDiagnostics
+
+    assert SearchConfig().nose_out is True
+    assert SearchConfig(nose_out=False).nose_out is False
+
+    assert PlaneConstraint().nose_out is None
+    assert PlaneConstraint(nose_out=True).nose_out is True
+    assert PlaneConstraint(nose_out=False).nose_out is False
+
+    assert (
+        SolverDiagnostics(
+            restarts_attempted=1,
+            wall_time_s=0.0,
+            best_partial=None,
+            best_partial_layout=None,
+            seed=1,
+        ).nose_out_flips
+        == ()
+    )
+
+
+def test_solver_diagnostics_rejects_negative_nose_out_flips():
+    import pytest
+
+    from hangarfit.models import SolverDiagnostics
+
+    with pytest.raises(ValueError, match="nose_out_flips"):
+        SolverDiagnostics(
+            restarts_attempted=1,
+            wall_time_s=0.0,
+            best_partial=None,
+            best_partial_layout=None,
+            seed=1,
+            nose_out_flips=(0, -1),
+        )
+
+
+def test_solve_result_rejects_misaligned_nose_out_flips():
+    """SolveResult.__post_init__ rejects non-empty nose_out_flips whose length
+    differs from layouts (the #263 parity guard, mirroring min_pairwise_gap_m)."""
+    import pytest
+
+    from hangarfit.models import SolverDiagnostics, SolveResult
+
+    layout = _make_valid_layout()
+    diag = SolverDiagnostics(
+        restarts_attempted=1,
+        wall_time_s=0.1,
+        best_partial=None,
+        best_partial_layout=None,
+        seed=42,
+        nose_out_flips=(0, 1),  # 2 counts but 1 layout — mismatch
+    )
+    with pytest.raises(ValueError, match="nose_out_flips"):
+        SolveResult(status="found", layouts=(layout,), plans=(None,), diagnostics=diag)
 
 
 class TestWheels:
