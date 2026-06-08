@@ -100,4 +100,4 @@ manual workflow above is canonical.
 | 0020 | [The viewer is a typed, modular TypeScript application built by a dev-only toolchain; the Python-owned transform is retained](0020-viewer-typescript-architecture.md) | Proposed |
 | 0021 | [Tow-planner staging apron — a bounded entry-staging start-region in front of the door; rearrangement holding-area deferred](0021-tow-planner-staging-apron.md) | Proposed |
 | 0022 | [Nose-out parked heading — RNG-free 180° flip post-pass (default on), plus the `tow_pivotable` towing-motion flag](0022-nose-out-parked-heading.md) | Accepted |
-| 0023 | [Model the empennage as explicit tail surfaces so a vertical fin in the wing layer can block wing-over-tail nesting](0023-empennage-tail-surfaces.md) | Proposed |
+| 0023 | [Model the empennage as explicit tail surfaces so a vertical fin in the wing layer can block wing-over-tail nesting](0023-empennage-tail-surfaces.md) | Accepted |
