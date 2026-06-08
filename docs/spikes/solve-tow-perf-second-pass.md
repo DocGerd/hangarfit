@@ -299,20 +299,24 @@ deliberate, documented re-base.**
 
 ---
 
-## Filed follow-up issues (proposed)
+## Filed follow-up issues
 
-- _(primary, the central GO)_ **Parallel restarts via per-restart-index reseed +
+- [#544](https://github.com/DocGerd/hangarfit/issues/544) _(primary, the central
+  GO — **greenlit to build**)_ **Parallel restarts via per-restart-index reseed +
   ordered merge (ProcessPool).** Determinism: re-base (re-golden canaries +
   ADR-0003 amendment). Measured 4.5× @ 8 workers. **Must also preserve, under the
   re-base, the `best_partial_layout` accumulator and the `alternatives > 1`
   diversity-gated `_select_spread_diverse` selection** — both unexercised by the
   prototype (which proved the `alternatives=1` selected layout) and reconstructible
-  deterministically, but obligations to verify in the implementation.
-- _(enabler, blocks the above)_ **Make `Scenario` picklable** (drop the
-  `mappingproxy`, or provide `__getstate__`/`__setstate__`).
-- _(low priority)_ **Default-on spread-stall early-exit + `--spread-stall-restarts`
-  CLI wiring** (Q7).
-- _(optional guard)_ **`full_nine_placement` bench regime** to guard parts²-scaling.
+  deterministically, but obligations to verify in the implementation. Blocked by
+  #545.
+- [#545](https://github.com/DocGerd/hangarfit/issues/545) _(enabler, blocks #544)_
+  **Make `Scenario` picklable** (drop the `mappingproxy`, or provide
+  `__getstate__`/`__setstate__`).
+- [#546](https://github.com/DocGerd/hangarfit/issues/546) _(low priority)_
+  **Default-on spread-stall early-exit + `--spread-stall-restarts` CLI wiring** (Q7).
+- [#547](https://github.com/DocGerd/hangarfit/issues/547) _(optional guard)_
+  **`full_nine_placement` bench regime** to guard parts²-scaling.
 
 REJECTED (recorded so they are not re-proposed without new evidence):
 placement-side STRtree, most-conflicted-first descent ordering, incremental
