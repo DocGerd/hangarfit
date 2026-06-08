@@ -423,3 +423,24 @@ def test_scene_contract_ts_nested_keys_match_scene_py():
     }
     for interface, obj in cases.items():
         assert _ts_interface_fields("scene-contract.ts", interface) == set(obj), interface
+
+    # StructuralNotchData: the animated scene uses a rectangular hangar, so its
+    # structural_notches list is empty — sample a notched hangar block to pin the
+    # nested notch field names against the TS mirror too (else a rename in scene.py
+    # could silently drift from scene-contract.ts).
+    import dataclasses
+
+    from hangarfit.models import StructuralNotch
+
+    lay = load_layout(LAYOUT)  # 22 x 25 hangar
+    notched = dataclasses.replace(
+        lay,
+        hangar=dataclasses.replace(
+            lay.hangar,
+            structural_notches=(
+                StructuralNotch(x_min_m=18.0, y_min_m=20.0, x_max_m=22.0, y_max_m=25.0),
+            ),
+        ),
+    )
+    notch_obj = scene._hangar_block(notched)["structural_notches"][0]
+    assert _ts_interface_fields("scene-contract.ts", "StructuralNotchData") == set(notch_obj)
