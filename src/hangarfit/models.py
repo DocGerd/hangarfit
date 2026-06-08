@@ -25,7 +25,10 @@ if TYPE_CHECKING:
 WingPosition = Literal["high", "mid", "low"]
 Gear = Literal["tailwheel", "nosewheel", "monowheel"]
 MovementMode = Literal["always_cart", "always_own_gear", "cart_eligible"]
-PartKind = Literal["fuselage_front", "fuselage_aft", "wing", "strut", "tail"]
+# `tail` denotes the horizontal stabilizer specifically (a wide, usually-low
+# overhangable surface — see metrics._OVERHANGABLE); `vertical_stabilizer` is the
+# fin (thin, tall, never overhangable). Empennage split per ADR-0023.
+PartKind = Literal["fuselage_front", "fuselage_aft", "wing", "strut", "tail", "vertical_stabilizer"]
 
 _VALID_PART_KINDS = frozenset(typing.get_args(PartKind))
 _VALID_WING_POSITIONS = frozenset(typing.get_args(WingPosition))
@@ -43,10 +46,14 @@ class Part:
     convention" for plane-local coordinates (``+x`` forward, ``+y`` right).
 
     ``kind`` is closed: ``"fuselage_front" | "fuselage_aft" | "wing" |
-    "strut" | "tail"``. The fuselage is split front/aft so the collision
-    rule can distinguish a wing over a cockpit (``fuselage_front`` — always
-    a conflict in plan view, height ignored) from a wing over a tail
-    (``fuselage_aft`` — today's two-clause z-gap rule); see ADR-0012 and
+    "strut" | "tail" | "vertical_stabilizer"``. The fuselage is split
+    front/aft so the collision rule can distinguish a wing over a cockpit
+    (``fuselage_front`` — always a conflict in plan view, height ignored)
+    from a wing over a tail (``fuselage_aft`` — today's two-clause z-gap
+    rule); see ADR-0012. The empennage is two explicit surfaces (ADR-0023):
+    ``tail`` (the horizontal stabilizer — wide, usually low) and
+    ``vertical_stabilizer`` (the fin + rudder — thin, tall, rising into the
+    wing layer so a wing nested over the centreline conflicts with it). See
     ``docs/architecture/08-crosscutting-concepts.md`` "The parts model".
     The legacy ``"fuselage"`` keyword is **not** a constructed kind: it
     survives only as a transient YAML keyword the loader auto-splits at the

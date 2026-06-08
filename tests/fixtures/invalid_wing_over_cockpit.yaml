@@ -1,35 +1,19 @@
 # #50 / ADR-0012 (D1) — a wing over another plane's `fuselage_front`
-# (cockpit) is a HARD conflict EVEN at a z-disjoint height. This is the
-# canary that the new rule actually bites: under the OLD (pre-split) rule
-# this exact geometry was VALID (z-gap 0.3 m > 0.2 m clearance); the split
-# makes it `fuselage_front_wing_overlap` because a wing over a cockpit is
-# unacceptable at any nesting height (canopy / prop arc / pilot ingress).
+# (cockpit) is a HARD conflict EVEN at a z-disjoint height. Under the OLD
+# (pre-split) rule this geometry was VALID (z-gap 0.3 m > 0.2 m clearance);
+# the split makes it `fuselage_front_wing_overlap` because a wing over a
+# cockpit is unacceptable at any nesting height (canopy / prop arc / ingress).
 #
-# Paired with `valid_wing_over_tail.yaml`: the two fixtures use the same
-# two aircraft at the same z-disjoint height and differ only in Fuji's
-# heading (which flips its `fuselage_front` vs `fuselage_aft` to the
-# deeper-y end the ctsl wing crosses) — the cleanest possible
-# demonstration of the front/aft distinction (mirrors the case-7/8
-# left/right-symmetry idiom).
+# Paired with `valid_wing_over_tail.yaml`: same two aircraft, same ctsl
+# placement (x 5.5), differ ONLY in Fuji's heading. Heading 0 puts fuji's
+# cockpit (`fuselage_front`) at the deeper-y end the ctsl wing crosses → hard
+# conflict; heading 180 puts the tail there and the wing clears the fin → valid.
 #
-# Fuji's fuselage split: plane-local fuselage spans x ∈ [-4.39, 3.59];
-# wing trailing edge x_break = 0.10 - 1.5/2 = -0.65 ⇒
-# `fuselage_front` = plane-local x ∈ [-0.65, 3.59] (cockpit / nose).
-#
-# Layout (Fuji at heading 0 ⇒ nose points DEEPER / +y, so `fuselage_front`
-# is at the high-y end where the ctsl wing crosses):
-#   fuji at (5, 9, 0, false):
-#       fuselage_front world x ∈ [4.50, 5.50], y ∈ [8.35, 12.59], z [0, 1.6]
-#       fuselage_aft   world x ∈ [4.50, 5.50], y ∈ [4.61,  8.35], z [0, 1.6]
-#   ctsl at (4, 13.5, 90, false):
-#       wing world x ∈ [3.97, 5.37], y ∈ [9.21, 17.79], z [1.9, 2.2]
-#
-# Plan-view overlap of ctsl wing × fuji `fuselage_front`: x ∈ [4.50, 5.37],
-# y ∈ [9.21, 12.59]. z-gap = 1.9 - 1.6 = 0.3 m (> 0.2 m clearance, so the
-# OLD rule would PASS) — but D1 IGNORES the z-gap for wing × fuselage_front,
-# so this is a conflict. The ctsl wing clears fuji's `fuselage_aft`
-# (y ≤ 8.35) by 0.36 m in plan view (> 0.3 m clearance), so exactly ONE
-# conflict fires: `fuselage_front_wing_overlap` (alphabetical kind order).
+# fuji at (5, 9, 0): nose deeper (+y), cockpit at the high-y end; the fin /
+#   horizontal stab are at the LOW-y (door) end, away from the crossing — so the
+#   only conflict is the cockpit one (the fin does not participate here).
+# ctsl at (5.5, 13.5, 90): wing crosses fuji's `fuselage_front`; D1 ignores the
+#   z-gap → exactly one `fuselage_front_wing_overlap` (alphabetical kind order).
 
 fleet: ../../data/fleet.yaml
 hangar: ../../data/hangar.yaml
@@ -41,7 +25,7 @@ placements:
     heading_deg: 0.0
     on_carts: false
   - plane: ctsl
-    x_m: 4.0
+    x_m: 5.5
     y_m: 13.5
     heading_deg: 90.0
     on_carts: false

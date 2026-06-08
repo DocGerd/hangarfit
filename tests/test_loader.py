@@ -158,7 +158,7 @@ class TestRealDataFiles:
     def test_load_hangar(self) -> None:
         hangar = load_hangar(HANGAR_YAML)
         assert hangar.length_m == 25.0
-        assert hangar.width_m == 18.0
+        assert hangar.width_m == 22.0  # widened for #519/#520 (realistic tail surfaces)
         assert hangar.door.center_x_m == 9.0
         assert hangar.maintenance_bay.center_x_m == 13.5
         assert hangar.maintenance_bay.width_m == 9.0

@@ -44,6 +44,12 @@
 # - stemme_s10 is modelled in its WINGS-FOLDED hangar configuration: the
 #   wing part width is the folded 11.40 m span (unfolded 23 m would not enter
 #   the 13.46 m door). Folded outer panels raise the effective height.
+# - Empennage (ADR-0023, #518/#519/#520): each aircraft carries a `tail` (the
+#   horizontal stabilizer) + a `vertical_stabilizer` (fin+rudder rising to the
+#   published height column above, into the wing layer). stemme_s10 is the one
+#   T-tail (stabilizer at the fin top); ctsl is cruciform (stabilizer kept below
+#   the wing layer); all others are conventional-low. Spans/chords are estimates;
+#   tail configs + heights are sourced. All measured: false.
 
 aircraft:
   # ----------------------------------------------------------------------------
@@ -74,6 +80,20 @@ aircraft:
         offset_y_m: 0.0
         z_bottom_m: 1.9
         z_top_m: 2.1
+      - kind: tail            # horizontal stabilizer (conventional low; ~2.6 m span est.)
+        length_m: 0.9
+        width_m: 2.6
+        offset_x_m: -3.34
+        offset_y_m: 0.0
+        z_bottom_m: 1.2
+        z_top_m: 1.5
+      - kind: vertical_stabilizer  # fin+rudder to overall height 1.85 m (Super Falke)
+        length_m: 1.1
+        width_m: 0.15
+        offset_x_m: -3.24
+        offset_y_m: 0.0
+        z_bottom_m: 1.5
+        z_top_m: 1.85
     wheels:
       main_offset_x_m: 0.0
 
@@ -104,6 +124,20 @@ aircraft:
         offset_y_m: 0.0
         z_bottom_m: 1.9
         z_top_m: 2.1
+      - kind: tail            # T-TAIL: horizontal stabilizer HIGH, at the fin top (~2.8 m span est.)
+        length_m: 0.8
+        width_m: 2.8
+        offset_x_m: -5.31
+        offset_y_m: 0.0
+        z_bottom_m: 1.5
+        z_top_m: 1.8
+      - kind: vertical_stabilizer  # fin to overall height 1.80 m (folded config; tops 0.1 m below a 1.9 m wing — within the 0.2 m clearance band, so a wing nested over it still conflicts)
+        length_m: 1.0
+        width_m: 0.15
+        offset_x_m: -5.21
+        offset_y_m: 0.0
+        z_bottom_m: 1.4
+        z_top_m: 1.8
     wheels:
       main_offset_x_m: 0.0
 
@@ -132,6 +166,20 @@ aircraft:
         offset_y_m: 0.0
         z_bottom_m: 2.0
         z_top_m: 2.3
+      - kind: tail            # horizontal stabilizer (conventional low; ~3.0 m span est.)
+        length_m: 1.0
+        width_m: 3.0
+        offset_x_m: -4.66
+        offset_y_m: 0.0
+        z_bottom_m: 1.2
+        z_top_m: 1.5
+      - kind: vertical_stabilizer  # fin+rudder to overall height 2.26 m (A-1C; into the wing layer)
+        length_m: 1.3
+        width_m: 0.15
+        offset_x_m: -4.51
+        offset_y_m: 0.0
+        z_bottom_m: 1.5
+        z_top_m: 2.26
     struts:
       fuselage_attach_x_m: -1.22
       fuselage_attach_y_m: 0.425
@@ -168,6 +216,20 @@ aircraft:
         offset_y_m: 0.0
         z_bottom_m: 2.0
         z_top_m: 2.2
+      - kind: tail            # horizontal stabilizer (conventional low; ~2.9 m span est.)
+        length_m: 0.9
+        width_m: 2.9
+        offset_x_m: -3.13
+        offset_y_m: 0.0
+        z_bottom_m: 1.1
+        z_top_m: 1.4
+      - kind: vertical_stabilizer  # fin+rudder to overall height 1.90 m
+        length_m: 1.0
+        width_m: 0.15
+        offset_x_m: -3.08
+        offset_y_m: 0.0
+        z_bottom_m: 1.4
+        z_top_m: 1.9
     struts:
       fuselage_attach_x_m: 0.07
       fuselage_attach_y_m: 0.425
@@ -204,6 +266,20 @@ aircraft:
         offset_y_m: 0.0
         z_bottom_m: 1.9
         z_top_m: 2.2
+      - kind: tail            # horizontal stabilizer (conventional low; ~2.8 m span est.)
+        length_m: 0.9
+        width_m: 2.8
+        offset_x_m: -4.35
+        offset_y_m: 0.0
+        z_bottom_m: 1.2
+        z_top_m: 1.5
+      - kind: vertical_stabilizer  # fin+rudder to overall height 2.03 m
+        length_m: 1.1
+        width_m: 0.15
+        offset_x_m: -4.25
+        offset_y_m: 0.0
+        z_bottom_m: 1.5
+        z_top_m: 2.03
     struts:
       fuselage_attach_x_m: -1.20
       fuselage_attach_y_m: 0.4
@@ -241,6 +317,20 @@ aircraft:
         offset_y_m: 0.0
         z_bottom_m: 2.0
         z_top_m: 2.3
+      - kind: tail            # horizontal stabilizer (conventional low; ~3.2 m span est.)
+        length_m: 1.1
+        width_m: 3.2
+        offset_x_m: -4.37
+        offset_y_m: 0.0
+        z_bottom_m: 1.2
+        z_top_m: 1.5
+      - kind: vertical_stabilizer  # fin+rudder to overall height 1.91 m
+        length_m: 1.2
+        width_m: 0.15
+        offset_x_m: -4.32
+        offset_y_m: 0.0
+        z_bottom_m: 1.5
+        z_top_m: 1.91
     struts:
       fuselage_attach_x_m: -1.14
       fuselage_attach_y_m: 0.425
@@ -278,6 +368,20 @@ aircraft:
         offset_y_m: 0.0
         z_bottom_m: 1.9
         z_top_m: 2.2
+      - kind: tail            # CRUCIFORM tail — stabilator low/mid, kept below the wing layer (~2.6 m span est.)
+        length_m: 0.9
+        width_m: 2.6
+        offset_x_m: -3.18
+        offset_y_m: 0.0
+        z_bottom_m: 1.1
+        z_top_m: 1.4
+      - kind: vertical_stabilizer  # tall fin+rudder to overall height 2.34 m (well into the wing layer)
+        length_m: 1.2
+        width_m: 0.15
+        offset_x_m: -3.03
+        offset_y_m: 0.0
+        z_bottom_m: 1.4
+        z_top_m: 2.34
     wheels:
       main_offset_x_m: -0.10
       track_m: 1.7
@@ -308,6 +412,20 @@ aircraft:
         offset_y_m: 0.0
         z_bottom_m: 1.9
         z_top_m: 2.2
+      - kind: tail            # horizontal stabilizer (conventional low; ~3.2 m span est.)
+        length_m: 0.9
+        width_m: 3.2
+        offset_x_m: -2.77
+        offset_y_m: 0.0
+        z_bottom_m: 1.1
+        z_top_m: 1.4
+      - kind: vertical_stabilizer  # fin+rudder to overall height 2.15 m
+        length_m: 1.1
+        width_m: 0.15
+        offset_x_m: -2.67
+        offset_y_m: 0.0
+        z_bottom_m: 1.4
+        z_top_m: 2.15
     struts:
       fuselage_attach_x_m: 0.11
       fuselage_attach_y_m: 0.425

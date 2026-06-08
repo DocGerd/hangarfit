@@ -1,40 +1,19 @@
-# Case 3 (reframed for #50 / ADR-0012) — a high-wing's wingtip over the
-# AFT fuselage / tail of the low-wing Fuji is VALID because the heights are
-# disjoint enough to clear the 0.2 m vertical clearance.
+# Case 3 (reframed for #50 / ADR-0012 + ADR-0023) — a high-wing's wingtip over
+# the low-wing Fuji's tail surfaces is VALID when the heights are z-disjoint AND
+# the wing clears the centreline fin laterally.
 #
-# The fuselage front/aft split (ADR-0012) makes *where* over the fuselage
-# matter: a wing over `fuselage_front` (cockpit) is a HARD conflict (z
-# ignored, D1); a wing over `fuselage_aft` (tail) keeps today's z-gap rule.
-# This fixture is the headline POSITIVE control for the new rule — the
-# overlap deliberately lands on the AFT segment, well clear of the cockpit,
-# so it stays valid (its z-disjoint cousin `invalid_wing_over_cockpit.yaml`
-# lands on the front and is rejected).
+# The headline POSITIVE control. The ctsl high wing (z 1.9-2.2) overhangs fuji's
+# wide horizontal stabilizer (`tail`, z 1.3-1.6) — a real ~1.24 m² nest that
+# PASSES because the z-gap (0.3 m) exceeds the 0.2 m clearance. ctsl is placed
+# (x 5.5) so the wing passes OUTBOARD of fuji's thin centreline fin
+# (`vertical_stabilizer`, z 1.6-2.02 reaching into the wing layer, ~world x 5.0),
+# so the fin does not bite. A wing crossing directly over the fin would conflict
+# (see `invalid_wing_over_fin.yaml`); clearing it laterally keeps the nest legal.
 #
-# Fuji's fuselage split: plane-local fuselage spans x ∈ [-4.39, 3.59];
-# the wing trailing edge x_break = 0.10 - 1.5/2 = -0.65, so
-# `fuselage_front` = plane-local x ∈ [-0.65, 3.59] (cockpit / nose),
-# `fuselage_aft` = plane-local x ∈ [-4.39, -0.65] (cabin-aft + tail).
-#
-# Layout (Fuji at heading 180 so its NOSE points toward the door / -y,
-# putting the aft/tail at the DEEPER-y end where the ctsl wing crosses):
-#   fuji at (5, 5, 180, false):
-#       fuselage_front world x ∈ [4.50, 5.50], y ∈ [1.41, 5.65], z [0, 1.6]
-#       fuselage_aft   world x ∈ [4.50, 5.50], y ∈ [5.65, 9.39], z [0, 1.6]
-#       wing           world x ∈ [0.29, 9.71], y ∈ [4.15, 5.65], z [0.8, 1.1]
-#   ctsl at (4, 10.5, 90, false):
-#       wing world x ∈ [3.97, 5.37], y ∈ [6.21, 14.79], z [1.9, 2.2]
-#
-# Plan-view overlap of ctsl wing × fuji `fuselage_aft`: x ∈ [4.50, 5.37],
-# y ∈ [6.21, 9.39] — a real "in 2D this looks like a collision" zone.
-# z-gap = 1.9 - 1.6 = 0.3 m > 0.2 m clearance ⇒ NOT a conflict.
-#
-# Crucially the ctsl wing clears fuji's `fuselage_front` by 0.555 m in plan
-# view (> 0.3 m horizontal clearance), so the hard cockpit rule does NOT
-# fire — this is genuinely a wing-over-tail, not a wing-over-cockpit.
-#
-# Counterpart non-conflicts that must also be clean here:
-#   - ctsl fuselage (centred near world x ≈ 4) doesn't enter fuji's footprint.
-#   - ctsl wing × fuji wing: any plan overlap is z-disjoint by 0.8 m.
+# fuji at (5, 5, 180): nose toward the door (-y), tail surfaces at the deeper-y
+#   end; fin centreline ~x 5.0; horizontal stab spans ~x 3.4-6.6, low (z 1.3-1.6).
+# ctsl at (5.5, 10.5, 90): wing world x ~5.47-6.87, clearing the fin by ~0.40 m,
+#   overlapping the low horizontal stab z-disjointly; clears the cockpit too.
 #
 # A bbox-style implementation that ignores z would mark this invalid.
 
@@ -48,7 +27,7 @@ placements:
     heading_deg: 180.0
     on_carts: false
   - plane: ctsl
-    x_m: 4.0
+    x_m: 5.5
     y_m: 10.5
     heading_deg: 90.0
     on_carts: false

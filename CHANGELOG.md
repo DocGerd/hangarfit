@@ -32,6 +32,26 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Changed
 
+- **BREAKING (collision model): the empennage is now modelled as explicit tail
+  surfaces (#518/#519/#520, ADR-0023).** Every aircraft gains a `tail` (horizontal
+  stabilizer — wide, ~2.5–3.5 m span) and a new `vertical_stabilizer` `PartKind`
+  (the fin + rudder — thin, on the centreline, rising to the published overall
+  height *into* the wing-nesting layer). The checker now rejects two cases it
+  silently passed before: a wing nested over a neighbour's tail that passes over
+  that plane's **fin** (#520 — the fin reaches into the wing layer), and a
+  wing/strut/fuselage clipping a realistic-width **tailplane** (#519). The
+  collision *predicate is unchanged* — honest z-extents alone produce the correct
+  verdict; a wing-over-tail nest stays legal exactly when it clears the centreline
+  fin laterally. Per-part z expresses conventional / cruciform / T-tail
+  configurations (the Stemme S10 is the fleet's one T-tail) with no per-type code.
+  Some previously-"valid" layouts flip to invalid: the canonical
+  `valid_wing_over_tail` fixtures were re-tuned to nest over the low tailplane
+  while clearing the fin (with a new paired `invalid_wing_over_fin`), the real
+  `examples/herrenteich/layout.yaml` all-eight arrangement was re-arranged to
+  clear every fin, and the packed 9-plane fill is now statically valid but no
+  longer tow-routable (wide tailplanes block the corridors). The placeholder
+  `data/hangar.yaml` was widened 18 → 22 m so the canonical demo keeps its full
+  plane set with the bulkier tail surfaces.
 - **Fewest-moves tow routing — nose-out slots are backed in (#480, ADR-0010
   amendment).** The tow planner now minimises **moves** (direction changes), not
   reverse distance: word/path cost is `length + CUSP_PENALTY × cusps` (a *cusp* is

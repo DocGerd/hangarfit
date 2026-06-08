@@ -372,10 +372,12 @@ def _draw_part(ax: Any, part: WorldPart, color: str) -> None:
     """Render a single world part. Fuselage segments are near-opaque (two
     fuselages overlapping is always a conflict; no value in seeing through) —
     ``fuselage_front`` (cockpit) a darker tint of the plane's brand fill,
-    ``fuselage_aft`` (tail) the plain fill — wing translucent (so stacked
+    ``fuselage_aft`` (cabin-aft) the plain fill — wing translucent (so stacked
     wings show their plan-view overlap visually), strut as a thin outlined
     polygon (struts are physically thin, a fill would be near-invisible), tail
-    rendered like a small fuselage (same z-tier, same conflict semantics).
+    (the horizontal stabilizer) rendered like a small fuselage (same z-tier,
+    same conflict semantics), and ``vertical_stabilizer`` (the fin) opaque on
+    the top z-tier as a cue that it rises through the wing layer (ADR-0023).
 
     Solid parts are stroked in ``_INK_EDGE`` (#14161A), the brand "never hue
     alone" outline — so a plane's silhouette reads even in greyscale or under
@@ -425,6 +427,20 @@ def _draw_part(ax: Any, part: WorldPart, color: str) -> None:
             edgecolor=_INK_EDGE,
             lw=_STRUT_LINEWIDTH,
             zorder=3,
+        )
+    elif part.kind == "vertical_stabilizer":
+        # The fin (ADR-0023): a thin centreline surface that rises into / above
+        # the wing layer. Drawn opaque and ink-edged on top (zorder above the
+        # wing) so its height — invisible in a top-down view — reads as "this
+        # pokes up through the wing band."
+        patch = MplPolygon(
+            coords,
+            closed=True,
+            facecolor=color,
+            edgecolor=_INK_EDGE,
+            alpha=_FUSELAGE_ALPHA,
+            lw=0.5,
+            zorder=4,
         )
     else:
         raise ValueError(

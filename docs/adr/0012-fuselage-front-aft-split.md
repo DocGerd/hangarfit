@@ -162,6 +162,14 @@ at zero (only a header comment) and the break a single derived value.
   separate, currently-unused kind (the empennage folds into `fuselage_aft` —
   the aft *region* includes the tail, so a separate tail segment would add a
   kind with no distinct rule).
+  **Amended by [ADR-0023](0023-empennage-tail-surfaces.md):** this last claim no
+  longer holds. The empennage does *not* fully fold into `fuselage_aft` — its
+  lateral span and its fin's vertical extent are unmodelled there — so ADR-0023
+  makes the tail surfaces explicit (`tail` for the horizontal stabilizer, a new
+  `vertical_stabilizer` for the fin). The fin *does* exercise a distinct
+  outcome, though via the *uniform* two-clause predicate, not a new rule.
+  ADR-0012's front/aft split (D2) and the `wing × fuselage_front` cockpit rule
+  (D1) are unaffected and stay Accepted.
 - The visualizer tints `fuselage_front` a darker shade of the wing-position
   fill so the cockpit boundary reads at a glance. (At the time of this ADR
   `_draw_gear_glyph` reconstructed the full fuselage span from both segments to

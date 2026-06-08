@@ -305,8 +305,19 @@ class TestFleetHangarOverrides:
 def test_solve_human_output_shows_min_gap(capsys):
     from hangarfit.cli import main
 
+    # An EASY 3-plane fixture: rc==0 is set the moment the first valid basin is
+    # found (sub-second), so this can't flake under heavy parallel CI load — the
+    # budget only governs spread-pool collection, not the verdict. (A hard 6/9-plane
+    # fill flaked here once #519/#520 tail surfaces slowed each restart.)
     rc = main(
-        ["solve", "tests/fixtures/solve_fresh_six_planes.yaml", "--seed", "7", "--budget", "5"]
+        [
+            "solve",
+            "tests/fixtures/solve_fresh_alternatives_three.yaml",
+            "--seed",
+            "7",
+            "--budget",
+            "5",
+        ]
     )
     out = capsys.readouterr().out
     assert rc == 0
@@ -318,10 +329,12 @@ def test_solve_json_output_has_spread_diagnostics(capsys):
 
     from hangarfit.cli import main
 
+    # Easy 3-plane fixture — load-robust (see test_solve_human_output_shows_min_gap):
+    # rc==0 once the first valid basin is found, regardless of wall-clock budget.
     rc = main(
         [
             "solve",
-            "tests/fixtures/solve_fresh_six_planes.yaml",
+            "tests/fixtures/solve_fresh_alternatives_three.yaml",
             "--seed",
             "7",
             "--budget",

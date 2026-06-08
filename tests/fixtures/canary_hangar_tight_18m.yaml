@@ -1,0 +1,19 @@
+# Tight 18 m-wide hangar for the max_restarts exhausted-budget determinism
+# canary (tests/test_solver_canaries.py). These are the pre-#519/#520
+# placeholder dimensions: data/hangar.yaml was widened 18 -> 22 m so the demo
+# keeps its full plane set with the bulkier tail surfaces, which made the
+# 6-plane fresh fill *solvable* within a tiny max_restarts and broke the
+# canary. This fixture pins a tight hangar so the canary keeps exercising the
+# exhausted-budget (best-partial) branch, decoupled from data/hangar.yaml.
+length_m: 25.0
+width_m: 18.0
+door:
+  center_x_m: 9.0
+  width_m: 12.0
+maintenance_bay:
+  center_x_m: 13.5
+  width_m: 9.0
+  depth_m: 9.0
+clearance_m: 0.3
+wing_layer_clearance_m: 0.2
+max_carts: 1
