@@ -1,70 +1,74 @@
 # Airfield Herrenteich — "everyone home": all eight usual occupants parked
 # in the real hangar at once. Passes `hangarfit check` (exit 0).
 #
-# HOW THIS WAS PRODUCED. The product solver (`hangarfit solve`) cannot
-# generate this layout. (#425 — fixed — once made its fast trivial-
-# infeasibility gate sum each plane's bounding-box area, Σ ≈ 606 m² > the
-# 479 m² rectangular floor, and bail, because an 18 m-span motor glider is a
-# 136 m² bounding box of mostly empty air; the gate now sums actual part
-# footprints — Σ ≈ 160 m² « 479 — and no longer bails.) Two reasons solve
-# still won't reproduce this layout: the rectangular hangar model does not
-# represent the back-right office NOTCH that this layout keeps every plane
-# clear of (see hangar.yaml + spike #424), and finding an all-eight nested
-# arrangement within budget is a separate search-feasibility question. The
-# REAL, part-based collision checker (thin wing rectangles, z-disjoint
-# wing-over-fuselage nesting) accepts a nested arrangement, so this layout was
-# found by a search that drives that real checker directly.
+# RE-ARRANGED for the empennage model (#518/#519/#520, ADR-0023). The previous
+# arrangement was built before the tail surfaces were modelled; once each
+# aircraft gained a wide horizontal stabilizer (`tail`) and a fin
+# (`vertical_stabilizer`) that rises into the wing-nesting layer, six of its
+# nestings turned out to physically foul a neighbour's fin or tailplane (a
+# wing tucked over a plane's tail now collides with that plane's fin). The
+# placements below are a fresh nested arrangement that clears every fin
+# (min wing-over-tail clearance ~0.40 m), stays in bounds, and keeps clear of
+# the back-right office NOTCH (x ∈ [12.72, 15.08], y ∈ [22.66, 31.76]) by hand
+# — the rectangular model still does not represent that notch (spike #424).
 #
-# So: this file is a VALID nested layout, but it is the tool's arrangement,
-# not a record of where the club actually parks each aircraft. Replace the
-# placements with the real parking positions when known.
+# HOW THIS WAS PRODUCED. The product solver (`hangarfit solve`) cannot generate
+# this layout (it won't reproduce an all-eight nested arrangement within budget,
+# and it does not model the notch). The REAL, part-based collision checker (thin
+# wing rectangles, z-disjoint wing-over-fuselage nesting, fins in the wing layer)
+# accepts a nested arrangement, so this layout was found by a search that drives
+# that real checker directly.
 #
-# Coordinate convention (see hangar.yaml): world (0,0) front-left, +x right
-# along the door wall, +y deeper in; heading 0 = nose deep (+y), 90 = nose
-# toward +x. scheibe_falke (18 m span) cannot sit nose-in under the 15.08 m
-# width, so it parks lengthwise (heading 90).
+# So: this file is a VALID nested layout, but it is the tool's arrangement, not a
+# record of where the club actually parks each aircraft. Replace the placements
+# with the real parking positions when known.
+#
+# Coordinate convention (see hangar.yaml): world (0,0) front-left, +x right along
+# the door wall, +y deeper in; heading 0 = nose deep (+y), 90 = nose toward +x.
+# scheibe_falke (18 m span) cannot sit nose-in under the 15.08 m width, so it
+# parks lengthwise (heading 90).
 
 fleet: fleet.yaml
 hangar: hangar.yaml
 
 placements:
   - plane: scheibe_falke
-    x_m: 7.5
-    y_m: 22.5
+    x_m: 8.60
+    y_m: 22.50
     heading_deg: 90.0
     on_carts: true          # always_cart
   - plane: stemme_s10
-    x_m: 3.5
-    y_m: 13.5
+    x_m: 3.50
+    y_m: 13.65
     heading_deg: 270.0
     on_carts: false         # always_own_gear
   - plane: aviat_husky
-    x_m: 5.5
-    y_m: 19.5
+    x_m: 5.60
+    y_m: 16.40
     heading_deg: 90.0
     on_carts: false         # always_own_gear
   - plane: cessna_140
-    x_m: 10.5
-    y_m: 6.5
+    x_m: 12.80
+    y_m: 5.35
     heading_deg: 90.0
     on_carts: false         # cart_eligible, on own gear
   - plane: fk9_mkii
-    x_m: 7.5
-    y_m: 10.5
+    x_m: 7.60
+    y_m: 10.00
     heading_deg: 270.0
     on_carts: false         # cart_eligible, on own gear
   - plane: zlin_savage
-    x_m: 6.5
-    y_m: 26.5
+    x_m: 2.70
+    y_m: 24.90
     heading_deg: 270.0
     on_carts: true          # always_cart
   - plane: wild_thing
-    x_m: 10.5
-    y_m: 16.5
+    x_m: 11.45
+    y_m: 16.95
     heading_deg: 90.0
     on_carts: true          # always_cart
   - plane: ctsl
-    x_m: 4.5
-    y_m: 4.5
+    x_m: 4.50
+    y_m: 4.50
     heading_deg: 180.0
     on_carts: false         # cart_eligible, on own gear

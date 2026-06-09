@@ -45,7 +45,7 @@ def _stub_towplanning(monkeypatch):
     from hangarfit.towplanner import MovesPlan
 
     monkeypatch.setattr(
-        solver_mod, "plan_fill", lambda target: MovesPlan(target_layout=target, moves=())
+        solver_mod, "plan_fill", lambda target, **kwargs: MovesPlan(target_layout=target, moves=())
     )
 
 
@@ -80,10 +80,14 @@ def test_solve_deterministic_given_seed(fixture):
     instances loaded from the same file).
     """
     s1 = load_scenario(fixture)
-    r1 = solve(s1, budget_s=5.0, alternatives=1, seed=42, search=SearchConfig(spread=False))
+    r1 = solve(
+        s1, budget_s=5.0, alternatives=1, seed=42, search=SearchConfig(spread=False, nose_out=False)
+    )
 
     s2 = load_scenario(fixture)
-    r2 = solve(s2, budget_s=5.0, alternatives=1, seed=42, search=SearchConfig(spread=False))
+    r2 = solve(
+        s2, budget_s=5.0, alternatives=1, seed=42, search=SearchConfig(spread=False, nose_out=False)
+    )
 
     # Status + seed must match.
     assert r1.status == r2.status
@@ -155,8 +159,18 @@ def test_solve_deterministic_best_partial_under_max_restarts() -> None:
         ``1 < 2`` (the predicate is strictly ``<``, not ``<=``), so
         the canary keeps working — but headroom drops to one restart
         and is one regression away from breaking.
+
+        Re-calibrated 2026-06-08 for #519/#520 (ADR-0023): widening
+        ``data/hangar.yaml`` 18 -> 22 m (so the demo keeps its full plane
+        set with the bulkier tail surfaces) made the shared
+        ``solve_fresh_six_planes.yaml`` *solvable* within ``max_restarts=1``,
+        flipping this canary to ``status=found``. It now uses a dedicated
+        tight 18 m hangar fixture (``solve_canary_six_planes_tight.yaml`` ->
+        ``canary_hangar_tight_18m.yaml``) so the fill stays un-fully-solvable
+        within the cap — decoupling the canary from ``data/hangar.yaml``'s
+        width so future demo-hangar tweaks cannot re-break it.
     """
-    fixture = "tests/fixtures/solve_fresh_six_planes.yaml"
+    fixture = "tests/fixtures/solve_canary_six_planes_tight.yaml"
     max_restarts = 1
     seed = 256
 
@@ -166,7 +180,7 @@ def test_solve_deterministic_best_partial_under_max_restarts() -> None:
         budget_s=30.0,
         alternatives=1,
         seed=seed,
-        search=SearchConfig(max_restarts=max_restarts, spread=False),
+        search=SearchConfig(max_restarts=max_restarts, spread=False, nose_out=False),
     )
 
     s2 = load_scenario(fixture)
@@ -175,7 +189,7 @@ def test_solve_deterministic_best_partial_under_max_restarts() -> None:
         budget_s=30.0,
         alternatives=1,
         seed=seed,
-        search=SearchConfig(max_restarts=max_restarts, spread=False),
+        search=SearchConfig(max_restarts=max_restarts, spread=False, nose_out=False),
     )
 
     # The max_restarts cap (not wall-clock) must be the gate that trips —

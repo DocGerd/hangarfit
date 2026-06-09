@@ -10,8 +10,10 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import yaml
 
 from hangarfit.loader import (
+    _ALLOWED_AIRCRAFT_KEYS,
     LoaderError,
     _resolve_known_plane_id,
     _suggest_plane_id,
@@ -156,7 +158,7 @@ class TestRealDataFiles:
     def test_load_hangar(self) -> None:
         hangar = load_hangar(HANGAR_YAML)
         assert hangar.length_m == 25.0
-        assert hangar.width_m == 18.0
+        assert hangar.width_m == 22.0  # widened for #519/#520 (realistic tail surfaces)
         assert hangar.door.center_x_m == 9.0
         assert hangar.maintenance_bay.center_x_m == 13.5
         assert hangar.maintenance_bay.width_m == 9.0
@@ -481,6 +483,140 @@ aircraft:
         )
         with pytest.raises(LoaderError, match="'measured': expected boolean"):
             load_fleet(path)
+
+    @staticmethod
+    def _pivot_fleet(tow_pivotable_line: str) -> str:
+        """A valid one-aircraft fleet body; ``tow_pivotable_line`` is inserted
+        (already indented under the aircraft entry) or empty for the default."""
+        return f"""
+aircraft:
+  - id: foo
+    name: Foo
+    wing_position: high
+    gear: tailwheel
+    movement_mode: always_own_gear
+    turn_radius_m: 5.0
+    measured: false
+{tow_pivotable_line}    parts:
+      - kind: fuselage
+        length_m: 7.0
+        width_m: 0.8
+        z_bottom_m: 0.0
+        z_top_m: 1.5
+      - kind: wing
+        length_m: 1.4
+        width_m: 9.0
+        z_bottom_m: 2.0
+        z_top_m: 2.3
+    wheels:
+      main_offset_x_m: 0.20
+      track_m: 1.8
+      third_wheel_offset_x_m: -2.0
+"""
+
+    def test_tow_pivotable_defaults_false(self, tmp_path: Path) -> None:
+        path = _write(tmp_path / "f.yaml", self._pivot_fleet(""))
+        fleet = load_fleet(path)
+        assert fleet["foo"].tow_pivotable is False
+
+    def test_tow_pivotable_true_parsed(self, tmp_path: Path) -> None:
+        path = _write(tmp_path / "f.yaml", self._pivot_fleet("    tow_pivotable: true\n"))
+        fleet = load_fleet(path)
+        assert fleet["foo"].tow_pivotable is True
+
+    def test_quoted_bool_for_tow_pivotable_rejected(self, tmp_path: Path) -> None:
+        """`tow_pivotable: "true"` (quoted) would silently be True via bool()."""
+        path = _write(tmp_path / "f.yaml", self._pivot_fleet('    tow_pivotable: "true"\n'))
+        with pytest.raises(LoaderError, match="'tow_pivotable': expected boolean"):
+            load_fleet(path)
+
+    @pytest.mark.parametrize(
+        "typo",
+        ["tow_pivot", "towpivotable", "tow-pivotable", "turn_radius", "note", "bogus_field"],
+    )
+    def test_unknown_aircraft_key_rejected(self, tmp_path: Path, typo: str) -> None:
+        """A misspelled aircraft field key must be REJECTED (#513), not silently
+        dropped to its default. PR #511 (#263) added a new field (``tow_pivotable``)
+        that newly exposed this pre-existing gap: ``tow_pivot: true`` silently parsed
+        as ``tow_pivotable=False``, denying the pivot capability the author tried to
+        grant. Mirrors the strict ``wheels:`` and constraint-key allowlists. The
+        ``match`` also pins the ``aircraft '<id>':`` attribution prefix so a refactor
+        can't silently drop the file/id context while keeping the 'unknown key' text."""
+        path = _write(tmp_path / "f.yaml", self._pivot_fleet(f"    {typo}: true\n"))
+        with pytest.raises(LoaderError, match=r"aircraft 'foo': unknown aircraft key"):
+            load_fleet(path)
+
+    def test_unknown_struts_key_rejected(self, tmp_path: Path) -> None:
+        """The nested ``struts:`` block also rejects unknown keys (#513), mirroring
+        ``wheels:``. All struts keys are required, so a typo of one fails loudly as
+        'missing'; this catches a misspelled near-duplicate alongside the correct key
+        (e.g. ``wing_atttach_y_m:``) that would otherwise be silently dropped."""
+        body = self._pivot_fleet("    tow_pivotable: false\n").replace(
+            "    wheels:\n",
+            "    struts:\n"
+            "      fuselage_attach_x_m: -1.22\n"
+            "      fuselage_attach_y_m: 0.425\n"
+            "      fuselage_attach_z_m: 0.5\n"
+            "      wing_attach_y_m: 1.8\n"
+            "      width_m: 0.05\n"
+            "      wing_atttach_y_m: 1.8\n"  # typo'd near-duplicate
+            "    wheels:\n",
+        )
+        with pytest.raises(LoaderError, match=r"'struts' block has unknown key\(s\)"):
+            load_fleet(_write(tmp_path / "f.yaml", body))
+
+    def test_all_allowed_aircraft_keys_load(self, tmp_path: Path) -> None:
+        """Completeness guard for the allowlist: an aircraft declaring EVERY
+        valid key (including the YAML-only ``struts:`` block, which is expanded
+        into ``parts`` and is *not* an ``Aircraft`` field, plus ``notes``) loads
+        without error — so the allowlist can never be too strict."""
+        body = """
+aircraft:
+  - id: foo
+    name: Foo
+    notes: a strut-braced high-winger
+    wing_position: high
+    gear: tailwheel
+    movement_mode: always_own_gear
+    turn_radius_m: 5.0
+    measured: false
+    tow_pivotable: true
+    parts:
+      - kind: fuselage
+        length_m: 7.0
+        width_m: 0.8
+        z_bottom_m: 0.0
+        z_top_m: 1.5
+      - kind: wing
+        length_m: 1.4
+        width_m: 9.0
+        z_bottom_m: 2.0
+        z_top_m: 2.3
+    struts:
+      fuselage_attach_x_m: -1.22
+      fuselage_attach_y_m: 0.425
+      fuselage_attach_z_m: 0.5
+      wing_attach_y_m: 1.8
+      width_m: 0.05
+    wheels:
+      main_offset_x_m: 0.20
+      track_m: 1.8
+      third_wheel_offset_x_m: -2.0
+"""
+        # Self-enforcing: the fixture must exercise EVERY allowed key, so adding a
+        # new key to _ALLOWED_AIRCRAFT_KEYS without extending this fixture fails here
+        # (closing the "forgot the fixture line" hole that a hand-maintained guard has).
+        entry_keys = set(yaml.safe_load(body)["aircraft"][0])
+        assert entry_keys == _ALLOWED_AIRCRAFT_KEYS, (
+            f"fixture must cover the full allowlist; "
+            f"missing={sorted(_ALLOWED_AIRCRAFT_KEYS - entry_keys)} "
+            f"extra={sorted(entry_keys - _ALLOWED_AIRCRAFT_KEYS)}"
+        )
+        fleet = load_fleet(_write(tmp_path / "f.yaml", body))
+        assert fleet["foo"].tow_pivotable is True
+        assert fleet["foo"].notes == "a strut-braced high-winger"
+        # struts expanded into parts (no `struts` Aircraft field).
+        assert any(p.kind == "strut" for p in fleet["foo"].parts)
 
     def test_invalid_movement_mode_caught(self, tmp_path: Path) -> None:
         """Typo in movement_mode used to leak silently past the Layout cart
@@ -1887,3 +2023,72 @@ def test_load_fleet_rejects_non_utf8_file(tmp_path: Path) -> None:
     bad.write_bytes(b"\xff\xfe\x00bad bytes not utf-8")
     with pytest.raises(LoaderError, match="UTF-8"):
         load_fleet(bad)
+
+
+class TestStructuralNotchesLoading:
+    """`load_hangar` parses the optional `structural_notches:` list (ADR-0018).
+    Absent ⇒ rectangular hangar, byte-identical behaviour."""
+
+    def test_absent_defaults_to_empty(self, tmp_path: Path) -> None:
+        path = _write(tmp_path / "h.yaml", _MIN_HANGAR)
+        hangar = load_hangar(path)
+        assert hangar.structural_notches == ()
+        assert hangar.floor_polygon is None
+
+    def test_explicit_null_treated_as_empty(self, tmp_path: Path) -> None:
+        # A bare `structural_notches:` (YAML null) means "none", like constraints:.
+        path = _write(tmp_path / "h.yaml", _MIN_HANGAR + "structural_notches:\n")
+        assert load_hangar(path).structural_notches == ()
+
+    def test_unknown_notch_key_rejected(self, tmp_path: Path) -> None:
+        path = _write(
+            tmp_path / "h.yaml",
+            _MIN_HANGAR + "structural_notches: "
+            "[{x_min_m: 14.0, y_min_m: 20.0, x_max_m: 18.0, y_max_m: 25.0, x_mn_m: 9.0}]\n",
+        )
+        with pytest.raises(LoaderError, match="unknown key"):
+            load_hangar(path)
+
+    def test_single_notch_parsed(self, tmp_path: Path) -> None:
+        path = _write(
+            tmp_path / "h.yaml",
+            _MIN_HANGAR + "structural_notches: "
+            "[{x_min_m: 14.0, y_min_m: 20.0, x_max_m: 18.0, y_max_m: 25.0}]\n",
+        )
+        hangar = load_hangar(path)
+        assert len(hangar.structural_notches) == 1
+        n = hangar.structural_notches[0]
+        assert (n.x_min_m, n.y_min_m, n.x_max_m, n.y_max_m) == (14.0, 20.0, 18.0, 25.0)
+        assert hangar.floor_polygon is not None
+
+    def test_missing_key_rejected(self, tmp_path: Path) -> None:
+        path = _write(
+            tmp_path / "h.yaml",
+            _MIN_HANGAR + "structural_notches: [{x_min_m: 14.0, y_min_m: 20.0, x_max_m: 18.0}]\n",
+        )
+        with pytest.raises(LoaderError, match=r"structural_notches\[0\].y_max_m"):
+            load_hangar(path)
+
+    def test_non_list_rejected(self, tmp_path: Path) -> None:
+        path = _write(tmp_path / "h.yaml", _MIN_HANGAR + "structural_notches: {x_min_m: 1.0}\n")
+        with pytest.raises(LoaderError, match="must be a list"):
+            load_hangar(path)
+
+    def test_notch_outside_hangar_rejected(self, tmp_path: Path) -> None:
+        # x_max 20.0 exceeds width 18.0 — a model error wrapped as LoaderError.
+        path = _write(
+            tmp_path / "h.yaml",
+            _MIN_HANGAR + "structural_notches: "
+            "[{x_min_m: 14.0, y_min_m: 20.0, x_max_m: 20.0, y_max_m: 25.0}]\n",
+        )
+        with pytest.raises(LoaderError, match="doesn't fit in hangar"):
+            load_hangar(path)
+
+    def test_degenerate_notch_rejected(self, tmp_path: Path) -> None:
+        path = _write(
+            tmp_path / "h.yaml",
+            _MIN_HANGAR + "structural_notches: "
+            "[{x_min_m: 14.0, y_min_m: 20.0, x_max_m: 14.0, y_max_m: 25.0}]\n",
+        )
+        with pytest.raises(LoaderError, match="must be greater than"):
+            load_hangar(path)

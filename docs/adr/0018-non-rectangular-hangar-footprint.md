@@ -1,13 +1,50 @@
 # ADR-0018: Model the non-rectangular hangar footprint — a list of keep-out rects + a derived Shapely floor polygon for containment
 
-- **Status:** Proposed
-  <!-- This is a design-note SPIKE (#424). The deliverable is the decision
-       record only; no `src/` code ships in the PR that introduces this ADR.
-       Implementation is a separate follow-up issue. The status flips to
-       Accepted when the *implementing* PR merges, not when this note lands. -->
+- **Status:** Accepted
+  <!-- Originated as a design-note SPIKE (#424); flipped Proposed → Accepted
+       when the implementing PR (#528, static containment) landed. The full
+       roll-out is umbrella #527 in three stacked PRs: #528 static containment
+       (model + loader + checker + 2D viz + data), #529 tow routing, #530 the
+       3D viewer L-shape. See the Implementation note below for the one
+       deviation from the sketch (orthogonal field, not a generalized list). -->
 
-- **Date:** 2026-06-04
+- **Date:** 2026-06-04 (accepted 2026-06-08)
 - **Deciders:** Patrick Kuhn (DocGerd)
+
+## Implementation note (2026-06-08, #527/#528/#529)
+
+The implementation deviates from this ADR's sketch in two deliberate ways,
+decided during build:
+
+- **Orthogonal field, not a generalized list.** `Hangar` gains a new, separate
+  `structural_notches: tuple[StructuralNotch, ...]` field; `maintenance_bay` is
+  left **untouched**. The two stay orthogonal (different activation: the notch is
+  always-on and defines the floor; the bay is state-gated and never subtracted
+  from the floor), so folding the bay into a tagged list would have added
+  backward-compat surface and bay-test churn for **no behavioural gain** — the
+  bay was never going to be subtracted from `floor_polygon` anyway. The keep-out
+  *representation* is still a list of rectangles, exactly as the decision below
+  intends; only the bay is not retrofitted into it.
+- **Inert when empty.** `floor_polygon` is `None` (and the checker keeps its fast
+  per-vertex rectangle path) whenever `structural_notches` is empty — so every
+  no-notch hangar (all `data/` + test fixtures, the determinism canaries, the
+  bench) is **byte-identical and zero-cost**. Only a hangar that configures a
+  notch pays the `covers` cost.
+- **Distinct conflict kind.** A notch overhang is reported as `structural_notch`
+  (not `hangar_bounds`), so the tow planner's mover-bounds exemption can never
+  silently swallow it (#529) and the taxonomy stays self-documenting.
+- **Tow: a separate keep-out, not "route the in-transit bounds through the floor
+  polygon" (#529).** This ADR sketched routing the mover's in-transit bounds
+  through the derived floor polygon. Implementation deviates: a moving plane is
+  allowed to protrude the front door at `y < 0` during entry (#411/#412), but the
+  floor polygon excludes `y < 0`, so `floor.covers(mover)` would wrongly reject
+  every legitimate door/apron protrusion. Instead the notch is carried as an
+  always-on keep-out alongside the maintenance bay — checked in `_motion_clear`
+  (polygon overlap, so an edge crossing the notch is caught) and the grid
+  heuristic — which preserves the door-gap exemption. The final-path oracle
+  (`path_first_conflict`) still enforces the notch for the mover for free: it
+  skips only the oracle's `hangar_bounds` verdict, so the distinct
+  `structural_notch` conflict surfaces.
 
 ## Context & Problem Statement
 

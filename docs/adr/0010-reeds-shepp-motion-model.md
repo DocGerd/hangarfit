@@ -90,7 +90,11 @@ This **supersedes [ADR-0007](0007-tow-path-planner-v1-scope.md) fork 2
 own-gear with `turn_radius_m = 0`, the `effective_turn_radius_m()` accessor,
 the door-as-motion-gate, the bounded greedy-order retry) stands.
 
-### Why `_REVERSE_COST_FACTOR = 1.5`?
+### Why `_REVERSE_COST_FACTOR = 1.5`? (Superseded — see the [2026-06-07 #480 amendment](#amendment-2026-06-07--480-fewest-moves-cost-model--nose-out-back-in))
+
+> **Superseded.** The multiplicative reverse-length factor was replaced by an
+> additive **cusp** penalty in the #480 amendment below; this section is kept for
+> the historical rationale.
 
 A measured nose-out case is **18 m reverse vs 32 m forward**. At **1.5×** the
 reverse weighs 27 m, still beating the 32 m forward loop, so the reverse win is
@@ -210,8 +214,83 @@ word algebra, not a bolt-on. One vocabulary, one cost model, one integrator.
   ([ADR-0002](0002-determinant-minus-one-transform.md)) is the hazard the reverse
   legs add a fresh sign to.
 
+## Amendment (2026-06-07) — #480: fewest-moves cost model + nose-out back-in
+
+**Status:** Accepted. **Context:** a UAT/Herrenteich observation — a plane whose
+*parked* heading is nose-out (toward the door) was towed nose-first deep into the
+hangar and spun ~160° in the cramped back corner, because the door entry cone was
+inward-only and the cost model penalised reverse *distance*. The paths were valid
+but low-quality (and pessimistic for routability). [#480](https://github.com/DocGerd/hangarfit/issues/480).
+
+Three coordinated changes, all RNG-free — the ADR-0003 determinism contract holds
+(verified: serial canaries + the `bench` `det` verdict). Cross-version
+byte-identity is intentionally re-baselined where noted.
+
+1. **Cost model: cusp penalty replaces the reverse-length factor.** Word /
+   path selection now minimises **`Σ|leg| + CUSP_PENALTY × cusps`** — gear-agnostic
+   length plus a fixed additive penalty per **cusp** (a forward↔reverse
+   *travel-direction* change between consecutive *translating* legs; in-place cart
+   pivots don't translate and are excluded). This makes the objective **fewest
+   moves** (`moves = cusps + 1`), not least-reverse-distance. `_REVERSE_COST_FACTOR`
+   is removed; it applied at three sites (`_rs_solve_normalised`, `_cart_seg_weight`,
+   `_seg_cost`) — all three now use the cusp model (the search charges the cusp
+   incrementally in the expansion loop via a `_SearchNode.last_drive_gear`). The
+   normalised RS solver gets `CUSP_PENALTY / r` so its choice agrees with the
+   metre-space objective. **Forward preference is now purely the
+   enumeration-order tie-break** (forward primitives/words enumerated first →
+   equal cost keeps forward), not a per-metre tax.
+
+   **Why `CUSP_PENALTY = 10.0` m?** It must (a) keep a genuine nose-out win — a
+   rear-entry back-in is 0 cusps and wins on length alone, and where a 1-cusp
+   back-in (~18 m) replaces a forward loop (~32 m) we need `CUSP_PENALTY < 14`
+   m — and (b) dominate the small length differences between equal-move
+   alternatives so the planner doesn't trade a direction change for a couple of
+   saved metres. 10 m (order of a plane length / the hangar's short dimension)
+   satisfies both; pinned by `test_cusp_penalty_value`.
+
+2. **Rear-entry cone is nose-out-gated, apron-independent.** `entry_poses` emits
+   the rear cone `{150°,165°,180°,195°,210°}` iff the *target* parked heading is
+   nose-out (`|wrap180(target.heading − 180)| ≤ _REAR_CONE_HALF_ANGLE_DEG ≈ 45°`),
+   with or without an apron (previously it was emitted only when an apron existed).
+   A nose-out slot can therefore be **backed in** through the door; a nose-in slot
+   keeps the 5-heading forward cone only (no wasted seeds). This changes the
+   depth-0 grid for **nose-out** targets, **superseding the [#412](https://github.com/DocGerd/hangarfit/issues/412)/[ADR-0021](0021-tow-planner-staging-apron.md)
+   depth-0 cross-version byte-identity for that case** (the ADR-0003 same-input
+   contract is intact; only the historical depth-0≡pre-apron equality is given up,
+   and only for nose-out targets).
+
+3. **Cost-aware start-seed analytic expansion.** The rear cone + cusp cost alone
+   did *not* fix nose-out: the Hybrid-A\* analytic expansion returned the **first**
+   collision-clean shot in pop order, and the forward cone is enumerated first, so
+   a forward entry that pirouettes inside was returned before the cheaper back-in
+   was evaluated. The fix evaluates **every surviving start seed's** closed-form
+   completion up front and returns the **cheapest collision-clean** one (the back-in
+   is a start-seed shot, so it now wins); if no seed closes cleanly (an obstructed
+   approach) it falls through to the unchanged greedy node-level search.
+   - *Considered and rejected:* making the **whole** search cost-aware (keep the
+     cheapest analytic completion across all popped nodes, admissible f-cutoff).
+     It is more general (optimises obstructed nose-out too) but, with the loose
+     default euclidean heuristic, explores to ~`max_expansions` before the cutoff
+     fires — **13–26 s per `plan_path`** (vs milliseconds), impractical for
+     `solve` and the bench perf gate. The bounded start-seed variant fixes the
+     measured open-hangar/clear-approach cases at ~unchanged speed; **obstructed
+     nose-out needing mid-search maneuvering stays best-effort** (greedy), which is
+     an accepted limitation.
+
+**Acceptance:** a nose-out slot's in-hangar swept turning drops from ~162° to a
+back-in (<45°), verified by `tests/test_towplanner_nose_out.py`; no validity /
+path-validity / determinism regression (`bench`; serial canaries); design spec
+`docs/superpowers/specs/2026-06-07-480-fewest-moves-tow-routing-design.md`.
+
+**Relationship to [#263](https://github.com/DocGerd/hangarfit/issues/263)** (prefer
+a nose-out *parked heading*): this amendment makes a nose-out slot **cheap to
+reach** when the solver picks one; #263 (separate) makes the solver *prefer* to
+pick them.
+
 ## More Information
 
+- Amended by #480 (2026-06-07): cusp-penalty cost model, nose-out-gated rear cone,
+  cost-aware start-seed analytic expansion (see the amendment section above).
 - Supersedes: [ADR-0007](0007-tow-path-planner-v1-scope.md) fork 2 ("Dubins-only").
   The rest of ADR-0007 stands.
 - Related ADRs:

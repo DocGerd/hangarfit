@@ -33,6 +33,7 @@ from hangarfit.collisions import check as check_layout
 from hangarfit.geometry import WorldPart, cached_parts_world, pose_cache_scope
 from hangarfit.models import (
     Aircraft,
+    ApronShallowDrop,
     CheckResult,
     Conflict,
     DiversityConfig,
@@ -301,8 +302,16 @@ def _run_solve(
                         budget_s=budget_s,
                         pinned_planes=pinned_planes,
                     )
-                # _spread preserves every Layout invariant; a ValueError here
-                # would be a structural bug, so let it propagate.
+                # Nose-out preference (#263 / ADR-0022): RNG-free, runs after
+                # _spread and independently of it (also on the spread=False fast
+                # path). Flips parked headings toward the door where valid.
+                n_flips = 0
+                if search.nose_out:
+                    placements, n_flips = _nose_out(
+                        placements, scenario, search, pinned_planes=pinned_planes
+                    )
+                # _spread / _nose_out preserve every Layout invariant; a ValueError
+                # here would be a structural bug, so let it propagate.
                 candidate_layout = Layout(
                     fleet=scenario.fleet,
                     hangar=scenario.hangar,
@@ -316,6 +325,7 @@ def _run_solve(
                         min_gap=min_gap,
                         energy=energy,
                         restart_index=restart_index,
+                        nose_out_flips=n_flips,
                     )
                 )
                 break  # restart to seek a different basin
@@ -489,46 +499,69 @@ def _tow_plan_layouts(
     plan_paths: bool,
     tow_heuristic: Literal["euclidean", "grid"],
     tow_max_expansions: int | None,
-) -> tuple[tuple[MovesPlan | None, ...], tuple[str, ...]]:
+) -> tuple[tuple[MovesPlan | None, ...], tuple[str, ...], tuple[ApronShallowDrop, ...]]:
     """Tow-plan every returned layout (best-effort enrichment, #197).
 
-    Returns ``(plans, unroutable)`` index-aligned with ``accepted_layouts``.
-    The v2 planner (Reeds–Shepp arcs + bounded Hybrid-A* — #222/#261 under
-    ADR-0007 + ADR-0010) cannot route dense multi-plane fills and has documented
-    false-negatives, so an un-routable layout is recorded as ``plans[i]=None``
-    rather than discarding the otherwise-valid static arrangement — the layout is
-    the headline answer; the tow plan is advisory (spike Risk #8). RNG-free, so
-    it preserves the ADR-0003 determinism contract.
+    Returns ``(plans, unroutable, apron_drops)``. ``plans`` is index-aligned with
+    ``accepted_layouts``. The v2 planner (Reeds–Shepp arcs + bounded Hybrid-A* —
+    #222/#261 under ADR-0007 + ADR-0010) cannot route dense multi-plane fills and
+    has documented false-negatives, so an un-routable layout is recorded as
+    ``plans[i]=None`` rather than discarding the otherwise-valid static arrangement
+    — the layout is the headline answer; the tow plan is advisory (spike Risk #8).
+    RNG-free, so it preserves the ADR-0003 determinism contract.
+
+    ``apron_drops`` is the flat, advisory list of every returned layout's
+    too-shallow-apron drops (#503): a plane that towed via the ``y = 0`` door line
+    despite an apron being set, because the apron was too shallow for its footprint
+    (one :class:`ApronShallowDrop` per dropped plane per layout, in
+    layout-then-move order). Because this collects only the layouts ACTUALLY
+    returned in the :class:`SolveResult`, a discarded spread-fallback pass's drops
+    never surface — only the chosen result's diagnostics are built (see
+    :func:`solve`). Empty when no returned layout had a too-shallow drop.
 
     With ``plan_paths=False`` no planning runs and ``plans`` is all-``None``
-    (still index-aligned), with no ``unroutable`` planes.
+    (still index-aligned), with no ``unroutable`` planes and no ``apron_drops``.
     """
     if not plan_paths:
-        return (None,) * len(accepted_layouts), ()
+        return (None,) * len(accepted_layouts), (), ()
 
     built: list[MovesPlan | None] = []
     unroutable: list[str] = []
+    apron_drops: list[ApronShallowDrop] = []
     for layout in accepted_layouts:
+        # Diagnostics-only out-param (#503): plan_fill populates this with the
+        # too-shallow-apron drops of THIS layout's tow plan, plan-inert — it is
+        # never read back into the MovesPlan, so the plan stays byte-identical
+        # whether or not the list is passed (ADR-0003). A fresh list per layout
+        # keeps the per-layout drops in their own scope; we extend the flat
+        # collection so a plane dropped across multiple layouts appears once per
+        # layout (the CLI dedups by plane id before warning).
+        layout_drops: list[ApronShallowDrop] = []
         try:
-            # Default path calls ``plan_fill(layout)`` with NO kwargs, so the
-            # ADR-0003 determinism canaries — and any test that stubs
-            # ``plan_fill`` with a target-only signature — stay untouched. Since
+            # Default path calls ``plan_fill(layout)`` with NO budget kwargs (only
+            # the plan-inert diagnostics out-param), so the ADR-0003 determinism
+            # canaries are unaffected (the out-param never changes the plan). Since
             # #336 the shipped default is grid + the module budgets, which is
             # exactly what a bare ``plan_fill(layout)`` applies; an explicit
             # euclidean / custom budget takes the kwargs path below.
             if tow_heuristic == "grid" and tow_max_expansions is None:
-                built.append(plan_fill(layout))
+                built.append(plan_fill(layout, apron_dropped_out=layout_drops))
             else:
                 built.append(
                     plan_fill(
                         layout,
                         heuristic=tow_heuristic,
                         max_expansions=tow_max_expansions,
+                        apron_dropped_out=layout_drops,
                     )
                 )
+            apron_drops.extend(layout_drops)
         except NoFeasiblePlanError as e:
             built.append(None)
             unroutable.append(e.plane_id)
+            # A NoFeasiblePlanError means this layout produced no plan at all, so
+            # any partial drops collected before the bail describe a plan the user
+            # never receives — discard them (don't extend apron_drops).
             # Log the conflict kind/detail too, not just the plane: it
             # distinguishes a genuinely-boxed-in plane from a Hybrid-A* budget
             # exhaustion (a known false-negative class), which call for different
@@ -540,7 +573,7 @@ def _tow_plan_layouts(
                 e.conflict.kind,
                 e.conflict.detail,
             )
-    return tuple(built), tuple(unroutable)
+    return tuple(built), tuple(unroutable), tuple(apron_drops)
 
 
 def _build_found_result(
@@ -567,8 +600,9 @@ def _build_found_result(
     """
     accepted_layouts = [c.layout for c in selected]
     min_gaps = tuple(c.min_gap for c in selected)
+    nose_out_flips = tuple(c.nose_out_flips for c in selected)
     status: SolveStatus = "found" if len(accepted_layouts) >= alternatives else "found_partial"
-    plans, unroutable = _tow_plan_layouts(
+    plans, unroutable, apron_drops = _tow_plan_layouts(
         accepted_layouts,
         plan_paths=plan_paths,
         tow_heuristic=tow_heuristic,
@@ -590,6 +624,8 @@ def _build_found_result(
             min_pairwise_gap_m=min_gaps,
             valid_basins_found=valid_basins_found,
             spread_stall_applied=spread_stall_applied,
+            apron_shallow_drops=apron_drops,
+            nose_out_flips=nose_out_flips,
         ),
     )
 
@@ -1060,6 +1096,80 @@ def _spread_quality(
             min_gap = min(min_gap, gap)
             energy += w[ids[i]] * w[ids[j]] * math.exp(-gap / scale)
     return (min_gap, energy)
+
+
+def _nose_out(
+    placements: dict[str, Placement],
+    scenario: Scenario,
+    search: SearchConfig,
+    *,
+    pinned_planes: frozenset[str],
+) -> tuple[dict[str, Placement], int]:
+    """RNG-free post-pass: flip movable planes' parked headings toward nose-out.
+
+    For each movable plane in ``sorted(plane_id)`` order, apply the
+    zero-displacement antipodal flip ``(h + 180) % 360`` (preserving
+    x/y/on_carts) iff it is **strictly more nose-out** (closer to heading 180,
+    toward the door per ADR-0002) AND the layout stays valid
+    (``_score == (0, 0.0)``). Each flip is re-validated against the CURRENT
+    (possibly already-flipped) set, one plane at a time, so two
+    individually-valid flips can never jointly invalidate. Returns
+    ``(placements, n_flips)``.
+
+    Soft preference (#263 / ADR-0022), mirroring :func:`_spread`'s discipline but
+    **RNG-free** — it takes no ``rng`` and consumes no RNG draw, so the seeded
+    stream (and thus the ADR-0003 byte-identical contract) is unchanged even with
+    the feature ON.
+
+    Per-plane override via :attr:`PlaneConstraint.nose_out` (tri-state): ``None``
+    ⇒ follow the global ``search.nose_out``; ``True`` ⇒ prefer-out; ``False`` ⇒
+    never flip (the nose-IN exemption, e.g. a low-wing tucked under a high-wing
+    tail).
+    """
+    movable = sorted(pid for pid in placements if pid not in pinned_planes)
+    flips = 0
+    for pid in movable:
+        constraint = scenario.constraints.get(pid)
+        want = (
+            constraint.nose_out
+            if constraint is not None and constraint.nose_out is not None
+            else search.nose_out
+        )
+        if not want:
+            continue
+        current = placements[pid]
+        flipped_heading = (current.heading_deg + 180.0) % 360.0
+        # Strictly more nose-out. Because the flip is the exact antipode and
+        # short_arc(antipode, 180) == 180 - short_arc(h, 180), this is identical
+        # to "the flip lands in the nose-out hemisphere (< 90°)".
+        if _heading_delta_short_arc(flipped_heading, 180.0) >= _heading_delta_short_arc(
+            current.heading_deg, 180.0
+        ):
+            continue
+        flipped = Placement(
+            plane_id=current.plane_id,
+            x_m=current.x_m,
+            y_m=current.y_m,
+            heading_deg=flipped_heading,
+            on_carts=current.on_carts,
+        )
+        trial = dict(placements)
+        trial[pid] = flipped
+        # A heading-only flip preserves plane_id / x / y / on_carts, so it cannot
+        # trip any Layout cross-reference invariant (cart rule, on_carts
+        # consistency, duplicate placements) — build directly. A ValueError here
+        # would be a structural bug, so let it propagate rather than silently skip.
+        trial_layout = Layout(
+            fleet=scenario.fleet,
+            hangar=scenario.hangar,
+            placements=tuple(trial.values()),
+            maintenance_plane=scenario.maintenance_plane,
+        )
+        if _score(trial_layout) != (0, 0.0):
+            continue
+        placements[pid] = flipped
+        flips += 1
+    return placements, flips
 
 
 def _spread(
@@ -1582,6 +1692,7 @@ class _SpreadCandidate(NamedTuple):
     min_gap: float
     energy: float
     restart_index: int
+    nose_out_flips: int = 0
 
 
 def _select_spread_diverse(

@@ -15,15 +15,21 @@
 # of the visualiser, use ``examples/layouts/example_invalid.yaml`` (a deliberately
 # bad layout shipped alongside this file for that purpose).
 #
-# Hangar: 18 m wide × 25 m deep (data/hangar.yaml). Maintenance bay
-# is the right-rear corner: x ∈ (9, 18), y > 16 (a 9 × 9 m walled
-# keep-out while scheibe_falke is in maintenance). Coordinate
-# convention (CLAUDE.md): world (0, 0) at front-left, +x right along
-# door wall, +y deeper into hangar. heading 0 = nose into hangar.
+# Hangar: 22 m wide × 25 m deep (data/hangar.yaml). Maintenance bay
+# spans x ∈ (9, 18), y > 16 (a 9 × 9 m walled keep-out while
+# scheibe_falke is in maintenance). Coordinate convention (CLAUDE.md):
+# world (0, 0) at front-left, +x right along door wall, +y deeper into
+# hangar. heading 0 = nose into hangar.
 #
-# Cart usage: only the three ``always_cart`` planes (scheibe, zlin,
-# wild_thing) are on carts; CTSL is ``cart_eligible`` but parked on its
-# own gear (the "no cart swapping unless necessary" operational rule).
+# Cart usage: only the two ``always_cart`` planes here (zlin, wild_thing)
+# are on carts; CTSL is ``cart_eligible`` but parked on its own gear (the
+# "no cart swapping unless necessary" operational rule).
+#
+# Empennage (#518/#519/#520, ADR-0023): every aircraft now carries a wide
+# horizontal stabilizer (`tail`) and a fin (`vertical_stabilizer`) that rises
+# into the wing-nesting layer. Those realistic tail surfaces consume lateral
+# room, so the planes are spread across the (widened) 22 m hall — a wing may
+# no longer nest directly over a neighbour's tail unless it clears the fin.
 #
 # Planes not in this layout (out flying):
 #   - cessna_140  (training flight)
@@ -36,53 +42,37 @@ hangar: ../../data/hangar.yaml
 maintenance:
   plane: scheibe_falke
 
-# Front/aft nudge (#50 / ADR-0012): the fuselage split makes a wing over
-# another plane's COCKPIT (fuselage_front) a hard conflict at any height,
-# where the pre-split layout let high-wing wingtips legally overhang a
-# neighbour's fuselage. Two placements were adjusted so every overhang now
-# lands on an aft fuselage / tail (still valid) rather than a cockpit:
-#   - ctsl shifted right (x 9 → 11) so zlin's wingtip no longer reaches its
-#     cockpit;
-#   - wild_thing rotated to heading 180 (nose toward the door) so the husky
-#     wing crossing it overhangs its aft fuselage, not its cockpit.
-
 placements:
-  # Front-right: small cantilever near the door, easy to roll out first.
-  # Sits at x=11 so the Zlin's wingtip (to its left) clears its cockpit.
+  # Front row, left + right (clear of each other's wide wings + tails).
+  - plane: zlin_savage
+    x_m: 5.0
+    y_m: 6.0
+    heading_deg: 0.0
+    on_carts: true         # always_cart
   - plane: ctsl
-    x_m: 11.0
+    x_m: 16.5
     y_m: 4.0
     heading_deg: 0.0
     on_carts: false        # cart_eligible but on own gear
 
-  # Front lane (y = 8): one strut-braced on the left, fuji
-  # parked sideways on the right
-  - plane: zlin_savage
-    x_m: 5.0
-    y_m: 8.0
-    heading_deg: 0.0
-    on_carts: true         # always_cart
+  # Mid: the low-wing Fuji parked sideways (heading 90), its low wing
+  # threading between the high-wing neighbours (z-disjoint).
   - plane: fuji
-    x_m: 13.0
-    y_m: 8.0
-    heading_deg: 90.0      # nose pointing right; low wing threads under
-                           # neighbouring high wings (z-disjoint nesting)
+    x_m: 10.5
+    y_m: 9.5
+    heading_deg: 90.0
     on_carts: false        # always_own_gear
 
-  # Mid-center: wild_thing at heading 180 (nose toward the door) so the
-  # husky wing behind it overhangs its AFT fuselage / tail, not its
-  # cockpit (front/aft split — ADR-0012)
+  # Back row (forward of the maintenance bay at y = 16): wild_thing nose
+  # toward the door (heading 180) on the left, husky on the right.
   - plane: wild_thing
-    x_m: 9.0
-    y_m: 12.0
+    x_m: 5.0
+    y_m: 13.5
     heading_deg: 180.0
     on_carts: true         # always_cart
-
-  # Just forward of the maintenance bay: husky tucked left of centre
-  # with its 10.82 m wing fully clear of the bay's front edge at y=16
   - plane: aviat_husky
-    x_m: 6.0
-    y_m: 15.0
+    x_m: 16.5
+    y_m: 14.0
     heading_deg: 0.0
     on_carts: false        # always_own_gear
 

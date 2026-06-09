@@ -51,7 +51,7 @@ from hangarfit.models import (
 # transform/checker logic, not probing how GEOS handles ±inf coordinates (a
 # shapely concern, not ours — and a source of false findings). Headings range
 # well outside [0, 360) to exercise the sin/cos wrap.
-_PART_KINDS = ["fuselage_front", "fuselage_aft", "wing", "strut", "tail"]
+_PART_KINDS = ["fuselage_front", "fuselage_aft", "wing", "strut", "tail", "vertical_stabilizer"]
 _coord = st.floats(min_value=-60.0, max_value=60.0, allow_nan=False, allow_infinity=False)
 _dim = st.floats(min_value=0.05, max_value=25.0, allow_nan=False, allow_infinity=False)
 _heading = st.floats(min_value=-1080.0, max_value=1080.0, allow_nan=False, allow_infinity=False)

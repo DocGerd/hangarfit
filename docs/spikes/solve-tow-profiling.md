@@ -351,24 +351,49 @@ fixed and the only thing that varies is machine speed, so a generous absolute
 ceiling is a sound, low-flake design. A regime with no ceiling defined is itself a
 gate failure, so a newly added regime cannot silently escape the speed check.
 
-| Regime (fast set) | dev `total_s` (post-#453) | CI median (ubuntu-24.04) | ceiling | headroom |
-|---|---:|---:|---:|---|
-| `trivial_single` | ~0.2 s | 0.6 s | 10 s | catastrophic-only |
-| `roomy_three_spread_on` | ~19 s | **54.6 s** | **100 s** | ~1.8× the CI median |
-| `roomy_three_spread_off` | ~0.9 s | 2.7 s | 20 s | catastrophic-only |
+| Regime (fast set) | CI median (ubuntu-24.04, post-#263) | ceiling | headroom |
+|---|---:|---:|---|
+| `trivial_single` | 0.8 s | 10 s | catastrophic-only |
+| `roomy_three_spread_on` | **84.5 s** | **130 s** | ~1.5× the CI median |
+| `roomy_three_spread_off` | 7.3 s | 20 s | catastrophic-only |
+| `roomy_three_apron` | **~210 s** (post-empennage median; ~269 s pre-fix peak) | **380 s** | ~1.8× the CI median |
 
-The binding ceiling is `roomy_three_spread_on`. At 100 s it trips on the canonical
-regression — reverting #453's memoization ~2.3×'d that regime's placement, i.e.
-~123 s on this runner — while leaving ~1.8× headroom over the CI median for
-ordinary run-to-run variance. The two tiny regimes keep generous absolute ceilings:
-their small absolute times make proportional jitter larger, so they police a
-catastrophic blow-up (e.g. spread-OFF losing its 1-restart early-exit), not drift.
+The binding ceiling is `roomy_three_spread_on`. At 130 s it still trips on the
+canonical regression — reverting #453's memoization adds ~+68 s of placement on
+this runner (→ ~152 s post-#263) — while leaving ~1.5× headroom over the CI median
+for ordinary run-to-run variance. The two tiny regimes keep generous absolute
+ceilings: their small absolute times make proportional jitter larger, so they
+police a catastrophic blow-up (e.g. spread-OFF losing its 1-restart early-exit),
+not drift.
 
 > **Calibration:** ceilings are sized against the wall-clock the `bench gates`
-> job itself reports on the GitHub-hosted runner (the numbers above were measured
-> on `ubuntu-24.04`, 2026-06-06). Recalibrate only when the regimes change, the
-> lever set changes, or GitHub changes the runner class — and re-confirm the
-> ceiling still trips on a memoization-revert (the canonical regression).
+> job itself reports on the GitHub-hosted runner. **Re-baselined 2026-06-08 (#263):**
+> nose-out parked heading is **default ON**, so every regime now routes nose-out
+> goals by *backing the plane in during the fill* (#480's cheap analytic back-in
+> only fires for a clear approach; a multi-plane fill pays node-level search per
+> back-in). This ~doubled `roomy_three_spread_on` routing (54.6 → 84.5 s) and
+> ~tripled `roomy_three_apron` (→ 170.5 s; the apron's enlarged start set — reverse
+> cones × apron y-samples — compounds the back-in cost). The maintainer chose to
+> keep default-ON and raise the ceilings to fit the shipped default's real cost
+> (not a regression). The cheap `solve` path (no `--render-paths`) is unaffected —
+> `_nose_out` itself is an O(planes) placement-time post-pass. Recalibrate only when
+> the regimes change, a default / the lever set changes, or GitHub changes the
+> runner class — and re-confirm `roomy_three_spread_on` still trips on a
+> memoization-revert (the canonical regression).
+>
+> **Re-baselined again 2026-06-08 (#524):** the empennage model (#518/#519/#520,
+> ADR-0023) added two parts per aircraft (a horizontal `tail` + a
+> `vertical_stabilizer`), so every tow expansion validates more part pairs and
+> per-check cost rose. The route-heavy `roomy_three_apron` regime's
+> empennage-merge run that tripped the old 240 s ceiling peaked at ~269 s; post-fix
+> runs land ~207–213 s (median ~210), while the three correctness verdicts stayed
+> green — a model-change re-baseline, not a regression.
+> The apron ceiling is raised to **380 s** (~1.8× the observed ~210 s median;
+> ≈1.4× the ~269 s pre-fix peak); `roomy_three_spread_on` keeps headroom under 130
+> and is unchanged. This
+> is the same wall-clock-vs-CI-variance class that bit the CLI solve smoke tests in
+> #522 — the bench binds on `max_restarts`, so only machine speed varies, but the
+> ceilings are absolute seconds and must track the (heavier) shipped model.
 
 ### What F6 deliberately did NOT do
 

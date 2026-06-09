@@ -21,11 +21,18 @@ primitive default stays ``euclidean`` — callers choose). The earlier "grid is
 inert, so no 'grid beats euclidean' test can exist" conclusion was a budget-700/
 2000 artifact: at those budgets BOTH heuristics cap out on the tight cases, so
 grid bought no extra *routed count*. But grid roughly halves the *expansions*
-(aviat_husky ~13.5k euclidean → ~6062 grid), which converts to a routed plane once
-the per-plane budget clears ~6100 (#336 raised it to 8000). The end-to-end "grid
-routes a tight fill euclidean cannot, at the shipped default budget" proof now
-lives in ``tests/test_solver_towplanner.py::
-test_six_plane_fresh_fill_fully_routes_at_shipped_defaults``.
+(aviat_husky ~13.5k euclidean → ~6062 grid pre-#480), which converted to a routed
+plane once the per-plane budget cleared ~6100 (#336 raised it to 8000).
+
+#512: that ~6062 grid figure is PRE-#480. #480's fewest-moves cost model (an
+additive ``CUSP_PENALTY`` per direction reversal) ~doubled the per-plane cost of
+the deep, heading-hard slots — aviat_husky → ~12515, and ctsl (cheap pre-#480) →
+> 13000 — so the seed=1 six-plane fill is no longer *fully* routable at the
+8000/16000 budgets — an accepted realism-over-routability trade (raising the
+budgets enough would breach the un-routable-disprove perf intent). The
+grid-still-beats-euclidean property holds; the end-to-end behaviour is now pinned
+(as best-effort partial routing) by ``tests/test_solver_towplanner.py::
+test_six_plane_fresh_fill_partial_routing_post_480``.
 """
 
 from __future__ import annotations
@@ -163,8 +170,14 @@ def test_default_heuristic_and_stats_do_not_change_the_path() -> None:
 
 
 def test_grid_heuristic_is_deterministic() -> None:
-    """``heuristic="grid"`` is RNG-free ⇒ byte-identical across repeat runs."""
-    layout = load_layout("tests/fixtures/valid_all_nine_planes.yaml")
+    """``heuristic="grid"`` is RNG-free ⇒ byte-identical across repeat runs.
+
+    Uses a sparse 2-plane nesting fixture: since ADR-0023 added realistic tail
+    surfaces (#519/#520), the packed 9-plane ``valid_all_nine_planes`` fill is
+    statically valid but no longer tow-routable (the wide tailplanes block every
+    corridor). This test only needs *a* routable plane to exercise the grid
+    heuristic's determinism."""
+    layout = load_layout("tests/fixtures/valid_left_side_nesting.yaml")
     mover = min(layout.placements, key=lambda p: p.y_m).plane_id  # a shallow, routable plane
     stats: dict[str, object] = {}
     a = _route_one(layout, mover, heuristic="grid", stats=stats)
@@ -184,7 +197,9 @@ def test_grid_heuristic_is_deterministic() -> None:
 
 
 def test_grid_path_is_oracle_clean() -> None:
-    layout = load_layout("tests/fixtures/valid_all_nine_planes.yaml")
+    # Sparse 2-plane fixture: the packed 9-plane fill is no longer tow-routable
+    # once the empennage is modelled (ADR-0023); a routable plane suffices here.
+    layout = load_layout("tests/fixtures/valid_left_side_nesting.yaml")
     mover = min(layout.placements, key=lambda p: p.y_m).plane_id
     others = tuple(p for p in layout.placements if p.plane_id != mover)
     placed = Layout(
@@ -345,9 +360,11 @@ def test_plan_fill_global_cap_bails_in_bounded_total_expansions() -> None:
     """``max_total_expansions`` caps the SUM of expansions across the whole fill
     (#336). A tiny global cap forces a fast, bounded bail with the cap-exhausted
     conflict — instead of paying per-plane-budget × scan-retries on a fill the
-    bounded planner cannot route. ``valid_two_separated`` leads with the 18 m-wing
-    scheibe_falke, which cannot route in 10 expansions, so the global cap trips."""
-    layout = load_layout("tests/fixtures/valid_two_separated.yaml")
+    bounded planner cannot route. Uses the packed 9-plane fill, which since
+    ADR-0023 added realistic tail surfaces (#519/#520) is no longer tow-routable
+    (the wide tailplanes block every corridor): the planes consume expansions
+    until the global SUM cap trips."""
+    layout = load_layout("tests/fixtures/valid_all_nine_planes.yaml")
     with pytest.raises(NoFeasiblePlanError) as ei:
         plan_fill(layout, max_total_expansions=10)
     assert "global fill expansion budget" in ei.value.conflict.detail

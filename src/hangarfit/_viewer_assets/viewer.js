@@ -74,15 +74,34 @@ import * as THREE2 from "three";
 var WALL_H = 3;
 function addHangar(scene2, H2, BRAND2, span2) {
   const wallMeshes2 = [];
-  const floor = new THREE2.Mesh(
-    new THREE2.PlaneGeometry(H2.width_m, H2.length_m),
-    new THREE2.MeshStandardMaterial({
-      color: new THREE2.Color(BRAND2.floor),
-      roughness: 1,
-      side: THREE2.DoubleSide
-    })
-  );
-  floor.position.set(H2.width_m / 2, H2.length_m / 2, 0);
+  const notches = H2.structural_notches ?? [];
+  const floorMat = new THREE2.MeshStandardMaterial({
+    color: new THREE2.Color(BRAND2.floor),
+    roughness: 1,
+    side: THREE2.DoubleSide
+  });
+  let floor;
+  if (notches.length === 0) {
+    floor = new THREE2.Mesh(new THREE2.PlaneGeometry(H2.width_m, H2.length_m), floorMat);
+    floor.position.set(H2.width_m / 2, H2.length_m / 2, 0);
+  } else {
+    const shape = new THREE2.Shape();
+    shape.moveTo(0, 0);
+    shape.lineTo(H2.width_m, 0);
+    shape.lineTo(H2.width_m, H2.length_m);
+    shape.lineTo(0, H2.length_m);
+    shape.closePath();
+    for (const n of notches) {
+      const hole = new THREE2.Path();
+      hole.moveTo(n.x_min_m, n.y_min_m);
+      hole.lineTo(n.x_max_m, n.y_min_m);
+      hole.lineTo(n.x_max_m, n.y_max_m);
+      hole.lineTo(n.x_min_m, n.y_max_m);
+      hole.closePath();
+      shape.holes.push(hole);
+    }
+    floor = new THREE2.Mesh(new THREE2.ShapeGeometry(shape), floorMat);
+  }
   floor.receiveShadow = true;
   scene2.add(floor);
   const grid = new THREE2.GridHelper(
@@ -114,6 +133,17 @@ function addHangar(scene2, H2, BRAND2, span2) {
   const dr = H2.door.center_x_m + H2.door.width_m / 2;
   if (dl > 1e-6) addWall(dl, t, dl / 2, 0);
   if (dr < H2.width_m - 1e-6) addWall(H2.width_m - dr, t, (dr + H2.width_m) / 2, 0);
+  const eps = 1e-6;
+  for (const n of notches) {
+    const cx = (n.x_min_m + n.x_max_m) / 2;
+    const cy = (n.y_min_m + n.y_max_m) / 2;
+    const w = n.x_max_m - n.x_min_m;
+    const l = n.y_max_m - n.y_min_m;
+    if (n.x_min_m > eps) addWall(t, l, n.x_min_m, cy);
+    if (n.x_max_m < H2.width_m - eps) addWall(t, l, n.x_max_m, cy);
+    if (n.y_min_m > eps) addWall(w, t, cx, n.y_min_m);
+    if (n.y_max_m < H2.length_m - eps) addWall(w, t, cx, n.y_max_m);
+  }
   const bay = H2.maintenance_bay;
   if (bay && bay.closed) {
     const bm = new THREE2.Mesh(
@@ -308,14 +338,46 @@ function addPlanes(scene2, SCENE2, BRAND2) {
   return { groups: groups2, labelMeshes: labelMeshes2, noseMeshes: noseMeshes2 };
 }
 
+// src/paths.ts
+import * as THREE6 from "three";
+var TX = 2;
+var TY = 5;
+function pathPoints(seg) {
+  return seg.samples.map((s) => [s[TX], s[TY]]);
+}
+function addTowPaths(scene2, SCENE2, BRAND2) {
+  const Z_OFFSET = 0.02;
+  const segByPlane = {};
+  for (const s of SCENE2.timeline.segments) segByPlane[s.plane_id] = s;
+  const lines = [];
+  for (const p of SCENE2.planes) {
+    const seg = segByPlane[p.id];
+    if (!seg) continue;
+    const pts = pathPoints(seg);
+    if (pts.length < 2) continue;
+    const conflicted = SCENE2.conflicts.includes(p.id);
+    const colour = new THREE6.Color(conflicted ? BRAND2.conflict : p.color);
+    const geom = new THREE6.BufferGeometry().setFromPoints(
+      pts.map(([x, y]) => new THREE6.Vector3(x, y, Z_OFFSET))
+    );
+    const line = new THREE6.Line(geom, new THREE6.LineBasicMaterial({ color: colour }));
+    scene2.add(line);
+    lines.push(line);
+  }
+  const setVisible = (on) => {
+    for (const l of lines) l.visible = on;
+  };
+  return { lines, setVisible };
+}
+
 // src/anchors.ts
-import * as THREE7 from "three";
+import * as THREE8 from "three";
 
 // src/affine.ts
-import * as THREE6 from "three";
+import * as THREE7 from "three";
 function affineMatrix(aff) {
   const [a, b, tx, c, d, ty] = aff;
-  const m = new THREE6.Matrix4();
+  const m = new THREE7.Matrix4();
   m.set(
     a,
     b,
@@ -343,7 +405,7 @@ function applyAffine(aff, u, v) {
 
 // src/anchors.ts
 function boxCornersLocal(b) {
-  const h = THREE7.MathUtils.degToRad(b.angle_deg);
+  const h = THREE8.MathUtils.degToRad(b.angle_deg);
   const cs = Math.cos(h), sn = Math.sin(h);
   const hl = b.length_m / 2, hw = b.width_m / 2;
   const corners = [[hl, -hw], [hl, hw], [-hl, hw], [-hl, -hw]];
@@ -519,6 +581,9 @@ labelsToggle.addEventListener("change", () => {
   for (const m of labelMeshes) m.visible = on;
   for (const m of noseMeshes) m.visible = on;
 });
+var { setVisible: setPathsVisible } = addTowPaths(scene, SCENE, BRAND);
+var pathsToggle = byId("paths");
+pathsToggle.addEventListener("change", () => setPathsVisible(pathsToggle.checked));
 try {
   const { structural, maxErr } = checkAnchors(SCENE);
   if (structural) {

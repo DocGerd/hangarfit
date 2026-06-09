@@ -95,6 +95,16 @@ def test_html_embeds_polish_features(tmp_path):
     assert 'id="labels"' in html  # the HUD toggle for labels + nose arrows
 
 
+def test_html_embeds_floor_tow_paths(tmp_path):
+    # #505: the floor tow-path overlay (3D analogue of `solve --render-paths`)
+    # must reach the artifact — the HUD `paths` toggle (default ON) and the
+    # bundled line-builder. Pixels are checked by the headless screenshot; this
+    # is the string-presence guard that the toggle + builder ship in the HTML.
+    html = _html(tmp_path)
+    assert 'id="paths" type="checkbox" checked' in html  # toggle, default ON
+    assert "addTowPaths" in html  # the bundled floor-line builder reaches viewer.js
+
+
 def test_html_embeds_honesty_banner_and_readouts(tmp_path):
     # #401: the placeholder banner + readouts wiring must reach the artifact, and
     # the scene JSON must carry the placeholder flag (shipped fleet is unmeasured).

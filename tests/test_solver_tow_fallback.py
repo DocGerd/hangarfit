@@ -37,13 +37,14 @@ def _plan(layout):
     return MovesPlan(target_layout=layout, moves=(Move(plane_id="a", target_slot=end, path=arc),))
 
 
-def _result(layouts, plans):
+def _result(layouts, plans, apron_drops=()):
     diag = SolverDiagnostics(
         restarts_attempted=1,
         wall_time_s=0.1,
         best_partial=None,
         best_partial_layout=None,
         seed=5,
+        apron_shallow_drops=apron_drops,
     )
     return SolveResult(status="found", layouts=layouts, plans=plans, diagnostics=diag)
 
@@ -165,6 +166,37 @@ def test_fallback_inherits_max_restarts_not_wall_clock(monkeypatch):
 
     assert calls[1]["search"].spread is False
     assert calls[1]["search"].max_restarts == 7
+
+
+def test_discarded_spread_pass_apron_drops_do_not_surface(monkeypatch):
+    # #503 phantom-layout guard: the spread pass is valid-but-unroutable (so it is
+    # DISCARDED) and reports an apron-shallow drop for a plane the user never gets;
+    # the returned fallback pass reports a DIFFERENT drop set. solve() returns the
+    # fallback result, so only ITS apron_shallow_drops surface — the discarded
+    # spread pass's drops must NOT appear (they describe a layout never returned).
+    from hangarfit.models import ApronShallowDrop
+
+    layout = _layout()
+    plan = _plan(layout)
+    spread_drop = ApronShallowDrop(plane_id="phantom", min_depth_m=9.0)
+    fallback_drop = ApronShallowDrop(plane_id="real", min_depth_m=7.0)
+    calls = _patch_run_solve(
+        monkeypatch,
+        [
+            _result((layout,), (None,), apron_drops=(spread_drop,)),
+            _result((layout,), (plan,), apron_drops=(fallback_drop,)),
+        ],
+    )
+
+    result = solve(_scenario(), seed=5, plan_paths=True, search=SearchConfig(spread=True))
+
+    assert len(calls) == 2  # both passes ran
+    assert result.diagnostics.spread_fallback_applied is True
+    # Only the RETURNED (fallback) layout's drop is present; the discarded spread
+    # pass's "phantom" drop is gone.
+    assert result.diagnostics.apron_shallow_drops == (fallback_drop,)
+    drop_ids = [d.plane_id for d in result.diagnostics.apron_shallow_drops]
+    assert "phantom" not in drop_ids
 
 
 def test_real_library_fallback_routes_single_plane(monkeypatch):

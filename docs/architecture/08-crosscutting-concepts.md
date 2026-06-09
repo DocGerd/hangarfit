@@ -23,10 +23,13 @@ of the *same* aircraft are never checked against each other — a
 Husky's wing and its own strut share a plan-view column by design.
 
 **The fuselage front/aft exception.** The fuselage is split into two
-kinds, `fuselage_front` (cockpit / nose) and `fuselage_aft` (cabin-aft
-+ tail), so the rule can tell a wing-over-cockpit from a wing-over-tail.
+kinds, `fuselage_front` (cockpit / nose) and `fuselage_aft` (the
+cabin-aft tube), so the rule can tell a wing-over-cockpit from a
+wing-over-tail. (The tail *surfaces* are now explicit `tail` +
+`vertical_stabilizer` parts, no longer folded into `fuselage_aft` — see
+"The empennage" below and [ADR-0023](../adr/0023-empennage-tail-surfaces.md).)
 `wing × fuselage_aft` keeps the two-clause rule above (a wing may
-overhang another plane's tail when the heights are disjoint). But
+overhang another plane's aft fuselage when the heights are disjoint). But
 `wing × fuselage_front` is a **hard conflict on plan-view overlap
 alone — the height clause (2) is dropped**: a wing over a cockpit blocks
 the canopy / prop arc / pilot ingress at *any* nesting height. This is
@@ -49,7 +52,7 @@ Split station x_break = wing.offset_x_m - wing.length_m/2  (the wing TRAILING ed
               |   tail (-y, near door)                      |   tail (-y, near door)
         +-----------+                                 +-----------+
         |           |                                 |:::::::::::|
-        |           |  ... fuselage_aft (TAIL)        |::::: A :::|
+        |           |  ... fuselage_aft (CABIN-AFT)    |::::: A :::|
    - - -|:::::::::::|- - - x_break (wing TE) - - - - -|           |- - - x_break - - -
         |::::: A :::|                                 |           |
         +-----------+  ... fuselage_front (COCKPIT)   +-----------+
@@ -69,22 +72,39 @@ gap is irrelevant -- the cockpit rule drops clause (2) entirely (ADR-0012, D1).
                         | z-gap >= wing_layer_clearance_m
          B fuselage  [############]   (lower layer)
 ```
-*A wingtip may overhang a parked plane's aft fuselage / tail (Case A: legal when heights are disjoint, the two-clause `wing × fuselage_aft` rule) but never its cockpit / front fuselage (Case B: a hard `fuselage_front_wing_overlap` conflict at any nesting height). The loader auto-splits a `fuselage` part at the wing trailing edge `x_break`; front is the nose side, aft the tail side.*
+*A wingtip may overhang a parked plane's aft fuselage / low tailplane (Case A: legal when heights are disjoint, the two-clause `wing × fuselage_aft` rule) but never its cockpit / front fuselage (Case B: a hard `fuselage_front_wing_overlap` conflict at any nesting height). The loader auto-splits a `fuselage` part at the wing trailing edge `x_break`; front is the nose side, aft the tail side. Since [ADR-0023](../adr/0023-empennage-tail-surfaces.md) Case A also requires the wing to clear the plane's centreline `vertical_stabilizer` (fin), which rises into the wing layer — see "The empennage" below.*
 
 The closed set of `PartKind` values is `{"fuselage_front",
-"fuselage_aft", "wing", "strut", "tail"}`. The legacy `"fuselage"` is
-**not** a constructed kind — it survives only as a transient YAML keyword
-the loader auto-splits at the wing trailing-edge station
-(`wing.offset_x_m − wing.length_m/2`, the #282 wing-spar precedent),
-emitting an area-conserving `fuselage_front` + `fuselage_aft` pair whose
-union is the original box. An aircraft with a `fuselage` part but no
-`wing` part is a load error (nothing to derive the break from); explicit
-`fuselage_front`/`fuselage_aft` parts in YAML are a valid override the
-loader does not split. Adding a new structural element (engine nacelle,
-ventral fin) is a code change in `src/hangarfit/models.py`, not just a
-YAML edit — see [ADR-0001](../adr/0001-aircraft-parts-model.md) for the
+"fuselage_aft", "wing", "strut", "tail", "vertical_stabilizer"}`. The
+legacy `"fuselage"` is **not** a constructed kind — it survives only as a
+transient YAML keyword the loader auto-splits at the wing trailing-edge
+station (`wing.offset_x_m − wing.length_m/2`, the #282 wing-spar
+precedent), emitting an area-conserving `fuselage_front` + `fuselage_aft`
+pair whose union is the original box. An aircraft with a `fuselage` part
+but no `wing` part is a load error (nothing to derive the break from);
+explicit `fuselage_front`/`fuselage_aft` parts in YAML are a valid
+override the loader does not split. Adding a new structural element (e.g.
+an engine nacelle) is a code change in `src/hangarfit/models.py`, not just
+a YAML edit — see [ADR-0001](../adr/0001-aircraft-parts-model.md) for the
 parts-not-bbox rationale and [ADR-0012](../adr/0012-fuselage-front-aft-split.md)
 for the front/aft refinement.
+
+**The empennage** ([ADR-0023](../adr/0023-empennage-tail-surfaces.md)).
+Each aircraft carries two explicit tail surfaces: `tail` (the horizontal
+stabilizer — wide, ~2.5–3.5 m span, at a per-aircraft height) and
+`vertical_stabilizer` (the fin + rudder — thin, on the centreline, rising
+from the fuselage top to the published overall height, *into* the wing
+layer). No collision-rule change is needed: the same two-clause predicate
+makes a wing nested over a neighbour's tail conflict with that plane's fin
+**only when the wing also overlaps the thin centreline fin in plan view** —
+i.e. wing-over-tail nesting stays legal exactly when the wing clears the
+fin laterally. Per-part z expresses every tail configuration with no
+per-type code: conventional / cruciform tails sit the horizontal
+stabilizer *below* the wing layer (z-disjoint from an overhanging high
+wing, so it stays overhangable); a T-tail (the Stemme S10) sits it at the
+fin top *inside* the wing layer (so an overhanging wing conflicts).
+The fin is never overhangable; `metrics._OVERHANGABLE` keeps only `tail`
+and `fuselage_aft`.
 
 **Fleet composition relevant to the parts model.** Of the nine
 aircraft in `data/fleet.yaml`, six are **strut-braced** (the Aviat
@@ -96,10 +116,11 @@ which plane is low-wing — drive the operationally interesting cases
 of the collision rule: strut-braced planes block another plane's
 wing from nesting through their wing volume, and the only low-wing
 allows a high-wing's wingtip to legally project over its **aft
-fuselage / tail** in plan view (the height-disjoint pass-through case)
-— but *not* over its **cockpit / front fuselage**, which is a hard
-conflict regardless of height (the front/aft split, ADR-0012).
-Per-plane dimensions, gear types, and movement modes live in
+fuselage / low tailplane** in plan view (the height-disjoint pass-through
+case) — but *not* over its **cockpit / front fuselage**, which is a hard
+conflict regardless of height (the front/aft split, ADR-0012), and *not*
+over its **fin** (`vertical_stabilizer`), which rises into the wing layer
+(ADR-0023). Per-plane dimensions, gear types, and movement modes live in
 `data/fleet.yaml` as the source of truth.
 
 ### The maintenance bay rule
@@ -123,8 +144,10 @@ Top-down, with the placeholder `data/hangar.yaml` values made concrete
 ```text
  TOP-DOWN.  +x along the door; +y runs deeper into the hangar, drawn DOWNWARD
  (door at top) to match the §8 convention box and the renderer.  Placeholder
- data/hangar.yaml: length_m=25, width_m=18; bay center_x_m=13.5, width_m=9,
- depth_m=9  ->  x in (9.0, 18.0),  y in (16.0, 25.0].
+ data/hangar.yaml: length_m=25, width_m=22; bay center_x_m=13.5, width_m=9,
+ depth_m=9  ->  x in (9.0, 18.0),  y in (16.0, 25.0].  (Schematic, not to scale:
+ the box below draws the bay flush to its right edge x=18; the right wall is now
+ x=22 — a ~4 m aisle, x in (18, 22), is elided.)
  x=0          door center_x=9.0, width=12.0  (x in [3, 15])               x=18
   +=========================[  door  ]=======================================+   y = 0.0   front wall
   |        +x runs right along the door --->        +y runs into hangar      |
@@ -135,8 +158,8 @@ Top-down, with the placeholder `data/hangar.yaml` values made concrete
   |                                          |#  MAINTENANCE BAY (closed)  #|   a vertex ON x=9 or
   |          normal hangar floor             |#  back-anchored, partial-w  #|   y=16 is OUTSIDE the bay)
   |                                          |#  x in (9.0, 18.0)          #|
-  |                                          |#  y in (16.0, 25.0]         #|   right edge x=18
-  |                                          |#  any non-occupant vertex   #|   == hangar wall
+  |                                          |#  y in (16.0, 25.0]         #|   bay right edge x=18
+  |                                          |#  any non-occupant vertex   #|   (~4 m aisle to x=22 wall)
   |                                          |#  STRICTLY inside  =>  one   #|
   |                                          |#  bay_intrusion per part    #|
   +==========================================+#############################+   y = 25.0  [INSIDE]
@@ -147,7 +170,7 @@ Top-down, with the placeholder `data/hangar.yaml` values made concrete
    strict < on the left / right / front edges; inclusive <= on the back edge
    (inherited from _hangar_bounds_conflicts, so y = 25 is not re-tested here)
 ```
-*Maintenance-bay geometry on the placeholder hangar (`length_m`=25, `width_m`=18; bay `center_x_m`=13.5, `width_m`=9, `depth_m`=9): the back-right 9×9 m corner, `x ∈ (9.0, 18.0)`, `y ∈ (16.0, 25.0]`. The left/right/front edges are strict `<` (a vertex on the edge is in the aisle, not the bay); the back-`y` edge is inclusive because it coincides with the hangar back wall and is inherited from `_hangar_bounds_conflicts`. When a maintenance occupant is set, any non-occupant part vertex strictly inside fires one `bay_intrusion` conflict per offending part.*
+*Maintenance-bay geometry on the placeholder hangar (`length_m`=25, `width_m`=22; bay `center_x_m`=13.5, `width_m`=9, `depth_m`=9): the back-right 9×9 m corner, `x ∈ (9.0, 18.0)`, `y ∈ (16.0, 25.0]` (the bay's x=18 right edge now sits ~4 m inside the widened x=22 wall — that aisle is elided from the schematic above). The left/right/front edges are strict `<` (a vertex on the edge is in the aisle, not the bay); the back-`y` edge is inclusive because it coincides with the hangar back wall and is inherited from `_hangar_bounds_conflicts`. When a maintenance occupant is set, any non-occupant part vertex strictly inside fires one `bay_intrusion` conflict per offending part.*
 
 This rule replaced the earlier "fuselage centroid in the back strip"
 rule during the bay-walling work that completed in
@@ -425,12 +448,15 @@ amendment).
 The two-clause predicate is symmetric in the two clearances: a
 collision requires *both* the plan-view and the height-gap thresholds
 to be violated simultaneously. This is what lets a high-wing's
-wingtip legally project over a low-wing's **aft fuselage / tail**
+wingtip legally project over a low-wing's **aft fuselage / low tailplane**
 (close in plan view, far in height) — see ADR-0001. The **one
 exception** is `wing × fuselage_front`: a wing over a cockpit is a hard
 conflict on plan-view overlap alone, with the height clause dropped
 (ADR-0012). `wing_layer_clearance_m` therefore governs every pair
-*except* wing-over-cockpit.
+*except* wing-over-cockpit — including `wing × vertical_stabilizer`, where
+the fin's reach *into* the wing layer is exactly what makes the height
+gap small enough to bite when a wing passes over the centreline fin
+(ADR-0023).
 
 ## Data integrity: frozen dataclasses + `__post_init__` invariants
 
@@ -527,6 +553,8 @@ ADR.
 
 The hard score tuple `(conflict_count, total_penetration_m2)` measures only illegal overlap. The first **soft** preference — inter-plane spread (maximize separation once valid) — ships as an isolated post-pass (`solver._spread`), deliberately *outside* the hard tuple so the conflict-resolution determinism contract ([ADR-0003](../adr/0003-rr-mc-solver-algorithm.md)) is unaffected. See [ADR-0008](../adr/0008-inter-plane-spread-soft-preference.md) for the repulsion-energy metric and why it is a post-pass rather than a third score key.
 
+The second soft preference — **nose-out parked heading** (park each plane pointing toward the door for an easy straight-out exit) — is a second isolated post-pass (`solver._nose_out`), run *after* `_spread` and independently of it. For each movable plane it applies the zero-displacement 180° antipodal flip `(h + 180) % 360` iff that is strictly more nose-out (closer to `heading 180`, the door, under the [ADR-0002](../adr/0002-determinant-minus-one-transform.md) convention) **and** the layout stays valid. It is **default ON** (`--no-nose-out`), with a per-plane tri-state `PlaneConstraint.nose_out` override for the legitimate nose-IN exemption. Crucially the pass is **RNG-free** — it draws no random numbers — so byte-identical determinism holds *even with the feature on* (strictly stronger than `_spread`, which guarantees byte-identity only when off). It is gap-neutral (position fixed), so it cannot fight spread. The companion **`tow_pivotable`** aircraft flag (a free-castering / nose-lift plane pivots in place when towed, `effective_turn_radius_m() → 0`, routed via the existing zero-radius cart-pivot fan) is a realism flag orthogonal to `movement_mode`. See [ADR-0022](../adr/0022-nose-out-parked-heading.md); the cheap *reachability* of a nose-out slot (backing in rather than looping) is the [ADR-0010](../adr/0010-reeds-shepp-motion-model.md) #480 amendment.
+
 ## Visualizer colour accessibility
 
 The PNG renderer (`src/hangarfit/visualize.py`) must stay usable by
@@ -608,7 +636,7 @@ otherwise the default-fast invariant erodes.
 ### Test-only fixtures live alongside the production ones
 
 Files like `tests/fixtures/test_hangar_large.yaml` (30 × 25 m) exist
-because the placeholder production hangar (25 × 18 m in
+because the placeholder production hangar (25 × 22 m in
 `data/hangar.yaml`) cannot fit all nine aircraft simultaneously
 under the placeholder clearance budget. The fixture header explains
 the reason; the all-nine-planes test uses this larger hangar. When

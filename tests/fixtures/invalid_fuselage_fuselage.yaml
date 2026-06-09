@@ -1,22 +1,17 @@
-# Case 5 — two fuselages overlap (single isolated conflict).
+# Case 5 — two deeply-overlapping planes (rich segment-pair conflict set).
 #
-# ctsl at (9, 5, 0, false) — fuselage x [8.5, 9.5], y [1.85, 8.15], z [0, 1.4];
-#                            wing x [4.7, 13.3], y [5.3, 6.7], z [1.9, 2.2].
-# fuji at (9, 9, 0, false)  — fuselage x [8.5, 9.5], y [5, 13],   z [0, 1.6];
-#                            wing x [4.3, 13.7], y [8.75, 10.25], z [0.8, 1.1].
+# ctsl at (9, 5, 0) and fuji at (9, 9, 0): their fuselages share x [8.5, 9.5]
+# and overlap in y → the front/aft split (#50/ADR-0012) yields the
+# fuselage_aft × fuselage_{front,aft} segment-pair kinds. With the empennage
+# modelled (ADR-0023) the dense overlap also catches fuji's wide horizontal
+# stabilizer (`tail`, z 1.3-1.6) against ctsl's fuselage segments, and the ctsl
+# wing (z 1.9-2.2) over fuji's fin (`vertical_stabilizer`, z 1.6-2.02).
 #
-# Fuselages share x [8.5, 9.5] and overlap y [5, 8.15] → fuselage_fuselage_overlap.
-#
-# Crucially, no other pair conflicts:
-#   - ctsl wing y [5.3, 6.7] vs fuji fuselage y [5, 13]: plan overlap, but
-#     z-gap = 1.9 − 1.6 = 0.3 m > 0.2 m clearance.
-#   - fuji wing y [8.75, 10.25] vs ctsl fuselage y [1.85, 8.15]: y-gap 0.6 m
-#     (no plan overlap at all).
-#   - ctsl wing y [5.3, 6.7] vs fuji wing y [8.75, 10.25]: y-gap 2.05 m.
-#
-# This makes case 5 a *single-conflict* fixture suitable for asserting
-# the conflict list has exactly one entry — guarding against future
-# regressions that might emit phantom extra conflicts.
+# The fixture's value is the TAXONOMY invariant, not a clean count: every
+# conflict kind is the two part kinds sorted alphabetically + `_overlap`, and
+# the retired un-split `fuselage_fuselage_overlap` kind must never reappear.
+# See `tests/test_collisions.py::TestPairwiseOverlap::test_case_5_fuselage_fuselage_overlap`
+# for the exact re-pinned kind set.
 
 fleet: ../../data/fleet.yaml
 hangar: ../../data/hangar.yaml

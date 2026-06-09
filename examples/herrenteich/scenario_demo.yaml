@@ -1,0 +1,19 @@
+# Airfield Herrenteich — small DEMO scenario (a 3-plane subset).
+#
+# Unlike the all-eight `scenario.yaml` (which the product solver cannot route
+# in the narrow L-shaped hangar within budget), this three-aircraft subset
+# SOLVES and fully TOW-ROUTES end-to-end on the real Herrenteich hangar — the
+# solver places all three clear of the back-right office notch (ADR-0018) and
+# the tow planner routes each from the door to its slot around it. Use it to
+# exercise the full toolchain on real (sourced) data:
+#
+#   hangarfit solve examples/herrenteich/scenario_demo.yaml \
+#       --render out.png --render-paths --seed 3
+#   hangarfit view  examples/herrenteich/scenario_demo.yaml -o out.html --seed 3
+#
+fleet: fleet.yaml
+hangar: hangar.yaml
+fleet_in:
+  - cessna_140
+  - fk9_mkii
+  - ctsl

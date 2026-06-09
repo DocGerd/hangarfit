@@ -8,6 +8,7 @@ import pytest
 
 from hangarfit.models import (
     Aircraft,
+    ApronShallowDrop,
     CheckResult,
     Conflict,
     Door,
@@ -19,6 +20,7 @@ from hangarfit.models import (
     SearchConfig,
     SolverDiagnostics,
     SolveResult,
+    StructuralNotch,
     StrutsSpec,
     Wheels,
 )
@@ -92,7 +94,9 @@ class TestPart:
         with pytest.raises(ValueError, match="Part.kind must be one of"):
             _ok_part(kind=kind)  # type: ignore[arg-type]
 
-    @pytest.mark.parametrize("kind", ["fuselage_front", "fuselage_aft", "wing", "strut", "tail"])
+    @pytest.mark.parametrize(
+        "kind", ["fuselage_front", "fuselage_aft", "wing", "strut", "tail", "vertical_stabilizer"]
+    )
     def test_all_valid_kinds_accepted(self, kind: str) -> None:
         p = _ok_part(kind=kind)  # type: ignore[arg-type]
         assert p.kind == kind
@@ -293,6 +297,22 @@ class TestAircraft:
     def test_effective_turn_radius_delegates_for_cart_eligible(self) -> None:
         a = _ok_aircraft(movement_mode="cart_eligible", turn_radius_m=9.5)
         assert a.effective_turn_radius_m() == 9.5
+
+    def test_tow_pivotable_defaults_false(self) -> None:
+        a = _ok_aircraft(movement_mode="always_own_gear", turn_radius_m=5.0)
+        assert a.tow_pivotable is False
+        assert a.effective_turn_radius_m() == 5.0
+
+    def test_tow_pivotable_overrides_effective_radius_to_zero(self) -> None:
+        a = _ok_aircraft(movement_mode="always_own_gear", turn_radius_m=5.0, tow_pivotable=True)
+        # The declared turn radius is retained (powered-taxi); only the *tow*
+        # radius is overridden to a pivot-in-place 0.0.
+        assert a.turn_radius_m == 5.0
+        assert a.effective_turn_radius_m() == 0.0
+
+    def test_tow_pivotable_overrides_cart_eligible_too(self) -> None:
+        a = _ok_aircraft(movement_mode="cart_eligible", turn_radius_m=4.0, tow_pivotable=True)
+        assert a.effective_turn_radius_m() == 0.0
 
     @pytest.mark.parametrize("wing_position", ["", "middle", "High", "MID", "bottom"])
     def test_invalid_wing_position_rejected(self, wing_position: str) -> None:
@@ -570,6 +590,71 @@ class TestHangar:
             wing_layer_clearance_m=0.2,
         )
         assert h.maintenance_bay.center_x_m == 14.0
+
+
+class TestStructuralNotch:
+    """The always-on floor keep-out (ADR-0018): a rectangle validated for
+    sane corners on its own, and for fit-in-hangar by :class:`Hangar`."""
+
+    def test_valid_construction(self) -> None:
+        n = StructuralNotch(x_min_m=12.72, y_min_m=22.66, x_max_m=15.08, y_max_m=31.76)
+        assert (n.x_min_m, n.y_min_m, n.x_max_m, n.y_max_m) == (12.72, 22.66, 15.08, 31.76)
+
+    @pytest.mark.parametrize("x_min,y_min", [(-1.0, 0.0), (0.0, -2.0)])
+    def test_negative_corner_rejected(self, x_min: float, y_min: float) -> None:
+        with pytest.raises(ValueError, match="must be non-negative"):
+            StructuralNotch(x_min_m=x_min, y_min_m=y_min, x_max_m=5.0, y_max_m=5.0)
+
+    def test_non_increasing_x_rejected(self) -> None:
+        with pytest.raises(ValueError, match="x_max_m .* must be greater than"):
+            StructuralNotch(x_min_m=5.0, y_min_m=0.0, x_max_m=5.0, y_max_m=5.0)
+
+    def test_non_increasing_y_rejected(self) -> None:
+        with pytest.raises(ValueError, match="y_max_m .* must be greater than"):
+            StructuralNotch(x_min_m=0.0, y_min_m=5.0, x_max_m=5.0, y_max_m=4.0)
+
+
+class TestHangarFloorPolygon:
+    """The derived :attr:`Hangar.floor_polygon` (ADR-0018) — ``None`` without a
+    notch (fast rectangle path), an L-shape with one, and a fit guard."""
+
+    def _hangar(self, notches: tuple[StructuralNotch, ...]) -> Hangar:
+        return Hangar(
+            length_m=31.76,
+            width_m=15.08,
+            door=Door(center_x_m=7.28, width_m=13.46),
+            maintenance_bay=MaintenanceBay(center_x_m=2.0, width_m=3.0, depth_m=2.0),
+            clearance_m=0.3,
+            wing_layer_clearance_m=0.2,
+            structural_notches=notches,
+        )
+
+    def test_floor_polygon_none_without_notch(self) -> None:
+        assert self._hangar(()).floor_polygon is None
+
+    def test_floor_polygon_area_reduced_by_notch(self) -> None:
+        notch = StructuralNotch(x_min_m=12.72, y_min_m=22.66, x_max_m=15.08, y_max_m=31.76)
+        floor = self._hangar((notch,)).floor_polygon
+        assert floor is not None
+        expected = 15.08 * 31.76 - (15.08 - 12.72) * (31.76 - 22.66)
+        assert floor.area == pytest.approx(expected)
+
+    def test_notch_outside_hangar_rejected(self) -> None:
+        with pytest.raises(ValueError, match="doesn't fit in hangar"):
+            # x_max 16.0 exceeds width 15.08
+            self._hangar((StructuralNotch(x_min_m=12.0, y_min_m=22.0, x_max_m=16.0, y_max_m=31.0),))
+
+    def test_full_floor_notch_rejected(self) -> None:
+        # A notch covering the whole floor would leave an empty polygon that
+        # `covers` rejects for every part — caught at construction instead.
+        with pytest.raises(ValueError, match="no usable hangar floor"):
+            self._hangar((StructuralNotch(x_min_m=0.0, y_min_m=0.0, x_max_m=15.08, y_max_m=31.76),))
+
+    def test_floor_polygon_excluded_from_equality_and_hash(self) -> None:
+        notch = StructuralNotch(x_min_m=12.72, y_min_m=22.66, x_max_m=15.08, y_max_m=31.76)
+        h1, h2 = self._hangar((notch,)), self._hangar((notch,))
+        assert h1 == h2
+        assert hash(h1) == hash(h2)
 
 
 class TestPlacement:
@@ -958,6 +1043,27 @@ class TestLayout:
         assert len(layout.fleet) == 0
 
 
+class TestApronShallowDrop:
+    def test_valid_construction(self) -> None:
+        drop = ApronShallowDrop(plane_id="A", min_depth_m=8.0)
+        assert drop.plane_id == "A"
+        assert drop.min_depth_m == 8.0
+
+    def test_zero_min_depth_accepted(self) -> None:
+        # Non-negative is the gate (mirrors the module's other distance fields);
+        # a real footprint extent is always > 0, but 0 is not rejected.
+        assert ApronShallowDrop(plane_id="A", min_depth_m=0.0).min_depth_m == 0.0
+
+    def test_empty_plane_id_rejected(self) -> None:
+        with pytest.raises(ValueError, match="plane_id must be non-empty"):
+            ApronShallowDrop(plane_id="", min_depth_m=8.0)
+
+    @pytest.mark.parametrize("bad_depth", [-1.0, float("nan"), float("inf")])
+    def test_non_finite_or_negative_min_depth_rejected(self, bad_depth: float) -> None:
+        with pytest.raises(ValueError, match="min_depth_m must be finite and >= 0"):
+            ApronShallowDrop(plane_id="A", min_depth_m=bad_depth)
+
+
 class TestConflict:
     def test_one_plane_conflict(self) -> None:
         c = Conflict(kind="hangar_bounds", planes=("foo",), detail="vertex past wall")
@@ -1326,6 +1432,66 @@ def test_solve_result_rejects_misaligned_min_pairwise_gap_m():
             plans=(None,),
             diagnostics=diag,
         )
+
+
+def test_nose_out_model_fields_defaults_and_overrides():
+    """#263: SearchConfig.nose_out (default ON), PlaneConstraint.nose_out
+    (tri-state), SolverDiagnostics.nose_out_flips (default ())."""
+    from hangarfit.models import PlaneConstraint, SearchConfig, SolverDiagnostics
+
+    assert SearchConfig().nose_out is True
+    assert SearchConfig(nose_out=False).nose_out is False
+
+    assert PlaneConstraint().nose_out is None
+    assert PlaneConstraint(nose_out=True).nose_out is True
+    assert PlaneConstraint(nose_out=False).nose_out is False
+
+    assert (
+        SolverDiagnostics(
+            restarts_attempted=1,
+            wall_time_s=0.0,
+            best_partial=None,
+            best_partial_layout=None,
+            seed=1,
+        ).nose_out_flips
+        == ()
+    )
+
+
+def test_solver_diagnostics_rejects_negative_nose_out_flips():
+    import pytest
+
+    from hangarfit.models import SolverDiagnostics
+
+    with pytest.raises(ValueError, match="nose_out_flips"):
+        SolverDiagnostics(
+            restarts_attempted=1,
+            wall_time_s=0.0,
+            best_partial=None,
+            best_partial_layout=None,
+            seed=1,
+            nose_out_flips=(0, -1),
+        )
+
+
+def test_solve_result_rejects_misaligned_nose_out_flips():
+    """SolveResult.__post_init__ rejects non-empty nose_out_flips whose length
+    differs from layouts (the #263 parity guard, mirroring min_pairwise_gap_m)."""
+    import pytest
+
+    from hangarfit.models import SolverDiagnostics, SolveResult
+
+    layout = _make_valid_layout()
+    diag = SolverDiagnostics(
+        restarts_attempted=1,
+        wall_time_s=0.1,
+        best_partial=None,
+        best_partial_layout=None,
+        seed=42,
+        nose_out_flips=(0, 1),  # 2 counts but 1 layout — mismatch
+    )
+    with pytest.raises(ValueError, match="nose_out_flips"):
+        SolveResult(status="found", layouts=(layout,), plans=(None,), diagnostics=diag)
 
 
 class TestWheels:

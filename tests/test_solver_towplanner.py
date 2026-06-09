@@ -73,7 +73,7 @@ def test_solve_best_effort_none_when_a_layout_is_untowable(solvable_scenario, mo
     from hangarfit.solver import solve
     from hangarfit.towplanner import NoFeasiblePlanError
 
-    def boom(target):
+    def boom(target, **kwargs):
         raise NoFeasiblePlanError("A", Conflict.single(kind="parts_overlap", plane="A", detail="x"))
 
     monkeypatch.setattr(solver_mod, "plan_fill", boom)
@@ -92,7 +92,7 @@ def test_solve_plan_paths_false_skips_planning(solvable_scenario, monkeypatch):
     import hangarfit.solver as solver_mod
     from hangarfit.solver import solve
 
-    def fail_if_called(target):
+    def fail_if_called(target, **kwargs):
         raise AssertionError("plan_fill must not be called when plan_paths=False")
 
     monkeypatch.setattr(solver_mod, "plan_fill", fail_if_called)
@@ -133,16 +133,29 @@ def test_solve_best_effort_real_planner_on_untowable_fill():
 
 
 @pytest.mark.slow
-def test_six_plane_fresh_fill_fully_routes_at_shipped_defaults():
-    """#336: a tow-friendly (spread=False) fill of ``solve_fresh_six_planes``
-    (seed=1) is **fully** tow-routable under the SHIPPED default planner — the
-    obstacle-aware grid heuristic + the raised per-plane budget. Previously
-    un-routable: euclidean@2000 capped out on ``aviat_husky`` (which needs
-    ~6062 grid expansions to thread its 10.82 m wing into the back corner).
+def test_six_plane_fresh_fill_partial_routing_post_480():
+    """#512: post-#480, the tow-friendly (spread=False) fill of
+    ``solve_fresh_six_planes`` (seed=1) is NO LONGER fully tow-routable at shipped
+    defaults — an ACCEPTED realism-over-routability trade, not a bug.
 
-    Scope: this asserts the *planner* improvement on a tow-friendly layout. The
-    default ``spread=True`` fill remaining hard is the separate #280 placement
-    tension (back-fill #320), not this issue. Slow (real per-plane search).
+    #336 originally shipped this as a *full*-routing guarantee: the obstacle-aware
+    grid heuristic threaded ``aviat_husky``'s 10.82 m wing into the back corner in
+    ~6062 expansions, and the seed=1 fill reached 5/5 at ~8.4 k total. #480's
+    fewest-moves cost model (an additive ``CUSP_PENALTY`` per direction reversal,
+    ADR-0010) roughly DOUBLED the per-plane cost of the deep, heading-hard slots:
+    ``aviat_husky`` now needs ~12515 (measured, > the 8000 per-plane cap) and
+    ``ctsl`` — cheap pre-#480 — exceeds even a 13000 cap. Routing the fill again
+    would need per-plane ~20 k + global ~35 k, pushing the un-routable-disprove
+    wall-clock past the ~400 s perf intent the 16000 global cap exists to hold (see
+    the ``_MAX_EXPANSIONS`` comment in towplanner.py). So the budgets stay at
+    8000/16000 and the solve is BEST-EFFORT here: it returns the valid static
+    layout with the over-budget plane's plan ``None`` and that plane named in
+    ``unroutable_planes``, rather than failing the whole solve.
+
+    (Was ``test_six_plane_fresh_fill_fully_routes_at_shipped_defaults``, which
+    asserted full routing under the pre-#480 ~6062-expansion path.) Slow (real
+    per-plane search to the budget). The separate ``spread=True`` placement tension
+    is #280 / back-fill #320, not this.
     """
     from hangarfit.loader import load_scenario
     from hangarfit.models import SearchConfig
@@ -152,13 +165,19 @@ def test_six_plane_fresh_fill_fully_routes_at_shipped_defaults():
     result = solve(
         scenario, budget_s=15.0, alternatives=1, seed=1, search=SearchConfig(spread=False)
     )
+    # The static layout is still found (a valid placement exists) — only its tow
+    # plan is best-effort.
     assert result.status in ("found", "found_partial")
     assert len(result.layouts) == 1
-    assert all(p is not None for p in result.plans), (
-        f"fill not fully routed at shipped defaults: "
-        f"unroutable={result.diagnostics.unroutable_planes}"
+    assert len(result.plans) == len(result.layouts)
+    # Best-effort: at least one plane exceeds the shipped tow budget post-#480, so
+    # its plan is None and it is named in unroutable_planes — the valid layout is
+    # preserved, the whole solve does not fail.
+    assert any(p is None for p in result.plans), (
+        f"expected best-effort partial routing post-#480; plans={result.plans}"
     )
-    assert result.diagnostics.unroutable_planes == ()
+    assert result.diagnostics.unroutable_planes  # non-empty: names the blocking plane(s)
+    assert len(result.diagnostics.unroutable_planes) == sum(1 for p in result.plans if p is None)
 
 
 def test_solve_k_gt_1_bundle_alignment_with_mixed_routability(monkeypatch):
@@ -173,13 +192,13 @@ def test_solve_k_gt_1_bundle_alignment_with_mixed_routability(monkeypatch):
     """
     import hangarfit.solver as solver_mod
     from hangarfit.loader import load_scenario
-    from hangarfit.models import Conflict
+    from hangarfit.models import Conflict, SearchConfig
     from hangarfit.solver import solve
     from hangarfit.towplanner import MovesPlan, NoFeasiblePlanError
 
     calls = {"n": 0}
 
-    def fail_second_only(target):
+    def fail_second_only(target, **kwargs):
         calls["n"] += 1
         if calls["n"] == 2:
             pid = target.placements[0].plane_id
@@ -191,7 +210,16 @@ def test_solve_k_gt_1_bundle_alignment_with_mixed_routability(monkeypatch):
     monkeypatch.setattr(solver_mod, "plan_fill", fail_second_only)
 
     scenario = load_scenario("tests/fixtures/solve_fresh_alternatives_three.yaml")
-    result = solve(scenario, budget_s=10.0, alternatives=3, seed=0)
+    # Pin max_restarts (not budget_s) so the search WORK is load-independent
+    # (ADR-0003): a wall-clock budget here found <2 basins on a loaded CI runner
+    # once the empennage model made each restart heavier (#531). max_restarts=6
+    # yields all 3 diverse layouts for this fixture+seed regardless of machine
+    # speed (measured: >=4 restarts is sufficient; 6 for margin). budget_s is set
+    # well above the 6-restart wall-clock (~5 s local, ~14 s CI) so max_restarts is
+    # the sole termination gate even on a very slow runner — no latent budget flake.
+    result = solve(
+        scenario, budget_s=120.0, search=SearchConfig(max_restarts=6), alternatives=3, seed=0
+    )
 
     # This fixture+seed must yield at least 2 diverse layouts for the test to
     # be meaningful; fail loudly (not vacuously) if the search regresses.

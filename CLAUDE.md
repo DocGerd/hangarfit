@@ -20,7 +20,7 @@ This file is the durable **operational** context for the project: how we work, w
 | What is in / out of scope, the external actors, exit-code semantics pointer | [§3 Context & Scope](docs/architecture/03-context-and-scope.md) |
 | Module map (`cli`, `loader`, `models`, `geometry`, `collisions`, `solver`, `towplanner`, `visualize`, `scene`, `viewer`, `metrics`, `brand`) and per-module responsibilities | [§5 Building Block View](docs/architecture/05-building-block-view.md) |
 | Runtime flow of `check` and `solve` invocations | [§6 Runtime View](docs/architecture/06-runtime-view.md) |
-| **The parts model** (collision rule, why parts not bbox, `struts:` block, the fuselage front/aft split — a wingtip may overhang a low-winger's *tail* but not its *cockpit*) | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#the-parts-model) + [ADR-0001](docs/adr/0001-aircraft-parts-model.md) + [ADR-0012](docs/adr/0012-fuselage-front-aft-split.md) |
+| **The parts model** (collision rule, why parts not bbox, `struts:` block, the fuselage front/aft split, the **empennage** `tail`+`vertical_stabilizer` surfaces — a wingtip may overhang a low-winger's *low tailplane* but not its *cockpit*, and not its *fin* which rises into the wing layer) | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#the-parts-model) + [ADR-0001](docs/adr/0001-aircraft-parts-model.md) + [ADR-0012](docs/adr/0012-fuselage-front-aft-split.md) + [ADR-0023](docs/adr/0023-empennage-tail-surfaces.md) |
 | **The coordinate convention + the determinant-−1 transform trap** | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#the-coordinate-convention) + [ADR-0002](docs/adr/0002-determinant-minus-one-transform.md) |
 | **The maintenance bay rule** (current `bay_intrusion` semantics) | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#the-maintenance-bay-rule) + [ADR-0006](docs/adr/0006-bay-intrusion-maintenance-rule.md). The Phase 1 predecessor is preserved as [ADR-0005](docs/adr/0005-maintenance-bay-rule.md) (Superseded by ADR-0006). |
 | Fleet composition (per-plane wing type, gear, movement mode, struts, canonical wheel positions) | [`data/fleet.yaml`](data/fleet.yaml) — the source of truth; §8 calls out the strut-braced subset and the only low-wing. Wheel positions are canonical per-aircraft data ([ADR-0013](docs/adr/0013-wheels-canonical-data.md)), not renderer heuristics |
@@ -155,10 +155,10 @@ Vulnerability reporting lives in [SECURITY.md](SECURITY.md). The rationale for t
 ## Open questions / TBD before trusting output
 
 - **`data/` is synthetic.** Every aircraft (`measured: false` in `fleet.yaml`) and the hangar in `data/hangar.yaml` are eyeballed placeholders — kept deliberately as the stable demo/test fixtures.
-- **Real data lives in [`examples/herrenteich/`](examples/herrenteich/README.md)** (since #426): the DWG-measured hangar (15.08 × 31.76 m, 13.46 m door) and the eight usual occupants on published-spec, second-source-verified dimensions (still `measured: false` — published specs, not on-site). Two gaps it surfaced — one modelling, one solver-gate bug (the latter now fixed):
-  - **The real hangar is L-shaped; the model is a rectangle.** Its back-right office **notch** (~2.36 × 9.10 m) is recorded only in comments and avoided by hand; teaching the model the notch is **spike #424**.
+- **Real data lives in [`examples/herrenteich/`](examples/herrenteich/README.md)** (since #426): the DWG-measured hangar (15.08 × 31.76 m, 13.46 m door) and the eight usual occupants on published-spec, second-source-verified dimensions (still `measured: false` — published specs, not on-site). Two gaps it surfaced — one modelling, one solver-gate bug — are **both now fixed**:
+  - **The real hangar is L-shaped — now modelled ([ADR-0018](docs/adr/0018-non-rectangular-hangar-footprint.md), epic #527).** Its back-right office **notch** (~2.36 × 9.10 m, `x ∈ [12.72, 15.08]`, `y ∈ [22.66, 31.76]`) is the `structural_notches` block in [`hangar.yaml`](examples/herrenteich/hangar.yaml). `collisions.check` and the solver reject any layout that parks — or overhangs — a plane in it: a `floor.covers` containment test that also fixes a latent edge-crossing bug (#528). The epic extends this to tow-path notch-avoidance (#529) and the 3D viewer's L-shaped footprint (#530). Spike **#424** produced the design.
   - **`hangarfit solve`'s glider area-gate (#425 — fixed).** The trivial-infeasibility gate now sums actual *part footprints*, not bounding boxes, so an 18 m-span glider no longer trips it (Σ part-area « floor) and glider fleets reach the search instead of being false-rejected. (The Herrenteich `layout.yaml` was still built by driving `collisions.check` directly; whether `solve` finds an all-eight layout *within budget* is a separate search-feasibility question.)
-- **Placeholder hangar can't fit the full fleet.** The placeholder hangar in [`data/hangar.yaml`](data/hangar.yaml) is too tight to fit every aircraft at once under the placeholder clearance budget. The default [`examples/layouts/example.yaml`](examples/layouts/example.yaml) is a deliberate 6-plane subset; test fixtures that need the full fleet use [`tests/fixtures/test_hangar_large.yaml`](tests/fixtures/test_hangar_large.yaml).
+- **Placeholder hangar can't fit the full fleet.** The placeholder hangar in [`data/hangar.yaml`](data/hangar.yaml) — widened 18 → 22 m for the #519/#520 empennage tail surfaces, which consume lateral room — is still too tight to fit every aircraft at once under the placeholder clearance budget. The default [`examples/layouts/example.yaml`](examples/layouts/example.yaml) is a deliberate subset (5 parked + the Scheibe in the maintenance bay); test fixtures that need the full fleet use [`tests/fixtures/test_hangar_large.yaml`](tests/fixtures/test_hangar_large.yaml). The `max_restarts` exhausted-budget determinism canary keeps its own dedicated tight 18 m fixture (`solve_canary_six_planes_tight.yaml`) so demo-hangar tweaks can't re-break it.
 
 The collision checker will run on the `data/` placeholders, but until those are real, output on them is illustrative only (the `examples/herrenteich/` hangar is real; its fleet is published-spec).
 
@@ -192,6 +192,20 @@ pytest -m ""
 # as a regression. The max_restarts-scoped companion
 # (test_solve_deterministic_best_partial_under_max_restarts) is the
 # load-independent determinism check.
+
+# GOTCHA: the same wall-clock fragility bites NON-serial tests too, and worsens as
+# the model gains parts. A `solve`/`view` smoke test that runs a HARD scenario
+# (6-/9-plane fill) under a wall-clock `--budget` can exhaust the budget under
+# `pytest -n auto` CI load → rc=1 → flake (the #519/#520 empennage's extra parts
+# tipped four CLI solve tests over — fixed in #522). For output-format /
+# flag-acceptance smokes, use an EASY fixture (scenario_minimal /
+# solve_fresh_alternatives_three): `solve` sets rc=0 the instant the first valid
+# basin is found (sub-second), so the verdict no longer races the clock. The bench
+# `--gate` SPEED ceilings (bench/profile_pipeline.py) are wall-clock too and fail
+# on slower CI runners as the model gets heavier — re-baseline them (the empennage
+# pushed the apron regime past its ceiling, #524) rather than chase a phantom
+# regression; the bench's validity/path/determinism verdicts bind on max_restarts
+# and stay reproducible.
 
 # GOTCHA: CI runs the suite in two passes (#492) — `pytest -n auto -m "not slow
 # and not serial"` then `pytest -m "serial and not slow" --cov-append` — and

@@ -7,17 +7,16 @@
 # architect's DWG of the main building (distances annotated on the floor
 # plan, read to the millimetre and rounded here to the centimetre).
 #
-# ⚠ NON-RECTANGULAR FOOTPRINT IS NOT YET MODELLED. The real hangar is an
-# L-shape: one back corner is notched out by ~2.36 m (x) × ~9.10 m (y) —
-# that corner is office/annex space, NOT hangar floor. The model here is
-# the full BOUNDING RECTANGLE (15.08 × 31.76), so a layout that parks a
-# plane in that back corner is NOT yet rejected even though there is no
-# floor there. Representing the notch in the data model + the containment /
-# solver / tow algorithms is deferred to spike #424. In the coordinate
-# frame below the notch is the back-right corner: x ∈ [12.72, 15.08],
-# y ∈ [22.66, 31.76]. These coords are DERIVED from the rectangle dims —
-# back-right = [width-2.36, width] × [length-9.10, length] — so if length_m /
-# width_m are ever re-surveyed, recompute this box (nothing enforces it).
+# NON-RECTANGULAR FOOTPRINT (L-shape). The real hangar's back-right corner is
+# notched out by ~2.36 m (x) × ~9.10 m (y) — that corner is office/annex space,
+# NOT hangar floor. Since ADR-0018 (#527) this is MODELLED: the
+# `structural_notches` block below subtracts the corner from the hangar floor,
+# so `hangarfit check` (and the solver / tow planner) now reject any layout that
+# parks — or even overhangs — a plane in it. width_m / length_m below stay the
+# full BOUNDING RECTANGLE (15.08 × 31.76); the notch is carved out of it. The
+# notch box is DERIVED from the rectangle dims — back-right =
+# [width-2.36, width] × [length-9.10, length] — so if length_m / width_m are
+# ever re-surveyed, recompute it (the loader validates only that it fits).
 #
 # ⚠ NO MAINTENANCE BAY. The real hangar has no modelled curtained bay; the
 # block below is an inert placeholder that only satisfies the schema (the
@@ -48,6 +47,16 @@ maintenance_bay:
   center_x_m: 2.0
   width_m: 3.0
   depth_m: 2.0
+
+structural_notches:
+  # Back-right office/annex corner — a permanent absence of floor (ADR-0018)
+  # that makes the building L-shaped. DERIVED from the rectangle:
+  # x ∈ [width-2.36, width] = [12.72, 15.08],
+  # y ∈ [length-9.10, length] = [22.66, 31.76]. Recompute if the dims change.
+  - x_min_m: 12.72
+    y_min_m: 22.66
+    x_max_m: 15.08
+    y_max_m: 31.76
 
 clearance_m: 0.3        # minimum horizontal gap between any two aircraft parts
 wing_layer_clearance_m: 0.2  # minimum vertical gap between two parts at the same XY

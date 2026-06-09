@@ -52,6 +52,7 @@ from .models import (
     Placement,
     PlaneConstraint,
     Scenario,
+    StructuralNotch,
     StrutsSpec,
     Wheels,
 )
@@ -209,6 +210,34 @@ def load_hangar(path: Path | str, *, fleet: Mapping[str, Aircraft] | None = None
         if key not in bay_data:
             raise LoaderError(f"{path}: missing required field 'maintenance_bay.{key}'")
 
+    # Optional always-on floor keep-outs (ADR-0018). Absent — or an explicit
+    # null (`structural_notches:` with no value) — ⇒ rectangular hangar, unchanged
+    # behaviour (mirrors load_scenario's None→{} handling for `constraints:`).
+    # Each entry is an axis-aligned rectangle in hangar coords.
+    notches_data = raw.get("structural_notches")
+    if notches_data is None:
+        notches_data = []
+    if not isinstance(notches_data, list):
+        raise LoaderError(f"{path}: 'structural_notches' must be a list of rectangles")
+    _notch_keys = ("x_min_m", "y_min_m", "x_max_m", "y_max_m")
+    _allowed_notch_keys = frozenset(_notch_keys)
+    for i, notch in enumerate(notches_data):
+        if not isinstance(notch, dict):
+            raise LoaderError(
+                f"{path}: structural_notches[{i}] must be a mapping with {', '.join(_notch_keys)}"
+            )
+        # Reject unknown keys loudly — a misspelled coord must not be silently
+        # dropped (same discipline as _ALLOWED_AIRCRAFT_KEYS / _parse_wheels).
+        unknown = set(notch) - _allowed_notch_keys
+        if unknown:
+            raise LoaderError(
+                f"{path}: structural_notches[{i}] has unknown key(s) {sorted(unknown)}; "
+                f"allowed: {list(_notch_keys)}"
+            )
+        for key in _notch_keys:
+            if key not in notch:
+                raise LoaderError(f"{path}: missing required field 'structural_notches[{i}].{key}'")
+
     try:
         return Hangar(
             length_m=_to_float(raw["length_m"], "length_m"),
@@ -228,6 +257,15 @@ def load_hangar(path: Path | str, *, fleet: Mapping[str, Aircraft] | None = None
             ),
             max_carts=_to_int(raw.get("max_carts", 1), "max_carts"),
             apron_depth_m=_resolve_apron_depth(raw.get("apron_depth_m", 0.0), fleet),
+            structural_notches=tuple(
+                StructuralNotch(
+                    x_min_m=_to_float(notch["x_min_m"], f"structural_notches[{i}].x_min_m"),
+                    y_min_m=_to_float(notch["y_min_m"], f"structural_notches[{i}].y_min_m"),
+                    x_max_m=_to_float(notch["x_max_m"], f"structural_notches[{i}].x_max_m"),
+                    y_max_m=_to_float(notch["y_max_m"], f"structural_notches[{i}].y_max_m"),
+                )
+                for i, notch in enumerate(notches_data)
+            ),
         )
     except (ValueError, TypeError) as e:
         raise LoaderError(f"{path}: {e}") from e
@@ -507,6 +545,9 @@ def load_scenario(
         raise LoaderError(f"{path}: {e}") from e
 
 
+_ALLOWED_CONSTRAINT_KEYS = frozenset({"pin", "force_on_carts", "priority", "nose_out"})
+
+
 def _build_plane_constraint(plane_id: str, data: Any) -> PlaneConstraint:
     """Build a :class:`PlaneConstraint` from one entry in a scenario YAML
     ``constraints:`` block.
@@ -520,6 +561,7 @@ def _build_plane_constraint(plane_id: str, data: Any) -> PlaneConstraint:
             pin: { x_m: <float>, y_m: <float>, heading_deg: <float>, on_carts: <bool> }
             force_on_carts: <bool>
             priority: <float>   # soft, >= 0 (#441)
+            nose_out: <bool>    # soft tri-state; omit ⇒ follow global (#263)
 
     ``pin``, ``force_on_carts`` and ``priority`` are all optional. Omitting all
     yields a "free" constraint (the solver may place the plane anywhere
@@ -541,6 +583,19 @@ def _build_plane_constraint(plane_id: str, data: Any) -> PlaneConstraint:
     """
     if not isinstance(data, dict):
         raise LoaderError(f"must be a mapping, got {type(data).__name__}")
+
+    # Strict unknown-key allowlist (mirrors the `wheels:` block). Without it a
+    # misspelled key is silently dropped — harmless for pin/force_on_carts/priority
+    # (whose absence means "free"), but for `nose_out` a silent drop INVERTS intent:
+    # its None means "follow the global SearchConfig.nose_out" (default ON), so a
+    # fat-fingered nose-IN exemption (`nose_out: false`) would silently flip the
+    # plane nose-OUT (#263). Reject loudly instead.
+    unknown = set(data) - _ALLOWED_CONSTRAINT_KEYS
+    if unknown:
+        raise LoaderError(
+            f"unknown constraint key(s) {sorted(unknown)}; "
+            f"allowed: {sorted(_ALLOWED_CONSTRAINT_KEYS)}"
+        )
 
     pin_data = data.get("pin")
     pin: Placement | None = None
@@ -571,7 +626,16 @@ def _build_plane_constraint(plane_id: str, data: Any) -> PlaneConstraint:
     if priority is not None:
         priority = _to_float(priority, "priority")
 
-    return PlaneConstraint(pin=pin, force_on_carts=force_on_carts, priority=priority)
+    # Per-plane nose-out override (#263). Tri-state: None ⇒ follow the global
+    # SearchConfig.nose_out; True ⇒ prefer-out; False ⇒ never flip (nose-IN
+    # exemption). Strict bool coercion, like force_on_carts.
+    nose_out = data.get("nose_out")
+    if nose_out is not None:
+        nose_out = _to_bool(nose_out, "nose_out")
+
+    return PlaneConstraint(
+        pin=pin, force_on_carts=force_on_carts, priority=priority, nose_out=nose_out
+    )
 
 
 def _extract_maintenance_plane(raw: dict, path: Path) -> str | None:
@@ -792,9 +856,45 @@ def _validate_wheels_vs_turn_radius(aircraft: Aircraft) -> None:
         )
 
 
+# Strict unknown-key allowlist for an `aircraft:` entry (#513). Mirrors the
+# `wheels:` (:func:`_parse_wheels`) and constraint-key (:data:`_ALLOWED_CONSTRAINT_KEYS`)
+# guards. These are the YAML *schema* keys — note `struts` is a YAML-only convenience
+# block (expanded into `parts` by :func:`_expand_struts`), NOT an Aircraft field, so the
+# allowlist is the accepted-input set, not the dataclass fields. Without it a misspelled
+# key is silently dropped to its default: e.g. `tow_pivot: true` (the #511/#263 widening)
+# parses as `tow_pivotable=False`, silently denying the pivot capability the author tried
+# to grant. Keep in sync with the keys read in :func:`_build_aircraft`;
+# ``test_all_allowed_aircraft_keys_load`` guards the too-strict direction.
+_ALLOWED_AIRCRAFT_KEYS = frozenset(
+    {
+        "id",
+        "name",
+        "wing_position",
+        "gear",
+        "movement_mode",
+        "turn_radius_m",
+        "measured",
+        "parts",
+        "wheels",
+        "notes",
+        "struts",
+        "tow_pivotable",
+    }
+)
+
+
 def _build_aircraft(entry: Any) -> Aircraft:
     if not isinstance(entry, dict):
         raise LoaderError(f"aircraft entry must be a mapping, got {type(entry).__name__}")
+
+    # Reject unknown/misspelled keys loudly (#513) before any field is read, so a
+    # typo'd required key (e.g. `nam:`) surfaces as the offending key rather than a
+    # downstream "missing required field" for the key the author thought they spelled.
+    unknown = set(entry) - _ALLOWED_AIRCRAFT_KEYS
+    if unknown:
+        raise LoaderError(
+            f"unknown aircraft key(s) {sorted(unknown)}; allowed: {sorted(_ALLOWED_AIRCRAFT_KEYS)}"
+        )
 
     required = ("id", "name", "wing_position", "gear", "movement_mode")
     for key in required:
@@ -870,6 +970,7 @@ def _build_aircraft(entry: Any) -> Aircraft:
         movement_mode=entry["movement_mode"],
         turn_radius_m=turn_radius_m,
         measured=_to_bool(entry.get("measured", False), "measured"),
+        tow_pivotable=_to_bool(entry.get("tow_pivotable", False), "tow_pivotable"),
         parts=tuple(parts),
         notes=entry.get("notes", ""),
         wheels=_parse_wheels(entry.get("wheels"), entry["gear"]),
@@ -908,6 +1009,13 @@ def _build_struts_spec(data: dict[str, Any]) -> StrutsSpec:
     for key in required:
         if key not in data:
             raise LoaderError(f"'struts' missing required field {key!r}")
+    # Reject unknown/misspelled nested keys (#513), mirroring the `wheels:` block
+    # (:func:`_parse_wheels`). All struts keys are required, so a typo of one fails
+    # loudly above as "missing"; this additionally catches a misspelled near-duplicate
+    # (e.g. `wing_atttach_y_m:` alongside a correct key) that would otherwise be dropped.
+    unknown = set(data) - set(required)
+    if unknown:
+        raise LoaderError(f"'struts' block has unknown key(s): {sorted(unknown)}")
     return StrutsSpec(
         fuselage_attach_x_m=_to_float(data["fuselage_attach_x_m"], "struts.fuselage_attach_x_m"),
         fuselage_attach_y_m=_to_float(data["fuselage_attach_y_m"], "struts.fuselage_attach_y_m"),

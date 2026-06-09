@@ -1,0 +1,28 @@
+# ADR-0023 (#520) — the safety case on real-fleet data. A high wing nested
+# over a low-wing's tail conflicts with that plane's VERTICAL STABILIZER (fin)
+# when the wing passes OVER the centreline fin, because the fin rises into the
+# wing-nesting layer. This layout was reported VALID before the empennage model
+# (the wing cleared the flat aft-fuselage box in z); the fin makes it invalid.
+#
+# Same two aircraft and same Fuji heading as `valid_wing_over_tail.yaml`; the
+# ONLY difference is ctsl's x (5.5 -> 4.0), which slides the wing from outboard
+# of fuji's fin onto it. The thin centreline fin (`vertical_stabilizer`,
+# z 1.6-2.02) overlaps the ctsl wing (z 1.9-2.2) → `vertical_stabilizer_wing_overlap`.
+#
+# fuji at (5, 9, 180): fin on the centreline (~world x 5.0) at the high-y tail.
+# ctsl at (4, 14.5, 90): wing world x ~3.97-5.37 covers the fin's x → conflict.
+
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
+
+placements:
+  - plane: fuji
+    x_m: 5.0
+    y_m: 9.0
+    heading_deg: 180.0
+    on_carts: false
+  - plane: ctsl
+    x_m: 4.0
+    y_m: 14.5
+    heading_deg: 90.0
+    on_carts: false

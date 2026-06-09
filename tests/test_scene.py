@@ -59,6 +59,23 @@ def test_hangar_block_shape():
         "width_m": lay.hangar.door.width_m,
     }
     assert h["maintenance_bay"]["closed"] is (lay.maintenance_plane is not None)
+    # structural_notches is always emitted; the default layout's hangar has none.
+    assert h["structural_notches"] == []
+
+
+def test_hangar_block_emits_structural_notches():
+    """A notched hangar emits each notch rectangle for the viewer (ADR-0018)."""
+    import dataclasses
+
+    from hangarfit.models import StructuralNotch
+
+    lay = load_layout(LAYOUT)  # 22 x 25 hangar
+    notch = StructuralNotch(x_min_m=18.0, y_min_m=20.0, x_max_m=22.0, y_max_m=25.0)
+    notched = dataclasses.replace(lay.hangar, structural_notches=(notch,))
+    h = scene._hangar_block(dataclasses.replace(lay, hangar=notched))
+    assert h["structural_notches"] == [
+        {"x_min_m": 18.0, "y_min_m": 20.0, "x_max_m": 22.0, "y_max_m": 25.0}
+    ]
 
 
 # ── Task 2: plane boxes ──────────────────────────────────────────────────────
@@ -406,3 +423,24 @@ def test_scene_contract_ts_nested_keys_match_scene_py():
     }
     for interface, obj in cases.items():
         assert _ts_interface_fields("scene-contract.ts", interface) == set(obj), interface
+
+    # StructuralNotchData: the animated scene uses a rectangular hangar, so its
+    # structural_notches list is empty — sample a notched hangar block to pin the
+    # nested notch field names against the TS mirror too (else a rename in scene.py
+    # could silently drift from scene-contract.ts).
+    import dataclasses
+
+    from hangarfit.models import StructuralNotch
+
+    lay = load_layout(LAYOUT)  # 22 x 25 hangar
+    notched = dataclasses.replace(
+        lay,
+        hangar=dataclasses.replace(
+            lay.hangar,
+            structural_notches=(
+                StructuralNotch(x_min_m=18.0, y_min_m=20.0, x_max_m=22.0, y_max_m=25.0),
+            ),
+        ),
+    )
+    notch_obj = scene._hangar_block(notched)["structural_notches"][0]
+    assert _ts_interface_fields("scene-contract.ts", "StructuralNotchData") == set(notch_obj)

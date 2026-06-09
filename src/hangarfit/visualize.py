@@ -243,14 +243,16 @@ def nose_direction(heading_deg: float) -> tuple[float, float]:
 
 
 def _draw_hangar(ax: Any, layout: Layout) -> None:
-    """Hangar rectangle with a gap in the front wall for the door and a
-    conditional maintenance-bay overlay (closed-bay only)."""
+    """Hangar rectangle with a gap in the front wall for the door, a
+    conditional maintenance-bay overlay (closed-bay only), and an always-on
+    hatched overlay for any structural notch (ADR-0018)."""
     hangar = layout.hangar
     door_left = hangar.door.center_x_m - hangar.door.width_m / 2
     door_right = hangar.door.center_x_m + hangar.door.width_m / 2
 
-    # Bay overlay first (zorder=0) so walls and aircraft layer on top.
+    # Keep-out overlays first (zorder=0) so walls and aircraft layer on top.
     _draw_maintenance_bay(ax, layout)
+    _draw_structural_notches(ax, layout)
 
     # Back, left, right walls — solid.
     ax.plot(
@@ -320,6 +322,30 @@ def _draw_maintenance_bay(ax: Any, layout: Layout) -> None:
     )
 
 
+def _draw_structural_notches(ax: Any, layout: Layout) -> None:
+    """Overlay each always-on structural notch (ADR-0018) as a cross-hatched
+    keep-out — the slice of the bounding rectangle that is *not* floor (e.g. the
+    Herrenteich back-right office annex). Drawn unconditionally whenever notches
+    are present, unlike the state-gated maintenance bay, and rendered in the
+    wall ink (no fill) so it reads as "structure, not parkable floor"."""
+    for notch in layout.hangar.structural_notches:
+        patch = MplPolygon(
+            [
+                (notch.x_min_m, notch.y_min_m),
+                (notch.x_max_m, notch.y_min_m),
+                (notch.x_max_m, notch.y_max_m),
+                (notch.x_min_m, notch.y_max_m),
+            ],
+            closed=True,
+            facecolor="none",
+            edgecolor=_HANGAR_EDGE,
+            hatch="xx",
+            lw=1.5,
+            zorder=0,
+        )
+        ax.add_patch(patch)
+
+
 def _draw_aircraft(ax: Any, layout: Layout) -> None:
     """Draw each placed plane as its world parts, one brand colour per plane.
 
@@ -372,10 +398,12 @@ def _draw_part(ax: Any, part: WorldPart, color: str) -> None:
     """Render a single world part. Fuselage segments are near-opaque (two
     fuselages overlapping is always a conflict; no value in seeing through) —
     ``fuselage_front`` (cockpit) a darker tint of the plane's brand fill,
-    ``fuselage_aft`` (tail) the plain fill — wing translucent (so stacked
+    ``fuselage_aft`` (cabin-aft) the plain fill — wing translucent (so stacked
     wings show their plan-view overlap visually), strut as a thin outlined
     polygon (struts are physically thin, a fill would be near-invisible), tail
-    rendered like a small fuselage (same z-tier, same conflict semantics).
+    (the horizontal stabilizer) rendered like a small fuselage (same z-tier,
+    same conflict semantics), and ``vertical_stabilizer`` (the fin) opaque on
+    the top z-tier as a cue that it rises through the wing layer (ADR-0023).
 
     Solid parts are stroked in ``_INK_EDGE`` (#14161A), the brand "never hue
     alone" outline — so a plane's silhouette reads even in greyscale or under
@@ -425,6 +453,20 @@ def _draw_part(ax: Any, part: WorldPart, color: str) -> None:
             edgecolor=_INK_EDGE,
             lw=_STRUT_LINEWIDTH,
             zorder=3,
+        )
+    elif part.kind == "vertical_stabilizer":
+        # The fin (ADR-0023): a thin centreline surface that rises into / above
+        # the wing layer. Drawn opaque and ink-edged on top (zorder above the
+        # wing) so its height — invisible in a top-down view — reads as "this
+        # pokes up through the wing band."
+        patch = MplPolygon(
+            coords,
+            closed=True,
+            facecolor=color,
+            edgecolor=_INK_EDGE,
+            alpha=_FUSELAGE_ALPHA,
+            lw=0.5,
+            zorder=4,
         )
     else:
         raise ValueError(

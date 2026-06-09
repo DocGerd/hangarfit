@@ -1,0 +1,13 @@
+# Six-plane fresh fill in a TIGHT 18 m hangar — the exhausted-budget
+# determinism canary (tests/test_solver_canaries.py). Same fleet subset as
+# solve_fresh_six_planes.yaml, but pinned to canary_hangar_tight_18m.yaml
+# (the pre-#519/#520 placeholder width) so the fill does NOT fully solve
+# within a tiny max_restarts, exercising the best-partial branch whose
+# byte-identical determinism the canary guards. (The shared
+# solve_fresh_six_planes.yaml now uses the widened 22 m data/hangar.yaml and
+# solves within max_restarts, so it can no longer drive this canary.)
+fleet: ../../data/fleet.yaml
+hangar: canary_hangar_tight_18m.yaml
+fleet_in: [aviat_husky, fuji, ctsl, wild_thing, fk9_mkii, cessna_140]
+maintenance:
+  plane: wild_thing

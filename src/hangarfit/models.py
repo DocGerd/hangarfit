@@ -19,13 +19,19 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, cast
 
+from shapely import box, union_all
+from shapely.geometry.base import BaseGeometry
+
 if TYPE_CHECKING:
     from hangarfit.towplanner import MovesPlan
 
 WingPosition = Literal["high", "mid", "low"]
 Gear = Literal["tailwheel", "nosewheel", "monowheel"]
 MovementMode = Literal["always_cart", "always_own_gear", "cart_eligible"]
-PartKind = Literal["fuselage_front", "fuselage_aft", "wing", "strut", "tail"]
+# `tail` denotes the horizontal stabilizer specifically (a wide, usually-low
+# overhangable surface — see metrics._OVERHANGABLE); `vertical_stabilizer` is the
+# fin (thin, tall, never overhangable). Empennage split per ADR-0023.
+PartKind = Literal["fuselage_front", "fuselage_aft", "wing", "strut", "tail", "vertical_stabilizer"]
 
 _VALID_PART_KINDS = frozenset(typing.get_args(PartKind))
 _VALID_WING_POSITIONS = frozenset(typing.get_args(WingPosition))
@@ -43,10 +49,14 @@ class Part:
     convention" for plane-local coordinates (``+x`` forward, ``+y`` right).
 
     ``kind`` is closed: ``"fuselage_front" | "fuselage_aft" | "wing" |
-    "strut" | "tail"``. The fuselage is split front/aft so the collision
-    rule can distinguish a wing over a cockpit (``fuselage_front`` — always
-    a conflict in plan view, height ignored) from a wing over a tail
-    (``fuselage_aft`` — today's two-clause z-gap rule); see ADR-0012 and
+    "strut" | "tail" | "vertical_stabilizer"``. The fuselage is split
+    front/aft so the collision rule can distinguish a wing over a cockpit
+    (``fuselage_front`` — always a conflict in plan view, height ignored)
+    from a wing over a tail (``fuselage_aft`` — today's two-clause z-gap
+    rule); see ADR-0012. The empennage is two explicit surfaces (ADR-0023):
+    ``tail`` (the horizontal stabilizer — wide, usually low) and
+    ``vertical_stabilizer`` (the fin + rudder — thin, tall, rising into the
+    wing layer so a wing nested over the centreline conflicts with it). See
     ``docs/architecture/08-crosscutting-concepts.md`` "The parts model".
     The legacy ``"fuselage"`` keyword is **not** a constructed kind: it
     survives only as a transient YAML keyword the loader auto-splits at the
@@ -241,6 +251,15 @@ class Aircraft:
     parts: tuple[Part, ...]
     wheels: Wheels
     notes: str = ""
+    tow_pivotable: bool = False
+    """(#263 / ADR-0022) When True, this plane is planned with the pivot-in-place
+    *towing* motion: :meth:`effective_turn_radius_m` returns ``0.0`` so the tow
+    planner routes it with the zero-radius cart-pivot fan (no new motion
+    primitive). Models a free-castering tailwheel or a tail-down nose-lift pivot.
+    Orthogonal to ``movement_mode`` — a flagged own-gear plane stays
+    ``on_carts=False`` and the cart-pool accounting is untouched. The declared
+    ``turn_radius_m`` is retained (powered-taxi semantics); only the tow radius is
+    overridden. Default ``False``."""
 
     def __post_init__(self) -> None:
         if not self.id:
@@ -297,15 +316,18 @@ class Aircraft:
         return self.turn_radius_m
 
     def effective_turn_radius_m(self) -> float:
-        """Turn radius for path planning: ``0.0`` for cart-borne planes
-        (a pivot-in-place), else the own-gear ``required_turn_radius_m()``.
+        """Turn radius for path planning: ``0.0`` for cart-borne *or*
+        ``tow_pivotable`` planes (a pivot-in-place), else the own-gear
+        ``required_turn_radius_m()``.
 
         This is the accessor the tow-path planner consumes (ADR-0007): a
-        cart-borne plane is modelled as own-gear with a zero turn radius.
-        Unlike :meth:`required_turn_radius_m`, this never raises — callers
-        that legitimately handle carts (the Dubins planner) use this one.
+        cart-borne plane is modelled as own-gear with a zero turn radius, and a
+        ``tow_pivotable`` plane (free-castering / nose-lift, #263) likewise pivots
+        in place when towed. Unlike :meth:`required_turn_radius_m`, this never
+        raises — callers that legitimately handle carts (the Dubins planner) use
+        this one.
         """
-        if self.movement_mode == "always_cart":
+        if self.movement_mode == "always_cart" or self.tow_pivotable:
             return 0.0
         return self.required_turn_radius_m()
 
@@ -356,6 +378,49 @@ class MaintenanceBay:
 
 
 @dataclass(frozen=True, slots=True)
+class StructuralNotch:
+    """An always-on rectangular keep-out cut from the hangar floor.
+
+    Unlike :class:`MaintenanceBay` — a *state-gated* operational
+    reservation that only bites when a plane occupies it — a structural
+    notch is a **permanent absence of floor**: e.g. the Airfield
+    Herrenteich hangar's back-right office annex, which makes the real
+    building L-shaped rather than rectangular (ADR-0018). It is subtracted
+    from the hangar's derived :attr:`Hangar.floor_polygon`, so the
+    collision checker rejects any part that overhangs it — including a thin
+    part whose *edge* crosses the notch with neither endpoint inside it (a
+    case the legacy per-vertex bounds test missed).
+
+    Axis-aligned, in hangar coordinates: the rectangle
+    ``[x_min_m, x_max_m] × [y_min_m, y_max_m]``. The notch-fits-in-hangar
+    check (``x_max_m ≤ width_m``, ``y_max_m ≤ length_m``) lives on
+    :class:`Hangar` because it needs the hangar dimensions.
+    """
+
+    x_min_m: float
+    y_min_m: float
+    x_max_m: float
+    y_max_m: float
+
+    def __post_init__(self) -> None:
+        if self.x_min_m < 0 or self.y_min_m < 0:
+            raise ValueError(
+                f"StructuralNotch corners must be non-negative, got "
+                f"min=({self.x_min_m}, {self.y_min_m})"
+            )
+        if self.x_max_m <= self.x_min_m:
+            raise ValueError(
+                f"StructuralNotch.x_max_m ({self.x_max_m}) must be greater than "
+                f"x_min_m ({self.x_min_m})"
+            )
+        if self.y_max_m <= self.y_min_m:
+            raise ValueError(
+                f"StructuralNotch.y_max_m ({self.y_max_m}) must be greater than "
+                f"y_min_m ({self.y_min_m})"
+            )
+
+
+@dataclass(frozen=True, slots=True)
 class Hangar:
     """The hangar floor plan.
 
@@ -379,6 +444,19 @@ class Hangar:
     it is positive. The loader resolves the opt-in ``auto`` keyword to a
     fleet-derived depth before construction, so this field is always a plain
     resolved float.
+
+    ``structural_notches`` is an optional tuple of always-on rectangular
+    keep-outs cut from the floor (ADR-0018) — e.g. the real Herrenteich
+    hangar's back-right office annex, which makes the building L-shaped. When
+    present, they are subtracted from the derived :attr:`floor_polygon`, which
+    the collision checker uses for containment. Defaults to empty, in which
+    case ``floor_polygon`` is ``None`` and the checker keeps its fast,
+    byte-identical per-vertex rectangle test — so a hangar with no notch
+    behaves exactly as before. Each notch is validated to fit inside the
+    rectangle and to leave some floor; coherence *between* keep-outs (a notch
+    overlapping the door opening, the maintenance bay, or another notch) is the
+    author's responsibility and is **not** validated — overlaps are geometrically
+    harmless (the floor is a set difference) but may indicate a data error.
     """
 
     length_m: float
@@ -389,6 +467,13 @@ class Hangar:
     wing_layer_clearance_m: float
     max_carts: int = 1
     apron_depth_m: float = 0.0
+    structural_notches: tuple[StructuralNotch, ...] = ()
+    # Derived L-shaped floor outline (outer rectangle minus the notches),
+    # computed once in __post_init__ and cached here. ``None`` when there are
+    # no notches (the common case) so the checker stays on its rectangle path.
+    # Excluded from equality/hash/repr (a Shapely geometry is not hashable and
+    # is fully determined by the other fields).
+    _floor_polygon: BaseGeometry | None = field(init=False, compare=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.length_m <= 0:
@@ -427,6 +512,46 @@ class Hangar:
                 f"must be strictly less than Hangar.length_m={self.length_m} "
                 f"(otherwise no non-bay parking area remains)"
             )
+        for notch in self.structural_notches:
+            if notch.x_max_m > self.width_m or notch.y_max_m > self.length_m:
+                raise ValueError(
+                    f"StructuralNotch (x ∈ [{notch.x_min_m:g}, {notch.x_max_m:g}], "
+                    f"y ∈ [{notch.y_min_m:g}, {notch.y_max_m:g}]) doesn't fit in hangar "
+                    f"{self.width_m:g} x {self.length_m:g}"
+                )
+        # Derive the floor outline once. Only build the (more expensive) polygon
+        # when there is something to subtract; otherwise leave it ``None`` and
+        # let the checker stay on the fast rectangle path.
+        floor: BaseGeometry | None = None
+        if self.structural_notches:
+            floor = box(0.0, 0.0, self.width_m, self.length_m).difference(
+                union_all(
+                    [
+                        box(n.x_min_m, n.y_min_m, n.x_max_m, n.y_max_m)
+                        for n in self.structural_notches
+                    ]
+                )
+            )
+            # A notch (or union) covering the whole floor would otherwise leave an
+            # empty polygon that ``covers`` rejects for *every* part — a baffling
+            # "all planes out of bounds" instead of a clear construction error.
+            if floor.is_empty:
+                raise ValueError(
+                    "structural_notches leave no usable hangar floor "
+                    f"(outer {self.width_m:g} x {self.length_m:g} fully covered)"
+                )
+        object.__setattr__(self, "_floor_polygon", floor)
+
+    @property
+    def floor_polygon(self) -> BaseGeometry | None:
+        """The hangar floor as a Shapely polygon (outer rectangle minus any
+        :class:`StructuralNotch`), or ``None`` when there are no notches.
+
+        ``None`` is the signal to the collision checker that the floor is a
+        plain rectangle and the fast per-vertex bounds test applies; a non-None
+        value is the L-shaped outline against which parts are tested with
+        ``covers`` (ADR-0018)."""
+        return self._floor_polygon
 
 
 @dataclass(frozen=True, slots=True)
@@ -627,11 +752,20 @@ class PlaneConstraint:
     where ``None`` means 'free') and to let #442 distinguish 'user never set a
     priority' from an explicit ``0.0`` on round-trip; both collapse to weight
     ``1.0`` in the solver today.
+
+    ``nose_out`` (#263 / ADR-0022) is the per-plane override of the global
+    :attr:`SearchConfig.nose_out` preference. **Its ``None`` semantics differ from
+    its optional siblings:** ``pin``/``force_on_carts`` ``None`` means 'free/unset',
+    but ``nose_out`` ``None`` means 'follow the global ``SearchConfig.nose_out``'.
+    ``True`` ⇒ always prefer nose-out for this plane; ``False`` ⇒ never flip it —
+    the legitimate nose-IN exemption (e.g. a low-wing tucked under a high-wing's
+    tail). Soft: it only re-orients, never overrides validity or a hard ``pin``.
     """
 
     pin: Placement | None = None
     force_on_carts: bool | None = None
     priority: float | None = None
+    nose_out: bool | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -788,6 +922,36 @@ class Scenario:
         object.__setattr__(self, "constraints", MappingProxyType(dict(self.constraints)))
 
 
+@dataclass(frozen=True, slots=True)
+class ApronShallowDrop:
+    """One plane that tows via the ``y = 0`` door line despite an apron being set,
+    because the apron is too shallow for its footprint (#503 / ADR-0021).
+
+    Plan-inert diagnostics produced by :func:`hangarfit.towplanner.plan_fill`:
+    when ``hangar.apron_depth_m > 0`` but every apron start pose was filtered for
+    a plane (its fore-aft footprint overflows the apron south bound), the plane
+    falls back to the door-line start and shows no slide-in — silent in the
+    :class:`~hangarfit.towplanner.MovesPlan`. This records that drop so the CLI
+    can warn at the boundary.
+
+    ``min_depth_m`` is the plane's fore-aft footprint extent — a *conservative
+    (sufficient) upper bound* on the apron depth needed to engage it, NOT the
+    exact minimum: the true per-plane engagement gate is ≈ ``2·min(fore, aft)``
+    of the footprint about its reference, so a deeper-than-necessary suggestion
+    is always safe. RNG-free, so it does not affect determinism (ADR-0003)."""
+
+    plane_id: str
+    min_depth_m: float
+
+    def __post_init__(self) -> None:
+        if not self.plane_id:
+            raise ValueError("ApronShallowDrop.plane_id must be non-empty")
+        if not math.isfinite(self.min_depth_m) or self.min_depth_m < 0.0:
+            raise ValueError(
+                f"ApronShallowDrop.min_depth_m must be finite and >= 0, got {self.min_depth_m!r}"
+            )
+
+
 SolveStatus = Literal[
     "found",
     "found_partial",
@@ -855,6 +1019,11 @@ class SolverDiagnostics:
     basins the search collected before selection — how much choice best-of-all
     had. Both are advisory.
 
+    ``nose_out_flips`` is index-aligned with :attr:`SolveResult.layouts`: the
+    number of nose-out heading flips the RNG-free ``_nose_out`` post-pass applied
+    to that returned layout (#263, ADR-0022). ``0`` for a layout where no plane was
+    flipped (or with ``nose_out`` disabled). Advisory / RNG-free.
+
     ``spread_fallback_applied`` is ``True`` when :func:`hangarfit.solver.solve`
     re-solved with the inter-plane spread post-pass disabled and substituted
     that tighter, tow-routable arrangement because the spread layout(s) came
@@ -874,6 +1043,20 @@ class SolverDiagnostics:
     selection exists, a ``True`` value always accompanies a ``found`` result.
     Advisory: it changes *when* the search stops, never *whether* the returned
     layout is valid — it does not affect ``status``.
+
+    ``apron_shallow_drops`` is a flat, advisory tuple of :class:`ApronShallowDrop`
+    for the planes that towed via the ``y = 0`` door line — showing no slide-in —
+    because the site's apron (``hangar.apron_depth_m > 0``) was too shallow for
+    their footprint (#503 / ADR-0021). It collects the drops of *every* returned
+    layout's tow plan, in returned-layout-then-move order; a plane may appear more
+    than once (once per layout it is dropped in), so the CLI dedups by plane id
+    before warning. Empty when no returned layout had a too-shallow drop, or when
+    tow-planning was not attempted (``solve(..., plan_paths=False)``) / no apron is
+    set. Crucially it carries only the *returned* result's drops: the discarded
+    spread-fallback pass (#280 / F5) never contributes, since its diagnostics are
+    not the ones returned. Advisory: the drop is observational — the layout is
+    still valid and the plan still routes (via the door line), so it does not
+    affect ``status``. RNG-free ⇒ ADR-0003-safe.
     """
 
     restarts_attempted: int
@@ -888,6 +1071,8 @@ class SolverDiagnostics:
     valid_basins_found: int = 0
     spread_fallback_applied: bool = False
     spread_stall_applied: bool = False
+    apron_shallow_drops: tuple[ApronShallowDrop, ...] = ()
+    nose_out_flips: tuple[int, ...] = ()
 
     def __post_init__(self) -> None:
         if (self.best_partial is None) != (self.best_partial_layout is None):
@@ -916,6 +1101,11 @@ class SolverDiagnostics:
             raise ValueError(
                 "SolverDiagnostics.min_pairwise_gap_m entries must be non-negative "
                 f"(math.inf allowed for <2-plane layouts), got {self.min_pairwise_gap_m!r}"
+            )
+        if any(n < 0 for n in self.nose_out_flips):
+            raise ValueError(
+                "SolverDiagnostics.nose_out_flips entries must be >= 0, "
+                f"got {self.nose_out_flips!r}"
             )
 
 
@@ -973,6 +1163,14 @@ class SolveResult:
                 "SolveResult.diagnostics.min_pairwise_gap_m, when populated, must be "
                 f"index-aligned with layouts: got {len(self.diagnostics.min_pairwise_gap_m)} "
                 f"gaps for {len(self.layouts)} layouts"
+            )
+        if self.diagnostics.nose_out_flips and len(self.diagnostics.nose_out_flips) != len(
+            self.layouts
+        ):
+            raise ValueError(
+                "SolveResult.diagnostics.nose_out_flips, when populated, must be "
+                f"index-aligned with layouts: got {len(self.diagnostics.nose_out_flips)} "
+                f"counts for {len(self.layouts)} layouts"
             )
 
 
@@ -1114,6 +1312,21 @@ class SearchConfig:
     the former as noise while a genuinely better-separated basin still resets the
     counter. Inert unless ``spread_stall_restarts`` is set; validated ``> 0``
     regardless so the field is always a usable threshold."""
+
+    nose_out: bool = True
+    """(#263 / ADR-0022) When True (default), ``solve()`` runs the RNG-free
+    ``_nose_out`` post-pass on each valid basin (after ``_spread``): it flips a
+    movable plane's parked heading 180° toward nose-out (heading 180, toward the
+    door) when that is strictly more nose-out AND keeps the layout valid. A soft
+    preference — never overrides validity, never moves a plane, never un-parks one
+    (ADR-0008's discipline). **RNG-free ⇒ byte-identical determinism holds even
+    with it ON** (strictly stronger than ``spread``); set False for the
+    pre-feature heading behaviour. Runs independently of ``spread`` (a placement
+    concern), so it also applies on the ``spread=False`` fast path and the
+    spread→no-spread fallback. Per-plane override via
+    :attr:`PlaneConstraint.nose_out`. A plain ``bool`` (not ``bool | None``):
+    ``None`` stays reserved as the disable sentinel for
+    ``max_restarts``/``spread_stall_restarts`` (see ``max_restarts``)."""
 
     def __post_init__(self) -> None:
         if self.candidates_per_iter < 1:

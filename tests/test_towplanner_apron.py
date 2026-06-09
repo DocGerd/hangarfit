@@ -19,7 +19,16 @@ from pathlib import Path
 
 import pytest
 
-from hangarfit.models import Aircraft, Door, Hangar, MaintenanceBay, Part, Placement, Wheels
+from hangarfit.models import (
+    Aircraft,
+    ApronShallowDrop,
+    Door,
+    Hangar,
+    MaintenanceBay,
+    Part,
+    Placement,
+    Wheels,
+)
 from hangarfit.towplanner import (
     Pose,
     _mover_motion_bounds_conflict,
@@ -74,6 +83,36 @@ def _always_cart_plane(plane_id: str) -> Aircraft:
         turn_radius_m=None,
         measured=False,
         parts=(_fuselage_box(),),
+        wheels=_TAIL_WHEELS,
+    )
+
+
+def _long_box_plane(plane_id: str, *, body_length_m: float) -> Aircraft:
+    """A plane whose fuselage box is ``body_length_m`` long fore-aft and CENTRED on
+    the origin (``offset_x_m=0.0``), so at heading 0 the body spans world
+    y ∈ [ref_y − body_length_m/2, ref_y + body_length_m/2]. A long body cannot fit
+    an apron start pose in a shallow apron (its aft vertex overflows the south
+    bound) — the too-shallow-apron-drops-the-plane case (#503). Its fore-aft extent
+    is exactly ``body_length_m`` (one part centred on the origin)."""
+    part = Part(
+        kind="fuselage_aft",
+        length_m=body_length_m,
+        width_m=0.6,
+        offset_x_m=0.0,
+        offset_y_m=0.0,
+        angle_deg=0.0,
+        z_bottom_m=0.0,
+        z_top_m=1.0,
+    )
+    return Aircraft(
+        id=plane_id,
+        name=f"Long {plane_id}",
+        wing_position="high",
+        gear="tailwheel",
+        movement_mode="always_own_gear",
+        turn_radius_m=4.0,
+        measured=False,
+        parts=(part,),
         wheels=_TAIL_WHEELS,
     )
 
@@ -175,15 +214,17 @@ def test_entry_poses_depth_zero_exact_order_unchanged() -> None:
 
 
 def test_entry_poses_with_apron_forces_start_onto_apron_and_adds_reverse_headings() -> None:
+    # Nose-out target (h=180): the apron forces the start onto the apron AND, since
+    # the target is nose-out, the rear cone is emitted (#480 gates it on nose-out).
     h = _hangar(door_center=10.0, door_width=6.0, apron_depth_m=6.0)
-    slot = _slot("A", x=10.0, y=12.0, h=0.0)
+    slot = _slot("A", x=10.0, y=12.0, h=180.0)
     poses = entry_poses(slot, h)
     # y=0 (door line) is excluded — every start is ON the apron (#412 slide-in).
     assert {p.y_m for p in poses} == {-3.0, -6.0}  # {-d/2, -d}
     assert all(p.y_m < 0.0 for p in poses)
     headings = {p.heading_deg for p in poses}
     assert {330.0, 345.0, 0.0, 15.0, 30.0} <= headings  # forward cone retained
-    assert {150.0, 165.0, 180.0, 195.0, 210.0} <= headings  # reverse cone added
+    assert {150.0, 165.0, 180.0, 195.0, 210.0} <= headings  # rear cone (nose-out target)
 
 
 def test_entry_poses_with_apron_is_deterministic() -> None:
@@ -193,13 +234,59 @@ def test_entry_poses_with_apron_is_deterministic() -> None:
 
 
 def test_entry_poses_apron_emit_order_x_outer_y_middle_heading_inner() -> None:
-    """The fixed emit order is x-outer, y-middle, heading-inner (ADR-0003)."""
+    """The fixed emit order is x-outer, y-middle, heading-inner (ADR-0003).
+
+    Uses a nose-out target (h=180) so the rear cone is emitted (#480 gates the
+    rear cone on a nose-out target, not on the apron)."""
     h = _hangar(door_center=10.0, door_width=6.0, apron_depth_m=4.0)
-    slot = _slot("A", x=10.0, y=12.0, h=0.0)  # x_centre == x_target == x_mid == 10 ⇒ 1 x-sample
+    slot = _slot("A", x=10.0, y=12.0, h=180.0)  # x_centre == x_target == x_mid == 10 ⇒ 1 x-sample
     poses = list(entry_poses(slot, h))
     headings = (330.0, 345.0, 0.0, 15.0, 30.0, 150.0, 165.0, 180.0, 195.0, 210.0)
     expected = [Pose(x_m=10.0, y_m=y, heading_deg=hd) for y in (-2.0, -4.0) for hd in headings]
     assert poses == expected
+
+
+# ── #480: rear-entry cone is gated on a NOSE-OUT target, not on the apron ──────
+
+
+def test_entry_poses_rear_cone_for_nose_out_target_without_apron() -> None:
+    """#480: a nose-out target (heading ~180) gets the rear-entry cone even with
+    NO apron — so the plane can be backed in rather than pirouetting inside.
+    This deliberately changes the depth-0 grid for nose-out targets (superseding
+    the #412 depth-0 cross-version byte-identity for that case)."""
+    h = _hangar(door_center=10.0, door_width=6.0)  # no apron
+    slot = _slot("A", x=10.0, y=12.0, h=180.0)  # nose-out
+    poses = entry_poses(slot, h)
+    assert {p.y_m for p in poses} == {0.0}  # still the door line (no apron)
+    headings = {p.heading_deg for p in poses}
+    assert {330.0, 345.0, 0.0, 15.0, 30.0} <= headings  # forward cone
+    assert {150.0, 165.0, 180.0, 195.0, 210.0} <= headings  # rear cone, no apron needed
+
+
+def test_entry_poses_no_rear_cone_for_nose_in_target_even_with_apron() -> None:
+    """#480: a nose-in target (heading ~0) keeps the forward cone only, even with
+    an apron — a nose-in slot never wins a rear-entry seed, so don't waste it."""
+    h = _hangar(door_center=10.0, door_width=6.0, apron_depth_m=6.0)
+    slot = _slot("A", x=10.0, y=12.0, h=0.0)  # nose-in
+    poses = entry_poses(slot, h)
+    assert all(p.y_m < 0.0 for p in poses)  # apron still forces the start onto the apron
+    headings = {p.heading_deg for p in poses}
+    assert headings == {330.0, 345.0, 0.0, 15.0, 30.0}  # forward cone ONLY, no rear cone
+
+
+def test_entry_poses_nose_out_gate_boundary() -> None:
+    """#480: the rear cone is emitted iff |wrap180(h-180)| <= 45 (covers the rear
+    cone's own +/-30 span plus margin). h=135 and h=225 are in; h=134/226 are out."""
+    h = _hangar(door_center=10.0, door_width=6.0)
+    rear = {150.0, 165.0, 180.0, 195.0, 210.0}
+
+    def _headings(target_h: float) -> set[float]:
+        return {p.heading_deg for p in entry_poses(_slot("A", x=10.0, y=12.0, h=target_h), h)}
+
+    assert rear <= _headings(135.0)  # boundary in
+    assert rear <= _headings(225.0)  # boundary in (symmetric)
+    assert not (rear & _headings(134.0))  # just outside
+    assert not (rear & _headings(226.0))  # just outside
 
 
 # ── Task 4: apron-aware front-wall rule (#411 jamb retained) ─────────────────
@@ -394,3 +481,85 @@ def test_apron_movesplan_byte_identical_across_processes() -> None:
     h1 = _run("111")
     h2 = _run("777")
     assert h1 and h1 == h2, f"apron MovesPlan diverged across processes: {h1!r} != {h2!r}"
+
+
+# ── #503: too-shallow-apron drops (plan-inert out-param; plan byte-identical) ──
+# When apron_depth_m > 0 but is too shallow for a given plane's footprint, ALL of
+# that plane's apron start poses are filtered and plan_path silently falls back to
+# the y=0 door-line pose (no slide-in). plan_fill records the drop into the
+# OPTIONAL `apron_dropped_out` list (plane id + suggested min depth) — it does NOT
+# print. The data is purely observational: it never touches the MovesPlan (the
+# apron byte-identity canaries above remain the determinism proof). The CLI emits
+# the user-facing warning from this data (see tests/test_cli_solve.py /
+# tests/test_cli_view.py).
+
+
+def test_shallow_apron_populates_drop_naming_plane_and_min_depth() -> None:
+    """The fuji-at-6 m analogue (#503): an 8 m-long plane in a 6 m apron has all
+    apron start poses filtered → it tows via the y=0 door line. plan_fill records
+    one ApronShallowDrop naming the plane with a suggested depth ≈ its 8 m
+    footprint — and never prints."""
+    h = _hangar(width_m=20.0, length_m=30.0, door_center=10.0, door_width=6.0, apron_depth_m=6.0)
+    fleet = {"A": _long_box_plane("A", body_length_m=8.0)}
+    target = _layout(fleet, h, _slot("A", 10.0, 12.0, 0.0))
+    drops: list[ApronShallowDrop] = []
+    plan = plan_fill(target, apron_dropped_out=drops)
+    # The plane is still routed (best-effort) — via the door line, not the apron.
+    first = list(plan.moves[0].path.sample(step_m=0.25, step_deg=5.0))[0]
+    assert first.y_m == 0.0  # door-line fallback, NOT a slide-in
+    assert len(drops) == 1
+    assert drops[0].plane_id == "A"
+    assert drops[0].min_depth_m == pytest.approx(8.0)  # the 8 m footprint extent
+
+
+def test_deep_apron_records_no_drop() -> None:
+    """A 14 m apron clears the 8 m plane's footprint → it slides in from the apron,
+    so NO drop is recorded."""
+    h = _hangar(width_m=20.0, length_m=30.0, door_center=10.0, door_width=6.0, apron_depth_m=14.0)
+    fleet = {"A": _long_box_plane("A", body_length_m=8.0)}
+    target = _layout(fleet, h, _slot("A", 10.0, 12.0, 0.0))
+    drops: list[ApronShallowDrop] = []
+    plan = plan_fill(target, apron_dropped_out=drops)
+    first = list(plan.moves[0].path.sample(step_m=0.25, step_deg=5.0))[0]
+    assert first.y_m < 0.0  # slides in from the apron
+    assert drops == []
+
+
+def test_no_apron_records_no_drop() -> None:
+    """With no apron (depth 0) the y=0 door-line start is the CORRECT behaviour,
+    not a dropped slide-in — so no drop is recorded."""
+    h = _hangar(width_m=20.0, length_m=30.0, door_center=10.0, door_width=6.0, apron_depth_m=0.0)
+    fleet = {"A": _long_box_plane("A", body_length_m=8.0)}
+    target = _layout(fleet, h, _slot("A", 10.0, 12.0, 0.0))
+    drops: list[ApronShallowDrop] = []
+    plan_fill(target, apron_dropped_out=drops)
+    assert drops == []
+
+
+def test_shallow_apron_drop_only_for_the_dropped_plane() -> None:
+    """Mixed fleet (the #499 §6 observation): the long plane drops to the door
+    line; the short plane engages the apron. Exactly one drop, naming the long
+    plane only."""
+    h = _hangar(width_m=20.0, length_m=30.0, door_center=10.0, door_width=6.0, apron_depth_m=6.0)
+    fleet = {
+        "LONG": _long_box_plane("LONG", body_length_m=8.0),
+        "SHORT": _box_plane("SHORT"),
+    }
+    target = _layout(fleet, h, _slot("LONG", 6.0, 22.0, 0.0), _slot("SHORT", 14.0, 8.0, 0.0))
+    drops: list[ApronShallowDrop] = []
+    plan_fill(target, apron_dropped_out=drops)
+    assert [d.plane_id for d in drops] == ["LONG"]
+
+
+def test_shallow_apron_out_param_does_not_change_the_plan() -> None:
+    """The out-param is observational: the MovesPlan is byte-identical whether or
+    not it is passed (it is plan-inert). Both branches — with and without the
+    out-param — yield the same plan, and equal to each other."""
+    h = _hangar(width_m=20.0, length_m=30.0, door_center=10.0, door_width=6.0, apron_depth_m=6.0)
+    fleet = {"A": _long_box_plane("A", body_length_m=8.0)}
+    target = _layout(fleet, h, _slot("A", 10.0, 12.0, 0.0))
+    drops: list[ApronShallowDrop] = []
+    with_out = plan_fill(target, apron_dropped_out=drops)
+    without_out = plan_fill(target)
+    assert with_out == without_out == plan_fill(target)
+    assert len(drops) == 1  # the out-param was still populated

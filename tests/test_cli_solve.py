@@ -568,11 +568,14 @@ def test_solve_no_spread_flag_accepted_and_runs(tmp_path):
     """`--no-spread` is accepted on `solve` and drives a successful no-spread run."""
     from hangarfit.cli import main
 
+    # Easy 2-plane fixture so rc==0 is load-robust: it finds a valid layout
+    # immediately rather than risking budget exhaustion under heavy parallel CI
+    # load (which #519/#520 tail surfaces made worse on the old 9-plane fill).
     out = tmp_path / "layout.yaml"
     rc = main(
         [
             "solve",
-            "tests/fixtures/solve_all_nine_large_hangar.yaml",
+            "tests/fixtures/scenario_minimal.yaml",
             "--seed",
             "42",
             "--budget",
@@ -595,15 +598,48 @@ def test_solve_back_fill_defaults_on_and_no_back_fill_opts_out():
     assert build_parser().parse_args(["solve", "s.yaml", "--no-back-fill"]).back_fill is False
 
 
+def test_solve_nose_out_defaults_on_and_no_nose_out_opts_out():
+    """`--no-nose-out` flips the ``nose_out`` namespace default (#263); absent,
+    it defaults ON (the solver prefers nose-out parked headings)."""
+    from hangarfit.cli import build_parser
+
+    assert build_parser().parse_args(["solve", "s.yaml"]).nose_out is True
+    assert build_parser().parse_args(["solve", "s.yaml", "--no-nose-out"]).nose_out is False
+
+
+def test_view_nose_out_defaults_on_and_no_nose_out_opts_out():
+    from hangarfit.cli import build_parser
+
+    assert build_parser().parse_args(["view", "s.yaml", "-o", "x.html"]).nose_out is True
+    assert (
+        build_parser().parse_args(["view", "s.yaml", "-o", "x.html", "--no-nose-out"]).nose_out
+        is False
+    )
+
+
+def test_solve_json_includes_nose_out_flips(capsys):
+    """The --json diagnostics payload carries the per-layout nose_out_flips list
+    (#263), additive and backward-compatible."""
+    rc = main(["solve", SMOKE_FIXTURE, "--budget", "2.0", "--seed", "42", "--json"])
+    assert rc == 0
+    d = json.loads(capsys.readouterr().out)["diagnostics"]
+    assert "nose_out_flips" in d
+    assert isinstance(d["nose_out_flips"], list)
+    assert all(isinstance(n, int) for n in d["nose_out_flips"])
+
+
 def test_solve_no_back_fill_flag_accepted_and_runs(tmp_path):
     """`--no-back-fill` is accepted on `solve` and drives a successful run."""
     from hangarfit.cli import main
 
+    # Easy 2-plane fixture so rc==0 is load-robust (finds a valid layout at once,
+    # rather than risking budget exhaustion under heavy parallel CI load that
+    # #519/#520 tail surfaces aggravated on the old 9-plane fill).
     out = tmp_path / "layout.yaml"
     rc = main(
         [
             "solve",
-            "tests/fixtures/solve_all_nine_large_hangar.yaml",
+            "tests/fixtures/scenario_minimal.yaml",
             "--seed",
             "42",
             "--budget",
@@ -644,7 +680,9 @@ class TestSolveRenderPaths:
         )
 
     @staticmethod
-    def _result(status, layouts, plans, unroutable=(), spread_fallback_applied=False):
+    def _result(
+        status, layouts, plans, unroutable=(), spread_fallback_applied=False, apron_drops=()
+    ):
         from hangarfit.models import SolverDiagnostics, SolveResult
 
         diag = SolverDiagnostics(
@@ -655,6 +693,7 @@ class TestSolveRenderPaths:
             seed=42,
             unroutable_planes=unroutable,
             spread_fallback_applied=spread_fallback_applied,
+            apron_shallow_drops=apron_drops,
         )
         return SolveResult(status=status, layouts=layouts, plans=plans, diagnostics=diag)
 
@@ -843,6 +882,135 @@ class TestSolveRenderPaths:
                     "42",
                 ]
             )
+
+    # ── #503: too-shallow-apron warning emitted ONCE at the CLI boundary ──────
+    # The warning is keyed on the RETURNED result's diagnostics
+    # (apron_shallow_drops) and deduped per plane, so --alternatives never
+    # multiplies it and a discarded spread-fallback pass never surfaces (its
+    # diagnostics are not the ones returned). These mirror _warn_unroutable's
+    # CLI-boundary tests.
+
+    @staticmethod
+    def _drop(plane_id, depth):
+        from hangarfit.models import ApronShallowDrop
+
+        return ApronShallowDrop(plane_id=plane_id, min_depth_m=depth)
+
+    def test_apron_shallow_warns_once_naming_plane_and_depth(self, tmp_path, monkeypatch, capsys):
+        layout = self._layout()
+        plan = self._plan(layout)
+        self._patch_solve(
+            monkeypatch,
+            self._result("found", (layout,), (plan,), apron_drops=(self._drop("husky", 8.0),)),
+        )
+        out = tmp_path / "p.png"
+        rc = main(["solve", SMOKE_FIXTURE, "--render", str(out), "--render-paths", "--seed", "42"])
+        assert rc == 0
+        err = capsys.readouterr().err
+        assert err.count("apron too shallow") == 1
+        assert "'husky'" in err
+        assert "8.0 m" in err  # the suggested footprint-extent depth
+
+    def test_apron_shallow_not_multiplied_by_alternatives(self, tmp_path, monkeypatch, capsys):
+        # The SAME plane is dropped in BOTH returned layouts (--alternatives 2), so
+        # apron_shallow_drops carries two entries for 'husky'. The CLI dedups by
+        # plane id ⇒ exactly ONE warning, not one per alternative (the
+        # multiplicative-repetition bug the rework fixes).
+        layout = self._layout()
+        plan = self._plan(layout)
+        self._patch_solve(
+            monkeypatch,
+            self._result(
+                "found",
+                (layout, layout),
+                (plan, plan),
+                apron_drops=(self._drop("husky", 8.0), self._drop("husky", 8.0)),
+            ),
+        )
+        pattern = str(tmp_path / "p_{i}.png")
+        rc = main(
+            [
+                "solve",
+                SMOKE_FIXTURE,
+                "--alternatives",
+                "2",
+                "--render",
+                pattern,
+                "--render-paths",
+                "--seed",
+                "42",
+            ]
+        )
+        assert rc == 0
+        err = capsys.readouterr().err
+        assert err.count("apron too shallow") == 1  # deduped — not multiplied
+
+    def test_apron_shallow_dedup_keeps_largest_depth(self, tmp_path, monkeypatch, capsys):
+        # Same plane dropped in two layouts with DIFFERENT suggested depths: the
+        # one warning reports the LARGER (safe upper bound).
+        layout = self._layout()
+        plan = self._plan(layout)
+        self._patch_solve(
+            monkeypatch,
+            self._result(
+                "found",
+                (layout, layout),
+                (plan, plan),
+                apron_drops=(self._drop("husky", 6.0), self._drop("husky", 9.0)),
+            ),
+        )
+        pattern = str(tmp_path / "p_{i}.png")
+        rc = main(
+            [
+                "solve",
+                SMOKE_FIXTURE,
+                "--alternatives",
+                "2",
+                "--render",
+                pattern,
+                "--render-paths",
+                "--seed",
+                "42",
+            ]
+        )
+        assert rc == 0
+        err = capsys.readouterr().err
+        assert err.count("apron too shallow") == 1
+        assert "9.0 m" in err and "6.0 m" not in err
+
+    def test_no_apron_drops_no_warning(self, tmp_path, monkeypatch, capsys):
+        layout = self._layout()
+        plan = self._plan(layout)
+        self._patch_solve(monkeypatch, self._result("found", (layout,), (plan,)))
+        out = tmp_path / "p.png"
+        rc = main(["solve", SMOKE_FIXTURE, "--render", str(out), "--render-paths", "--seed", "42"])
+        assert rc == 0
+        assert "apron too shallow" not in capsys.readouterr().err
+
+    def test_apron_shallow_json_surfaces_drops(self, tmp_path, monkeypatch, capsys):
+        layout = self._layout()
+        plan = self._plan(layout)
+        self._patch_solve(
+            monkeypatch,
+            self._result("found", (layout,), (plan,), apron_drops=(self._drop("husky", 8.0),)),
+        )
+        rc = main(
+            [
+                "solve",
+                SMOKE_FIXTURE,
+                "--render",
+                str(tmp_path / "p.png"),
+                "--render-paths",
+                "--json",
+                "--seed",
+                "42",
+            ]
+        )
+        assert rc == 0
+        payload = json.loads(capsys.readouterr().out)
+        assert payload["diagnostics"]["apron_shallow_drops"] == [
+            {"plane": "husky", "min_depth_m": 8.0}
+        ]
 
     def test_empty_layouts_exits_1_not_3(self, tmp_path, monkeypatch):
         # No layouts (exhausted_budget): exit 1 wins over the exit-3 check even

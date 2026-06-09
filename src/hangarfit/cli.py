@@ -18,11 +18,19 @@ import argparse
 import json
 import math
 import sys
+from collections.abc import Iterable
 from typing import TYPE_CHECKING, Literal
 
 from hangarfit import __version__, collisions, visualize
 from hangarfit.loader import LoaderError, load_fleet, load_hangar, load_layout
-from hangarfit.models import CheckResult, Conflict, DiversityConfig, Layout, SolveResult
+from hangarfit.models import (
+    ApronShallowDrop,
+    CheckResult,
+    Conflict,
+    DiversityConfig,
+    Layout,
+    SolveResult,
+)
 
 if TYPE_CHECKING:
     # Annotation-only: avoids importing the solver/towplanner stack at module
@@ -254,6 +262,18 @@ def build_parser() -> argparse.ArgumentParser:
             "with --no-spread, since the bias rides on the spread post-pass.)"
         ),
     )
+    solve.add_argument(
+        "--no-nose-out",
+        action="store_false",
+        dest="nose_out",
+        default=True,
+        help=(
+            "Disable the nose-out parked-heading preference (#263). By default the "
+            "solver flips each plane's parked heading toward the door (for an easy "
+            "straight-out exit) when that stays collision-valid; pass this to keep "
+            "the packing-chosen heading. Per-plane override: constraints.<id>.nose_out."
+        ),
+    )
     # ── Tow-planner knobs (grid heuristic default + global fill cap since #336;
     # spike #332). --tow-heuristic defaults to the shipped grid planner and
     # --tow-max-expansions widens the per-plane budget; both RNG-free (ADR-0003).
@@ -354,6 +374,16 @@ def build_parser() -> argparse.ArgumentParser:
             "Solve mode: keep the inter-plane spread post-pass ON. Default is OFF "
             "for `view --solve` because spread routinely defeats the bounded tow "
             "planner, leaving the animation static (#280)."
+        ),
+    )
+    view.add_argument(
+        "--no-nose-out",
+        action="store_false",
+        dest="nose_out",
+        default=True,
+        help=(
+            "Solve mode: disable the nose-out parked-heading preference (#263). "
+            "By default the solver prefers headings that face the door."
         ),
     )
     view.add_argument(
@@ -625,6 +655,7 @@ def cmd_solve(args: argparse.Namespace) -> int:
         seed=args.seed,
         search=SearchConfig(
             spread=args.spread,
+            nose_out=args.nose_out,
             back_bias_weight=_BACK_FILL_DEFAULT_WEIGHT if args.back_fill else 0.0,
         ),
         plan_paths=args.render_paths,
@@ -655,8 +686,13 @@ def cmd_solve(args: argparse.Namespace) -> int:
     # Structured tow-path warnings: name the plane that blocked each layout the
     # tow planner could not route (best-effort — the layout is still valid and
     # is rendered, just without a path overlay; ADR-0007 + ADR-0010 / #197).
+    # Then warn (once per plane, deduped) about any plane that towed via the
+    # door line because the apron was too shallow for its footprint (#503) —
+    # keyed on the RETURNED result's diagnostics only, so the discarded
+    # spread-fallback pass's drops never surface.
     if args.render_paths:
         _warn_unroutable(result)
+        _warn_apron_shallow_drops(result.diagnostics.apron_shallow_drops)
 
     # Renders / YAML writes. Only run if we have layouts to write —
     # exhausted_budget / trivially_infeasible carry empty `layouts`.
@@ -748,6 +784,37 @@ def _warn_unroutable(result: SolveResult) -> None:
         print(
             f"warning: layout {layout_index}: no feasible tow path "
             f"(plane {plane!r} could not be routed); rendered without paths",
+            file=sys.stderr,
+        )
+
+
+def _warn_apron_shallow_drops(drops: Iterable[ApronShallowDrop]) -> None:
+    """Emit one stderr warning per plane that towed via the ``y = 0`` door line
+    because the site's apron was too shallow for its footprint (#503 / ADR-0021).
+
+    ``drops`` carries the too-shallow-apron drops across *every returned* layout
+    (one per dropped plane per layout — :attr:`SolverDiagnostics.apron_shallow_drops`
+    in the solve path, or the ``apron_dropped_out`` out-param of a single
+    :func:`~hangarfit.towplanner.plan_fill` in the view path). A plane may repeat
+    (once per layout it is dropped in), so we **dedup by plane id**, warning once
+    per plane and keeping the largest suggested depth seen for it. Emit order is
+    first-seen order — deterministic because the producer's order is (#503).
+
+    Each plane shows no slide-in: its footprint is too deep for the apron, so all
+    its apron start poses were filtered. The suggested minimum depth is the plane's
+    fore-aft FOOTPRINT extent — a conservative sufficient depth to engage the apron
+    (the true gate is ≈ ``2·min(fore, aft)``), NOT the fleet-wide ``auto``
+    over-margin. Purely observational: stderr only, never the plan."""
+    suggested: dict[str, float] = {}
+    for drop in drops:
+        prev = suggested.get(drop.plane_id)
+        if prev is None or drop.min_depth_m > prev:
+            suggested[drop.plane_id] = drop.min_depth_m
+    for plane_id, depth in suggested.items():
+        print(
+            f"warning: apron too shallow for plane {plane_id!r}: it tows in via the "
+            f"door line (no slide-in). Increase the apron depth to >= {depth:.1f} m "
+            f"(its footprint extent) so it engages the apron.",
             file=sys.stderr,
         )
 
@@ -925,6 +992,18 @@ def _emit_solve_json(
             # arrangement. Always present (False in the normal no-swap case) so
             # consumers can rely on it. Backward-compatible — no schema bump.
             "spread_fallback_applied": d.spread_fallback_applied,
+            # Additive (#503): planes that towed via the door line because the
+            # apron was too shallow for their footprint, with the suggested min
+            # depth (their footprint extent). One entry per dropped plane per
+            # returned layout; empty unless --render-paths ran the planner with an
+            # apron set. Backward-compatible — no schema bump.
+            "apron_shallow_drops": [
+                {"plane": drop.plane_id, "min_depth_m": drop.min_depth_m}
+                for drop in d.apron_shallow_drops
+            ],
+            # Additive (#263): nose-out heading flips applied per returned layout.
+            # Backward-compatible — no schema bump.
+            "nose_out_flips": list(d.nose_out_flips),
         },
     }
     print(json.dumps(payload, indent=2))
@@ -977,7 +1056,7 @@ def cmd_view(args: argparse.Namespace) -> int:
                 budget_s=args.budget,
                 alternatives=1,
                 seed=args.seed,
-                search=SearchConfig(spread=args.spread),
+                search=SearchConfig(spread=args.spread, nose_out=args.nose_out),
                 plan_paths=args.animate,
                 tow_max_expansions=args.tow_max_expansions,
             )
@@ -991,6 +1070,12 @@ def cmd_view(args: argparse.Namespace) -> int:
                     "note: solution not tow-routable; rendering static 3D scene.",
                     file=sys.stderr,
                 )
+            # #503: warn (deduped) about any plane that towed via the door line
+            # because the apron was too shallow — the solve path carries the
+            # RETURNED result's drops on its diagnostics, so a discarded
+            # spread-fallback pass never contributes.
+            if args.animate:
+                _warn_apron_shallow_drops(result.diagnostics.apron_shallow_drops)
         else:
             layout = load_layout(
                 args.input,
@@ -1013,11 +1098,19 @@ def cmd_view(args: argparse.Namespace) -> int:
                         if args.tow_max_expansions is not None
                         else _VIEW_TOW_MAX_TOTAL_EXPANSIONS
                     )
+                    # #503: layout-mode view calls plan_fill directly (no
+                    # SolverDiagnostics), so collect the too-shallow-apron drops via
+                    # the plan-inert out-param and warn once each, deduped. Only a
+                    # plan that is actually built (no NoFeasiblePlanError) reaches
+                    # the warn call, so a discarded/failed plan never warns.
+                    apron_drops: list[ApronShallowDrop] = []
                     moves_plan = plan_fill(
                         layout,
                         max_expansions=args.tow_max_expansions,
                         max_total_expansions=view_total_cap,
+                        apron_dropped_out=apron_drops,
                     )
+                    _warn_apron_shallow_drops(apron_drops)
                 except NoFeasiblePlanError as e:
                     print(
                         f"note: layout not tow-routable (plane {e.plane_id!r} could not be "
