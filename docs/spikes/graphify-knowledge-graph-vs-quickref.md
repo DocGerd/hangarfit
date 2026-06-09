@@ -4,7 +4,7 @@
 - **Date:** 2026-06-09
 - **Spike issue:** [#569](https://github.com/DocGerd/hangarfit/issues/569)
 - **Recommendation:** **NO-GO** (high confidence) for the question #569 asks — beating the doc-navigation layer (Quick-Ref + auto-memory). The one honest opening — a *code-graph* niche, **out of #569's framing** — was tested live and is a **soft PARTIAL**: Graphify's free AST graph genuinely beats `ripgrep` on *relational precision*, but the practical value over `rg` on a 15-file repo doesn't clearly justify a new dependency + rebuild discipline (see the Empirical trial + Recommendation).
-- **Context:** *"~71× fewer tokens per session."* [Graphify](https://github.com/safishamsi/graphify) (MIT, © 2026 Safi Shamsi; PyPI `graphifyy` 0.8.36, Python ≥3.10, actively maintained) is a `/graphify` skill for Claude Code (and Cursor / Codex / Gemini CLI / Aider) that builds an LLM + Tree-sitter knowledge graph over code + docs + diagrams and answers queries against it. hangarfit is docs-heavy (24 ADRs, ~10 arc42 sections, Mermaid diagrams, 6 spike docs) — a plausible fit — but it is a *probabilistic* retrieval layer, and the project already runs a hand-maintained, deterministic, source-of-truth navigation discipline that cuts the other way if a probabilistic layer is over-trusted.
+- **Context:** *"~71× fewer tokens per session."* [Graphify](https://github.com/safishamsi/graphify) (MIT, © 2026 Safi Shamsi; PyPI `graphifyy` 0.8.36, Python ≥3.10, actively maintained) is a `/graphify` skill for Claude Code (and Cursor / Codex / Gemini CLI / Aider) that builds an LLM + Tree-sitter knowledge graph over code + docs + diagrams and answers queries against it. hangarfit is docs-heavy (24 ADRs, ~10 arc42 sections, Mermaid diagrams, 6 prior spike docs) — a plausible fit — but it is a *probabilistic* retrieval layer, and the project already runs a hand-maintained, deterministic, source-of-truth navigation discipline that cuts the other way if a probabilistic layer is over-trusted.
 - **Prior art (don't re-tread):** this spike follows the project's measure-then-decline tradition — [#336](https://github.com/DocGerd/hangarfit/issues/336) (RRT-Connect NO-GO), [#331](https://github.com/DocGerd/hangarfit/issues/331)/[#332](https://github.com/DocGerd/hangarfit/issues/332) (CNN NO-GO), [#540](https://github.com/DocGerd/hangarfit/issues/540) (placement-side STRtree NO-GO). Same shape: a headline metric that does not transfer to this corpus's regime, weighed honestly against an existing free substitute, declined with the reason recorded.
 
 ---
@@ -19,7 +19,7 @@ The spike question (from #569): *does querying a Graphify graph over `docs/` + `
 
 3. **The "always reconfirm against source" mandate erases any acted-upon win.** #569 permits adoption only as a *"navigation hint, always reconfirmed against source."* Since you read the source ADR/code anyway, Graphify would only replace the *routing* step — which the Quick-Ref already does deterministically for 0 tokens. **No net saving on any answer you act on.**
 
-4. **The one honest steelman is code-graph, not doc-nav — and here Graphify *does* beat `ripgrep` (measured).** Graphify's free AST call-graph (`EXTRACTED` confidence-1.0 edges) answers relational questions the flat Quick-Ref cannot. I built it for real ($0, 3.5 s) and ran the queries: `explain "_spread()"` names the caller `_run_restart()` with direction and relation type, where `rg '_spread'` returns **1 call + 1 def + 10 docstring/comment false-positives** you must eyeball-filter. `affected "aircraft_parts_world()"` gives a *function-level, relation-typed* blast radius vs `rg -l`'s file-level list. **So on relational precision the code graph wins.** The catch is what it costs to get there: a build + rebuild-on-change discipline, a new dependency, and graph noise — for a 15-file repo where `rg`'s superset is trivially filtered by eye. Real win, narrow value, **and out of #569's doc-nav framing.**
+4. **The one honest steelman is code-graph, not doc-nav — and here Graphify *does* beat `ripgrep` (measured).** Graphify's free AST call-graph (`EXTRACTED` confidence-1.0 edges) answers relational questions the flat Quick-Ref cannot. I built it for real ($0, 3.5 s) and ran the queries: `explain "_spread()"` names the caller `_run_restart()` with direction and relation type, where `rg -n '_spread\b' src/` returns **1 call + 1 def + 10 docstring/comment false-positives** you must eyeball-filter. `affected "aircraft_parts_world()"` gives a *function-level, relation-typed* blast radius vs `rg -l`'s file-level list. **So on relational precision the code graph wins.** The catch is what it costs to get there: a build + rebuild-on-change discipline, a new dependency, and graph noise — for a 15-file repo where `rg`'s superset is trivially filtered by eye. Real win, narrow value, **and out of #569's doc-nav framing.**
 
 | Axis the #569 gate measures | Verdict | Why (measured) |
 |---|---|---|
@@ -64,7 +64,7 @@ What was **not** done, and why: **pass-2** (the paid LLM doc/diagram extraction)
 
 Graphify's 71.5× is `query-cost ÷ read-all-files-cost`. hangarfit's denominator is not "read all files":
 
-- **Resident free at session start:** `CLAUDE.md` (32,503 B, incl. the entire **19-row Quick-Ref router** mapping every topic → owning arc42 anchor + ADR number) + `MEMORY.md` (24,513 B, 77-entry auto-memory index). ≈ **14–15K tokens of navigation + live state, before any question is asked.**
+- **Resident free at session start:** `CLAUDE.md` (32,503 B, incl. the entire **19-row Quick-Ref router** mapping every topic → owning arc42 anchor + ADR number) + `MEMORY.md` (24,513 B, 77-entry auto-memory index — measurement-time snapshot; the auto-memory grows a little each session). ≈ **14–15K tokens of navigation + live state, before any question is asked.**
 - **Routing cost for a "which ADR owns X" question: 0 extra tokens.** The Quick-Ref row resolves the target deterministically — no grep, no search.
 - **Resolution cost: exactly one targeted ADR read** (ADR-0009 ~1.8K tokens … ADR-0003 ~7K tokens). Several questions ("what is hangarfit", "is the hangar L-shaped", "what supersedes ADR-0005") need **zero** extra reads — the already-resident prose answers them.
 
@@ -94,9 +94,9 @@ The strongest *fair* GO case is **not** doc-nav. It is sub-file, code-structure 
 
 Same question — *who calls `_spread`?* — both tools, over `src/`:
 
-| | `ripgrep` (`rg -n '_spread' src/`) | Graphify (`explain "_spread()"`) |
+| | `ripgrep` (`rg -n '_spread\b' src/`) | Graphify (`explain "_spread()"`) |
 |---|---|---|
-| Result | 12 matches: **1 call** (`solver.py:272`), 1 `def`, **10 docstring/comment mentions** | `<-- _run_restart() [calls]` — *the* caller, with direction + relation; docstring shows as a separate `rationale_for` node, not a caller |
+| Result | 12 matches: **1 call** (`solver.py:272`), 1 `def` (`:1380`), **10 docstring/comment mentions** (9 in `solver.py` + `models.py:1400`) | `<-- _run_restart() [calls]` — *the* caller, with direction + relation; docstring shows as a separate `rationale_for` node, not a caller |
 | Precision | substring superset → eyeball-filter the 10 false-positives | function-level, relation-typed, **zero comment noise** |
 | Speed | **14 ms**, zero build | **~0.1 s/query**, after a free **3.5 s** AST build |
 | Freshness | always current | stale after any code edit → must rebuild |
