@@ -204,8 +204,9 @@ def _bay_intrusion_conflicts(
     "the occupant intrudes into its own bay" would otherwise be
     indistinguishable from a real intrusion.
 
-    Emits one ``bay_intrusion`` conflict per offending **part**, with
-    the first-violating vertex (matches the per-part granularity of
+    Emits one ``bay_intrusion`` conflict per offending **part** — citing the
+    first strictly-inside vertex when one exists, or ``edge crosses`` when only
+    the polygon overlaps (matches the per-part granularity of
     :func:`_hangar_bounds_conflicts`).
     """
     if layout.maintenance_plane is None:
