@@ -298,8 +298,8 @@ pip-compile --generate-hashes --no-strip-extras --allow-unsafe -o requirements-p
 # instead of an unpinned isolated build env). No pytest coverage threshold
 # (no --cov-fail-under); Codecov posts a `codecov/patch` status flagging patch
 # coverage on each PR, but it is NOT a required check on `develop` (required =
-# test 3.12 + the three lockfile-drift jobs + Analyze + `bench correctness` #564),
-# so a red patch status
+# test 3.12 + the three lockfile-drift jobs + Analyze + `bench correctness`, added
+# by #564), so a red patch status
 # reports but does not by itself block merge (see the @slow gotcha above).
 
 # Phase 1 acceptance smoke test
