@@ -157,6 +157,14 @@ class TestSolveParallelFlags:
         assert args.workers == 4
         assert args.max_restarts == 8
 
+    def test_max_restarts_zero_exits_2(self, capsys):
+        """``--max-restarts 0`` is invalid (must be >= 1). It previously crashed with
+        an uncaught ValueError traceback; the #546 SearchConfig try/except wrap now
+        surfaces it as a clean exit 2 (regression lock for that latent gap)."""
+        rc = main(["solve", SMOKE_FIXTURE, "--max-restarts", "0"])
+        assert rc == 2
+        assert "max_restarts" in capsys.readouterr().err
+
     def test_eligible_parallel_no_note_and_byte_identical(self, capsys):
         """Eligible regime (``--max-restarts`` + spread on): ``--workers >1``
         prints NO note and yields byte-identical ``--json`` output to
