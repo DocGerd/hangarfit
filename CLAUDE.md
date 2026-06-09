@@ -218,10 +218,9 @@ pytest -m ""
 # GOTCHA: coverage.py does NOT measure ProcessPool/spawn WORKER subprocesses, so
 # code that only runs inside a worker (e.g. solver._run_restart_worker, #544)
 # reads as uncovered even when tests DO exercise it via the pool → `codecov/patch`
-# flags it (it is NOT a required check, so it won't block merge — see #561). To
-# actually cover such code, call the worker fn IN-PROCESS in a unit test (the
-# worker is usually a thin wrapper), or set coverage `concurrency = multiprocessing`
-# + COVERAGE_PROCESS_START.
+# flags it (non-blocking; #561 tracks closing the gap). Cover it by calling the
+# worker fn IN-PROCESS in a unit test (the worker is usually a thin wrapper; or
+# wire coverage `concurrency=multiprocessing` + COVERAGE_PROCESS_START).
 
 # Lint + format check (CI also runs these)
 ruff check src/ tests/
