@@ -1,9 +1,9 @@
 # Spike: Graphify (LLM + Tree-sitter knowledge-graph context layer) vs the hand-maintained Quick-Ref + auto-memory
 
-- **Status:** Findings + recommendation. Evaluation-only; **no production change ships from this spike** — no dependency is added, no `.claude/` config is touched, no graph is built into the repo. The one conditional follow-up is named as a DEFER gate, not filed.
+- **Status:** Findings + recommendation. **Graphify was actually installed and run** (free pass-1) in an isolated throwaway `/tmp` venv — the repo, its dependencies, and `.claude/`/`CLAUDE.md` were **never** touched. Pass-2 (the paid LLM doc-graph) was *not* run: it needs an Anthropic **API key**, which a Claude Max subscription does not provide, and the maintainer opted to skip it once Graphify's own `benchmark` had settled the token question. **No production change ships from this spike.**
 - **Date:** 2026-06-09
 - **Spike issue:** [#569](https://github.com/DocGerd/hangarfit/issues/569)
-- **Recommendation:** **NO-GO** (high confidence) for the question asked — replacing/augmenting the doc-navigation layer. One narrow code-graph niche is left as a DEFER gate that could flip it to **PARTIAL** (see the end).
+- **Recommendation:** **NO-GO** (high confidence) for the question #569 asks — beating the doc-navigation layer (Quick-Ref + auto-memory). The one honest opening — a *code-graph* niche, **out of #569's framing** — was tested live and is a **soft PARTIAL**: Graphify's free AST graph genuinely beats `ripgrep` on *relational precision*, but the practical value over `rg` on a 15-file repo doesn't clearly justify a new dependency + rebuild discipline (see the Empirical trial + Recommendation).
 - **Context:** *"~71× fewer tokens per session."* [Graphify](https://github.com/safishamsi/graphify) (MIT, © 2026 Safi Shamsi; PyPI `graphifyy` 0.8.36, Python ≥3.10, actively maintained) is a `/graphify` skill for Claude Code (and Cursor / Codex / Gemini CLI / Aider) that builds an LLM + Tree-sitter knowledge graph over code + docs + diagrams and answers queries against it. hangarfit is docs-heavy (24 ADRs, ~10 arc42 sections, Mermaid diagrams, 6 spike docs) — a plausible fit — but it is a *probabilistic* retrieval layer, and the project already runs a hand-maintained, deterministic, source-of-truth navigation discipline that cuts the other way if a probabilistic layer is over-trusted.
 - **Prior art (don't re-tread):** this spike follows the project's measure-then-decline tradition — [#336](https://github.com/DocGerd/hangarfit/issues/336) (RRT-Connect NO-GO), [#331](https://github.com/DocGerd/hangarfit/issues/331)/[#332](https://github.com/DocGerd/hangarfit/issues/332) (CNN NO-GO), [#540](https://github.com/DocGerd/hangarfit/issues/540) (placement-side STRtree NO-GO). Same shape: a headline metric that does not transfer to this corpus's regime, weighed honestly against an existing free substitute, declined with the reason recorded.
 
@@ -13,22 +13,22 @@
 
 The spike question (from #569): *does querying a Graphify graph over `docs/` + `src/` beat the hand-maintained Quick-Ref + auto-memory for real session questions, at acceptable build cost, without introducing stale or hallucinated answers?* **No, on every clause.** Four conclusions, each measured against this repo, not Graphify's benchmark corpus:
 
-1. **The token win does not exist at this scale.** Graphify's **71.5×** is a *1020-file* large-corpus number measured against a *"read/grep ALL raw files"* baseline (~465 KB of ADR+arch bodies). hangarfit never navigates that way: the **full Quick-Ref router is already resident in-context for free** (`CLAUDE.md` = 32,503 B + `MEMORY.md` = 24,513 B load every session). Routing cost is already **0 extra tokens**; resolution is **one targeted ADR read** (~1.8–7 KB). Graphify's own README says small corpora (hangarfit is **15 src files / 10.5K LOC + 124 `.md`**) get *"structural clarity, **not** compression."*
+1. **The token win does not exist at this scale — confirmed by Graphify's own benchmark.** I ran `graphify benchmark` on the real hangarfit graph: it reports **3.5× reduction, not 71.5×** (and only **2.2–2.5×** for ordinary questions; the 13–21× cases are the cross-cutting relational ones). Worse, its **average query cost is ~33,841 tokens** — measured against a 120K-token *"read everything"* baseline hangarfit never uses. hangarfit's **real** baseline: the full Quick-Ref router is **resident in-context for free** (`CLAUDE.md` 32,503 B + `MEMORY.md` 24,513 B every session) → routing is **0 extra tokens** and resolution is **one ~5K-token ADR read**. So against the real baseline Graphify's per-query cost is **~7× *higher*, not lower**. The 71.5× is a large-corpus figure; Graphify's README itself says small corpora (hangarfit = **15 src files / 124 `.md`**) get *"structural clarity, **not** compression."*
 
 2. **The hand-maintained layer is 11/11 correct on the sample — and its correctness depends on exactly the prose Graphify would mis-extract.** A head-to-head on 11 representative session questions resolved all 11 to the right source. But **3 of them are correct only because the reader follows the pointer into an ADR's *amendment trail* or the live code** — the ADR *headline* is stale (see Finding 2). A prose-extraction graph keying on ADR body text would surface the stale headline = **wrong-vs-source on the high-stakes invariants**, failing the "zero wrong answers" gate.
 
 3. **The "always reconfirm against source" mandate erases any acted-upon win.** #569 permits adoption only as a *"navigation hint, always reconfirmed against source."* Since you read the source ADR/code anyway, Graphify would only replace the *routing* step — which the Quick-Ref already does deterministically for 0 tokens. **No net saving on any answer you act on.**
 
-4. **The one honest steelman is code-graph, not doc-nav — and `ripgrep` already serves it.** Graphify's deterministic value (AST call-graph, `EXTRACTED` confidence-1.0 edges) genuinely answers questions the flat Quick-Ref cannot ("what calls `_spread`", "every reference to the det-(−1) trap", "blast radius of `aircraft_parts_world`"). But on a 15-file single-language Python repo, **`rg` answers all three in milliseconds (11 ms for the `_spread` query), deterministically, at zero cost / zero staleness / zero install** (commands shown below). Graphify would have to beat a tool already at the cost/freshness floor.
+4. **The one honest steelman is code-graph, not doc-nav — and here Graphify *does* beat `ripgrep` (measured).** Graphify's free AST call-graph (`EXTRACTED` confidence-1.0 edges) answers relational questions the flat Quick-Ref cannot. I built it for real ($0, 3.5 s) and ran the queries: `explain "_spread()"` names the caller `_run_restart()` with direction and relation type, where `rg '_spread'` returns **1 call + 1 def + 10 docstring/comment false-positives** you must eyeball-filter. `affected "aircraft_parts_world()"` gives a *function-level, relation-typed* blast radius vs `rg -l`'s file-level list. **So on relational precision the code graph wins.** The catch is what it costs to get there: a build + rebuild-on-change discipline, a new dependency, and graph noise — for a 15-file repo where `rg`'s superset is trivially filtered by eye. Real win, narrow value, **and out of #569's doc-nav framing.**
 
 | Axis the #569 gate measures | Verdict | Why (measured) |
 |---|---|---|
-| **Measurable token win for doc-nav** | **NO-GO** | Real baseline = 0 routing tokens + 1 ADR read; 71.5× is a large-corpus-vs-grep-all number that doesn't transfer (small-corpus regime → "clarity not compression") |
-| **Zero wrong-vs-source answers** | **NO-GO** | Doc value-add is the *paid, `INFERRED`/`AMBIGUOUS`* pass; would key on 3 verified stale ADR headlines (reverse-cost `1.5`, "notch not implemented", "bit-identical under seed") |
-| **Acceptable build/run cost** | **NO-GO** | Docs value-add needs the **paid** Claude pass-2; new un-pinned PyPI dep vs the repo's hash-pin/OpenSSF posture; graph artifacts untracked; docs churn → recurring paid re-extract |
-| **Code-graph niche (out of #569's framing)** | **DEFER** | Real, but must beat `rg` (11 ms, deterministic) not the Quick-Ref — gate named below |
+| **Measurable token win for doc-nav** | **NO-GO** | Graphify's *own* `benchmark` on this corpus = **3.5×** (2.2–2.5× ordinary), **~33,841 tokens/query** vs a baseline hangarfit never uses. Against the real in-context Quick-Ref baseline (0 routing + ~5K read), Graphify is **~7× more expensive per query** |
+| **Zero wrong-vs-source answers** | **NO-GO** (analytic) | Doc value-add is the *paid, `INFERRED`/`AMBIGUOUS`* pass (not run — needs an API key); it keys on prose that carries 3 verified stale ADR headlines (reverse-cost `1.5`, "notch not implemented", "bit-identical under seed") |
+| **Acceptable build/run cost** | **NO-GO** | Docs value-add needs the **paid** pass-2; new un-pinned PyPI dep vs the repo's hash-pin/OpenSSF posture; graph artifacts untracked; docs churn → recurring paid re-extract |
+| **Code-graph niche (out of #569's framing)** | **soft PARTIAL** | Tested live: Graphify's free AST graph **beats `rg` on relational precision** (caller/blast-radius with direction + relation, no comment noise). But narrow value on a 15-file repo vs the dependency + rebuild cost |
 
-**Recommendation: NO-GO** for adopting Graphify as a navigation layer. The hand-maintained Quick-Ref + auto-memory is already a free, deterministic, in-context version of what Graphify sells, and the project's source-of-truth discipline is the very thing a probabilistic layer would erode. **Complement-not-replace** is the only framing under which a future trial makes sense, and only for the code-graph niche, gated on beating `ripgrep`.
+**Recommendation: NO-GO** for adopting Graphify as the navigation layer #569 asks about. The hand-maintained Quick-Ref + auto-memory is already a free, deterministic, in-context version of what Graphify sells, the project's source-of-truth discipline is the very thing a probabilistic doc-graph would erode, and Graphify's own benchmark confirms there's no token win here. The code-graph niche is a real-but-narrow **complement-not-replace** judgment call, not adopted now.
 
 ---
 
@@ -46,15 +46,15 @@ Not from the marketing site (which 403s and overstates) — from the repo `READM
 
 ## Method
 
-This spike binds on **what hangarfit's navigation actually costs today**, not on Graphify's benchmark. Five strands, measured against the repo at `develop`:
+This spike binds on **what hangarfit's navigation actually costs today**, plus a **live trial** of Graphify itself. Strands, measured against the repo at `develop`:
 
 1. **Inventory the real baseline** — what navigation content is resident in-context for free at session start, and what a "which ADR/file owns X" question actually costs beyond it.
 2. **Head-to-head on 11 representative session questions** — answer each using only the hand-maintained layer, verify against source, record marginal cost and any place a single-source read would mislead.
-3. **Steelman the GO case** — build the strongest honest argument for adopting Graphify here, then test it.
-4. **Measure the steelman's strongest queries against `ripgrep`** — the free deterministic tool Graphify must actually beat on a single-language repo.
+3. **Steelman the GO case** — the strongest honest argument for adopting Graphify here.
+4. **Live trial (Empirical trial, below):** `pip install graphifyy` in a throwaway `/tmp` venv; build the **free pass-1 AST graph** over `src/`; run `graphify affected / explain / query`; run Graphify's own `graphify benchmark`; head-to-head against `ripgrep` on the same questions.
 5. **Independent adversarial verdict** against the #569 gate (token win **and** zero wrong-vs-source).
 
-What was **not** done, and why: no live `pip install graphifyy`, no `.claude/`/`CLAUDE.md` mutation, and no graph build. The docs value-add requires the **paid** pass-2 (real API spend), installing the integration mutates the shared, carefully-maintained `CLAUDE.md` + adds a hook, and `graphifyy` would be a new un-pinned dependency in a repo that hash-pins everything against an OpenSSF Scorecard posture. The #569 *gate question* (doc-nav vs the Quick-Ref) is decisively answerable without any of that, and the only thing a live build would additionally probe — the code-graph niche — is settled for free against `ripgrep` below. A live **free pass-1-only** trial is named as the DEFER gate for the user to greenlight if desired (see Recommendation).
+What was **not** done, and why: **pass-2** (the paid LLM doc/diagram extraction) was not run. Its `--backend claude` path calls the **Anthropic API** and requires `ANTHROPIC_API_KEY` — which a **Claude Max** subscription does not provide (Max powers claude.ai + Claude Code via login; the API is separate, usage-billed). Free backends (Gemini key, local ollama) and an API key were all available routes, but the maintainer opted to skip pass-2 once `graphify benchmark` (run on the free graph) had already settled the token question. The pass-2 result would only have added an *empirical* test of the stale-headline hallucination hypothesis (Finding 2), which remains analytic. Nothing touched the repo, its deps, or `.claude/` — the entire trial lived in `/tmp` and is deleted with it.
 
 ---
 
@@ -68,7 +68,7 @@ Graphify's 71.5× is `query-cost ÷ read-all-files-cost`. hangarfit's denominato
 - **Routing cost for a "which ADR owns X" question: 0 extra tokens.** The Quick-Ref row resolves the target deterministically — no grep, no search.
 - **Resolution cost: exactly one targeted ADR read** (ADR-0009 ~1.8K tokens … ADR-0003 ~7K tokens). Several questions ("what is hangarfit", "is the hangar L-shaped", "what supersedes ADR-0005") need **zero** extra reads — the already-resident prose answers them.
 
-So the marginal cost Graphify must beat is **~1 file read (~4–5K tokens)**, not ~110K. The genuine headroom is roughly **an order of magnitude smaller** than the headline, and the corpus (15 src files / 10.5K LOC; 124 `.md`) sits in the **small-corpus regime** where Graphify's own README promises *clarity, not compression*. The token win the GO gate requires simply isn't there.
+So the marginal cost Graphify must beat is **~1 file read (~5K tokens)**, not the ~120K "read everything" baseline its `benchmark` assumes (measured: 120,066 naive tokens, ~33,841 avg per query). Graphify's per-query cost is **larger than hangarfit's whole per-question cost**; the corpus (15 src files / 10.5K LOC; 124 `.md`) sits in the **small-corpus regime** where Graphify's own README promises *clarity, not compression*. The token win the GO gate requires simply isn't there.
 
 ### 2. The hand-maintained layer is 11/11 correct — and that exposes Graphify's accuracy problem, not its opportunity
 
@@ -88,19 +88,22 @@ A prose-extraction graph keys on exactly this body text. Its `INFERRED`/`AMBIGUO
 
 #569 only ever proposes Graphify as a *"navigation hint, always reconfirmed against source."* That is the right guardrail for a probabilistic layer — and it is also self-defeating economically. For any answer you act on, you read the source ADR/code regardless. Graphify would replace only the routing hop, which the in-context Quick-Ref already performs for **0 tokens, deterministically**. The net token saving on acted-upon answers is **zero or negative** (you've added a query + a graph to maintain in front of a read you'd do anyway).
 
-### 4. The honest steelman is code-graph — and `ripgrep` already wins it
+### 4. The honest steelman is code-graph — tested live, Graphify beats `ripgrep` on relational precision
 
-The strongest *fair* GO case is **not** doc-nav. It is sub-file, code-structure queries the flat Quick-Ref structurally cannot answer (it has **0 function-level references by design**): reverse call-graphs, cross-cutting invariant tracing, blast-radius. These ride Graphify's **`EXTRACTED` (1.0, AST, free pass-1)** edges — no hallucination exposure. That's a real gap in the Quick-Ref.
+The strongest *fair* GO case is **not** doc-nav. It is sub-file, code-structure queries the flat Quick-Ref structurally cannot answer (it has **0 function-level references by design**): reverse call-graphs, cross-cutting invariant tracing, blast-radius. These ride Graphify's **`EXTRACTED` (1.0, AST, free pass-1)** edges — no hallucination exposure. That's a real gap in the Quick-Ref. So I built the graph and measured it (full setup + raw output in the **Empirical trial** below).
 
-But the Quick-Ref isn't the competitor for code questions — **`ripgrep` is**, and on a 15-file single-language Python repo it is already at the floor:
+Same question — *who calls `_spread`?* — both tools, over `src/`:
 
-| Steelman query | `ripgrep` invocation | Result | Cost |
-|---|---|---|---|
-| *what calls `_spread`?* | `rg -n '_spread' src/ --type py` | The call (`solver.py:272`), its `def` (`:1380`), sibling `_spread_*` symbols (`:293/1260/1269`), the `metrics.py:70` mirror — a textual superset | **11 ms**, deterministic |
-| *every reference to the det-(−1) trap / ADR-0002* | `rg -l 'ADR-0002\|sign-flip' .` | Every file, one call | <50 ms |
-| *blast radius of `aircraft_parts_world`* | `rg -l 'aircraft_parts_world' src/ tests/ --type py` | All 18 Python files (6 src + 12 test); `rg -l` without `--type py` adds 1 yaml fixture = 19 | one call |
+| | `ripgrep` (`rg -n '_spread' src/`) | Graphify (`explain "_spread()"`) |
+|---|---|---|
+| Result | 12 matches: **1 call** (`solver.py:272`), 1 `def`, **10 docstring/comment mentions** | `<-- _run_restart() [calls]` — *the* caller, with direction + relation; docstring shows as a separate `rationale_for` node, not a caller |
+| Precision | substring superset → eyeball-filter the 10 false-positives | function-level, relation-typed, **zero comment noise** |
+| Speed | **14 ms**, zero build | **~0.1 s/query**, after a free **3.5 s** AST build |
+| Freshness | always current | stale after any code edit → must rebuild |
 
-`rg` returns a textual **superset** (the `_spread` query above also surfaces the `def`, sibling `_spread_*` symbols, and a docstring mirror — not a pure call-set), so it is *less precise* than Graphify's AST call-graph, which distinguishes a call from a mention and resolves structure `rg` can't. **That imprecision is exactly the niche Graphify could fill.** But `rg` is **zero-install, zero-API, zero-staleness, deterministic, and already used constantly**, and for a 10.5K-LOC single-language repo under heavy naming-convention discipline the false-positive filtering is trivial-by-eye. The precision gap is real but small, and it is dwarfed by `rg`'s advantages on cost, freshness, determinism, and *not adding a dependency*. To justify adoption Graphify must beat **`rg`**, not the Quick-Ref — and it doesn't clear that bar here.
+For the *blast radius* of `aircraft_parts_world`, `affected` likewise returns a **function-level, relation-typed** reverse-dependency set (`cached_parts_world() [calls]`, `check() [calls]`, `_spread_quality() [calls]`, importers …) where `rg -l` returns a flat file list. **On relational precision the code graph genuinely wins.**
+
+The honest qualifier: this is a **15-file single-language Python repo under heavy naming-convention discipline**, where `rg`'s superset is trivially filtered by eye, the graph must be *rebuilt on every code change* to stay correct, it pulls in a new dependency + a 28-package tree-sitter stack, and the build is noisy (the `viewer.js` bundle alone inflated the graph to **1801 nodes / 5583 edges**, and docstrings became nodes). So the precision win is **real but its practical value is narrow** — it buys you relation-typed call/blast-radius queries you'd otherwise eyeball, at the cost of a build/staleness/dependency discipline. That is a genuine **complement** to `rg` for someone who asks relational code questions often; it is not a doc-nav win and it is out of #569's framing.
 
 ### 5. Operational frictions confirmed against the repo
 
@@ -110,21 +113,50 @@ But the Quick-Ref isn't the competitor for code questions — **`ripgrep` is**, 
 
 ---
 
+## Empirical trial — pass-1 run for real (2026-06-09)
+
+Fully isolated, `$0`: `python3 -m venv` in `/tmp` → `pip install graphifyy` (**v0.8.36**; deps are all local — networkx + 28 tree-sitter language packs, **no LLM SDK**). No API keys in the environment, so pass-2 physically could not fire. Built over a *copy* of `src/` so no `graphify-out/` ever landed in the repo.
+
+**Build (free pass-1, AST only):** `graphify ./src` → **1801 nodes, 5583 edges, 71 communities in 3.5 s**, `$0`. *Gotcha:* the default build tries LLM extraction on any markdown it finds and **aborts the whole build** if no backend is configured — I had to strip 2 stray `.md`/`.txt` files to get a clean code-only graph. A docs-heavy adopter therefore cannot avoid configuring (and paying for) a backend.
+
+**Graphify's own token benchmark** (`graphify benchmark`, no key needed) on this corpus:
+
+```
+Corpus:          90,050 words → ~120,066 tokens (naive)
+Graph:           1,801 nodes, 5,583 edges
+Avg query cost:  ~33,841 tokens
+Reduction:       3.5x fewer tokens per query
+  [2.2x] how does authentication work
+  [2.3x] what is the main entry point
+  [2.5x] how are errors handled
+  [21.9x] what connects the data layer to the api
+  [13.6x] what are the core abstractions
+```
+
+**3.5×, not 71.5×.** Ordinary questions get 2.2–2.5×; the 13–21× outliers are the relational queries. And the **avg query cost ~33,841 tokens** is *larger* than hangarfit's entire real per-question cost (~5K for one ADR read off the in-context Quick-Ref) — so against the real baseline, querying the graph is a net **loss**. The 3.5× exists only relative to a "read all 120K tokens" baseline hangarfit never pays.
+
+**Code-graph queries** (`affected` / `explain` / `query`) all ran **locally, deterministically, ~0.1 s, `$0`** — no backend needed — and are more precise than `rg` on relational questions (Finding 4).
+
+**Pass-2 (paid doc-graph): not run.** `--backend claude` needs `ANTHROPIC_API_KEY` (the Anthropic API, *not* a Max subscription); no key was provided and the maintainer skipped it once the benchmark had settled the token question. So Finding 2's stale-headline hazard stands as an *analytic* argument, not an empirical measurement — but the benchmark already shows a doc-graph could not deliver a token win here even with perfect edges.
+
+---
+
 ## Recommendation
 
 **NO-GO** — do not adopt Graphify as a navigation layer for hangarfit. It would duplicate a curated, human-trusted, zero-hallucination, **already-in-context** artifact; the headline token win does not transfer to this corpus's regime; the only doc value it adds is paid and probabilistic and would surface stale ADR headlines as fact; and the "reconfirm against source" guardrail that makes it safe also makes it economically pointless. This is the same disposition as CNN / RRT-Connect / STRtree: a metric that doesn't survive contact with this repo's regime, declined with the reasons recorded so it isn't re-litigated on marketing numbers.
 
 **The Quick-Ref + auto-memory already *is* the local, free, deterministic knowledge graph** — hand-curated to point at source rather than to paraphrase it. The project's source-of-truth / determinism discipline is the asset; a probabilistic layer over the top is a liability against it, not an upgrade.
 
-### The one thing that would flip the verdict — **DEFER**, gated
+### The code-graph niche — gate tested, **soft PARTIAL**
 
-The code-graph niche (Finding 4) is the only honest opening, and it is **out of #569's framing** (#569 asks about beating the *Quick-Ref + auto-memory* for *session questions*, i.e. doc-nav). Disposition: **DEFER**, gated on a single cheap probe —
+The code-graph niche (Finding 4) is the only honest opening, and it is **out of #569's framing** (#569 asks about beating the *Quick-Ref + auto-memory* for *session questions*, i.e. doc-nav). The gate from this spike's first draft — *does the free pass-1 graph beat `ripgrep`, not just the Quick-Ref?* — was **tested live** (Empirical trial), and the answer is **yes, on relational precision**: relation-typed callers and blast-radius with the comment noise stripped.
 
-> **Gate:** a scoped, **free pass-1-only** (`graphify . ` AST graph, no paid extraction, run in a throwaway `/tmp` checkout, no `.claude` mutation) head-to-head showing the `EXTRACTED` code-graph answers *what-calls-`_spread`* / *every-ref-to-ADR-0002* / *`aircraft_parts_world` blast-radius* **measurably faster or more reliably than `rg`/`ripgrep`** on this repo. **Do not file an implementation issue until that probe beats `ripgrep`** — not merely the Quick-Ref.
+That makes the niche a **soft PARTIAL**, not a GO:
 
-If (and only if) it clears that gate, the verdict becomes **PARTIAL**: adopt Graphify's **code** graph as a **complement** to — never a replacement for — the Quick-Ref, with the prose/diagram pass-2 left off (paid + probabilistic + the stale-headline hazard). Replacing the Quick-Ref is never on the table: it would regress the curated lookups it pre-answers for 0 tokens (its 19 rows route to dozens of distinct destinations).
+- **Real:** for someone who frequently asks *what-calls-X* / *blast-radius-of-X* / *what-connects-X-to-Y*, the free, deterministic, local AST graph is a genuine improvement over `rg` + eyeball.
+- **Narrow:** on a 15-file single-language repo, `rg`'s superset is trivially filtered, and the graph costs a new dependency, a rebuild-on-change discipline, and untracked artifacts. The benchmark's relational outliers (13–21×) are where it would pay; the ordinary lookups (2.2–2.5×) are not worth it.
 
-This spike does **not** file that issue; the gate is unmet pending the probe, and the user can greenlight the free trial if the code-graph niche is worth chasing.
+**Disposition:** not adopted, and **not filed** as an implementation issue — the value does not clear the dependency/maintenance cost for a repo this size. If the team later finds itself repeatedly asking relational code questions, the path is a **complement** (free pass-1 graph built in `/tmp` or git-ignored, queried on demand) — **never a replacement** for the Quick-Ref (which pre-answers its lookups for 0 tokens), and **never the paid pass-2 doc-graph** (the benchmark shows no token win, and it carries the stale-headline hazard).
 
 ---
 
@@ -136,7 +168,7 @@ hangarfit's defining discipline is that **`CLAUDE.md` holds no domain assertions
 
 ## Out of scope
 
-- **No production change, no dependency, no `.claude`/`CLAUDE.md` edit, no committed graph.** Output is this document; #569 closes with it.
-- **No live paid build.** Deliberately declined (cost + shared-config mutation + supply-chain) — see Method. The free pass-1 code-graph trial is the named DEFER gate, not run here.
+- **No production change, no dependency, no `.claude`/`CLAUDE.md` edit, no committed graph.** Output is this document; #569 closes with it. The live pass-1 trial ran entirely in a throwaway `/tmp` venv (deleted after), never touching the repo or its hash-pinned env.
+- **No paid pass-2 build.** Skipped — it needs an Anthropic **API key** (separate from the maintainer's Claude **Max** subscription), and `graphify benchmark` had already settled the token question on the free graph. The stale-headline hazard (Finding 2) therefore stays analytic.
 - **Prior NO-GOs re-listed so they aren't re-proposed without new evidence:** CNN ([#331](https://github.com/DocGerd/hangarfit/issues/331)/[#332](https://github.com/DocGerd/hangarfit/issues/332)), RRT-Connect ([#336](https://github.com/DocGerd/hangarfit/issues/336)), placement-side STRtree ([#540](https://github.com/DocGerd/hangarfit/issues/540)). Graphify-as-doc-nav now joins them.
 - **Corpus-and-tooling-specific conclusion.** This NO-GO is measured against hangarfit's curated, auto-loaded Quick-Ref baseline. For a project *without* one — or a non-Claude assistant (Cursor/Aider/Codex) / new human contributor with no Quick-Ref internalized — Graphify's relative value is higher. The judgment is about *this* repo's substitute, not about Graphify in general.
