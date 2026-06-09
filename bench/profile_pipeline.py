@@ -96,6 +96,14 @@ _SPEED_CEILING_S: dict[str, float] = {
     # CI (the pre-fix run that tripped the old 240 s ceiling peaked at ~269 s; was
     # ~170 s pre-empennage). Tripwire, not a microbenchmark (#499 / #263 / #524).
     "roomy_three_apron": 380.0,
+    # 2026-06-09 (#547): parts²-scaling guard. PLACEMENT-dominated 9-plane fill
+    # (spread ON, 8 restarts; a tiny tow cap ⇒ routing bails fast, so placement is
+    # ~80% of the total). Measured 110.2 s on the bench-gates CI runner (placement
+    # 88.4 s + routing 21.8 s; ~2.3x the ~47 s local). 190 s is ~1.7x that CI median
+    # — matching the spread_off/apron headroom — and still trips on a parts²-blowup
+    # or a #453 memoization revert (both multi-x placement growth). Tripwire, not a
+    # microbenchmark.
+    "full_nine_placement": 190.0,
 }
 
 

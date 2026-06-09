@@ -103,6 +103,24 @@ REGIMES: tuple[Regime, ...] = (
         heavy=True,
     ),
     Regime(
+        # parts²-scaling guard (#547, from spike #540). The all-nine fill maximizes
+        # part-pairs, so the O(planes²·parts²) collision sweep is heaviest here as
+        # the parts model grows (the empennage #518–#520 already added 2 parts per
+        # aircraft). Unlike full_nine_spread_on (heavy, characterises 9-plane
+        # ROUTING), this is a FAST regime that characterises 9-plane PLACEMENT: a
+        # tiny global tow cap makes routing bail fast (NoFeasiblePlanError ⇒ no
+        # committed arc ⇒ paths vacuously valid + deterministic) so placement
+        # dominates the measured wall-clock. Binds on max_restarts (8).
+        key="full_nine_placement",
+        description="9 planes, large hangar, spread ON — placement parts²-scaling guard",
+        scenario=FIXTURES / "solve_all_nine_large_hangar.yaml",
+        seed=1,
+        max_restarts=8,
+        spread=True,
+        n_planes=9,
+        tow_max_total_expansions=300,
+    ),
+    Regime(
         key="tight_six_placeholder",
         description="6 planes, 25x18 m placeholder — tight, routing likely bails",
         scenario=FIXTURES / "solve_fresh_six_planes.yaml",
