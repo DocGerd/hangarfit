@@ -274,6 +274,37 @@ def build_parser() -> argparse.ArgumentParser:
             "the packing-chosen heading. Per-plane override: constraints.<id>.nose_out."
         ),
     )
+    # ── Restart-budget + parallel knobs (#544). --max-restarts bounds the
+    # search by a fixed restart count (cross-machine reproducible, NOT
+    # wall-clock); --workers fans those restarts across processes, which is
+    # byte-identical to serial only in this max_restarts-bound, spread-on regime.
+    solve.add_argument(
+        "--max-restarts",
+        type=int,
+        metavar="N",
+        default=None,
+        dest="max_restarts",
+        help=(
+            "Cap the RR-MC search at N restarts instead of the wall-clock "
+            "--budget (the two gates compose; first to trip wins). A fixed "
+            "restart count makes the result reproducible across machines "
+            "regardless of speed, and is required to enable --workers."
+        ),
+    )
+    solve.add_argument(
+        "--workers",
+        type=int,
+        metavar="N",
+        default=1,
+        dest="workers",
+        help=(
+            "Fan the restarts across N worker processes (#544; default 1 = "
+            "serial). Byte-identical to serial in the --max-restarts + spread "
+            "regime; for any other config it runs serial (a note is printed). "
+            "Speedup is sub-linear and placement-only — most useful on roomy "
+            "spread-on fills with many restarts."
+        ),
+    )
     # ── Tow-planner knobs (grid heuristic default + global fill cap since #336;
     # spike #332). --tow-heuristic defaults to the shipped grid planner and
     # --tow-max-expansions widens the per-plane budget; both RNG-free (ADR-0003).
@@ -607,7 +638,7 @@ def cmd_solve(args: argparse.Namespace) -> int:
     # and `solve` callers pay that cost regardless.
     from hangarfit.loader import load_scenario
     from hangarfit.models import SearchConfig
-    from hangarfit.solver import solve
+    from hangarfit.solver import _parallel_eligible, solve
 
     # Validate output PATTERNs BEFORE solving — a user who typoed
     # --render shouldn't burn the full --budget only to crash on write.
@@ -648,19 +679,33 @@ def cmd_solve(args: argparse.Namespace) -> int:
     # plan_paths=False: the library bundle (SolveResult.plans) is available to
     # callers, but the CLI would just pay the per-plane Hybrid-A* search cost
     # for output it never draws.
+    search_cfg = SearchConfig(
+        spread=args.spread,
+        nose_out=args.nose_out,
+        back_bias_weight=_BACK_FILL_DEFAULT_WEIGHT if args.back_fill else 0.0,
+        max_restarts=args.max_restarts,
+    )
+    # Never silently ignore --workers (#544): if parallel restarts aren't
+    # byte-identical-eligible for this config (no --max-restarts, or --no-spread),
+    # solve() transparently runs serial — say so on stderr so the user isn't
+    # left believing they got the speedup.
+    if args.workers > 1 and not _parallel_eligible(search_cfg, args.workers):
+        print(
+            f"note: --workers {args.workers} ignored (runs serial) — parallel "
+            "restarts need --max-restarts and the spread post-pass (drop "
+            "--no-spread); see --workers help",
+            file=sys.stderr,
+        )
     result = solve(
         scenario,
         budget_s=args.budget,
         alternatives=args.alternatives,
         seed=args.seed,
-        search=SearchConfig(
-            spread=args.spread,
-            nose_out=args.nose_out,
-            back_bias_weight=_BACK_FILL_DEFAULT_WEIGHT if args.back_fill else 0.0,
-        ),
+        search=search_cfg,
         plan_paths=args.render_paths,
         tow_heuristic=args.tow_heuristic,
         tow_max_expansions=args.tow_max_expansions,
+        workers=args.workers,
     )
 
     # Spread-vs-towability fallback (#280 → #402 / F5; ADR-0016). The re-solve

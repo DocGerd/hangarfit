@@ -6,6 +6,23 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Parallel restarts (`solve --workers N`, #544, ADR-0003 amendment).** The
+  RR-MC restart loop can now fan across worker processes — a measured **4.5× at
+  8 workers** on the binding roomy-three spread-on regime (spike #540).
+  `hangarfit solve` gains `--workers N` (default `1` = serial, today's behaviour)
+  and `--max-restarts N` (cap the search at a fixed, cross-machine-reproducible
+  restart count instead of the wall-clock `--budget`). Parallel restarts are
+  **byte-identical to serial** in the `--max-restarts` + spread regime; for any
+  other config `--workers` transparently runs serial and prints a note (never a
+  silent fallback). Determinism is **preserved, not dropped**: as of #544 each
+  restart is seeded by its index, so output is a pure function of
+  `(scenario, seed)` *independent of worker count* — a one-time re-base of the
+  goldens (the determinism contract's deliberate-algorithm-change clause), not a
+  reproducibility loss. The speedup is sub-linear and placement-only (routing is
+  RNG-free and post-merge), so it helps most on roomy spread-on fills with many
+  restarts. `Scenario` and `Layout` are now picklable (#545) to cross the
+  worker boundary.
+
 ### Changed
 
 ### Fixed

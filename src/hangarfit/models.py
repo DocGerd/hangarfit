@@ -569,6 +569,48 @@ class Placement:
             raise ValueError("Placement.plane_id must be non-empty")
 
 
+# ── Proxy-aware pickling for frozen slots dataclasses (#545/#544) ─────────
+#
+# Scenario and Layout both wrap mapping field(s) in MappingProxyType for
+# immutability, but a mappingproxy is not picklable
+# (``TypeError: cannot pickle 'mappingproxy' object``). Both must cross the
+# ProcessPool boundary for #544's parallel restarts — Scenario as the worker
+# input, Layout (inside the returned candidates) as the result. These two
+# helpers are the single implementation both types share, so the wrap list and
+# the unwrap list cannot drift between them. Each type names its proxy fields
+# in a ``_PROXY_FIELDS`` ClassVar (also the source of truth for the
+# construction-time wrap in __post_init__).
+#
+# We iterate over ``__slots__`` (``slots=True`` ⇒ no ``__dict__``) rather than
+# hand-listing fields, so a future field round-trips transparently instead of
+# being silently dropped on the wire — and if that future field is itself
+# unpicklable it fails *loudly* here rather than corrupting a worker.
+#
+# Security: this is an in-process trust boundary — it only round-trips objects
+# we built ourselves across our own pool, never deserializing external/
+# untrusted data, so the usual pickle-RCE caveat does not apply.
+
+
+def _proxy_aware_getstate(obj: object, proxy_fields: tuple[str, ...]) -> dict[str, typing.Any]:
+    """``__getstate__`` for a frozen slots dataclass with MappingProxyType
+    fields: capture every slot, then unwrap the proxy fields to plain dicts."""
+    state: dict[str, typing.Any] = {name: getattr(obj, name) for name in obj.__slots__}  # type: ignore[attr-defined]
+    for name in proxy_fields:
+        state[name] = dict(state[name])  # unwrap mappingproxy → plain dict
+    return state
+
+
+def _proxy_aware_setstate(
+    obj: object, state: dict[str, typing.Any], proxy_fields: tuple[str, ...]
+) -> None:
+    """``__setstate__`` counterpart: restore every slot, re-wrapping the proxy
+    fields so the immutability contract survives the round-trip."""
+    for name, value in state.items():
+        if name in proxy_fields:
+            value = MappingProxyType(dict(value))  # re-wrap on the far side
+        object.__setattr__(obj, name, value)
+
+
 @dataclass(frozen=True, slots=True)
 class Layout:
     """A complete candidate layout: hangar + fleet + placements.
@@ -601,6 +643,12 @@ class Layout:
     hangar: Hangar
     placements: tuple[Placement, ...]
     maintenance_plane: str | None = None
+
+    # The mapping field wrapped in MappingProxyType for immutability — single
+    # source of truth for the construction-time wrap (__post_init__) and the
+    # pickle unwrap/re-wrap (__getstate__/__setstate__, #544 ProcessPool
+    # boundary). See _proxy_aware_getstate. (ClassVar ⇒ not a dataclass field.)
+    _PROXY_FIELDS: typing.ClassVar[tuple[str, ...]] = ("fleet",)
 
     def __post_init__(self) -> None:
         for k, a in self.fleet.items():
@@ -654,7 +702,16 @@ class Layout:
                     f"placements when in maintenance (occupant is treated as away)"
                 )
 
-        object.__setattr__(self, "fleet", MappingProxyType(dict(self.fleet)))
+        for name in self._PROXY_FIELDS:
+            object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
+
+    # Picklable across the #544 ProcessPool boundary — Layout rides back inside
+    # the returned candidates. See _proxy_aware_getstate for the rationale.
+    def __getstate__(self) -> dict[str, typing.Any]:
+        return _proxy_aware_getstate(self, self._PROXY_FIELDS)
+
+    def __setstate__(self, state: dict[str, typing.Any]) -> None:
+        _proxy_aware_setstate(self, state, self._PROXY_FIELDS)
 
 
 @dataclass(frozen=True, slots=True)
@@ -930,40 +987,13 @@ class Scenario:
         for name in self._PROXY_FIELDS:
             object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
 
-    # ── Pickling (#545, enables #544 ProcessPool parallel restarts) ──────
-    #
-    # A Scenario must cross the process boundary so #544 can fan RR-MC
-    # restarts across a ProcessPoolExecutor. But the _PROXY_FIELDS are wrapped
-    # in MappingProxyType (above), and a mappingproxy is not picklable
-    # (``TypeError: cannot pickle 'mappingproxy' object``). So unwrap the
-    # proxies to plain dicts for the wire and re-wrap them on the far side,
-    # which keeps the immutability contract alive across the round-trip
-    # (``slots=True`` ⇒ no ``__dict__``; the state lives in ``__slots__``).
-    #
-    # We iterate over ``__slots__`` rather than hand-listing the fields so a
-    # future field round-trips transparently instead of being silently dropped
-    # on the wire — and if that future field is itself unpicklable it fails
-    # *loudly* here (it won't be unwrapped) rather than corrupting a worker.
-    #
-    # Security: this is an in-process trust boundary — it only round-trips a
-    # Scenario we built ourselves across our own pool, never deserializing
-    # external/untrusted data, so the usual pickle-RCE caveat does not apply.
-    #
-    # NOTE: Layout (the sibling type that may carry results *back* across the
-    # boundary) has the same MappingProxyType/pickle gap and no hooks yet —
-    # #544 must make whatever it returns from a worker picklable too.
-
+    # Picklable across the #544 ProcessPool boundary — the worker input. See
+    # _proxy_aware_getstate for the rationale (shared with Layout, #545/#544).
     def __getstate__(self) -> dict[str, typing.Any]:
-        state: dict[str, typing.Any] = {name: getattr(self, name) for name in self.__slots__}
-        for name in self._PROXY_FIELDS:
-            state[name] = dict(state[name])  # unwrap mappingproxy → plain dict
-        return state
+        return _proxy_aware_getstate(self, self._PROXY_FIELDS)
 
     def __setstate__(self, state: dict[str, typing.Any]) -> None:
-        for name, value in state.items():
-            if name in self._PROXY_FIELDS:
-                value = MappingProxyType(dict(value))  # re-wrap on the far side
-            object.__setattr__(self, name, value)
+        _proxy_aware_setstate(self, state, self._PROXY_FIELDS)
 
 
 @dataclass(frozen=True, slots=True)

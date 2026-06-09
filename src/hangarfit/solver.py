@@ -19,9 +19,12 @@ the current implementation supports:
 
 from __future__ import annotations
 
+import concurrent.futures
 import itertools
 import logging
 import math
+import multiprocessing
+import os
 import random as _random_module
 import secrets
 import sys
@@ -61,6 +64,7 @@ def solve(
     plan_paths: bool = True,
     tow_heuristic: Literal["euclidean", "grid"] = "grid",
     tow_max_expansions: int | None = None,
+    workers: int = 1,
 ) -> SolveResult:
     """Solve a Scenario into up to ``alternatives`` diverse valid Layouts.
 
@@ -100,12 +104,23 @@ def solve(
     with the module per-plane and global fill budgets; pass
     ``tow_heuristic="euclidean"`` to opt out, or a larger ``tow_max_expansions``
     to widen the per-plane budget. All RNG-free, so determinism holds (ADR-0003).
+
+    ``workers`` (default 1 = serial) fans the RR-MC restarts across a
+    ``ProcessPoolExecutor`` when > 1 (#544). The result is **byte-identical** to
+    the serial path in the ``max_restarts``-bound, spread-on regime (see
+    :func:`_parallel_eligible`); for any other config it transparently runs
+    serial, so the worker count never changes the answer. Output is a pure
+    function of ``(scenario, seed)`` either way: since #544 each restart is
+    seeded by its index (an ADR-0003 amendment — a one-time re-base of the
+    goldens, not a determinism drop).
     """
     # Resolve seed and search ONCE here, above the (possible) two-pass fallback
     # below, so both passes share an identical, reproducible seed (#402 / F5):
     # without this, a ``seed=None`` caller would draw a *different* entropy seed
     # for each pass, making the fallback non-reproducible. A concrete seed
     # passed down makes ``_run_solve``'s own resolution a pass-through.
+    if workers < 1:
+        raise ValueError(f"workers must be >= 1 (got {workers})")
     resolved_seed = seed if seed is not None else secrets.randbits(32)
     effective_search = search if search is not None else SearchConfig()
 
@@ -132,6 +147,7 @@ def solve(
             plan_paths=plan_paths,
             tow_heuristic=tow_heuristic,
             tow_max_expansions=tow_max_expansions,
+            workers=workers,
         )
 
         # Spread-vs-towability fallback (#280 → #402 / F5; ADR-0016). The
@@ -163,6 +179,7 @@ def solve(
                 plan_paths=True,
                 tow_heuristic=tow_heuristic,
                 tow_max_expansions=tow_max_expansions,
+                workers=workers,
             )
             if fallback.layouts and any(plan is not None for plan in fallback.plans):
                 return replace(
@@ -171,6 +188,232 @@ def solve(
                 )
 
         return result
+
+
+class _RestartOutput(NamedTuple):
+    """The result of one RR-MC restart, as a pure function of
+    ``(scenario, seed, restart_index)`` (#544). ``candidate`` is the valid,
+    spread-polished basin this restart found (or ``None``); ``best_partial_*``
+    is the lowest-score layout seen in this restart's trajectory (the merge
+    folds these across restarts to reconstruct the global best-partial).
+    ``best_partial_layout`` is ``None`` *only* when initial placement failed to
+    build — that doubly-``None`` shape is how the merge detects a dead restart.
+    """
+
+    candidate: _SpreadCandidate | None
+    best_partial_score: tuple[int, float]
+    best_partial_layout: Layout | None
+
+
+def _restart_rng(seed: int, restart_index: int) -> _random_module.Random:
+    """Per-restart-index RNG (#544 / ADR-0003 amendment). Each restart draws
+    from an *independent* stream keyed by ``(seed, restart_index)`` instead of a
+    single ``Random(seed)`` threaded across restarts — this makes every restart
+    a pure function of its index, so the serial and ProcessPool paths produce
+    byte-identical results. A string seed is deterministic and cross-process
+    stable even under hash randomization (``random`` seeds strings via SHA-512,
+    not ``hash()``); a tuple seed would raise (only int/float/str/bytes seeds
+    are accepted)."""
+    return _random_module.Random(f"{seed}:{restart_index}")
+
+
+def _run_restart(
+    scenario: Scenario,
+    *,
+    restart_index: int,
+    seed: int,
+    search: SearchConfig,
+    spread_scale: float,
+    pinned_planes: frozenset[str],
+    cart_buckets: list[frozenset[str]],
+    start: float,
+    budget_s: float,
+) -> _RestartOutput:
+    """Run one RR-MC restart to natural completion (success / stall / build
+    failure). Pure function of ``(scenario, seed, restart_index, search)`` — the
+    extracted body of the old in-line restart loop, so the serial and parallel
+    drivers share one implementation. ``start``/``budget_s`` bound the inner
+    descent + spread wall-clock the same way the old loop did; the parallel
+    driver passes ``budget_s=inf`` so each worker runs to completion (the
+    ``max_restarts``-bound regime the byte-identity contract is scoped to)."""
+    rng = _restart_rng(seed, restart_index)
+    cart_bucket = _cart_bucket_for_restart(cart_buckets, restart_index=restart_index)
+    try:
+        placements = _initial_placements(scenario=scenario, rng=rng, cart_bucket=cart_bucket)
+    except _LayoutBuildFailure:
+        return _RestartOutput(None, (sys.maxsize, float("inf")), None)
+
+    best_partial_score: tuple[int, float] = (sys.maxsize, float("inf"))
+    best_partial_layout: Layout | None = None
+    candidate: _SpreadCandidate | None = None
+
+    initial_layout = Layout(
+        fleet=scenario.fleet,
+        hangar=scenario.hangar,
+        placements=tuple(placements.values()),
+        maintenance_plane=scenario.maintenance_plane,
+    )
+    current_score = _score(initial_layout)
+    if current_score < best_partial_score:
+        best_partial_score = current_score
+        best_partial_layout = initial_layout
+    last_improved = 0
+
+    for iter_count in range(10000):  # large outer cap; real exit via stall/success
+        if time.monotonic() - start >= budget_s:
+            break
+        if current_score == (0, 0.0):
+            if search.spread:
+                placements = _spread(
+                    placements,
+                    scenario,
+                    rng,
+                    search,
+                    start=start,
+                    budget_s=budget_s,
+                    pinned_planes=pinned_planes,
+                )
+            # Nose-out preference (#263 / ADR-0022): RNG-free, runs after _spread.
+            n_flips = 0
+            if search.nose_out:
+                placements, n_flips = _nose_out(
+                    placements, scenario, search, pinned_planes=pinned_planes
+                )
+            candidate_layout = Layout(
+                fleet=scenario.fleet,
+                hangar=scenario.hangar,
+                placements=tuple(placements.values()),
+                maintenance_plane=scenario.maintenance_plane,
+            )
+            min_gap, energy = _spread_quality(placements, scenario, spread_scale)
+            candidate = _SpreadCandidate(
+                layout=candidate_layout,
+                min_gap=min_gap,
+                energy=energy,
+                restart_index=restart_index,
+                nose_out_flips=n_flips,
+            )
+            break  # found a basin
+
+        step_result = _descent_step(
+            placements=placements,
+            scenario=scenario,
+            rng=rng,
+            search=search,
+            current_score=current_score,
+            pinned_planes=pinned_planes,
+        )
+        if step_result is None:
+            break  # all conflicts on pinned planes
+        placements, new_score, _accepted = step_result
+        if new_score < current_score:
+            last_improved = iter_count
+        current_score = new_score
+
+        if current_score < best_partial_score:
+            best_partial_score = current_score
+            best_partial_layout = Layout(
+                fleet=scenario.fleet,
+                hangar=scenario.hangar,
+                placements=tuple(placements.values()),
+                maintenance_plane=scenario.maintenance_plane,
+            )
+
+        if iter_count - last_improved >= search.k_stall:
+            break  # stall
+
+    return _RestartOutput(candidate, best_partial_score, best_partial_layout)
+
+
+def _merge_restart(
+    out: _RestartOutput,
+    pool: list[_SpreadCandidate],
+    best_partial_score: tuple[int, float],
+    best_partial_layout: Layout | None,
+) -> tuple[tuple[int, float], Layout | None]:
+    """Fold one restart's output into the running ``pool`` + best-partial. Used
+    by BOTH the serial and parallel drivers, so the merge is identical — the key
+    to byte-identity. Strict ``<`` keeps the *earliest* restart on a score tie,
+    matching the old in-order loop; the caller feeds restarts in index order."""
+    if out.best_partial_layout is not None and out.best_partial_score < best_partial_score:
+        best_partial_score = out.best_partial_score
+        best_partial_layout = out.best_partial_layout
+    if out.candidate is not None:
+        pool.append(out.candidate)
+    return best_partial_score, best_partial_layout
+
+
+def _run_restart_worker(
+    args: tuple[Scenario, int, int, SearchConfig, float, frozenset[str], list[frozenset[str]]],
+) -> _RestartOutput:
+    """ProcessPool entry point (module-level so it pickles by reference). Each
+    worker runs its restart inside a fresh ``pose_cache_scope`` (the #453 memo is
+    a pure memo, so a per-worker cache changes speed, not values) and with an
+    infinite budget (run to natural completion — the ``max_restarts`` regime)."""
+    scenario, restart_index, seed, search, spread_scale, pinned_planes, cart_buckets = args
+    with pose_cache_scope():
+        return _run_restart(
+            scenario,
+            restart_index=restart_index,
+            seed=seed,
+            search=search,
+            spread_scale=spread_scale,
+            pinned_planes=pinned_planes,
+            cart_buckets=cart_buckets,
+            start=0.0,
+            budget_s=float("inf"),
+        )
+
+
+def _run_restarts_parallel(
+    scenario: Scenario,
+    *,
+    seed: int,
+    search: SearchConfig,
+    spread_scale: float,
+    pinned_planes: frozenset[str],
+    cart_buckets: list[frozenset[str]],
+    workers: int,
+    n_restarts: int,
+) -> list[_RestartOutput]:
+    """Fan ``n_restarts`` restarts across a spawn ProcessPool and return their
+    outputs **in restart-index order** (NOT completion order). The ordered list
+    lets the caller merge exactly as the serial loop would — byte-identical
+    regardless of which worker finishes first. ThreadPool is useless here:
+    shapely's scalar calls don't release the GIL (#544 / spike #540)."""
+    ctx = multiprocessing.get_context("spawn")
+    max_workers = max(1, min(workers, n_restarts, os.cpu_count() or 1))
+    results: list[_RestartOutput | None] = [None] * n_restarts
+    with concurrent.futures.ProcessPoolExecutor(
+        max_workers=max_workers, mp_context=ctx
+    ) as executor:
+        future_to_index = {
+            executor.submit(
+                _run_restart_worker,
+                (scenario, i, seed, search, spread_scale, pinned_planes, cart_buckets),
+            ): i
+            for i in range(n_restarts)
+        }
+        for future in concurrent.futures.as_completed(future_to_index):
+            results[future_to_index[future]] = future.result()
+    # Every slot is filled (one future per index, each returns a _RestartOutput).
+    return [r for r in results if r is not None]
+
+
+def _parallel_eligible(search: SearchConfig, workers: int) -> bool:
+    """Whether ``workers`` parallel restarts are byte-identical to the serial
+    path for this config (#544). Parallel runs a FIXED ``max_restarts`` restarts
+    and merges; it matches serial only when serial would *also* run them all —
+    i.e. ``max_restarts`` is set (the determinism-scoped regime) and no
+    completion-order-dependent early-exit gate is active (``spread`` on so the
+    pre-#267 first-valid exit is off, and the opt-in spread-stall exit unset).
+    Otherwise the caller runs serial so worker count never changes the result."""
+    return (
+        workers > 1
+        and search.max_restarts is not None
+        and search.spread
+        and search.spread_stall_restarts is None
+    )
 
 
 def _run_solve(
@@ -184,6 +427,7 @@ def _run_solve(
     plan_paths: bool,
     tow_heuristic: Literal["euclidean", "grid"],
     tow_max_expansions: int | None,
+    workers: int = 1,
 ) -> SolveResult:
     """Body of :func:`solve`, run inside an active ``pose_cache_scope`` (#453)."""
     if diversity is None:
@@ -191,14 +435,15 @@ def _run_solve(
     if search is None:
         search = SearchConfig()
 
-    # Resolve seed. Validate eagerly — a bad seed would raise here, at
-    # solve() entry, instead of 30 s into the search loop. ONE
-    # random.Random instance drives every sampling decision (spec §4.8):
-    # initial placement, perturbation, candidate selection, conflict-
-    # plane pick. Cart-bucket round-robin uses the non-random restart
-    # index, so it's deterministic by construction.
+    # Resolve seed. Since #544 each restart builds its OWN
+    # ``random.Random`` keyed by ``(resolved_seed, restart_index)`` (see
+    # ``_restart_rng``) instead of one instance threaded across restarts —
+    # that makes each restart a pure function of its index, which is what lets
+    # the serial and ProcessPool paths agree byte-for-byte (ADR-0003
+    # amendment). The per-restart RNG drives every sampling decision (spec §4.8:
+    # initial placement, perturbation, candidate selection, conflict-plane
+    # pick); cart-bucket round-robin uses the non-random restart index.
     resolved_seed = seed if seed is not None else secrets.randbits(32)
-    rng = _random_module.Random(resolved_seed)
 
     # Diversity-impossible heuristic (spec §4.6): warn (without mutating
     # `alternatives`) when too many planes are pinned to ever yield >1
@@ -252,152 +497,100 @@ def _run_solve(
     #      cross-machine-deterministic exhaustion canaries.
     # Selection of the K best basins happens after the loop completes;
     # the loop itself runs only to budget / max_restarts.
-    while time.monotonic() - start < budget_s and (
-        search.max_restarts is None or restart_index < search.max_restarts
-    ):
-        cart_bucket = _cart_bucket_for_restart(cart_buckets, restart_index=restart_index)
-        try:
-            placements = _initial_placements(scenario=scenario, rng=rng, cart_bucket=cart_bucket)
-        except _LayoutBuildFailure:
-            restart_index += 1
-            continue
-
-        # Initial Layout build.
-        #
-        # No try/except: under current invariants, NO Layout.__post_init__
-        # ValueError is reachable here. `_enumerate_cart_buckets` already
-        # filters bucket assignments that would violate the cart rule;
-        # Scenario invariants enforce pin/on_carts/movement_mode consistency;
-        # `_initial_placements` skips the maintenance plane so the
-        # bay-occupant invariant holds; remaining placements are over
-        # ``scenario.fleet_in − {maintenance_plane}`` (no duplicates, all in
-        # fleet). Any ValueError here would mean a real bug — let it
-        # propagate as one rather than burn the budget on silent restart
-        # absorption.
-        initial_layout = Layout(
-            fleet=scenario.fleet,
-            hangar=scenario.hangar,
-            placements=tuple(placements.values()),
-            maintenance_plane=scenario.maintenance_plane,
+    if _parallel_eligible(search, workers):
+        # Parallel restarts (#544). Run exactly ``max_restarts`` restarts across
+        # a ProcessPool and merge them IN INDEX ORDER, which reproduces the
+        # serial accumulation byte-for-byte. ``_parallel_eligible`` guarantees no
+        # completion-order-dependent early-exit gate is active, so running the
+        # full fixed count matches what serial would do. ``budget_s`` is the
+        # outer guard of the ``max_restarts``-bound regime only; the count is
+        # fixed (the byte-identity contract is scoped to this regime, ADR-0003).
+        assert search.max_restarts is not None  # guaranteed by _parallel_eligible
+        outputs = _run_restarts_parallel(
+            scenario,
+            seed=resolved_seed,
+            search=search,
+            spread_scale=spread_scale,
+            pinned_planes=pinned_planes,
+            cart_buckets=cart_buckets,
+            workers=workers,
+            n_restarts=search.max_restarts,
         )
-        current_score = _score(initial_layout)
-        # Track the initial layout as a best-partial candidate too — it
-        # may be the lowest-score thing we see in this trajectory.
-        if current_score < best_partial_score:
-            best_partial_score = current_score
-            best_partial_layout = initial_layout
-        last_improved = 0
-
-        for iter_count in range(10000):  # large outer cap; real exit via stall/success
-            if time.monotonic() - start >= budget_s:
-                break
-            if current_score == (0, 0.0):
-                if search.spread:
-                    placements = _spread(
-                        placements,
-                        scenario,
-                        rng,
-                        search,
-                        start=start,
-                        budget_s=budget_s,
-                        pinned_planes=pinned_planes,
-                    )
-                # Nose-out preference (#263 / ADR-0022): RNG-free, runs after
-                # _spread and independently of it (also on the spread=False fast
-                # path). Flips parked headings toward the door where valid.
-                n_flips = 0
-                if search.nose_out:
-                    placements, n_flips = _nose_out(
-                        placements, scenario, search, pinned_planes=pinned_planes
-                    )
-                # _spread / _nose_out preserve every Layout invariant; a ValueError
-                # here would be a structural bug, so let it propagate.
-                candidate_layout = Layout(
-                    fleet=scenario.fleet,
-                    hangar=scenario.hangar,
-                    placements=tuple(placements.values()),
-                    maintenance_plane=scenario.maintenance_plane,
-                )
-                min_gap, energy = _spread_quality(placements, scenario, spread_scale)
-                pool.append(
-                    _SpreadCandidate(
-                        layout=candidate_layout,
-                        min_gap=min_gap,
-                        energy=energy,
-                        restart_index=restart_index,
-                        nose_out_flips=n_flips,
-                    )
-                )
-                break  # restart to seek a different basin
-
-            step_result = _descent_step(
-                placements=placements,
-                scenario=scenario,
-                rng=rng,
-                search=search,
-                current_score=current_score,
-                pinned_planes=pinned_planes,
+        for out in outputs:  # already in restart-index order
+            best_partial_score, best_partial_layout = _merge_restart(
+                out, pool, best_partial_score, best_partial_layout
             )
-            if step_result is None:
-                break  # restart (all conflicts on pinned planes)
-            placements, new_score, _accepted = step_result
-            if new_score < current_score:
-                last_improved = iter_count
-            current_score = new_score
+        restart_index = search.max_restarts
+    else:
+        # Serial restarts. Each restart is the same pure ``_run_restart`` the
+        # parallel path uses (per-index reseed), so the two paths are
+        # byte-identical in the eligible regime. The completion-order-dependent
+        # early-exit gates below fire only on the non-eligible configs (spread
+        # off / spread-stall set), which is exactly why those run serial.
+        #
+        # Two independent termination gates; first to trip wins:
+        #   1. Wall-clock budget (`budget_s`) — always present.
+        #   2. Restart count (`search.max_restarts`) — opt-in (spec §4.2);
+        #      `None` preserves wall-clock-only behaviour.
+        while time.monotonic() - start < budget_s and (
+            search.max_restarts is None or restart_index < search.max_restarts
+        ):
+            out = _run_restart(
+                scenario,
+                restart_index=restart_index,
+                seed=resolved_seed,
+                search=search,
+                spread_scale=spread_scale,
+                pinned_planes=pinned_planes,
+                cart_buckets=cart_buckets,
+                start=start,
+                budget_s=budget_s,
+            )
+            restart_index += 1
 
-            # Track best partial AFTER the move (lowest-score Layout ever seen)
-            if current_score < best_partial_score:
-                best_partial_score = current_score
-                best_partial_layout = Layout(
-                    fleet=scenario.fleet,
-                    hangar=scenario.hangar,
-                    placements=tuple(placements.values()),
-                    maintenance_plane=scenario.maintenance_plane,
-                )
+            # A build failure (initial placement couldn't build) produces no
+            # candidate and no partial — skip the merge AND the early-exit gates
+            # (matches the old loop's `continue`, since the pool is unchanged).
+            if out.best_partial_layout is None and out.candidate is None:
+                continue
 
-            if iter_count - last_improved >= search.k_stall:
-                break  # stall — restart
+            best_partial_score, best_partial_layout = _merge_restart(
+                out, pool, best_partial_score, best_partial_layout
+            )
 
-        restart_index += 1
-
-        # Best-of-all-basins selection (#267) only adds value when the spread
-        # post-pass can reorder basins by separation quality. With spread
-        # disabled there is nothing to optimize, so continuing past
-        # `alternatives` diverse valid layouts cannot improve the result —
-        # restore the pre-#267 early exit. This keeps the `--no-spread` fast
-        # path (the speed escape hatch) and gives a seed-deterministic
-        # termination for that mode (independent of wall-clock).
-        if not search.spread:
-            selected_so_far, _ = _select_spread_diverse(pool, alternatives, diversity)
-            if len(selected_so_far) >= alternatives:
-                break
-        elif search.spread_stall_restarts is not None:
-            # F7 (#404): opt-in spread-stagnation early-exit. Reached only when
-            # ``search.spread`` is True (the ``if not search.spread`` arm was
-            # False). Arms only once a COMPLETE selected set exists, so a hard
-            # scenario still gets the full budget to find its first answer and
-            # this only trims the polish-the-incumbent tail. Thereafter, stop
-            # once ``spread_stall_restarts`` consecutive restarts fail to improve
-            # the set's maximin gap by ``spread_stall_epsilon_m``. The metric is
-            # ``min(min_gap)`` over the selected basins (the maximin objective,
-            # ADR-0008) — for ``alternatives == 1`` that is the pool's best gap
-            # and strictly monotonic; for ``alternatives > 1`` it need not be
-            # monotonic (the diversity gate can re-pick the set), but
-            # ``best_stall_gap`` tracks the running max, so the stop stays a sound,
-            # deterministic "no improvement in the last N restarts" signal either
-            # way. Seed-fixed restart sequence + an integer counter ⇒ identical
-            # per-seed across machines, narrowing the #267 timing scope (ADR-0003).
-            selected_so_far, _ = _select_spread_diverse(pool, alternatives, diversity)
-            if len(selected_so_far) >= alternatives:
-                current_stall_gap = min(c.min_gap for c in selected_so_far)
-                if current_stall_gap >= best_stall_gap + search.spread_stall_epsilon_m:
-                    best_stall_gap = current_stall_gap
-                    stall_count = 0
-                else:
-                    stall_count += 1
-                    if stall_count >= search.spread_stall_restarts:
-                        spread_stalled = True
-                        break
+            # Best-of-all-basins selection (#267) only adds value when the spread
+            # post-pass can reorder basins by separation quality. With spread
+            # disabled there is nothing to optimize, so continuing past
+            # `alternatives` diverse valid layouts cannot improve the result —
+            # restore the pre-#267 early exit (the `--no-spread` fast path,
+            # seed-deterministic and independent of wall-clock).
+            if not search.spread:
+                selected_so_far, _ = _select_spread_diverse(pool, alternatives, diversity)
+                if len(selected_so_far) >= alternatives:
+                    break
+            elif search.spread_stall_restarts is not None:
+                # F7 (#404): opt-in spread-stagnation early-exit. Arms only once a
+                # COMPLETE selected set exists, so a hard scenario still gets the
+                # full budget to find its first answer; thereafter, stop once
+                # ``spread_stall_restarts`` consecutive restarts fail to improve
+                # the set's maximin gap by ``spread_stall_epsilon_m``. The metric
+                # is ``min(min_gap)`` over the selected basins (ADR-0008);
+                # ``best_stall_gap`` tracks the running max, so the stop is a
+                # sound, deterministic "no improvement in the last N restarts"
+                # signal for ``alternatives`` >= 1. Seed-fixed restart sequence +
+                # integer counter ⇒ identical per-seed across machines, narrowing
+                # the #267 timing scope (ADR-0003).
+                selected_so_far, _ = _select_spread_diverse(pool, alternatives, diversity)
+                if len(selected_so_far) >= alternatives:
+                    current_stall_gap = min(c.min_gap for c in selected_so_far)
+                    if current_stall_gap >= best_stall_gap + search.spread_stall_epsilon_m:
+                        best_stall_gap = current_stall_gap
+                        stall_count = 0
+                    else:
+                        stall_count += 1
+                        if stall_count >= search.spread_stall_restarts:
+                            spread_stalled = True
+                            break
 
     elapsed = time.monotonic() - start
 
