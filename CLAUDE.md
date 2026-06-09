@@ -193,8 +193,9 @@ mypy src/hangarfit/
 
 # Regenerate the four hash-pinned lockfiles (dev / build / fuzz / pip-tools).
 # Full recipes + rationale: docs/dev/lockfiles.md. You rarely run these by hand —
-# the `*-lockfile-drift` CI jobs PRINT the exact command on drift. Same toolchain
-# for all four: pip-tools 7.5.3 on Python 3.12. Most common (dev deps; no `.in`,
+# the dev/build/fuzz drift jobs PRINT the exact command on drift (pip-tools has no
+# drift job; its rationale lives in requirements-pip-tools.in). Same toolchain for
+# all four: pip-tools 7.5.3 on Python 3.12. Most common (dev deps; no `.in`,
 # regenerated from pyproject.toml after editing [project] deps or the dev extra):
 pip-compile --generate-hashes --no-strip-extras --extra dev -o requirements-dev.txt pyproject.toml
 
@@ -266,8 +267,8 @@ python -m bench.profile_pipeline --heavy --profile  # + heavy regimes + cProfile
 # needed ONLY to change the viewer; pip/build/pytest never invoke npm. The wheel ships
 # the COMMITTED bundle src/hangarfit/_viewer_assets/viewer.js (built from viewer/src/*.ts
 # by esbuild). After editing any viewer/src/*.ts, REBUILD + commit viewer.js in the same
-# change or the `viewer-build-drift` CI guard (#438) fails. Commands + the three-vendoring
-# (r160) and .ts-import details: viewer/README.md; rationale: ADR-0020.
+# change or the `viewer-build-drift` CI guard (#438) fails. Commands: viewer/README.md;
+# rationale: ADR-0020.
 npm --prefix viewer/ ci          # install from the committed lockfile (CI uses this)
 npm --prefix viewer/ run build   # rebuild ../src/hangarfit/_viewer_assets/viewer.js
 npm --prefix viewer/ run typecheck   # tsc --noEmit (strict)
@@ -275,6 +276,10 @@ npm --prefix viewer/ run lint    # eslint (flat config, ESLint 10)
 npm --prefix viewer/ run test    # node --test — pure units in viewer/test/
 # Verify a build WITHOUT clobbering the committed bundle: redirect the output.
 VIEWER_OUTFILE=/tmp/viewer-scratch.js npm --prefix viewer/ run build
+# three stays vendored & external (r160; @types/three + a TEST-ONLY `three` devDep track
+# it — the CI skew-guard ties all three, bump in lockstep). viewer/src uses explicit `.ts`
+# imports (tsconfig allowImportingTsExtensions) so `node --test` resolves them under Node
+# 24 type-stripping; esbuild inlines internal modules, so .ts stays bundle-neutral.
 
 # GitFlow loops
 git switch develop && git pull
