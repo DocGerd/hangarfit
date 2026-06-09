@@ -368,6 +368,19 @@ def test_load_scenario_all_allowed_top_level_keys_load(tmp_path):
     assert "aviat_husky" in s.constraints
 
 
+def test_load_scenario_unknown_key_wins_over_missing_required(tmp_path):
+    """Ordering contract (#516): with BOTH an unknown top-level key AND a missing
+    required field, the unknown key (the author's actual typo) surfaces first — not
+    a confusing 'missing fleet_in'. `fleet_inn` IS the typo'd `fleet_in`, so the
+    required key is absent; the unknown-key check must still win. Pins the
+    check-order so a future reorder can't silently regress it."""
+    from hangarfit.loader import load_scenario
+
+    p = _stage_scenario(tmp_path, "fleet_inn: [aviat_husky]\n")
+    with pytest.raises(LoaderError, match=r"unknown scenario key\(s\)"):
+        load_scenario(p)
+
+
 def test_load_scenario_rejects_quoted_bool_nose_out(tmp_path):
     """`nose_out: "true"` (quoted) would silently be truthy via bool(); rejected
     by the strict _to_bool, like force_on_carts/measured."""
