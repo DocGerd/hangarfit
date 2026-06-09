@@ -202,8 +202,10 @@ pytest -m ""
 # solve_fresh_alternatives_three): `solve` sets rc=0 the instant the first valid
 # basin is found (sub-second), so the verdict no longer races the clock. The bench
 # `--gate` SPEED ceilings (bench/profile_pipeline.py) are wall-clock too and fail
-# on slower CI runners as the model gets heavier — re-baseline them (the empennage
-# pushed the apron regime past its ceiling, #524) rather than chase a phantom
+# on slower CI runners as the model gets heavier — OR when a deliberate determinism
+# re-base changes WHICH layout a regime selects (a different valid layout can
+# tow-route slower). Re-baseline them (empennage→apron ceiling #524; #544's
+# per-restart-index reseed→spread-off ceiling 20→45 s) rather than chase a phantom
 # regression; the bench's validity/path/determinism verdicts bind on max_restarts
 # and stay reproducible.
 
@@ -212,6 +214,13 @@ pytest -m ""
 # derives coverage from the COMBINED run, so marking a test @slow drops it from
 # coverage too. If a @slow test is the only one covering a new code path, the
 # `codecov/patch` PR check fails — keep >=1 non-slow test per new path.
+
+# GOTCHA: coverage.py does NOT measure ProcessPool/spawn WORKER subprocesses, so
+# code that only runs inside a worker (e.g. solver._run_restart_worker, #544)
+# reads as uncovered even when tests DO exercise it via the pool → `codecov/patch`
+# flags it (non-blocking; #561 tracks closing the gap). Cover it by calling the
+# worker fn IN-PROCESS in a unit test (the worker is usually a thin wrapper; or
+# wire coverage `concurrency=multiprocessing` + COVERAGE_PROCESS_START).
 
 # Lint + format check (CI also runs these)
 ruff check src/ tests/
