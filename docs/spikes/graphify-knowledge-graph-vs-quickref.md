@@ -19,7 +19,7 @@ The spike question (from #569): *does querying a Graphify graph over `docs/` + `
 
 3. **The "always reconfirm against source" mandate erases any acted-upon win.** #569 permits adoption only as a *"navigation hint, always reconfirmed against source."* Since you read the source ADR/code anyway, Graphify would only replace the *routing* step — which the Quick-Ref already does deterministically for 0 tokens. **No net saving on any answer you act on.**
 
-4. **The one honest steelman is code-graph, not doc-nav — and `ripgrep` already serves it.** Graphify's deterministic value (AST call-graph, `EXTRACTED` confidence-1.0 edges) genuinely answers questions the flat Quick-Ref cannot ("what calls `_spread`", "every reference to the det-(−1) trap", "blast radius of `aircraft_parts_world`"). But on a 15-file single-language Python repo, **`rg` answers all three in ≤11 ms, deterministically, at zero cost / zero staleness / zero install** (measured below). Graphify would have to beat a tool already at the cost/freshness floor.
+4. **The one honest steelman is code-graph, not doc-nav — and `ripgrep` already serves it.** Graphify's deterministic value (AST call-graph, `EXTRACTED` confidence-1.0 edges) genuinely answers questions the flat Quick-Ref cannot ("what calls `_spread`", "every reference to the det-(−1) trap", "blast radius of `aircraft_parts_world`"). But on a 15-file single-language Python repo, **`rg` answers all three in milliseconds (11 ms for the `_spread` query), deterministically, at zero cost / zero staleness / zero install** (commands shown below). Graphify would have to beat a tool already at the cost/freshness floor.
 
 | Axis the #569 gate measures | Verdict | Why (measured) |
 |---|---|---|
@@ -79,7 +79,7 @@ The decisive observation is *why* it's correct. **Three of the eleven are right 
 | Question | Stale headline a single read would surface | Source of truth |
 |---|---|---|
 | Reverse-cost factor (ADR-0010) | Body prominently states `_REVERSE_COST_FACTOR = 1.5` | **Removed** by the #480 amendment → `CUSP_PENALTY = 10.0` ("fewest-moves"), `towplanner.py:545`; `_REVERSE_COST_FACTOR` is gone |
-| L-shaped notch (ADR-0018) | Closes with *"Implementation sketch (NOT implemented in this spike)"* | **Shipped** via #528 — `collisions.py:106-130` `floor.covers` / `structural_notch` |
+| L-shaped notch (ADR-0018) | Body still carries *"Implementation sketch (NOT implemented in this spike)"* deep at the bottom (the weakest of the three — the ADR's **status line is now `Accepted`** with a top-of-file Implementation note, so a status-aware reader is safe; only a naive prose extractor that ignores the status line would surface the buried string) | **Shipped** via #528 — `collisions.py:127/130` `floor.covers` / `structural_notch` |
 | Determinism contract (ADR-0003) | *"Status: Accepted / bit-identical under seed"* | **Narrowed** by the #267/#404/#544 amendments to the `max_restarts`-bound regime |
 
 A prose-extraction graph keys on exactly this body text. Its `INFERRED`/`AMBIGUOUS` edges would encode the **stale** value (`1.5`, "not implemented", bare "bit-identical") — **wrong-vs-source on the project's highest-stakes invariants** (a tow-cost model, a collision rule guarded by a subagent, the determinism contract). This fails #569's "zero wrong answers" bar at precisely the questions where being wrong is most expensive. *(Note: the auto-memory can carry the same stale `1.5` — which is exactly why the discipline is "reconfirm against source," and exactly why a second probabilistic layer adds risk without adding truth.)*
@@ -94,13 +94,13 @@ The strongest *fair* GO case is **not** doc-nav. It is sub-file, code-structure 
 
 But the Quick-Ref isn't the competitor for code questions — **`ripgrep` is**, and on a 15-file single-language Python repo it is already at the floor:
 
-| Steelman query | `ripgrep` result | Cost |
-|---|---|---|
-| *what calls `_spread`?* | All call sites: `solver.py:272/293/1260/1269/1380`, `metrics.py:70` mirror, … | **11 ms**, deterministic |
-| *every reference to the det-(−1) trap / ADR-0002* | Enumerates every file in one call | <50 ms |
-| *blast radius of `aircraft_parts_world`* | All 18 files (6 src + 12 test) listed | one `rg -l` |
+| Steelman query | `ripgrep` invocation | Result | Cost |
+|---|---|---|---|
+| *what calls `_spread`?* | `rg -n '_spread' src/ --type py` | The call (`solver.py:272`), its `def` (`:1380`), sibling `_spread_*` symbols (`:293/1260/1269`), the `metrics.py:70` mirror — a textual superset | **11 ms**, deterministic |
+| *every reference to the det-(−1) trap / ADR-0002* | `rg -l 'ADR-0002\|sign-flip' .` | Every file, one call | <50 ms |
+| *blast radius of `aircraft_parts_world`* | `rg -l 'aircraft_parts_world' src/ tests/ --type py` | All 18 Python files (6 src + 12 test); `rg -l` without `--type py` adds 1 yaml fixture = 19 | one call |
 
-`rg` is **zero-install, zero-API, zero-staleness, deterministic, and already used constantly.** Graphify's code graph is *semantically* richer (it distinguishes a call from a comment mention, and resolves structure `rg` can't), but for a 10.5K-LOC single-language repo under heavy naming-convention discipline that precision gap is small — and it is dwarfed by `rg`'s advantages on cost, freshness, determinism, and *not adding a dependency*. To justify adoption Graphify must beat **`rg`**, not the Quick-Ref. It doesn't clear that bar here.
+`rg` returns a textual **superset** (the `_spread` query above also surfaces the `def`, sibling `_spread_*` symbols, and a docstring mirror — not a pure call-set), so it is *less precise* than Graphify's AST call-graph, which distinguishes a call from a mention and resolves structure `rg` can't. **That imprecision is exactly the niche Graphify could fill.** But `rg` is **zero-install, zero-API, zero-staleness, deterministic, and already used constantly**, and for a 10.5K-LOC single-language repo under heavy naming-convention discipline the false-positive filtering is trivial-by-eye. The precision gap is real but small, and it is dwarfed by `rg`'s advantages on cost, freshness, determinism, and *not adding a dependency*. To justify adoption Graphify must beat **`rg`**, not the Quick-Ref — and it doesn't clear that bar here.
 
 ### 5. Operational frictions confirmed against the repo
 
@@ -122,7 +122,7 @@ The code-graph niche (Finding 4) is the only honest opening, and it is **out of 
 
 > **Gate:** a scoped, **free pass-1-only** (`graphify . ` AST graph, no paid extraction, run in a throwaway `/tmp` checkout, no `.claude` mutation) head-to-head showing the `EXTRACTED` code-graph answers *what-calls-`_spread`* / *every-ref-to-ADR-0002* / *`aircraft_parts_world` blast-radius* **measurably faster or more reliably than `rg`/`ripgrep`** on this repo. **Do not file an implementation issue until that probe beats `ripgrep`** — not merely the Quick-Ref.
 
-If (and only if) it clears that gate, the verdict becomes **PARTIAL**: adopt Graphify's **code** graph as a **complement** to — never a replacement for — the Quick-Ref, with the prose/diagram pass-2 left off (paid + probabilistic + the stale-headline hazard). Replacing the Quick-Ref is never on the table: it would regress the ~35 curated lookups it pre-answers for 0 tokens.
+If (and only if) it clears that gate, the verdict becomes **PARTIAL**: adopt Graphify's **code** graph as a **complement** to — never a replacement for — the Quick-Ref, with the prose/diagram pass-2 left off (paid + probabilistic + the stale-headline hazard). Replacing the Quick-Ref is never on the table: it would regress the curated lookups it pre-answers for 0 tokens (its 19 rows route to dozens of distinct destinations).
 
 This spike does **not** file that issue; the gate is unmet pending the probe, and the user can greenlight the free trial if the code-graph niche is worth chasing.
 
