@@ -93,9 +93,26 @@ class TestSolveParallelFlags:
     def test_eligible_parallel_no_note_and_byte_identical(self, capsys):
         """Eligible regime (``--max-restarts`` + spread on): ``--workers >1``
         prints NO note and yields byte-identical ``--json`` output to
-        ``--workers 1``. Binds on ``max_restarts`` (4), so load-independent."""
+        ``--workers 1``. Binds on ``max_restarts`` (4), so load-independent.
+
+        The generous explicit ``--budget`` makes that max_restarts-binding
+        intent self-documenting and immune to per-restart cost growth: if the
+        budget ever truncated the SERIAL run below 4 restarts (the parallel
+        branch always runs the full fixed count), the two runs would diverge —
+        so the budget must stay non-binding here, not be left to the default.
+        """
         fixture = str(FIXTURES_DIR / "solve_fresh_alternatives_three.yaml")
-        base = ["solve", fixture, "--max-restarts", "4", "--seed", "42", "--json"]
+        base = [
+            "solve",
+            fixture,
+            "--max-restarts",
+            "4",
+            "--budget",
+            "600",
+            "--seed",
+            "42",
+            "--json",
+        ]
 
         rc1 = main([*base, "--workers", "1"])
         serial = capsys.readouterr()
@@ -108,8 +125,9 @@ class TestSolveParallelFlags:
         assert "note:" not in parallel.err
 
         # Byte-identical placements end-to-end through the CLI's JSON surface.
-        # The ONLY field that legitimately differs is wall-clock timing
-        # (``*_time_s``); strip it and everything else — placements, seed,
+        # The only field that legitimately differs is wall-clock timing (today
+        # just ``wall_time_s``; the ``*_time_s`` suffix match is defensive
+        # against future timing fields). Everything else — placements, seed,
         # restarts_attempted, basins — must match exactly.
         def _strip_timing(obj):
             if isinstance(obj, dict):
