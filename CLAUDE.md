@@ -138,11 +138,7 @@ After cloning and running `claude`, use the `/mcp` command. The `github` and `co
 
 ## Worktrees
 
-Allowed but not the default. Use only when two feature branches need parallel work (e.g., long-running test suite while writing the visualizer). For sequential issue flow, plain branch checkout is simpler.
-
-**Worktree gotcha:** the editable install's `.pth` points at the **main** checkout, so a bare `pytest` / `python` / `hangarfit` run *inside* a worktree imports the wrong `src` (the PostToolUse hook's pytest included) — run `PYTHONPATH=$PWD/src python -m pytest …` instead. There is no `__main__.py` (the CLI entry point is `hangarfit.cli:main`), so `python -m hangarfit` fails — invoke the CLI as `PYTHONPATH=$PWD/src python -c "from hangarfit.cli import main; main(['view', …])"`.
-
-**`EnterWorktree` base-ref trap:** this *clone's* local `origin/HEAD` ref is unset (the remote default is `develop`, but the clone didn't set the local tracking ref), so the native `EnterWorktree` tool falls back to the wrong base — observed branching off `origin/main` (the last release) instead of `develop`, silently producing a feature branch missing recent develop work (and `worktree.baseRef head` was *not* honored). One-shot remedy: `git remote set-head origin -a` (points local `origin/HEAD` at `develop`). Per-worktree safety net: right after `EnterWorktree`, verify with `git merge-base --is-ancestor origin/develop HEAD` (must succeed); if it doesn't, `git fetch origin develop && git rebase origin/develop` *before* working/pushing (clean while the branch is unpushed). The native tool's auto-cleanup also won't delete a branch you `git branch -m`-renamed, so `git branch -d` it after the worktree is removed.
+Allowed but not the default — use only for genuinely parallel feature work; plain branch checkout is simpler for sequential issues. Two gotchas if you do: **(1)** the editable install's `.pth` points at the **main** checkout, so a bare `pytest`/`python`/`hangarfit` *inside* a worktree imports the wrong `src` (the PostToolUse hook's pytest included) — use `PYTHONPATH=$PWD/src python -m …` (there is no `__main__.py`; the entry point is `hangarfit.cli:main`). **(2)** `EnterWorktree` branches off the wrong base — this clone's local `origin/HEAD` is unset, so it falls back to `origin/main` not `develop`; fix once with `git remote set-head origin -a`, then per-worktree verify `git merge-base --is-ancestor origin/develop HEAD` (else `git fetch origin develop && git rebase origin/develop` before pushing). The native auto-cleanup won't delete a `git branch -m`-renamed branch, so `git branch -d` it after the worktree is removed.
 
 ---
 
@@ -155,9 +151,7 @@ Vulnerability reporting lives in [SECURITY.md](SECURITY.md). The rationale for t
 ## Open questions / TBD before trusting output
 
 - **`data/` is synthetic.** Every aircraft (`measured: false` in `fleet.yaml`) and the hangar in `data/hangar.yaml` are eyeballed placeholders — kept deliberately as the stable demo/test fixtures.
-- **Real data lives in [`examples/herrenteich/`](examples/herrenteich/README.md)** (since #426): the DWG-measured hangar (15.08 × 31.76 m, 13.46 m door) and the eight usual occupants on published-spec, second-source-verified dimensions (still `measured: false` — published specs, not on-site). Two gaps it surfaced — one modelling, one solver-gate bug — are **both now fixed**:
-  - **The real hangar is L-shaped — now modelled ([ADR-0018](docs/adr/0018-non-rectangular-hangar-footprint.md), epic #527).** Its back-right office **notch** (~2.36 × 9.10 m, `x ∈ [12.72, 15.08]`, `y ∈ [22.66, 31.76]`) is the `structural_notches` block in [`hangar.yaml`](examples/herrenteich/hangar.yaml). `collisions.check` and the solver reject any layout that parks — or overhangs — a plane in it: a `floor.covers` containment test that also fixes a latent edge-crossing bug (#528). The epic extends this to tow-path notch-avoidance (#529) and the 3D viewer's L-shaped footprint (#530). Spike **#424** produced the design.
-  - **`hangarfit solve`'s glider area-gate (#425 — fixed).** The trivial-infeasibility gate now sums actual *part footprints*, not bounding boxes, so an 18 m-span glider no longer trips it (Σ part-area « floor) and glider fleets reach the search instead of being false-rejected. (The Herrenteich `layout.yaml` was still built by driving `collisions.check` directly; whether `solve` finds an all-eight layout *within budget* is a separate search-feasibility question.)
+- **Real data lives in [`examples/herrenteich/`](examples/herrenteich/README.md)** (since #426): the DWG-measured L-shaped hangar (15.08 × 31.76 m, 13.46 m door) and the eight published-spec occupants (still `measured: false`). The two gaps it surfaced are **both fixed** — the back-right office **notch** is modelled as a `structural_notches` keep-out ([ADR-0018](docs/adr/0018-non-rectangular-hangar-footprint.md), epic #527), and `solve`'s trivial-infeasibility glider area-gate now sums part footprints, not bounding boxes (#425), so glider fleets reach the search.
 - **Placeholder hangar can't fit the full fleet.** The placeholder hangar in [`data/hangar.yaml`](data/hangar.yaml) — widened 18 → 22 m for the #519/#520 empennage tail surfaces, which consume lateral room — is still too tight to fit every aircraft at once under the placeholder clearance budget. The default [`examples/layouts/example.yaml`](examples/layouts/example.yaml) is a deliberate subset (5 parked + the Scheibe in the maintenance bay); test fixtures that need the full fleet use [`tests/fixtures/test_hangar_large.yaml`](tests/fixtures/test_hangar_large.yaml). The `max_restarts` exhausted-budget determinism canary keeps its own dedicated tight 18 m fixture (`solve_canary_six_planes_tight.yaml`) so demo-hangar tweaks can't re-break it.
 
 The collision checker will run on the `data/` placeholders, but until those are real, output on them is illustrative only (the `examples/herrenteich/` hangar is real; its fleet is published-spec).
@@ -178,49 +172,13 @@ pytest -m slow
 # Or run everything regardless of marker
 pytest -m ""
 
-# GOTCHA: the wall-clock determinism canaries (the `serial`-marked double-solve
-# tests in tests/test_solver_canaries.py, tests/test_solver_search.py, and
-# tests/test_solver_towplanner.py) use a wall-clock `budget_s` (not
-# max_restarts) and run solve() twice in-process, so under heavy concurrent CPU
-# load the two solves can complete different restart counts and the result can
-# diverge. Since #492 they carry the `serial` marker and CI runs them in a
-# dedicated serial pass OUTSIDE the `pytest -n auto` xdist pool. The marker only
-# protects the CI invocation: a local bare `pytest -n auto` still drops them into
-# the parallel pool and can re-expose the flake — to mirror CI locally run
-# `pytest -n auto -m "not slow and not serial"` then `pytest -m "serial and not
-# slow"`, or just re-run a flagged canary in isolation before treating a failure
-# as a regression. The max_restarts-scoped companion
-# (test_solve_deterministic_best_partial_under_max_restarts) is the
-# load-independent determinism check.
-
-# GOTCHA: the same wall-clock fragility bites NON-serial tests too, and worsens as
-# the model gains parts. A `solve`/`view` smoke test that runs a HARD scenario
-# (6-/9-plane fill) under a wall-clock `--budget` can exhaust the budget under
-# `pytest -n auto` CI load → rc=1 → flake (the #519/#520 empennage's extra parts
-# tipped four CLI solve tests over — fixed in #522). For output-format /
-# flag-acceptance smokes, use an EASY fixture (scenario_minimal /
-# solve_fresh_alternatives_three): `solve` sets rc=0 the instant the first valid
-# basin is found (sub-second), so the verdict no longer races the clock. The bench
-# `--gate` SPEED ceilings (bench/profile_pipeline.py) are wall-clock too and fail
-# on slower CI runners as the model gets heavier — OR when a deliberate determinism
-# re-base changes WHICH layout a regime selects (a different valid layout can
-# tow-route slower). Re-baseline them (empennage→apron ceiling #524; #544's
-# per-restart-index reseed→spread-off ceiling 20→45 s) rather than chase a phantom
-# regression; the bench's validity/path/determinism verdicts bind on max_restarts
-# and stay reproducible.
-
-# GOTCHA: CI runs the suite in two passes (#492) — `pytest -n auto -m "not slow
-# and not serial"` then `pytest -m "serial and not slow" --cov-append` — and
-# derives coverage from the COMBINED run, so marking a test @slow drops it from
-# coverage too. If a @slow test is the only one covering a new code path, the
-# `codecov/patch` PR check fails — keep >=1 non-slow test per new path.
-
-# GOTCHA: coverage.py does NOT measure ProcessPool/spawn WORKER subprocesses, so
-# code that only runs inside a worker (e.g. solver._run_restart_worker, #544)
-# reads as uncovered even when tests DO exercise it via the pool → `codecov/patch`
-# flags it (non-blocking). #561 closed this for the #544 worker by calling the
-# worker fn IN-PROCESS in a unit test (the worker is usually a thin wrapper; or
-# wire coverage `concurrency=multiprocessing` + COVERAGE_PROCESS_START).
+# GOTCHA (test flakes + CI quirks) → docs/dev/test-flakes-and-ci-gotchas.md.
+# Read it before treating a determinism/coverage CI failure as a regression: the
+# `serial` wall-clock double-solve canaries (run OUTSIDE `-n auto`, #492); the same
+# fragility in non-serial smokes + the wall-clock bench `--gate` speed ceilings
+# (re-baseline on a deliberate determinism re-base, don't chase a phantom); two-pass
+# coverage (@slow drops from the combined run — keep >=1 non-slow test per new
+# path); and the ProcessPool/spawn worker coverage blind spot (#561).
 
 # Lint + format check (CI also runs these)
 ruff check src/ tests/
@@ -233,61 +191,13 @@ ruff format src/ tests/
 # Type check
 mypy src/hangarfit/
 
-# Regenerate the CI hash-pinned dev-deps lockfile. Required after
-# editing EITHER `[project] dependencies` OR
-# `[project.optional-dependencies] dev` in pyproject.toml — the lockfile
-# is generated with `--extra dev`, which covers BOTH groups, so both
-# need to be in sync. CI's `pip install -e . --no-deps` will silently
-# skip a runtime dep that's in pyproject.toml but missing from the
-# lockfile (ImportError surfaces only at test-collection time). The
-# `lockfile-drift` CI job (see .github/workflows/ci.yml) enforces this
-# invariant on every PR by regenerating the lockfile against the
-# committed pyproject.toml and comparing the resolved
-# `package==version` set. The job pins `pip-tools==7.5.3` on Python
-# 3.12; use the same pip-tools version locally so the lockfile header
-# and the regenerated content stay consistent with what the guard
-# expects. `--no-strip-extras` is explicit so a future pip-tools 8.0
-# default flip cannot silently prune transitive extras. Run on the
-# single supported Python (3.12) — the interpreter the lockfile is
-# resolved against and the only version CI tests.
+# Regenerate the four hash-pinned lockfiles (dev / build / fuzz / pip-tools).
+# Full recipes + rationale: docs/dev/lockfiles.md. You rarely run these by hand —
+# the dev/build/fuzz drift jobs PRINT the exact command on drift (pip-tools has no
+# drift job; its rationale lives in requirements-pip-tools.in). Same toolchain for
+# all four: pip-tools 7.5.3 on Python 3.12. Most common (dev deps; no `.in`,
+# regenerated from pyproject.toml after editing [project] deps or the dev extra):
 pip-compile --generate-hashes --no-strip-extras --extra dev -o requirements-dev.txt pyproject.toml
-
-# Regenerate the hash-pinned BUILD-toolchain lockfile. Source is
-# `requirements-build.in` (build + setuptools + wheel). Required after
-# bumping any of those or after `packaging` moves in requirements-dev.txt
-# (the `.in` constrains shared transitive deps via `-c requirements-dev.txt`
-# so the two lockfiles can be installed together in CI without skew).
-# `--allow-unsafe` is REQUIRED — pip-tools classifies setuptools/wheel as
-# "unsafe to pin" and comments them out by default, which would defeat the
-# `--no-build-isolation` install in ci.yml. `--no-strip-extras` mirrors the
-# dev lockfile (8.0 default-flip defense). The `build-lockfile-drift` CI
-# job enforces this on every PR. Same toolchain as the dev lockfile:
-# pip-tools 7.5.3 on Python 3.12.
-pip-compile --generate-hashes --no-strip-extras --allow-unsafe -o requirements-build.txt requirements-build.in
-
-# Regenerate the hash-pinned FUZZING-toolchain lockfile. Source is
-# `requirements-fuzz.in` (Atheris only — Hypothesis lives in the dev extra).
-# Atheris is installed solely by the nightly fuzz workflow, never by
-# `pip install -e .[dev]`, so it is kept out of pyproject.toml. The `.in`
-# constrains shared transitives via `-c requirements-dev.txt` so the nightly
-# job can install the dev and fuzz lockfiles together without skew. The
-# `fuzz-lockfile-drift` CI job enforces this on every PR. Same toolchain as
-# the other lockfiles: pip-tools 7.5.3 on Python 3.12.
-pip-compile --generate-hashes --no-strip-extras -o requirements-fuzz.txt requirements-fuzz.in
-
-# Regenerate the hash-pinned PIP-TOOLS bootstrap lockfile. Source is
-# `requirements-pip-tools.in` (a single `pip-tools==7.5.3` pin). This is
-# the toolchain the two lockfile-drift guard jobs install to regenerate
-# the dev + build lockfiles above — hash-pinning it closes the residual
-# `pipCommand not pinned by hash` Scorecard finding on the bare
-# `pip install pip-tools==7.5.3` the guards used to run (#224). Required
-# after bumping the pip-tools pin (do that here AND in the `.in`, in
-# lockstep with the version named in the two regeneration commands
-# above). `--allow-unsafe` is REQUIRED — pip-tools depends on pip +
-# setuptools, which pip-tools comments out by default; `--require-hashes`
-# is all-or-nothing, so an un-pinned transitive dep would make the
-# guard-job install fail. Same toolchain: pip-tools 7.5.3 / Python 3.12.
-pip-compile --generate-hashes --no-strip-extras --allow-unsafe -o requirements-pip-tools.txt requirements-pip-tools.in
 
 # CI: GitHub Actions runs `pytest` on Python 3.12 for PRs into
 # develop/main (see .github/workflows/ci.yml). CI installs dev deps
@@ -344,42 +254,32 @@ google-chrome --headless=new --use-gl=angle --use-angle=swiftshader \
 hangarfit solve tests/fixtures/scenario_minimal.yaml --render out.png --render-paths --apron-depth auto
 hangarfit view tests/fixtures/valid_left_side_nesting.yaml -o out.html --apron-depth 6
 
-# Solve→tow profiling harness (DEV/CI-ONLY, #381 — top-level `bench/`, NOT shipped
-# in the wheel; `pip install` / `python -m build` / pytest never touch it). Splits
-# each regime's wall-clock into placement vs routing and asserts validity /
-# path-validity / determinism per regime, exiting non-zero on any failure (the
-# substrate for #403/F6's CI gates: since #564 the no-`--gate` correctness run is a
-# REQUIRED `bench correctness` check, while the `--gate` SPEED job stays
-# non-required). Binds on `max_restarts`, NOT wall-clock, so the
-# work — and thus the numbers — is reproducible run-to-run and machine-to-machine.
-# Findings + the ranked speedup levers: docs/spikes/solve-tow-profiling.md (and
-# bench/README.md). GOTCHA: only the FAST regimes faithfully mirror
-# `solve(plan_paths=True)`; the heavy regimes pass a tighter global tow cap to
-# bound the un-routable case, so their routing time is a harness-specific lower bound.
+# Solve→tow profiling harness (DEV/CI-ONLY, #381 — top-level `bench/`, never in the
+# wheel). Binds on `max_restarts` (reproducible). The no-`--gate` correctness run is
+# a REQUIRED `bench correctness` check; the `--gate` SPEED job is non-required (#564).
+# Rationale + ranked speedup levers + the heavy-regime caveat (heavy regimes use a
+# tighter tow cap, so their routing time is a lower bound): bench/README.md and
+# docs/spikes/solve-tow-profiling.md.
 python -m bench.profile_pipeline                    # fast regimes: timing + correctness verdicts
 python -m bench.profile_pipeline --heavy --profile  # + heavy regimes + cProfile stage breakdown
 
-# Viewer TypeScript toolchain (DEV/CI-ONLY — ADR-0020, top-level `viewer/`). You
-# need Node ONLY to change the viewer; `pip install` / `python -m build` / pytest
-# never invoke npm. The wheel ships the COMMITTED bundle
-# src/hangarfit/_viewer_assets/viewer.js, built FROM viewer/src/*.ts by esbuild.
-# Node is pinned via viewer/.nvmrc; use `npm --prefix viewer/ …` (Pattern A).
+# Viewer TypeScript toolchain (DEV/CI-ONLY — ADR-0020, top-level `viewer/`). Node is
+# needed ONLY to change the viewer; pip/build/pytest never invoke npm. The wheel ships
+# the COMMITTED bundle src/hangarfit/_viewer_assets/viewer.js (built from viewer/src/*.ts
+# by esbuild). After editing any viewer/src/*.ts, REBUILD + commit viewer.js in the same
+# change or the `viewer-build-drift` CI guard (#438) fails. Commands: viewer/README.md;
+# rationale: ADR-0020.
 npm --prefix viewer/ ci          # install from the committed lockfile (CI uses this)
 npm --prefix viewer/ run build   # rebuild ../src/hangarfit/_viewer_assets/viewer.js
 npm --prefix viewer/ run typecheck   # tsc --noEmit (strict)
 npm --prefix viewer/ run lint    # eslint (flat config, ESLint 10)
-npm --prefix viewer/ run test    # node --test — pure units (affine/anchors/timeline) in viewer/test/
-# After editing any viewer/src/*.ts, REBUILD and commit viewer.js in the same change
-# or the `viewer-build-drift` CI guard (#438, live since the #439 port) will fail —
-# it rebuilds the bundle and diffs it against the committed viewer.js. To verify
-# a build WITHOUT clobbering the committed bundle, redirect the output:
+npm --prefix viewer/ run test    # node --test — pure units in viewer/test/
+# Verify a build WITHOUT clobbering the committed bundle: redirect the output.
 VIEWER_OUTFILE=/tmp/viewer-scratch.js npm --prefix viewer/ run build
-# three stays vendored & external (resolved by viewer.py's import-map). @types/three
-# AND a TEST-ONLY `three` devDep (node --test runs the real three; esbuild keeps it
-# external, never in the wheel) are both 0.160.x — the CI skew guard ties all three to
-# vendored r160; bump in lockstep. GOTCHA: viewer/src internal imports use explicit
-# `.ts` extensions (tsconfig allowImportingTsExtensions) so node --test resolves them
-# under Node 24 type-stripping; esbuild inlines internal modules, so .ts is bundle-neutral.
+# three stays vendored & external (r160; @types/three + a TEST-ONLY `three` devDep track
+# it — the CI skew-guard ties all three, bump in lockstep). viewer/src uses explicit `.ts`
+# imports (tsconfig allowImportingTsExtensions) so `node --test` resolves them under Node
+# 24 type-stripping; esbuild inlines internal modules, so .ts stays bundle-neutral.
 
 # GitFlow loops
 git switch develop && git pull
