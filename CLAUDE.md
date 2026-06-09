@@ -93,7 +93,7 @@ Use the best-fitted model for the task. The model class to pick is "as much reas
 - **`pr-review-toolkit:silent-failure-hunter`** — for PRs touching loader or collision code.
 - **`pr-review-toolkit:type-design-analyzer`** — when `models.py` changes.
 - **`geometry-invariant-guard`** — for any PR touching `src/hangarfit/geometry.py` or `src/hangarfit/collisions.py`; guards the coordinate-transform sign-flip trap (see [ADR-0002](docs/adr/0002-determinant-minus-one-transform.md)).
-- **`determinism-guard`** — for any PR touching `src/hangarfit/solver.py` or `src/hangarfit/towplanner.py`; guards the byte-identical-plan determinism contract (same scenario + seed → bit-identical output, `max_restarts`-scoped per the #267 amendment), runs the solver twice on a fixed seed and diffs (see [ADR-0003](docs/adr/0003-rr-mc-solver-algorithm.md)).
+- **`determinism-guard`** — for any PR touching `src/hangarfit/solver.py` or `src/hangarfit/towplanner.py` (including the #544 `--workers` parallel-restart fan-out and `tests/test_solver_parallel.py`); guards the byte-identical-plan determinism contract (same scenario + seed → bit-identical output, `max_restarts`-scoped per the #267 amendment; and parallel-restart ≡ serial in the `_parallel_eligible` regime per the #544 amendment), runs the solver twice on a fixed seed and diffs (see [ADR-0003](docs/adr/0003-rr-mc-solver-algorithm.md)).
 - **`feature-dev:code-architect`** — only for genuinely novel design decisions, not routine implementation.
 
 Most coding goes direct in-session. Subagent dispatch is for review work and isolated heavy lifts.
