@@ -82,7 +82,7 @@ budget, the bloat is not from over-long index lines (e.g. too MANY entries); sto
 and report that — this skill only compacts over-long lines, it does not delete
 entries:
 ```
-MEMORY.md is over budget (<BYTES_BEFORE> bytes) but no index line exceeds 180 chars, so the size is from the NUMBER of entries, not over-long ones. This skill won't delete entries — compact by archiving stale topics by hand.
+MEMORY.md is over budget (<BYTES_BEFORE> bytes) but no index line exceeds 180 bytes, so the size is from the NUMBER of entries, not over-long ones. This skill won't delete entries — compact by archiving stale topics by hand.
 ```
 
 ## Step 4 — Plan each move (no writes yet)
@@ -115,7 +115,7 @@ For each over-long index line, in the order above, plan a LOSSLESS move:
    prefix verbatim, then a NEW hook of ≤ ~120 chars distilled from `detail` that
    still names the **live status** (dates, the current PR/issue state, the key
    decision) — enough that the one-liner is still useful in the loaded index. The
-   whole rewritten line must be < 180 characters. Do NOT invent facts: the hook is
+   whole rewritten line must be < 180 bytes. Do NOT invent facts: the hook is
    a faithful compression of the existing detail, nothing new.
 4. **Compose the topic-file append.** The FULL original `detail` (verbatim, so
    nothing is lost) under a dated provenance heading appended to the topic file
@@ -150,7 +150,7 @@ After:  ~<BYTES_AFTER> bytes (estimated)
 <N> over-long index line(s) to compact (longest first):
 
 [ ] <file>.md
-      index line: <OLD_LEN> -> <NEW_LEN> chars
+      index line: <OLD_LEN> -> <NEW_LEN> bytes
       old: - [<Title>](<file>.md) — <detail>
       new: - [<Title>](<file>.md) — <new hook>
       append to <file>.md body: the full original detail (verbatim), under a
