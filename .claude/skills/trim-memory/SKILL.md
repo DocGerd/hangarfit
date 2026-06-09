@@ -36,12 +36,14 @@ Validation:
 - `memory_dir` must be non-empty and absolute (starts with `/` or `~` — expand a
   leading `~` to `$HOME`). A relative path is invalid: this operates on
   per-developer state outside any repo, so a repo-relative path is always wrong.
-- The directory must exist. Check:
+- The directory must exist **and be writable** (the skill rewrites MEMORY.md and
+  appends to topic files — fail fast here rather than after the user has confirmed):
   ```bash
-  test -d "<memory_dir>" && echo "dir ok"
+  test -d "<memory_dir>" && test -w "<memory_dir>" && echo "dir ok"
   ```
-If the argument is missing, relative, or the directory does not exist, stop
-immediately with a clear error naming the problem. Do NOT read or write anything.
+If the argument is missing, relative, or the directory does not exist or isn't
+writable, stop immediately with a clear error naming the problem. Do NOT read or
+write anything.
 
 ## Step 2 — Verify MEMORY.md and measure the current budget
 
@@ -104,15 +106,16 @@ For each over-long index line, in the order above, plan a LOSSLESS move:
    - If it exists, you will APPEND to its body — never touch its YAML frontmatter
      (the `---` … `---` block) and never edit existing body text.
    - If it is absent (rare — the index points at it), CREATE it with frontmatter
-     matching the harness's shape: `name:` = the filename without `.md` in
-     **hyphen** form (e.g. `project-session-foo` — the style the harness itself
-     generates); `description:` = a one-line summary of the detail; and `metadata:`
-     with `node_type: memory` plus `type:` inferred from the filename prefix
-     (`project_*` → `project`, `feedback_*` → `feedback`, else `reference`). Omit
-     `originSessionId` (unknowable for a skill-created file). Then the moved detail
-     as the body. Confirm absence with `test -f` first — never overwrite.
+     matching the harness's shape: `name:` = the filename without `.md` (real topic
+     files use both the underscore stem `project_session_foo` and the hyphen form
+     `project-session-foo` — either is accepted; the underscore stem matches the
+     filename, so prefer it); `description:` = a one-line summary of the detail; and
+     `metadata:` with `node_type: memory` plus `type:` inferred from the filename
+     prefix (`project_*` → `project`, `feedback_*` → `feedback`, else `reference`).
+     Omit `originSessionId` (unknowable for a skill-created file). Then the moved
+     detail as the body. Confirm absence with `test -f` first — never overwrite.
 3. **Compose the rewritten index line.** Keep the `- [<Title>](<file>.md) — `
-   prefix verbatim, then a NEW hook of ≤ ~120 chars distilled from `detail` that
+   prefix verbatim, then a NEW hook of ≤ ~120 bytes distilled from `detail` that
    still names the **live status** (dates, the current PR/issue state, the key
    decision) — enough that the one-liner is still useful in the loaded index. The
    whole rewritten line must be < 180 bytes. Do NOT invent facts: the hook is
@@ -158,7 +161,16 @@ After:  ~<BYTES_AFTER> bytes (estimated)
         [topic file MISSING — will be CREATED with frontmatter]   <-- only if absent
 
   …(repeat per line)…
+
+<M> over-long line(s) SKIPPED — over 180 bytes but DON'T match `- [Title](file.md) — detail` (unparseable; left untouched, Failure mode 7):
+  - <each skipped over-long line, truncated>
+  …(omit this whole section if M == 0)…
 ```
+This SKIPPED section is **only** for over-180-byte lines that failed to parse.
+Well-formed lines **under** 180 bytes are simply not candidates — they are out of
+scope, never touched, and NOT listed here. Listing parse-skips **in the plan**
+(shown before confirmation) ensures the user sees which over-long entries were
+passed over even if the execute phase later aborts (Step 7 doesn't run on an abort).
 Then stop and print:
 ```
 Confirm? Type YES to apply (rewrite MEMORY.md + append to the topic files), or anything else to abort.
@@ -173,16 +185,34 @@ Aborted. No changes were made.
 
 For each planned move, in order:
 
-1. **Append the detail to the topic file.** READ the whole topic file, then use
-   the Write tool to write it back **unchanged** with the dated provenance heading +
-   verbatim detail appended at the very end. Reading-and-rewriting the whole file
-   (rather than an Edit anchored on a possibly-non-unique last body line) guarantees
-   the leading frontmatter block is preserved byte-for-byte and sidesteps the Edit
-   unique-anchor requirement. NEVER alter the frontmatter (`---` … `---`) or any
-   existing body line — only append. If the topic file is absent, Write it with the
-   frontmatter + body from Step 4.2. If a topic-file write fails, stop immediately,
-   print the error verbatim, and do NOT rewrite that line in MEMORY.md (the index
-   keeps the full detail — no loss).
+1. **Append the detail to the topic file** — idempotently, then verify the write
+   didn't corrupt anything:
+   a. READ the whole topic file. Record its byte size (`wc -c`).
+   b. **Idempotency (re-run safety).** If THIS entry's exact detail text is already
+      present in the file (under an "Index detail (moved …)" heading from a prior
+      interrupted run), SKIP the append — it is already saved — and go to 6.2. Match
+      the **specific detail content**, not merely the presence of *some* moved-block
+      heading (the file may already hold a DIFFERENT entry's moved detail). This makes
+      a re-run after an interruption converge instead of duplicating the block.
+   c. Otherwise use the Write tool to write the file back **unchanged** with the
+      dated provenance heading + verbatim detail appended at the very end. Reading-
+      and-rewriting the whole file (not an Edit on a possibly-non-unique last body
+      line) keeps the leading frontmatter byte-for-byte. NEVER alter the frontmatter
+      (`---` … `---`) or any existing body line — only append. If the topic file is
+      absent, Write it with the frontmatter + body from Step 4.2.
+   d. **Verify (no silent corruption).** Re-READ the file and confirm the pre-write
+      content is an exact leading **prefix** of the new content (only the heading +
+      verbatim detail were added) — the prefix check is authoritative; compare against
+      the original **on-disk bytes** (e.g. `cmp` the new file's first <before> bytes),
+      NOT a `printf '%s'` reconstruction, which drops the trailing newline and yields a
+      spurious off-by-one. The byte count should also reconcile: `wc -c` after ==
+      before + the appended block's bytes. **If either check fails, treat it as a topic-file write failure
+      (Failure mode 8): STOP, print the mismatch, and do NOT rewrite the index line**
+      — the full detail is still in MEMORY.md, so nothing is lost. A whole-file
+      rewrite that silently drops or reflows existing content must never be reported
+      as success.
+   If any write fails, stop immediately, print the error verbatim, and do NOT rewrite
+   that line in MEMORY.md (the index keeps the full detail — no loss).
 2. **Rewrite the index line in MEMORY.md.** Use the Edit tool with the exact old
    line as `old_string` and the new (compacted) line as `new_string`. Do this only
    AFTER that entry's detail is safely in its topic file.
@@ -195,17 +225,29 @@ Re-measure and confirm the result:
 ```bash
 wc -c "<memory_dir>/MEMORY.md"
 ```
-Print exactly:
-```
-trim-memory done
-================
-MEMORY.md: <BYTES_BEFORE> -> <BYTES_AFTER_ACTUAL> bytes (target < 24,986).
-<N> entr(y/ies) compacted; their full detail now lives in the matching topic files.
-0 entries deleted, 0 links broken, frontmatter untouched.
-```
-If the actual size is still ≥ 24,986 bytes, add one line noting the index is still
-over budget and the remaining size is from the number of entries, which this skill
-does not prune.
+Then branch on the **measured** result (`BYTES_AFTER_ACTUAL` from `wc -c`, never the
+estimate):
+
+- If `BYTES_AFTER_ACTUAL` < 24,986 — under budget, success. Print exactly:
+  ```
+  trim-memory done
+  ================
+  MEMORY.md: <BYTES_BEFORE> -> <BYTES_AFTER_ACTUAL> bytes (target < 24,986).
+  <N> entr(y/ies) compacted; their full detail now lives in the matching topic files.
+  0 entries deleted, 0 links broken, frontmatter untouched.
+  ```
+- If `BYTES_AFTER_ACTUAL` ≥ 24,986 — compaction was NOT enough; the index is **still
+  over the truncation ceiling**, so the harness will still drop memory next session.
+  Do NOT frame this as done — print the loud form with the measured shortfall:
+  ```
+  trim-memory — STILL OVER BUDGET
+  ===============================
+  MEMORY.md: <BYTES_BEFORE> -> <BYTES_AFTER_ACTUAL> bytes — still <BYTES_AFTER_ACTUAL − 24,986> over the 24,986 ceiling.
+  <N> over-long line(s) compacted (full detail preserved in topic files; 0 deleted,
+  0 links broken), but that was not enough. The remaining size is the <TOTAL_ENTRIES>
+  index entries, which this skill does NOT prune — archive stale topics by hand to
+  get under budget.
+  ```
 
 Do not add anything else — no praise, no summary, no emoji.
 
@@ -243,8 +285,11 @@ message. Step 7 (success) only runs after every step above has succeeded.
    `](<file>.md) — ` link — e.g. a heading, a wrapped line, or an entry with no
    detail): SKIP it — never rewrite a line you couldn't parse cleanly — and name it
    in the Step 7 report. This is the safety net for the em-dash-in-title case.
-8. **A topic-file write fails**: print the error verbatim; do NOT rewrite that
-   entry's index line (its detail is still intact in the index).
+8. **A topic-file write fails, OR its post-write integrity check fails** (the
+   pre-write content is not an exact leading prefix of the result, or the byte count
+   doesn't add up — i.e. the whole-file rewrite silently changed existing content):
+   print the mismatch/error verbatim; do NOT rewrite that entry's index line (its
+   detail is still intact in the index — nothing is lost).
 9. **An index-line Edit fails** (anchor not unique / not found): print the error
    verbatim plus the new line to apply by hand; that entry's detail is already
    safely appended to its topic file, so re-running on the remaining lines is safe.
