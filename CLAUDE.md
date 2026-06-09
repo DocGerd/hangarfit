@@ -104,7 +104,7 @@ Most coding goes direct in-session. Subagent dispatch is for review work and iso
 
 ## Project-local Claude Code config
 
-The `.claude/` directory holds team-shared Claude Code settings (currently: a PreToolUse guard that blocks hand-edits to the hash-pinned `requirements-*.txt` lockfiles, a PostToolUse hook that runs ruff + pytest after edits under `src/hangarfit/` or `tests/`, plus a Stop-event hook that runs mypy once when a turn finishes; and the `pyright-lsp` + `typescript-lsp` editor plugins under `enabledPlugins`). See [.claude/README.md](.claude/README.md) for what's there and how to disable per-contributor via a gitignored `.claude/settings.local.json`.
+The `.claude/` directory holds team-shared Claude Code settings (currently: a PreToolUse guard that blocks hand-edits to the hash-pinned `requirements-*.txt` lockfiles, a PostToolUse hook that runs ruff + pytest after edits under `src/hangarfit/` or `tests/`, a second PostToolUse hook that reminds you to rebuild `viewer.js` after `viewer/src/*.ts` edits (#568), plus a Stop-event hook that runs mypy once when a turn finishes; and the `pyright-lsp` + `typescript-lsp` editor plugins under `enabledPlugins`). See [.claude/README.md](.claude/README.md) for what's there and how to disable per-contributor via a gitignored `.claude/settings.local.json`.
 
 ---
 
@@ -218,7 +218,7 @@ pytest -m ""
 # GOTCHA: coverage.py does NOT measure ProcessPool/spawn WORKER subprocesses, so
 # code that only runs inside a worker (e.g. solver._run_restart_worker, #544)
 # reads as uncovered even when tests DO exercise it via the pool → `codecov/patch`
-# flags it (non-blocking; #561 tracks closing the gap). Cover it by calling the
+# flags it (non-blocking). #561 closed this for the #544 worker by calling the
 # worker fn IN-PROCESS in a unit test (the worker is usually a thin wrapper; or
 # wire coverage `concurrency=multiprocessing` + COVERAGE_PROCESS_START).
 
@@ -298,7 +298,8 @@ pip-compile --generate-hashes --no-strip-extras --allow-unsafe -o requirements-p
 # instead of an unpinned isolated build env). No pytest coverage threshold
 # (no --cov-fail-under); Codecov posts a `codecov/patch` status flagging patch
 # coverage on each PR, but it is NOT a required check on `develop` (required =
-# test 3.12 + the three lockfile-drift jobs + Analyze), so a red patch status
+# test 3.12 + the three lockfile-drift jobs + Analyze + `bench correctness` #564),
+# so a red patch status
 # reports but does not by itself block merge (see the @slow gotcha above).
 
 # Phase 1 acceptance smoke test
@@ -347,7 +348,9 @@ hangarfit view tests/fixtures/valid_left_side_nesting.yaml -o out.html --apron-d
 # in the wheel; `pip install` / `python -m build` / pytest never touch it). Splits
 # each regime's wall-clock into placement vs routing and asserts validity /
 # path-validity / determinism per regime, exiting non-zero on any failure (the
-# substrate for #403/F6's CI gate). Binds on `max_restarts`, NOT wall-clock, so the
+# substrate for #403/F6's CI gates: since #564 the no-`--gate` correctness run is a
+# REQUIRED `bench correctness` check, while the `--gate` SPEED job stays
+# non-required). Binds on `max_restarts`, NOT wall-clock, so the
 # work — and thus the numbers — is reproducible run-to-run and machine-to-machine.
 # Findings + the ranked speedup levers: docs/spikes/solve-tow-profiling.md (and
 # bench/README.md). GOTCHA: only the FAST regimes faithfully mirror
