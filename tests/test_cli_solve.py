@@ -69,6 +69,99 @@ class TestSolveSubparser:
         assert args.json is True
 
 
+class TestSolveParallelFlags:
+    """#544/#561: the ``--workers`` / ``--max-restarts`` argparse surface, the
+    serial-fallback ``note:`` branch, and eligible-regime byte-identity surfaced
+    end-to-end through the CLI's ``--json`` output.
+
+    ``test_solver_parallel.py`` covers the library contract; these tests cover
+    the CLI wiring (the codecov/patch gap #561 names: ``cli.py`` ~690-708).
+    """
+
+    def test_workers_and_max_restarts_defaults(self):
+        parser = build_parser()
+        args = parser.parse_args(["solve", SMOKE_FIXTURE])
+        assert args.workers == 1
+        assert args.max_restarts is None
+
+    def test_workers_and_max_restarts_parsed(self):
+        parser = build_parser()
+        args = parser.parse_args(["solve", SMOKE_FIXTURE, "--workers", "4", "--max-restarts", "8"])
+        assert args.workers == 4
+        assert args.max_restarts == 8
+
+    def test_eligible_parallel_no_note_and_byte_identical(self, capsys):
+        """Eligible regime (``--max-restarts`` + spread on): ``--workers >1``
+        prints NO note and yields byte-identical ``--json`` output to
+        ``--workers 1``. Binds on ``max_restarts`` (4), so load-independent."""
+        fixture = str(FIXTURES_DIR / "solve_fresh_alternatives_three.yaml")
+        base = ["solve", fixture, "--max-restarts", "4", "--seed", "42", "--json"]
+
+        rc1 = main([*base, "--workers", "1"])
+        serial = capsys.readouterr()
+        rc4 = main([*base, "--workers", "4"])
+        parallel = capsys.readouterr()
+
+        assert rc1 == 0
+        assert rc4 == 0
+        assert "note:" not in serial.err
+        assert "note:" not in parallel.err
+
+        # Byte-identical placements end-to-end through the CLI's JSON surface.
+        # The ONLY field that legitimately differs is wall-clock timing
+        # (``*_time_s``); strip it and everything else — placements, seed,
+        # restarts_attempted, basins — must match exactly.
+        def _strip_timing(obj):
+            if isinstance(obj, dict):
+                return {k: _strip_timing(v) for k, v in obj.items() if not k.endswith("_time_s")}
+            if isinstance(obj, list):
+                return [_strip_timing(v) for v in obj]
+            return obj
+
+        assert _strip_timing(json.loads(serial.out)) == _strip_timing(json.loads(parallel.out))
+
+    def test_non_eligible_no_max_restarts_prints_note(self, capsys):
+        """``--workers >1`` without ``--max-restarts`` is not byte-identity
+        eligible → solve transparently runs serial and the CLI says so on
+        stderr (the #544 'never silently ignore --workers' contract)."""
+        rc = main(
+            [
+                "solve",
+                str(FIXTURES_DIR / "solve_trivial_single_plane.yaml"),
+                "--workers",
+                "2",
+                "--budget",
+                "0.5",
+                "--seed",
+                "1",
+            ]
+        )
+        captured = capsys.readouterr()
+        assert rc == 0
+        assert "note: --workers 2 ignored (runs serial)" in captured.err
+
+    def test_non_eligible_spread_off_prints_note(self, capsys):
+        """``--no-spread`` also disables eligibility (the first-valid early-exit
+        is completion-order-dependent), so the note fires even WITH
+        ``--max-restarts``. First-valid exit keeps this fast."""
+        rc = main(
+            [
+                "solve",
+                str(FIXTURES_DIR / "solve_trivial_single_plane.yaml"),
+                "--workers",
+                "2",
+                "--max-restarts",
+                "4",
+                "--no-spread",
+                "--seed",
+                "1",
+            ]
+        )
+        captured = capsys.readouterr()
+        assert rc == 0
+        assert "note: --workers 2 ignored (runs serial)" in captured.err
+
+
 class TestSolveLoaderErrors:
     """LoaderError → exit 2, message to stderr; no traceback to user."""
 
