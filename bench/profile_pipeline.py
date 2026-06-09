@@ -96,6 +96,15 @@ _SPEED_CEILING_S: dict[str, float] = {
     # CI (the pre-fix run that tripped the old 240 s ceiling peaked at ~269 s; was
     # ~170 s pre-empennage). Tripwire, not a microbenchmark (#499 / #263 / #524).
     "roomy_three_apron": 380.0,
+    # 2026-06-09 (#547): parts²-scaling guard. PLACEMENT-dominated 9-plane fill
+    # (spread ON, 8 restarts; tiny tow cap ⇒ routing bails fast). Local total ~47 s
+    # (placement ~37 s + routing ~10 s). PROVISIONAL ceiling pending the first
+    # `bench gates` CI observation — like every ceiling above, the binding value is
+    # ~1.7x the CI median, but CI runs 2–4x slower than local and is not yet
+    # measured for this regime, so 300 s is a safe first-run headroom that still
+    # trips on a parts²-blowup or a #453-memoization revert (both multi-x). Tighten
+    # to ~1.7x the observed CI total once the workflow reports it.
+    "full_nine_placement": 300.0,
 }
 
 
