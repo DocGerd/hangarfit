@@ -70,10 +70,12 @@ item per memory, each shaped like:
 (There may also be a top heading / intro lines and blank lines — those are NOT
 index entries; leave them untouched.)
 
-List every index line whose length exceeds **180 characters**, longest first, so
-the biggest wins come first:
+List every index line longer than **180 bytes**, longest first, so the biggest
+wins come first. `LC_ALL=C` forces awk to count **bytes**, not characters — the
+budget is in bytes and the index is dense with multi-byte glyphs (`— → ⚠ ≡ −`), so
+a character count would understate the real size:
 ```bash
-awk '{ if (length($0) > 180) printf "%4d  %s\n", length($0), $0 }' "<memory_dir>/MEMORY.md" | sort -rn
+LC_ALL=C awk '{ if (length($0) > 180) printf "%4d  %s\n", length($0), $0 }' "<memory_dir>/MEMORY.md" | sort -rn
 ```
 These are the compaction candidates. If there are none but the file is still over
 budget, the bloat is not from over-long index lines (e.g. too MANY entries); stop
@@ -87,16 +89,28 @@ MEMORY.md is over budget (<BYTES_BEFORE> bytes) but no index line exceeds 180 ch
 
 For each over-long index line, in the order above, plan a LOSSLESS move:
 
-1. **Parse the line** into `Title`, `file` (the `(<file>.md)` link target), and
-   `detail` (everything after the `— `). The topic file is `<memory_dir>/<file>`.
+1. **Parse the line**, anchoring on the **link** — never on a bare `— ` (titles
+   frequently contain an em-dash, e.g. `[Session #480/#503/#505 — ALL MERGED](…)`,
+   so splitting on the first `— ` would cut inside the title and break the link).
+   Match `^- \[(.+?)\]\(([^)]+\.md)\) — (.*)$`: a **non-greedy** `Title` (stops at
+   the first `](<file>.md) — `), `file` is the link target (no `)`, ends in `.md`),
+   and `detail` is **everything after that first `.md) — `, taken verbatim** — it
+   may itself contain `](`, `[[wikilinks]]`, or further ` — `, so never re-split it.
+   The topic file is `<memory_dir>/<file>`. **If a line does not match this exact
+   shape** (no `](<file>.md) — ` link — e.g. a heading, a wrapped line, or an entry
+   with no detail), **SKIP it**: do not rewrite it and name it in the report
+   (Failure mode 7). A line is only ever touched when it parses cleanly.
 2. **Resolve the topic file.** It almost always exists (the index points at it).
    - If it exists, you will APPEND to its body — never touch its YAML frontmatter
      (the `---` … `---` block) and never edit existing body text.
-   - If it is absent, you will CREATE it with minimal frontmatter (`name:` = the
-     file's slug; `description:` = a one-line summary of the detail;
-     `metadata:` with `type:` inferred from the filename prefix — `project_*` →
-     `project`, `feedback_*` → `feedback`, else `reference`), then the moved
-     detail as the body.
+   - If it is absent (rare — the index points at it), CREATE it with frontmatter
+     matching the harness's shape: `name:` = the filename without `.md` in
+     **hyphen** form (e.g. `project-session-foo` — the style the harness itself
+     generates); `description:` = a one-line summary of the detail; and `metadata:`
+     with `node_type: memory` plus `type:` inferred from the filename prefix
+     (`project_*` → `project`, `feedback_*` → `feedback`, else `reference`). Omit
+     `originSessionId` (unknowable for a skill-created file). Then the moved detail
+     as the body. Confirm absence with `test -f` first — never overwrite.
 3. **Compose the rewritten index line.** Keep the `- [<Title>](<file>.md) — `
    prefix verbatim, then a NEW hook of ≤ ~120 chars distilled from `detail` that
    still names the **live status** (dates, the current PR/issue state, the key
@@ -114,10 +128,11 @@ For each over-long index line, in the order above, plan a LOSSLESS move:
    ```
    Get `<TODAY>` dynamically: `date +%Y-%m-%d`. Never hardcode it.
 
-Estimate `BYTES_AFTER` ≈ `BYTES_BEFORE` − Σ(old line length − new line length)
-over the rewritten lines. If the estimate is still ≥ 24,986 bytes after
-compacting every over-long line, say so in the plan (the user may need to also
-prune entries by hand) but still offer to apply what you have.
+Estimate `BYTES_AFTER` ≈ `BYTES_BEFORE` − Σ(old − new **byte** length) over the
+rewritten lines (use the `LC_ALL=C` byte lengths from Step 3; the estimate is
+approximate — the Step 7 `wc -c` re-measure is authoritative). If the estimate is
+still ≥ 24,986 bytes after compacting every over-long line, say so in the plan (the
+user may also need to prune entries by hand) but still offer to apply what you have.
 
 ## Step 5 — Show the dry-run plan and wait for confirmation
 
@@ -158,13 +173,16 @@ Aborted. No changes were made.
 
 For each planned move, in order:
 
-1. **Append the detail to the topic file.** Use the Edit tool, anchoring on the
-   last non-empty line currently in the topic file's body, and append the dated
-   provenance heading + the verbatim detail after it. NEVER alter the frontmatter
-   block. If the topic file is absent, use the Write tool to create it with the
-   frontmatter + body from Step 4.2. If a topic-file write fails, stop
-   immediately, print the error verbatim, and do NOT rewrite that line in
-   MEMORY.md (so the index keeps pointing at the still-complete detail — no loss).
+1. **Append the detail to the topic file.** READ the whole topic file, then use
+   the Write tool to write it back **unchanged** with the dated provenance heading +
+   verbatim detail appended at the very end. Reading-and-rewriting the whole file
+   (rather than an Edit anchored on a possibly-non-unique last body line) guarantees
+   the leading frontmatter block is preserved byte-for-byte and sidesteps the Edit
+   unique-anchor requirement. NEVER alter the frontmatter (`---` … `---`) or any
+   existing body line — only append. If the topic file is absent, Write it with the
+   frontmatter + body from Step 4.2. If a topic-file write fails, stop immediately,
+   print the error verbatim, and do NOT rewrite that line in MEMORY.md (the index
+   keeps the full detail — no loss).
 2. **Rewrite the index line in MEMORY.md.** Use the Edit tool with the exact old
    line as `old_string` and the new (compacted) line as `new_string`. Do this only
    AFTER that entry's detail is safely in its topic file.
@@ -196,6 +214,9 @@ Do not add anything else — no praise, no summary, no emoji.
 - **Lossless, always.** Never delete an index entry, never drop the `[Title](file.md)`
   link, never discard detail — it is moved verbatim into the topic file, not
   summarised away. The index hook is a faithful compression of the moved detail.
+- **Parse on the `](<file>.md) — ` link, never a bare `— `** (titles contain
+  em-dashes). Any line that doesn't match `- [Title](file.md) — detail` is SKIPPED,
+  never rewritten — a corrupt parse must never touch the index.
 - **Never alter a topic file's frontmatter** (the `---` … `---` block). Only ever
   APPEND to the body (or CREATE the file with fresh frontmatter if it is absent).
 - **Only two kinds of write**: append to topic files, and rewrite over-long lines
@@ -218,8 +239,12 @@ message. Step 7 (success) only runs after every step above has succeeded.
 5. **Over budget but no over-long lines**: report that the size is from the number
    of entries; this skill won't delete entries.
 6. **User does not confirm (any response other than `YES`)**: `Aborted. No changes were made.`
-7. **A topic-file write fails**: print the error verbatim; do NOT rewrite that
+7. **An index line doesn't parse** as `- [Title](file.md) — detail` (no
+   `](<file>.md) — ` link — e.g. a heading, a wrapped line, or an entry with no
+   detail): SKIP it — never rewrite a line you couldn't parse cleanly — and name it
+   in the Step 7 report. This is the safety net for the em-dash-in-title case.
+8. **A topic-file write fails**: print the error verbatim; do NOT rewrite that
    entry's index line (its detail is still intact in the index).
-8. **An index-line Edit fails** (anchor not unique / not found): print the error
+9. **An index-line Edit fails** (anchor not unique / not found): print the error
    verbatim plus the new line to apply by hand; that entry's detail is already
    safely appended to its topic file, so re-running on the remaining lines is safe.
