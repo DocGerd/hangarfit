@@ -48,7 +48,13 @@ which plane is iterated first.
 
 from __future__ import annotations
 
-from .geometry import WorldPart, cached_parts_world, polygon_overlap, polygon_overlap_area
+from .geometry import (
+    WorldPart,
+    axis_aligned_rect,
+    cached_parts_world,
+    polygon_overlap,
+    polygon_overlap_area,
+)
 from .models import CheckResult, Conflict, Hangar, Layout
 
 
@@ -169,23 +175,26 @@ def _bay_intrusion_conflicts(
     world_parts: dict[str, list[WorldPart]], layout: Layout
 ) -> list[Conflict]:
     """When the bay is closed (``layout.maintenance_plane is not None``),
-    flag any non-occupant part with a vertex strictly inside the bay
-    rectangle.
+    flag any non-occupant part that either has a vertex strictly inside the bay
+    rectangle OR whose edge crosses it with no vertex inside.
 
     The bay is the axis-aligned rectangle anchored to the back wall:
 
     - ``x ∈ (center_x_m − width_m/2, center_x_m + width_m/2)``
     - ``y ∈ (length_m − depth_m, length_m]``
 
-    The three interior edges (left, right, front) use strict ``<``: a
-    vertex sitting on any of those edges counts as outside. The bay's
-    back edge coincides with the hangar's back wall, which is why
-    there is no separate ``y < length_m`` test — a vertex at
-    ``y = length_m`` sits on the hangar's outer wall (still inside the
-    hangar per :func:`_hangar_bounds_conflicts`) and is correctly
-    treated as inside the closed bay. This mirrors the convention in
-    :func:`_first_out_of_bounds_vertex` where the hangar boundary is
-    inclusive.
+    The per-vertex test (:func:`_first_vertex_in_bay`) is the primary gate —
+    strict ``<`` on the left/right/front edges, inclusive back edge (the hangar
+    wall, per :func:`_first_out_of_bounds_vertex`). To close the per-vertex test's
+    edge-crossing blind spot (a thin part skewering the bay with both endpoints
+    outside — the ADR-0018 ``floor.covers`` fix, mirrored here, #551), a
+    **polygon-level** :func:`polygon_overlap` test is consulted *additively* when
+    no vertex is inside. ``polygon_overlap`` (clearance 0) requires genuine
+    *interior* overlap, so a part merely flush with a bay edge (Shapely
+    ``touches``) is still outside. Keeping the per-vertex test as the gate (rather
+    than replacing it with the polygon test) keeps every existing verdict
+    byte-identical (ADR-0003): the polygon test only ever *adds* the edge-crossing
+    case, never removes a conflict the per-vertex test already raised.
 
     The maintenance occupant is absent from placements by Layout
     invariant, so it should not appear in ``world_parts``. A defensive
@@ -195,8 +204,9 @@ def _bay_intrusion_conflicts(
     "the occupant intrudes into its own bay" would otherwise be
     indistinguishable from a real intrusion.
 
-    Emits one ``bay_intrusion`` conflict per offending **part**, with
-    the first-violating vertex (matches the per-part granularity of
+    Emits one ``bay_intrusion`` conflict per offending **part** — citing the
+    first strictly-inside vertex when one exists, or ``edge crosses`` when only
+    the polygon overlaps (matches the per-part granularity of
     :func:`_hangar_bounds_conflicts`).
     """
     if layout.maintenance_plane is None:
@@ -205,21 +215,36 @@ def _bay_intrusion_conflicts(
     x_min = bay.center_x_m - bay.width_m / 2
     x_max = bay.center_x_m + bay.width_m / 2
     y_min = layout.hangar.length_m - bay.depth_m
+    bay_rect = axis_aligned_rect(x_min, y_min, x_max, layout.hangar.length_m)
     out: list[Conflict] = []
     for plane_id, parts in world_parts.items():
         if plane_id == layout.maintenance_plane:
             continue
         for part in parts:
+            # The per-vertex test stays the PRIMARY gate so every existing verdict is
+            # byte-identical (ADR-0003). It intentionally counts a vertex beyond the
+            # back wall (y > length_m) — that candidate is out of bounds and already
+            # flagged by _hangar_bounds_conflicts, but the min-conflicts solver steers
+            # by conflict COUNT, so dropping that redundant conflict would shift the
+            # search trajectory. The polygon-overlap test is therefore an ADDITIVE
+            # catch, consulted only when NO vertex is inside: it flags the ADR-0018
+            # blind spot — a thin part whose EDGE crosses the bay with no vertex inside
+            # (#551). ``polygon_overlap`` (clearance 0) requires genuine *interior*
+            # overlap, so a part merely flush with a bay edge (Shapely ``touches``) is
+            # still outside, preserving the strict-``<`` boundary semantics.
             bad = _first_vertex_in_bay(part, x_min, x_max, y_min)
-            if bad is None:
+            if bad is not None:
+                where = f"vertex ({bad[0]:.3f}, {bad[1]:.3f}) inside"
+            elif polygon_overlap(bay_rect, part.polygon):
+                where = "edge crosses"
+            else:
                 continue
-            x, y = bad
             out.append(
                 Conflict.single(
                     kind="bay_intrusion",
                     plane=plane_id,
                     detail=(
-                        f"part {part.kind!r} vertex ({x:.3f}, {y:.3f}) inside "
+                        f"part {part.kind!r} {where} "
                         f"closed maintenance bay (x ∈ ({x_min:g}, {x_max:g}), "
                         f"y ∈ ({y_min:g}, {layout.hangar.length_m:g}); "
                         f"occupant={layout.maintenance_plane!r})"
@@ -235,7 +260,12 @@ def _first_vertex_in_bay(
     """Return ``(x, y)`` of the first vertex of ``part`` strictly inside
     the bay rectangle, or ``None`` if every vertex is outside. Strict
     ``<`` on left/right/front edges; no back-edge test (back edge is
-    the hangar's outer wall — see :func:`_bay_intrusion_conflicts`)."""
+    the hangar's outer wall — see :func:`_bay_intrusion_conflicts`).
+
+    This is the primary intrusion gate (#551 adds an additive polygon-overlap
+    catch for the edge-crossing case on top of it). When it returns a vertex,
+    the caller renders it in the detail; when it returns ``None`` but the polygon
+    still overlaps the bay, the caller renders "edge crosses" instead."""
     for x, y in list(part.polygon.exterior.coords)[:-1]:
         if x_min < x < x_max and y > y_min:
             return x, y

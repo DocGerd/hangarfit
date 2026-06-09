@@ -182,10 +182,23 @@ def test_solve_deterministic_best_partial_under_max_restarts() -> None:
         trip before the cap. Re-calibration trigger unchanged: if a future
         change pushes ``seed=3`` natural success to ``<= 3``, re-probe and
         pick a higher-headroom seed.
+
+        Re-calibrated 2026-06-09 for #551 (bay edge-crossing intrusion):
+        adding the polygon-overlap catch for a part whose edge skewers the
+        *closed* bay with no vertex inside (this fixture has a maintenance
+        plane) re-bases this fixture's min-conflicts trajectory. Determinism is
+        unchanged — same seed still gives bit-identical output (the ``r2 == r1``
+        assertion below still holds); only *which* seed exhausts shifts. Under
+        the new logic ``seed=3`` finds within the cap, so the fixture was
+        re-probed: ``seed=44`` has by far the most headroom — first natural
+        success at restart **21**, an *18-restart* drift margin against the
+        fixed ``max_restarts=3``. Trigger unchanged: if a future change pushes
+        ``seed=44`` natural success to ``<= 3``, re-probe and pick a
+        higher-headroom seed.
     """
     fixture = "tests/fixtures/solve_canary_six_planes_tight.yaml"
     max_restarts = 3
-    seed = 3
+    seed = 44
 
     s1 = load_scenario(fixture)
     r1 = solve(
