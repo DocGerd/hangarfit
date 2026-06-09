@@ -33,6 +33,16 @@
             "timeout": 120
           }
         ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -n \"$HANGARFIT_SKIP_VIEWER_HOOK\" ]; then cat > /dev/null; exit 0; fi; path=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get(\"tool_input\",{}).get(\"file_path\",\"\"))'); case \"$path\" in */viewer/src/*.ts) echo \"[hangarfit hook] edited $path — rebuild the committed bundle (npm --prefix viewer/ run build) and commit src/hangarfit/_viewer_assets/viewer.js in the SAME change; the viewer-build-drift CI guard (ADR-0020) rebuilds and diffs it.\" ;; *) : ;; esac; exit 0",
+            "timeout": 15
+          }
+        ]
       }
     ],
     "Stop": [
