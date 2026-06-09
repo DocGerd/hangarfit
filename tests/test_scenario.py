@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import pickle
 from types import MappingProxyType
 
 import pytest
@@ -623,3 +624,54 @@ def test_scenario_priority_coexists_with_pin_and_force_on_carts(fleet, hangar):
     )
     c = s.constraints["ctsl"]
     assert c.priority == 4.0 and c.pin == pin and c.force_on_carts is True
+
+
+# ── Scenario picklability (#545 — enables #544 ProcessPool parallel restarts) ──
+
+
+def test_scenario_pickle_round_trips_all_fields(fleet, hangar):
+    """Scenario must survive a pickle round-trip so #544's ProcessPool
+    parallel restarts can ship it across the process boundary. The
+    MappingProxyType wraps on ``fleet``/``constraints`` make the default
+    pickle raise ``TypeError: cannot pickle 'mappingproxy' object``; the
+    __getstate__/__setstate__ hooks unwrap then re-wrap them. Round-trips a
+    scenario that exercises every field (multi-plane fleet_in, a
+    maintenance_plane, and a fully-populated constraint)."""
+    pin = Placement(plane_id="ctsl", x_m=2.0, y_m=10.0, heading_deg=0.0, on_carts=True)
+    s = Scenario(
+        fleet=fleet,
+        hangar=hangar,
+        fleet_in=("ctsl", "aviat_husky"),
+        maintenance_plane="aviat_husky",
+        constraints={"ctsl": PlaneConstraint(pin=pin, force_on_carts=True, priority=4.0)},
+    )
+
+    restored = pickle.loads(pickle.dumps(s))
+
+    assert dict(restored.fleet) == dict(s.fleet)
+    assert restored.hangar == s.hangar
+    assert restored.fleet_in == s.fleet_in
+    assert restored.maintenance_plane == s.maintenance_plane
+    assert dict(restored.constraints) == dict(s.constraints)
+
+
+def test_scenario_pickle_preserves_immutability_wraps(fleet, hangar):
+    """The round-trip must restore the MappingProxyType immutability
+    contract, not just the data — otherwise an unpickled Scenario would
+    silently become mutable, regressing the same guarantee
+    test_scenario_fleet_is_mapping_proxy pins for the constructed form."""
+    s = Scenario(
+        fleet=fleet,
+        hangar=hangar,
+        fleet_in=("aviat_husky",),
+        constraints={"aviat_husky": PlaneConstraint()},
+    )
+
+    restored = pickle.loads(pickle.dumps(s))
+
+    assert isinstance(restored.fleet, MappingProxyType)
+    assert isinstance(restored.constraints, MappingProxyType)
+    with pytest.raises(TypeError):
+        restored.fleet["x"] = None  # type: ignore[index]
+    with pytest.raises(TypeError):
+        restored.constraints["x"] = PlaneConstraint()  # type: ignore[index]

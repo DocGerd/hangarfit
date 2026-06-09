@@ -921,6 +921,37 @@ class Scenario:
         # mutations through their retained reference to the underlying dict.
         object.__setattr__(self, "constraints", MappingProxyType(dict(self.constraints)))
 
+    # ── Pickling (#545, enables #544 ProcessPool parallel restarts) ──────
+    #
+    # A Scenario must cross the process boundary so #544 can fan RR-MC
+    # restarts across a ProcessPoolExecutor. But ``fleet`` and ``constraints``
+    # are wrapped in MappingProxyType (above), and a mappingproxy is not
+    # picklable (``TypeError: cannot pickle 'mappingproxy' object``). So unwrap
+    # the proxies to plain dicts for the wire and re-wrap them on the far side,
+    # which keeps the immutability contract alive across the round-trip
+    # (``slots=True`` ⇒ no ``__dict__``; the state lives in ``__slots__``).
+    #
+    # We iterate over ``__slots__`` rather than hand-listing the fields so a
+    # future field round-trips transparently instead of being silently dropped
+    # on the wire — and if that future field is itself unpicklable it fails
+    # *loudly* here (it won't be unwrapped) rather than corrupting a worker.
+    #
+    # Security: this only round-trips a TRUSTED, in-process object across our
+    # own pool; it never unpickles external/untrusted data (see SECURITY.md).
+    _PICKLE_PROXY_FIELDS: typing.ClassVar[tuple[str, ...]] = ("fleet", "constraints")
+
+    def __getstate__(self) -> dict[str, typing.Any]:
+        state: dict[str, typing.Any] = {name: getattr(self, name) for name in self.__slots__}
+        for name in self._PICKLE_PROXY_FIELDS:
+            state[name] = dict(state[name])  # unwrap mappingproxy → plain dict
+        return state
+
+    def __setstate__(self, state: dict[str, typing.Any]) -> None:
+        for name, value in state.items():
+            if name in self._PICKLE_PROXY_FIELDS:
+                value = MappingProxyType(dict(value))  # re-wrap on the far side
+            object.__setattr__(self, name, value)
+
 
 @dataclass(frozen=True, slots=True)
 class ApronShallowDrop:
