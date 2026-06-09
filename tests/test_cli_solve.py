@@ -69,6 +69,73 @@ class TestSolveSubparser:
         assert args.json is True
 
 
+class TestSpreadStallRestartsFlag:
+    """#546: the opt-in ``--spread-stall-restarts N`` flag exposes F7 (#404)'s
+    spread-stagnation early-exit from the CLI. The default stays opt-in (``None``),
+    so omitting the flag is byte-identical to before (no #544 ``--workers``
+    regression, no bench re-baseline).
+    """
+
+    def test_default_is_none(self):
+        parser = build_parser()
+        args = parser.parse_args(["solve", SMOKE_FIXTURE])
+        assert args.spread_stall_restarts is None
+
+    def test_parsed(self):
+        parser = build_parser()
+        args = parser.parse_args(["solve", SMOKE_FIXTURE, "--spread-stall-restarts", "5"])
+        assert args.spread_stall_restarts == 5
+
+    def test_threads_into_searchconfig(self, monkeypatch):
+        """The flag value reaches the ``SearchConfig`` the solver receives."""
+        import hangarfit.solver as solver_mod
+
+        captured: dict = {}
+        real_solve = solver_mod.solve
+
+        def spy(scenario, **kwargs):
+            captured["search"] = kwargs.get("search")
+            return real_solve(scenario, **kwargs)
+
+        # --no-spread keeps the solve sub-second (single-plane first-valid exit); the
+        # flag still threads into SearchConfig regardless of spread, which is what we
+        # assert. Running the real spread loop here would burn the wall-clock --budget
+        # and risk the documented -n auto flake (docs/dev/test-flakes-and-ci-gotchas.md).
+        monkeypatch.setattr(solver_mod, "solve", spy)
+        rc = main(["solve", SMOKE_FIXTURE, "--no-spread", "--spread-stall-restarts", "7"])
+        assert rc == 0
+        assert captured["search"] is not None
+        assert captured["search"].spread_stall_restarts == 7
+
+    def test_zero_exits_2(self, capsys):
+        """``--spread-stall-restarts 0`` is invalid (must be >= 1): the CLI surfaces
+        the SearchConfig ValueError as a clean exit 2, not an uncaught traceback.
+        (The same wrap also closes the latent ``--max-restarts 0`` crash.)"""
+        rc = main(["solve", SMOKE_FIXTURE, "--spread-stall-restarts", "0"])
+        assert rc == 2
+        assert "spread_stall_restarts" in capsys.readouterr().err
+
+    def test_with_workers_surfaces_serial_note(self, capsys):
+        """The #544 interaction made visible: setting --spread-stall-restarts makes
+        an otherwise parallel-eligible config (--max-restarts + spread) ineligible
+        (the stall counter is completion-order-dependent), so --workers prints the
+        'ignored (runs serial)' note rather than silently degrading the speedup."""
+        rc = main(
+            [
+                "solve",
+                SMOKE_FIXTURE,
+                "--max-restarts",
+                "1",
+                "--workers",
+                "4",
+                "--spread-stall-restarts",
+                "5",
+            ]
+        )
+        assert rc == 0
+        assert "--workers 4 ignored (runs serial)" in capsys.readouterr().err
+
+
 class TestSolveParallelFlags:
     """#544/#561: the ``--workers`` / ``--max-restarts`` argparse surface, the
     serial-fallback ``note:`` branch, and eligible-regime byte-identity surfaced
@@ -89,6 +156,14 @@ class TestSolveParallelFlags:
         args = parser.parse_args(["solve", SMOKE_FIXTURE, "--workers", "4", "--max-restarts", "8"])
         assert args.workers == 4
         assert args.max_restarts == 8
+
+    def test_max_restarts_zero_exits_2(self, capsys):
+        """``--max-restarts 0`` is invalid (must be >= 1). It previously crashed with
+        an uncaught ValueError traceback; the #546 SearchConfig try/except wrap now
+        surfaces it as a clean exit 2 (regression lock for that latent gap)."""
+        rc = main(["solve", SMOKE_FIXTURE, "--max-restarts", "0"])
+        assert rc == 2
+        assert "max_restarts" in capsys.readouterr().err
 
     def test_eligible_parallel_no_note_and_byte_identical(self, capsys):
         """Eligible regime (``--max-restarts`` + spread on): ``--workers >1``

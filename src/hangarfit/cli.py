@@ -305,6 +305,22 @@ def build_parser() -> argparse.ArgumentParser:
             "spread-on fills with many restarts."
         ),
     )
+    solve.add_argument(
+        "--spread-stall-restarts",
+        type=int,
+        metavar="N",
+        default=None,
+        dest="spread_stall_restarts",
+        help=(
+            "Opt-in early-exit (F7/#404): stop the spread-ON restart loop after N "
+            "consecutive restarts fail to improve the selected layouts' maximin "
+            "plan-view gap (default: off = run to --budget/--max-restarts). The stop "
+            "is seed-deterministic (an integer counter, never wall-clock) and only "
+            "arms once a complete selection exists, so it just trims the "
+            "polish-the-incumbent tail; no-op under --no-spread. NOTE: setting it "
+            "makes the run ineligible for byte-identical --workers parallelism (#544)."
+        ),
+    )
     # ── Tow-planner knobs (grid heuristic default + global fill cap since #336;
     # spike #332). --tow-heuristic defaults to the shipped grid planner and
     # --tow-max-expansions widens the per-plane budget; both RNG-free (ADR-0003).
@@ -679,12 +695,20 @@ def cmd_solve(args: argparse.Namespace) -> int:
     # plan_paths=False: the library bundle (SolveResult.plans) is available to
     # callers, but the CLI would just pay the per-plane Hybrid-A* search cost
     # for output it never draws.
-    search_cfg = SearchConfig(
-        spread=args.spread,
-        nose_out=args.nose_out,
-        back_bias_weight=_BACK_FILL_DEFAULT_WEIGHT if args.back_fill else 0.0,
-        max_restarts=args.max_restarts,
-    )
+    try:
+        search_cfg = SearchConfig(
+            spread=args.spread,
+            nose_out=args.nose_out,
+            back_bias_weight=_BACK_FILL_DEFAULT_WEIGHT if args.back_fill else 0.0,
+            max_restarts=args.max_restarts,
+            spread_stall_restarts=args.spread_stall_restarts,
+        )
+    except ValueError as e:
+        # A bad restart-budget knob (e.g. --max-restarts 0 or --spread-stall-restarts
+        # 0; both must be >= 1 when set) surfaces as a clean exit-2 input error rather
+        # than an uncaught traceback — same contract as a LoaderError on malformed input.
+        print(f"error: {e}", file=sys.stderr)
+        return 2
     # Never silently ignore --workers (#544): if parallel restarts aren't
     # byte-identical-eligible for this config (no --max-restarts, or --no-spread),
     # solve() transparently runs serial — say so on stderr so the user isn't
