@@ -81,7 +81,14 @@ from .regimes import FAST_REGIMES, REGIMES, regime_by_key
 _SPEED_CEILING_S: dict[str, float] = {
     "trivial_single": 10.0,
     "roomy_three_spread_on": 130.0,
-    "roomy_three_spread_off": 20.0,
+    # 2026-06-09 (#544): the per-restart-index reseed (ADR-0003 amendment) re-bases
+    # which layout this --no-spread regime returns (it early-exits at the *first*
+    # valid layout), and seed=1's new first-valid arrangement tow-routes slower than
+    # the old one — ~7 s locally, ~26 s on CI (was tripping the old 20 s ceiling),
+    # while valid/paths/det all stayed ok. A deliberate re-base, not a regression
+    # (the layout is still fully routed and deterministic), so the ceiling is raised
+    # to 45 s (~1.7x the observed CI value, matching the spread_on/apron headroom).
+    "roomy_three_spread_off": 45.0,
     # Same placement as roomy_three_spread_on (apron is planner-only) plus the
     # apron's heavier routing — and since #263 the nose-out back-in from the apron's
     # enlarged start set dominates. Post-empennage (#518/#519/#520) the per-expansion
