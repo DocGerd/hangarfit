@@ -309,6 +309,17 @@ hangarfit check examples/layouts/example.yaml --render out.png
 # exit 3 only if NO candidate layout is tow-routable.
 hangarfit solve tests/fixtures/scenario_minimal.yaml --render out.png --render-paths
 
+# #544/#560 parallel restarts. --max-restarts N bounds the search by a FIXED
+# restart count (cross-machine reproducible, NOT wall-clock); --workers N fans
+# those restarts across worker processes. The speedup is BYTE-IDENTICAL to serial
+# ONLY in the --max-restarts + spread-on regime (`_parallel_eligible`): for any
+# other config (no --max-restarts, or --no-spread) --workers is silently
+# downgraded to serial and prints a `note: --workers N ignored (runs serial)` on
+# stderr. Speedup is sub-linear and placement-only — most useful on roomy spread-on
+# fills with many restarts. Determinism stays max_restarts-scoped (ADR-0003 #544
+# amendment); see tests/test_solver_parallel.py for the byte-identity contract.
+hangarfit solve tests/fixtures/scenario_minimal.yaml --max-restarts 64 --workers 8
+
 # Phase 4: 3D viewer (self-contained offline HTML). examples/layouts/example.yaml is NOT
 # tow-routable → it falls back to a static 3D render. Since #398 (F1), layout-mode
 # `view` passes a small deterministic GLOBAL tow-expansion cap
