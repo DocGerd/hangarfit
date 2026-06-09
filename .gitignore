@@ -61,6 +61,11 @@ out*.png
 # committed (issue #148).
 .claude/worktrees/
 
+# Transient runtime lock written by Claude Code's scheduled-tasks / `/loop`
+# machinery (holds the owning sessionId + pid); a pure runtime artifact, never
+# meant to be committed (issue #555).
+.claude/scheduled_tasks.lock
+
 # Viewer TypeScript toolchain (top-level `viewer/`, ADR-0020 / issue #437). The
 # dev/CI-only Node deps are installed via `npm --prefix viewer/ ci` and must never
 # be committed or shipped; the committed bundle is src/hangarfit/_viewer_assets/
