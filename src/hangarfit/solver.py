@@ -30,7 +30,7 @@ import secrets
 import sys
 import time
 from dataclasses import replace
-from typing import Literal, NamedTuple
+from typing import Literal, NamedTuple, cast
 
 from hangarfit.collisions import check as check_layout
 from hangarfit.geometry import WorldPart, cached_parts_world, pose_cache_scope
@@ -108,7 +108,10 @@ def solve(
     ``workers`` (default 1 = serial) fans the RR-MC restarts across a
     ``ProcessPoolExecutor`` when > 1 (#544). The result is **byte-identical** to
     the serial path in the ``max_restarts``-bound, spread-on regime (see
-    :func:`_parallel_eligible`); for any other config it transparently runs
+    :func:`_parallel_eligible`) — provided ``budget_s`` is non-binding, since the
+    parallel path always runs the full ``max_restarts`` count while a serial run
+    can stop early when the wall-clock budget trips first (which ADR-0003 already
+    scopes out of byte-identity). For any other config it transparently runs
     serial, so the worker count never changes the answer. Output is a pure
     function of ``(scenario, seed)`` either way: since #544 each restart is
     seeded by its index (an ADR-0003 amendment — a one-time re-base of the
@@ -230,12 +233,14 @@ def _run_restart(
     budget_s: float,
 ) -> _RestartOutput:
     """Run one RR-MC restart to natural completion (success / stall / build
-    failure). Pure function of ``(scenario, seed, restart_index, search)`` — the
-    extracted body of the old in-line restart loop, so the serial and parallel
-    drivers share one implementation. ``start``/``budget_s`` bound the inner
-    descent + spread wall-clock the same way the old loop did; the parallel
-    driver passes ``budget_s=inf`` so each worker runs to completion (the
-    ``max_restarts``-bound regime the byte-identity contract is scoped to)."""
+    failure). Pure function of its arguments — and since ``spread_scale``,
+    ``pinned_planes`` and ``cart_buckets`` are all derived deterministically
+    from ``scenario``, of ``(scenario, seed, restart_index, search)`` — which is
+    what makes the serial and parallel drivers (which share this one extracted
+    body) byte-identical. ``start``/``budget_s`` bound the inner descent + spread
+    wall-clock the same way the old loop did; the parallel driver passes
+    ``budget_s=inf`` so each worker runs to completion (the ``max_restarts``-bound
+    regime the byte-identity contract is scoped to)."""
     rng = _restart_rng(seed, restart_index)
     cart_bucket = _cart_bucket_for_restart(cart_buckets, restart_index=restart_index)
     try:
@@ -395,9 +400,16 @@ def _run_restarts_parallel(
             for i in range(n_restarts)
         }
         for future in concurrent.futures.as_completed(future_to_index):
+            # .result() re-raises any worker exception (we never swallow it).
             results[future_to_index[future]] = future.result()
-    # Every slot is filled (one future per index, each returns a _RestartOutput).
-    return [r for r in results if r is not None]
+    # Invariant: one future per index, each returns a _RestartOutput, so every
+    # slot is filled. Assert it LOUDLY rather than silently filtering — a future
+    # edit that broke it (e.g. a timeout or FIRST_EXCEPTION on as_completed)
+    # would otherwise drop restarts and quietly change the result.
+    unfilled = [i for i, r in enumerate(results) if r is None]
+    if unfilled:
+        raise AssertionError(f"parallel restart slot(s) never filled: {unfilled}")
+    return cast("list[_RestartOutput]", results)
 
 
 def _parallel_eligible(search: SearchConfig, workers: int) -> bool:

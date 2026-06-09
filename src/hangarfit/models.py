@@ -591,22 +591,30 @@ class Placement:
 # untrusted data, so the usual pickle-RCE caveat does not apply.
 
 
-def _proxy_aware_getstate(obj: object, proxy_fields: tuple[str, ...]) -> dict[str, typing.Any]:
+class _ProxyPicklable(typing.Protocol):
+    """A frozen slots dataclass (Scenario, Layout) that wraps the mapping fields
+    named in ``_PROXY_FIELDS`` in MappingProxyType. Typing the shared helpers
+    against this expresses their real precondition — and makes ``_PROXY_FIELDS``
+    the single source the helpers read, so it can't be passed inconsistently."""
+
+    __slots__: tuple[str, ...]
+    _PROXY_FIELDS: typing.ClassVar[tuple[str, ...]]
+
+
+def _proxy_aware_getstate(obj: _ProxyPicklable) -> dict[str, typing.Any]:
     """``__getstate__`` for a frozen slots dataclass with MappingProxyType
     fields: capture every slot, then unwrap the proxy fields to plain dicts."""
-    state: dict[str, typing.Any] = {name: getattr(obj, name) for name in obj.__slots__}  # type: ignore[attr-defined]
-    for name in proxy_fields:
+    state: dict[str, typing.Any] = {name: getattr(obj, name) for name in obj.__slots__}
+    for name in obj._PROXY_FIELDS:
         state[name] = dict(state[name])  # unwrap mappingproxy → plain dict
     return state
 
 
-def _proxy_aware_setstate(
-    obj: object, state: dict[str, typing.Any], proxy_fields: tuple[str, ...]
-) -> None:
+def _proxy_aware_setstate(obj: _ProxyPicklable, state: dict[str, typing.Any]) -> None:
     """``__setstate__`` counterpart: restore every slot, re-wrapping the proxy
     fields so the immutability contract survives the round-trip."""
     for name, value in state.items():
-        if name in proxy_fields:
+        if name in obj._PROXY_FIELDS:
             value = MappingProxyType(dict(value))  # re-wrap on the far side
         object.__setattr__(obj, name, value)
 
@@ -708,10 +716,10 @@ class Layout:
     # Picklable across the #544 ProcessPool boundary — Layout rides back inside
     # the returned candidates. See _proxy_aware_getstate for the rationale.
     def __getstate__(self) -> dict[str, typing.Any]:
-        return _proxy_aware_getstate(self, self._PROXY_FIELDS)
+        return _proxy_aware_getstate(self)
 
     def __setstate__(self, state: dict[str, typing.Any]) -> None:
-        _proxy_aware_setstate(self, state, self._PROXY_FIELDS)
+        _proxy_aware_setstate(self, state)
 
 
 @dataclass(frozen=True, slots=True)
@@ -990,10 +998,10 @@ class Scenario:
     # Picklable across the #544 ProcessPool boundary — the worker input. See
     # _proxy_aware_getstate for the rationale (shared with Layout, #545/#544).
     def __getstate__(self) -> dict[str, typing.Any]:
-        return _proxy_aware_getstate(self, self._PROXY_FIELDS)
+        return _proxy_aware_getstate(self)
 
     def __setstate__(self, state: dict[str, typing.Any]) -> None:
-        _proxy_aware_setstate(self, state, self._PROXY_FIELDS)
+        _proxy_aware_setstate(self, state)
 
 
 @dataclass(frozen=True, slots=True)

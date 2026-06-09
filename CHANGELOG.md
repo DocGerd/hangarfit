@@ -20,8 +20,8 @@ All notable changes to this project are documented here. Format follows [Keep a 
   goldens (the determinism contract's deliberate-algorithm-change clause), not a
   reproducibility loss. The speedup is sub-linear and placement-only (routing is
   RNG-free and post-merge), so it helps most on roomy spread-on fills with many
-  restarts. `Scenario` and `Layout` are now picklable (#545) to cross the
-  worker boundary.
+  restarts. `Scenario` (#545) and `Layout` (this change) are now picklable —
+  via a shared proxy-aware helper — to cross the worker boundary.
 
 ### Changed
 
