@@ -120,6 +120,26 @@ def _to_int(value: Any, field_name: str) -> int:
     return value
 
 
+def _reject_unknown_top_level_keys(
+    raw: Mapping[str, Any], allowed: frozenset[str], *, path: Path, block: str
+) -> None:
+    """Reject misspelled/unknown top-level keys in a hangar/layout/scenario file
+    (#516) — the same silent-failure class the ``aircraft:`` allowlist
+    (:data:`_ALLOWED_AIRCRAFT_KEYS`, #513) closes one layer down. Without it a
+    typo'd top-level key (e.g. ``apron_dpeth_m:``) is silently dropped to its
+    default. Raised with the ``{path}:`` prefix every top-level loader already uses.
+
+    Each ``allowed`` set is exactly the keys its loader reads — keep the two in
+    sync; the ``test_all_allowed_*_keys_load`` completeness guards fail loudly if
+    a real key is ever dropped from an allowlist (the too-strict direction).
+    """
+    unknown = set(raw) - allowed
+    if unknown:
+        raise LoaderError(
+            f"{path}: unknown {block} key(s) {sorted(unknown)}; allowed: {sorted(allowed)}"
+        )
+
+
 def load_fleet(path: Path | str) -> dict[str, Aircraft]:
     """Load ``fleet.yaml`` into a dict keyed by :attr:`Aircraft.id`.
 
@@ -175,6 +195,28 @@ def _resolve_apron_depth(
     return _to_float(value, field_name)
 
 
+# Strict top-level-key allowlist for a hangar.yaml (#516). Mirrors the `aircraft:`
+# (:data:`_ALLOWED_AIRCRAFT_KEYS`) guard, extended to the hangar file's top level.
+# The nested `door`/`maintenance_bay` blocks need no allowlist — all their keys are
+# required, so a typo there already fails loudly as "missing required field"; the
+# `structural_notches` rectangles carry their own per-entry allowlist (below). Keep
+# in sync with the keys read in :func:`load_hangar`; ``test_all_allowed_hangar_keys_load``
+# guards the too-strict direction.
+_ALLOWED_HANGAR_KEYS = frozenset(
+    {
+        "length_m",
+        "width_m",
+        "door",
+        "maintenance_bay",
+        "structural_notches",
+        "clearance_m",
+        "wing_layer_clearance_m",
+        "max_carts",
+        "apron_depth_m",
+    }
+)
+
+
 def load_hangar(path: Path | str, *, fleet: Mapping[str, Aircraft] | None = None) -> Hangar:
     """Load ``hangar.yaml`` into a :class:`Hangar`.
 
@@ -188,6 +230,7 @@ def load_hangar(path: Path | str, *, fleet: Mapping[str, Aircraft] | None = None
     raw = _read_yaml(path)
     if not isinstance(raw, dict):
         raise LoaderError(f"{path}: top-level must be a mapping")
+    _reject_unknown_top_level_keys(raw, _ALLOWED_HANGAR_KEYS, path=path, block="hangar")
 
     door_data = raw.get("door")
     if not isinstance(door_data, dict):
@@ -271,6 +314,13 @@ def load_hangar(path: Path | str, *, fleet: Mapping[str, Aircraft] | None = None
         raise LoaderError(f"{path}: {e}") from e
 
 
+# Strict top-level-key allowlist for a layout.yaml (#516). Keep in sync with the
+# keys read in :func:`load_layout`; ``test_all_allowed_layout_keys_load`` guards the
+# too-strict direction. ``fleet``/``hangar`` are optional in the file (they may arrive
+# as kwargs instead); the file-vs-kwarg conflict is handled separately, below.
+_ALLOWED_LAYOUT_KEYS = frozenset({"fleet", "hangar", "placements", "maintenance"})
+
+
 def load_layout(
     path: Path | str,
     *,
@@ -297,6 +347,7 @@ def load_layout(
     raw = _read_yaml(path)
     if not isinstance(raw, dict):
         raise LoaderError(f"{path}: top-level must be a mapping")
+    _reject_unknown_top_level_keys(raw, _ALLOWED_LAYOUT_KEYS, path=path, block="layout")
 
     if fleet is None:
         fleet_ref = raw.get("fleet")
@@ -393,6 +444,13 @@ def load_layout(
         raise LoaderError(f"{path}: {e}") from e
 
 
+# Strict top-level-key allowlist for a scenario.yaml (#516). Keep in sync with the
+# keys read in :func:`load_scenario`; ``test_all_allowed_scenario_keys_load`` guards
+# the too-strict direction. Per-plane ``constraints`` entries carry their own
+# allowlist (:data:`_ALLOWED_CONSTRAINT_KEYS`).
+_ALLOWED_SCENARIO_KEYS = frozenset({"fleet_in", "fleet", "hangar", "maintenance", "constraints"})
+
+
 def load_scenario(
     path: Path | str,
     *,
@@ -424,6 +482,7 @@ def load_scenario(
     raw = _read_yaml(path)
     if not isinstance(raw, dict):
         raise LoaderError(f"{path}: top-level must be a mapping")
+    _reject_unknown_top_level_keys(raw, _ALLOWED_SCENARIO_KEYS, path=path, block="scenario")
 
     # fleet_in (required) — checked before fleet/hangar are loaded so that
     # a missing required field is reported as such, rather than as a

@@ -326,6 +326,48 @@ def test_load_scenario_rejects_unknown_constraint_key(tmp_path, typo):
         load_scenario(p)
 
 
+@pytest.mark.parametrize("typo", ["fleet_inn", "constraint", "maintenace", "bogus_field"])
+def test_load_scenario_rejects_unknown_top_level_key(tmp_path, typo):
+    """A misspelled TOP-LEVEL scenario key must be REJECTED (#516), not silently
+    dropped to its default — the silent-failure class #513 closed for the
+    ``aircraft:`` block, extended to the scenario file's top level. Mirrors
+    ``_ALLOWED_CONSTRAINT_KEYS`` / ``_ALLOWED_AIRCRAFT_KEYS``."""
+    from hangarfit.loader import load_scenario
+
+    p = _stage_scenario(tmp_path, f"fleet_in: [aviat_husky]\n{typo}: 1\n")
+    with pytest.raises(LoaderError, match=r"unknown scenario key\(s\)"):
+        load_scenario(p)
+
+
+def test_load_scenario_all_allowed_top_level_keys_load(tmp_path):
+    """Completeness guard: a scenario declaring EVERY allowed top-level key
+    (``maintenance`` + ``constraints`` alongside ``fleet_in``/``fleet``/``hangar``)
+    loads — so the allowlist can never be too strict. Self-enforcing against
+    ``_ALLOWED_SCENARIO_KEYS``."""
+    import yaml
+
+    from hangarfit.loader import _ALLOWED_SCENARIO_KEYS, load_scenario
+
+    p = _stage_scenario(
+        tmp_path,
+        "fleet_in: [aviat_husky, ctsl]\n"
+        "maintenance:\n"
+        "  plane: ctsl\n"
+        "constraints:\n"
+        "  aviat_husky:\n"
+        "    priority: 1.0\n",
+    )
+    file_keys = set(yaml.safe_load(p.read_text()))
+    assert file_keys == _ALLOWED_SCENARIO_KEYS, (
+        f"fixture must cover the full allowlist; "
+        f"missing={sorted(_ALLOWED_SCENARIO_KEYS - file_keys)} "
+        f"extra={sorted(file_keys - _ALLOWED_SCENARIO_KEYS)}"
+    )
+    s = load_scenario(p)
+    assert s.maintenance_plane == "ctsl"
+    assert "aviat_husky" in s.constraints
+
+
 def test_load_scenario_rejects_quoted_bool_nose_out(tmp_path):
     """`nose_out: "true"` (quoted) would silently be truthy via bool(); rejected
     by the strict _to_bool, like force_on_carts/measured."""

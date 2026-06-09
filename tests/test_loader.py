@@ -14,6 +14,8 @@ import yaml
 
 from hangarfit.loader import (
     _ALLOWED_AIRCRAFT_KEYS,
+    _ALLOWED_HANGAR_KEYS,
+    _ALLOWED_LAYOUT_KEYS,
     LoaderError,
     _resolve_known_plane_id,
     _suggest_plane_id,
@@ -1313,6 +1315,47 @@ maintenance_bay: {center_x_m: 13.5, width_m: 9, depth_m: 9}
         assert h.clearance_m == 0.3
         assert h.wing_layer_clearance_m == 0.2
 
+    @pytest.mark.parametrize(
+        "typo",
+        ["lenght_m", "appron_depth_m", "max_cart", "wing_clearance_m", "bogus_field"],
+    )
+    def test_unknown_hangar_key_rejected(self, tmp_path: Path, typo: str) -> None:
+        """A misspelled TOP-LEVEL hangar key must be REJECTED (#516), not silently
+        dropped to its default — the same silent-failure class #513 closed for
+        ``aircraft:`` entries. The nastiest case is ``apron_depth_m`` (#503): a
+        typo (``appron_depth_m:``) silently falls back to depth 0, compounding the
+        already-silent too-shallow-apron fallback. Mirrors ``_ALLOWED_AIRCRAFT_KEYS``."""
+        path = _write(tmp_path / "h.yaml", _MIN_HANGAR + f"{typo}: 1.0\n")
+        with pytest.raises(LoaderError, match=r"unknown hangar key\(s\)"):
+            load_hangar(path)
+
+    def test_all_allowed_hangar_keys_load(self, tmp_path: Path) -> None:
+        """Completeness guard for the allowlist: a hangar declaring EVERY allowed
+        top-level key (including the optional ``structural_notches`` + ``apron_depth_m``)
+        loads without error — so the allowlist can never be too strict. Self-enforcing:
+        adding a key to ``_ALLOWED_HANGAR_KEYS`` without extending this fixture fails here."""
+        body = """
+length_m: 30.0
+width_m: 25.0
+door: {center_x_m: 12.5, width_m: 12.0}
+maintenance_bay: {center_x_m: 21.0, width_m: 6.0, depth_m: 6.0}
+clearance_m: 0.3
+wing_layer_clearance_m: 0.2
+max_carts: 2
+apron_depth_m: 6.0
+structural_notches:
+  - {x_min_m: 0.0, y_min_m: 27.0, x_max_m: 2.0, y_max_m: 30.0}
+"""
+        file_keys = set(yaml.safe_load(body))
+        assert file_keys == _ALLOWED_HANGAR_KEYS, (
+            f"fixture must cover the full allowlist; "
+            f"missing={sorted(_ALLOWED_HANGAR_KEYS - file_keys)} "
+            f"extra={sorted(file_keys - _ALLOWED_HANGAR_KEYS)}"
+        )
+        h = load_hangar(_write(tmp_path / "h.yaml", body))
+        assert h.apron_depth_m == 6.0
+        assert len(h.structural_notches) == 1
+
 
 # ----------------------------------------------------------------------------
 # Layout loader: path resolution + cross-reference errors.
@@ -1354,6 +1397,45 @@ placements:
         layout = load_layout(layout_path)
         assert len(layout.placements) == 1
         assert layout.placements[0].plane_id == "foo"
+
+    @pytest.mark.parametrize(
+        "typo",
+        ["placments", "maintenence", "hangarr", "bogus_field"],
+    )
+    def test_unknown_layout_key_rejected(self, tmp_path: Path, typo: str) -> None:
+        """A misspelled TOP-LEVEL layout key must be REJECTED (#516), not silently
+        dropped — the silent-failure class #513 closed for ``aircraft:`` entries,
+        extended to the layout file's top level. Mirrors ``_ALLOWED_AIRCRAFT_KEYS``."""
+        self._minimal_fleet_and_hangar(tmp_path)
+        layout_path = _write(
+            tmp_path / "layout.yaml",
+            "fleet: fleet.yaml\n"
+            "hangar: hangar.yaml\n"
+            "placements:\n"
+            "  - {plane: foo, x_m: 5.0, y_m: 5.0, heading_deg: 0, on_carts: false}\n"
+            f"{typo}: 1\n",
+        )
+        with pytest.raises(LoaderError, match=r"unknown layout key\(s\)"):
+            load_layout(layout_path)
+
+    def test_all_allowed_layout_keys_load(self, tmp_path: Path) -> None:
+        """Completeness guard: a layout declaring EVERY allowed top-level key
+        (``maintenance`` + ``placements`` alongside the ``fleet``/``hangar`` refs)
+        loads — so the allowlist can never be too strict. Self-enforcing against
+        ``_ALLOWED_LAYOUT_KEYS``."""
+        self._minimal_fleet_and_hangar(tmp_path)
+        body = (
+            "fleet: fleet.yaml\nhangar: hangar.yaml\nmaintenance:\n  plane: foo\nplacements: []\n"
+        )
+        file_keys = set(yaml.safe_load(body))
+        assert file_keys == _ALLOWED_LAYOUT_KEYS, (
+            f"fixture must cover the full allowlist; "
+            f"missing={sorted(_ALLOWED_LAYOUT_KEYS - file_keys)} "
+            f"extra={sorted(file_keys - _ALLOWED_LAYOUT_KEYS)}"
+        )
+        layout = load_layout(_write(tmp_path / "layout.yaml", body))
+        assert layout.maintenance_plane == "foo"
+        assert layout.placements == ()
 
     def test_unknown_plane_reference_propagates(self, tmp_path: Path) -> None:
         self._minimal_fleet_and_hangar(tmp_path)
