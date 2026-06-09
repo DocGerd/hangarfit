@@ -799,6 +799,13 @@ class Scenario:
     maintenance_plane: str | None = None
     constraints: Mapping[str, PlaneConstraint] = field(default_factory=lambda: MappingProxyType({}))
 
+    # The mapping fields wrapped in MappingProxyType for immutability. This is
+    # the single source of truth for both the construction-time wrap (in
+    # __post_init__) and the pickle unwrap/re-wrap (in __getstate__/__setstate__,
+    # #545) — listing them once means the two cannot silently drift. (ClassVar so
+    # the dataclass excludes it from the field set and __slots__.)
+    _PROXY_FIELDS: typing.ClassVar[tuple[str, ...]] = ("fleet", "constraints")
+
     def __post_init__(self) -> None:
         # fleet_in must be non-empty (otherwise there's nothing to solve;
         # downstream helpers like the sum-of-areas infeasibility check
@@ -914,20 +921,22 @@ class Scenario:
                         f"{constraint.priority!r} must be >= 0.0 (a soft importance weight)"
                     )
 
-        object.__setattr__(self, "fleet", MappingProxyType(dict(self.fleet)))
-        # Always copy+wrap constraints — mirrors the unconditional pattern on
-        # fleet above (and on Layout.fleet). Skipping the copy when the caller
-        # passes a pre-wrapped MappingProxyType would let the caller leak
-        # mutations through their retained reference to the underlying dict.
-        object.__setattr__(self, "constraints", MappingProxyType(dict(self.constraints)))
+        # Wrap the mapping fields in MappingProxyType so a frozen Scenario can't
+        # be mutated through e.g. ``scenario.fleet["x"] = …``. Always copy+wrap
+        # (even an already-wrapped MappingProxyType arg): skipping the copy would
+        # let a caller leak mutations through their retained reference to the
+        # underlying dict. Driven off _PROXY_FIELDS so this wrap list and the
+        # pickle unwrap list stay a single source of truth.
+        for name in self._PROXY_FIELDS:
+            object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
 
     # ── Pickling (#545, enables #544 ProcessPool parallel restarts) ──────
     #
     # A Scenario must cross the process boundary so #544 can fan RR-MC
-    # restarts across a ProcessPoolExecutor. But ``fleet`` and ``constraints``
-    # are wrapped in MappingProxyType (above), and a mappingproxy is not
-    # picklable (``TypeError: cannot pickle 'mappingproxy' object``). So unwrap
-    # the proxies to plain dicts for the wire and re-wrap them on the far side,
+    # restarts across a ProcessPoolExecutor. But the _PROXY_FIELDS are wrapped
+    # in MappingProxyType (above), and a mappingproxy is not picklable
+    # (``TypeError: cannot pickle 'mappingproxy' object``). So unwrap the
+    # proxies to plain dicts for the wire and re-wrap them on the far side,
     # which keeps the immutability contract alive across the round-trip
     # (``slots=True`` ⇒ no ``__dict__``; the state lives in ``__slots__``).
     #
@@ -936,19 +945,23 @@ class Scenario:
     # on the wire — and if that future field is itself unpicklable it fails
     # *loudly* here (it won't be unwrapped) rather than corrupting a worker.
     #
-    # Security: this only round-trips a TRUSTED, in-process object across our
-    # own pool; it never unpickles external/untrusted data (see SECURITY.md).
-    _PICKLE_PROXY_FIELDS: typing.ClassVar[tuple[str, ...]] = ("fleet", "constraints")
+    # Security: this is an in-process trust boundary — it only round-trips a
+    # Scenario we built ourselves across our own pool, never deserializing
+    # external/untrusted data, so the usual pickle-RCE caveat does not apply.
+    #
+    # NOTE: Layout (the sibling type that may carry results *back* across the
+    # boundary) has the same MappingProxyType/pickle gap and no hooks yet —
+    # #544 must make whatever it returns from a worker picklable too.
 
     def __getstate__(self) -> dict[str, typing.Any]:
         state: dict[str, typing.Any] = {name: getattr(self, name) for name in self.__slots__}
-        for name in self._PICKLE_PROXY_FIELDS:
+        for name in self._PROXY_FIELDS:
             state[name] = dict(state[name])  # unwrap mappingproxy → plain dict
         return state
 
     def __setstate__(self, state: dict[str, typing.Any]) -> None:
         for name, value in state.items():
-            if name in self._PICKLE_PROXY_FIELDS:
+            if name in self._PROXY_FIELDS:
                 value = MappingProxyType(dict(value))  # re-wrap on the far side
             object.__setattr__(self, name, value)
 
