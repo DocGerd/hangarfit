@@ -61,13 +61,36 @@ pytest -m "serial and not slow" --cov-append
 
 — and derives coverage from the **combined** run, so marking a test `@slow` drops
 it from coverage too. If a `@slow` test is the only one covering a new code path,
-the `codecov/patch` PR check fails — keep **≥ 1 non-slow test per new path**.
+the `codecov/patch` number dips for that path (the check is *informational* since
+#589 — it reports, never fails; see §5) — still keep **≥ 1 non-slow test per new
+path** so the signal stays honest.
 
 ## 4. ProcessPool/spawn workers are a coverage blind spot
 
 `coverage.py` does **not** measure ProcessPool/spawn **worker** subprocesses, so
 code that only runs inside a worker (e.g. `solver._run_restart_worker`, #544)
-reads as uncovered even when tests *do* exercise it via the pool → `codecov/patch`
-flags it (non-blocking). #561 closed this for the #544 worker by calling the
-worker fn **in-process** in a unit test (the worker is usually a thin wrapper; or
-wire coverage `concurrency=multiprocessing` + `COVERAGE_PROCESS_START`).
+reads as uncovered even when tests *do* exercise it via the pool → it drags the
+`codecov/patch` number down (informational, see §5). #561 closed this for the #544
+worker by calling the worker fn **in-process** in a unit test (the worker is
+usually a thin wrapper; or wire coverage `concurrency=multiprocessing` +
+`COVERAGE_PROCESS_START`).
+
+## 5. Codecov statuses are informational, not gates
+
+There is a committed [`codecov.yml`](../../codecov.yml) that sets both
+`coverage.status.patch` and `coverage.status.project` to `informational: true`,
+so **the `codecov/patch` and `codecov/project` checks always pass** while still
+posting the coverage numbers on every PR. Two reasons (#589):
+
+1. Neither status was ever a *required* check on `develop`/`main` (required =
+   `test (3.12)`, the three lockfile-drift jobs, `bench correctness`). They are a
+   signal, not a merge gate — `informational: true` just stops them rendering a
+   misleading red **X** on a check that never blocked.
+2. Under the default auto-target, every **release PR** went red: its cumulative
+   `vX.Y.Z..develop` diff vs `main` lands a couple of points under the project
+   target (e.g. PR #587: 95.09 % patch vs 97.17 %). Structural noise, not a
+   regression — and it merged anyway.
+
+So: **read the patch number** (it still shows new-code coverage), but a green/grey
+codecov status is not a quality claim and a low number does not block. The §3/§4
+guidance above keeps that number honest.
