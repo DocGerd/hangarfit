@@ -207,7 +207,7 @@ def aircraft_parts_world(
             sin_h = math.sin(h)
             cx = part.offset_x_m
             cy = part.offset_y_m
-            local_coords = [
+            local_coords: list[tuple[float, float]] = [
                 (cx + x * cos_h - y * sin_h, cy + x * sin_h + y * cos_h)
                 for x, y in part.local_vertices
             ]
@@ -222,7 +222,7 @@ def aircraft_parts_world(
                 angle_deg=part.angle_deg,
             )
             # exterior.coords includes the closing-point duplicate; slice it off.
-            local_coords = list(local_poly.exterior.coords)[:-1]
+            local_coords = [(x, y) for x, y in list(local_poly.exterior.coords)[:-1]]
         # Apply the plane-local-to-world transform to each vertex.
         world_coords = [local_to_world(u, v, placement) for u, v in local_coords]
         world_poly = Polygon(world_coords)
