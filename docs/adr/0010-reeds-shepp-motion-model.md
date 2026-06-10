@@ -287,10 +287,87 @@ a nose-out *parked heading*): this amendment makes a nose-out slot **cheap to
 reach** when the solver picks one; #263 (separate) makes the solver *prefer* to
 pick them.
 
+## Amendment (2026-06-10) — #599: lateral cart strafe + broadside entry
+
+**Status:** Accepted. **Context:** the real Airfield Herrenteich "everyone home"
+layout (`examples/herrenteich/layout.yaml`) is statically valid (`check` → exit 0)
+but was **not tow-routable**: `scheibe_falke` (18 m span) parks **broadside**
+(heading 90°) because 18 m exceeds both the 13.46 m door and the 15.08 m hangar
+width. `entry_poses` only emitted the nose-in cone, so at every seeded heading the
+18 m span lay *across* the door/width and clipped a wall — `plan_path` bailed at
+**1 expansion even into an empty hangar** (a width impossibility no budget or apron
+can fix). And the cart motion model had no way to *move* a plane side-on: its
+primitives only pivot or drive **along** the heading.
+[#599](https://github.com/DocGerd/hangarfit/issues/599).
+
+Three coordinated changes, all RNG-free — the ADR-0003 determinism contract holds
+(verified: the full `tests/test_towplanner_*` suite, including the apron
+cross-process byte-identity canary, passes). Cross-version byte-identity is
+intentionally re-baselined **only for cart plans that the more capable motion now
+routes more cheaply** (none of the existing fixtures changed; the only affected
+arrangement is the previously-unroutable Herrenteich all-8).
+
+1. **New lateral translate primitive `Segment(kind="T")`.** A **strafe**:
+   `pose_at` integrates it *perpendicular* to the heading (`x += gear·step·(−sin
+   θ)`, `y += gear·step·(cos θ)`), heading unchanged; `gear` ±1 selects the side.
+   At heading 90° a `+1` strafe moves `+y` — straight in through the door. It is a
+   pure translation, so `_seg_cost` and `DubinsArc.sample` treat it like `S`
+   (metres), and the cusp model already keys "translating" off *not* being an
+   `L`/`R` pivot, so a `T` leg participates in the `Σ|leg| + CUSP_PENALTY × cusps`
+   objective unchanged. **It is gated on `mover_on_carts`, not on the turn radius**
+   (`_primitives(turn_radius_m, lateral=mover_on_carts)`; `plan_reeds_shepp(...,
+   lateral=...)`). This is the crux of the **three-way** zero-radius distinction:
+
+   - **on a dolly/cart** (`mover_on_carts`, e.g. an `always_cart` plane) → pivot +
+     straight **+ strafe**: it can be pushed side-on (wing-walkers / a transverse
+     dolly). The 18 m Scheibe *needs* this — it cannot pivot inside a 15 m hangar.
+   - **free-swivel gear on its own wheels** (`tow_pivotable`, #263 — e.g. a
+     castering tailwheel/nosewheel) → `effective_turn_radius_m() == 0` so it
+     **pivots in place** + drives straight, but its wheels roll fore/aft only so it
+     gets `lateral=False` (**no strafe**). It threads tight spots multi-step.
+   - **steerable own gear** (`r > 0`) → arcs only, unchanged.
+
+   `T` never appears in a closed-form Reeds–Shepp/Dubins *word* (those stay
+   `L`/`S`/`R`); it is only a cart search primitive + the `_plan_cart` connector.
+
+2. **`_primitives(0.0)` gains two strafes; `_plan_cart` gains a lateral connector.**
+   The cart search fan becomes `Lf, Sf, Rf, Sr, Tf, Tr` — the two strafes appended
+   **last** so an existing pivot/straight path still wins a cost tie (minimal
+   byte-identity churn). `_plan_cart` now offers a third closed-form candidate
+   *pivot-to-final-heading → straight (along) + strafe (perpendicular)* alongside
+   the forward/reverse pivot-straight-pivot, and ranks all three by the cusp-aware
+   `_segments_cost` (replacing the removed `_cart_seg_weight`; for the
+   forward-vs-reverse pair this is monotonic in pivot magnitude, so their selection
+   is unchanged). So the **analytic shot** snaps a broadside goal to a *single clean
+   slide* — e.g. Scheibe routes door→slot in one 22.5 m `T` leg, 0 search
+   expansions — instead of an L-shaped crab. The lateral candidate only wins when
+   strictly cheaper, i.e. near-pure-perpendicular displacement (`hypot ≤ |along| +
+   |perp|`, so a diagonal pivot-straight-pivot beats the L-shape once the
+   along-heading component exceeds the small pivot penalty).
+
+3. **Broadside entry cone.** `entry_poses` emits a side-on heading cone
+   (`_BROADSIDE_CONE_OFFSETS` around the target heading *and* target+180°) **iff
+   the target parked heading is broadside** (within `_BROADSIDE_GATE_HALF_ANGLE_DEG`
+   of 90°/270°) — gated exactly like the #480 rear cone, so **nose-in targets keep
+   the forward cone only and their grid stays byte-identical**. This seeds a
+   heading-90 start at the target's x, from which the lateral connector slides
+   straight in.
+
+**Acceptance:** `examples/herrenteich/layout.yaml` tow-routes its broadside cart
+planes via clean lateral slides; `pose_at`/`_plan_cart` lateral roundtrips and the
+broadside-cone seeds are covered by `tests/test_towplanner_lateral.py`; no
+determinism regression. **Limitation:** the strafe is **cart-only** by design — an
+own-gear plane nested in a tight slot still routes by arcs and can be expensive;
+that is an accepted motion-model limit, not a strafe candidate.
+
 ## More Information
 
 - Amended by #480 (2026-06-07): cusp-penalty cost model, nose-out-gated rear cone,
   cost-aware start-seed analytic expansion (see the amendment section above).
+- Amended by #599 (2026-06-10): cart lateral strafe primitive (`Segment` kind
+  `"T"`) + broadside entry cone, so a too-wide-for-the-door broadside-parked plane
+  slides in side-on (see the amendment section above). Removed `_cart_seg_weight`
+  (the cart closed-form now ranks candidates by the cusp-aware `_segments_cost`).
 - Supersedes: [ADR-0007](0007-tow-path-planner-v1-scope.md) fork 2 ("Dubins-only").
   The rest of ADR-0007 stands.
 - Related ADRs:

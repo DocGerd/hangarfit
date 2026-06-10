@@ -1,10 +1,23 @@
 # Airfield Herrenteich — real fleet (the aircraft usually hangared here).
 #
 # Kept separate from the synthetic data/fleet.yaml (the project's stable
-# demo/test fixture). Roster per the operator (2026-06-04): Cessna 140,
-# Flight Design CTSL, Wild Thing, Aviat Husky, Scheibe SF-25E, FK9 Mk II,
-# Stemme S10 (hangared WINGS-FOLDED), Zlin Savage. (Fuji and the Cessna 150
-# are not based here.)
+# demo/test fixture). Roster per the operator (2026-06-04, Fuji added
+# 2026-06-10): Cessna 140, Flight Design CTSL, Wild Thing, Aviat Husky,
+# Scheibe SF-25E, FK9 Mk II, Stemme S10 (hangared WINGS-FOLDED), Zlin Savage,
+# Fuji FA-200 Aero Subaru. (The Cessna 150 is not based here.)
+#
+# GROUND HANDLING (per the operator, 2026-06-10) — how each is moved in the
+# hangar, which drives the tow-path motion model:
+#   on a DOLLY/CART (always_cart → can be slid SIDEWAYS): Scheibe SF-25E (18 m,
+#     MUST go in side-on — it cannot pivot in the 15 m hangar), Zlin Savage,
+#     Wild Thing.
+#   FREE-SWIVEL gear, on its OWN gear (tow_pivotable → pivots IN PLACE, threads
+#     tight spots multi-step but does NOT strafe): Aviat Husky + Cessna 140
+#     (free-swivel tailwheel), Flight Design CTSL + FK9 Mk II (free-swivel
+#     nosewheel).
+#   steerable nosewheel, on its own gear (normal turning radius): Fuji FA-200.
+# The free-swivel pivot-in-place model (#599) is why every on-gear aircraft can
+# be manoeuvred into its slot even in a roomy nested arrangement.
 #
 # DIMENSIONS — provenance refresh 2026-06-08 (#536). The primary envelope
 # (span / length / height) was looked up from published manufacturer /
@@ -193,7 +206,10 @@ aircraft:
     wing_position: high
     gear: tailwheel
     movement_mode: always_own_gear
-    turn_radius_m: 5.0
+    tow_pivotable: true       # free-swivel tailwheel → pivots in place when towed
+                              # (#599; effective turn radius 0, so it threads tight
+                              # spots multi-step instead of needing a turning circle)
+    turn_radius_m: 5.0        # taxi radius; ignored for the tow (tow_pivotable ⇒ 0)
     measured: false
     parts:
       - kind: fuselage
@@ -344,7 +360,8 @@ aircraft:
     wing_position: high
     gear: tailwheel
     movement_mode: cart_eligible
-    turn_radius_m: 5.5
+    tow_pivotable: true       # free-swivel tailwheel → pivots in place when towed (#599)
+    turn_radius_m: 5.5        # taxi radius; ignored for the tow (tow_pivotable ⇒ 0)
     measured: false
     notes: "V-strut treated as one strut per side"
     parts:
@@ -395,7 +412,8 @@ aircraft:
     wing_position: high
     gear: nosewheel
     movement_mode: cart_eligible
-    turn_radius_m: 4.0
+    tow_pivotable: true       # free-swivel nosewheel → pivots in place when towed (#599)
+    turn_radius_m: 4.0        # taxi radius; ignored for the tow (tow_pivotable ⇒ 0)
     measured: false
     notes: "Cantilever wing (no struts). Span/length/height from EASA TCDS A.537."
     parts:
@@ -440,7 +458,8 @@ aircraft:
     wing_position: high
     gear: nosewheel
     movement_mode: cart_eligible
-    turn_radius_m: 4.0
+    tow_pivotable: true       # free-swivel nosewheel → pivots in place when towed (#599)
+    turn_radius_m: 4.0        # taxi radius; ignored for the tow (tow_pivotable ⇒ 0)
     measured: false
     parts:
       - kind: fuselage
@@ -482,3 +501,56 @@ aircraft:
       main_offset_x_m: -0.10
       track_m: 1.4            # est. (unpublished)
       third_wheel_offset_x_m: 1.40
+
+  # ----------------------------------------------------------------------------
+  # ON GEAR (cart_eligible) — Fuji FA-200 Aero Subaru, LOW-wing cantilever
+  # nosewheel. Added 2026-06-10 (roster update): the FA-200 IS based here. Primary
+  # envelope (span 9.42 m, length 8.17 m, height 2.59 m, wing area 14.0 m²) from
+  # the Wikipedia spec table / manufacturer; part-level dims below are
+  # 3-view/estimated (measured: false), flagged inline. Unlike the Scheibe (a real
+  # low-wing modelled HIGH as a tilt abstraction — see the header), the FA-200's
+  # 9.42 m wing is modelled at its REAL low height: it is narrower than the hangar
+  # and a neighbour's high wing clears over it, so no abstraction is needed.
+  # ----------------------------------------------------------------------------
+  - id: fuji_fa200
+    name: "Fuji FA-200 Aero Subaru"
+    wing_position: low
+    gear: nosewheel
+    movement_mode: cart_eligible
+    turn_radius_m: 5.0        # steerable nosewheel taxi radius (est.; not free-swivel)
+    measured: false
+    notes: "Cantilever LOW wing (no struts). Span/length/height/area from the
+      Wikipedia spec table; part dims estimated."
+    parts:
+      - kind: fuselage
+        length_m: 8.17        # overall length (Wikipedia: 8.17 m)
+        width_m: 1.12         # 2+2 cabin external width (est., unpublished)
+        offset_x_m: -0.40
+        offset_y_m: 0.0
+        z_bottom_m: 0.0
+        z_top_m: 1.5
+      - kind: wing            # LOW wing (real height); chord = area 14.0 m² / span 9.42 m
+        length_m: 1.49        # mean chord (14.0 / 9.42)
+        width_m: 9.42         # span (Wikipedia: 9.42 m)
+        offset_x_m: 0.20
+        offset_y_m: 0.0
+        z_bottom_m: 0.55      # low-wing: sits at the fuselage underside
+        z_top_m: 0.90
+      - kind: tail            # conventional-low horizontal stabilizer (~3.2 m span est.)
+        length_m: 0.95        # chord est. (unpublished)
+        width_m: 3.20         # span est.
+        offset_x_m: -3.55
+        offset_y_m: 0.0
+        z_bottom_m: 1.0
+        z_top_m: 1.3
+      - kind: vertical_stabilizer  # fin+rudder to overall height 2.59 m
+        length_m: 1.30        # fin chord est.
+        width_m: 0.15
+        offset_x_m: -3.45
+        offset_y_m: 0.0
+        z_bottom_m: 1.3
+        z_top_m: 2.59
+    wheels:
+      main_offset_x_m: -0.30  # mains aft of CG (est.)
+      track_m: 2.50           # est. (unpublished)
+      third_wheel_offset_x_m: 1.90  # nosewheel forward (est.)
