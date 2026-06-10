@@ -61,3 +61,16 @@ def test_build_part_rejects_unknown_part_key() -> None:
     }
     with pytest.raises(LoaderError, match="unknown key"):
         _build_part(data, 0)
+
+
+def test_planform_rejected_on_non_wing_part() -> None:
+    data = {
+        "kind": "fuselage",
+        "length_m": 6.0,
+        "width_m": 0.8,
+        "z_bottom_m": 0.0,
+        "z_top_m": 1.5,
+        "planform": {"root_chord_m": 6.0, "tip_chord_m": 3.0},
+    }
+    with pytest.raises(LoaderError, match="only valid on a kind 'wing'"):
+        _build_part(data, 0)

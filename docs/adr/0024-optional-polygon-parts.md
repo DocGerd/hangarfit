@@ -99,11 +99,14 @@ decouples the invariant from the build-path and makes the contract
 directly verifiable.
 
 `_canonicalize_ring` applies four steps: (1) reject non-finite
-coordinates, fewer than 3 vertices, self-intersecting (non-simple) rings,
-and degenerate / collinear rings (signed area ≈ 0); (2) force CCW by
-signed-area sign; (3) rotate to a lex-min start vertex; (4) drop the
-closing duplicate (store an open ring). Two equivalent input orderings of
-the same shape produce a byte-identical `Part`.
+coordinates and fewer than 3 vertices; reject collinear / degenerate rings
+via the **maximum-cross-product collinearity gate** (max |cross-product|
+over consecutive triples ≈ 0); reject self-intersecting (non-simple) rings;
+the **shoelace signed area is used for the CCW winding decision** (step 2),
+with a defense-in-depth |area| guard that is unreachable after the earlier
+gates; (2) force CCW by signed-area sign; (3) rotate to a lex-min start
+vertex; (4) drop the closing duplicate (store an open ring). Two equivalent
+input orderings of the same shape produce a byte-identical `Part`.
 
 **P1 tuple-of-tuples field**, because `Part` is `frozen=True, slots=True`
 (hashable dataclass); Shapely objects are not hashable and cannot live in a
@@ -251,8 +254,9 @@ configuration. That is a provenance violation, not a fidelity gain.
   degenerate rings; two equivalent input orderings → identical `Part`) plus
   the `Part.local_vertices` field and bbox-subset tests.
 - **`tests/test_geometry.py`** — per-vertex det(−1) transform at a
-  non-axis-aligned heading (geometry-invariant-guard requirement); confirms
-  no centroid shortcut is taken.
+  non-axis-aligned heading (geometry-invariant-guard requirement); exercises
+  every vertex through the transform (a centroid shortcut would fail the
+  rectangle-equivalence assertion).
 - **`tests/test_loader_planform.py`** — `planform:` parse, `tip > root`
   rejection, unknown-key rejection, root-exceeds-bbox rejection.
 - **`tests/test_solver_canaries.py::test_solve_deterministic_polygon_taper_fleet`**

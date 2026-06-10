@@ -45,10 +45,13 @@ _RING_MIN_ABS_SIGNED_AREA = 1e-9
 # Float slack for the local_vertices-within-bbox containment check.
 _PART_BBOX_TOL_M = 1e-9
 
+# A 2D point in a part's own (plane-local) frame; a polygon ring is a tuple of these.
+Vertex = tuple[float, float]
+
 
 def _canonicalize_ring(
-    vertices: Sequence[tuple[float, float]],
-) -> tuple[tuple[float, float], ...]:
+    vertices: Sequence[Vertex],
+) -> tuple[Vertex, ...]:
     """Canonicalize an author-supplied polygon ring to a deterministic form.
 
     Returns the ring OPEN (no closing duplicate), wound counter-clockwise,
@@ -67,13 +70,14 @@ def _canonicalize_ring(
         raise ValueError(f"polygon ring needs >= 3 distinct vertices, got {len(pts)}")
     if not all(math.isfinite(x) and math.isfinite(y) for x, y in pts):
         raise ValueError(f"polygon ring has a non-finite vertex: {pts}")
-    # Reject self-intersection (bow-ties) — shapely is the well-tested oracle.
-    # This check runs BEFORE the shoelace degeneracy gate so that a self-intersecting
-    # ring with non-zero shoelace area (e.g. a bowtie whose triangles don't cancel)
-    # is caught here. Collinear rings are also not-simple per Shapely, but their
-    # shoelace area is effectively zero — so we check collinearity first via the
-    # max absolute cross product, and emit "degenerate" for those, letting the
-    # self-intersection check handle true geometric crossings.
+    # Degeneracy + self-intersection gates, in this order so each case gets the
+    # right error message:
+    #   (a) max |cross-product| over consecutive triples == 0  -> "degenerate"
+    #       (rejects FULLY collinear / zero-area rings; a redundant collinear
+    #       vertex on an otherwise-valid ring is tolerated, not rejected).
+    #   (b) Shapely LinearRing.is_simple is False                -> "self-intersects".
+    #   (c) shoelace signed area: its SIGN drives the CCW flip below; the
+    #       |area| < eps check is defense-in-depth, unreachable after (a)+(b).
     n = len(pts)
     max_cross = max(
         abs(
@@ -91,7 +95,7 @@ def _canonicalize_ring(
         pts[i][0] * pts[(i + 1) % n][1] - pts[(i + 1) % n][0] * pts[i][1] for i in range(n)
     )
     # Defense-in-depth: unreachable for a simple, non-collinear polygon (both gated above).
-    if abs(signed_area2) < _RING_MIN_ABS_SIGNED_AREA:
+    if abs(signed_area2) < _RING_MIN_ABS_SIGNED_AREA:  # pragma: no cover
         raise ValueError(f"polygon ring is degenerate (near-zero area): {pts}")
     # Force counter-clockwise (positive signed area).
     if signed_area2 < 0:
@@ -137,7 +141,7 @@ class Part:
     angle_deg: float
     z_bottom_m: float
     z_top_m: float
-    local_vertices: tuple[tuple[float, float], ...] | None = None
+    local_vertices: tuple[Vertex, ...] | None = None
 
     def __post_init__(self) -> None:
         if self.kind not in _VALID_PART_KINDS:
@@ -161,6 +165,10 @@ class Part:
             canonical = _canonicalize_ring(self.local_vertices)
             half_l = self.length_m / 2.0
             half_w = self.width_m / 2.0
+            # The polygon is checked against the axis-aligned bbox in the part's
+            # OWN (unrotated) frame. That is sufficient even when angle_deg != 0:
+            # aircraft_parts_world rotates the polygon and the bbox together, and a
+            # rigid rotation preserves the subset relation.
             for x, y in canonical:
                 if abs(x) > half_l + _PART_BBOX_TOL_M or abs(y) > half_w + _PART_BBOX_TOL_M:
                     raise ValueError(
