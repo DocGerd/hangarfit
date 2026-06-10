@@ -59,7 +59,9 @@
 # conventions and ADR-0012/0013):
 # - Each Part is an oriented rectangle: length_m along plane +x (fore-aft),
 #   width_m along plane +y (lateral = wingspan for the wing part). Wing length_m
-#   is the chord; wing width_m is the span.
+#   is the chord; wing width_m is the span. Exception: the scheibe_falke wing
+#   carries an optional `planform:` taper (a 6-vertex hexagon footprint, ADR-0024)
+#   — length_m/width_m stay its bounding box; every other part stays a rectangle.
 # - Part z_bottom/z_top encode the vertical layer the nesting rule uses (a high
 #   wing may legally overhang a neighbour's lower tail/fuselage when z-disjoint).
 #   High wings sit ~1.9-2.3 m; fuselages ~0-1.5 m.
@@ -106,6 +108,17 @@ aircraft:
         offset_y_m: 0.0
         z_bottom_m: 1.9
         z_top_m: 2.1
+        # Symmetric double-taper (no sweep, root kink at y=0) → a 6-vertex hexagon
+        # (ADR-0024). The SF-25E wing is the realistically-tapered glider whose
+        # narrowed wingtip nests where its bounding rectangle falsely conflicts with
+        # the Stemme empennage — the spike's measured 0.10–0.30 m flip window (#541).
+        # root = the existing mean-chord length_m (keeps the polygon a strict bbox
+        # subset → no golden re-pin; area is intentionally UNDER-conserved, the safe
+        # footprint direction, since the area gate reads scalars — spec §5.1 / ADR-0024).
+        # tip = 0.45 × root (the spike's measured taper ratio).
+        planform:
+          root_chord_m: 1.01
+          tip_chord_m: 0.4545
       - kind: tail            # horizontal stabilizer (conventional-low; ~2.6 m span est.)
         length_m: 0.9         # chord est. (unpublished)
         width_m: 2.6          # span est.
