@@ -568,7 +568,7 @@ class TestAircraftPartsWorldPolygon:
         to the SAME world polygon as the scalar oriented_rect path — proving the
         polygon branch routes every vertex through the det(-1) transform."""
         hl, hw = 1.0, 5.0  # length_m=2, width_m=10
-        rect_corners = [(hl, -hw), (hl, hw), (-hl, hw), (-hl, -hw)]
+        rect_corners = ((hl, -hw), (hl, hw), (-hl, hw), (-hl, -hw))
         scalar = _aircraft_with_one_part(
             Part(
                 kind="wing",
@@ -602,7 +602,7 @@ class TestAircraftPartsWorldPolygon:
     def test_taper_polygon_is_strict_subset_area_of_bbox(self) -> None:
         """A tapered hexagon transforms to a world polygon with LESS area than
         the bounding rectangle (the conservative footprint direction)."""
-        taper = [(1.0, 0.0), (0.4, 5.0), (-0.4, 5.0), (-1.0, 0.0), (-0.4, -5.0), (0.4, -5.0)]
+        taper = ((1.0, 0.0), (0.4, 5.0), (-0.4, 5.0), (-1.0, 0.0), (-0.4, -5.0), (0.4, -5.0))
         scalar = _aircraft_with_one_part(
             Part(
                 kind="wing",

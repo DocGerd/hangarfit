@@ -87,6 +87,7 @@ def test_part_canonicalizes_local_vertices_on_construction() -> None:
     p = _wing(local_vertices=verts)
     assert p.local_vertices == _canonicalize_ring(verts)
     # Canonical: lex-min start, CCW.
+    assert p.local_vertices is not None
     assert p.local_vertices[0] == min(p.local_vertices)
 
 
@@ -101,4 +102,5 @@ def test_part_local_vertices_within_bbox_ok() -> None:
     # Tip/root within the 2.0 x 10.0 box; touching the boundary is allowed.
     verts = [(1.0, 0.0), (0.4, 5.0), (-0.4, 5.0), (-1.0, 0.0), (-0.4, -5.0), (0.4, -5.0)]
     p = _wing(local_vertices=verts)
+    assert p.local_vertices is not None
     assert len(p.local_vertices) == 6
