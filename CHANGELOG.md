@@ -21,8 +21,8 @@ All notable changes to this project are documented here. Format follows [Keep a 
   now authored as a symmetric double-taper `planform` (root = the existing
   1.01 m mean chord, tip = 0.45 × root). Its tapered wingtip nests where the
   bounding rectangle would falsely conflict — a value-proof regression reproduces
-  the spike's ~0.22 m rect-rejects / taper-accepts flip window on the shipped
-  parametrization. Every other shipped part (including the folded Stemme wing —
+  the spike's flip-window order (~0.2 m wide) of rect-rejects / taper-accepts on the
+  shipped parametrization. Every other shipped part (including the folded Stemme wing —
   folding is not a taper) stays a rectangle; the herrenteich layout stays valid
   with no golden re-pin (the polygon is a strict subset of its bbox). (#593, ADR-0024)
 

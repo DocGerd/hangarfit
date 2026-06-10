@@ -3,13 +3,14 @@ loader-built Scheibe SF-25E wing taper makes a wingtip nest where its bounding
 rectangle would falsely conflict.
 
 The spike (``docs/spikes/polygon-part-geometry-feasibility.md``) measured a robust
-~0.22 m "flip window" (0.10–0.30 m of crowding) of rect-rejects / taper-accepts,
-originally against the Stemme empennage. In today's herrenteich model the Stemme
-empennage sits *below* the wing layer (tail/fin z ≤ 1.8 m vs wing z 1.9–2.1 m), so
-the original wing-over-empennage pair no longer z-overlaps. The *mechanism* is
-unchanged and reproduced here with a wing-layer neighbour (the kind of part that
-crowds a glider wingtip): a tapered tip clears a neighbour the bbox rectangle
-falsely fouls, across a window whose width is the taper's tip footprint reduction.
+flip window (~0.2 m wide; 0.10–0.30 m of crowding) of rect-rejects / taper-accepts
+by crowding the Scheibe wing toward the Stemme empennage. Reproducing that exact
+two-aircraft crowd from a fixed shipped layout means positioning both planes
+precisely inside the flip band — fiddly and brittle. So this regression reproduces
+the identical *mechanism* directly and deterministically with a synthetic
+wing-layer neighbour at the wingtip: a tapered tip clears a neighbour the bbox
+rectangle falsely fouls, across a window whose width is the taper's tip footprint
+reduction.
 
 This exercises ``geometry.polygon_overlap`` — the exact plan-view conflict
 primitive ``collisions._parts_conflict`` aggregates — on the real shipped taper
@@ -61,7 +62,7 @@ def _conflicts(wing, s: float) -> bool:
 def test_taper_clears_a_wingtip_neighbour_the_rectangle_fouls():
     """Mid-window: the rectangle wing fouls the neighbour; the shipped taper clears it."""
     taper, rect = _wing_world(_scheibe(taper=True)), _wing_world(_scheibe(taper=False))
-    s = 0.42  # inside the measured flip window [~0.29, ~0.55]
+    s = 0.42  # inside the measured flip window [~0.28, ~0.55]
     assert _conflicts(rect, s), "the bounding rectangle should foul the crowded neighbour"
     assert not _conflicts(taper, s), "the tapered wingtip should clear it — the value"
 
@@ -81,8 +82,9 @@ def test_both_clear_when_uncrowded():
 
 
 def test_flip_window_width_matches_the_spike():
-    """The rect-rejects / taper-accepts band reproduces the spike's ~0.22 m order
-    (the taper's tip footprint reduction), grounded in the shipped parametrization."""
+    """The rect-rejects / taper-accepts band reproduces the spike's ~0.2 m order
+    (this shipped model's band is ≈0.26 m wide — the taper's tip footprint
+    reduction), grounded in the shipped parametrization."""
     taper, rect = _wing_world(_scheibe(taper=True)), _wing_world(_scheibe(taper=False))
     flips = [
         i * 0.01
@@ -91,7 +93,7 @@ def test_flip_window_width_matches_the_spike():
     ]
     assert flips, "expected a non-empty rect-rejects / taper-accepts window"
     width = max(flips) - min(flips)
-    assert 0.15 <= width <= 0.40, f"flip window {width:.3f} m off the spike's ~0.22 m order"
+    assert 0.15 <= width <= 0.40, f"flip window {width:.3f} m off the spike's ~0.2 m order"
 
 
 def test_taper_wing_underfills_its_bounding_box():
@@ -100,3 +102,30 @@ def test_taper_wing_underfills_its_bounding_box():
     taper, rect = _wing_world(_scheibe(taper=True)), _wing_world(_scheibe(taper=False))
     assert taper.area < rect.area
     assert taper.within(rect.buffer(1e-9))  # taper ⊆ bbox rectangle
+
+
+def _const_chord_wing_world(ac):
+    # The negative control's wing: a CONSTANT-chord planform (the loader's hexagon
+    # with tip == root). It degenerates to the full bbox rectangle, so it can never
+    # clear what the rectangle fouls.
+    wing = next(p for p in ac.parts if p.kind == "wing")
+    hr, half = wing.length_m / 2.0, wing.width_m / 2.0
+    flat = ((hr, 0.0), (hr, half), (-hr, half), (-hr, 0.0), (-hr, -half), (hr, -half))
+    parts = tuple(
+        dataclasses.replace(p, local_vertices=flat) if p.kind == "wing" else p for p in ac.parts
+    )
+    return _wing_world(dataclasses.replace(ac, parts=parts))
+
+
+def test_constant_chord_wing_shows_no_flip():
+    """The spike's negative control: a non-tapered (constant-chord) wing flips
+    NOWHERE — its footprint equals its bbox, so the value is taper-specific and
+    not an artefact of the probe geometry."""
+    rect = _wing_world(_scheibe(taper=False))
+    const = _const_chord_wing_world(_scheibe(taper=True))
+    flips = [
+        i * 0.01
+        for i in range(0, 100)
+        if _conflicts(rect, i * 0.01) and not _conflicts(const, i * 0.01)
+    ]
+    assert not flips, f"a constant-chord wing must not flip; got window {flips}"
