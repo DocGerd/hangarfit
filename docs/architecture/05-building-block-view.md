@@ -397,7 +397,7 @@ as per-frame affine matrices and emits `aircraft_parts_world` oracle corners as
 `anchors`, so the viewer applies matrices and does no transform math. It also
 builds the whole-fill timeline (one segment per plane in `back_first_order`, laid
 end-to-end, sampled from each tow `DubinsArc`). Pure and deterministic — same
-input ⇒ byte-identical scene. Schema: [`scene-v1-schema.md`](scene-v1-schema.md);
+input ⇒ byte-identical scene. Schema: [`scene-v2-schema.md`](scene-v2-schema.md);
 rationale: [ADR-0017](../adr/0017-3d-viewer-architecture.md).
 
 ### `viewer.py` — self-contained 3D HTML
@@ -471,7 +471,7 @@ JSON schemas are versioned: `hangarfit.check/v1` and
 `hangarfit.solve/v1`. Bumping a version is reserved for breaking
 changes to the payload shape; additive fields do not bump. (The
 `view` subcommand emits the `hangarfit.scene/v1` JSON *inlined into its
-HTML*, not to stdout — see [`scene-v1-schema.md`](scene-v1-schema.md).)
+HTML*, not to stdout — see [`scene-v2-schema.md`](scene-v2-schema.md).)
 
 Exit codes:
 

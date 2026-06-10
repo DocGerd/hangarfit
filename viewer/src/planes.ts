@@ -4,7 +4,7 @@ import { byId } from './dom.ts';
 import { addGear, makeGearMaterials } from './gear.ts';
 import { addLabelAndNose } from './labels.ts';
 import type { BrandTokens } from './brand-contract.ts';
-import type { BoxData, SceneV1 } from './scene-contract.ts';
+import type { BoxData, SceneV2 } from './scene-contract.ts';
 
 export interface PlanesBundle {
   groups: Record<string, THREE.Group>;
@@ -33,7 +33,7 @@ export function boxMaterial(b: BoxData, colour: THREE.Color): THREE.MeshStandard
 /** Build every plane's affine Group (boxes + gear + label/nose), add it to the
  * scene, and build the legend chips with safe DOM methods. Returns the per-plane
  * groups (driven by the timeline) and the toggle arrays. */
-export function addPlanes(scene: THREE.Scene, SCENE: SceneV1, BRAND: BrandTokens): PlanesBundle {
+export function addPlanes(scene: THREE.Scene, SCENE: SceneV2, BRAND: BrandTokens): PlanesBundle {
   const CONFLICT = BRAND.conflict; // '#RRGGBB' string → new THREE.Color(CONFLICT)
   const groups: Record<string, THREE.Group> = {};
   const labelMeshes: THREE.Sprite[] = [];
@@ -48,12 +48,32 @@ export function addPlanes(scene: THREE.Scene, SCENE: SceneV1, BRAND: BrandTokens
     const colour = new THREE.Color(conflicted ? CONFLICT : p.color);
     for (const b of p.boxes) {
       // local X = u (forward/length), local Y = v (right/width), local Z = w (height).
-      const mesh = new THREE.Mesh(
-        new THREE.BoxGeometry(b.length_m, b.width_m, b.height_m),
-        boxMaterial(b, colour),
-      );
-      mesh.position.set(b.cx, b.cy, b.cz);
-      mesh.rotation.z = THREE.MathUtils.degToRad(b.angle_deg); // CCW about local up, as oriented_rect
+      let mesh: THREE.Mesh;
+      if (b.vertices !== null) {
+        // scene/v2 polygon footprint (#549): extrude the plane-local ring into a
+        // prism. The ring already has (cx,cy,angle) folded in (it matches the
+        // anchor oracle), so we apply NO position.xy / rotation here — only lift
+        // the base to z_bottom. ExtrudeGeometry lays the Shape in XY and extrudes
+        // +Z from 0..height_m, mirroring the box's [z_bottom, z_top] span. The
+        // ShapeGeometry L-floor (hangar.ts) is the in-tree precedent (#530).
+        const shape = new THREE.Shape();
+        const vs = b.vertices;
+        shape.moveTo(vs[0][0], vs[0][1]);
+        for (let i = 1; i < vs.length; i++) shape.lineTo(vs[i][0], vs[i][1]);
+        shape.closePath();
+        mesh = new THREE.Mesh(
+          new THREE.ExtrudeGeometry(shape, { depth: b.height_m, bevelEnabled: false }),
+          boxMaterial(b, colour),
+        );
+        mesh.position.z = b.z_band[0];
+      } else {
+        mesh = new THREE.Mesh(
+          new THREE.BoxGeometry(b.length_m, b.width_m, b.height_m),
+          boxMaterial(b, colour),
+        );
+        mesh.position.set(b.cx, b.cy, b.cz);
+        mesh.rotation.z = THREE.MathUtils.degToRad(b.angle_deg); // CCW about local up, as oriented_rect
+      }
       mesh.castShadow = true;
       mesh.receiveShadow = true; // planes catch each other's shadows (vertical clearance)
       g.add(mesh);

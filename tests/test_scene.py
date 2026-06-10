@@ -1,4 +1,4 @@
-"""Tests for the pure scene/v1 builder (hangarfit.scene).
+"""Tests for the pure scene/v2 builder (hangarfit.scene).
 
 The core correctness claim — that the per-frame affine reproduces the
 production ``aircraft_parts_world`` transform (the determinant-−1 trap,
@@ -276,7 +276,7 @@ def test_build_scene_conflicts_flattened_from_check_result():
 
 def test_build_scene_is_byte_deterministic():
     # No sort_keys: this must prove the *serialized* dict (key + value order)
-    # is byte-identical, not just equal-as-sets — the scene/v1 determinism claim.
+    # is byte-identical, not just equal-as-sets — the scene/v2 determinism claim.
     lay = load_layout(LAYOUT)
     plan = plan_fill(lay)
     a = json.dumps(scene.build_scene(lay, moves_plan=plan))
@@ -361,9 +361,9 @@ def test_build_scene_readouts_none_for_unchecked_invalid_layout():
     assert sc["readouts"] is None
 
 
-# ── #440: scene/v1 ↔ TypeScript contract key-set parity ─────────────────────
+# ── #440: scene/v2 ↔ TypeScript contract key-set parity ─────────────────────
 #
-# The TS viewer types its scene/v1 consumption against hand-written mirrors
+# The TS viewer types its scene/v2 consumption against hand-written mirrors
 # (viewer/src/scene-contract.ts, brand-contract.ts). These guard against the
 # documented desync risk (ADR-0020): if scene.py/brand.py grow or drop a key and
 # the TS mirror is not updated in lockstep, these fail the test the maintainer
@@ -406,7 +406,7 @@ def test_brand_contract_ts_keys_match_brand_py():
 
 
 def test_scene_contract_ts_top_level_keys_match_scene_py():
-    assert _ts_interface_fields("scene-contract.ts", "SceneV1") == set(_animated_scene())
+    assert _ts_interface_fields("scene-contract.ts", "SceneV2") == set(_animated_scene())
 
 
 def test_scene_contract_ts_nested_keys_match_scene_py():
@@ -444,3 +444,82 @@ def test_scene_contract_ts_nested_keys_match_scene_py():
     )
     notch_obj = scene._hangar_block(notched)["structural_notches"][0]
     assert _ts_interface_fields("scene-contract.ts", "StructuralNotchData") == set(notch_obj)
+
+
+# ── #549: scene/v2 — explicit footprint vertices + z-band (polygon viewer seam) ─
+#
+# v2 adds two always-present box keys: `z_band` ([z_bottom_m, z_top_m]) and
+# `vertices` (the plane-local N-gon footprint, or `null` for a scalar box). A
+# scalar (rectangle) box emits `vertices: null` and renders byte-identically to
+# v1; a polygon part emits its plane-local ring so the viewer's single det-−1
+# affine reproduces the anchor oracle vertex-for-vertex.
+
+
+def _polygon_layout(verts=None):
+    """Loaded layout with the first placed plane's parts replaced by a single
+    polygon (N-gon) wing — a *placed* polygon aircraft so ``_plane_blocks`` and
+    ``_anchors`` exercise the ``local_vertices`` path (the shipped fleet still
+    ships rectangles until PR3). The hexagon (6 verts) is distinguishable from a
+    4-corner box."""
+    import dataclasses
+
+    if verts is None:
+        # Convex hexagon inside the ±1.0 × ±3.0 bbox (length_m=2.0, width_m=6.0).
+        verts = ((1.0, 0.0), (0.4, 3.0), (-0.4, 3.0), (-1.0, 0.0), (-0.4, -3.0), (0.4, -3.0))
+    lay = load_layout(LAYOUT)
+    pid = sorted(pl.plane_id for pl in lay.placements)[0]
+    poly = Part("wing", 2.0, 6.0, 1.2, 0.0, 0.0, 1.9, 2.1, local_vertices=verts)
+    poly_ac = dataclasses.replace(lay.fleet[pid], parts=(poly,))
+    poly_lay = dataclasses.replace(lay, fleet={**lay.fleet, pid: poly_ac})
+    return poly_lay, pid
+
+
+def test_schema_is_scene_v2():
+    assert scene.SCHEMA == "hangarfit.scene/v2"
+
+
+def test_scalar_box_emits_zband_and_null_vertices():
+    lay = load_layout(LAYOUT)  # shipped fleet: all-rectangle (scalar) parts
+    pid = lay.placements[0].plane_id
+    p = next(b for b in scene._plane_blocks(lay) if b["id"] == pid)
+    part0 = lay.fleet[pid].parts[0]
+    b0 = p["boxes"][0]
+    assert b0["vertices"] is None  # scalar part → null signals the box render path
+    assert b0["z_band"] == [part0.z_bottom_m, part0.z_top_m]
+
+
+def test_polygon_box_emits_plane_local_vertices():
+    from hangarfit.geometry import part_local_ring
+
+    poly_lay, pid = _polygon_layout()
+    p = next(b for b in scene._plane_blocks(poly_lay) if b["id"] == pid)
+    part = poly_lay.fleet[pid].parts[0]
+    b0 = p["boxes"][0]
+    # N-gon footprint in plane-local (u,v) — the exact ring the oracle folds
+    # before the affine, emitted verbatim so the viewer does no transform math.
+    assert b0["vertices"] == [[u, v] for u, v in part_local_ring(part)]
+    assert len(b0["vertices"]) == 6  # a hexagon, not a 4-corner box
+    assert b0["z_band"] == [part.z_bottom_m, part.z_top_m]
+
+
+def test_polygon_vertices_through_affine_reproduce_anchors():
+    # Python-side mirror of the JS checkAnchors parity: the emitted plane-local
+    # vertices, pushed through the plane's final affine, must equal the world
+    # anchor oracle vertex-for-vertex (the det-−1 surface, ADR-0002/ADR-0017).
+    poly_lay, pid = _polygon_layout()
+    p = next(b for b in scene._plane_blocks(poly_lay) if b["id"] == pid)
+    placement = next(pl for pl in poly_lay.placements if pl.plane_id == pid)
+    affine = scene._affine(placement)
+    anchors = scene._anchors(poly_lay)[pid][0]
+    verts = p["boxes"][0]["vertices"]
+    assert len(verts) == len(anchors)
+    for (u, v), (ax, ay) in zip(verts, anchors, strict=True):
+        wx, wy = _apply(affine, u, v)
+        assert math.isclose(wx, ax, abs_tol=1e-9) and math.isclose(wy, ay, abs_tol=1e-9)
+
+
+def test_build_scene_v2_byte_deterministic_with_polygon():
+    poly_lay, _ = _polygon_layout()
+    a = json.dumps(scene.build_scene(poly_lay))
+    b = json.dumps(scene.build_scene(poly_lay))
+    assert a == b

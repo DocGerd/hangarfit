@@ -2,7 +2,7 @@
 //
 // Draw each placed plane's full tow route as a coloured line on the hangar floor
 // (z ≈ 0), one colour per plane — the 3D counterpart of `solve --render-paths`
-// (#192/#193). NO scene/v1 change (ADR-0017): the polyline is already implicit
+// (#192/#193). NO scene/v2 change (ADR-0017): the polyline is already implicit
 // in the timeline. Each `segments[].samples` entry is a `[a,b,tx,c,d,ty]` affine
 // whose translation `(tx, ty) = (sample[2], sample[5])` is exactly the
 // plane-local origin's ground track, door (or apron, ty<0) → parked slot. So we
@@ -14,7 +14,7 @@
 // "blue plane has a blue route" reading is self-consistent in the viewer.
 import * as THREE from 'three';
 import type { BrandTokens } from './brand-contract.ts';
-import type { SceneV1, SegmentData } from './scene-contract.ts';
+import type { SceneV2, SegmentData } from './scene-contract.ts';
 
 const TX = 2; // index of tx in a [a,b,tx,c,d,ty] affine
 const TY = 5; // index of ty
@@ -39,7 +39,7 @@ export interface TowPaths {
  * gets no line — there is no route to draw. Lines sit a hair above the floor
  * (z = `Z_OFFSET`) so they don't z-fight the floor plane or the grid, and below
  * the parked planes' bellies. Returns the lines + a visibility toggle. */
-export function addTowPaths(scene: THREE.Scene, SCENE: SceneV1, BRAND: BrandTokens): TowPaths {
+export function addTowPaths(scene: THREE.Scene, SCENE: SceneV2, BRAND: BrandTokens): TowPaths {
   const Z_OFFSET = 0.02; // just above the floor (grid sits at 0.003); under any belly
   const segByPlane: Record<string, SegmentData> = {};
   for (const s of SCENE.timeline.segments) segByPlane[s.plane_id] = s;

@@ -1,7 +1,7 @@
 // hangarfit 3D viewer — entry / orchestration (esbuild bundles this + the sibling
 // modules into the committed src/hangarfit/_viewer_assets/viewer.js, ADR-0020).
 //
-// A thin consumer of the hangarfit.scene/v1 contract: it performs NO transform
+// A thin consumer of the hangarfit.scene/v2 contract: it performs NO transform
 // math. Every plane-local→world placement arrives as a 2x3 affine [a,b,tx,c,d,ty]
 // computed in Python from geometry.local_to_world (the determinant-−1 transform,
 // ADR-0002/ADR-0017). The viewer drops each affine into a THREE.Matrix4 and
@@ -19,9 +19,9 @@ import { checkAnchors } from './anchors.ts';
 import { createTimeline } from './timeline.ts';
 import { startHud } from './hud.ts';
 import type { BrandTokens } from './brand-contract.ts';
-import type { SceneV1 } from './scene-contract.ts';
+import type { SceneV2 } from './scene-contract.ts';
 
-const SCENE = JSON.parse(byId('scene').textContent ?? 'null') as SceneV1;
+const SCENE = JSON.parse(byId('scene').textContent ?? 'null') as SceneV2;
 const BRAND = JSON.parse(byId('brand').textContent ?? 'null') as BrandTokens;
 const H = SCENE.hangar;
 

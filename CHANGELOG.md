@@ -11,6 +11,12 @@ All notable changes to this project are documented here. Format follows [Keep a 
   tip_chord_m}` wing block), used by the collision build-path while `length_m`/
   `width_m` stay the bounding box. Scalar fleets are byte-identical; the 3D viewer
   still renders boxes until the scene/v2 work. (#548, ADR-0024)
+- 3D viewer renders polygon part footprints as extruded prisms (`scene/v2`): each
+  plane box now carries an explicit `z_band` and an optional plane-local `vertices`
+  ring, and the viewer extrudes polygon parts (e.g. a tapered glider wing) instead
+  of drawing their bounding box. Scalar (rectangle) parts render byte-identically
+  to v1. The det-−1 anchor self-check generalizes from 4 corners to N via the
+  shared `geometry.part_local_ring` helper. (#549, ADR-0017)
 
 ### Changed
 

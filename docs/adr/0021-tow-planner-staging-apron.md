@@ -279,7 +279,7 @@ rearrangement tier's extra needs named (spike Q7) so they are not foreclosed.
   substrate the apron+jamb model can reuse).
 - Related concepts: [§5 — `towplanner.py`](../architecture/05-building-block-view.md) ·
   [§8 — the door & the coordinate convention](../architecture/08-crosscutting-concepts.md) ·
-  [scene-v1-schema](../architecture/scene-v1-schema.md).
+  [scene-v2-schema](../architecture/scene-v2-schema.md).
 - Related issues: [#412](https://github.com/DocGerd/hangarfit/issues/412)
   (implementation), [#494](https://github.com/DocGerd/hangarfit/issues/494) (this
   spike), [#411](https://github.com/DocGerd/hangarfit/issues/411) (merged foundation),

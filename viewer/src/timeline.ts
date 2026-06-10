@@ -2,7 +2,7 @@
 import type * as THREE from 'three';
 import { affineMatrix } from './affine.ts';
 import { byId } from './dom.ts';
-import type { Affine, SceneV1, SegmentData } from './scene-contract.ts';
+import type { Affine, SceneV2, SegmentData } from './scene-contract.ts';
 
 /** Pose + visibility of a plane at time `t`. PURE given `(segByPlane, finals, pid, t)`
  * — no THREE, no DOM (node-tested in #440). A static plane (no segment) renders at
@@ -35,7 +35,7 @@ export interface Timeline {
 
 /** Wire the timeline to the built plane Groups + the `#active`/`#clock` readouts.
  * `applyTime(t)` is the per-frame impure edge around the pure `affineAt`. */
-export function createTimeline(scene: SceneV1, groups: Record<string, THREE.Group>): Timeline {
+export function createTimeline(scene: SceneV2, groups: Record<string, THREE.Group>): Timeline {
   const TL = scene.timeline;
   const SEGS = TL.segments;
   const TOTAL = TL.total_s;

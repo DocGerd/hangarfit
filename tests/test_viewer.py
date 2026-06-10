@@ -70,7 +70,7 @@ def test_scene_json_round_trips(tmp_path):
     assert m is not None
     # Embedded JSON escapes '<' as < to prevent a </script> breakout; JSON
     # parsing decodes it back, so the document round-trips to the scene dict.
-    assert json.loads(m.group(1))["schema"] == "hangarfit.scene/v1"
+    assert json.loads(m.group(1))["schema"] == "hangarfit.scene/v2"
 
 
 def test_embedded_scene_has_no_raw_angle_bracket(tmp_path):
@@ -198,7 +198,7 @@ def test_inlined_viewer_js_is_the_committed_bundle_verbatim(tmp_path):
 
 def test_brand_blob_is_present_canonical_and_round_trips(tmp_path):
     # The BRAND blob (#419) is its OWN <script id="brand">, separate from the
-    # scene blob (scene/v1 unchanged). It must parse, be canonical (sorted keys +
+    # scene blob (scene/v2 unchanged). It must parse, be canonical (sorted keys +
     # compact separators) so the HTML is byte-stable, and be a flat dict of
     # str/number values.
     html = _html(tmp_path)
