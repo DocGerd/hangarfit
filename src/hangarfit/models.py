@@ -14,12 +14,13 @@ from __future__ import annotations
 
 import math
 import typing
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, cast
 
 from shapely import box, union_all
+from shapely.geometry import LinearRing
 from shapely.geometry.base import BaseGeometry
 
 if TYPE_CHECKING:
@@ -37,6 +38,67 @@ _VALID_PART_KINDS = frozenset(typing.get_args(PartKind))
 _VALID_WING_POSITIONS = frozenset(typing.get_args(WingPosition))
 _VALID_GEARS = frozenset(typing.get_args(Gear))
 _VALID_MOVEMENT_MODES = frozenset(typing.get_args(MovementMode))
+
+# Below this absolute |2·signed-area| a ring is treated as degenerate
+# (zero-area / collinear). 1e-9 m² is far tighter than any real part.
+_RING_MIN_ABS_SIGNED_AREA = 1e-9
+# Float slack for the local_vertices-within-bbox containment check.
+_PART_BBOX_TOL_M = 1e-9
+
+
+def _canonicalize_ring(
+    vertices: Sequence[tuple[float, float]],
+) -> tuple[tuple[float, float], ...]:
+    """Canonicalize an author-supplied polygon ring to a deterministic form.
+
+    Returns the ring OPEN (no closing duplicate), wound counter-clockwise,
+    rotated so the lexicographically-smallest vertex is first. Two orderings
+    of the SAME shape therefore produce a byte-identical tuple — the
+    determinism contract (ADR-0003) for polygon parts, since the geometry
+    layer never re-orients at solve time (Shapely preserves vertex order
+    verbatim). Rejects non-finite, fewer-than-3-vertex, degenerate
+    (zero-area / collinear), and self-intersecting rings.
+    """
+    pts = [(float(x), float(y)) for x, y in vertices]
+    # Drop an explicit closing duplicate if the author supplied one.
+    if len(pts) >= 2 and pts[0] == pts[-1]:
+        pts = pts[:-1]
+    if len(pts) < 3:
+        raise ValueError(f"polygon ring needs >= 3 distinct vertices, got {len(pts)}")
+    if not all(math.isfinite(x) and math.isfinite(y) for x, y in pts):
+        raise ValueError(f"polygon ring has a non-finite vertex: {pts}")
+    # Reject self-intersection (bow-ties) — shapely is the well-tested oracle.
+    # This check runs BEFORE the shoelace degeneracy gate so that a self-intersecting
+    # ring with non-zero shoelace area (e.g. a bowtie whose triangles don't cancel)
+    # is caught here. Collinear rings are also not-simple per Shapely, but their
+    # shoelace area is effectively zero — so we check collinearity first via the
+    # max absolute cross product, and emit "degenerate" for those, letting the
+    # self-intersection check handle true geometric crossings.
+    n = len(pts)
+    max_cross = max(
+        abs(
+            (pts[(i + 1) % n][0] - pts[i][0]) * (pts[(i + 2) % n][1] - pts[i][1])
+            - (pts[(i + 1) % n][1] - pts[i][1]) * (pts[(i + 2) % n][0] - pts[i][0])
+        )
+        for i in range(n)
+    )
+    if max_cross < _RING_MIN_ABS_SIGNED_AREA:
+        raise ValueError(f"polygon ring is degenerate (near-zero area): {pts}")
+    if not LinearRing([*pts, pts[0]]).is_simple:
+        raise ValueError(f"polygon ring self-intersects: {pts}")
+    # Signed area (shoelace) gives both the winding sign and a final degeneracy check.
+    signed_area2 = sum(
+        pts[i][0] * pts[(i + 1) % n][1] - pts[(i + 1) % n][0] * pts[i][1] for i in range(n)
+    )
+    if abs(signed_area2) < _RING_MIN_ABS_SIGNED_AREA:
+        raise ValueError(f"polygon ring is degenerate (near-zero area): {pts}")
+    # Force counter-clockwise (positive signed area).
+    if signed_area2 < 0:
+        pts = list(reversed(pts))
+    # Rotate to the lexicographically-minimum start vertex.
+    start = min(range(len(pts)), key=lambda i: pts[i])
+    pts = pts[start:] + pts[:start]
+    return tuple(pts)
 
 
 @dataclass(frozen=True, slots=True)
