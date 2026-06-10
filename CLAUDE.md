@@ -56,6 +56,8 @@ If you find yourself about to write a domain assertion in this file, **don't** �
 
 `required_linear_history` must **never** be enabled — it blocks GitFlow's release flow, which merges each `release/*` into both `main` and `develop`. Feature PRs land as merge commits too (squash/rebase merging is disabled repo-wide as a release-safety guardrail). The strategy is recorded in [ADR-0014](docs/adr/0014-merge-commit-only-history-strategy.md), superseding the never-adopted [ADR-0011](docs/adr/0011-linear-history-strategy-under-gitflow.md).
 
+**Releasing** (two skills, in order). `/release-prep version=X.Y.Z` promotes the CHANGELOG `[Unreleased]` block + runs a doc audit, landing via a PR that **must merge first**; then `/release-cut version=X.Y.Z` bumps `pyproject.toml` and opens the release→`main` + back-merge→`develop` PRs (its Check E refuses unless develop already carries the `[X.Y.Z]` heading). After the release PR merges, tag the **main merge commit** with an **annotated** `git tag -a vX.Y.Z` — **not** `git tag -s`: releases are signed by `release.yml`'s **Sigstore keyless cosign on the artifacts** (CI OIDC, no stored key), not a GPG-signed tag. Then `gh release edit vX.Y.Z --notes-file` with that version's CHANGELOG section (auto-publish otherwise uses the bare tag message). Tagging + `gh release edit` aren't merges, so Claude may run them on the user's go-ahead — `gh pr merge` stays the user's alone.
+
 ### Per-PR process
 
 1. Branch `feature/<slug>` off `develop`. Work, commit.
@@ -81,6 +83,7 @@ deps: `gh api -X POST repos/DocGerd/hangarfit/issues/<n>/dependencies/blocked_by
 - Every change is tracked by a GitHub issue. No code without an issue.
 - Issues are organized into milestones (one milestone = one releasable cut).
 - PR bodies link to issues with `Closes #N` / `Fixes #N` (the body, not the title — only body syntax auto-closes).
+- Each user-facing change carries its own `CHANGELOG.md [Unreleased]` entry; `/release-prep` only *promotes* that block (never authors it), so any missing entries must be backfilled at cut time.
 
 ---
 
