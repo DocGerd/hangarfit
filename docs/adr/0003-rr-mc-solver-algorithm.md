@@ -312,6 +312,51 @@ silently rejected at scoring time). Rejected.
 
 ## Amendments
 
+### 2026-06-09 — per-restart-index reseed + parallel restarts (issue #544)
+
+[#544](https://github.com/DocGerd/hangarfit/issues/544) makes the embarrassingly
+parallel restart loop fan across a `ProcessPoolExecutor` (`solve(..., workers=N)`,
+default `1` = serial). The measured win is **4.5× at 8 workers** on the binding
+`roomy_three_spread_on` regime (spike #540) — placement-only and sub-linear, but
+the largest headroom on the geometry-bound placement path. Two coupled changes:
+
+**1. Per-restart-index reseed (the re-base).** RR-MC previously threaded *one*
+`random.Random(seed)` through every restart, so restart *i* began drawing wherever
+*i−1* stopped — a serial dependency that made independent per-worker RNGs
+impossible. Each restart now seeds its own RNG from its index (`_restart_rng`
+keys on `(seed, restart_index)` via a SHA-512-stable string seed, so it is
+deterministic and identical *across processes* even under hash randomization).
+Each restart is therefore a pure function of `(scenario, seed, restart_index)`,
+and the serial and parallel paths produce **byte-identical** output.
+
+This re-seeding is applied to **both** paths, so the per-restart trajectories
+differ from the pre-#544 goldens — a deliberate, one-time **re-base**, exactly
+the "Intentionally fragile / a deliberate algorithm change requires updating the
+expected outputs" clause in *Compliance* above. The determinism contract is
+**preserved, not dropped**: output remains a pure function of `(scenario, seed)`
+— now additionally *independent of worker count*. The double-solve canaries in
+`tests/test_solver_canaries.py` assert run-to-run identity (not pinned literals),
+so they stayed green under the re-base; the one max_restarts-scoped canary
+(`test_solve_deterministic_best_partial_under_max_restarts`) was re-calibrated
+(seed `256 → 3`, `max_restarts 1 → 3`) because the new per-index trajectories
+shifted its fixture's first natural success.
+
+**2. The byte-identity scope is the `max_restarts`-bound, spread-on regime.** The
+parallel path runs a *fixed* `max_restarts` restarts and merges them; that equals
+the serial result only when serial would also run them all. So `workers > 1` is
+honored (`_parallel_eligible`) only when `max_restarts` is set, `spread` is on
+(no pre-#267 first-valid early exit), and the opt-in spread-stall exit is unset —
+i.e. exactly the regime this ADR already scopes wall-clock *out* of (the #267
+amendment below). For any other config `solve()` transparently runs serial, so
+the worker count never changes the answer; the CLI prints a note rather than
+silently ignoring `--workers`. The merge reconstructs the serial result exactly:
+the pool is rebuilt in `restart_index` order before `_select_spread_diverse`
+(whose total order is completion-order-invariant), and `best_partial_layout` is a
+strict-`<` min folded over restarts in index order (earliest restart wins ties,
+matching the old in-line loop). The previously-unexercised `alternatives > 1`
+selection and `best_partial` accumulator are covered by
+`tests/test_solver_parallel.py`. The `determinism-guard` gates the change.
+
 ### 2026-05-27 — best-of-all-basins selection and determinism scoping (issue #267)
 
 Since [#267](https://github.com/DocGerd/hangarfit/issues/267), `solve()` no

@@ -27,7 +27,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 
-from shapely.geometry import Polygon
+from shapely.geometry import Polygon, box
 
 from .models import Aircraft, PartKind, Placement
 
@@ -78,6 +78,20 @@ def oriented_rect(
         (cx + x * cos_h - y * sin_h, cy + x * sin_h + y * cos_h) for x, y in corners_local
     ]
     return Polygon(corners_world)
+
+
+def axis_aligned_rect(x_min: float, y_min: float, x_max: float, y_max: float) -> Polygon:
+    """Build an axis-aligned rectangle ``Polygon`` from world-space bounds — e.g.
+    the maintenance-bay keep-out in
+    :func:`hangarfit.collisions._bay_intrusion_conflicts`.
+
+    Unlike :func:`oriented_rect` / :func:`aircraft_parts_world`, this applies NO
+    plane-local → world transform: the inputs are already world coordinates, so it
+    carries none of the determinant-−1 sign-flip concern (ADR-0002). A thin wrapper
+    over ``shapely.geometry.box`` kept here so polygon construction stays in one
+    module (the same ``box`` primitive ``models.Hangar`` uses for its floor/notches).
+    """
+    return box(x_min, y_min, x_max, y_max)
 
 
 def polygon_overlap(p1: Polygon, p2: Polygon, clearance: float = 0.0) -> bool:

@@ -81,7 +81,14 @@ from .regimes import FAST_REGIMES, REGIMES, regime_by_key
 _SPEED_CEILING_S: dict[str, float] = {
     "trivial_single": 10.0,
     "roomy_three_spread_on": 130.0,
-    "roomy_three_spread_off": 20.0,
+    # 2026-06-09 (#544): the per-restart-index reseed (ADR-0003 amendment) re-bases
+    # which layout this --no-spread regime returns (it early-exits at the *first*
+    # valid layout), and seed=1's new first-valid arrangement tow-routes slower than
+    # the old one — ~7 s locally, ~26 s on CI (was tripping the old 20 s ceiling),
+    # while valid/paths/det all stayed ok. A deliberate re-base, not a regression
+    # (the layout is still fully routed and deterministic), so the ceiling is raised
+    # to 45 s (~1.7x the observed CI value, matching the spread_on/apron headroom).
+    "roomy_three_spread_off": 45.0,
     # Same placement as roomy_three_spread_on (apron is planner-only) plus the
     # apron's heavier routing — and since #263 the nose-out back-in from the apron's
     # enlarged start set dominates. Post-empennage (#518/#519/#520) the per-expansion
@@ -89,6 +96,14 @@ _SPEED_CEILING_S: dict[str, float] = {
     # CI (the pre-fix run that tripped the old 240 s ceiling peaked at ~269 s; was
     # ~170 s pre-empennage). Tripwire, not a microbenchmark (#499 / #263 / #524).
     "roomy_three_apron": 380.0,
+    # 2026-06-09 (#547): parts²-scaling guard. PLACEMENT-dominated 9-plane fill
+    # (spread ON, 8 restarts; a tiny tow cap ⇒ routing bails fast, so placement is
+    # ~80% of the total). Measured 110.2 s on the bench-gates CI runner (placement
+    # 88.4 s + routing 21.8 s; ~2.3x the ~47 s local). 190 s is ~1.7x that CI median
+    # — matching the spread_off/apron headroom — and still trips on a parts²-blowup
+    # or a #453 memoization revert (both multi-x placement growth). Tripwire, not a
+    # microbenchmark.
+    "full_nine_placement": 190.0,
 }
 
 

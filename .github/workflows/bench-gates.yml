@@ -12,9 +12,25 @@ name: bench gates
 #
 # Deliberately a SEPARATE workflow from ci.yml (the Python test/lint matrix): a
 # bench regression is a distinct signal from a unit-test failure, and a separate
-# file keeps each concern independently editable. This job is NOT yet a *required*
-# status check — it runs on every develop/main PR, but the repo owner adds it to
-# branch protection's required set when ready.
+# file keeps each concern independently editable.
+#
+# TWO jobs split the gate by what is safe to block a merge on (#564):
+#
+#   * `bench-correctness` runs `python -m bench.profile_pipeline` WITHOUT `--gate`,
+#     so it exits non-zero ONLY on the byte-reproducible VALIDITY / PATH-VALIDITY /
+#     DETERMINISM invariants and merely reports timing. Those invariants are machine-
+#     and load-independent (the harness binds on `max_restarts`), so this job is
+#     safe to make a REQUIRED status check — a determinism regression then BLOCKS a
+#     merge instead of only reporting red (closing the gap where a direct push also
+#     bypasses the in-session determinism-guard subagent). The repo owner adds the
+#     `bench correctness ...` check to branch protection's required set (it is not
+#     timing-sensitive, so it runs on the floating `ubuntu-latest`).
+#   * `bench-gates` runs `--gate`, which additionally enforces the per-regime SPEED
+#     ceilings. Those are runner-sensitive and periodically re-baselined (CLAUDE.md),
+#     so this job stays a NON-required reporting check: a speed regression reports
+#     red but is never allowed to block a merge on CI-runner jitter.
+#
+# Both jobs run on every develop/main PR.
 
 on:
   pull_request:
@@ -75,3 +91,43 @@ jobs:
         # speed-ceiling breach. `bench/` lives outside src/ and ships in no wheel,
         # so it is invoked as a module, not via the installed console script.
         run: python -m bench.profile_pipeline --gate
+
+  bench-correctness:
+    name: bench correctness (validity + path-validity + determinism)
+    # The REQUIRED-candidate gate (#564): correctness ONLY, no speed ceiling.
+    # NOT timing-sensitive — the harness binds on `max_restarts`, so VALIDITY /
+    # PATH-VALIDITY / DETERMINISM are byte-reproducible regardless of runner speed.
+    # So this job runs on the floating `ubuntu-latest` (no calibration pin needed,
+    # unlike the speed job above), and is the one the repo owner adds to branch
+    # protection's required set so a determinism regression blocks merge.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+
+      - name: Set up Python 3.12
+        # The single supported Python (ADR-0009).
+        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: |
+            pyproject.toml
+            requirements-dev.txt
+            requirements-build.txt
+
+      - name: Install dev deps (hash-pinned)
+        run: pip install --require-hashes -r requirements-dev.txt
+
+      - name: Install build toolchain (hash-pinned)
+        run: pip install --require-hashes -r requirements-build.txt
+
+      - name: Install project (editable, no deps)
+        # MUST run after the build-toolchain install (see the speed job's note).
+        run: pip install -e . --no-deps --no-build-isolation
+
+      - name: Run bench correctness (fast regimes — no speed ceiling)
+        # No `--gate`: exit non-zero ONLY on a VALIDITY / PATH-VALIDITY /
+        # DETERMINISM failure; speed is reported in the table but never enforced
+        # (profile_pipeline.py main()'s default-path return). This is the
+        # merge-blocking signal once added to the required set.
+        run: python -m bench.profile_pipeline

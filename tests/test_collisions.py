@@ -400,6 +400,58 @@ class TestBayIntrusion:
             f"part centered inside closed bay must fire bay_intrusion, got {result.conflicts!r}"
         )
 
+    def test_closed_bay_flags_edge_crossing_with_no_vertex_inside(self) -> None:
+        """The ADR-0018 blind spot, mirrored for the bay (#551): a thin part whose
+        EDGE skewers the bay with NO vertex strictly inside is missed by the
+        per-vertex test but caught by the polygon-overlap predicate.
+
+        Bay (from ``_build_layout``) is x ∈ (10, 18), y ∈ (16, 25]. This part spans
+        x ∈ [9, 19], y ∈ [19.9, 20.1]: all four vertices sit OUTSIDE the bay's
+        x-range (9 and 19 are both outside (10, 18)), so no vertex is inside — yet
+        its body clearly overlaps the bay interior. Built as an explicit WorldPart
+        (bypassing the placement transform) like ``TestStructuralNotch``'s analog."""
+        from shapely.geometry import Polygon
+
+        from hangarfit.collisions import _bay_intrusion_conflicts, _first_vertex_in_bay
+        from hangarfit.geometry import WorldPart
+
+        layout = self._build_layout(bay_open=False)  # bay closed (occupant inside)
+        skewer = WorldPart(
+            polygon=Polygon([(9.0, 19.9), (19.0, 19.9), (19.0, 20.1), (9.0, 20.1)]),
+            z_bottom_m=2.0,
+            z_top_m=2.3,
+            plane_id="probe",
+            kind="wing",
+        )
+        # Precondition: no vertex is strictly inside the bay (else we'd be exercising
+        # the old per-vertex path, not the new polygon-overlap one).
+        assert _first_vertex_in_bay(skewer, 10.0, 18.0, 16.0) is None
+        conflicts = _bay_intrusion_conflicts({"probe": [skewer]}, layout)
+        assert [c.kind for c in conflicts] == ["bay_intrusion"], conflicts
+        assert "edge crosses" in conflicts[0].detail, conflicts[0].detail
+
+    def test_closed_bay_edge_flush_part_does_not_fire(self) -> None:
+        """Byte-identity guard for the polygon predicate: a part whose edge is
+        FLUSH with the bay boundary (shares the x_min=10 edge, body entirely
+        outside at x ∈ [8, 10]) only *touches* the bay — no interior overlap — so
+        it must NOT fire, preserving the strict-``<`` semantics of the per-vertex
+        test (cf. ``valid_part_vertex_on_bay_edge`` / the sub-epsilon edge tests)."""
+        from shapely.geometry import Polygon
+
+        from hangarfit.collisions import _bay_intrusion_conflicts
+        from hangarfit.geometry import WorldPart
+
+        layout = self._build_layout(bay_open=False)
+        flush = WorldPart(
+            polygon=Polygon([(8.0, 19.0), (10.0, 19.0), (10.0, 21.0), (8.0, 21.0)]),
+            z_bottom_m=2.0,
+            z_top_m=2.3,
+            plane_id="probe",
+            kind="wing",
+        )
+        conflicts = _bay_intrusion_conflicts({"probe": [flush]}, layout)
+        assert conflicts == [], conflicts
+
     def test_left_edge_vertex_strictly_outside_passes(self) -> None:
         """Bay x_min=10. A 1×1 wing centered at (9.5, 20) has its
         right edge at x=10 exactly — on the boundary, not strictly

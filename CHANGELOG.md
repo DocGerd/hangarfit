@@ -10,6 +10,63 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Fixed
 
+## [0.14.0] — 2026-06-10
+
+### Added
+
+- **`solve --spread-stall-restarts N` opt-in flag (#546).** Exposes the F7
+  (#404) spread-stall early-exit — the spread post-pass stops after `N`
+  restarts with no further inter-plane-gap improvement — through a new
+  `hangarfit solve --spread-stall-restarts N` flag. **Opt-in, default off**, so
+  every existing solve stays byte-identical; reproducibility remains
+  `max_restarts`-scoped (the default-on flip is deferred while it is reconciled
+  with the #544 parallel-restart path). Narrows the perceived-latency tail on
+  easy interactive solves.
+
+- **Parallel restarts (`solve --workers N`, #544, ADR-0003 amendment).** The
+  RR-MC restart loop can now fan across worker processes — a measured **4.5× at
+  8 workers** on the binding roomy-three spread-on regime (spike #540).
+  `hangarfit solve` gains `--workers N` (default `1` = serial, today's behaviour)
+  and `--max-restarts N` (cap the search at a fixed, cross-machine-reproducible
+  restart count instead of the wall-clock `--budget`). Parallel restarts are
+  **byte-identical to serial** in the `--max-restarts` + spread regime; for any
+  other config `--workers` transparently runs serial and prints a note (never a
+  silent fallback). Determinism is **preserved, not dropped**: as of #544 each
+  restart is seeded by its index, so output is a pure function of
+  `(scenario, seed)` *independent of worker count* — a one-time re-base of the
+  goldens (the determinism contract's deliberate-algorithm-change clause), not a
+  reproducibility loss. The speedup is sub-linear and placement-only (routing is
+  RNG-free and post-merge), so it helps most on roomy spread-on fills with many
+  restarts. `Scenario` (#545) and `Layout` (this change) are now picklable —
+  via a shared proxy-aware helper — to cross the worker boundary.
+
+### Changed
+
+### Fixed
+
+- **Maintenance-bay edge-crossing intrusion (#551, ADR-0018).** The bay-intrusion
+  check now **also** consults a polygon-vs-bay intersection test — additively,
+  only when no vertex lies inside the bay — on top of the existing per-vertex
+  containment gate, so a thin part whose *edge* crosses the closed maintenance
+  bay with no vertex inside is correctly flagged (the thin-edge blind spot
+  ADR-0018 already closed for the hangar floor via `floor.covers`). Because the
+  per-vertex test stays the primary gate, every existing verdict is
+  **byte-identical** for today's rectangular parts; it hardens the checker ahead
+  of slender/concave polygon parts (#548).
+
+- **Strict top-level unknown-key allowlist for `hangar.yaml` / scenario /
+  layout files (#516).** The loader now rejects an unrecognised **top-level**
+  key in these files with an attributed `LoaderError` instead of silently
+  dropping it to its default — extending the #513 fleet-entry allowlist (the same
+  silent-failure class) to the top-level blocks. The motivating trap: a typo'd
+  `apron_depth_m` (e.g. `apron_dpeth_m:`) previously fell back to depth 0
+  silently; it is now a loud error. A well-formed file is unaffected.
+
+- **`solve --max-restarts 0` / `--spread-stall-restarts 0` clean exit (#546).**
+  A bad restart-budget knob (both must be `>= 1` when set) now reports a clean
+  exit-2 input error instead of an uncaught `ValueError` traceback — the same
+  contract as a `LoaderError` on malformed input.
+
 ## [0.13.0] — 2026-06-09
 
 ### Added
@@ -627,7 +684,8 @@ First Phase 1 cut — substrate for arranging the flying club fleet in a stack-s
 - Apache-2.0 license, public-audience README, CI matrix (Python 3.11 + 3.12), branch protection on develop + main (#13, #14, #15, #16).
 - Strut-aware golden tests + all-9-planes fixture using larger test-only hangar to accommodate strut-bracing geometry on placeholder dimensions (#5).
 
-[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/DocGerd/hangarfit/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/DocGerd/hangarfit/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/DocGerd/hangarfit/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/DocGerd/hangarfit/compare/v0.10.0...v0.11.0

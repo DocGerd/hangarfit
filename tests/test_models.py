@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import dataclasses
+import pickle
+from types import MappingProxyType
 
 import pytest
 
@@ -682,6 +684,32 @@ class TestLayout:
         )
         assert layout.maintenance_plane is None
         assert len(layout.placements) == 1
+
+    def test_pickle_round_trips_and_preserves_fleet_proxy(self) -> None:
+        """Layout must survive a pickle round-trip so #544's ProcessPool
+        parallel restarts can carry it *back* from a worker (the returned
+        candidates hold Layouts). `fleet` is MappingProxyType-wrapped, which is
+        not picklable; the shared proxy-aware hooks unwrap then re-wrap it, so
+        the round-trip restores both the data and the immutability contract."""
+        a = _ok_aircraft("foo", movement_mode="always_own_gear", turn_radius_m=5.0)
+        layout = Layout(
+            fleet=self._fleet_of(a),
+            hangar=_ok_hangar(),
+            placements=(
+                Placement(plane_id="foo", x_m=5.0, y_m=10.0, heading_deg=0.0, on_carts=False),
+            ),
+            maintenance_plane=None,
+        )
+
+        restored = pickle.loads(pickle.dumps(layout))
+
+        assert dict(restored.fleet) == dict(layout.fleet)
+        assert restored.placements == layout.placements
+        assert restored.hangar == layout.hangar
+        assert restored.maintenance_plane == layout.maintenance_plane
+        assert isinstance(restored.fleet, MappingProxyType)
+        with pytest.raises(TypeError):
+            restored.fleet["x"] = None  # type: ignore[index]
 
     def test_unknown_plane_id_rejected(self) -> None:
         a = _ok_aircraft("foo", movement_mode="always_own_gear", turn_radius_m=5.0)

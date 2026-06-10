@@ -69,6 +69,192 @@ class TestSolveSubparser:
         assert args.json is True
 
 
+class TestSpreadStallRestartsFlag:
+    """#546: the opt-in ``--spread-stall-restarts N`` flag exposes F7 (#404)'s
+    spread-stagnation early-exit from the CLI. The default stays opt-in (``None``),
+    so omitting the flag is byte-identical to before (no #544 ``--workers``
+    regression, no bench re-baseline).
+    """
+
+    def test_default_is_none(self):
+        parser = build_parser()
+        args = parser.parse_args(["solve", SMOKE_FIXTURE])
+        assert args.spread_stall_restarts is None
+
+    def test_parsed(self):
+        parser = build_parser()
+        args = parser.parse_args(["solve", SMOKE_FIXTURE, "--spread-stall-restarts", "5"])
+        assert args.spread_stall_restarts == 5
+
+    def test_threads_into_searchconfig(self, monkeypatch):
+        """The flag value reaches the ``SearchConfig`` the solver receives."""
+        import hangarfit.solver as solver_mod
+
+        captured: dict = {}
+        real_solve = solver_mod.solve
+
+        def spy(scenario, **kwargs):
+            captured["search"] = kwargs.get("search")
+            return real_solve(scenario, **kwargs)
+
+        # --no-spread keeps the solve sub-second (single-plane first-valid exit); the
+        # flag still threads into SearchConfig regardless of spread, which is what we
+        # assert. Running the real spread loop here would burn the wall-clock --budget
+        # and risk the documented -n auto flake (docs/dev/test-flakes-and-ci-gotchas.md).
+        monkeypatch.setattr(solver_mod, "solve", spy)
+        rc = main(["solve", SMOKE_FIXTURE, "--no-spread", "--spread-stall-restarts", "7"])
+        assert rc == 0
+        assert captured["search"] is not None
+        assert captured["search"].spread_stall_restarts == 7
+
+    def test_zero_exits_2(self, capsys):
+        """``--spread-stall-restarts 0`` is invalid (must be >= 1): the CLI surfaces
+        the SearchConfig ValueError as a clean exit 2, not an uncaught traceback.
+        (The same wrap also closes the latent ``--max-restarts 0`` crash.)"""
+        rc = main(["solve", SMOKE_FIXTURE, "--spread-stall-restarts", "0"])
+        assert rc == 2
+        assert "spread_stall_restarts" in capsys.readouterr().err
+
+    def test_with_workers_surfaces_serial_note(self, capsys):
+        """The #544 interaction made visible: setting --spread-stall-restarts makes
+        an otherwise parallel-eligible config (--max-restarts + spread) ineligible
+        (the stall counter is completion-order-dependent), so --workers prints the
+        'ignored (runs serial)' note rather than silently degrading the speedup."""
+        rc = main(
+            [
+                "solve",
+                SMOKE_FIXTURE,
+                "--max-restarts",
+                "1",
+                "--workers",
+                "4",
+                "--spread-stall-restarts",
+                "5",
+            ]
+        )
+        assert rc == 0
+        assert "--workers 4 ignored (runs serial)" in capsys.readouterr().err
+
+
+class TestSolveParallelFlags:
+    """#544/#561: the ``--workers`` / ``--max-restarts`` argparse surface, the
+    serial-fallback ``note:`` branch, and eligible-regime byte-identity surfaced
+    end-to-end through the CLI's ``--json`` output.
+
+    ``test_solver_parallel.py`` covers the library contract; these tests cover
+    the CLI wiring (the codecov/patch gap #561 names: ``cli.py`` ~690-708).
+    """
+
+    def test_workers_and_max_restarts_defaults(self):
+        parser = build_parser()
+        args = parser.parse_args(["solve", SMOKE_FIXTURE])
+        assert args.workers == 1
+        assert args.max_restarts is None
+
+    def test_workers_and_max_restarts_parsed(self):
+        parser = build_parser()
+        args = parser.parse_args(["solve", SMOKE_FIXTURE, "--workers", "4", "--max-restarts", "8"])
+        assert args.workers == 4
+        assert args.max_restarts == 8
+
+    def test_max_restarts_zero_exits_2(self, capsys):
+        """``--max-restarts 0`` is invalid (must be >= 1). It previously crashed with
+        an uncaught ValueError traceback; the #546 SearchConfig try/except wrap now
+        surfaces it as a clean exit 2 (regression lock for that latent gap)."""
+        rc = main(["solve", SMOKE_FIXTURE, "--max-restarts", "0"])
+        assert rc == 2
+        assert "max_restarts" in capsys.readouterr().err
+
+    def test_eligible_parallel_no_note_and_byte_identical(self, capsys):
+        """Eligible regime (``--max-restarts`` + spread on): ``--workers >1``
+        prints NO note and yields byte-identical ``--json`` output to
+        ``--workers 1``. Binds on ``max_restarts`` (4), so load-independent.
+
+        The generous explicit ``--budget`` makes that max_restarts-binding
+        intent self-documenting and immune to per-restart cost growth: if the
+        budget ever truncated the SERIAL run below 4 restarts (the parallel
+        branch always runs the full fixed count), the two runs would diverge —
+        so the budget must stay non-binding here, not be left to the default.
+        """
+        fixture = str(FIXTURES_DIR / "solve_fresh_alternatives_three.yaml")
+        base = [
+            "solve",
+            fixture,
+            "--max-restarts",
+            "4",
+            "--budget",
+            "600",
+            "--seed",
+            "42",
+            "--json",
+        ]
+
+        rc1 = main([*base, "--workers", "1"])
+        serial = capsys.readouterr()
+        rc4 = main([*base, "--workers", "4"])
+        parallel = capsys.readouterr()
+
+        assert rc1 == 0
+        assert rc4 == 0
+        assert "note:" not in serial.err
+        assert "note:" not in parallel.err
+
+        # Byte-identical placements end-to-end through the CLI's JSON surface.
+        # The only field that legitimately differs is wall-clock timing (today
+        # just ``wall_time_s``; the ``*_time_s`` suffix match is defensive
+        # against future timing fields). Everything else — placements, seed,
+        # restarts_attempted, basins — must match exactly.
+        def _strip_timing(obj):
+            if isinstance(obj, dict):
+                return {k: _strip_timing(v) for k, v in obj.items() if not k.endswith("_time_s")}
+            if isinstance(obj, list):
+                return [_strip_timing(v) for v in obj]
+            return obj
+
+        assert _strip_timing(json.loads(serial.out)) == _strip_timing(json.loads(parallel.out))
+
+    def test_non_eligible_no_max_restarts_prints_note(self, capsys):
+        """``--workers >1`` without ``--max-restarts`` is not byte-identity
+        eligible → solve transparently runs serial and the CLI says so on
+        stderr (the #544 'never silently ignore --workers' contract)."""
+        rc = main(
+            [
+                "solve",
+                str(FIXTURES_DIR / "solve_trivial_single_plane.yaml"),
+                "--workers",
+                "2",
+                "--budget",
+                "0.5",
+                "--seed",
+                "1",
+            ]
+        )
+        captured = capsys.readouterr()
+        assert rc == 0
+        assert "note: --workers 2 ignored (runs serial)" in captured.err
+
+    def test_non_eligible_spread_off_prints_note(self, capsys):
+        """``--no-spread`` also disables eligibility (the first-valid early-exit
+        is completion-order-dependent), so the note fires even WITH
+        ``--max-restarts``. First-valid exit keeps this fast."""
+        rc = main(
+            [
+                "solve",
+                str(FIXTURES_DIR / "solve_trivial_single_plane.yaml"),
+                "--workers",
+                "2",
+                "--max-restarts",
+                "4",
+                "--no-spread",
+                "--seed",
+                "1",
+            ]
+        )
+        captured = capsys.readouterr()
+        assert rc == 0
+        assert "note: --workers 2 ignored (runs serial)" in captured.err
+
+
 class TestSolveLoaderErrors:
     """LoaderError → exit 2, message to stderr; no traceback to user."""
 
