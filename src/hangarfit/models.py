@@ -136,6 +136,7 @@ class Part:
     angle_deg: float
     z_bottom_m: float
     z_top_m: float
+    local_vertices: tuple[tuple[float, float], ...] | None = None
 
     def __post_init__(self) -> None:
         if self.kind not in _VALID_PART_KINDS:
@@ -155,6 +156,18 @@ class Part:
                 f"Part {self.kind!r}: z_top_m must exceed z_bottom_m, "
                 f"got z_bottom={self.z_bottom_m}, z_top={self.z_top_m}"
             )
+        if self.local_vertices is not None:
+            canonical = _canonicalize_ring(self.local_vertices)
+            half_l = self.length_m / 2.0
+            half_w = self.width_m / 2.0
+            for x, y in canonical:
+                if abs(x) > half_l + _PART_BBOX_TOL_M or abs(y) > half_w + _PART_BBOX_TOL_M:
+                    raise ValueError(
+                        f"Part {self.kind!r}: local_vertices vertex ({x}, {y}) lies outside "
+                        f"the length_m x width_m bbox (+/-{half_l} x +/-{half_w}); the polygon "
+                        f"footprint must be a subset of the bounding box"
+                    )
+            object.__setattr__(self, "local_vertices", canonical)
 
 
 @dataclass(frozen=True, slots=True)
