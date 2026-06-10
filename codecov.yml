@@ -1,8 +1,9 @@
 # Codecov configuration — see https://docs.codecov.com/docs/codecovyml-reference
 #
 # Why this exists (#589): Codecov's `patch`/`project` status checks were never
-# required checks on `develop` or `main` (required = `test (3.12)`, the three
-# lockfile-drift jobs, `bench correctness`; see CLAUDE.md). They are a *signal*,
+# required checks on `develop` or `main` (required on `develop` = `test (3.12)`,
+# the three lockfile-drift jobs, `Analyze (Python)` CodeQL, `bench correctness`;
+# `main` is the same minus `Analyze`; see CLAUDE.md). They are a *signal*,
 # not a merge gate. Yet under the default auto-target they post a RED conclusion
 # whenever a diff dips below the project's current coverage — most visibly on
 # every **release PR**, whose cumulative `vX.Y.Z..develop` diff vs `main` lands a

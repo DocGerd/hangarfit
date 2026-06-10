@@ -82,8 +82,9 @@ There is a committed [`codecov.yml`](../../codecov.yml) that sets both
 so **the `codecov/patch` and `codecov/project` checks always pass** while still
 posting the coverage numbers on every PR. Two reasons (#589):
 
-1. Neither status was ever a *required* check on `develop`/`main` (required =
-   `test (3.12)`, the three lockfile-drift jobs, `bench correctness`). They are a
+1. Neither status was ever a *required* check on `develop`/`main` (required on
+   `develop` = `test (3.12)`, the three lockfile-drift jobs, `Analyze (Python)`
+   CodeQL, `bench correctness`; `main` is the same minus `Analyze`). They are a
    signal, not a merge gate — `informational: true` just stops them rendering a
    misleading red **X** on a check that never blocked.
 2. Under the default auto-target, every **release PR** went red: its cumulative
