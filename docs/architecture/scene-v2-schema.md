@@ -110,9 +110,10 @@ The list is always present and is empty for the common rectangular hangar.
       "length_m": 1.2, "width_m": 18.0, "height_m": 0.2, "angle_deg": 0.0,
       "z_band": [1.9, 2.1],
       // v2: a polygon part's plane-local (u, v) footprint, angle+offset already
-      // folded in (so the affine applies directly, no transform math). CCW,
-      // open (no closing-dup). Here a 6-vertex tapered-wing hexagon.
-      "vertices": [[2.1,0.0],[2.1,9.0],[1.96,9.0],[0.9,0.0],[1.96,-9.0],[2.1,-9.0]]
+      // folded in (so the affine applies directly, no transform math). Canonical:
+      // CCW, open (no closing-dup), lex-min-start (ADR-0024). Here a 6-vertex
+      // tapered-wing hexagon (root chord 1.2 at cx=1.5 → ±0.6 → [0.9, 2.1]).
+      "vertices": [[0.9,0.0],[1.36,-9.0],[1.64,-9.0],[2.1,0.0],[1.64,9.0],[1.36,9.0]]
     }
     // … one box per Part
   ],
