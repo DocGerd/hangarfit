@@ -1,0 +1,30 @@
+# Codecov configuration — see https://docs.codecov.com/docs/codecovyml-reference
+#
+# Why this exists (#589): Codecov's `patch`/`project` status checks were never
+# required checks on `develop` or `main` (required on `develop` = `test (3.12)`,
+# the three lockfile-drift jobs, `Analyze (Python)` CodeQL, `bench correctness`;
+# `main` is the same minus `Analyze`; see CLAUDE.md). They are a *signal*,
+# not a merge gate. Yet under the default auto-target they post a RED conclusion
+# whenever a diff dips below the project's current coverage — most visibly on
+# every **release PR**, whose cumulative `vX.Y.Z..develop` diff vs `main` lands a
+# couple of points under target (e.g. PR #587: 95.09% patch vs 97.17% target).
+# That red is structural noise, not a regression, and it merged anyway.
+#
+# `informational: true` makes both statuses *always pass* while still posting the
+# coverage numbers to the PR (docs: "the resulting status will pass no matter what
+# the coverage is ... great if you want to expose codecov information without
+# gating PRs"). This formalises the already-documented stance: codecov reports,
+# it does not block. The coverage % stays visible on every PR — only the misleading
+# red X (on a non-blocking check) goes away.
+#
+# Contributors should still watch the patch number on feature PRs and keep
+# >= 1 non-slow test per new path (docs/dev/test-flakes-and-ci-gotchas.md §3-§4).
+
+coverage:
+  status:
+    patch:
+      default:
+        informational: true
+    project:
+      default:
+        informational: true
