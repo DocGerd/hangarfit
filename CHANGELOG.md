@@ -42,23 +42,30 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Changed
 
-- **Strict top-level unknown-key allowlist for `hangar.yaml` / scenario /
-  layout files (#516).** The loader now rejects an unrecognised **top-level**
-  key in these files with an attributed `LoaderError` instead of silently
-  dropping it to its default — extending the #513 fleet-entry allowlist to the
-  top-level blocks. The motivating trap: a typo'd `apron_depth_m` (e.g.
-  `apron_dpeth_m:`) previously fell back to depth 0 silently; it is now a loud
-  error. A well-formed file is unaffected.
-
 ### Fixed
 
 - **Maintenance-bay edge-crossing intrusion (#551, ADR-0018).** The bay-intrusion
-  check now tests polygon-vs-bay **intersection** instead of per-vertex
-  containment, so a thin part whose *edge* crosses the closed maintenance bay
-  with no vertex inside is correctly flagged — closing the same thin-edge blind
-  spot ADR-0018 already fixed for the hangar floor (`floor.covers`). Inert and
+  check now **also** consults a polygon-vs-bay intersection test — additively,
+  only when no vertex lies inside the bay — on top of the existing per-vertex
+  containment gate, so a thin part whose *edge* crosses the closed maintenance
+  bay with no vertex inside is correctly flagged (the thin-edge blind spot
+  ADR-0018 already closed for the hangar floor via `floor.covers`). Because the
+  per-vertex test stays the primary gate, every existing verdict is
   **byte-identical** for today's rectangular parts; it hardens the checker ahead
   of slender/concave polygon parts (#548).
+
+- **Strict top-level unknown-key allowlist for `hangar.yaml` / scenario /
+  layout files (#516).** The loader now rejects an unrecognised **top-level**
+  key in these files with an attributed `LoaderError` instead of silently
+  dropping it to its default — extending the #513 fleet-entry allowlist (the same
+  silent-failure class) to the top-level blocks. The motivating trap: a typo'd
+  `apron_depth_m` (e.g. `apron_dpeth_m:`) previously fell back to depth 0
+  silently; it is now a loud error. A well-formed file is unaffected.
+
+- **`solve --max-restarts 0` / `--spread-stall-restarts 0` clean exit (#546).**
+  A bad restart-budget knob (both must be `>= 1` when set) now reports a clean
+  exit-2 input error instead of an uncaught `ValueError` traceback — the same
+  contract as a `LoaderError` on malformed input.
 
 ## [0.13.0] — 2026-06-09
 
