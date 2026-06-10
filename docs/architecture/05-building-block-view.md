@@ -16,7 +16,7 @@ flowchart TD
     solver["solver.py<br/>RR-MC search<br/>deterministic RNG"]
     towplanner["towplanner.py<br/>tow-path planning<br/>Reeds–Shepp + bound-aware Hybrid-A*"]
     visualize["visualize.py<br/>top-down PNG renderer<br/>headless matplotlib"]
-    scene["scene.py<br/>scene/v1 builder<br/>precomputed affines + timeline"]
+    scene["scene.py<br/>scene/v2 builder<br/>precomputed affines + timeline"]
     viewer["viewer.py<br/>self-contained 3D HTML<br/>inlined scene + vendored Three.js"]
     metrics["metrics.py<br/>read-only render annotations<br/>placeholder / gap / clearance / validity"]
     brand["brand.py<br/>single source of brand tokens<br/>CVD-safe palette / opacity / fonts"]
@@ -384,10 +384,10 @@ plane's canonical `aircraft.wheels.positions`
 The render is the only project output that is not also JSON-encodable;
 it is the human's sanity-check.
 
-### `scene.py` — `scene/v1` builder (3D)
+### `scene.py` — `scene/v2` builder (3D)
 
 A pure builder (no I/O, no rendering) that turns a `Layout` (+ optional
-`MovesPlan`, `CheckResult`) into the JSON-serializable `hangarfit.scene/v1`
+`MovesPlan`, `CheckResult`) into the JSON-serializable `hangarfit.scene/v2`
 dict consumed by the 3D viewer. It is a leaf consumer of the core types, the
 same role `visualize.py` plays for the 2D PNG.
 
@@ -397,12 +397,12 @@ as per-frame affine matrices and emits `aircraft_parts_world` oracle corners as
 `anchors`, so the viewer applies matrices and does no transform math. It also
 builds the whole-fill timeline (one segment per plane in `back_first_order`, laid
 end-to-end, sampled from each tow `DubinsArc`). Pure and deterministic — same
-input ⇒ byte-identical scene. Schema: [`scene-v1-schema.md`](scene-v1-schema.md);
+input ⇒ byte-identical scene. Schema: [`scene-v2-schema.md`](scene-v2-schema.md);
 rationale: [ADR-0017](../adr/0017-3d-viewer-architecture.md).
 
 ### `viewer.py` — self-contained 3D HTML
 
-Assembles **one** offline HTML file: it inlines the `scene/v1` JSON plus a
+Assembles **one** offline HTML file: it inlines the `scene/v2` JSON plus a
 `data:`-URL import-map for the vendored Three.js (`_viewer_assets/three/`, shipped
 as package data) and the committed `_viewer_assets/viewer.js` bundle — built from
 the typed TypeScript sources under the dev-only top-level `viewer/` by esbuild
@@ -454,7 +454,7 @@ palette, opacities, darken factors and font stacks
 ([ADR-0019](../adr/0019-brand-tokens-single-source.md), #419). The three render
 surfaces *reference* it: `visualize.py` (2D) re-exports the names it always
 exposed, `scene.py` reads `PLANES_DARK`, and `viewer.py` builds its CSS from the
-tokens and injects a canonical `BRAND` JSON blob (separate from the `scene/v1`
+tokens and injects a canonical `BRAND` JSON blob (separate from the `scene/v2`
 blob) that the compiled `viewer.js` reads instead of hard-coded `0x` literals. A
 leaf of constants + small helpers with no project imports; it never enters the
 collision model, so it carries no determinism or correctness risk.
@@ -470,8 +470,8 @@ builders); this module owns only argparse, IO routing, and exit-code mapping.
 JSON schemas are versioned: `hangarfit.check/v1` and
 `hangarfit.solve/v1`. Bumping a version is reserved for breaking
 changes to the payload shape; additive fields do not bump. (The
-`view` subcommand emits the `hangarfit.scene/v1` JSON *inlined into its
-HTML*, not to stdout — see [`scene-v1-schema.md`](scene-v1-schema.md).)
+`view` subcommand emits the `hangarfit.scene/v2` JSON *inlined into its
+HTML*, not to stdout — see [`scene-v2-schema.md`](scene-v2-schema.md).)
 
 Exit codes:
 

@@ -29,7 +29,7 @@ from dataclasses import dataclass
 
 from shapely.geometry import Polygon, box
 
-from .models import Aircraft, PartKind, Placement
+from .models import Aircraft, Part, PartKind, Placement
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,6 +167,32 @@ def local_to_world(u: float, v: float, placement: Placement) -> tuple[float, flo
     return world_x, world_y
 
 
+def part_local_ring(part: Part) -> list[tuple[float, float]] | None:
+    """Plane-local ``(u, v)`` footprint ring for a polygon part, or ``None`` for a
+    scalar (oriented-rectangle) part.
+
+    For a polygon part this folds the part's ``angle_deg`` + ``(offset_x_m,
+    offset_y_m)`` into the canonical ``local_vertices`` — the **same** per-vertex
+    affine :func:`aircraft_parts_world` applies before routing each vertex through
+    the determinant-−1 :func:`local_to_world`. Sharing this one helper between the
+    collision oracle and :mod:`hangarfit.scene` is what keeps the 3D viewer's
+    emitted ``vertices[]`` bit-identical to the anchor oracle's pre-affine
+    coordinates (ADR-0002 / ADR-0017 parity): both consume the identical floats,
+    so they cannot drift. Returns ``None`` for a scalar part so callers branch on
+    presence rather than re-deriving the rectangle.
+    """
+    if part.local_vertices is None:
+        return None
+    h = math.radians(part.angle_deg)
+    cos_h = math.cos(h)
+    sin_h = math.sin(h)
+    cx = part.offset_x_m
+    cy = part.offset_y_m
+    return [
+        (cx + x * cos_h - y * sin_h, cy + x * sin_h + y * cos_h) for x, y in part.local_vertices
+    ]
+
+
 def aircraft_parts_world(
     aircraft: Aircraft,
     placement: Placement,
@@ -197,20 +223,15 @@ def aircraft_parts_world(
     """
     world_parts: list[WorldPart] = []
     for part in aircraft.parts:
-        if part.local_vertices is not None:
-            # Polygon footprint: rotate each author vertex from the part's own
-            # frame into plane-local by the part's angle+offset (mirroring
-            # oriented_rect's per-corner affine), then route EVERY vertex through
-            # the det(-1) local_to_world transform — no centroid shortcut (ADR-0002).
-            h = math.radians(part.angle_deg)
-            cos_h = math.cos(h)
-            sin_h = math.sin(h)
-            cx = part.offset_x_m
-            cy = part.offset_y_m
-            local_coords: list[tuple[float, float]] = [
-                (cx + x * cos_h - y * sin_h, cy + x * sin_h + y * cos_h)
-                for x, y in part.local_vertices
-            ]
+        ring = part_local_ring(part)
+        if ring is not None:
+            # Polygon footprint: part_local_ring has already folded the part's
+            # angle+offset into the plane-local ring (mirroring oriented_rect's
+            # per-corner affine). It is the SAME ring hangarfit.scene emits as
+            # vertices[], so the viewer's affine reproduces these anchors. Route
+            # EVERY vertex through the det(-1) local_to_world — no centroid
+            # shortcut (ADR-0002).
+            local_coords: list[tuple[float, float]] = ring
         else:
             # Scalar oriented rectangle (back-compat path). ``angle_deg`` rotates
             # the part within plane-local (standard CCW).

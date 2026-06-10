@@ -313,12 +313,26 @@ function addPlanes(scene2, SCENE2, BRAND2) {
     const conflicted = SCENE2.conflicts.includes(p.id);
     const colour = new THREE5.Color(conflicted ? CONFLICT : p.color);
     for (const b of p.boxes) {
-      const mesh = new THREE5.Mesh(
-        new THREE5.BoxGeometry(b.length_m, b.width_m, b.height_m),
-        boxMaterial(b, colour)
-      );
-      mesh.position.set(b.cx, b.cy, b.cz);
-      mesh.rotation.z = THREE5.MathUtils.degToRad(b.angle_deg);
+      let mesh;
+      if (b.vertices !== null) {
+        const shape = new THREE5.Shape();
+        const vs = b.vertices;
+        shape.moveTo(vs[0][0], vs[0][1]);
+        for (let i = 1; i < vs.length; i++) shape.lineTo(vs[i][0], vs[i][1]);
+        shape.closePath();
+        mesh = new THREE5.Mesh(
+          new THREE5.ExtrudeGeometry(shape, { depth: b.height_m, bevelEnabled: false }),
+          boxMaterial(b, colour)
+        );
+        mesh.position.z = b.z_band[0];
+      } else {
+        mesh = new THREE5.Mesh(
+          new THREE5.BoxGeometry(b.length_m, b.width_m, b.height_m),
+          boxMaterial(b, colour)
+        );
+        mesh.position.set(b.cx, b.cy, b.cz);
+        mesh.rotation.z = THREE5.MathUtils.degToRad(b.angle_deg);
+      }
       mesh.castShadow = true;
       mesh.receiveShadow = true;
       g.add(mesh);
@@ -404,7 +418,8 @@ function applyAffine(aff, u, v) {
 }
 
 // src/anchors.ts
-function boxCornersLocal(b) {
+function partCornersLocal(b) {
+  if (b.vertices !== null) return b.vertices;
   const h = THREE8.MathUtils.degToRad(b.angle_deg);
   const cs = Math.cos(h), sn = Math.sin(h);
   const hl = b.length_m / 2, hw = b.width_m / 2;
@@ -427,12 +442,20 @@ function checkAnchors(scene2) {
       structural = "anchor/box count mismatch for " + p.id;
       break;
     }
-    p.boxes.forEach((b, bi) => {
-      boxCornersLocal(b).forEach(([u, v], ci) => {
+    let vertexMismatch = false;
+    for (let bi = 0; bi < p.boxes.length; bi++) {
+      const corners = partCornersLocal(p.boxes[bi]);
+      if (want[bi].length !== corners.length) {
+        structural = "anchor/vertex count mismatch for " + p.id;
+        vertexMismatch = true;
+        break;
+      }
+      corners.forEach(([u, v], ci) => {
         const [wx, wy] = applyAffine(aff, u, v);
         maxErr = Math.max(maxErr, Math.abs(wx - want[bi][ci][0]), Math.abs(wy - want[bi][ci][1]));
       });
-    });
+    }
+    if (vertexMismatch) break;
     const gw = scene2.gear_anchors[p.id];
     if (!gw || !p.wheels) {
       structural = "missing gear anchors/wheels for " + p.id;

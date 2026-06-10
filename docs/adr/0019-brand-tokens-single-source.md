@@ -121,6 +121,6 @@ the same single-source guarantee with strictly less machinery, and the viewer
   architecture and the Python-owned transform), [ADR-0003](0003-rr-mc-solver-algorithm.md)
   (the determinism spirit the byte-stable blob honors).
 - Related docs: [`docs/assets/BRAND.md`](../assets/BRAND.md) (the human source of
-  truth `brand.py` mirrors), [`docs/architecture/scene-v1-schema.md`](../architecture/scene-v1-schema.md).
+  truth `brand.py` mirrors), [`docs/architecture/scene-v2-schema.md`](../architecture/scene-v2-schema.md).
 - Related issues / PRs: #419 (this decision), #326 (CVD-safe palette), #414/#415
   (the brand and its first application to the viewer).
