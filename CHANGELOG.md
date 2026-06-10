@@ -17,6 +17,14 @@ All notable changes to this project are documented here. Format follows [Keep a 
   of drawing their bounding box. Scalar (rectangle) parts render byte-identically
   to v1. The det-−1 anchor self-check generalizes from 4 corners to N via the
   shared `geometry.part_local_ring` helper. (#549, ADR-0017)
+- First shipped aircraft taper: the real Herrenteich **Scheibe SF-25E wing** is
+  now authored as a symmetric double-taper `planform` (root = the existing
+  1.01 m mean chord, tip = 0.45 × root). Its tapered wingtip nests where the
+  bounding rectangle would falsely conflict — a value-proof regression reproduces
+  the spike's ~0.22 m rect-rejects / taper-accepts flip window on the shipped
+  parametrization. Every other shipped part (including the folded Stemme wing —
+  folding is not a taper) stays a rectangle; the herrenteich layout stays valid
+  with no golden re-pin (the polygon is a strict subset of its bbox). (#593, ADR-0024)
 
 ### Changed
 
