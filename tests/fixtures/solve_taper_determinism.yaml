@@ -1,0 +1,5 @@
+# Determinism canary scenario (#548): place the tapered glider so the polygon
+# build-path runs inside solve()'s seeded restart loop.
+fleet: fleet_taper.yaml
+hangar: hangar_taper.yaml
+fleet_in: [taper_glider]

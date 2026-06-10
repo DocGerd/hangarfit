@@ -1038,22 +1038,108 @@ def _build_aircraft(entry: Any) -> Aircraft:
     return aircraft
 
 
+# Strict unknown-key allowlist for a `parts[i]` entry, mirroring
+# _ALLOWED_AIRCRAFT_KEYS. `planform` is a YAML-only convenience block expanded
+# into Part.local_vertices by _build_planform (NOT a Part field). Without this,
+# a typo like `planfrm:` would be silently dropped and the wing would stay a
+# rectangle with no error.
+_ALLOWED_PART_KEYS = frozenset(
+    {
+        "kind",
+        "length_m",
+        "width_m",
+        "offset_x_m",
+        "offset_y_m",
+        "angle_deg",
+        "z_bottom_m",
+        "z_top_m",
+        "planform",
+    }
+)
+
+
+def _build_planform(
+    data: Any, span_m: float, length_m: float, index: int
+) -> tuple[tuple[float, float], ...]:
+    """Expand a parametrized symmetric double-taper wing into part-own vertices.
+
+    Convention (ADR-0024): no sweep, root kink at y=0. In the part's own frame
+    ``+x`` is the chord (forward = leading edge), and ``width_m`` is the span
+    running along ``+-y``. Produces a 6-vertex hexagon; the chord at the root
+    (y=0) is ``root_chord_m`` and at each tip (y=+-span/2) is ``tip_chord_m``.
+    Part.__post_init__ canonicalizes the ring and enforces the bbox subset.
+    """
+    if not isinstance(data, dict):
+        raise LoaderError(f"parts[{index}].planform must be a mapping")
+    required = ("root_chord_m", "tip_chord_m")
+    for key in required:
+        if key not in data:
+            raise LoaderError(f"parts[{index}].planform missing required field {key!r}")
+    unknown = set(data) - set(required)
+    if unknown:
+        raise LoaderError(f"parts[{index}].planform has unknown key(s) {sorted(unknown)}")
+    root = _to_float(data["root_chord_m"], f"parts[{index}].planform.root_chord_m")
+    tip = _to_float(data["tip_chord_m"], f"parts[{index}].planform.tip_chord_m")
+    if root <= 0 or tip <= 0:
+        raise LoaderError(
+            f"parts[{index}].planform chords must be positive, got root={root}, tip={tip}"
+        )
+    if tip > root:
+        raise LoaderError(
+            f"parts[{index}].planform tip_chord_m ({tip}) must not exceed root_chord_m "
+            f"({root}) — a wing does not taper outward"
+        )
+    if root > length_m:
+        raise LoaderError(
+            f"parts[{index}].planform root_chord_m ({root}) must not exceed the part "
+            f"length_m ({length_m}); the planform must fit the part bbox"
+        )
+    half_span = span_m / 2.0
+    hr = root / 2.0
+    ht = tip / 2.0
+    return (
+        (hr, 0.0),
+        (ht, half_span),
+        (-ht, half_span),
+        (-hr, 0.0),
+        (-ht, -half_span),
+        (ht, -half_span),
+    )
+
+
 def _build_part(data: Any, index: int) -> Part:
     if not isinstance(data, dict):
         raise LoaderError(f"parts[{index}] must be a mapping")
+    unknown = set(data) - _ALLOWED_PART_KEYS
+    if unknown:
+        raise LoaderError(
+            f"parts[{index}] has unknown key(s) {sorted(unknown)}; "
+            f"allowed: {sorted(_ALLOWED_PART_KEYS)}"
+        )
     required = ("kind", "length_m", "width_m", "z_bottom_m", "z_top_m")
     for key in required:
         if key not in data:
             raise LoaderError(f"parts[{index}] missing required field {key!r}")
+    if "planform" in data and data["kind"] != "wing":
+        raise LoaderError(
+            f"parts[{index}]: planform: is only valid on a kind 'wing' part, "
+            f"got kind {data['kind']!r}"
+        )
+    width_m = _to_float(data["width_m"], f"parts[{index}].width_m")
+    length_m = _to_float(data["length_m"], f"parts[{index}].length_m")
+    local_vertices = None
+    if "planform" in data:
+        local_vertices = _build_planform(data["planform"], width_m, length_m, index)
     return Part(
         kind=data["kind"],
-        length_m=_to_float(data["length_m"], f"parts[{index}].length_m"),
-        width_m=_to_float(data["width_m"], f"parts[{index}].width_m"),
+        length_m=length_m,
+        width_m=width_m,
         offset_x_m=_to_float(data.get("offset_x_m", 0.0), f"parts[{index}].offset_x_m"),
         offset_y_m=_to_float(data.get("offset_y_m", 0.0), f"parts[{index}].offset_y_m"),
         angle_deg=_to_float(data.get("angle_deg", 0.0), f"parts[{index}].angle_deg"),
         z_bottom_m=_to_float(data["z_bottom_m"], f"parts[{index}].z_bottom_m"),
         z_top_m=_to_float(data["z_top_m"], f"parts[{index}].z_top_m"),
+        local_vertices=local_vertices,
     )
 
 
@@ -1212,6 +1298,11 @@ def _split_fuselage(fuselage: Part, wing: Part) -> list[Part]:
     aft of the tail) — a degenerate split that would produce a zero- or
     negative-length segment.
     """
+    if fuselage.local_vertices is not None:
+        raise LoaderError(
+            "a fuselage part may not carry a polygon footprint (local_vertices); "
+            "polygon footprints are wing-only"
+        )
     c = fuselage.offset_x_m
     half_len = fuselage.length_m / 2.0
     nose_x = c + half_len  # forward tip (+x)

@@ -106,6 +106,23 @@ fin top *inside* the wing layer (so an overhanging wing conflicts).
 The fin is never overhangable; `metrics._OVERHANGABLE` keeps only `tail`
 and `fuselage_aft`.
 
+**Optional polygon footprints** ([ADR-0024](../adr/0024-optional-polygon-parts.md)).
+A part is an oriented rectangle by default, but a `Part` may carry an
+optional polygon footprint — `local_vertices`, a load-time-canonicalized
+vertex ring authored via a parametrized `planform: {root_chord_m,
+tip_chord_m}` wing block (a symmetric double-taper hexagon). When present,
+the collision build-path (`geometry.aircraft_parts_world`) routes every
+vertex through the det(−1) transform and uses the polygon for the plan-view
+overlap test; when absent (`None`), today's bounding-rectangle path is
+unchanged. `length_m`/`width_m` always remain the bounding box for every
+scalar consumer (`metrics`, scene box, `towplanner` apron, the
+trivial-infeasibility area gate), and the polygon is constrained to be a
+subset of that box — so wing area is intentionally under-conserved in the
+conservative direction. Canonicalization at load time (force CCW, lex-min
+start, drop the closing duplicate) is the determinism crux: equivalent
+author orderings yield a byte-identical `Part`, protecting the ADR-0003
+solver contract.
+
 **Fleet composition relevant to the parts model.** Of the nine
 aircraft in `data/fleet.yaml`, six are **strut-braced** (the Aviat
 Husky, Wild Thing, Zlin Savage, Cessna 140, Cessna 150, and FK9 Mk II)

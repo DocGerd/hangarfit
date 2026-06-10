@@ -255,6 +255,33 @@ def test_solve_deterministic_best_partial_under_max_restarts() -> None:
     assert bpl1.maintenance_plane == bpl2.maintenance_plane
 
 
+def test_solve_deterministic_polygon_taper_fleet() -> None:
+    """A fleet whose wing is a polygon (tapered hexagon) solves bit-identically
+    across two runs under a fixed max_restarts cap — proving the polygon
+    build-path + load-time vertex canonicalization are determinism-safe
+    (ADR-0003). max_restarts (not wall-clock) makes this load-independent, so
+    it stays in the parallel pool (no `serial` mark)."""
+    fixture = "tests/fixtures/solve_taper_determinism.yaml"
+    cfg = SearchConfig(max_restarts=8, spread=False, nose_out=False)
+
+    s1 = load_scenario(fixture)
+    r1 = solve(s1, budget_s=30.0, alternatives=1, seed=42, search=cfg)
+    s2 = load_scenario(fixture)
+    r2 = solve(s2, budget_s=30.0, alternatives=1, seed=42, search=cfg)
+
+    assert r1.status == r2.status
+    assert len(r1.layouts) == len(r2.layouts)
+    for la, lb in zip(r1.layouts, r2.layouts, strict=True):
+        assert la.placements == lb.placements
+        assert la.maintenance_plane == lb.maintenance_plane
+
+    bp1 = r1.diagnostics.best_partial_layout
+    bp2 = r2.diagnostics.best_partial_layout
+    if bp1 is not None:
+        assert bp2 is not None
+        assert bp1.placements == bp2.placements
+
+
 def test_solve_budget_trips_before_max_restarts() -> None:
     """When ``budget_s`` would cut the loop short of ``max_restarts``,
     the budget gate wins — exercises the compound termination

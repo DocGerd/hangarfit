@@ -560,3 +560,76 @@ class TestAircraftPartsWorldOnRealAircraft:
         assert _almost_equal(strut_xs[0], -strut_xs[1], tol=1e-6), (
             f"struts should mirror across world x=0, got centroids at {strut_xs}"
         )
+
+
+class TestAircraftPartsWorldPolygon:
+    def test_rectangle_vertices_match_scalar_path_at_45deg(self) -> None:
+        """A part whose local_vertices ARE its rectangle corners must transform
+        to the SAME world polygon as the scalar oriented_rect path — proving the
+        polygon branch routes every vertex through the det(-1) transform."""
+        hl, hw = 1.0, 5.0  # length_m=2, width_m=10
+        rect_corners = ((hl, -hw), (hl, hw), (-hl, hw), (-hl, -hw))
+        scalar = _aircraft_with_one_part(
+            Part(
+                kind="wing",
+                length_m=2.0,
+                width_m=10.0,
+                offset_x_m=0.3,
+                offset_y_m=-0.2,
+                angle_deg=0.0,
+                z_bottom_m=1.9,
+                z_top_m=2.1,
+            )
+        )
+        poly = _aircraft_with_one_part(
+            Part(
+                kind="wing",
+                length_m=2.0,
+                width_m=10.0,
+                offset_x_m=0.3,
+                offset_y_m=-0.2,
+                angle_deg=0.0,
+                z_bottom_m=1.9,
+                z_top_m=2.1,
+                local_vertices=rect_corners,
+            )
+        )
+        pl = Placement(plane_id="probe", x_m=4.0, y_m=7.0, heading_deg=45.0, on_carts=False)
+        [ws] = aircraft_parts_world(scalar, pl)
+        [wp] = aircraft_parts_world(poly, pl)
+        assert wp.polygon.equals(ws.polygon)
+
+    def test_taper_polygon_is_strict_subset_area_of_bbox(self) -> None:
+        """A tapered hexagon transforms to a world polygon with LESS area than
+        the bounding rectangle (the conservative footprint direction)."""
+        taper = ((1.0, 0.0), (0.4, 5.0), (-0.4, 5.0), (-1.0, 0.0), (-0.4, -5.0), (0.4, -5.0))
+        scalar = _aircraft_with_one_part(
+            Part(
+                kind="wing",
+                length_m=2.0,
+                width_m=10.0,
+                offset_x_m=0.0,
+                offset_y_m=0.0,
+                angle_deg=0.0,
+                z_bottom_m=1.9,
+                z_top_m=2.1,
+            )
+        )
+        poly = _aircraft_with_one_part(
+            Part(
+                kind="wing",
+                length_m=2.0,
+                width_m=10.0,
+                offset_x_m=0.0,
+                offset_y_m=0.0,
+                angle_deg=0.0,
+                z_bottom_m=1.9,
+                z_top_m=2.1,
+                local_vertices=taper,
+            )
+        )
+        pl = Placement(plane_id="probe", x_m=0.0, y_m=0.0, heading_deg=45.0, on_carts=False)
+        [ws] = aircraft_parts_world(scalar, pl)
+        [wp] = aircraft_parts_world(poly, pl)
+        assert wp.polygon.area < ws.polygon.area
+        assert wp.polygon.within(ws.polygon.buffer(1e-9))

@@ -14,12 +14,13 @@ from __future__ import annotations
 
 import math
 import typing
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, cast
 
 from shapely import box, union_all
+from shapely.geometry import LinearRing
 from shapely.geometry.base import BaseGeometry
 
 if TYPE_CHECKING:
@@ -37,6 +38,72 @@ _VALID_PART_KINDS = frozenset(typing.get_args(PartKind))
 _VALID_WING_POSITIONS = frozenset(typing.get_args(WingPosition))
 _VALID_GEARS = frozenset(typing.get_args(Gear))
 _VALID_MOVEMENT_MODES = frozenset(typing.get_args(MovementMode))
+
+# Below this absolute |2·signed-area| a ring is treated as degenerate
+# (zero-area / collinear). 1e-9 m² is far tighter than any real part.
+_RING_MIN_ABS_SIGNED_AREA = 1e-9
+# Float slack for the local_vertices-within-bbox containment check.
+_PART_BBOX_TOL_M = 1e-9
+
+# A 2D point in a part's own (plane-local) frame; a polygon ring is a tuple of these.
+Vertex = tuple[float, float]
+
+
+def _canonicalize_ring(
+    vertices: Sequence[Vertex],
+) -> tuple[Vertex, ...]:
+    """Canonicalize an author-supplied polygon ring to a deterministic form.
+
+    Returns the ring OPEN (no closing duplicate), wound counter-clockwise,
+    rotated so the lexicographically-smallest vertex is first. Two orderings
+    of the SAME shape therefore produce a byte-identical tuple — the
+    determinism contract (ADR-0003) for polygon parts, since the geometry
+    layer never re-orients at solve time (Shapely preserves vertex order
+    verbatim). Rejects non-finite, fewer-than-3-vertex, degenerate
+    (zero-area / collinear), and self-intersecting rings.
+    """
+    pts = [(float(x), float(y)) for x, y in vertices]
+    # Drop an explicit closing duplicate if the author supplied one.
+    if len(pts) >= 2 and pts[0] == pts[-1]:
+        pts = pts[:-1]
+    if len(pts) < 3:
+        raise ValueError(f"polygon ring needs >= 3 distinct vertices, got {len(pts)}")
+    if not all(math.isfinite(x) and math.isfinite(y) for x, y in pts):
+        raise ValueError(f"polygon ring has a non-finite vertex: {pts}")
+    # Degeneracy + self-intersection gates, in this order so each case gets the
+    # right error message:
+    #   (a) max |cross-product| over consecutive triples == 0  -> "degenerate"
+    #       (rejects FULLY collinear / zero-area rings; a redundant collinear
+    #       vertex on an otherwise-valid ring is tolerated, not rejected).
+    #   (b) Shapely LinearRing.is_simple is False                -> "self-intersects".
+    #   (c) shoelace signed area: its SIGN drives the CCW flip below; the
+    #       |area| < eps check is defense-in-depth, unreachable after (a)+(b).
+    n = len(pts)
+    max_cross = max(
+        abs(
+            (pts[(i + 1) % n][0] - pts[i][0]) * (pts[(i + 2) % n][1] - pts[i][1])
+            - (pts[(i + 1) % n][1] - pts[i][1]) * (pts[(i + 2) % n][0] - pts[i][0])
+        )
+        for i in range(n)
+    )
+    if max_cross < _RING_MIN_ABS_SIGNED_AREA:
+        raise ValueError(f"polygon ring is degenerate (near-zero area): {pts}")
+    if not LinearRing(pts).is_simple:
+        raise ValueError(f"polygon ring self-intersects: {pts}")
+    # Signed area (shoelace) gives both the winding sign and a final degeneracy check.
+    signed_area2 = sum(
+        pts[i][0] * pts[(i + 1) % n][1] - pts[(i + 1) % n][0] * pts[i][1] for i in range(n)
+    )
+    # Defense-in-depth: unreachable for a simple, non-collinear polygon (both gated above).
+    if abs(signed_area2) < _RING_MIN_ABS_SIGNED_AREA:  # pragma: no cover
+        raise ValueError(f"polygon ring is degenerate (near-zero area): {pts}")
+    # Force counter-clockwise (positive signed area).
+    if signed_area2 < 0:
+        pts = list(reversed(pts))
+    # Rotate to the lexicographically-minimum start vertex.
+    start = min(range(len(pts)), key=lambda i: pts[i])
+    pts = pts[start:] + pts[:start]
+    return tuple(pts)
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +141,7 @@ class Part:
     angle_deg: float
     z_bottom_m: float
     z_top_m: float
+    local_vertices: tuple[Vertex, ...] | None = None
 
     def __post_init__(self) -> None:
         if self.kind not in _VALID_PART_KINDS:
@@ -93,6 +161,22 @@ class Part:
                 f"Part {self.kind!r}: z_top_m must exceed z_bottom_m, "
                 f"got z_bottom={self.z_bottom_m}, z_top={self.z_top_m}"
             )
+        if self.local_vertices is not None:
+            canonical = _canonicalize_ring(self.local_vertices)
+            half_l = self.length_m / 2.0
+            half_w = self.width_m / 2.0
+            # The polygon is checked against the axis-aligned bbox in the part's
+            # OWN (unrotated) frame. That is sufficient even when angle_deg != 0:
+            # aircraft_parts_world rotates the polygon and the bbox together, and a
+            # rigid rotation preserves the subset relation.
+            for x, y in canonical:
+                if abs(x) > half_l + _PART_BBOX_TOL_M or abs(y) > half_w + _PART_BBOX_TOL_M:
+                    raise ValueError(
+                        f"Part {self.kind!r}: local_vertices vertex ({x}, {y}) lies outside "
+                        f"the length_m x width_m bbox (+/-{half_l} x +/-{half_w}); the polygon "
+                        f"footprint must be a subset of the bounding box"
+                    )
+            object.__setattr__(self, "local_vertices", canonical)
 
 
 @dataclass(frozen=True, slots=True)

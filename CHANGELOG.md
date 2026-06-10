@@ -6,6 +6,12 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- Optional polygon part footprints: a `Part` may carry a load-time-canonicalized
+  `local_vertices` polygon (authored via a parametrized `planform: {root_chord_m,
+  tip_chord_m}` wing block), used by the collision build-path while `length_m`/
+  `width_m` stay the bounding box. Scalar fleets are byte-identical; the 3D viewer
+  still renders boxes until the scene/v2 work. (#548, ADR-0024)
+
 ### Changed
 
 ### Fixed

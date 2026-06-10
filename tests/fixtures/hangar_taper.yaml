@@ -1,0 +1,13 @@
+# Roomy test hangar for the polygon-taper determinism canary (#548). Large
+# enough for one 18 m-span tapered glider. Synthetic placeholder dimensions.
+length_m: 25.0
+width_m: 22.0
+door:
+  center_x_m: 11.0
+  width_m: 12.0
+maintenance_bay:
+  center_x_m: 18.0
+  width_m: 8.0
+  depth_m: 9.0
+clearance_m: 0.3
+wing_layer_clearance_m: 0.2
