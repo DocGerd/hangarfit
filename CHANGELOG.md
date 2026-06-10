@@ -6,6 +6,23 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [0.14.0] — 2026-06-10
+
+### Added
+
+- **`solve --spread-stall-restarts N` opt-in flag (#546).** Exposes the F7
+  (#404) spread-stall early-exit — the spread post-pass stops after `N`
+  restarts with no further inter-plane-gap improvement — through a new
+  `hangarfit solve --spread-stall-restarts N` flag. **Opt-in, default off**, so
+  every existing solve stays byte-identical; reproducibility remains
+  `max_restarts`-scoped (the default-on flip is deferred while it is reconciled
+  with the #544 parallel-restart path). Narrows the perceived-latency tail on
+  easy interactive solves.
+
 - **Parallel restarts (`solve --workers N`, #544, ADR-0003 amendment).** The
   RR-MC restart loop can now fan across worker processes — a measured **4.5× at
   8 workers** on the binding roomy-three spread-on regime (spike #540).
@@ -25,7 +42,23 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Changed
 
+- **Strict top-level unknown-key allowlist for `hangar.yaml` / scenario /
+  layout files (#516).** The loader now rejects an unrecognised **top-level**
+  key in these files with an attributed `LoaderError` instead of silently
+  dropping it to its default — extending the #513 fleet-entry allowlist to the
+  top-level blocks. The motivating trap: a typo'd `apron_depth_m` (e.g.
+  `apron_dpeth_m:`) previously fell back to depth 0 silently; it is now a loud
+  error. A well-formed file is unaffected.
+
 ### Fixed
+
+- **Maintenance-bay edge-crossing intrusion (#551, ADR-0018).** The bay-intrusion
+  check now tests polygon-vs-bay **intersection** instead of per-vertex
+  containment, so a thin part whose *edge* crosses the closed maintenance bay
+  with no vertex inside is correctly flagged — closing the same thin-edge blind
+  spot ADR-0018 already fixed for the hangar floor (`floor.covers`). Inert and
+  **byte-identical** for today's rectangular parts; it hardens the checker ahead
+  of slender/concave polygon parts (#548).
 
 ## [0.13.0] — 2026-06-09
 
@@ -644,7 +677,8 @@ First Phase 1 cut — substrate for arranging the flying club fleet in a stack-s
 - Apache-2.0 license, public-audience README, CI matrix (Python 3.11 + 3.12), branch protection on develop + main (#13, #14, #15, #16).
 - Strut-aware golden tests + all-9-planes fixture using larger test-only hangar to accommodate strut-bracing geometry on placeholder dimensions (#5).
 
-[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.13.0...HEAD
+[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.14.0...HEAD
+[0.14.0]: https://github.com/DocGerd/hangarfit/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/DocGerd/hangarfit/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/DocGerd/hangarfit/compare/v0.11.0...v0.12.0
 [0.11.0]: https://github.com/DocGerd/hangarfit/compare/v0.10.0...v0.11.0
