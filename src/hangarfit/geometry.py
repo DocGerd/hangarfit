@@ -197,22 +197,34 @@ def aircraft_parts_world(
     """
     world_parts: list[WorldPart] = []
     for part in aircraft.parts:
-        # Build the part's polygon in plane-local coordinates. ``angle_deg``
-        # rotates the part within plane-local (standard CCW). This is the
-        # "in plane-local frame, where is the part?" step.
-        local_poly = oriented_rect(
-            cx=part.offset_x_m,
-            cy=part.offset_y_m,
-            length=part.length_m,
-            width=part.width_m,
-            angle_deg=part.angle_deg,
-        )
+        if part.local_vertices is not None:
+            # Polygon footprint: rotate each author vertex from the part's own
+            # frame into plane-local by the part's angle+offset (mirroring
+            # oriented_rect's per-corner affine), then route EVERY vertex through
+            # the det(-1) local_to_world transform — no centroid shortcut (ADR-0002).
+            h = math.radians(part.angle_deg)
+            cos_h = math.cos(h)
+            sin_h = math.sin(h)
+            cx = part.offset_x_m
+            cy = part.offset_y_m
+            local_coords = [
+                (cx + x * cos_h - y * sin_h, cy + x * sin_h + y * cos_h)
+                for x, y in part.local_vertices
+            ]
+        else:
+            # Scalar oriented rectangle (back-compat path). ``angle_deg`` rotates
+            # the part within plane-local (standard CCW).
+            local_poly = oriented_rect(
+                cx=part.offset_x_m,
+                cy=part.offset_y_m,
+                length=part.length_m,
+                width=part.width_m,
+                angle_deg=part.angle_deg,
+            )
+            # exterior.coords includes the closing-point duplicate; slice it off.
+            local_coords = list(local_poly.exterior.coords)[:-1]
         # Apply the plane-local-to-world transform to each vertex.
-        # local_poly.exterior.coords includes the closing-point duplicate;
-        # slice it off so Polygon() doesn't have to de-dup.
-        world_coords = [
-            local_to_world(u, v, placement) for u, v in list(local_poly.exterior.coords)[:-1]
-        ]
+        world_coords = [local_to_world(u, v, placement) for u, v in local_coords]
         world_poly = Polygon(world_coords)
         world_parts.append(
             WorldPart(
