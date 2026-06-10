@@ -74,7 +74,7 @@ def _wing(**kw):
         z_top_m=2.1,
     )
     base.update(kw)
-    return Part(**base)
+    return Part(**base)  # type: ignore[arg-type]
 
 
 def test_part_defaults_local_vertices_none() -> None:

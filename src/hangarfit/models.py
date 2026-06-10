@@ -84,12 +84,13 @@ def _canonicalize_ring(
     )
     if max_cross < _RING_MIN_ABS_SIGNED_AREA:
         raise ValueError(f"polygon ring is degenerate (near-zero area): {pts}")
-    if not LinearRing([*pts, pts[0]]).is_simple:
+    if not LinearRing(pts).is_simple:
         raise ValueError(f"polygon ring self-intersects: {pts}")
     # Signed area (shoelace) gives both the winding sign and a final degeneracy check.
     signed_area2 = sum(
         pts[i][0] * pts[(i + 1) % n][1] - pts[(i + 1) % n][0] * pts[i][1] for i in range(n)
     )
+    # Defense-in-depth: unreachable for a simple, non-collinear polygon (both gated above).
     if abs(signed_area2) < _RING_MIN_ABS_SIGNED_AREA:
         raise ValueError(f"polygon ring is degenerate (near-zero area): {pts}")
     # Force counter-clockwise (positive signed area).
