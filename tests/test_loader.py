@@ -376,15 +376,14 @@ aircraft:
         with pytest.raises(LoaderError, match="kind must be one of"):
             load_fleet(path)
 
-    def test_aircraft_entry_not_a_mapping(self, tmp_path: Path) -> None:
+    def test_aircraft_entry_wrong_type(self, tmp_path: Path) -> None:
+        # Post-#595: a bare string IS a valid catalog reference, so a wrong-typed
+        # entry (here an int) is the "not a reference/mapping" case.
         path = _write(
             tmp_path / "f.yaml",
-            """
-aircraft:
-  - just_a_string
-""",
+            "aircraft:\n  - 123\n",
         )
-        with pytest.raises(LoaderError, match="must be a mapping"):
+        with pytest.raises(LoaderError, match="must be a catalog reference"):
             load_fleet(path)
 
     def test_aircraft_missing_top_level_field(self, tmp_path: Path) -> None:
