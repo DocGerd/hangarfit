@@ -29,15 +29,23 @@ if TYPE_CHECKING:
 WingPosition = Literal["high", "mid", "low"]
 Gear = Literal["tailwheel", "nosewheel", "monowheel"]
 MovementMode = Literal["always_cart", "always_own_gear", "cart_eligible"]
+GroundObjectClass = Literal["fixed_obstacle", "placed_routed_mover"]
+MoverMotionMode = Literal["steerable", "towed"]
 # `tail` denotes the horizontal stabilizer specifically (a wide, usually-low
 # overhangable surface — see metrics._OVERHANGABLE); `vertical_stabilizer` is the
 # fin (thin, tall, never overhangable). Empennage split per ADR-0023.
-PartKind = Literal["fuselage_front", "fuselage_aft", "wing", "strut", "tail", "vertical_stabilizer"]
+# `ground` denotes a non-aircraft ground-object footprint (a solid keep-out/body,
+# never overhangable — #601).
+PartKind = Literal[
+    "fuselage_front", "fuselage_aft", "wing", "strut", "tail", "vertical_stabilizer", "ground"
+]
 
 _VALID_PART_KINDS = frozenset(typing.get_args(PartKind))
 _VALID_WING_POSITIONS = frozenset(typing.get_args(WingPosition))
 _VALID_GEARS = frozenset(typing.get_args(Gear))
 _VALID_MOVEMENT_MODES = frozenset(typing.get_args(MovementMode))
+_VALID_GROUND_OBJECT_CLASSES = frozenset(typing.get_args(GroundObjectClass))
+_VALID_MOVER_MOTION_MODES = frozenset(typing.get_args(MoverMotionMode))
 
 # Below this absolute |2·signed-area| a ring is treated as degenerate
 # (zero-area / collinear). 1e-9 m² is far tighter than any real part.
@@ -414,6 +422,76 @@ class Aircraft:
         if self.movement_mode == "always_cart" or self.tow_pivotable:
             return 0.0
         return self.required_turn_radius_m()
+
+
+@dataclass(frozen=True, slots=True)
+class GroundObject:
+    """A non-aircraft object on the hangar floor (#601 / ADR-0025).
+
+    Two classes, set by ``object_class`` (derived by the loader from the
+    catalog ``type:`` — ``fixed_obstacle`` → ``"fixed_obstacle"``;
+    ``car``/``trailer`` → ``"placed_routed_mover"``):
+
+    * **fixed_obstacle** — a placed-but-immovable keep-out (e.g. a fuel
+      trailer at the door). Carries no motion. Its world footprint is a
+      keep-out for aircraft/mover parts; the tow planner routes around it.
+    * **placed_routed_mover** — a placed body that is itself routed (a
+      self-driving ``steerable`` car, a ``towed`` trailer). Participates in
+      pairwise collision like an aircraft. ``motion_mode`` is carried here;
+      the actual route search lands in #602 (this type only carries the field).
+
+    Geometry reuses the parts model: ``parts`` is a tuple of ``Part`` with
+    ``kind="ground"`` (a solid footprint, never overhangable), transformed to
+    world coords by the *same* :func:`hangarfit.geometry.aircraft_parts_world`
+    path aircraft use. ``turn_radius_m`` is static catalog data carried for
+    #602's routing; it is unused in #601.
+    """
+
+    id: str
+    name: str
+    parts: tuple[Part, ...]
+    object_class: GroundObjectClass
+    motion_mode: MoverMotionMode | None = None
+    turn_radius_m: float | None = None
+    measured: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.id:
+            raise ValueError("GroundObject.id must be non-empty")
+        if not self.name:
+            raise ValueError(f"GroundObject {self.id!r}: name must be non-empty")
+        if not self.parts:
+            raise ValueError(f"GroundObject {self.id!r}: parts must be non-empty")
+        if self.object_class not in _VALID_GROUND_OBJECT_CLASSES:
+            raise ValueError(
+                f"GroundObject {self.id!r}: object_class must be one of "
+                f"{sorted(_VALID_GROUND_OBJECT_CLASSES)}, got {self.object_class!r}"
+            )
+        if self.object_class == "fixed_obstacle":
+            if self.motion_mode is not None:
+                raise ValueError(
+                    f"GroundObject {self.id!r}: a fixed_obstacle must not carry a "
+                    f"motion_mode (got {self.motion_mode!r}) — it never moves"
+                )
+            if self.turn_radius_m is not None:
+                raise ValueError(
+                    f"GroundObject {self.id!r}: a fixed_obstacle must not carry a "
+                    f"turn_radius_m — it never moves"
+                )
+        else:  # placed_routed_mover
+            if self.motion_mode not in _VALID_MOVER_MOTION_MODES:
+                raise ValueError(
+                    f"GroundObject {self.id!r}: a placed_routed_mover requires a "
+                    f"motion_mode in {sorted(_VALID_MOVER_MOTION_MODES)}, "
+                    f"got {self.motion_mode!r}"
+                )
+            # Only movers may carry a turn radius (fixed_obstacle rejects any
+            # non-None above), and when present it must be positive.
+            if self.turn_radius_m is not None and self.turn_radius_m <= 0:
+                raise ValueError(
+                    f"GroundObject {self.id!r}: turn_radius_m must be positive, "
+                    f"got {self.turn_radius_m}"
+                )
 
 
 @dataclass(frozen=True, slots=True)

@@ -468,6 +468,18 @@ def _draw_part(ax: Any, part: WorldPart, color: str) -> None:
             lw=0.5,
             zorder=4,
         )
+    elif part.kind == "ground":
+        # Ground-object footprint (#601): solid keep-out, drawn opaque like a
+        # fuselage body at the fuselage z-level (above wings).
+        patch = MplPolygon(
+            coords,
+            closed=True,
+            facecolor=color,
+            edgecolor=_INK_EDGE,
+            alpha=_FUSELAGE_ALPHA,
+            lw=0.5,
+            zorder=2,
+        )
     else:
         raise ValueError(
             f"_draw_part: unhandled part kind {part.kind!r}. "
