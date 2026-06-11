@@ -11,6 +11,17 @@ All notable changes to this project are documented here. Format follows [Keep a 
   (a `ground_obstacle` conflict names the overlapping aircraft/mover) and
   movers join collision/tow enumeration. Empty-set output is byte-identical.
   (ADR-0025)
+- **Herrenteich full real set + ground-object catalog (#605).** The real hangar's
+  four non-aircraft occupants — a VW Caddy, two glider trailers, and a fixed
+  "Maul" fuel trailer — now have `data/catalog/` entries, and a new
+  `examples/herrenteich/layout_full.yaml` parks the full real set (8 aircraft +
+  those four) in one arrangement that passes `hangarfit check`. `collisions.check`
+  now bounds/notch-checks ground objects (previously aircraft-only). The
+  Herrenteich clearances were calibrated (`clearance_m` 0.3→0.20,
+  `wing_layer_clearance_m` 0.2→0.15) so the full set is feasible — the placeholder
+  values were too loose to model real club packing density. Tow-routing of the
+  full set, the hard Caddy nearest-door egress rule, and rendering of ground
+  objects are deferred (#602/#603/#606).
 - Optional polygon part footprints: a `Part` may carry a load-time-canonicalized
   `local_vertices` polygon (authored via a parametrized `planform: {root_chord_m,
   tip_chord_m}` wing block), used by the collision build-path while `length_m`/
