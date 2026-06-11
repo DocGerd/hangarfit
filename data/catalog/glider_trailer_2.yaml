@@ -1,0 +1,15 @@
+# Second closed glider trailer at Herrenteich. Same TYPICAL envelope as
+# glider_trailer_1 (no per-trailer survey); a distinct catalog object because
+# ground_object_placements forbids duplicate ids. measured: false.
+type: trailer
+id: glider_trailer_2
+name: "Glider trailer 2 (closed)"
+measured: false
+parts:
+  - kind: ground
+    length_m: 9.0
+    width_m: 2.1
+    offset_x_m: 0.0
+    offset_y_m: 0.0
+    z_bottom_m: 0.0
+    z_top_m: 2.3

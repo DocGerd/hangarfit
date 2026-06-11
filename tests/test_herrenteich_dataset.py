@@ -150,3 +150,25 @@ def test_demo_scenario_is_a_solvable_subset() -> None:
     )
     assert result.layouts and len(result.layouts[0].placements) == 3
     assert collisions.check(result.layouts[0]).valid
+
+
+def test_ground_objects_load_from_manifest() -> None:
+    """The four real ground objects load from the herrenteich fleet manifest
+    with the right object_class + motion (#605)."""
+    from hangarfit.loader import load_ground_objects
+
+    gos = load_ground_objects(HERRENTEICH / "fleet.yaml")
+    assert set(gos) == {
+        "maul_fuel_trailer",
+        "vw_caddy",
+        "glider_trailer_1",
+        "glider_trailer_2",
+    }
+    assert gos["maul_fuel_trailer"].object_class == "fixed_obstacle"
+    assert gos["vw_caddy"].object_class == "placed_routed_mover"
+    assert gos["vw_caddy"].motion_mode == "steerable"
+    assert gos["glider_trailer_1"].motion_mode == "towed"
+    assert gos["glider_trailer_2"].motion_mode == "towed"
+    # each is a single solid ground footprint
+    for go in gos.values():
+        assert len(go.parts) == 1 and go.parts[0].kind == "ground"
