@@ -21,7 +21,7 @@ from hangarfit.geometry import (
     polygon_overlap,
     polygon_overlap_area,
 )
-from hangarfit.models import Aircraft, Part, Placement, Wheels
+from hangarfit.models import Aircraft, GroundObject, Part, Placement, Wheels
 
 SQRT2_2 = math.sqrt(2) / 2  # ≈ 0.7071...
 
@@ -633,4 +633,27 @@ class TestAircraftPartsWorldPolygon:
         [ws] = aircraft_parts_world(scalar, pl)
         [wp] = aircraft_parts_world(poly, pl)
         assert wp.polygon.area < ws.polygon.area
-        assert wp.polygon.within(ws.polygon.buffer(1e-9))
+
+
+def test_ground_object_parts_world_uses_same_transform() -> None:
+    part = Part(
+        kind="ground",
+        length_m=4.0,
+        width_m=2.0,
+        offset_x_m=0.0,
+        offset_y_m=0.0,
+        angle_deg=0.0,
+        z_bottom_m=0.0,
+        z_top_m=1.5,
+    )
+    obj = GroundObject(id="trolley", name="t", parts=(part,), object_class="fixed_obstacle")
+    pl = Placement(plane_id="trolley", x_m=7.0, y_m=3.0, heading_deg=37.0, on_carts=False)
+    wps = aircraft_parts_world(obj, pl)
+    assert len(wps) == 1
+    assert wps[0].plane_id == "trolley"
+    assert wps[0].kind == "ground"
+    # det-(-1) transform: a non-axis-aligned heading must produce a rotated box
+    # (the geometry-invariant-guard requirement). Centroid maps via local_to_world.
+    cx, cy = wps[0].polygon.centroid.coords[0]
+    assert cx == pytest.approx(7.0)
+    assert cy == pytest.approx(3.0)

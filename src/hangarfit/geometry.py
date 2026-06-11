@@ -29,7 +29,7 @@ from dataclasses import dataclass
 
 from shapely.geometry import Polygon, box
 
-from .models import Aircraft, Part, PartKind, Placement
+from .models import Aircraft, GroundObject, Part, PartKind, Placement
 
 
 @dataclass(frozen=True, slots=True)
@@ -194,10 +194,10 @@ def part_local_ring(part: Part) -> list[tuple[float, float]] | None:
 
 
 def aircraft_parts_world(
-    aircraft: Aircraft,
+    obj: Aircraft | GroundObject,
     placement: Placement,
 ) -> list[WorldPart]:
-    """Transform every part of an aircraft from plane-local to world coords.
+    """Transform every part of an aircraft **or ground object** from plane-local to world coords.
 
     ``placement.heading_deg`` is the compass-style angle of the nose,
     measured from world ``+y`` (deeper-into-hangar), CW positive.
@@ -222,7 +222,7 @@ def aircraft_parts_world(
     canonical definition of this transform (#293).
     """
     world_parts: list[WorldPart] = []
-    for part in aircraft.parts:
+    for part in obj.parts:
         ring = part_local_ring(part)
         if ring is not None:
             # Polygon footprint: part_local_ring has already folded the part's
