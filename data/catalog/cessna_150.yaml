@@ -1,0 +1,48 @@
+# Catalog entry (#595). Conventions: see the catalog README.
+type: aircraft
+id: cessna_150
+name: "Cessna 150"
+wing_position: high
+gear: nosewheel
+movement_mode: cart_eligible
+turn_radius_m: 4.5
+measured: false
+parts:
+  - kind: fuselage
+    length_m: 6.56
+    width_m: 0.9
+    offset_x_m: -0.33
+    offset_y_m: 0.0
+    z_bottom_m: 0.0
+    z_top_m: 1.5
+  - kind: wing
+    length_m: 1.5
+    width_m: 10.17
+    offset_x_m: 0.77
+    offset_y_m: 0.0
+    z_bottom_m: 2.0
+    z_top_m: 2.3
+  - kind: tail            # horizontal stabilizer (conventional low; ~3.4 m span est.)
+    length_m: 1.1
+    width_m: 3.4
+    offset_x_m: -3.06
+    offset_y_m: 0.0
+    z_bottom_m: 1.2
+    z_top_m: 1.5
+  - kind: vertical_stabilizer  # fin+rudder to overall height 2.11 m
+    length_m: 1.4
+    width_m: 0.15
+    offset_x_m: -2.91
+    offset_y_m: 0.0
+    z_bottom_m: 1.5
+    z_top_m: 2.11
+struts:
+  fuselage_attach_x_m: 0.17
+  fuselage_attach_y_m: 0.45
+  fuselage_attach_z_m: 0.5
+  wing_attach_y_m: 1.8
+  width_m: 0.05
+wheels:
+  main_offset_x_m: -0.20
+  track_m: 2.3
+  third_wheel_offset_x_m: 1.30

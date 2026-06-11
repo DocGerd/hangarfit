@@ -1,0 +1,49 @@
+# Catalog entry (#595). Conventions: see the catalog README.
+type: aircraft
+id: cessna_140
+name: "Cessna 140"
+wing_position: high
+gear: tailwheel
+movement_mode: cart_eligible
+turn_radius_m: 5.5
+measured: false
+notes: "V-strut treated as one strut per side"
+parts:
+  - kind: fuselage
+    length_m: 6.55
+    width_m: 0.85
+    offset_x_m: -1.64
+    offset_y_m: 0.0
+    z_bottom_m: 0.0
+    z_top_m: 1.5
+  - kind: wing
+    length_m: 1.55
+    width_m: 10.16
+    offset_x_m: -0.54
+    offset_y_m: 0.0
+    z_bottom_m: 2.0
+    z_top_m: 2.3
+  - kind: tail            # horizontal stabilizer (conventional low; ~3.2 m span est.)
+    length_m: 1.1
+    width_m: 3.2
+    offset_x_m: -4.37
+    offset_y_m: 0.0
+    z_bottom_m: 1.2
+    z_top_m: 1.5
+  - kind: vertical_stabilizer  # fin+rudder to overall height 1.91 m
+    length_m: 1.2
+    width_m: 0.15
+    offset_x_m: -4.32
+    offset_y_m: 0.0
+    z_bottom_m: 1.5
+    z_top_m: 1.91
+struts:
+  fuselage_attach_x_m: -1.14
+  fuselage_attach_y_m: 0.425
+  fuselage_attach_z_m: 0.5
+  wing_attach_y_m: 1.7
+  width_m: 0.05
+wheels:
+  main_offset_x_m: 0.50
+  track_m: 2.1
+  third_wheel_offset_x_m: -3.80

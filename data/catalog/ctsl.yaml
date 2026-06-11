@@ -1,0 +1,44 @@
+# Catalog entry (#595). Conventions: see the catalog README.
+type: aircraft
+id: ctsl
+name: "Flight Design CTSL"
+wing_position: high
+gear: nosewheel
+movement_mode: cart_eligible
+tow_pivotable: true  # tail-down nose-lift pivot when towed (#263)
+turn_radius_m: 4.0
+measured: false
+notes: "Cantilever wing (no struts)"
+parts:
+  - kind: fuselage
+    length_m: 6.60
+    width_m: 1.0
+    offset_x_m: -0.33
+    offset_y_m: 0.0
+    z_bottom_m: 0.0
+    z_top_m: 1.4
+  - kind: wing
+    length_m: 1.4
+    width_m: 8.59
+    offset_x_m: 0.67
+    offset_y_m: 0.0
+    z_bottom_m: 1.9
+    z_top_m: 2.2
+  - kind: tail            # CRUCIFORM tail — stabilator low/mid, kept below the wing layer (~2.6 m span est.)
+    length_m: 0.9
+    width_m: 2.6
+    offset_x_m: -3.18
+    offset_y_m: 0.0
+    z_bottom_m: 1.1
+    z_top_m: 1.4
+  - kind: vertical_stabilizer  # tall fin+rudder to overall height 2.34 m (well into the wing layer)
+    length_m: 1.2
+    width_m: 0.15
+    offset_x_m: -3.03
+    offset_y_m: 0.0
+    z_bottom_m: 1.4
+    z_top_m: 2.34
+wheels:
+  main_offset_x_m: -0.10
+  track_m: 1.7
+  third_wheel_offset_x_m: 1.40

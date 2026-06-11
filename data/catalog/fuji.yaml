@@ -1,0 +1,43 @@
+# Catalog entry (#595). Conventions: see the catalog README.
+type: aircraft
+id: fuji
+name: "Fuji FA-200"
+wing_position: low
+gear: nosewheel
+movement_mode: always_own_gear
+turn_radius_m: 7.0
+measured: false
+notes: "Only low-wing in the fleet — wing underside near ground level"
+parts:
+  - kind: fuselage
+    length_m: 7.98
+    width_m: 1.0
+    offset_x_m: -0.40
+    offset_y_m: 0.0
+    z_bottom_m: 0.0
+    z_top_m: 1.6
+  - kind: wing
+    length_m: 1.5
+    width_m: 9.42
+    offset_x_m: 0.10
+    offset_y_m: 0.0
+    z_bottom_m: 0.8
+    z_top_m: 1.1
+  - kind: tail            # horizontal stabilizer (conventional low; ~3.2 m span est.)
+    length_m: 1.1
+    width_m: 3.2
+    offset_x_m: -3.84
+    offset_y_m: 0.0
+    z_bottom_m: 1.3
+    z_top_m: 1.6
+  - kind: vertical_stabilizer  # fin+rudder to overall height 2.02 m
+    length_m: 1.3
+    width_m: 0.15
+    offset_x_m: -3.74
+    offset_y_m: 0.0
+    z_bottom_m: 1.6
+    z_top_m: 2.02
+wheels:
+  main_offset_x_m: -0.40
+  track_m: 2.5
+  third_wheel_offset_x_m: 1.60

@@ -1,0 +1,48 @@
+# Catalog entry (#595). Conventions: see the catalog README.
+type: aircraft
+id: wild_thing
+name: "Wild Thing"
+wing_position: high
+gear: nosewheel
+movement_mode: always_cart
+turn_radius_m: null  # always_cart → towplanner uses 0 (pivot); see header + ADR-0007
+measured: false
+parts:
+  - kind: fuselage
+    length_m: 6.60
+    width_m: 0.85
+    offset_x_m: -0.33
+    offset_y_m: 0.0
+    z_bottom_m: 0.0
+    z_top_m: 1.4
+  - kind: wing
+    length_m: 1.2
+    width_m: 9.15
+    offset_x_m: 0.67
+    offset_y_m: 0.0
+    z_bottom_m: 2.0
+    z_top_m: 2.2
+  - kind: tail            # horizontal stabilizer (conventional low; ~2.9 m span est.)
+    length_m: 0.9
+    width_m: 2.9
+    offset_x_m: -3.18
+    offset_y_m: 0.0
+    z_bottom_m: 1.1
+    z_top_m: 1.4
+  - kind: vertical_stabilizer  # fin+rudder to overall height ~1.9 m
+    length_m: 1.0
+    width_m: 0.15
+    offset_x_m: -3.13
+    offset_y_m: 0.0
+    z_bottom_m: 1.4
+    z_top_m: 1.9
+struts:
+  fuselage_attach_x_m: 0.07
+  fuselage_attach_y_m: 0.425
+  fuselage_attach_z_m: 0.5
+  wing_attach_y_m: 1.6
+  width_m: 0.05
+wheels:
+  main_offset_x_m: -0.10
+  track_m: 1.5
+  third_wheel_offset_x_m: 1.40

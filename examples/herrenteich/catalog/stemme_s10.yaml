@@ -1,0 +1,45 @@
+# Catalog entry (#595). Conventions: see the catalog README.
+type: aircraft
+id: stemme_s10
+name: "Stemme S10"
+wing_position: high
+gear: tailwheel         # twin inward-retracting mains (track 1.15 m) + tailwheel (EASA TCDS A.054)
+movement_mode: always_own_gear
+turn_radius_m: 10.0
+measured: false
+notes: "Two-seat self-launching motor glider, T-tail. WINGS-FOLDED config: wing width = 11.4 m folded span (23 m unfolded; EASA TCDS A.054). Length 8.42 m, longest fuselage in the fleet. Taildragger (corrected from monowheel)."
+parts:
+  - kind: fuselage
+    length_m: 8.42        # EASA TCDS A.054 (length)
+    width_m: 1.18         # fuselage width (Stemme maintenance manual)
+    offset_x_m: -1.5
+    offset_y_m: 0.0
+    z_bottom_m: 0.0
+    z_top_m: 1.4
+  - kind: wing
+    length_m: 0.815       # mean chord = area 18.74 m² / span 23.0 m (EASA TCDS A.054)
+    width_m: 11.4         # FOLDED span (manufacturer; unfolded 23.0 m, EASA TCDS)
+    offset_x_m: 0.0
+    offset_y_m: 0.0
+    z_bottom_m: 1.9
+    z_top_m: 2.1
+  - kind: tail            # T-TAIL: horizontal stabilizer HIGH, at the fin top (~2.6 m span est.)
+    length_m: 0.8         # chord est. (unpublished)
+    width_m: 2.6          # span est. (low confidence)
+    offset_x_m: -5.31
+    offset_y_m: 0.0
+    z_bottom_m: 1.5
+    z_top_m: 1.8
+  - kind: vertical_stabilizer  # fin to overall height 1.80 m (folded config); fin top 1.8 m
+                               # sits 0.1 m below a 1.9 m wing — inside the 0.2 m clearance
+                               # band, so a wing nested over it still conflicts
+    length_m: 1.0         # fin chord est.
+    width_m: 0.15
+    offset_x_m: -5.21
+    offset_y_m: 0.0
+    z_bottom_m: 1.4
+    z_top_m: 1.8
+wheels:
+  main_offset_x_m: 0.0
+  track_m: 1.15           # main gear track (de.Wikipedia; narrow inward-retracting mains)
+  third_wheel_offset_x_m: -5.40  # tailwheel: main→tail wheelbase 5.40 m (de.Wikipedia)
