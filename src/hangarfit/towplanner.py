@@ -1306,6 +1306,61 @@ def path_first_conflict(
     return None
 
 
+def egress_first_conflict(
+    target: Layout,
+    mover_id: str,
+    *,
+    heuristic: Literal["euclidean", "grid"] = "grid",
+    max_expansions: int | None = None,
+) -> Conflict | None:
+    """First conflict blocking ``mover_id``'s drive-OUT through the door, else None.
+
+    By Reeds-Shepp reversibility (ADR-0010) an egress (slot -> out the door) is
+    feasible iff an entry (door-cone -> slot) path exists against the FULL parked
+    scene. Reuses :func:`plan_path` with the mover routed as a
+    :class:`~hangarfit.models.GroundObject`; the mover is EXCLUDED from
+    ``placed`` (:func:`path_first_conflict` re-injects it per sample — same
+    contract as :func:`plan_fill`'s mover routing, #602). Honors the fuel-trailer
+    keep-out and every other parked body. Closed-form, RNG-free. Returns a
+    ``caddy_egress`` :class:`~hangarfit.models.Conflict` when blocked."""
+    mover = target.ground_objects[mover_id]
+    slot = next(gp for gp in target.ground_object_placements if gp.plane_id == mover_id)
+    placed = Layout(
+        fleet=target.fleet,
+        hangar=target.hangar,
+        placements=target.placements,
+        maintenance_plane=target.maintenance_plane,
+        ground_objects=target.ground_objects,
+        ground_object_placements=tuple(
+            gp for gp in target.ground_object_placements if gp.plane_id != mover_id
+        ),
+    )
+    cone = entry_poses(slot, target.hangar)
+    budget = _MAX_EXPANSIONS if max_expansions is None else max_expansions
+    try:
+        plan_path(
+            mover,
+            cone[0],
+            Pose.from_placement(slot),
+            hangar=target.hangar,
+            placed=placed,
+            mover_on_carts=False,
+            entries=cone,
+            heuristic=heuristic,
+            max_expansions=budget,
+        )
+        return None
+    except NoFeasiblePlanError as exc:
+        return Conflict.single(
+            kind="caddy_egress",
+            plane=mover_id,
+            detail=(
+                f"hard-door mover {mover_id!r} cannot drive out the door "
+                f"(no clear egress corridor): {exc.conflict.detail}"
+            ),
+        )
+
+
 # ---------------------------------------------------------------------------
 # Empty-hangar fill planner + bounded order-retry (spike Q2 / ADR-0007)
 # ---------------------------------------------------------------------------

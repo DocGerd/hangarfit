@@ -1,9 +1,11 @@
-"""Mover-routing integration tests (#602).
+"""Mover-routing integration tests (#602 / #603).
 
 Covers:
 - a steerable car AND a towed trailer both route collision-free via plan_fill
 - a towed trailer (cart, r=0) routes and honours the effective_turn_radius_m()==0.0 contract
 - plan_fill is byte-identical across two runs when ground-object movers are present (ADR-0003)
+- egress_first_conflict returns None when corridor is clear (#603)
+- egress_first_conflict returns a caddy_egress Conflict when corridor is walled off (#603)
 
 Fixture helpers copied from tests/test_towplanner_ground_object.py per the
 repo's per-module fixture-duplication convention.
@@ -202,6 +204,96 @@ def test_towed_trailer_routes_with_cart_reverse_capability() -> None:
         )
         is None
     ), "towed trailer path must be collision-free"
+
+
+# ── #603 egress_first_conflict helpers + tests ───────────────────────────────
+
+
+def _caddy(hdm: bool = True) -> GroundObject:
+    return GroundObject(
+        id="caddy",
+        name="c",
+        parts=(_ground_part(length_m=4.5, width_m=1.8),),
+        object_class="placed_routed_mover",
+        motion_mode="steerable",
+        turn_radius_m=5.5,
+        hard_door_mover=hdm,
+    )
+
+
+def _wide_wall_parts() -> tuple[Part, ...]:
+    """Parts for a wall aircraft with 44 m wide fuselage parts (ground level)
+    that span beyond the 40 m hangar width, leaving no path around the wall.
+    Ground-level z (0–1.5 m) so they overlap the caddy's ground part."""
+    return (
+        Part(
+            kind="fuselage_front",
+            length_m=1.0,
+            width_m=44.0,
+            offset_x_m=0.5,
+            offset_y_m=0.0,
+            angle_deg=0.0,
+            z_bottom_m=0.0,
+            z_top_m=1.5,
+        ),
+        Part(
+            kind="fuselage_aft",
+            length_m=1.0,
+            width_m=44.0,
+            offset_x_m=-0.5,
+            offset_y_m=0.0,
+            angle_deg=0.0,
+            z_bottom_m=0.0,
+            z_top_m=1.5,
+        ),
+    )
+
+
+def test_egress_clear_returns_none() -> None:
+    """egress_first_conflict returns None when the corridor to the door is open.
+
+    Caddy placed close to the door (y=6 m), nothing between it and the door
+    → a direct egress path exists."""
+    from hangarfit.towplanner import egress_first_conflict
+
+    hangar = _hangar()
+    caddy = _caddy()
+    layout = Layout(
+        fleet={},
+        hangar=hangar,
+        placements=(),
+        ground_objects={caddy.id: caddy},
+        ground_object_placements=(
+            Placement("caddy", x_m=20.0, y_m=6.0, heading_deg=0.0, on_carts=False),
+        ),
+    )
+    assert egress_first_conflict(layout, "caddy") is None
+
+
+@pytest.mark.slow
+def test_egress_blocked_returns_caddy_egress_conflict() -> None:
+    """egress_first_conflict returns a caddy_egress Conflict when an aircraft
+    walls off the caddy's only path to the door.
+
+    A wide-wing aircraft (wing_m=16, wider than the 12 m door) is placed across
+    the corridor between the caddy (y=30) and the door (y=0).  With no gap to
+    route through, egress must fail."""
+    from hangarfit.towplanner import egress_first_conflict
+
+    hangar = _hangar()
+    wall = make_test_aircraft(id="wall", parts=_wide_wall_parts())
+    caddy = _caddy()
+    layout = Layout(
+        fleet={wall.id: wall},
+        hangar=hangar,
+        placements=(Placement("wall", x_m=20.0, y_m=15.0, heading_deg=0.0, on_carts=False),),
+        ground_objects={caddy.id: caddy},
+        ground_object_placements=(
+            Placement("caddy", x_m=20.0, y_m=30.0, heading_deg=0.0, on_carts=False),
+        ),
+    )
+    c = egress_first_conflict(layout, "caddy")
+    assert c is not None and c.kind == "caddy_egress" and "caddy" in c.planes
 
 
 def test_mover_routing_is_byte_identical_across_runs() -> None:
