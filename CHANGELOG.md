@@ -28,7 +28,22 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Changed
 
+- **Per-object catalog data model (#595).** Fleet data is now a per-object
+  **catalog** (`data/catalog/`, one file per aircraft carrying a `type:`
+  discriminator) referenced **by path** from thin fleet manifests; inline
+  aircraft definitions in fleet files are no longer supported (an inline mapping
+  raises a migration hint). A manifest entry may override a per-fleet operational
+  flag (`movement_mode`, `tow_pivotable`) on top of the shared static definition;
+  geometry stays static and is never override-able. The `type:` discriminator
+  reserves a clean home for non-aircraft physical objects (a future builder);
+  an unregistered type is rejected with a clear error today. (#595)
+
 ### Fixed
+
+- **Synthetic-vs-real Scheibe SF-25E divergence (#594).** The demo
+  (`data/fleet.yaml`) and `examples/herrenteich/` now reference a single central
+  real-spec catalog (`data/catalog/`), so each shared aircraft is defined exactly
+  once with the real published-spec numbers — no per-world duplication. (#594, via #595)
 
 ## [0.14.0] — 2026-06-10
 

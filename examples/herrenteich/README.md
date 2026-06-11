@@ -1,9 +1,11 @@
 # Airfield Herrenteich — real dataset
 
-A self-contained, **real-world** dataset for the club's main-building hangar,
-kept separate from the synthetic placeholders in `data/` (which stay as the
-project's stable demo/test fixtures). Nothing here is wired into the default
-CLI paths — point the tools at these files explicitly.
+A **real-world** dataset for the club's main-building hangar. The hangar,
+layout, and scenario files live here; the eight aircraft are defined once in the
+central catalog (`data/catalog/`) and pulled in by this directory's `fleet.yaml`
+manifest — the real published-spec numbers ARE the catalog's numbers (#595/#594,
+no per-world duplication). Nothing here is wired into the default CLI paths —
+point the tools at these files explicitly.
 
 ```bash
 # Validate the "everyone home" layout (all eight usual occupants):
