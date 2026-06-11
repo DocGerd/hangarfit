@@ -10,6 +10,8 @@ cannot silently break it.
 
 from pathlib import Path
 
+import pytest
+
 from hangarfit import collisions
 from hangarfit.geometry import aircraft_parts_world
 from hangarfit.loader import load_fleet, load_hangar, load_layout
@@ -231,3 +233,22 @@ def test_full_set_caddy_near_door() -> None:
     assert caddy.y_m < layout.hangar.length_m / 3
     door = layout.hangar.door
     assert door.center_x_m - door.width_m / 2 <= caddy.x_m <= door.center_x_m + door.width_m / 2
+
+
+@pytest.mark.slow
+def test_full_set_caddy_egress_blocked_finding() -> None:
+    """Documents the packing-wall finding: the egress oracle correctly reports
+    layout_full.yaml's Caddy as egress-blocked (the rescue vehicle is boxed in by
+    the surrounding aircraft; fixing it is gated on re-nesting / Stage C — #603).
+
+    This test records the *current* state of the dataset: the Caddy IS placed near
+    the door (per test_full_set_caddy_near_door above) but the packed fleet still
+    walls off a clear egress path at the real herrenteich clearances.
+    """
+    from hangarfit.towplanner import egress_first_conflict
+
+    layout = load_layout(HERRENTEICH / "layout_full.yaml")
+    c = egress_first_conflict(layout, "vw_caddy")
+    assert c is not None and c.kind == "caddy_egress", (
+        f"expected caddy_egress conflict from layout_full.yaml; got {c}"
+    )

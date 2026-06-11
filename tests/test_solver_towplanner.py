@@ -180,6 +180,179 @@ def test_six_plane_fresh_fill_partial_routing_post_480():
     assert len(result.diagnostics.unroutable_planes) == sum(1 for p in result.plans if p is None)
 
 
+# ── #603 egress gate integration tests ───────────────────────────────────────
+
+
+@pytest.mark.slow
+def test_hard_door_mover_egress_blocked_is_unroutable() -> None:
+    """A hard-door mover (Caddy) boxed off from the door makes the layout
+    un-routable: _tow_plan_layouts must set plans[0]=None and record the mover id
+    in unroutable — same exit-3 path as a blocked aircraft (#603).
+
+    The wall that blocks the Caddy is a fixed_obstacle ground object (not an
+    aircraft placement) so plan_fill can produce a successful MovesPlan for the
+    one real aircraft placement.  After plan_fill succeeds, the egress gate
+    detects the Caddy cannot drive out and raises NoFeasiblePlanError(caddy),
+    which the except block converts to plans[0]=None + "caddy" in unroutable.
+    """
+    from hangarfit.models import (
+        Door,
+        GroundObject,
+        Hangar,
+        Layout,
+        MaintenanceBay,
+        Part,
+        Placement,
+    )
+    from hangarfit.solver import _tow_plan_layouts
+
+    hangar = Hangar(
+        length_m=40.0,
+        width_m=40.0,
+        door=Door(center_x_m=20.0, width_m=12.0),
+        maintenance_bay=MaintenanceBay(center_x_m=20.0, width_m=8.0, depth_m=6.0),
+        clearance_m=0.3,
+        wing_layer_clearance_m=0.2,
+    )
+
+    # A fixed_obstacle wall spanning the full hangar width at y=15: the Caddy
+    # (y=30) has no gap to reach the door (y=0).  fixed_obstacle is inert for
+    # plan_fill's tow-routing (it is not a placement that needs routing), so
+    # plan_fill itself succeeds; only the egress gate detects the block.
+    wall = GroundObject(
+        id="wall",
+        name="Wall",
+        parts=(
+            Part(
+                kind="ground",
+                length_m=1.0,
+                width_m=44.0,  # wider than the 40 m hangar
+                offset_x_m=0.0,
+                offset_y_m=0.0,
+                angle_deg=0.0,
+                z_bottom_m=0.0,
+                z_top_m=1.5,
+            ),
+        ),
+        object_class="fixed_obstacle",
+    )
+
+    caddy = GroundObject(
+        id="caddy",
+        name="VW Caddy",
+        parts=(
+            Part(
+                kind="ground",
+                length_m=4.5,
+                width_m=1.8,
+                offset_x_m=0.0,
+                offset_y_m=0.0,
+                angle_deg=0.0,
+                z_bottom_m=0.0,
+                z_top_m=1.5,
+            ),
+        ),
+        object_class="placed_routed_mover",
+        motion_mode="steerable",
+        turn_radius_m=5.5,
+        hard_door_mover=True,
+    )
+
+    # No aircraft placements: plan_fill has nothing to route and returns a
+    # trivial MovesPlan.  The egress gate then detects the Caddy is blocked.
+    layout = Layout(
+        fleet={},
+        hangar=hangar,
+        placements=(),
+        ground_objects={wall.id: wall, caddy.id: caddy},
+        ground_object_placements=(
+            # Wall at y=15, blocking the path from caddy (y=30) to door (y=0)
+            Placement("wall", x_m=20.0, y_m=15.0, heading_deg=0.0, on_carts=False),
+            Placement("caddy", x_m=20.0, y_m=30.0, heading_deg=0.0, on_carts=False),
+        ),
+    )
+
+    plans, unroutable, _ = _tow_plan_layouts(
+        [layout], plan_paths=True, tow_heuristic="grid", tow_max_expansions=None
+    )
+    assert plans[0] is None, "boxed-in hard-door mover must produce plans[0]=None"
+    assert "caddy" in unroutable, f"caddy must be in unroutable; got {unroutable}"
+
+
+def test_no_hard_door_mover_egress_gate_inert() -> None:
+    """When no hard-door mover is present the egress gate is a no-op:
+    _tow_plan_layouts returns a real plan and is byte-identical across two runs
+    (ADR-0003 determinism).
+
+    Builds a minimal single-plane Layout with one ground object that is NOT
+    flagged hard_door_mover, so the egress gate loop body never runs.
+    """
+    from hangarfit.models import (
+        Door,
+        GroundObject,
+        Hangar,
+        Layout,
+        MaintenanceBay,
+        Part,
+        Placement,
+    )
+    from hangarfit.solver import _tow_plan_layouts
+    from tests.conftest import make_test_aircraft
+
+    hangar = Hangar(
+        length_m=40.0,
+        width_m=40.0,
+        door=Door(center_x_m=20.0, width_m=12.0),
+        maintenance_bay=MaintenanceBay(center_x_m=20.0, width_m=8.0, depth_m=6.0),
+        clearance_m=0.3,
+        wing_layer_clearance_m=0.2,
+    )
+    ac = make_test_aircraft(id="p1")
+    # A mover that is NOT a hard_door_mover — egress gate must skip it.
+    ordinary_mover = GroundObject(
+        id="trailer",
+        name="Glider trailer",
+        parts=(
+            Part(
+                kind="ground",
+                length_m=6.0,
+                width_m=1.2,
+                offset_x_m=0.0,
+                offset_y_m=0.0,
+                angle_deg=0.0,
+                z_bottom_m=0.0,
+                z_top_m=1.5,
+            ),
+        ),
+        object_class="placed_routed_mover",
+        motion_mode="towed",
+        hard_door_mover=False,
+    )
+    layout = Layout(
+        fleet={ac.id: ac},
+        hangar=hangar,
+        placements=(Placement(plane_id="p1", x_m=20.0, y_m=30.0, heading_deg=0.0, on_carts=False),),
+        ground_objects={ordinary_mover.id: ordinary_mover},
+        ground_object_placements=(
+            Placement(plane_id="trailer", x_m=10.0, y_m=10.0, heading_deg=90.0, on_carts=False),
+        ),
+    )
+
+    p1, u1, _ = _tow_plan_layouts(
+        [layout], plan_paths=True, tow_heuristic="grid", tow_max_expansions=None
+    )
+    p2, u2, _ = _tow_plan_layouts(
+        [layout], plan_paths=True, tow_heuristic="grid", tow_max_expansions=None
+    )
+    # Gate must be inert: no unroutable planes from the egress check.
+    assert u1 == (), f"expected no unroutable planes, got {u1}"
+    assert u2 == (), f"expected no unroutable planes, got {u2}"
+    # Byte-identical plans across both runs.
+    assert [(x is None, getattr(x, "moves", None)) for x in p1] == [
+        (x is None, getattr(x, "moves", None)) for x in p2
+    ], "egress gate must be inert (byte-identical) when no hard-door mover present"
+
+
 def test_solve_k_gt_1_bundle_alignment_with_mixed_routability(monkeypatch):
     """K>1: the per-layout loop builds an aligned plans tuple with a mix of
     real plans and None, and unroutable_planes records exactly the failed
