@@ -287,8 +287,77 @@ a nose-out *parked heading*): this amendment makes a nose-out slot **cheap to
 reach** when the solver picks one; #263 (separate) makes the solver *prefer* to
 pick them.
 
+## Amendment (2026-06-12) — #602: car (own-gear RS) + towed-trailer (free-swivel cart) routing
+
+**Status:** Accepted. **Context:** Epic A (ground objects, #600) introduced
+`GroundObject` movers into the hangar — specifically the VW Caddy and towed glider
+trailers. `plan_fill` must be able to route them using the existing planner
+infrastructure; no new planner and no new `SegmentKind` should be required.
+[#602](https://github.com/DocGerd/hangarfit/issues/602).
+
+### (a) Car = own-gear Reeds–Shepp parameterisation
+
+A self-driving steerable car (e.g. the VW Caddy, `turn_radius_m ≈ 5.5 m`) routes
+exactly as an own-gear aircraft: `effective_turn_radius_m()` returns the catalog
+`turn_radius_m`, `_primitives` emits the six-primitive fan `Lf, Sf, Rf, Lr, Sr,
+Rr`, and `plan_reeds_shepp` handles the full forward/reverse word algebra. No
+behavioural change to any aircraft — the machinery is reused verbatim.
+
+### (b) Towed trailer = free-swivel cart (`r = 0`)
+
+A towed glider trailer has no powered steering and is balanced at the drawbar:
+ground crew push/pull the tongue and let the trailer swivel freely.
+`effective_turn_radius_m()` returns `0.0`; the planner selects the existing
+four-primitive cart fan `Lf, Sf, Rf, Sr` via `_plan_cart(allow_reverse=True)`,
+giving forward arcs/straights plus a reverse straight — sufficient for
+push/pull-and-swivel positioning inside the hangar.
+
+**Why the cart model, not a positive tug-turning-circle?** (a) It models the
+actual human motion: a balanced trailer at the tongue can be hand-positioned with
+any lateral displacement by swivelling; a minimum-turning-circle constraint would
+be an over-restriction for manual ground handling. (b) It reuses the cart path
+verbatim — zero new code, zero new parameters. (c) It needs no new catalog data:
+the trailer carries no `turn_radius_m`, and the absence of that field is the
+data-driven selector. Richer trailer-jackknife kinematics remain a possible
+later follow-on, gated on whether the cart approximation proves insufficient for
+the real Herrenteich corridor.
+
+**Data-driven selector:** `effective_turn_radius_m()` is present and positive →
+own-gear RS fan; absent (returns `0.0`) → cart fan. Both branches already existed.
+
+### (c) The decision — new object behaviours, not a new planner
+
+`GroundObject.effective_turn_radius_m()` mirrors `Aircraft.effective_turn_radius_m()`:
+the mover is fully characterised to the planner by the pair
+`(effective_turn_radius_m, reverse-capability)`. The internal routines
+`_primitives`, `_plan_cart`, and `plan_reeds_shepp` are reused **unchanged**.
+
+The routing oracle (`path_first_conflict` / `plan_path` / `_motion_clear` /
+`_mover_motion_bounds_conflict`) was widened from `Aircraft`-only to
+`Aircraft | GroundObject`. A ground-object mover is injected into each per-sample
+`Layout` as a `ground_object_placement` so the collision substrate can check it
+against the static scene; aircraft routing is unaffected and remains byte-identical
+(ADR-0003 contract holds).
+
+### (d) Rejected alternative: dedicated kinematic-bicycle / trailer-jackknife planner
+
+A separate planner that models the full tractor–trailer articulation (jackknife
+constraint, separate front/rear swept paths) was considered and rejected:
+closed-form RS already provides forward + reverse arcs and straights, and the cart
+model already provides reverse-straight + free-pivot — both sufficient for v1
+ground handling in the measured Herrenteich corridor. A bespoke kinematic-bicycle
+model would add substantial complexity (new integrator, new collision sweep, new
+cost algebra) while the cart approximation remains valid for the balanced,
+manually-positioned trailers in scope. The byte-identical determinism contract
+(ADR-0003) is preserved with zero changes to the existing word algebra. Richer
+jackknife kinematics are a named later follow-on if the cart approximation proves
+insufficient.
+
 ## More Information
 
+- Amended by #602 (2026-06-12): car own-gear RS + free-swivel-cart trailer routing
+  via `GroundObject.effective_turn_radius_m()`; routing oracle widened to
+  `Aircraft | GroundObject` (see the amendment section above).
 - Amended by #480 (2026-06-07): cusp-penalty cost model, nose-out-gated rear cone,
   cost-aware start-seed analytic expansion (see the amendment section above).
 - Supersedes: [ADR-0007](0007-tow-path-planner-v1-scope.md) fork 2 ("Dubins-only").
