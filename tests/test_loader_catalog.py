@@ -136,6 +136,13 @@ def test_manifest_order_preserved(tmp_path: Path) -> None:
     assert list(load_fleet(manifest)) == ["c", "a", "b"]
 
 
+def test_inline_aircraft_mapping_rejected(tmp_path: Path) -> None:
+    # Post-#595 contract: an inline aircraft mapping under `aircraft:` is rejected.
+    manifest = _write(tmp_path / "fleet.yaml", {"aircraft": [_aircraft_doc("p1")]})
+    with pytest.raises(LoaderError, match="no longer supported"):
+        load_fleet(manifest)
+
+
 def test_data_fleet_loads_after_migration() -> None:
     # The shipped manifest still resolves to the same ids (guards the migration).
     fleet = load_fleet(REPO_ROOT / "data" / "fleet.yaml")
