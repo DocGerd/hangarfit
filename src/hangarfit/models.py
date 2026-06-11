@@ -29,15 +29,23 @@ if TYPE_CHECKING:
 WingPosition = Literal["high", "mid", "low"]
 Gear = Literal["tailwheel", "nosewheel", "monowheel"]
 MovementMode = Literal["always_cart", "always_own_gear", "cart_eligible"]
+GroundObjectClass = Literal["fixed_obstacle", "placed_routed_mover"]
+MoverMotionMode = Literal["steerable", "towed"]
 # `tail` denotes the horizontal stabilizer specifically (a wide, usually-low
 # overhangable surface — see metrics._OVERHANGABLE); `vertical_stabilizer` is the
 # fin (thin, tall, never overhangable). Empennage split per ADR-0023.
-PartKind = Literal["fuselage_front", "fuselage_aft", "wing", "strut", "tail", "vertical_stabilizer"]
+# `ground` denotes a non-aircraft ground-object footprint (a solid keep-out/body,
+# never overhangable — #601).
+PartKind = Literal[
+    "fuselage_front", "fuselage_aft", "wing", "strut", "tail", "vertical_stabilizer", "ground"
+]
 
 _VALID_PART_KINDS = frozenset(typing.get_args(PartKind))
 _VALID_WING_POSITIONS = frozenset(typing.get_args(WingPosition))
 _VALID_GEARS = frozenset(typing.get_args(Gear))
 _VALID_MOVEMENT_MODES = frozenset(typing.get_args(MovementMode))
+_VALID_GROUND_OBJECT_CLASSES = frozenset(typing.get_args(GroundObjectClass))
+_VALID_MOVER_MOTION_MODES = frozenset(typing.get_args(MoverMotionMode))
 
 # Below this absolute |2·signed-area| a ring is treated as degenerate
 # (zero-area / collinear). 1e-9 m² is far tighter than any real part.
@@ -417,6 +425,82 @@ class Aircraft:
 
 
 @dataclass(frozen=True, slots=True)
+class GroundObject:
+    """A non-aircraft object on the hangar floor (#601 / ADR-0025).
+
+    Two classes, set by ``object_class`` (derived by the loader from the
+    catalog ``type:`` — ``fixed_obstacle`` → ``"fixed_obstacle"``;
+    ``car``/``trailer`` → ``"placed_routed_mover"``):
+
+    * **fixed_obstacle** — a placed-but-immovable keep-out (e.g. a fuel
+      trailer at the door). Carries no motion. Its world footprint is a
+      keep-out for aircraft/mover parts; the tow planner routes around it.
+    * **placed_routed_mover** — a placed body that is itself routed (a
+      self-driving ``steerable`` car, a ``towed`` trailer). Participates in
+      pairwise collision like an aircraft. ``motion_mode`` is carried here;
+      the actual route search lands in #602 (this type only carries the field).
+
+    Geometry reuses the parts model: ``parts`` is a tuple of ``Part`` with
+    ``kind="ground"`` (a solid footprint, never overhangable), transformed to
+    world coords by the *same* :func:`hangarfit.geometry.aircraft_parts_world`
+    path aircraft use. ``turn_radius_m`` is static catalog data carried for
+    #602's routing; it is unused in #601.
+    """
+
+    id: str
+    name: str
+    parts: tuple[Part, ...]
+    object_class: GroundObjectClass
+    motion_mode: MoverMotionMode | None = None
+    turn_radius_m: float | None = None
+    measured: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.id:
+            raise ValueError("GroundObject.id must be non-empty")
+        if not self.name:
+            raise ValueError(f"GroundObject {self.id!r}: name must be non-empty")
+        if not self.parts:
+            raise ValueError(f"GroundObject {self.id!r}: parts must be non-empty")
+        for p in self.parts:
+            if p.kind != "ground":
+                raise ValueError(
+                    f"GroundObject {self.id!r}: all parts must be kind 'ground' "
+                    f"(a solid footprint), got {p.kind!r}"
+                )
+        if self.object_class not in _VALID_GROUND_OBJECT_CLASSES:
+            raise ValueError(
+                f"GroundObject {self.id!r}: object_class must be one of "
+                f"{sorted(_VALID_GROUND_OBJECT_CLASSES)}, got {self.object_class!r}"
+            )
+        if self.object_class == "fixed_obstacle":
+            if self.motion_mode is not None:
+                raise ValueError(
+                    f"GroundObject {self.id!r}: a fixed_obstacle must not carry a "
+                    f"motion_mode (got {self.motion_mode!r}) — it never moves"
+                )
+            if self.turn_radius_m is not None:
+                raise ValueError(
+                    f"GroundObject {self.id!r}: a fixed_obstacle must not carry a "
+                    f"turn_radius_m — it never moves"
+                )
+        else:  # placed_routed_mover
+            if self.motion_mode not in _VALID_MOVER_MOTION_MODES:
+                raise ValueError(
+                    f"GroundObject {self.id!r}: a placed_routed_mover requires a "
+                    f"motion_mode in {sorted(_VALID_MOVER_MOTION_MODES)}, "
+                    f"got {self.motion_mode!r}"
+                )
+            # Only movers may carry a turn radius (fixed_obstacle rejects any
+            # non-None above), and when present it must be positive.
+            if self.turn_radius_m is not None and self.turn_radius_m <= 0:
+                raise ValueError(
+                    f"GroundObject {self.id!r}: turn_radius_m must be positive, "
+                    f"got {self.turn_radius_m}"
+                )
+
+
+@dataclass(frozen=True, slots=True)
 class Door:
     center_x_m: float
     width_m: float
@@ -721,26 +805,41 @@ class Layout:
       placements** (the occupant is treated as "away" — physically
       absent from the parking problem).
 
+    Ground objects (#601 / ADR-0025) live in two parallel fields that
+    mirror ``fleet`` / ``placements``:
+
+    - ``ground_objects`` — a map of :class:`GroundObject` keyed by id (keys
+      equal their ``GroundObject.id``, like ``fleet``),
+    - ``ground_object_placements`` — the placed poses (``plane_id`` carries
+      the ground-object id, no duplicates).
+
+    Their cross-reference invariants are validated alongside the fleet's:
+    every ground-object placement resolves to a known object, and the
+    ground-object ids are **disjoint** from the fleet aircraft ids so a
+    placement id resolves unambiguously to exactly one object.
+
     The bay-closure rule (no other plane's parts may cross into the
     closed bay rectangle) is a geometric check; it lives in the
     collision checker alongside the other geometric rules.
 
-    On construction, ``fleet`` is wrapped in ``MappingProxyType`` so
-    that the cross-reference invariants stay valid for the lifetime of
-    the ``Layout`` (a plain ``dict`` field, even on a frozen dataclass,
-    can be mutated through ``layout.fleet["x"] = …``).
+    On construction, ``fleet`` and ``ground_objects`` are wrapped in
+    ``MappingProxyType`` so that the cross-reference invariants stay valid
+    for the lifetime of the ``Layout`` (a plain ``dict`` field, even on a
+    frozen dataclass, can be mutated through ``layout.fleet["x"] = …``).
     """
 
     fleet: Mapping[str, Aircraft]
     hangar: Hangar
     placements: tuple[Placement, ...]
     maintenance_plane: str | None = None
+    ground_objects: Mapping[str, GroundObject] = field(default_factory=dict)
+    ground_object_placements: tuple[Placement, ...] = ()
 
-    # The mapping field wrapped in MappingProxyType for immutability — single
+    # The mapping fields wrapped in MappingProxyType for immutability — single
     # source of truth for the construction-time wrap (__post_init__) and the
     # pickle unwrap/re-wrap (__getstate__/__setstate__, #544 ProcessPool
     # boundary). See _proxy_aware_getstate. (ClassVar ⇒ not a dataclass field.)
-    _PROXY_FIELDS: typing.ClassVar[tuple[str, ...]] = ("fleet",)
+    _PROXY_FIELDS: typing.ClassVar[tuple[str, ...]] = ("fleet", "ground_objects")
 
     def __post_init__(self) -> None:
         for k, a in self.fleet.items():
@@ -793,6 +892,33 @@ class Layout:
                     f"maintenance_plane {self.maintenance_plane!r} must NOT be in "
                     f"placements when in maintenance (occupant is treated as away)"
                 )
+
+        # Ground objects (#601): keys equal their id; placements resolve;
+        # ids disjoint from the fleet so a placement id resolves unambiguously.
+        for k, obj in self.ground_objects.items():
+            if obj.id != k:
+                raise ValueError(
+                    f"ground_objects key {k!r} does not match its GroundObject.id "
+                    f"({obj.id!r}); keys must equal their ground-object id"
+                )
+        fleet_ids = set(self.fleet)
+        ground_ids = set(self.ground_objects)
+        clash = fleet_ids & ground_ids
+        if clash:
+            raise ValueError(
+                f"ground-object id(s) {sorted(clash)} collide with fleet aircraft ids; "
+                f"ids must be disjoint so a placement resolves to exactly one object"
+            )
+        seen_ground: set[str] = set()
+        for gp in self.ground_object_placements:
+            if gp.plane_id not in self.ground_objects:
+                raise ValueError(
+                    f"ground_object_placement references unknown id {gp.plane_id!r} "
+                    f"(ground_objects has: {sorted(self.ground_objects)})"
+                )
+            if gp.plane_id in seen_ground:
+                raise ValueError(f"Duplicate ground_object_placement for id {gp.plane_id!r}")
+            seen_ground.add(gp.plane_id)
 
         for name in self._PROXY_FIELDS:
             object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
@@ -947,13 +1073,17 @@ class Scenario:
     fleet_in: tuple[str, ...]
     maintenance_plane: str | None = None
     constraints: Mapping[str, PlaneConstraint] = field(default_factory=lambda: MappingProxyType({}))
+    ground_objects: tuple[str, ...] = ()
+    ground_object_defs: Mapping[str, GroundObject] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
     # The mapping fields wrapped in MappingProxyType for immutability. This is
     # the single source of truth for both the construction-time wrap (in
     # __post_init__) and the pickle unwrap/re-wrap (in __getstate__/__setstate__,
     # #545) — listing them once means the two cannot silently drift. (ClassVar so
     # the dataclass excludes it from the field set and __slots__.)
-    _PROXY_FIELDS: typing.ClassVar[tuple[str, ...]] = ("fleet", "constraints")
+    _PROXY_FIELDS: typing.ClassVar[tuple[str, ...]] = ("fleet", "constraints", "ground_object_defs")
 
     def __post_init__(self) -> None:
         # fleet_in must be non-empty (otherwise there's nothing to solve;
@@ -1069,6 +1199,20 @@ class Scenario:
                         f"Scenario.constraints[{plane_id!r}].priority="
                         f"{constraint.priority!r} must be >= 0.0 (a soft importance weight)"
                     )
+
+        # Ground objects (#601): defs keys must equal their GroundObject.id;
+        # every id in ground_objects must resolve in ground_object_defs.
+        for k, obj in self.ground_object_defs.items():
+            if obj.id != k:
+                raise ValueError(
+                    f"Scenario.ground_object_defs key {k!r} != GroundObject.id ({obj.id!r})"
+                )
+        for gid in self.ground_objects:
+            if gid not in self.ground_object_defs:
+                raise ValueError(
+                    f"Scenario.ground_objects references unknown ground_object {gid!r}; "
+                    f"defs have: {sorted(self.ground_object_defs)}"
+                )
 
         # Wrap the mapping fields in MappingProxyType so a frozen Scenario can't
         # be mutated through e.g. ``scenario.fleet["x"] = …``. Always copy+wrap

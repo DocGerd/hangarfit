@@ -36,7 +36,7 @@ from __future__ import annotations
 import dataclasses
 import difflib
 import math
-from collections.abc import Collection, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from pathlib import Path
 from typing import Any, Literal
 
@@ -45,9 +45,11 @@ import yaml
 from .models import (
     Aircraft,
     Door,
+    GroundObject,
     Hangar,
     Layout,
     MaintenanceBay,
+    MoverMotionMode,
     Part,
     Placement,
     PlaneConstraint,
@@ -142,8 +144,8 @@ def _reject_unknown_top_level_keys(
 
 # A fleet manifest references per-object CATALOG files (#595). Each catalog file
 # carries a `type:` discriminator (default 'aircraft') routing to a per-type
-# builder. Only 'aircraft' is registered here; non-aircraft objects (fuel
-# trailer, glider trailer, rescue vehicle) arrive in Stage A (#600).
+# builder in :data:`_CATALOG_BUILDERS`. As of #601 the registry also resolves the
+# ground-object types ('fixed_obstacle', 'car', 'trailer'); see _build_catalog_object.
 _DEFAULT_OBJECT_TYPE = "aircraft"
 
 # Operational flags a fleet manifest entry may override on a catalog object.
@@ -152,24 +154,6 @@ _DEFAULT_OBJECT_TYPE = "aircraft"
 # merged onto the catalog dict BEFORE _build_aircraft's allowlist check, so an
 # override key absent from that allowlist would be rejected as an "unknown" key.
 _ALLOWED_MANIFEST_OVERRIDE_KEYS = frozenset({"movement_mode", "tow_pivotable"})
-
-
-def _build_catalog_object(raw: Any, *, source: Path) -> Aircraft:
-    """Dispatch a catalog object on its ``type:`` discriminator to the per-type
-    builder. ``type:`` is stripped before the builder runs, so the aircraft
-    allowlist (:data:`_ALLOWED_AIRCRAFT_KEYS`, which has no ``type`` member) is
-    unchanged. An unregistered type is rejected today with a clear error (the
-    slot is reserved for the Stage A ground objects, #600)."""
-    if not isinstance(raw, dict):
-        raise LoaderError(f"{source}: catalog object must be a mapping, got {type(raw).__name__}")
-    obj_type = raw.get("type", _DEFAULT_OBJECT_TYPE)
-    if obj_type != _DEFAULT_OBJECT_TYPE:
-        raise LoaderError(
-            f"{source}: object type {obj_type!r} not yet supported (non-aircraft "
-            f"objects arrive in Stage A, #600); known types: ['aircraft']"
-        )
-    entry = {k: v for k, v in raw.items() if k != "type"}
-    return _build_aircraft(entry)
 
 
 def _parse_manifest_entry(entry: Any, *, index: int, path: Path) -> tuple[str, dict[str, Any]]:
@@ -262,13 +246,73 @@ def load_fleet(path: Path | str) -> dict[str, Aircraft]:
         if isinstance(obj_raw, dict) and overrides:
             obj_raw = {**obj_raw, **overrides}
         try:
-            aircraft = _build_catalog_object(obj_raw, source=catalog_path)
+            obj = _build_catalog_object(obj_raw, source=catalog_path)
         except (ValueError, KeyError, TypeError, LoaderError) as e:
             raise LoaderError(f"{path}: aircraft[{i}] ({ref}): {e}") from e
-        if aircraft.id in fleet:
-            raise LoaderError(f"{path}: duplicate aircraft id {aircraft.id!r}")
-        fleet[aircraft.id] = aircraft
+        if not isinstance(obj, Aircraft):
+            raise LoaderError(
+                f"{path}: aircraft[{i}] ({ref}) is a {type(obj).__name__}, not an Aircraft; "
+                f"list non-aircraft objects under 'ground_objects:' instead"
+            )
+        if obj.id in fleet:
+            raise LoaderError(f"{path}: duplicate aircraft id {obj.id!r}")
+        fleet[obj.id] = obj
     return fleet
+
+
+def load_ground_objects(path: Path | str) -> dict[str, GroundObject]:
+    """Load the ``ground_objects:`` list of a fleet manifest into a dict keyed
+    by :attr:`GroundObject.id` (#601).
+
+    Returns ``{}`` when the key is absent, so existing manifests (aircraft-only)
+    are byte-identical. Refs resolve relative to the manifest dir, exactly like
+    ``aircraft:`` refs. Each referenced catalog file must resolve to a
+    :class:`GroundObject`; an aircraft ref under ``ground_objects:`` is rejected
+    loudly with a hint to move it under ``aircraft:`` instead.
+    """
+    path = Path(path)
+    raw = _read_yaml(path)
+    if not isinstance(raw, dict):
+        raise LoaderError(f"{path}: top-level mapping required")
+    obj_list = raw.get("ground_objects")
+    if obj_list is None:
+        return {}
+    if not isinstance(obj_list, list):
+        raise LoaderError(f"{path}: 'ground_objects' must be a list")
+    manifest_dir = path.parent
+    out: dict[str, GroundObject] = {}
+    for i, entry in enumerate(obj_list):
+        ref, overrides = _parse_manifest_entry(entry, index=i, path=path)
+        if overrides:
+            raise LoaderError(
+                f"{path}: ground_objects[{i}] overrides {sorted(overrides)} not supported; "
+                f"ground objects carry no per-fleet operational flags"
+            )
+        try:
+            catalog_path = (manifest_dir / ref).resolve()
+            ref_exists = catalog_path.is_file()
+        except (ValueError, OSError) as e:
+            raise LoaderError(
+                f"{path}: ground_objects[{i}] has an invalid catalog reference {ref!r}: {e}"
+            ) from e
+        if not ref_exists:
+            raise LoaderError(
+                f"{path}: ground_objects[{i}] references {ref!r} which does not exist "
+                f"(resolved to {catalog_path})"
+            )
+        try:
+            obj = _build_catalog_object(_read_yaml(catalog_path), source=catalog_path)
+        except (ValueError, KeyError, TypeError, LoaderError) as e:
+            raise LoaderError(f"{path}: ground_objects[{i}] ({ref}): {e}") from e
+        if not isinstance(obj, GroundObject):
+            raise LoaderError(
+                f"{path}: ground_objects[{i}] ({ref}) is a {type(obj).__name__}, not a "
+                f"GroundObject; list aircraft under 'aircraft:' instead"
+            )
+        if obj.id in out:
+            raise LoaderError(f"{path}: duplicate ground_object id {obj.id!r}")
+        out[obj.id] = obj
+    return out
 
 
 def _resolve_apron_depth(
@@ -417,7 +461,7 @@ def load_hangar(path: Path | str, *, fleet: Mapping[str, Aircraft] | None = None
 # keys read in :func:`load_layout`; ``test_all_allowed_layout_keys_load`` guards the
 # too-strict direction. ``fleet``/``hangar`` are optional in the file (they may arrive
 # as kwargs instead); the file-vs-kwarg conflict is handled separately, below.
-_ALLOWED_LAYOUT_KEYS = frozenset({"fleet", "hangar", "placements", "maintenance"})
+_ALLOWED_LAYOUT_KEYS = frozenset({"fleet", "hangar", "placements", "maintenance", "ground_objects"})
 
 
 def load_layout(
@@ -427,6 +471,7 @@ def load_layout(
     hangar: Hangar | None = None,
     max_carts: int | None = None,
     apron_depth: float | Literal["auto"] | None = None,
+    ground_objects: dict[str, GroundObject] | None = None,
 ) -> Layout:
     """Load a layout YAML.
 
@@ -499,6 +544,16 @@ def load_layout(
         except ValueError as e:
             raise LoaderError(f"{path}: {e}") from e
 
+    # Ground-object defs: kwarg overrides; otherwise resolve from the same
+    # manifest the fleet: key points at (which may return {} when the manifest
+    # has no ground_objects: list); absent both, default to empty (#601).
+    if ground_objects is None:
+        fleet_ref = raw.get("fleet")
+        if fleet_ref is not None:
+            ground_objects = load_ground_objects((path.parent / fleet_ref).resolve())
+        else:
+            ground_objects = {}
+
     placements_data = raw.get("placements", [])
     if not isinstance(placements_data, list):
         raise LoaderError(f"{path}: 'placements' must be a list")
@@ -532,12 +587,50 @@ def load_layout(
                     f"id if it doesn't match an aircraft in the fleet)."
                 )
 
+    # Parse the layout's optional ground_objects: block (#601). Each entry maps
+    # to a Placement (using plane_id for the object id, matching Layout's field).
+    go_data = raw.get("ground_objects", [])
+    if not isinstance(go_data, list):
+        raise LoaderError(f"{path}: 'ground_objects' must be a list")
+    _allowed_go_entry = frozenset({"object", "x_m", "y_m", "heading_deg"})
+    ground_object_placements_list: list[Placement] = []
+    for i, go_entry in enumerate(go_data):
+        if not isinstance(go_entry, dict):
+            raise LoaderError(f"{path}: ground_objects[{i}] must be a mapping")
+        unknown = set(go_entry) - _allowed_go_entry
+        if unknown:
+            raise LoaderError(
+                f"{path}: ground_objects[{i}] has unknown ground_object key(s) "
+                f"{sorted(unknown)}; allowed: {sorted(_allowed_go_entry)}"
+            )
+        for key in ("object", "x_m", "y_m", "heading_deg"):
+            if key not in go_entry:
+                raise LoaderError(f"{path}: missing required field 'ground_objects[{i}].{key}'")
+        obj_id = go_entry["object"]
+        if obj_id not in ground_objects:
+            raise LoaderError(
+                f"{path}: ground_objects[{i}] references unknown object {obj_id!r}; "
+                f"the available ground objects are: {sorted(ground_objects)}"
+            )
+        ground_object_placements_list.append(
+            Placement(
+                plane_id=obj_id,
+                x_m=_to_float(go_entry["x_m"], f"ground_objects[{i}].x_m"),
+                y_m=_to_float(go_entry["y_m"], f"ground_objects[{i}].y_m"),
+                heading_deg=_to_float(go_entry["heading_deg"], f"ground_objects[{i}].heading_deg"),
+                on_carts=False,
+            )
+        )
+    ground_object_placements = tuple(ground_object_placements_list)
+
     try:
         return Layout(
             fleet=fleet,
             hangar=hangar,
             placements=placements,
             maintenance_plane=maintenance_plane,
+            ground_objects=ground_objects,
+            ground_object_placements=ground_object_placements,
         )
     except ValueError as e:
         raise LoaderError(f"{path}: {e}") from e
@@ -547,7 +640,9 @@ def load_layout(
 # keys read in :func:`load_scenario`; ``test_all_allowed_scenario_keys_load`` guards
 # the too-strict direction. Per-plane ``constraints`` entries carry their own
 # allowlist (:data:`_ALLOWED_CONSTRAINT_KEYS`).
-_ALLOWED_SCENARIO_KEYS = frozenset({"fleet_in", "fleet", "hangar", "maintenance", "constraints"})
+_ALLOWED_SCENARIO_KEYS = frozenset(
+    {"fleet_in", "fleet", "hangar", "maintenance", "constraints", "ground_objects"}
+)
 
 
 def load_scenario(
@@ -557,6 +652,7 @@ def load_scenario(
     hangar: Hangar | None = None,
     max_carts: int | None = None,
     apron_depth: float | Literal["auto"] | None = None,
+    ground_objects: dict[str, GroundObject] | None = None,
 ) -> Scenario:
     """Load a scenario YAML into a validated :class:`Scenario`.
 
@@ -643,6 +739,16 @@ def load_scenario(
         except ValueError as e:
             raise LoaderError(f"{path}: {e}") from e
 
+    # Ground-object defs: kwarg overrides; otherwise resolve from the same
+    # manifest the fleet: key points at (which returns {} when the manifest has
+    # no ground_objects: list); absent both, default to empty (#601).
+    if ground_objects is None:
+        fleet_ref = raw.get("fleet")
+        if fleet_ref is not None:
+            ground_objects = load_ground_objects((path.parent / fleet_ref).resolve())
+        else:
+            ground_objects = {}
+
     for pid in fleet_in:
         _resolve_known_plane_id(pid, fleet, role="fleet_in entry", path=path)
 
@@ -691,6 +797,20 @@ def load_scenario(
         except (ValueError, KeyError, TypeError, LoaderError) as e:
             raise LoaderError(f"{path}: constraint {plane_id!r}: {e}") from e
 
+    # Parse the scenario's optional ground_objects: id-list (#601). Like
+    # fleet_in, it is a list of catalog ids; each must resolve in the defs
+    # resolved above (kwarg-injected or read from the fleet manifest).
+    go_ids_raw = raw.get("ground_objects", [])
+    if not isinstance(go_ids_raw, list):
+        raise LoaderError(f"{path}: 'ground_objects' must be a list of ids")
+    scenario_ground_objects = tuple(str(x) for x in go_ids_raw)
+    for gid in scenario_ground_objects:
+        if gid not in ground_objects:
+            raise LoaderError(
+                f"{path}: ground_objects references unknown object {gid!r}; "
+                f"the available ground objects are: {sorted(ground_objects)}"
+            )
+
     try:
         return Scenario(
             fleet=fleet,
@@ -698,6 +818,8 @@ def load_scenario(
             fleet_in=fleet_in,
             maintenance_plane=maintenance_plane,
             constraints=constraints,
+            ground_objects=scenario_ground_objects,
+            ground_object_defs=ground_objects,
         )
     except ValueError as e:
         raise LoaderError(f"{path}: {e}") from e
@@ -1135,6 +1257,109 @@ def _build_aircraft(entry: Any) -> Aircraft:
     )
     _validate_wheels_vs_turn_radius(aircraft)
     return aircraft
+
+
+# Per-type key allowlists for ground objects (#601 / ADR-0025). A fixed obstacle
+# never moves, so its allowlist deliberately EXCLUDES motion_mode/turn_radius_m —
+# authoring one is a loud "unknown fixed_obstacle key" rather than a silently
+# ignored field. Movers (car/trailer) may carry an explicit motion_mode override
+# and a static turn_radius_m (carried for #602's routing; unused in #601).
+_ALLOWED_FIXED_OBSTACLE_KEYS = frozenset({"id", "name", "parts", "measured"})
+_ALLOWED_MOVER_KEYS = frozenset({"id", "name", "parts", "measured", "motion_mode", "turn_radius_m"})
+
+
+def _build_ground_parts(entry: dict[str, Any]) -> tuple[Part, ...]:
+    """Parse a ground object's ``parts`` list. Every part must be kind 'ground'
+    (a solid footprint) — ground objects do NOT do the fuselage front/aft split,
+    struts, or wheels, and an aircraft part kind (wing, tail, …) is rejected."""
+    parts_data = entry.get("parts")
+    if not isinstance(parts_data, list) or not parts_data:
+        raise LoaderError("'parts' must be a non-empty list")
+    parts = tuple(_build_part(p, i) for i, p in enumerate(parts_data))
+    for i, part in enumerate(parts):
+        if part.kind != "ground":
+            raise LoaderError(
+                f"parts[{i}] kind {part.kind!r} not allowed on a ground object; "
+                f"use kind: ground (a solid footprint)"
+            )
+    return parts
+
+
+def _check_ground_keys(entry: Any, allowed: frozenset[str], *, what: str) -> dict[str, Any]:
+    """Reject unknown keys + require id/name on a ground-object catalog dict,
+    mirroring :func:`_build_aircraft`'s allowlist discipline (#513)."""
+    if not isinstance(entry, dict):
+        raise LoaderError(f"{what} entry must be a mapping, got {type(entry).__name__}")
+    unknown = set(entry) - allowed
+    if unknown:
+        raise LoaderError(f"unknown {what} key(s) {sorted(unknown)}; allowed: {sorted(allowed)}")
+    for key in ("id", "name"):
+        if key not in entry:
+            raise LoaderError(f"missing required field {key!r}")
+    return entry
+
+
+def _build_fixed_obstacle(entry: Any) -> GroundObject:
+    entry = _check_ground_keys(entry, _ALLOWED_FIXED_OBSTACLE_KEYS, what="fixed_obstacle")
+    return GroundObject(
+        id=entry["id"],
+        name=entry["name"],
+        parts=_build_ground_parts(entry),
+        object_class="fixed_obstacle",
+        measured=_to_bool(entry.get("measured", False), "measured"),
+    )
+
+
+def _build_mover(entry: Any, *, default_motion: MoverMotionMode) -> GroundObject:
+    entry = _check_ground_keys(entry, _ALLOWED_MOVER_KEYS, what="mover")
+    motion_raw = entry.get("motion_mode", default_motion)
+    tr_raw = entry.get("turn_radius_m")
+    return GroundObject(
+        id=entry["id"],
+        name=entry["name"],
+        parts=_build_ground_parts(entry),
+        object_class="placed_routed_mover",
+        motion_mode=motion_raw,
+        turn_radius_m=None if tr_raw is None else _to_float(tr_raw, "turn_radius_m"),
+        measured=_to_bool(entry.get("measured", False), "measured"),
+    )
+
+
+def _build_car(entry: Any) -> GroundObject:
+    """A self-driving rescue car — defaults to ``steerable`` motion (#601)."""
+    return _build_mover(entry, default_motion="steerable")
+
+
+def _build_trailer(entry: Any) -> GroundObject:
+    """A towed glider/fuel trailer — defaults to ``towed`` motion (#601)."""
+    return _build_mover(entry, default_motion="towed")
+
+
+# The catalog builder registry (#595 seam; ground-object types added #601). It is
+# defined AFTER all four builders so the names resolve at dict-construction time.
+_CATALOG_BUILDERS: dict[str, Callable[[Any], Aircraft | GroundObject]] = {
+    "aircraft": _build_aircraft,
+    "fixed_obstacle": _build_fixed_obstacle,
+    "car": _build_car,
+    "trailer": _build_trailer,
+}
+
+
+def _build_catalog_object(raw: Any, *, source: Path) -> Aircraft | GroundObject:
+    """Dispatch a catalog object on its ``type:`` discriminator to the per-type
+    builder (#595 seam; ground-object types added in #601). ``type:`` is stripped
+    before the builder runs, so each per-type allowlist needs no ``type`` member.
+    An unknown type is rejected with the list of known types."""
+    if not isinstance(raw, dict):
+        raise LoaderError(f"{source}: catalog object must be a mapping, got {type(raw).__name__}")
+    obj_type = raw.get("type", _DEFAULT_OBJECT_TYPE)
+    builder = _CATALOG_BUILDERS.get(obj_type)
+    if builder is None:
+        raise LoaderError(
+            f"{source}: unknown catalog type {obj_type!r}; known types: {sorted(_CATALOG_BUILDERS)}"
+        )
+    entry = {k: v for k, v in raw.items() if k != "type"}
+    return builder(entry)
 
 
 # Strict unknown-key allowlist for a `parts[i]` entry, mirroring

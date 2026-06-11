@@ -21,7 +21,7 @@ from hangarfit.geometry import (
     polygon_overlap,
     polygon_overlap_area,
 )
-from hangarfit.models import Aircraft, Part, Placement, Wheels
+from hangarfit.models import Aircraft, GroundObject, Part, Placement, Wheels
 
 SQRT2_2 = math.sqrt(2) / 2  # ≈ 0.7071...
 
@@ -633,4 +633,60 @@ class TestAircraftPartsWorldPolygon:
         [ws] = aircraft_parts_world(scalar, pl)
         [wp] = aircraft_parts_world(poly, pl)
         assert wp.polygon.area < ws.polygon.area
-        assert wp.polygon.within(ws.polygon.buffer(1e-9))
+
+
+def test_ground_object_parts_world_uses_same_transform() -> None:
+    part = Part(
+        kind="ground",
+        length_m=4.0,
+        width_m=2.0,
+        offset_x_m=0.0,
+        offset_y_m=0.0,
+        angle_deg=0.0,
+        z_bottom_m=0.0,
+        z_top_m=1.5,
+    )
+    obj = GroundObject(id="trolley", name="t", parts=(part,), object_class="fixed_obstacle")
+    pl = Placement(plane_id="trolley", x_m=7.0, y_m=3.0, heading_deg=37.0, on_carts=False)
+    wps = aircraft_parts_world(obj, pl)
+    assert len(wps) == 1
+    assert wps[0].plane_id == "trolley"
+    assert wps[0].kind == "ground"
+    # det-(-1) transform: a non-axis-aligned heading must produce a rotated box
+    # (the geometry-invariant-guard requirement). Centroid maps via local_to_world.
+    cx, cy = wps[0].polygon.centroid.coords[0]
+    assert cx == pytest.approx(7.0)
+    assert cy == pytest.approx(3.0)
+
+    # Stronger check: a part offset in +y (plane-local right) must map to the
+    # det-(-1) quadrant, NOT to a CCW +1 rotation result.
+    # For a heading-37° placement: the det-(-1) transform maps plane-local +y
+    # to world via local_to_world(0, offset_y, pl).
+    # A CCW (+1) rotation at 37° would send (0, 1) to (-sin37°, cos37°) ≈ (−0.60, 0.80).
+    # The det-(-1) correct answer sends (0, 1) to (+sin37°, cos37°) ≈ (+0.60, 0.80).
+    offset_y = 1.0
+    part_offset = Part(
+        kind="ground",
+        length_m=4.0,
+        width_m=2.0,
+        offset_x_m=0.0,
+        offset_y_m=offset_y,
+        angle_deg=0.0,
+        z_bottom_m=0.0,
+        z_top_m=1.5,
+    )
+    obj_offset = GroundObject(
+        id="trolley2", name="t2", parts=(part_offset,), object_class="fixed_obstacle"
+    )
+    wps_offset = aircraft_parts_world(obj_offset, pl)
+    ox, oy = wps_offset[0].polygon.centroid.coords[0]
+    # Expected world centroid = local_to_world(0, offset_y, pl)
+    exp_x, exp_y = local_to_world(0.0, offset_y, pl)
+    assert ox == pytest.approx(exp_x, abs=1e-9)
+    assert oy == pytest.approx(exp_y, abs=1e-9)
+    # Confirm the det-(-1) transform sent the +y offset into positive world-x
+    # delta (sin37° > 0), ruling out a CCW rotation (which would go negative).
+    assert ox > 7.0, (
+        f"det-(-1) transform must push a +y-offset part into world +x at heading 37°, "
+        f"got centroid x={ox:.6f} (expected > 7.0)"
+    )

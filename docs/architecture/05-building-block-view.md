@@ -106,10 +106,19 @@ maintenance-plane-is-not-in-placements rule. A constructed instance is
 guaranteed structurally valid; nothing downstream re-checks.
 
 `PartKind` is a closed `Literal` set (`"fuselage_front"`,
-`"fuselage_aft"`, `"wing"`, `"strut"`, `"tail"`,
-`"vertical_stabilizer"`). The `Conflict.kind` taxonomy is also closed —
-adding a new conflict kind is a code change here, not just a string
-constant elsewhere.
+`"fuselage_aft"`, `"ground"`, `"strut"`, `"tail"`,
+`"vertical_stabilizer"`, `"wing"`). The `Conflict.kind` taxonomy is also
+closed — adding a new conflict kind is a code change here, not just a
+string constant elsewhere.
+
+Ground objects — non-aircraft floor occupants — are modelled as frozen
+`GroundObject` dataclasses (#601, [ADR-0025](../adr/0025-ground-object-taxonomy.md)):
+a tuple of `Part`s using the `"ground"` `PartKind`, a derived
+`object_class` (`"fixed_obstacle"` or `"placed_routed_mover"`), and an
+optional `motion_mode` / `turn_radius_m` for movers. `Layout` gains two
+parallel fields (`ground_objects` map, `ground_object_placements` tuple)
+with the same id-disjointness and invariant discipline as `fleet` /
+`placements`; `Scenario` gains a `ground_objects` id list for the solve path.
 
 This module imports nothing from the rest of the project. It is the
 project's vocabulary.
@@ -124,14 +133,22 @@ A fleet file is a thin **manifest** (#595): its `aircraft:` list holds
 resolved by path relative to the manifest's directory (the same idiom
 `fleet:`/`hangar:` already use). Each catalog file carries a `type:`
 discriminator (default `aircraft`) that the loader dispatches to a per-type
-builder (`_build_catalog_object` → `_build_aircraft`); a non-aircraft `type:`
-is reserved for the ground-objects work and rejected with a clear error today.
-Manifest list order is preserved, so the resulting `dict[str, Aircraft]`
-insertion order is deterministic (ADR-0003). A manifest entry may be a bare
-path string or a `{ref: <path>, …}` mapping that **overrides a per-fleet
-operational flag** (`movement_mode`, `tow_pivotable`) on top of the shared
-static definition — geometry is static and never override-able. Inline
-aircraft definitions are no longer supported.
+builder (`_build_catalog_object` → `_build_aircraft` / `_build_fixed_obstacle`
+/ `_build_car` / `_build_trailer`). Manifest list order is preserved, so the
+resulting `dict[str, Aircraft]` insertion order is deterministic (ADR-0003).
+A manifest entry may be a bare path string or a `{ref: <path>, …}` mapping
+that **overrides a per-fleet operational flag** (`movement_mode`,
+`tow_pivotable`) on top of the shared static definition — geometry is static
+and never override-able. Inline aircraft definitions are no longer supported.
+
+The optional manifest `ground_objects:` list loads ground objects via
+`load_ground_objects` (#601, [ADR-0025](../adr/0025-ground-object-taxonomy.md));
+a layout `ground_objects:` block resolves each entry's `object` id against
+that set and builds a `Placement`. Each concrete `type:` (`fixed_obstacle`,
+`car`, `trailer`) has its own builder with a strict key allowlist and sensible
+motion defaults (`car` → `"steerable"`, `trailer` → `"towed"`). An absent
+`ground_objects:` key in the manifest returns `{}` — existing manifests are
+byte-identical.
 
 The other non-trivial transformation is the `struts:` block — a high-level
 YAML shorthand for strut-braced aircraft that the loader expands into two
@@ -190,6 +207,13 @@ predicates and aggregates conflicts:
    every part-pair is tested with the two-clause predicate
    (plan-view distance < `clearance_m` AND height gap <
    `wing_layer_clearance_m`).
+4. **Ground-object keep-out and pairwise wiring** (#601,
+   [ADR-0025](../adr/0025-ground-object-taxonomy.md)) — fixed-obstacle world
+   parts are checked against every aircraft/mover part with the same
+   two-clause predicate, emitting a `ground_obstacle` conflict (single-plane,
+   naming the obstacle in `detail`); mover world parts join the pairwise loop
+   like aircraft. Fixed ↔ fixed overlaps are suppressed. With empty
+   `ground_object_placements` the `CheckResult` is bit-identical to before.
 
 The cart rule is **not** here — it is already enforced upstream in
 `Layout.__post_init__`. `collisions.py` operates on a structurally
@@ -351,6 +375,13 @@ the **empty-hangar fill** case — every plane enters once (ADR-0007).
   opt-in `auto` value. Default `0` reproduces the no-apron `MovesPlan`
   byte-for-byte (the whole apron lives behind an `apron_depth_m > 0` gate;
   ADR-0003); `collisions.check` is untouched (§8 *The door*).
+- **Ground-object tow wiring** (#601, [ADR-0025](../adr/0025-ground-object-taxonomy.md)) —
+  fixed-obstacle world parts (sorted by id for determinism) join the **static**
+  obstacle set in `_build_obstacles` alongside `notch_boxes` and placed-plane
+  parts. Movers appear in `plan_fill`'s routable enumeration alongside aircraft;
+  in A1 the per-mover path search is **deferred to #602** (a mover yields
+  `path=None`, the existing best-effort pattern). With no ground objects the
+  `MovesPlan` is bit-identical to before.
 - **Failure is honest** — a layout it cannot route raises
   `NoFeasiblePlanError` naming the offending plane; `solve` records it
   best-effort (see the bundling bullet above), and the CLI's

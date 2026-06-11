@@ -51,6 +51,86 @@ Conventions (see `docs/architecture/08-crosscutting-concepts.md`
   heights are sourced. All measured: false. A wing nested over another plane's
   tail now conflicts with that plane's fin unless it clears it laterally.
 
+## Ground objects (#601)
+
+The catalog supports non-aircraft floor occupants via three `type:` values.
+See [ADR-0025](../../docs/adr/0025-ground-object-taxonomy.md) for the full
+rationale; the summary is below.
+
+### `type:` vocabulary
+
+| `type:` | `object_class` | motion default | use case |
+|---|---|---|---|
+| `fixed_obstacle` | `"fixed_obstacle"` | none (no motion fields allowed) | parked fuel trailer, fixed equipment |
+| `car` | `"placed_routed_mover"` | `"steerable"` | self-driven vehicle (e.g. VW Caddy) |
+| `trailer` | `"placed_routed_mover"` | `"towed"` | towed trailer (e.g. glider trailer) |
+
+### Parts convention for ground objects
+
+All ground-object parts use `kind: ground` — a footprint-only kind distinct
+from the aircraft part kinds. The collision checker treats `kind: ground` parts
+as keep-out geometry for fixed obstacles and as pairwise collision bodies for
+movers. A `ground` part is never overhangable and is never split by the
+fuselage front/aft loader logic.
+
+Typical ground-object parts are single-rectangle footprints:
+
+```yaml
+type: fixed_obstacle
+id: fuel_trailer
+name: Fuel trailer
+measured: false
+parts:
+  - kind: ground
+    length_m: 4.20       # fore-aft in plane-local coords (object +x)
+    width_m:  1.80       # lateral (object +y)
+    offset_x_m: 0.0
+    offset_y_m: 0.0
+    angle_deg: 0.0
+    z_bottom_m: 0.0
+    z_top_m: 1.5
+```
+
+Heights (`z_bottom_m` / `z_top_m`) should represent the real physical extent
+so the two-clause predicate can detect an aircraft wing passing over versus
+genuinely clearing the object.
+
+### Motion fields (movers only)
+
+`car` and `trailer` entries may carry an optional `motion_mode:` override
+(valid values: `"steerable"`, `"towed"`) and an optional `turn_radius_m:`
+(the minimum taxi / tow turn radius in metres, positive). Fixed obstacles
+must not carry either field; the loader rejects them.
+
+```yaml
+type: car
+id: vw_caddy
+name: VW Caddy
+measured: false
+motion_mode: steerable        # explicit override; default for car is already steerable
+turn_radius_m: 5.5
+parts:
+  - kind: ground
+    length_m: 4.59
+    width_m:  1.85
+    offset_x_m: 0.0
+    offset_y_m: 0.0
+    angle_deg: 0.0
+    z_bottom_m: 0.0
+    z_top_m: 1.85
+```
+
+### Status of real Herrenteich ground-object entries
+
+The real Airfield Herrenteich ground objects — `fuel_trailer`,
+`vw_caddy`, `glider_trailer_1`, `glider_trailer_2` — are **not yet
+authored in this catalog**. Issue #605 adds them alongside the
+dims/clearance calibration for a feasible all-11 arrangement.
+
+This PR (#601) ships the taxonomy and the loader; the catalog currently
+carries **test fixtures** under `tests/fixtures/catalog/` only, not
+production ground-object entries.
+
 ## Real-spec provenance (Airfield Herrenteich occupants, #536/#594)
 
 Airfield Herrenteich — real fleet (the aircraft usually hangared here).

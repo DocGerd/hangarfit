@@ -75,9 +75,11 @@ gap is irrelevant -- the cockpit rule drops clause (2) entirely (ADR-0012, D1).
 *A wingtip may overhang a parked plane's aft fuselage / low tailplane (Case A: legal when heights are disjoint, the two-clause `wing × fuselage_aft` rule) but never its cockpit / front fuselage (Case B: a hard `fuselage_front_wing_overlap` conflict at any nesting height). The loader auto-splits a `fuselage` part at the wing trailing edge `x_break`; front is the nose side, aft the tail side. Since [ADR-0023](../adr/0023-empennage-tail-surfaces.md) Case A also requires the wing to clear the plane's centreline `vertical_stabilizer` (fin), which rises into the wing layer — see "The empennage" below.*
 
 The closed set of `PartKind` values is `{"fuselage_front",
-"fuselage_aft", "wing", "strut", "tail", "vertical_stabilizer"}`. The
-legacy `"fuselage"` is **not** a constructed kind — it survives only as a
-transient YAML keyword the loader auto-splits at the wing trailing-edge
+"fuselage_aft", "ground", "strut", "tail", "vertical_stabilizer", "wing"}`.
+The `"ground"` kind is used exclusively by `GroundObject` parts (see
+"Ground objects" above). The legacy `"fuselage"` is **not** a constructed kind
+— it survives only as a transient YAML keyword the loader auto-splits at the
+wing trailing-edge
 station (`wing.offset_x_m − wing.length_m/2`, the #282 wing-spar
 precedent), emitting an area-conserving `fuselage_front` + `fuselage_aft`
 pair whose union is the original box. An aircraft with a `fuselage` part
@@ -122,6 +124,27 @@ conservative direction. Canonicalization at load time (force CCW, lex-min
 start, drop the closing duplicate) is the determinism crux: equivalent
 author orderings yield a byte-identical `Part`, protecting the ADR-0003
 solver contract.
+
+**Ground objects (#601, [ADR-0025](../adr/0025-ground-object-taxonomy.md)).**
+Non-aircraft floor occupants are modelled as `GroundObject` instances.
+Two `object_class` values exist:
+
+- **`"fixed_obstacle"`** — never moves; its world parts are keep-outs.
+  Any aircraft or mover whose part (plus clearance) overlaps a
+  fixed-obstacle part fires a `ground_obstacle` conflict (single-plane
+  arity, the obstacle named in `detail`). Fixed-obstacle parts use the
+  new `"ground"` `PartKind`.
+- **`"placed_routed_mover"`** — a moveable object (car or towed trailer)
+  that must eventually drive out; its world parts join the pairwise
+  overlap loop exactly like aircraft parts, emitting the standard
+  `<sorted_kinds>_overlap` conflicts. Mover route search is deferred to
+  #602.
+
+Three concrete catalog `type:` values author ground objects: `fixed_obstacle`,
+`car` (motion default `"steerable"`), and `trailer` (motion default `"towed"`).
+The `"ground"` `PartKind` is a footprint-only kind — it is never overhangable
+and is never split by the fuselage front/aft loader logic. With empty
+`ground_object_placements` the system is byte-identical to before.
 
 **Fleet composition relevant to the parts model.** Of the nine
 aircraft in `data/fleet.yaml`, six are **strut-braced** (the Aviat

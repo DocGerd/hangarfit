@@ -36,7 +36,12 @@ from shapely.geometry import Point, Polygon
 # Importing a sibling-module private is the same pattern as `check as _check`.
 from hangarfit.collisions import _parts_conflict
 from hangarfit.collisions import check as _check
-from hangarfit.geometry import WorldPart, cached_parts_world, polygon_overlap
+from hangarfit.geometry import (
+    WorldPart,
+    aircraft_parts_world,
+    cached_parts_world,
+    polygon_overlap,
+)
 from hangarfit.models import Aircraft, ApronShallowDrop, Conflict, Hangar, Layout, Placement
 
 SegmentKind = Literal["L", "S", "R"]
@@ -201,11 +206,24 @@ class DubinsArc:
 
 @dataclass(frozen=True, slots=True)
 class Move:
-    """One plane's entry: from the door-cone entry pose to its target slot."""
+    """One body's entry: from the door-cone entry pose to its target slot.
+
+    ``path`` is the routed tow arc, or ``None`` for a **deferred** move — a body
+    that is enumerated as something the planner must route but whose route search
+    has not been run (a #601 placed-routed ground-object mover; the search lands
+    in #602). This mirrors the established best-effort idiom where an un-routed
+    body is carried as ``None`` rather than dropped (Phase 3a / #197), now at
+    per-move granularity. Consumers that draw a path (visualize/scene) skip a
+    ``None``-path move."""
 
     plane_id: str
     target_slot: Pose
-    path: DubinsArc
+    # ``path is None`` marks a DEFERRED move: a placed-routed ground-object mover
+    # enumerated in the plan as a body the planner must route, but whose actual
+    # route search lands in #602 — today it carries no path (#601 enumerates,
+    # #602 routes). A routed aircraft (or, post-#602, a routed mover) always has a
+    # DubinsArc here. See the class docstring for the full contract.
+    path: DubinsArc | None
 
     def __post_init__(self) -> None:
         if not self.plane_id:
@@ -1442,6 +1460,19 @@ def plan_fill(
                 )
             )
 
+    # Ground-object movers (#601): enumerate each placed-routed mover as a body
+    # the planner must route, but DEFER the actual path search to #602 — emit a
+    # deferred (None-path) Move keyed on the mover id (see the Move.path contract:
+    # #601 enumerates, #602 routes). Fixed obstacles are NEVER routed (they are
+    # keep-outs, already in _build_obstacles). Appended AFTER the aircraft routing
+    # loop, in id-sorted order, so the aircraft moves are byte-identical to the
+    # pre-#601 plan (no ground objects → no extra moves).
+    for gp in sorted(target.ground_object_placements, key=lambda p: p.plane_id):
+        obj = target.ground_objects[gp.plane_id]
+        if obj.object_class != "placed_routed_mover":
+            continue
+        moves.append(Move(gp.plane_id, Pose.from_placement(gp), path=None))
+
     return MovesPlan(target_layout=target, moves=tuple(moves))
 
 
@@ -1736,6 +1767,17 @@ def _build_obstacles(placed: Layout, *, mover_id: str) -> _Obstacles:
         if placement.plane_id == mover_id:
             continue
         parts.extend(cached_parts_world(placed.fleet[placement.plane_id], placement))
+    # Ground objects (#601): fixed obstacles are ALWAYS static keep-outs; placed
+    # movers are static placed bodies EXCEPT the one currently being routed
+    # (mover_id), mirroring how the routed aircraft is excluded above. Iterate in
+    # id-sorted order so the world_parts tuple order is deterministic regardless
+    # of the placements' authored order (determinism-guard, ADR-0003). Empty when
+    # there are no ground objects → byte-identical to the pre-#601 obstacle set.
+    for gp in sorted(placed.ground_object_placements, key=lambda p: p.plane_id):
+        if gp.plane_id == mover_id:
+            continue
+        obj = placed.ground_objects[gp.plane_id]
+        parts.extend(aircraft_parts_world(obj, gp))
     bay = placed.hangar.maintenance_bay
     return _Obstacles(
         world_parts=tuple(parts),
