@@ -42,7 +42,15 @@ from hangarfit.geometry import (
     cached_parts_world,
     polygon_overlap,
 )
-from hangarfit.models import Aircraft, ApronShallowDrop, Conflict, Hangar, Layout, Placement
+from hangarfit.models import (
+    Aircraft,
+    ApronShallowDrop,
+    Conflict,
+    GroundObject,
+    Hangar,
+    Layout,
+    Placement,
+)
 
 SegmentKind = Literal["L", "S", "R"]
 _VALID_SEGMENT_KINDS = frozenset(typing.get_args(SegmentKind))
@@ -1106,11 +1114,15 @@ def entry_pose(target: Placement, hangar: Hangar) -> Pose:
 
 
 def _mover_motion_bounds_conflict(
-    mover: Aircraft, placement: Placement, hangar: Hangar
+    mover: Aircraft | GroundObject, placement: Placement, hangar: Hangar
 ) -> Conflict | None:
-    """First wall violation for a plane *in transit*, else ``None``.
+    """First wall violation for a mover *in transit*, else ``None``.
 
-    **Door-aware front-gap exemption (#222, refined in #411):** a plane being
+    The mover is an ``Aircraft`` or a ``GroundObject`` (#602); part geometry comes
+    from the union-typed :func:`~hangarfit.geometry.aircraft_parts_world`, so the
+    rule is identical for both.
+
+    **Door-aware front-gap exemption (#222, refined in #411):** a mover being
     towed through the door legitimately protrudes in front of it (``y < 0`` — the
     conceptual apron, spike Q6) — but *only through the door opening*. The front
     wall is solid except for the door gap, so a ``y < 0`` vertex is allowed only
@@ -1144,7 +1156,15 @@ def _mover_motion_bounds_conflict(
     door_hi = hangar.door.center_x_m + door_half
     apron_depth = hangar.apron_depth_m
 
-    world_parts = list(cached_parts_world(mover, placement))
+    # cached_parts_world is Aircraft-typed (pose-memoized for the solve scope);
+    # a GroundObject mover goes straight through the union-typed
+    # aircraft_parts_world (uncached, byte-identical geometry). The Aircraft
+    # branch is unchanged ⇒ aircraft routing stays byte-identical.
+    world_parts = list(
+        cached_parts_world(mover, placement)
+        if isinstance(mover, Aircraft)
+        else aircraft_parts_world(mover, placement)
+    )
     # Does the footprint cross the front-wall line (vertices on both sides of
     # y=0)? Only a crossing must thread the door (#411); a footprint wholly in
     # front (all y<=0) is staged on the apron and does not cross. Computed only
@@ -1214,7 +1234,7 @@ def _mover_motion_bounds_conflict(
 
 def path_first_conflict(
     arc: DubinsArc,
-    mover: Aircraft,
+    mover: Aircraft | GroundObject,
     *,
     mover_on_carts: bool,
     placed: Layout,
@@ -1254,12 +1274,24 @@ def path_first_conflict(
         # {mover} is a subset of a valid target layout those invariants hold;
         # a future caller that violates them gets a real ValueError, not a
         # suppressed one.
-        sample_layout = Layout(
-            fleet=placed.fleet,
-            hangar=placed.hangar,
-            placements=(*placed.placements, moving),
-            maintenance_plane=placed.maintenance_plane,
-        )
+        if isinstance(mover, Aircraft):
+            sample_layout = Layout(
+                fleet=placed.fleet,
+                hangar=placed.hangar,
+                placements=(*placed.placements, moving),
+                maintenance_plane=placed.maintenance_plane,
+                ground_objects=placed.ground_objects,
+                ground_object_placements=placed.ground_object_placements,
+            )
+        else:  # GroundObject mover -> belongs in ground_object_placements
+            sample_layout = Layout(
+                fleet=placed.fleet,
+                hangar=placed.hangar,
+                placements=placed.placements,
+                maintenance_plane=placed.maintenance_plane,
+                ground_objects=placed.ground_objects,
+                ground_object_placements=(*placed.ground_object_placements, moving),
+            )
         for conflict in _check(sample_layout).conflicts:
             if mover.id not in conflict.planes:
                 continue
@@ -1804,7 +1836,9 @@ def _aabb(poly: Polygon) -> tuple[float, float, float, float]:
     return xmin, ymin, xmax, ymax
 
 
-def _motion_clear(mover: Aircraft, pose: Pose, obstacles: _Obstacles, hangar: Hangar) -> bool:
+def _motion_clear(
+    mover: Aircraft | GroundObject, pose: Pose, obstacles: _Obstacles, hangar: Hangar
+) -> bool:
     """Fast per-pose verdict: ``True`` iff the mover at ``pose`` is collision-free.
 
     Mirrors the EXACT oracle (:func:`path_first_conflict` → ``collisions.check``)
@@ -1838,7 +1872,14 @@ def _motion_clear(mover: Aircraft, pose: Pose, obstacles: _Obstacles, hangar: Ha
     module note above and the safety-net re-check in :func:`plan_path`.
     """
     placement = Placement(mover.id, pose.x_m, pose.y_m, pose.heading_deg, on_carts=False)
-    mover_parts = cached_parts_world(mover, placement)
+    # cached_parts_world is Aircraft-typed; a GroundObject mover uses the
+    # union-typed aircraft_parts_world (uncached, identical geometry). Aircraft
+    # branch unchanged ⇒ byte-identical aircraft routing.
+    mover_parts = (
+        cached_parts_world(mover, placement)
+        if isinstance(mover, Aircraft)
+        else aircraft_parts_world(mover, placement)
+    )
 
     # (A) Hangar bounds (front-gap-exempt for the mover).
     if _mover_motion_bounds_conflict(mover, placement, hangar) is not None:
@@ -2019,7 +2060,7 @@ def _build_grid_heuristic(
 
 
 def plan_path(
-    mover: Aircraft,
+    mover: Aircraft | GroundObject,
     entry: Pose,
     goal: Pose,
     *,

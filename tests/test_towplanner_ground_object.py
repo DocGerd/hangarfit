@@ -116,6 +116,49 @@ def test_movers_excluded_from_static_obstacles_when_routed() -> None:
     assert all(wp.plane_id != "caddy" for wp in obstacles.world_parts)
 
 
+def test_plan_path_routes_a_ground_object_car_mover() -> None:
+    """A steerable GO car routes from the door cone to a parked slot against a
+    placed aircraft, and the returned arc is collision-free (the oracle places
+    the mover as a ground_object_placement, not an aircraft placement)."""
+    from hangarfit.towplanner import Pose, entry_poses, path_first_conflict, plan_path
+
+    hangar = _hangar()
+    ac = make_test_aircraft(id="p1")
+    car = GroundObject(
+        id="caddy",
+        name="c",
+        parts=(_ground_part(width_m=2.0, length_m=4.5),),
+        object_class="placed_routed_mover",
+        motion_mode="steerable",
+        turn_radius_m=5.5,
+    )
+    slot = Placement(plane_id="caddy", x_m=10.0, y_m=20.0, heading_deg=90.0, on_carts=False)
+    # `placed` carries only the already-committed bodies (the aircraft) — NOT the
+    # mover's own goal slot. Mirrors the aircraft routing contract in plan_fill:
+    # the body being routed is excluded from `placed`, then re-injected per-sample
+    # by path_first_conflict (else Layout rejects the duplicate id). The mover IS
+    # registered in `ground_objects` so the per-sample layout can resolve it.
+    placed = Layout(
+        fleet={ac.id: ac},
+        hangar=hangar,
+        placements=(Placement(plane_id="p1", x_m=6.0, y_m=30.0, heading_deg=0.0, on_carts=False),),
+        ground_objects={car.id: car},
+    )
+    cone = entry_poses(slot, hangar)
+    arc = plan_path(
+        car,
+        cone[0],
+        Pose.from_placement(slot),
+        hangar=hangar,
+        placed=placed,
+        mover_on_carts=False,
+        entries=cone,
+        heuristic="grid",
+    )
+    assert arc is not None
+    assert path_first_conflict(arc, car, mover_on_carts=False, placed=placed) is None
+
+
 def test_empty_ground_objects_no_extra_obstacles() -> None:
     """Byte-identity guard rail: with no ground objects the obstacle set carries
     only the (other) placed planes — no spurious entries."""
