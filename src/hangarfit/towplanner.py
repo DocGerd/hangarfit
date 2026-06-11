@@ -1394,6 +1394,14 @@ def plan_fill(
     fleet = target.fleet
     hangar = target.hangar
 
+    # Fixed obstacles (e.g. the fuel trailer) are static keep-outs for BOTH
+    # aircraft routes and mover routes. Empty when no ground objects => inert.
+    fixed_obstacle_placements = tuple(
+        gp
+        for gp in target.ground_object_placements
+        if target.ground_objects[gp.plane_id].object_class == "fixed_obstacle"
+    )
+
     placed: list[Placement] = []
     moves: list[Move] = []
 
@@ -1413,6 +1421,8 @@ def plan_fill(
             hangar=hangar,
             placements=tuple(placed),
             maintenance_plane=target.maintenance_plane,
+            ground_objects=target.ground_objects,
+            ground_object_placements=fixed_obstacle_placements,
         )
         for idx, slot in enumerate(ordered):
             remaining = total_budget - total_used
@@ -1492,18 +1502,55 @@ def plan_fill(
                 )
             )
 
-    # Ground-object movers (#601): enumerate each placed-routed mover as a body
-    # the planner must route, but DEFER the actual path search to #602 — emit a
-    # deferred (None-path) Move keyed on the mover id (see the Move.path contract:
-    # #601 enumerates, #602 routes). Fixed obstacles are NEVER routed (they are
-    # keep-outs, already in _build_obstacles). Appended AFTER the aircraft routing
-    # loop, in id-sorted order, so the aircraft moves are byte-identical to the
-    # pre-#601 plan (no ground objects → no extra moves).
+    # Ground-object movers (#602): route each placed-routed mover with its own
+    # path. id-sorted + appended after the aircraft loop => aircraft moves stay
+    # byte-identical (no ground objects => this loop is empty). Each mover routes
+    # against all parked aircraft + fixed obstacles + movers already routed this
+    # pass; the one being routed is excluded from `placed` (path_first_conflict
+    # re-injects it per sample, matching the aircraft routing contract).
+    routed_mover_placements: list[Placement] = []
     for gp in sorted(target.ground_object_placements, key=lambda p: p.plane_id):
         obj = target.ground_objects[gp.plane_id]
         if obj.object_class != "placed_routed_mover":
             continue
-        moves.append(Move(gp.plane_id, Pose.from_placement(gp), path=None))
+        mover_placed = Layout(
+            fleet=fleet,
+            hangar=hangar,
+            placements=tuple(placed),
+            maintenance_plane=target.maintenance_plane,
+            ground_objects=target.ground_objects,
+            ground_object_placements=(*fixed_obstacle_placements, *routed_mover_placements),
+        )
+        cone = entry_poses(gp, hangar)
+        mover_stats: dict[str, object] = {}
+        # Budget-exhausted (remaining <= 0) routes with a single expansion so
+        # plan_path fails fast and the mover is best-effort-skipped (path=None)
+        # below — unlike the aircraft scan, which RAISES on exhaustion. Movers
+        # are best-effort (ADR-0007 #197), so an exhausted budget must not abort
+        # the whole plan.
+        remaining = total_budget - total_used
+        mover_arc: DubinsArc | None
+        try:
+            mover_arc = plan_path(
+                obj,
+                cone[0],
+                Pose.from_placement(gp),
+                hangar=hangar,
+                placed=mover_placed,
+                mover_on_carts=False,
+                entries=cone,
+                heuristic=heuristic,
+                max_expansions=min(budget, remaining) if remaining > 0 else 1,
+                stats=mover_stats,
+            )
+        except NoFeasiblePlanError:
+            # Best-effort (ADR-0007 #197): an unroutable mover keeps a None path
+            # (surfaced by the caller, same contract as an un-tow-routable plane).
+            mover_arc = None
+        exp = mover_stats.get("expansions", 0)
+        total_used += exp if isinstance(exp, int) else 0
+        moves.append(Move(gp.plane_id, Pose.from_placement(gp), path=mover_arc))
+        routed_mover_placements.append(gp)
 
     return MovesPlan(target_layout=target, moves=tuple(moves))
 

@@ -63,30 +63,31 @@ def test_fixed_obstacle_in_static_obstacle_set() -> None:
     assert any(wp.plane_id == "doorblock" for wp in obstacles.world_parts)
 
 
-def test_mover_in_routable_enumeration() -> None:
+def test_plan_fill_routes_ground_object_movers() -> None:
     hangar = _hangar()
     ac = make_test_aircraft(id="p1")
-    mover = GroundObject(
+    car = GroundObject(
         id="caddy",
         name="c",
-        parts=(_ground_part(width_m=2.0),),
+        parts=(_ground_part(width_m=2.0, length_m=4.5),),
         object_class="placed_routed_mover",
         motion_mode="steerable",
-        turn_radius_m=4.0,
+        turn_radius_m=5.5,
     )
     layout = Layout(
         fleet={ac.id: ac},
         hangar=hangar,
-        placements=(Placement(plane_id=ac.id, x_m=6.0, y_m=8.0, heading_deg=0.0, on_carts=False),),
-        ground_objects={mover.id: mover},
+        placements=(Placement(plane_id="p1", x_m=6.0, y_m=30.0, heading_deg=0.0, on_carts=False),),
+        ground_objects={car.id: car},
         ground_object_placements=(
-            Placement(plane_id=mover.id, x_m=3.0, y_m=8.0, heading_deg=0.0, on_carts=False),
+            Placement(plane_id="caddy", x_m=10.0, y_m=20.0, heading_deg=90.0, on_carts=False),
         ),
     )
     plan = plan_fill(layout)
-    # the mover id appears in the plan's routed enumeration (path deferred/None to #602)
-    routed_ids = {m.plane_id for m in plan.moves}
-    assert "caddy" in routed_ids
+    caddy_moves = [m for m in plan.moves if m.plane_id == "caddy"]
+    assert len(caddy_moves) == 1
+    assert caddy_moves[0].path is not None  # #602: routed, not deferred None
+    assert plan.moves[-1].plane_id == "caddy"  # movers appended after aircraft
 
 
 def test_movers_excluded_from_static_obstacles_when_routed() -> None:
