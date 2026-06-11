@@ -104,8 +104,8 @@ must not carry either field; the loader rejects them.
 
 ```yaml
 type: car
-id: vw_caddy
-name: VW Caddy
+id: example_car               # illustration only — the real entry is vw_caddy (below)
+name: Example car
 measured: false
 motion_mode: steerable        # explicit override; default for car is already steerable
 turn_radius_m: 5.5
