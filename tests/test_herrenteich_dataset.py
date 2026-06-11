@@ -180,3 +180,54 @@ def test_hangar_clearances_calibrated() -> None:
     hangar = load_hangar(HERRENTEICH / "hangar.yaml")
     assert hangar.clearance_m == 0.20
     assert hangar.wing_layer_clearance_m == 0.15
+
+
+FULL_SET = USUAL_OCCUPANTS | {
+    "vw_caddy",
+    "glider_trailer_1",
+    "glider_trailer_2",
+    "maul_fuel_trailer",
+}
+
+
+def test_full_set_layout_is_valid() -> None:
+    """The full real set (8 aircraft + 4 ground objects) passes the real
+    checker at the calibrated clearances (#605 primary acceptance)."""
+    layout = load_layout(HERRENTEICH / "layout_full.yaml")
+    present = {p.plane_id for p in layout.placements} | {
+        gp.plane_id for gp in layout.ground_object_placements
+    }
+    assert present == FULL_SET
+    result = collisions.check(layout)
+    assert result.conflicts == (), [c.kind for c in result.conflicts]
+
+
+def test_full_set_ground_objects_in_bounds_and_clear_notch() -> None:
+    """Independent, model-free vertex scan: every ground object is inside the
+    L-shaped floor and clear of the office notch (belt-and-suspenders over the
+    checker's bounds/notch extension)."""
+    layout = load_layout(HERRENTEICH / "layout_full.yaml")
+    floor = layout.hangar.floor_polygon
+    assert floor is not None
+    x0, y0, x1, y1 = NOTCH
+    for gp in layout.ground_object_placements:
+        obj = layout.ground_objects[gp.plane_id]
+        for part in aircraft_parts_world(obj, gp):
+            assert floor.covers(part.polygon), f"{gp.plane_id} {part.kind} outside floor"
+            for x, y in part.polygon.exterior.coords:
+                assert not (x0 <= x <= x1 and y0 <= y <= y1), (
+                    f"{gp.plane_id} vertex ({x:.2f},{y:.2f}) in office notch"
+                )
+
+
+def test_full_set_caddy_near_door() -> None:
+    """SOFT intent (pre-#603): the Caddy is parked near the door — in the front
+    third of the hangar and within the door's x-span — the precursor to the #603
+    hard nearest-door egress gate. (Exact 'nearest' is #603's job; the 9 m glider
+    trailers run along the walls toward the door, so a strict min-y assertion
+    would fight that geometry.)"""
+    layout = load_layout(HERRENTEICH / "layout_full.yaml")
+    caddy = next(gp for gp in layout.ground_object_placements if gp.plane_id == "vw_caddy")
+    assert caddy.y_m < layout.hangar.length_m / 3
+    door = layout.hangar.door
+    assert door.center_x_m - door.width_m / 2 <= caddy.x_m <= door.center_x_m + door.width_m / 2
