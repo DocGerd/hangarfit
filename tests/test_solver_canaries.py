@@ -102,19 +102,23 @@ def test_solve_deterministic_given_seed(fixture):
         assert la.placements == lb.placements
         assert la.maintenance_plane == lb.maintenance_plane
 
-    # If the run exhausted budget, best_partial_layout must also match.
-    bp1 = r1.diagnostics.best_partial_layout
-    bp2 = r2.diagnostics.best_partial_layout
-    if bp1 is not None:
-        assert bp2 is not None
-        assert bp1.placements == bp2.placements
-
-    # NOT asserted: diagnostics.wall_time_s and diagnostics.restarts_attempted.
-    # Both depend on machine speed and the wall-clock-based budget cutoff —
-    # a faster run completes more restarts within the same 5.0 s budget.
-    # The deterministic-layout assertion above is enough to catch any
-    # accidental non-determinism (unseeded random, set/dict ordering, etc.):
-    # different RNG state -> different layouts.
+    # NOT asserted here: diagnostics.wall_time_s, diagnostics.restarts_attempted,
+    # AND diagnostics.best_partial_layout. All three are functions of how many
+    # restarts completed inside the wall-clock budget, which is machine-/load-
+    # dependent: a slow or CPU-contended runner finishes FEWER restarts in the
+    # same 5.0 s window. best_partial_layout is the best basin *across* those
+    # restarts (monotonic via solver._merge_restart), and the per-restart descent
+    # is itself budget-interruptible (solver.py outer loop), so two runs that both
+    # exhaust the budget at different restart counts legitimately land on
+    # different partials. ADR-0003 scopes byte-identical determinism to
+    # max_restarts-bounded solves, NOT budget_s-bounded ones (#267); asserting a
+    # budget-dependent quantity here is the #492 wall-clock-canary flake class (a
+    # slow CI runner exhausted this fixture and the two runs' partials diverged).
+    # best_partial determinism is owned, machine-independently, by
+    # test_solve_deterministic_best_partial_under_max_restarts below. The
+    # deterministic found-layout assertion above is what catches accidental
+    # non-determinism (unseeded random, set/dict ordering): a real RNG leak
+    # changes the per-restart trajectory and thus the found layouts/status.
 
 
 def test_solve_deterministic_best_partial_under_max_restarts() -> None:

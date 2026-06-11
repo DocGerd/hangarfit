@@ -10,3 +10,13 @@ aircraft:
   - ../../data/catalog/cessna_140.yaml
   - ../../data/catalog/ctsl.yaml
   - ../../data/catalog/fk9_mkii.yaml
+
+# Non-aircraft ground objects usually on the floor with the fleet (#605/#601).
+# Referenced from the central catalog, same as aircraft. The fuel trailer is a
+# fixed keep-out; the Caddy + two glider trailers are placed movers (routing
+# lands in #602).
+ground_objects:
+  - ../../data/catalog/maul_fuel_trailer.yaml
+  - ../../data/catalog/vw_caddy.yaml
+  - ../../data/catalog/glider_trailer_1.yaml
+  - ../../data/catalog/glider_trailer_2.yaml

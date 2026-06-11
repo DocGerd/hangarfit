@@ -1,0 +1,82 @@
+# Airfield Herrenteich — the FULL real set: all 8 usual aircraft PLUS the four
+# non-aircraft floor occupants (VW Caddy, two glider trailers, fixed Maul fuel
+# trailer). This is the #605 calibration reference — it passes `hangarfit check`
+# (exit 0) at the calibrated clearances (hangar.yaml: clearance_m 0.20,
+# wing_layer_clearance_m 0.15).
+#
+# HOW THIS WAS PRODUCED. Like layout.yaml, this is the TOOL's arrangement, not a
+# record of where the club parks: an offline search driving the real part-based
+# collision checker directly found a valid all-11 packing (the product solver does
+# not generate it). The aircraft are RE-NESTED relative to layout.yaml to free
+# wall corridors for the 9 m glider trailers — layout.yaml (aircraft-only) is
+# unchanged. Replace with real parking positions when surveyed.
+#
+# DEFERRED: tow-routing of this set (#602; the 18 m Scheibe is not yet routable),
+# the hard Caddy nearest-door egress gate (#603 — the Caddy IS placed near the
+# door here, but egress is not enforced), and rendering the ground objects (#606).
+#
+# Coordinate convention (see hangar.yaml): world (0,0) front-left, +x right along
+# the door wall, +y deeper in; heading 0 = nose deep (+y), 90 = nose toward +x.
+
+fleet: fleet.yaml
+hangar: hangar.yaml
+
+placements:
+  - plane: scheibe_falke
+    x_m: 8.18
+    y_m: 22.67
+    heading_deg: 90.0
+    on_carts: true          # always_cart
+  - plane: stemme_s10
+    x_m: 3.15
+    y_m: 13.65
+    heading_deg: 270.0
+    on_carts: false         # always_own_gear
+  - plane: aviat_husky
+    x_m: 5.28
+    y_m: 16.51
+    heading_deg: 90.0
+    on_carts: false         # always_own_gear
+  - plane: cessna_140
+    x_m: 13.36
+    y_m: 5.09
+    heading_deg: 90.0
+    on_carts: false         # cart_eligible, on own gear
+  - plane: fk9_mkii
+    x_m: 7.09
+    y_m: 9.10
+    heading_deg: 270.0
+    on_carts: false         # cart_eligible, on own gear
+  - plane: zlin_savage
+    x_m: 7.41
+    y_m: 25.52
+    heading_deg: 270.0
+    on_carts: true          # always_cart
+  - plane: wild_thing
+    x_m: 11.32
+    y_m: 17.32
+    heading_deg: 90.0
+    on_carts: true          # always_cart
+  - plane: ctsl
+    x_m: 5.32
+    y_m: 3.00
+    heading_deg: 180.0
+    on_carts: false         # cart_eligible, on own gear
+
+ground_objects:
+  - object: vw_caddy            # rescue vehicle near the door (egress precursor, #603)
+    x_m: 11.57
+    y_m: 8.26
+    heading_deg: 180.0
+  - object: glider_trailer_1    # along the left wall, lengthwise
+    x_m: 1.20
+    y_m: 7.99
+    heading_deg: 180.0
+  - object: glider_trailer_2    # along the left wall, deep
+    x_m: 2.02
+    y_m: 27.16
+    heading_deg: 0.0
+  - object: maul_fuel_trailer   # fixed keep-out (clear of the back-right office notch)
+    x_m: 14.05
+    y_m: 13.32
+    heading_deg: 0.0

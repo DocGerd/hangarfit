@@ -104,8 +104,8 @@ must not carry either field; the loader rejects them.
 
 ```yaml
 type: car
-id: vw_caddy
-name: VW Caddy
+id: example_car               # illustration only — the real entry is vw_caddy (below)
+name: Example car
 measured: false
 motion_mode: steerable        # explicit override; default for car is already steerable
 turn_radius_m: 5.5
@@ -120,16 +120,23 @@ parts:
     z_top_m: 1.85
 ```
 
-### Status of real Herrenteich ground-object entries
+### Real Herrenteich ground-object entries (#605)
 
-The real Airfield Herrenteich ground objects — `fuel_trailer`,
-`vw_caddy`, `glider_trailer_1`, `glider_trailer_2` — are **not yet
-authored in this catalog**. Issue #605 adds them alongside the
-dims/clearance calibration for a feasible all-11 arrangement.
+The real Airfield Herrenteich ground objects are now authored in this catalog
+(added by #605, on top of #601's taxonomy + loader):
 
-This PR (#601) ships the taxonomy and the loader; the catalog currently
-carries **test fixtures** under `tests/fixtures/catalog/` only, not
-production ground-object entries.
+| id | `type:` | envelope L×W×H (m) | basis (`measured: false`) |
+|---|---|---|---|
+| `vw_caddy` | `car` | 4.88 × 1.79 × 1.84 | VW Caddy Maxi (long-wheelbase) manufacturer data |
+| `glider_trailer_1` | `trailer` | 9.0 × 2.1 × 2.3 | typical closed glider trailer (Cobra/Spindelberger class) |
+| `glider_trailer_2` | `trailer` | 9.0 × 2.1 × 2.3 | second instance, same envelope |
+| `maul_fuel_trailer` | `fixed_obstacle` | 4.5 × 2.0 × 1.9 | Maul road-trailer envelope (estimated) |
+
+All carry `measured: false` (published/typical specs, not an on-site survey).
+They are parked together with the eight aircraft in
+`examples/herrenteich/layout_full.yaml` — the #605 full-set calibration
+reference. Tow-routing of the movers (#602), the hard Caddy nearest-door egress
+gate (#603), and rendering of ground objects (#606) are deferred.
 
 ## Real-spec provenance (Airfield Herrenteich occupants, #536/#594)
 

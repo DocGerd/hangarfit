@@ -213,6 +213,13 @@ solver seeds are unaffected.
 
 ### Real catalog entries deferred to #605
 
+> **Update (#605, 2026-06-11): landed.** The four real entries shipped as
+> `vw_caddy`, `glider_trailer_1`, `glider_trailer_2`, and `maul_fuel_trailer`
+> (the fixed fuel trailer; the `fuel_trailer` name below was provisional), along
+> with the Herrenteich clearance calibration (0.3/0.2 → 0.20/0.15) and an
+> extension of `collisions.check` to bounds/notch-check ground objects. The text
+> below is retained as the #601 (A1) decision record.
+
 A1 ships the taxonomy and the loader; the catalog currently carries only
 **test fixtures** under `tests/fixtures/catalog/`. The real Herrenteich
 objects (`fuel_trailer`, `vw_caddy`, `glider_trailer_1`, `glider_trailer_2`)
