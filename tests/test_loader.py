@@ -2378,6 +2378,7 @@ class TestScenarioGroundObjects:
             parts=(part,),
             object_class="placed_routed_mover",
             motion_mode="steerable",
+            turn_radius_m=4.5,
         )
 
     def test_scenario_ground_objects_idlist_resolves(self, tmp_path: Path) -> None:

@@ -246,6 +246,7 @@ def test_ground_object_in_notch_flagged() -> None:
         parts=(_ground_part(length_m=3.0, width_m=2.0),),
         object_class="placed_routed_mover",
         motion_mode="steerable",
+        turn_radius_m=4.0,
     )
     layout = Layout(
         fleet={},

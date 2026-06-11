@@ -114,6 +114,7 @@ def _mover(obj_id: str = "caddy") -> GroundObject:
         parts=(_rect_part(),),
         object_class="placed_routed_mover",
         motion_mode="steerable",
+        turn_radius_m=4.5,
     )
 
 
@@ -254,4 +255,43 @@ def test_ground_object_rejects_non_ground_part() -> None:
             name="Bad object",
             parts=(_rect_part(kind="wing"),),
             object_class="fixed_obstacle",
+        )
+
+
+# ---------------------------------------------------------------------------
+# Task 1: effective_turn_radius_m() + steerable-radius guard (#602)
+# ---------------------------------------------------------------------------
+
+
+def test_steerable_mover_effective_radius_is_its_turn_radius() -> None:
+    car = GroundObject(
+        id="caddy",
+        name="c",
+        parts=(_rect_part(),),
+        object_class="placed_routed_mover",
+        motion_mode="steerable",
+        turn_radius_m=5.5,
+    )
+    assert car.effective_turn_radius_m() == 5.5
+
+
+def test_towed_mover_without_radius_is_free_swivel_cart() -> None:
+    trailer = GroundObject(
+        id="tr1",
+        name="t",
+        parts=(_rect_part(),),
+        object_class="placed_routed_mover",
+        motion_mode="towed",
+    )
+    assert trailer.effective_turn_radius_m() == 0.0
+
+
+def test_steerable_mover_requires_positive_turn_radius() -> None:
+    with pytest.raises(ValueError, match="steerable.*turn_radius_m"):
+        GroundObject(
+            id="bad",
+            name="b",
+            parts=(_rect_part(),),
+            object_class="placed_routed_mover",
+            motion_mode="steerable",
         )
