@@ -6,6 +6,11 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Ground-object data model (#601).** Catalog `fixed_obstacle`/`car`/`trailer`
+  types and a layout `ground_objects:` block; fixed obstacles are keep-outs
+  (a `ground_obstacle` conflict names the overlapping aircraft/mover) and
+  movers join collision/tow enumeration. Empty-set output is byte-identical.
+  (ADR-0025)
 - Optional polygon part footprints: a `Part` may carry a load-time-canonicalized
   `local_vertices` polygon (authored via a parametrized `planform: {root_chord_m,
   tip_chord_m}` wing block), used by the collision build-path while `length_m`/
