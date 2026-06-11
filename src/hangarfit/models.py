@@ -799,26 +799,41 @@ class Layout:
       placements** (the occupant is treated as "away" — physically
       absent from the parking problem).
 
+    Ground objects (#601 / ADR-0025) live in two parallel fields that
+    mirror ``fleet`` / ``placements``:
+
+    - ``ground_objects`` — a map of :class:`GroundObject` keyed by id (keys
+      equal their ``GroundObject.id``, like ``fleet``),
+    - ``ground_object_placements`` — the placed poses (``plane_id`` carries
+      the ground-object id, no duplicates).
+
+    Their cross-reference invariants are validated alongside the fleet's:
+    every ground-object placement resolves to a known object, and the
+    ground-object ids are **disjoint** from the fleet aircraft ids so a
+    placement id resolves unambiguously to exactly one object.
+
     The bay-closure rule (no other plane's parts may cross into the
     closed bay rectangle) is a geometric check; it lives in the
     collision checker alongside the other geometric rules.
 
-    On construction, ``fleet`` is wrapped in ``MappingProxyType`` so
-    that the cross-reference invariants stay valid for the lifetime of
-    the ``Layout`` (a plain ``dict`` field, even on a frozen dataclass,
-    can be mutated through ``layout.fleet["x"] = …``).
+    On construction, ``fleet`` and ``ground_objects`` are wrapped in
+    ``MappingProxyType`` so that the cross-reference invariants stay valid
+    for the lifetime of the ``Layout`` (a plain ``dict`` field, even on a
+    frozen dataclass, can be mutated through ``layout.fleet["x"] = …``).
     """
 
     fleet: Mapping[str, Aircraft]
     hangar: Hangar
     placements: tuple[Placement, ...]
     maintenance_plane: str | None = None
+    ground_objects: Mapping[str, GroundObject] = field(default_factory=dict)
+    ground_object_placements: tuple[Placement, ...] = ()
 
-    # The mapping field wrapped in MappingProxyType for immutability — single
+    # The mapping fields wrapped in MappingProxyType for immutability — single
     # source of truth for the construction-time wrap (__post_init__) and the
     # pickle unwrap/re-wrap (__getstate__/__setstate__, #544 ProcessPool
     # boundary). See _proxy_aware_getstate. (ClassVar ⇒ not a dataclass field.)
-    _PROXY_FIELDS: typing.ClassVar[tuple[str, ...]] = ("fleet",)
+    _PROXY_FIELDS: typing.ClassVar[tuple[str, ...]] = ("fleet", "ground_objects")
 
     def __post_init__(self) -> None:
         for k, a in self.fleet.items():
@@ -871,6 +886,33 @@ class Layout:
                     f"maintenance_plane {self.maintenance_plane!r} must NOT be in "
                     f"placements when in maintenance (occupant is treated as away)"
                 )
+
+        # Ground objects (#601): keys equal their id; placements resolve;
+        # ids disjoint from the fleet so a placement id resolves unambiguously.
+        for k, obj in self.ground_objects.items():
+            if obj.id != k:
+                raise ValueError(
+                    f"ground_objects key {k!r} does not match its GroundObject.id "
+                    f"({obj.id!r}); keys must equal their ground-object id"
+                )
+        fleet_ids = set(self.fleet)
+        ground_ids = set(self.ground_objects)
+        clash = fleet_ids & ground_ids
+        if clash:
+            raise ValueError(
+                f"ground-object id(s) {sorted(clash)} collide with fleet aircraft ids; "
+                f"ids must be disjoint so a placement resolves to exactly one object"
+            )
+        seen_ground: set[str] = set()
+        for gp in self.ground_object_placements:
+            if gp.plane_id not in self.ground_objects:
+                raise ValueError(
+                    f"ground_object_placement references unknown id {gp.plane_id!r} "
+                    f"(ground_objects has: {sorted(self.ground_objects)})"
+                )
+            if gp.plane_id in seen_ground:
+                raise ValueError(f"Duplicate ground_object_placement for id {gp.plane_id!r}")
+            seen_ground.add(gp.plane_id)
 
         for name in self._PROXY_FIELDS:
             object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
