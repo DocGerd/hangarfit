@@ -1,9 +1,13 @@
-Fleet definitions for the flying club.
+Catalog of per-object aircraft definitions (#595) — the single source of static
+aircraft data, referenced by both the demo `data/fleet.yaml` manifest and
+`examples/herrenteich/fleet.yaml`.
 
-ALL DIMENSIONS BELOW ARE PLACEHOLDERS — replace with real measurements
-before trusting any layout the collision checker validates. Every
-entry has `measured: false` as a grep handle so you can audit what
-still needs real numbers.
+DIMENSIONS ARE A MIX. The eight Airfield Herrenteich occupants (cessna_140,
+ctsl, wild_thing, aviat_husky, scheibe_falke, fk9_mkii, stemme_s10, zlin_savage)
+carry published-spec / TCDS-sourced numbers — see "Real-spec provenance" below.
+`fuji` and `cessna_150` (not based at Herrenteich) remain eyeballed placeholders.
+Every entry keeps `measured: false` because none are on-site tape/laser
+measurements; treat the sourced figures as authoritative over the placeholders.
 
 Conventions (see `docs/architecture/08-crosscutting-concepts.md`
 "The coordinate convention" and "The parts model" for the full version):
@@ -106,7 +110,7 @@ positions), most tail chords, all fin chords, and all lift-strut attach points.
 These are geometrically derived from the sourced envelope and flagged inline.
 A fully-measured fleet needs on-site survey or the actual TCDS three-view.
 
-MODELLING NOTES (see data/fleet.yaml header for the full parts-model
+MODELLING NOTES (see the Conventions section above for the full parts-model
 conventions and ADR-0012/0013):
 - Each Part is an oriented rectangle: length_m along plane +x (fore-aft),
   width_m along plane +y (lateral = wingspan for the wing part). Wing length_m

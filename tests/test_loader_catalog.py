@@ -136,6 +136,17 @@ def test_manifest_order_preserved(tmp_path: Path) -> None:
     assert list(load_fleet(manifest)) == ["c", "a", "b"]
 
 
+def test_empty_catalog_file_errors(tmp_path: Path) -> None:
+    # An existing-but-empty catalog file parses to None → loud "must be a mapping",
+    # not a silent skip (the _read_yaml-returns-None path).
+    cat = tmp_path / "catalog"
+    cat.mkdir()
+    (cat / "empty.yaml").write_text("", encoding="utf-8")
+    manifest = _write(tmp_path / "fleet.yaml", {"aircraft": ["catalog/empty.yaml"]})
+    with pytest.raises(LoaderError, match="must be a mapping"):
+        load_fleet(manifest)
+
+
 def test_inline_aircraft_mapping_rejected(tmp_path: Path) -> None:
     # Post-#595 contract: an inline aircraft mapping under `aircraft:` is rejected.
     manifest = _write(tmp_path / "fleet.yaml", {"aircraft": [_aircraft_doc("p1")]})

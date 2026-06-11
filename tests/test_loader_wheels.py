@@ -6,51 +6,9 @@ from pathlib import Path
 from textwrap import dedent
 
 import pytest
-import yaml
 
 from hangarfit.loader import LoaderError, load_fleet
-
-
-def _write(path: Path, text: str) -> Path:
-    path.write_text(text, encoding="utf-8")
-    return path
-
-
-def _explode_fleet(tmp_path: Path, fleet_yaml: str) -> Path:
-    """Post-#595: materialise an inline fleet YAML *string* as a fleet manifest
-    under *tmp_path*/fleet.yaml; return its path. A well-formed
-    ``{aircraft: [<dicts>]}`` fleet is exploded into per-object
-    ``catalog/obj_<i>.yaml`` files (``type: aircraft`` prepended) + a manifest of
-    refs, so per-aircraft validation fires through the catalog path (the
-    validation message is preserved). Any other shape is written verbatim so the
-    manifest-level / YAML-parse guards still fire unchanged."""
-    manifest = tmp_path / "fleet.yaml"
-    try:
-        raw = yaml.safe_load(fleet_yaml)
-    except yaml.YAMLError:
-        raw = None
-    entries = raw.get("aircraft") if isinstance(raw, dict) else None
-    if isinstance(entries, list):
-        cat = tmp_path / "catalog"
-        cat.mkdir(exist_ok=True)
-        refs: list[object] = []
-        for i, ac in enumerate(entries):
-            if isinstance(ac, dict):
-                (cat / f"obj_{i}.yaml").write_text(
-                    yaml.safe_dump({"type": "aircraft", **ac}, allow_unicode=True, sort_keys=False),
-                    encoding="utf-8",
-                )
-                refs.append(f"catalog/obj_{i}.yaml")
-            else:
-                refs.append(ac)
-        manifest.write_text(
-            yaml.safe_dump({"aircraft": refs}, allow_unicode=True, sort_keys=False),
-            encoding="utf-8",
-        )
-    else:
-        manifest.write_text(fleet_yaml, encoding="utf-8")
-    return manifest
-
+from tests._fleet_test_utils import explode_fleet as _explode_fleet
 
 # Reusable per-test body. Tests can append a `    wheels:` block (note the
 # 4-space indent so it sits at the same level as `parts:`).

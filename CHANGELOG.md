@@ -42,8 +42,9 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 - **Synthetic-vs-real Scheibe SF-25E divergence (#594).** The demo
   (`data/fleet.yaml`) and `examples/herrenteich/` now reference a single central
-  real-spec catalog (`data/catalog/`), so each shared aircraft is defined exactly
-  once with the real published-spec numbers — no per-world duplication. (#594, via #595)
+  catalog (`data/catalog/`), so each **shared** aircraft is defined exactly once
+  with the real published-spec numbers — no per-world duplication. (`fuji` and
+  `cessna_150`, not based at Herrenteich, stay synthetic placeholders.) (#594, via #595)
 
 ## [0.14.0] — 2026-06-10
 

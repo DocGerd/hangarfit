@@ -148,6 +148,9 @@ _DEFAULT_OBJECT_TYPE = "aircraft"
 
 # Operational flags a fleet manifest entry may override on a catalog object.
 # Geometry is STATIC — never override-able (edit the catalog file). Keep tight.
+# INVARIANT: every member must also be in _ALLOWED_AIRCRAFT_KEYS — overrides are
+# merged onto the catalog dict BEFORE _build_aircraft's allowlist check, so an
+# override key absent from that allowlist would be rejected as an "unknown" key.
 _ALLOWED_MANIFEST_OVERRIDE_KEYS = frozenset({"movement_mode", "tow_pivotable"})
 
 
@@ -155,7 +158,8 @@ def _build_catalog_object(raw: Any, *, source: Path) -> Aircraft:
     """Dispatch a catalog object on its ``type:`` discriminator to the per-type
     builder. ``type:`` is stripped before the builder runs, so the aircraft
     allowlist (:data:`_ALLOWED_AIRCRAFT_KEYS`, which has no ``type`` member) is
-    unchanged. An unregistered type is reserved for Stage A (#600)."""
+    unchanged. An unregistered type is rejected today with a clear error (the
+    slot is reserved for the Stage A ground objects, #600)."""
     if not isinstance(raw, dict):
         raise LoaderError(f"{source}: catalog object must be a mapping, got {type(raw).__name__}")
     obj_type = raw.get("type", _DEFAULT_OBJECT_TYPE)
