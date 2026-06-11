@@ -8,7 +8,13 @@ from typing import Any
 import pytest
 import yaml
 
-from hangarfit.loader import LoaderError, _build_catalog_object, _read_yaml, load_fleet
+from hangarfit.loader import (
+    LoaderError,
+    _build_catalog_object,
+    _read_yaml,
+    load_fleet,
+    load_ground_objects,
+)
 from hangarfit.models import GroundObject
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -263,3 +269,29 @@ def test_ground_object_rejects_aircraft_part_kind() -> None:
     }
     with pytest.raises(LoaderError, match="not allowed on a ground object"):
         _build_catalog_object(bad, source=Path("inline"))
+
+
+# --- Task 5: manifest ground_objects: + load_ground_objects (#601) -----------
+
+
+def test_load_ground_objects_resolves_manifest() -> None:
+    gobjs = load_ground_objects(_CAT / "fixture_ground_manifest.yaml")
+    assert set(gobjs) == {"fixture_fuel_trailer", "fixture_caddy", "fixture_glider_trailer"}
+    assert gobjs["fixture_caddy"].object_class == "placed_routed_mover"
+
+
+def test_load_ground_objects_absent_key_is_empty(tmp_path: Path) -> None:
+    m = tmp_path / "m.yaml"
+    m.write_text("aircraft: []\n")
+    assert load_ground_objects(m) == {}
+
+
+def test_load_fleet_rejects_ground_object_under_aircraft(tmp_path: Path) -> None:
+    # A ground-object ref listed under aircraft: must fail loudly.
+    import shutil
+
+    shutil.copy(_CAT / "fixture_fuel_trailer.yaml", tmp_path / "ft.yaml")
+    m = tmp_path / "m.yaml"
+    m.write_text("aircraft:\n  - ft.yaml\n")
+    with pytest.raises(LoaderError, match="aircraft|not an aircraft|ground"):
+        load_fleet(m)

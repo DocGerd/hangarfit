@@ -260,6 +260,61 @@ def load_fleet(path: Path | str) -> dict[str, Aircraft]:
     return fleet
 
 
+def load_ground_objects(path: Path | str) -> dict[str, GroundObject]:
+    """Load the ``ground_objects:`` list of a fleet manifest into a dict keyed
+    by :attr:`GroundObject.id` (#601).
+
+    Returns ``{}`` when the key is absent, so existing manifests (aircraft-only)
+    are byte-identical. Refs resolve relative to the manifest dir, exactly like
+    ``aircraft:`` refs. Each referenced catalog file must resolve to a
+    :class:`GroundObject`; an aircraft ref under ``ground_objects:`` is rejected
+    loudly with a hint to move it under ``aircraft:`` instead.
+    """
+    path = Path(path)
+    raw = _read_yaml(path)
+    if not isinstance(raw, dict):
+        raise LoaderError(f"{path}: top-level mapping required")
+    obj_list = raw.get("ground_objects")
+    if obj_list is None:
+        return {}
+    if not isinstance(obj_list, list):
+        raise LoaderError(f"{path}: 'ground_objects' must be a list")
+    manifest_dir = path.parent
+    out: dict[str, GroundObject] = {}
+    for i, entry in enumerate(obj_list):
+        ref, overrides = _parse_manifest_entry(entry, index=i, path=path)
+        if overrides:
+            raise LoaderError(
+                f"{path}: ground_objects[{i}] overrides {sorted(overrides)} not supported; "
+                f"ground objects carry no per-fleet operational flags"
+            )
+        try:
+            catalog_path = (manifest_dir / ref).resolve()
+            ref_exists = catalog_path.is_file()
+        except (ValueError, OSError) as e:
+            raise LoaderError(
+                f"{path}: ground_objects[{i}] has an invalid catalog reference {ref!r}: {e}"
+            ) from e
+        if not ref_exists:
+            raise LoaderError(
+                f"{path}: ground_objects[{i}] references {ref!r} which does not exist "
+                f"(resolved to {catalog_path})"
+            )
+        try:
+            obj = _build_catalog_object(_read_yaml(catalog_path), source=catalog_path)
+        except (ValueError, KeyError, TypeError, LoaderError) as e:
+            raise LoaderError(f"{path}: ground_objects[{i}] ({ref}): {e}") from e
+        if not isinstance(obj, GroundObject):
+            raise LoaderError(
+                f"{path}: ground_objects[{i}] ({ref}) is a {type(obj).__name__}, not a "
+                f"GroundObject; list aircraft under 'aircraft:' instead"
+            )
+        if obj.id in out:
+            raise LoaderError(f"{path}: duplicate ground_object id {obj.id!r}")
+        out[obj.id] = obj
+    return out
+
+
 def _resolve_apron_depth(
     value: Any, fleet: Mapping[str, Aircraft] | None, *, field_name: str = "apron_depth_m"
 ) -> float:

@@ -1,0 +1,5 @@
+aircraft: []
+ground_objects:
+  - fixture_fuel_trailer.yaml
+  - fixture_caddy.yaml
+  - fixture_glider_trailer.yaml
