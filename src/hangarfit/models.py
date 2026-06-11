@@ -1067,13 +1067,17 @@ class Scenario:
     fleet_in: tuple[str, ...]
     maintenance_plane: str | None = None
     constraints: Mapping[str, PlaneConstraint] = field(default_factory=lambda: MappingProxyType({}))
+    ground_objects: tuple[str, ...] = ()
+    ground_object_defs: Mapping[str, GroundObject] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
     # The mapping fields wrapped in MappingProxyType for immutability. This is
     # the single source of truth for both the construction-time wrap (in
     # __post_init__) and the pickle unwrap/re-wrap (in __getstate__/__setstate__,
     # #545) — listing them once means the two cannot silently drift. (ClassVar so
     # the dataclass excludes it from the field set and __slots__.)
-    _PROXY_FIELDS: typing.ClassVar[tuple[str, ...]] = ("fleet", "constraints")
+    _PROXY_FIELDS: typing.ClassVar[tuple[str, ...]] = ("fleet", "constraints", "ground_object_defs")
 
     def __post_init__(self) -> None:
         # fleet_in must be non-empty (otherwise there's nothing to solve;
@@ -1189,6 +1193,20 @@ class Scenario:
                         f"Scenario.constraints[{plane_id!r}].priority="
                         f"{constraint.priority!r} must be >= 0.0 (a soft importance weight)"
                     )
+
+        # Ground objects (#601): defs keys must equal their GroundObject.id;
+        # every id in ground_objects must resolve in ground_object_defs.
+        for k, obj in self.ground_object_defs.items():
+            if obj.id != k:
+                raise ValueError(
+                    f"Scenario.ground_object_defs key {k!r} != GroundObject.id ({obj.id!r})"
+                )
+        for gid in self.ground_objects:
+            if gid not in self.ground_object_defs:
+                raise ValueError(
+                    f"Scenario.ground_objects references unknown ground_object {gid!r}; "
+                    f"defs have: {sorted(self.ground_object_defs)}"
+                )
 
         # Wrap the mapping fields in MappingProxyType so a frozen Scenario can't
         # be mutated through e.g. ``scenario.fleet["x"] = …``. Always copy+wrap

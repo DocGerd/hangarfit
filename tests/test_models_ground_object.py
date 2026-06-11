@@ -210,3 +210,37 @@ def test_layout_with_ground_objects_pickles() -> None:
     back = pickle.loads(pickle.dumps(layout))
     assert back.ground_objects[obj.id].id == obj.id
     assert back.ground_object_placements[0].plane_id == obj.id
+
+
+# ---------------------------------------------------------------------------
+# Task 3: Scenario ground-object id-list
+# ---------------------------------------------------------------------------
+
+from hangarfit.models import Scenario  # noqa: E402
+
+
+def test_scenario_ground_objects_idlist() -> None:
+    hangar = _hangar()
+    ac = make_test_aircraft(id="p1")
+    obj = _mover()
+    scn = Scenario(
+        fleet={ac.id: ac},
+        hangar=hangar,
+        fleet_in=(ac.id,),
+        ground_objects=(obj.id,),
+        ground_object_defs={obj.id: obj},
+    )
+    assert scn.ground_objects == (obj.id,)
+
+
+def test_scenario_rejects_unknown_ground_object_ref() -> None:
+    hangar = _hangar()
+    ac = make_test_aircraft(id="p1")
+    with pytest.raises(ValueError, match="ground_object"):
+        Scenario(
+            fleet={ac.id: ac},
+            hangar=hangar,
+            fleet_in=(ac.id,),
+            ground_objects=("ghost",),
+            ground_object_defs={},
+        )
