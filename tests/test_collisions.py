@@ -683,19 +683,18 @@ class TestTotalPenetration:
     def test_exact_value_for_wing_wing_plus_cockpit_overlaps(self) -> None:
         """Deterministic penetration total for ``invalid_wing_wing_same_height``.
 
-        Golden re-baselined 4.0373 → 5.54045 m² for #50 / ADR-0012. The two
-        close, same-height high-wings overlap wing-to-wing AND each wing now
-        crosses the OTHER plane's ``fuselage_front`` (cockpit) — a hard
-        conflict the split introduced (rule changed by #50 — re-pinned). The
-        old comment "the only conflict is the wing-wing one" no longer holds:
-        when two high-wings' wings cross, at least one passes over the other's
-        cockpit. The accumulator (``+=`` over every pairwise conflict's
+        Golden re-baselined 4.0373 → 5.54045 m² for #50 / ADR-0012, then
+        → 2.28913 m² for #595 (the central catalog now carries the real
+        aircraft dimensions, so the overlap areas shrank). The two close,
+        same-height high-wings overlap wing-to-wing AND each wing crosses the
+        OTHER plane's ``fuselage_front`` (cockpit) — a hard conflict the split
+        introduced. The accumulator (``+=`` over every pairwise conflict's
         intersection area) is what this still pins."""
         layout = _load("invalid_wing_wing_same_height")
         result = check(layout)
 
         assert not result.valid
-        assert result.total_penetration_m2 == pytest.approx(5.54045, abs=1e-4)
+        assert result.total_penetration_m2 == pytest.approx(2.28913, abs=1e-4)
 
     def test_sums_across_multiple_pair_conflicts(self) -> None:
         """5 pairwise conflicts in ``invalid_strut_blocks_nesting`` should

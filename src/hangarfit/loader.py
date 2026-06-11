@@ -140,12 +140,94 @@ def _reject_unknown_top_level_keys(
         )
 
 
-def load_fleet(path: Path | str) -> dict[str, Aircraft]:
-    """Load ``fleet.yaml`` into a dict keyed by :attr:`Aircraft.id`.
+# A fleet manifest references per-object CATALOG files (#595). Each catalog file
+# carries a `type:` discriminator (default 'aircraft') routing to a per-type
+# builder. Only 'aircraft' is registered here; non-aircraft objects (fuel
+# trailer, glider trailer, rescue vehicle) arrive in Stage A (#600).
+_DEFAULT_OBJECT_TYPE = "aircraft"
 
-    Expands the optional ``struts:`` block on each aircraft into
-    mirrored strut Parts (one per side), folded into the final
-    ``parts`` tuple.
+# Operational flags a fleet manifest entry may override on a catalog object.
+# Geometry is STATIC — never override-able (edit the catalog file). Keep tight.
+# INVARIANT: every member must also be in _ALLOWED_AIRCRAFT_KEYS — overrides are
+# merged onto the catalog dict BEFORE _build_aircraft's allowlist check, so an
+# override key absent from that allowlist would be rejected as an "unknown" key.
+_ALLOWED_MANIFEST_OVERRIDE_KEYS = frozenset({"movement_mode", "tow_pivotable"})
+
+
+def _build_catalog_object(raw: Any, *, source: Path) -> Aircraft:
+    """Dispatch a catalog object on its ``type:`` discriminator to the per-type
+    builder. ``type:`` is stripped before the builder runs, so the aircraft
+    allowlist (:data:`_ALLOWED_AIRCRAFT_KEYS`, which has no ``type`` member) is
+    unchanged. An unregistered type is rejected today with a clear error (the
+    slot is reserved for the Stage A ground objects, #600)."""
+    if not isinstance(raw, dict):
+        raise LoaderError(f"{source}: catalog object must be a mapping, got {type(raw).__name__}")
+    obj_type = raw.get("type", _DEFAULT_OBJECT_TYPE)
+    if obj_type != _DEFAULT_OBJECT_TYPE:
+        raise LoaderError(
+            f"{source}: object type {obj_type!r} not yet supported (non-aircraft "
+            f"objects arrive in Stage A, #600); known types: ['aircraft']"
+        )
+    entry = {k: v for k, v in raw.items() if k != "type"}
+    return _build_aircraft(entry)
+
+
+def _parse_manifest_entry(entry: Any, *, index: int, path: Path) -> tuple[str, dict[str, Any]]:
+    """Normalise a fleet-manifest entry to ``(ref_path, overrides)``.
+
+    - ``"catalog/x.yaml"``           -> ``(path, {})``           bare reference
+    - ``{ref: p, movement_mode: …}`` -> ``(p, {allowed flags})`` reference + overrides
+    - ``{id|name|parts|…}`` (no ref) -> rejected: the dropped inline-aircraft form
+    """
+    if isinstance(entry, str):
+        return entry, {}
+    if isinstance(entry, dict):
+        if "ref" not in entry:
+            raise LoaderError(
+                f"{path}: aircraft[{index}] is an inline aircraft mapping, which is no "
+                f"longer supported (#595). Move the aircraft to a catalog file "
+                f"(e.g. data/catalog/<id>.yaml with `type: aircraft`) and reference it: "
+                f"`- catalog/<id>.yaml` (or `- {{ref: catalog/<id>.yaml, movement_mode: …}}` "
+                f"to override a per-fleet flag)."
+            )
+        ref = entry["ref"]
+        if not isinstance(ref, str):
+            raise LoaderError(
+                f"{path}: aircraft[{index}].ref must be a path string, got {type(ref).__name__}"
+            )
+        overrides = {k: v for k, v in entry.items() if k != "ref"}
+        unknown = set(overrides) - _ALLOWED_MANIFEST_OVERRIDE_KEYS
+        if unknown:
+            raise LoaderError(
+                f"{path}: aircraft[{index}] override key(s) {sorted(unknown)} not allowed; "
+                f"only per-fleet operational flags may be overridden "
+                f"({sorted(_ALLOWED_MANIFEST_OVERRIDE_KEYS)}) — geometry is static, edit "
+                f"the catalog file instead"
+            )
+        return ref, overrides
+    raise LoaderError(
+        f"{path}: aircraft[{index}] must be a catalog reference (a path string or a "
+        f"{{ref: path, …}} mapping), got {type(entry).__name__}"
+    )
+
+
+def load_fleet(path: Path | str) -> dict[str, Aircraft]:
+    """Load a fleet **manifest** into a dict keyed by :attr:`Aircraft.id`.
+
+    A fleet file is a thin manifest: a top-level ``aircraft:`` list whose entries
+    reference per-object **catalog** files by path (resolved relative to the
+    manifest's directory, #595). Each entry is either a path string
+    (``catalog/x.yaml``) or a ``{ref: <path>, <flag overrides>}`` mapping that
+    adds a per-fleet operational-flag override (``movement_mode``,
+    ``tow_pivotable``) on top of the shared static definition. Geometry is static
+    and never override-able.
+
+    Each referenced catalog file carries a ``type:`` discriminator (default
+    ``aircraft``); the loader dispatches on it to a per-type builder. Manifest
+    **list order is preserved** -> deterministic ``dict`` insertion (ADR-0003).
+
+    Inline aircraft definitions are not supported (#595): an inline mapping under
+    ``aircraft:`` is rejected with a hint to move it to a catalog file.
     """
     path = Path(path)
     raw = _read_yaml(path)
@@ -155,17 +237,34 @@ def load_fleet(path: Path | str) -> dict[str, Aircraft]:
     if not isinstance(aircraft_list, list):
         raise LoaderError(f"{path}: 'aircraft' must be a list")
 
+    manifest_dir = path.parent
     fleet: dict[str, Aircraft] = {}
     for i, entry in enumerate(aircraft_list):
-        if not isinstance(entry, dict):
-            raise LoaderError(
-                f"{path}: aircraft entry #{i} must be a mapping, got {type(entry).__name__}"
-            )
-        ident = entry.get("id", f"#{i}") if isinstance(entry, dict) else f"#{i}"
+        # Every entry is a catalog reference (a path string or {ref, overrides});
+        # inline aircraft mappings are rejected by _parse_manifest_entry (#595).
+        ref, overrides = _parse_manifest_entry(entry, index=i, path=path)
+        # An invalid ref (e.g. an embedded null byte) makes pathlib raise a bare
+        # ValueError/OSError — wrap it into an attributed LoaderError so a
+        # malformed reference fails loudly through the normal error contract.
         try:
-            aircraft = _build_aircraft(entry)
+            catalog_path = (manifest_dir / ref).resolve()
+            ref_exists = catalog_path.is_file()
+        except (ValueError, OSError) as e:
+            raise LoaderError(
+                f"{path}: aircraft[{i}] has an invalid catalog reference {ref!r}: {e}"
+            ) from e
+        if not ref_exists:
+            raise LoaderError(
+                f"{path}: aircraft[{i}] references catalog file {ref!r} which does "
+                f"not exist (resolved to {catalog_path})"
+            )
+        obj_raw = _read_yaml(catalog_path)
+        if isinstance(obj_raw, dict) and overrides:
+            obj_raw = {**obj_raw, **overrides}
+        try:
+            aircraft = _build_catalog_object(obj_raw, source=catalog_path)
         except (ValueError, KeyError, TypeError, LoaderError) as e:
-            raise LoaderError(f"{path}: aircraft {ident!r}: {e}") from e
+            raise LoaderError(f"{path}: aircraft[{i}] ({ref}): {e}") from e
         if aircraft.id in fleet:
             raise LoaderError(f"{path}: duplicate aircraft id {aircraft.id!r}")
         fleet[aircraft.id] = aircraft

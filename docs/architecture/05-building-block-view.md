@@ -117,10 +117,25 @@ project's vocabulary.
 ### `loader.py` — YAML → models
 
 Parses `fleet.yaml`, `hangar.yaml`, layout YAMLs, and scenario YAMLs
-into the dataclasses from `models.py`. The single non-trivial
-transformation is the `struts:` block — a high-level YAML shorthand
-for strut-braced aircraft that the loader expands into two mirrored
-strut `Part`s before constructing the `Aircraft`. The constructed
+into the dataclasses from `models.py`.
+
+A fleet file is a thin **manifest** (#595): its `aircraft:` list holds
+**references** to per-object **catalog** files (`data/catalog/<id>.yaml`),
+resolved by path relative to the manifest's directory (the same idiom
+`fleet:`/`hangar:` already use). Each catalog file carries a `type:`
+discriminator (default `aircraft`) that the loader dispatches to a per-type
+builder (`_build_catalog_object` → `_build_aircraft`); a non-aircraft `type:`
+is reserved for the ground-objects work and rejected with a clear error today.
+Manifest list order is preserved, so the resulting `dict[str, Aircraft]`
+insertion order is deterministic (ADR-0003). A manifest entry may be a bare
+path string or a `{ref: <path>, …}` mapping that **overrides a per-fleet
+operational flag** (`movement_mode`, `tow_pivotable`) on top of the shared
+static definition — geometry is static and never override-able. Inline
+aircraft definitions are no longer supported.
+
+The other non-trivial transformation is the `struts:` block — a high-level
+YAML shorthand for strut-braced aircraft that the loader expands into two
+mirrored strut `Part`s before constructing the `Aircraft`. The constructed
 `Aircraft` has no `struts` field; the parts tuple is the single source
 of truth, eliminating any risk of strut volume being double-counted.
 

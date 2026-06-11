@@ -439,8 +439,41 @@ def _write_raw_tmp(doc: Any) -> Path:
     return p
 
 
+def write_fleet_doc(doc: Any, tmpdir: Path) -> Path:
+    """Materialise a (possibly fuzzed) fleet doc as a catalog + manifest under
+    *tmpdir*, returning the manifest path (#595).
+
+    A well-formed ``{"aircraft": [<aircraft dicts>]}`` doc is written as one
+    catalog file per aircraft (``type: aircraft`` prepended) + a manifest of
+    relative refs — so the fuzzer exercises the per-object builder + reference
+    resolution. Any other shape (non-dict, ``aircraft`` not a list, non-dict
+    entries) is written verbatim as the manifest so the loader's top-level and
+    ref-shape guards are still fuzzed."""
+    manifest = tmpdir / "fleet.yaml"
+    if isinstance(doc, dict) and isinstance(doc.get("aircraft"), list):
+        cat = tmpdir / "catalog"
+        cat.mkdir(exist_ok=True)
+        refs: list[Any] = []
+        for i, ac in enumerate(doc["aircraft"]):
+            if isinstance(ac, dict):
+                (cat / f"obj_{i}.yaml").write_text(
+                    yaml.safe_dump({"type": "aircraft", **ac}, allow_unicode=True),
+                    encoding="utf-8",
+                )
+                refs.append(f"catalog/obj_{i}.yaml")
+            else:
+                refs.append(ac)  # non-dict entry → fuzzes the ref-shape guard
+        manifest.write_text(
+            yaml.safe_dump({"aircraft": refs}, allow_unicode=True), encoding="utf-8"
+        )
+    else:
+        manifest.write_text(yaml.safe_dump(doc, allow_unicode=True), encoding="utf-8")
+    return manifest
+
+
 def _write_fleet_yaml(tmpdir: Path) -> Path:
-    """Write a minimal valid fleet YAML to *tmpdir* and return its path.
+    """Write a minimal fleet (catalog files + manifest) to *tmpdir*; return the
+    manifest path (#595).
 
     Used by the ref-resolving run-helpers so they can write a layout/scenario
     YAML that references the fleet by relative path — exercising
@@ -506,13 +539,10 @@ def _write_hangar_yaml(tmpdir: Path) -> Path:
 
 
 def run_fleet(doc: Any) -> None:
-    p = _write_yaml_tmp(doc)
-    try:
-        loader.load_fleet(p)
-    except LoaderError:
-        pass
-    finally:
-        p.unlink(missing_ok=True)
+    # A fleet is now a MANIFEST referencing per-object catalog files (#595), so a
+    # fuzzed fleet doc is materialised as catalog files + a manifest in a tmp dir.
+    with tempfile.TemporaryDirectory() as d, contextlib.suppress(LoaderError):
+        loader.load_fleet(write_fleet_doc(doc, Path(d)))
 
 
 def run_hangar(doc: Any) -> None:

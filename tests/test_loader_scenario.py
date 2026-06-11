@@ -93,6 +93,9 @@ def test_load_scenario_rejects_maintenance_plane_not_in_fleet_in(tmp_path):
     (tmp_path / "data").mkdir()
     shutil.copy("data/fleet.yaml", tmp_path / "data" / "fleet.yaml")
     shutil.copy("data/hangar.yaml", tmp_path / "data" / "hangar.yaml")
+    # The fleet is now a MANIFEST referencing data/catalog/ by relative path (#595),
+    # so the catalog dir must travel with it for the refs to resolve from tmp_path.
+    shutil.copytree("data/catalog", tmp_path / "data" / "catalog", dirs_exist_ok=True)
     bad = tmp_path / "bad_maintenance.yaml"
     bad.write_text(
         "fleet: data/fleet.yaml\n"
@@ -149,6 +152,9 @@ def test_load_scenario_rejects_null_maintenance_plane(tmp_path):
     (tmp_path / "data").mkdir()
     shutil.copy("data/fleet.yaml", tmp_path / "data" / "fleet.yaml")
     shutil.copy("data/hangar.yaml", tmp_path / "data" / "hangar.yaml")
+    # The fleet is now a MANIFEST referencing data/catalog/ by relative path (#595),
+    # so the catalog dir must travel with it for the refs to resolve from tmp_path.
+    shutil.copytree("data/catalog", tmp_path / "data" / "catalog", dirs_exist_ok=True)
     bad = tmp_path / "null_maintenance.yaml"
     bad.write_text(
         "fleet: data/fleet.yaml\n"
@@ -168,6 +174,9 @@ def _stage_scenario(tmp_path, body: str):
     (tmp_path / "data").mkdir(exist_ok=True)
     shutil.copy("data/fleet.yaml", tmp_path / "data" / "fleet.yaml")
     shutil.copy("data/hangar.yaml", tmp_path / "data" / "hangar.yaml")
+    # The fleet is now a MANIFEST referencing data/catalog/ by relative path (#595),
+    # so the catalog dir must travel with it for the refs to resolve from tmp_path.
+    shutil.copytree("data/catalog", tmp_path / "data" / "catalog", dirs_exist_ok=True)
     p = tmp_path / "scenario.yaml"
     p.write_text("fleet: data/fleet.yaml\nhangar: data/hangar.yaml\n" + body)
     return p

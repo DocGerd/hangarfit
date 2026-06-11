@@ -24,6 +24,7 @@ from hangarfit.loader import (
     load_layout,
     load_scenario,
 )
+from tests._fleet_test_utils import explode_fleet as _explode_fleet
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FLEET_YAML = REPO_ROOT / "data" / "fleet.yaml"
@@ -302,26 +303,26 @@ class TestFleetLoaderErrors:
             load_fleet(path)
 
     def test_missing_top_level_aircraft(self, tmp_path: Path) -> None:
-        path = _write(tmp_path / "f.yaml", "fleet: []\n")
+        path = _explode_fleet(tmp_path, "fleet: []\n")
         with pytest.raises(LoaderError, match="must contain 'aircraft'"):
             load_fleet(path)
 
     def test_aircraft_not_a_list(self, tmp_path: Path) -> None:
-        path = _write(tmp_path / "f.yaml", "aircraft: not_a_list\n")
+        path = _explode_fleet(tmp_path, "aircraft: not_a_list\n")
         with pytest.raises(LoaderError, match="'aircraft' must be a list"):
             load_fleet(path)
 
     def test_duplicate_aircraft_id(self, tmp_path: Path) -> None:
-        path = _write(
-            tmp_path / "f.yaml",
+        path = _explode_fleet(
+            tmp_path,
             _fleet_yaml(_aircraft_entry("foo"), _aircraft_entry("foo")),
         )
         with pytest.raises(LoaderError, match="duplicate aircraft id 'foo'"):
             load_fleet(path)
 
     def test_aircraft_missing_parts(self, tmp_path: Path) -> None:
-        path = _write(
-            tmp_path / "f.yaml",
+        path = _explode_fleet(
+            tmp_path,
             """
 aircraft:
   - id: foo
@@ -332,12 +333,12 @@ aircraft:
     turn_radius_m: 5.0
 """,
         )
-        with pytest.raises(LoaderError, match="aircraft 'foo': 'parts' must be a non-empty list"):
+        with pytest.raises(LoaderError, match=r"aircraft\[0\] .*'parts' must be a non-empty list"):
             load_fleet(path)
 
     def test_part_missing_required_field(self, tmp_path: Path) -> None:
-        path = _write(
-            tmp_path / "f.yaml",
+        path = _explode_fleet(
+            tmp_path,
             """
 aircraft:
   - id: foo
@@ -355,8 +356,8 @@ aircraft:
             load_fleet(path)
 
     def test_invalid_part_kind_propagated_from_model(self, tmp_path: Path) -> None:
-        path = _write(
-            tmp_path / "f.yaml",
+        path = _explode_fleet(
+            tmp_path,
             """
 aircraft:
   - id: foo
@@ -376,23 +377,22 @@ aircraft:
         with pytest.raises(LoaderError, match="kind must be one of"):
             load_fleet(path)
 
-    def test_aircraft_entry_not_a_mapping(self, tmp_path: Path) -> None:
-        path = _write(
-            tmp_path / "f.yaml",
-            """
-aircraft:
-  - just_a_string
-""",
+    def test_aircraft_entry_wrong_type(self, tmp_path: Path) -> None:
+        # Post-#595: a bare string IS a valid catalog reference, so a wrong-typed
+        # entry (here an int) is the "not a reference/mapping" case.
+        path = _explode_fleet(
+            tmp_path,
+            "aircraft:\n  - 123\n",
         )
-        with pytest.raises(LoaderError, match="must be a mapping"):
+        with pytest.raises(LoaderError, match="must be a catalog reference"):
             load_fleet(path)
 
     def test_aircraft_missing_top_level_field(self, tmp_path: Path) -> None:
         """An aircraft entry missing 'name' (or any other top-level required
         field) should produce a clear 'missing required field' message,
         not a bare quoted KeyError."""
-        path = _write(
-            tmp_path / "f.yaml",
+        path = _explode_fleet(
+            tmp_path,
             """
 aircraft:
   - id: foo
@@ -414,8 +414,8 @@ aircraft:
     def test_aircraft_missing_id_uses_fallback(self, tmp_path: Path) -> None:
         """When the aircraft entry has no 'id', the loader uses '#<index>'
         as the identifier in the wrapped error message."""
-        path = _write(
-            tmp_path / "f.yaml",
+        path = _explode_fleet(
+            tmp_path,
             """
 aircraft:
   - name: Anonymous
@@ -431,13 +431,16 @@ aircraft:
         z_top_m: 1.5
 """,
         )
-        with pytest.raises(LoaderError, match="aircraft '#0'.*missing required field 'id'"):
+        # Post-#595 the entry is attributed by manifest index + catalog ref
+        # (aircraft[0] (catalog/obj_0.yaml)), which now plays the missing-id
+        # "fallback" role the old `#0` placeholder served.
+        with pytest.raises(LoaderError, match=r"aircraft\[0\] .*missing required field 'id'"):
             load_fleet(path)
 
     def test_null_numeric_field_clear_error(self, tmp_path: Path) -> None:
         """`length_m:` (YAML null) used to leak as TypeError; now caught."""
-        path = _write(
-            tmp_path / "f.yaml",
+        path = _explode_fleet(
+            tmp_path,
             """
 aircraft:
   - id: foo
@@ -459,8 +462,8 @@ aircraft:
 
     def test_quoted_bool_for_measured_rejected(self, tmp_path: Path) -> None:
         """`measured: "false"` (quoted) would silently be True via bool()."""
-        path = _write(
-            tmp_path / "f.yaml",
+        path = _explode_fleet(
+            tmp_path,
             """
 aircraft:
   - id: foo
@@ -517,18 +520,18 @@ aircraft:
 """
 
     def test_tow_pivotable_defaults_false(self, tmp_path: Path) -> None:
-        path = _write(tmp_path / "f.yaml", self._pivot_fleet(""))
+        path = _explode_fleet(tmp_path, self._pivot_fleet(""))
         fleet = load_fleet(path)
         assert fleet["foo"].tow_pivotable is False
 
     def test_tow_pivotable_true_parsed(self, tmp_path: Path) -> None:
-        path = _write(tmp_path / "f.yaml", self._pivot_fleet("    tow_pivotable: true\n"))
+        path = _explode_fleet(tmp_path, self._pivot_fleet("    tow_pivotable: true\n"))
         fleet = load_fleet(path)
         assert fleet["foo"].tow_pivotable is True
 
     def test_quoted_bool_for_tow_pivotable_rejected(self, tmp_path: Path) -> None:
         """`tow_pivotable: "true"` (quoted) would silently be True via bool()."""
-        path = _write(tmp_path / "f.yaml", self._pivot_fleet('    tow_pivotable: "true"\n'))
+        path = _explode_fleet(tmp_path, self._pivot_fleet('    tow_pivotable: "true"\n'))
         with pytest.raises(LoaderError, match="'tow_pivotable': expected boolean"):
             load_fleet(path)
 
@@ -542,10 +545,11 @@ aircraft:
         that newly exposed this pre-existing gap: ``tow_pivot: true`` silently parsed
         as ``tow_pivotable=False``, denying the pivot capability the author tried to
         grant. Mirrors the strict ``wheels:`` and constraint-key allowlists. The
-        ``match`` also pins the ``aircraft '<id>':`` attribution prefix so a refactor
-        can't silently drop the file/id context while keeping the 'unknown key' text."""
-        path = _write(tmp_path / "f.yaml", self._pivot_fleet(f"    {typo}: true\n"))
-        with pytest.raises(LoaderError, match=r"aircraft 'foo': unknown aircraft key"):
+        ``match`` also pins the ``aircraft[<i>] (<ref>):`` attribution prefix (#595)
+        so a refactor can't silently drop the file/entry context while keeping the
+        'unknown key' text."""
+        path = _explode_fleet(tmp_path, self._pivot_fleet(f"    {typo}: true\n"))
+        with pytest.raises(LoaderError, match=r"aircraft\[0\] .*unknown aircraft key"):
             load_fleet(path)
 
     def test_unknown_struts_key_rejected(self, tmp_path: Path) -> None:
@@ -565,7 +569,7 @@ aircraft:
             "    wheels:\n",
         )
         with pytest.raises(LoaderError, match=r"'struts' block has unknown key\(s\)"):
-            load_fleet(_write(tmp_path / "f.yaml", body))
+            load_fleet(_explode_fleet(tmp_path, body))
 
     def test_all_allowed_aircraft_keys_load(self, tmp_path: Path) -> None:
         """Completeness guard for the allowlist: an aircraft declaring EVERY
@@ -614,7 +618,7 @@ aircraft:
             f"missing={sorted(_ALLOWED_AIRCRAFT_KEYS - entry_keys)} "
             f"extra={sorted(entry_keys - _ALLOWED_AIRCRAFT_KEYS)}"
         )
-        fleet = load_fleet(_write(tmp_path / "f.yaml", body))
+        fleet = load_fleet(_explode_fleet(tmp_path, body))
         assert fleet["foo"].tow_pivotable is True
         assert fleet["foo"].notes == "a strut-braced high-winger"
         # struts expanded into parts (no `struts` Aircraft field).
@@ -623,8 +627,8 @@ aircraft:
     def test_invalid_movement_mode_caught(self, tmp_path: Path) -> None:
         """Typo in movement_mode used to leak silently past the Layout cart
         rule (Aircraft.__post_init__ now validates the Literal set)."""
-        path = _write(
-            tmp_path / "f.yaml",
+        path = _explode_fleet(
+            tmp_path,
             """
 aircraft:
   - id: foo
@@ -656,8 +660,8 @@ aircraft:
     def test_model_validation_error_includes_aircraft_id(self, tmp_path: Path) -> None:
         """Aircraft.__post_init__ ValueError should be re-raised as LoaderError
         with the aircraft id prepended for navigation."""
-        path = _write(
-            tmp_path / "f.yaml",
+        path = _explode_fleet(
+            tmp_path,
             """
 aircraft:
   - id: bad_husky
@@ -683,7 +687,10 @@ aircraft:
       third_wheel_offset_x_m: -2.0
 """,
         )
-        with pytest.raises(LoaderError, match="aircraft 'bad_husky'.*turn_radius_m is required"):
+        # The model-layer ValueError carries the id ("Aircraft 'bad_husky': …");
+        # post-#595 the loader prefix attributes by index/ref, so assert the id
+        # still appears in the message for navigation.
+        with pytest.raises(LoaderError, match=r"bad_husky.*turn_radius_m is required"):
             load_fleet(path)
 
 
@@ -724,19 +731,19 @@ aircraft:
     def test_nan_wing_length_raises_loader_error(self, tmp_path: Path) -> None:
         """`length_m: .nan` parses to float('nan'); must not silently produce
         a NaN strut keep-out coordinate — LoaderError is required."""
-        path = _write(tmp_path / "f.yaml", self._fleet_with_wing_length(".nan"))
+        path = _explode_fleet(tmp_path, self._fleet_with_wing_length(".nan"))
         with pytest.raises(LoaderError, match="expected a finite number"):
             load_fleet(path)
 
     def test_inf_wing_length_raises_loader_error(self, tmp_path: Path) -> None:
         """`length_m: .inf` parses to float('inf'); must be rejected."""
-        path = _write(tmp_path / "f.yaml", self._fleet_with_wing_length(".inf"))
+        path = _explode_fleet(tmp_path, self._fleet_with_wing_length(".inf"))
         with pytest.raises(LoaderError, match="expected a finite number"):
             load_fleet(path)
 
     def test_neg_inf_wing_length_raises_loader_error(self, tmp_path: Path) -> None:
         """`length_m: -.inf` parses to float('-inf'); must be rejected."""
-        path = _write(tmp_path / "f.yaml", self._fleet_with_wing_length("-.inf"))
+        path = _explode_fleet(tmp_path, self._fleet_with_wing_length("-.inf"))
         with pytest.raises(LoaderError, match="expected a finite number"):
             load_fleet(path)
 
@@ -748,8 +755,8 @@ aircraft:
 
 class TestStrutExpansion:
     def test_struts_without_wing_part_rejected(self, tmp_path: Path) -> None:
-        path = _write(
-            tmp_path / "f.yaml",
+        path = _explode_fleet(
+            tmp_path,
             """
 aircraft:
   - id: weird
@@ -779,8 +786,8 @@ aircraft:
         """A wing whose z_bottom is below or equal to the strut's fuselage
         attach height makes no geometric sense — the strut would point
         downward. Loader catches it with a clear message."""
-        path = _write(
-            tmp_path / "f.yaml",
+        path = _explode_fleet(
+            tmp_path,
             """
 aircraft:
   - id: low_wing_with_struts
@@ -815,8 +822,8 @@ aircraft:
         """If an aircraft has multiple wing parts (unusual: split-wing, twin
         booms), the strut z_top is inferred from the FIRST wing part. Pin
         this behavior so refactoring to last-wins or raising would surface."""
-        path = _write(
-            tmp_path / "f.yaml",
+        path = _explode_fleet(
+            tmp_path,
             """
 aircraft:
   - id: split_wing
@@ -878,8 +885,8 @@ aircraft:
         wing_chord = 1.6
         trailing_edge_x = wing_offset_x - wing_chord / 2.0  # -0.3
         expected_spar_x = wing_offset_x + wing_chord / 4.0  # +0.9
-        path = _write(
-            tmp_path / "f.yaml",
+        path = _explode_fleet(
+            tmp_path,
             f"""
 aircraft:
   - id: braced
@@ -928,8 +935,8 @@ aircraft:
     def test_strut_span_must_be_positive(self, tmp_path: Path) -> None:
         """StrutsSpec allows wing_attach_y_m == fuselage_attach_y_m (degenerate
         boundary), but the loader requires strict span > 0 to build a usable Part."""
-        path = _write(
-            tmp_path / "f.yaml",
+        path = _explode_fleet(
+            tmp_path,
             """
 aircraft:
   - id: degenerate
@@ -1014,7 +1021,7 @@ aircraft:
 """
 
     def test_fuselage_splits_into_one_front_one_aft(self, tmp_path: Path) -> None:
-        path = _write(tmp_path / "f.yaml", self._fuselage_wing_yaml())
+        path = _explode_fleet(tmp_path, self._fuselage_wing_yaml())
         a = load_fleet(path)["splitme"]
         fronts = [p for p in a.parts if p.kind == "fuselage_front"]
         afts = [p for p in a.parts if p.kind == "fuselage_aft"]
@@ -1031,8 +1038,8 @@ aircraft:
         fus_length, fus_offset_x = 8.0, -0.5
         wing_length, wing_offset_x = 1.6, 0.5
         fus_width = 0.9
-        path = _write(
-            tmp_path / "f.yaml",
+        path = _explode_fleet(
+            tmp_path,
             self._fuselage_wing_yaml(
                 fus_length=fus_length,
                 fus_offset_x=fus_offset_x,
@@ -1073,8 +1080,8 @@ aircraft:
     def test_fuselage_without_wing_rejected(self, tmp_path: Path) -> None:
         """A ``kind: fuselage`` part with no ``wing`` part has nothing to
         derive the break from — LoaderError (mirrors the struts no-wing rule)."""
-        path = _write(
-            tmp_path / "f.yaml",
+        path = _explode_fleet(
+            tmp_path,
             """
 aircraft:
   - id: nowing
@@ -1102,7 +1109,7 @@ aircraft:
         kind ``fuselage``, never the internal ``fuselage_aft`` placeholder used
         for field validation — otherwise the error is a debugging dead-end
         (the user greps for ``fuselage_aft`` and finds nothing). #50 review."""
-        path = _write(tmp_path / "f.yaml", self._fuselage_wing_yaml(fus_length=-8.0))
+        path = _explode_fleet(tmp_path, self._fuselage_wing_yaml(fus_length=-8.0))
         with pytest.raises(LoaderError) as ei:
             load_fleet(path)
         msg = str(ei.value)
@@ -1114,8 +1121,8 @@ aircraft:
         """If the wing trailing edge falls forward of the nose (wing way ahead
         of the fuselage), the derived break is outside the span — a degenerate
         split that would produce a non-positive-length segment. Reject it."""
-        path = _write(
-            tmp_path / "f.yaml",
+        path = _explode_fleet(
+            tmp_path,
             self._fuselage_wing_yaml(
                 fus_length=4.0,
                 fus_offset_x=0.0,  # fuselage span x ∈ [-2, 2]
@@ -1130,8 +1137,8 @@ aircraft:
         """Explicit ``fuselage_front`` / ``fuselage_aft`` parts in YAML are a
         valid override — the loader does NOT auto-split them, and accepts the
         aircraft with no ``wing`` (the split derivation never runs)."""
-        path = _write(
-            tmp_path / "f.yaml",
+        path = _explode_fleet(
+            tmp_path,
             """
 aircraft:
   - id: explicit
@@ -1364,8 +1371,8 @@ structural_notches:
 
 class TestLayoutLoader:
     def _minimal_fleet_and_hangar(self, dir_: Path) -> tuple[Path, Path]:
-        fleet = _write(
-            dir_ / "fleet.yaml",
+        fleet = _explode_fleet(
+            dir_,
             _minimal_aircraft_yaml("foo", movement_mode="always_own_gear", turn_radius_m=5.0),
         )
         hangar = _write(
@@ -1456,8 +1463,8 @@ placements:
 
     def test_cart_rule_violation_propagates(self, tmp_path: Path) -> None:
         # Two cart_eligible planes, both on_carts=true
-        _write(
-            tmp_path / "fleet.yaml",
+        _explode_fleet(
+            tmp_path,
             _fleet_yaml(
                 _aircraft_entry("a", movement_mode="cart_eligible", turn_radius_m=4.0),
                 _aircraft_entry("b", movement_mode="cart_eligible", turn_radius_m=4.0),
@@ -1516,8 +1523,8 @@ placements: []
             load_layout(layout_path)
 
     def test_layout_missing_hangar_ref(self, tmp_path: Path) -> None:
-        _write(
-            tmp_path / "fleet.yaml",
+        _explode_fleet(
+            tmp_path,
             _minimal_aircraft_yaml("foo", movement_mode="always_own_gear", turn_radius_m=5.0),
         )
         layout_path = _write(
@@ -1677,8 +1684,8 @@ placements:
         ``placements[0].plane_id == maintenance_plane`` that would happen
         to pass the single-plane fixture above.
         """
-        _write(
-            tmp_path / "fleet.yaml",
+        _explode_fleet(
+            tmp_path,
             _fleet_yaml(
                 _aircraft_entry("foo", movement_mode="always_own_gear", turn_radius_m=5.0),
                 _aircraft_entry("bar", movement_mode="always_own_gear", turn_radius_m=5.0),
@@ -1805,8 +1812,8 @@ placements: []
         """Pin the helper composition: `_fleet_yaml(entry_a, entry_b)`
         produces a fleet with TWO aircraft (PyYAML's last-key-wins
         regression would have produced one — the original bug)."""
-        path = _write(
-            tmp_path / "f.yaml",
+        path = _explode_fleet(
+            tmp_path,
             _fleet_yaml(
                 _aircraft_entry("a"),
                 _aircraft_entry("b"),
@@ -2001,8 +2008,8 @@ class TestUnknownPlaneIdLayout:
     """Loader-boundary unknown/mis-cased plane id rejection for layouts."""
 
     def _fleet_and_hangar(self, dir_: Path) -> None:
-        _write(
-            dir_ / "fleet.yaml",
+        _explode_fleet(
+            dir_,
             _minimal_aircraft_yaml("foo", movement_mode="always_own_gear", turn_radius_m=5.0),
         )
         _write(
@@ -2072,8 +2079,8 @@ placements:
         # key) plus an unknown *string* placement id must raise a clean
         # LoaderError, not an AttributeError from .casefold() in the suggester.
         # (The "1" passed here round-trips through YAML to an int key.)
-        _write(
-            tmp_path / "fleet.yaml",
+        _explode_fleet(
+            tmp_path,
             _minimal_aircraft_yaml("1", movement_mode="always_own_gear", turn_radius_m=5.0),
         )
         _write(

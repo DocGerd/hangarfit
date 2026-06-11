@@ -1,0 +1,43 @@
+# Catalog entry (#595). Conventions: see the catalog README.
+type: aircraft
+id: ctsl
+name: "Flight Design CTSL"
+wing_position: high
+gear: nosewheel
+movement_mode: cart_eligible
+turn_radius_m: 4.0
+measured: false
+notes: "Cantilever wing (no struts). Span/length/height from EASA TCDS A.537."
+parts:
+  - kind: fuselage
+    length_m: 6.60        # EASA TCDS A.537 (6.604 m)
+    width_m: 1.24         # cabin width 49 in = 1.24 m (Flight Design USA)
+    offset_x_m: -0.33
+    offset_y_m: 0.0
+    z_bottom_m: 0.0
+    z_top_m: 1.4
+  - kind: wing
+    length_m: 1.16        # mean chord = area 9.98 m² / span 8.594 m (EASA TCDS A.537 / POH)
+    width_m: 8.59         # span (EASA TCDS A.537: 8.594 m)
+    offset_x_m: 0.67
+    offset_y_m: 0.0
+    z_bottom_m: 1.9
+    z_top_m: 2.2
+  - kind: tail            # CONVENTIONAL-low all-moving stabilator (EASA/MM; 2.33 m span SOURCED)
+    length_m: 0.69        # stabilator mean chord (CTLS MM: area 1.60 m² ÷ span 2.33 m)
+    width_m: 2.33         # stabilator span (CTLS MM: area 1.60 m², AR 3.38 → 2.33 m)
+    offset_x_m: -3.18
+    offset_y_m: 0.0
+    z_bottom_m: 1.1
+    z_top_m: 1.4
+  - kind: vertical_stabilizer  # tall fin+rudder to overall height 2.34 m (EASA TCDS; into the wing layer)
+    length_m: 1.2         # fin chord est.
+    width_m: 0.15
+    offset_x_m: -3.03
+    offset_y_m: 0.0
+    z_bottom_m: 1.4
+    z_top_m: 2.34
+wheels:
+  main_offset_x_m: -0.10
+  track_m: 1.7            # est. (unpublished)
+  third_wheel_offset_x_m: 1.40

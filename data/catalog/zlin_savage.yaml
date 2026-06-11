@@ -1,0 +1,48 @@
+# Catalog entry (#595). Conventions: see the catalog README.
+type: aircraft
+id: zlin_savage
+name: "Zlin Aviation Savage Cub"
+wing_position: high
+gear: tailwheel
+movement_mode: always_cart
+turn_radius_m: null  # always_cart → towplanner uses 0 (pivot); see ADR-0007
+measured: false
+parts:
+  - kind: fuselage
+    length_m: 6.39        # Zlin flight manual (639 cm)
+    width_m: 0.69         # cabin width 69 cm (Zlin flight manual); narrow tube-and-fabric
+    offset_x_m: -1.60
+    offset_y_m: 0.0
+    z_bottom_m: 0.0
+    z_top_m: 1.5
+  - kind: wing
+    length_m: 1.56        # constant rectangular chord 156 cm (Zlin flight manual / Savage brochure)
+    width_m: 9.31         # span (Zlin flight manual 931 cm)
+    offset_x_m: -0.50
+    offset_y_m: 0.0
+    z_bottom_m: 1.9
+    z_top_m: 2.2
+  - kind: tail            # horizontal stabilizer (conventional-low; ~2.8 m span est.)
+    length_m: 0.9         # chord est. (unpublished)
+    width_m: 2.8          # span est.
+    offset_x_m: -4.35
+    offset_y_m: 0.0
+    z_bottom_m: 1.2
+    z_top_m: 1.5
+  - kind: vertical_stabilizer  # fin+rudder to overall height 2.03 m
+    length_m: 1.1         # fin chord est.
+    width_m: 0.15
+    offset_x_m: -4.25
+    offset_y_m: 0.0
+    z_bottom_m: 1.5
+    z_top_m: 2.03
+struts:                   # twin lift struts + jury per side; attach stations est. (unpublished)
+  fuselage_attach_x_m: -1.20
+  fuselage_attach_y_m: 0.4
+  fuselage_attach_z_m: 0.5
+  wing_attach_y_m: 1.5
+  width_m: 0.05
+wheels:
+  main_offset_x_m: 0.20
+  track_m: 1.8            # main gear track 180 cm (Savage Classic flight manual)
+  third_wheel_offset_x_m: -4.19  # tailwheel: main→tail wheelbase 4.39 m (Zlin W&B station arms)
