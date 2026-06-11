@@ -640,7 +640,9 @@ def load_layout(
 # keys read in :func:`load_scenario`; ``test_all_allowed_scenario_keys_load`` guards
 # the too-strict direction. Per-plane ``constraints`` entries carry their own
 # allowlist (:data:`_ALLOWED_CONSTRAINT_KEYS`).
-_ALLOWED_SCENARIO_KEYS = frozenset({"fleet_in", "fleet", "hangar", "maintenance", "constraints"})
+_ALLOWED_SCENARIO_KEYS = frozenset(
+    {"fleet_in", "fleet", "hangar", "maintenance", "constraints", "ground_objects"}
+)
 
 
 def load_scenario(
@@ -650,6 +652,7 @@ def load_scenario(
     hangar: Hangar | None = None,
     max_carts: int | None = None,
     apron_depth: float | Literal["auto"] | None = None,
+    ground_objects: dict[str, GroundObject] | None = None,
 ) -> Scenario:
     """Load a scenario YAML into a validated :class:`Scenario`.
 
@@ -736,6 +739,16 @@ def load_scenario(
         except ValueError as e:
             raise LoaderError(f"{path}: {e}") from e
 
+    # Ground-object defs: kwarg overrides; otherwise resolve from the same
+    # manifest the fleet: key points at (which returns {} when the manifest has
+    # no ground_objects: list); absent both, default to empty (#601).
+    if ground_objects is None:
+        fleet_ref = raw.get("fleet")
+        if fleet_ref is not None:
+            ground_objects = load_ground_objects((path.parent / fleet_ref).resolve())
+        else:
+            ground_objects = {}
+
     for pid in fleet_in:
         _resolve_known_plane_id(pid, fleet, role="fleet_in entry", path=path)
 
@@ -784,6 +797,20 @@ def load_scenario(
         except (ValueError, KeyError, TypeError, LoaderError) as e:
             raise LoaderError(f"{path}: constraint {plane_id!r}: {e}") from e
 
+    # Parse the scenario's optional ground_objects: id-list (#601). Like
+    # fleet_in, it is a list of catalog ids; each must resolve in the defs
+    # resolved above (kwarg-injected or read from the fleet manifest).
+    go_ids_raw = raw.get("ground_objects", [])
+    if not isinstance(go_ids_raw, list):
+        raise LoaderError(f"{path}: 'ground_objects' must be a list of ids")
+    scenario_ground_objects = tuple(str(x) for x in go_ids_raw)
+    for gid in scenario_ground_objects:
+        if gid not in ground_objects:
+            raise LoaderError(
+                f"{path}: ground_objects references unknown object {gid!r}; "
+                f"the available ground objects are: {sorted(ground_objects)}"
+            )
+
     try:
         return Scenario(
             fleet=fleet,
@@ -791,6 +818,8 @@ def load_scenario(
             fleet_in=fleet_in,
             maintenance_plane=maintenance_plane,
             constraints=constraints,
+            ground_objects=scenario_ground_objects,
+            ground_object_defs=ground_objects,
         )
     except ValueError as e:
         raise LoaderError(f"{path}: {e}") from e

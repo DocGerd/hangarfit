@@ -350,9 +350,13 @@ def test_load_scenario_rejects_unknown_top_level_key(tmp_path, typo):
 
 def test_load_scenario_all_allowed_top_level_keys_load(tmp_path):
     """Completeness guard: a scenario declaring EVERY allowed top-level key
-    (``maintenance`` + ``constraints`` alongside ``fleet_in``/``fleet``/``hangar``)
-    loads — so the allowlist can never be too strict. Self-enforcing against
-    ``_ALLOWED_SCENARIO_KEYS``."""
+    (``maintenance`` + ``constraints`` + ``ground_objects`` alongside
+    ``fleet_in``/``fleet``/``hangar``) loads — so the allowlist can never be too
+    strict. Self-enforcing against ``_ALLOWED_SCENARIO_KEYS``. The
+    ``ground_objects:`` id-list is empty here (the real ``data/fleet.yaml``
+    manifest declares no ground objects yet), which still exercises the key's
+    presence in the allowlist; non-empty id-list resolution is covered in
+    ``tests/test_loader.py::TestScenarioGroundObjects`` (#601)."""
     import yaml
 
     from hangarfit.loader import _ALLOWED_SCENARIO_KEYS, load_scenario
@@ -364,7 +368,8 @@ def test_load_scenario_all_allowed_top_level_keys_load(tmp_path):
         "  plane: ctsl\n"
         "constraints:\n"
         "  aviat_husky:\n"
-        "    priority: 1.0\n",
+        "    priority: 1.0\n"
+        "ground_objects: []\n",
     )
     file_keys = set(yaml.safe_load(p.read_text()))
     assert file_keys == _ALLOWED_SCENARIO_KEYS, (
@@ -375,6 +380,7 @@ def test_load_scenario_all_allowed_top_level_keys_load(tmp_path):
     s = load_scenario(p)
     assert s.maintenance_plane == "ctsl"
     assert "aviat_husky" in s.constraints
+    assert s.ground_objects == ()
 
 
 def test_load_scenario_unknown_key_wins_over_missing_required(tmp_path):

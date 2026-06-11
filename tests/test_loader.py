@@ -16,6 +16,7 @@ from hangarfit.loader import (
     _ALLOWED_AIRCRAFT_KEYS,
     _ALLOWED_HANGAR_KEYS,
     _ALLOWED_LAYOUT_KEYS,
+    _ALLOWED_SCENARIO_KEYS,
     LoaderError,
     _resolve_known_plane_id,
     _suggest_plane_id,
@@ -2335,3 +2336,146 @@ class TestLayoutGroundObjects:
                 hangar=self._hangar(),
                 ground_objects={"fuel_trailer": obj},
             )
+
+
+# ----------------------------------------------------------------------------
+# Task 7: Scenario YAML ground_objects: id-list parsing (#601).
+# Uses kwarg-injection so no catalog manifest is needed for the scenario tests.
+# ----------------------------------------------------------------------------
+
+
+class TestScenarioGroundObjects:
+    """Tests for the ground_objects: id-list in scenario YAML (Task 7 / #601)."""
+
+    def _hangar(self) -> Hangar:
+        from hangarfit.models import Door, MaintenanceBay
+
+        return Hangar(
+            length_m=40.0,
+            width_m=40.0,
+            door=Door(center_x_m=20.0, width_m=12.0),
+            maintenance_bay=MaintenanceBay(center_x_m=20.0, width_m=8.0, depth_m=6.0),
+            clearance_m=0.3,
+            wing_layer_clearance_m=0.2,
+        )
+
+    def _mover(self, obj_id: str = "caddy") -> GroundObject:
+        from hangarfit.models import Part
+
+        part = Part(
+            kind="ground",
+            length_m=4.5,
+            width_m=1.8,
+            offset_x_m=0.0,
+            offset_y_m=0.0,
+            angle_deg=0.0,
+            z_bottom_m=0.0,
+            z_top_m=1.8,
+        )
+        return GroundObject(
+            id=obj_id,
+            name="Rescue car",
+            parts=(part,),
+            object_class="placed_routed_mover",
+            motion_mode="steerable",
+        )
+
+    def test_scenario_ground_objects_idlist_resolves(self, tmp_path: Path) -> None:
+        """A valid ground_objects: id-list resolves against the injected defs."""
+        from tests.conftest import make_test_aircraft
+
+        ac = make_test_aircraft(id="p1")
+        obj = self._mover("caddy")
+        scn_path = _write(
+            tmp_path / "scn.yaml",
+            "fleet_in:\n  - p1\nground_objects:\n  - caddy\n",
+        )
+        scn = load_scenario(
+            scn_path,
+            fleet={ac.id: ac},
+            hangar=self._hangar(),
+            ground_objects={obj.id: obj},
+        )
+        assert scn.ground_objects == ("caddy",)
+        assert "caddy" in scn.ground_object_defs
+
+    def test_scenario_unknown_ground_object_id_raises(self, tmp_path: Path) -> None:
+        """An unknown id in the list must raise LoaderError naming it."""
+        from tests.conftest import make_test_aircraft
+
+        ac = make_test_aircraft(id="p1")
+        obj = self._mover("caddy")
+        scn_path = _write(
+            tmp_path / "scn.yaml",
+            "fleet_in:\n  - p1\nground_objects:\n  - ghost\n",
+        )
+        with pytest.raises(LoaderError, match="ghost"):
+            load_scenario(
+                scn_path,
+                fleet={ac.id: ac},
+                hangar=self._hangar(),
+                ground_objects={obj.id: obj},
+            )
+
+    def _minimal_fleet_and_hangar(self, dir_: Path) -> None:
+        """Scaffold a real ``fleet.yaml`` (one aircraft ``foo`` + a ground-object
+        ref to the checked-in ``fixture_caddy.yaml``) and ``hangar.yaml`` so a
+        full-allowlist scenario naming ``fleet:``/``hangar:`` as keys loads
+        through the real manifest path (no kwarg injection — those keys forbid it)."""
+        import shutil
+
+        from tests._fleet_test_utils import explode_fleet
+
+        explode_fleet(
+            dir_,
+            _minimal_aircraft_yaml("foo", movement_mode="always_own_gear", turn_radius_m=5.0),
+        )
+        # explode_fleet only writes the aircraft: block; append a ground_objects:
+        # ref so the manifest's load_ground_objects resolves the scenario id.
+        cat = dir_ / "catalog"
+        cat.mkdir(exist_ok=True)
+        shutil.copy(
+            Path(__file__).parent / "fixtures" / "catalog" / "fixture_caddy.yaml",
+            cat / "fixture_caddy.yaml",
+        )
+        manifest = dir_ / "fleet.yaml"
+        manifest.write_text(
+            manifest.read_text(encoding="utf-8")
+            + "ground_objects:\n  - catalog/fixture_caddy.yaml\n",
+            encoding="utf-8",
+        )
+        _write(
+            dir_ / "hangar.yaml",
+            """
+length_m: 25.0
+width_m: 18.0
+door: {center_x_m: 9.0, width_m: 12.0}
+maintenance_bay: {center_x_m: 13.5, width_m: 9, depth_m: 9}
+""",
+        )
+
+    def test_all_allowed_scenario_keys_load(self, tmp_path: Path) -> None:
+        """Completeness guard: a scenario declaring EVERY allowed top-level key
+        loads — so the allowlist can never be too strict. Self-enforcing against
+        ``_ALLOWED_SCENARIO_KEYS``."""
+        self._minimal_fleet_and_hangar(tmp_path)
+        # The constraint uses only `priority` (a soft spread weight): a `pin`
+        # or `force_on_carts` on the maintenance plane is rejected by Scenario,
+        # but priority is allowed, so foo can be both maintenance + constrained.
+        body = (
+            "fleet: fleet.yaml\nhangar: hangar.yaml\n"
+            "fleet_in:\n  - foo\n"
+            "maintenance:\n  plane: foo\n"
+            "constraints:\n  foo:\n    priority: 1.0\n"
+            "ground_objects:\n  - fixture_caddy\n"
+        )
+        file_keys = set(yaml.safe_load(body))
+        assert file_keys == _ALLOWED_SCENARIO_KEYS, (
+            f"fixture must cover the full allowlist; "
+            f"missing={sorted(_ALLOWED_SCENARIO_KEYS - file_keys)} "
+            f"extra={sorted(file_keys - _ALLOWED_SCENARIO_KEYS)}"
+        )
+        scn = load_scenario(_write(tmp_path / "scn.yaml", body))
+        assert scn.ground_objects == ("fixture_caddy",)
+        assert "fixture_caddy" in scn.ground_object_defs
+        assert scn.maintenance_plane == "foo"
