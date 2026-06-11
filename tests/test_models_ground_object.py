@@ -60,6 +60,41 @@ def test_ground_partkind_is_valid() -> None:
     assert _rect_part(kind="ground").kind == "ground"
 
 
+def test_mover_can_be_hard_door_mover() -> None:
+    m = GroundObject(
+        id="caddy",
+        name="c",
+        parts=(_rect_part(),),
+        object_class="placed_routed_mover",
+        motion_mode="steerable",
+        turn_radius_m=5.5,
+        hard_door_mover=True,
+    )
+    assert m.hard_door_mover is True
+
+
+def test_hard_door_mover_defaults_false() -> None:
+    m = GroundObject(
+        id="tr",
+        name="t",
+        parts=(_rect_part(),),
+        object_class="placed_routed_mover",
+        motion_mode="towed",
+    )
+    assert m.hard_door_mover is False
+
+
+def test_fixed_obstacle_rejects_hard_door_mover() -> None:
+    with pytest.raises(ValueError, match="hard_door_mover"):
+        GroundObject(
+            id="obst",
+            name="o",
+            parts=(_rect_part(),),
+            object_class="fixed_obstacle",
+            hard_door_mover=True,
+        )
+
+
 @pytest.mark.parametrize(
     "kwargs, msg",
     [

@@ -230,6 +230,29 @@ def test_mover_motion_mode_override() -> None:
     assert obj.motion_mode == "steerable"
 
 
+def test_mover_hard_door_mover_loaded() -> None:
+    raw = {
+        "type": "car",
+        "id": "c1",
+        "name": "Car",
+        "parts": [
+            {
+                "kind": "ground",
+                "length_m": 4.0,
+                "width_m": 1.8,
+                "offset_x_m": 0.0,
+                "offset_y_m": 0.0,
+                "z_bottom_m": 0.0,
+                "z_top_m": 1.8,
+            }
+        ],
+        "turn_radius_m": 5.5,
+        "hard_door_mover": True,
+    }
+    obj = _build_catalog_object(raw, source=Path("inline"))
+    assert obj.hard_door_mover is True
+
+
 def test_fixed_obstacle_rejects_motion_key() -> None:
     bad = {
         "type": "fixed_obstacle",
