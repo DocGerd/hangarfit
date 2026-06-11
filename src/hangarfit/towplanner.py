@@ -1256,11 +1256,13 @@ def path_first_conflict(
     mid-tow), and conflicts that do not involve ``mover`` (e.g. a pre-existing
     clash among placed planes) are skipped so the mover is never blamed for them.
 
-    Precondition: ``mover.id`` must exist in ``placed.fleet`` — each per-sample
-    :class:`Layout` references it, so an unknown id raises ``ValueError`` from
+    Precondition: ``mover.id`` must exist in ``placed.fleet`` (an aircraft mover)
+    or ``placed.ground_objects`` (a ground-object mover, #602) — each per-sample
+    :class:`Layout` references it there, so an unknown id raises ``ValueError`` from
     ``Layout`` construction rather than being silently skipped. The callers
     (``plan_fill`` #196 and ``plan_path`` #222, which re-validates its final
-    path here) build ``placed`` from the full target fleet, satisfying this.
+    path here) build ``placed`` from the full target fleet + ground objects,
+    satisfying this.
     """
     for pose in arc.sample(step_m=step_m, step_deg=step_deg):
         moving = Placement(mover.id, pose.x_m, pose.y_m, pose.heading_deg, on_carts=mover_on_carts)
@@ -1523,11 +1525,13 @@ def plan_fill(
         )
         cone = entry_poses(gp, hangar)
         mover_stats: dict[str, object] = {}
-        # Budget-exhausted (remaining <= 0) routes with a single expansion so
-        # plan_path fails fast and the mover is best-effort-skipped (path=None)
-        # below — unlike the aircraft scan, which RAISES on exhaustion. Movers
-        # are best-effort (ADR-0007 #197), so an exhausted budget must not abort
-        # the whole plan.
+        # Budget-exhausted (remaining <= 0) routes with a near-zero search budget
+        # (1 expansion) so the node-expansion search bails immediately. The mover
+        # can STILL succeed if a clean closed-form analytic shot from a door-cone
+        # start exists (that path runs before the expansion cap); otherwise it is
+        # best-effort-skipped (path=None below). Unlike the aircraft scan, which
+        # RAISES on exhaustion, movers are best-effort (ADR-0007 #197), so an
+        # exhausted budget must never abort the whole plan.
         remaining = total_budget - total_used
         mover_arc: DubinsArc | None
         try:
@@ -1544,8 +1548,11 @@ def plan_fill(
                 stats=mover_stats,
             )
         except NoFeasiblePlanError:
-            # Best-effort (ADR-0007 #197): an unroutable mover keeps a None path
-            # (surfaced by the caller, same contract as an un-tow-routable plane).
+            # Best-effort (ADR-0007 #197): an unroutable mover keeps a None path so
+            # it never aborts the whole fill. NOTE: unlike an un-tow-routable
+            # AIRCRAFT (which raises -> solver -> stderr), a None-path mover is NOT
+            # yet surfaced to the user — it renders as a static body. Wiring that
+            # stderr surfacing is tracked as a follow-up (#612).
             mover_arc = None
         exp = mover_stats.get("expansions", 0)
         total_used += exp if isinstance(exp, int) else 0

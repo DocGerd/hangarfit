@@ -86,7 +86,7 @@ Add the method to the `GroundObject` class body (after `__post_init__`):
 
 ```python
     def effective_turn_radius_m(self) -> float:
-        """Turn radius the tow planner consumes (ADR-0010 / ADR-0026).
+        """Turn radius the tow planner consumes (ADR-0010, 2026-06-12 amendment).
 
         Data-driven, mirroring :meth:`Aircraft.effective_turn_radius_m`: a
         steerable car returns its positive ``turn_radius_m`` (own-gear

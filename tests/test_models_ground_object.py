@@ -295,3 +295,17 @@ def test_steerable_mover_requires_positive_turn_radius() -> None:
             object_class="placed_routed_mover",
             motion_mode="steerable",
         )
+
+
+def test_towed_mover_rejects_turn_radius() -> None:
+    # A towed mover moves as a free-swivel cart (r=0); a positive radius is a
+    # deliberate future change, not a silently-accepted contradictory state (#602).
+    with pytest.raises(ValueError, match="towed.*turn_radius_m"):
+        GroundObject(
+            id="bad",
+            name="b",
+            parts=(_rect_part(),),
+            object_class="placed_routed_mover",
+            motion_mode="towed",
+            turn_radius_m=4.0,
+        )

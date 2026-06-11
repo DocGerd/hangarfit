@@ -205,7 +205,8 @@ def test_trailer_loads_with_towed_default() -> None:
 
 
 def test_mover_motion_mode_override() -> None:
-    # a trailer authored with motion_mode: steerable keeps the override
+    # a trailer authored with motion_mode: steerable keeps the override.
+    # A steerable mover requires a turn_radius_m (#602 guard), so author one.
     raw = {
         "type": "trailer",
         "id": "t1",
@@ -222,6 +223,7 @@ def test_mover_motion_mode_override() -> None:
             }
         ],
         "motion_mode": "steerable",
+        "turn_radius_m": 5.0,
     }
     obj = _build_catalog_object(raw, source=Path("inline"))
     assert isinstance(obj, GroundObject)
