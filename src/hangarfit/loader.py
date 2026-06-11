@@ -461,7 +461,7 @@ def load_hangar(path: Path | str, *, fleet: Mapping[str, Aircraft] | None = None
 # keys read in :func:`load_layout`; ``test_all_allowed_layout_keys_load`` guards the
 # too-strict direction. ``fleet``/``hangar`` are optional in the file (they may arrive
 # as kwargs instead); the file-vs-kwarg conflict is handled separately, below.
-_ALLOWED_LAYOUT_KEYS = frozenset({"fleet", "hangar", "placements", "maintenance"})
+_ALLOWED_LAYOUT_KEYS = frozenset({"fleet", "hangar", "placements", "maintenance", "ground_objects"})
 
 
 def load_layout(
@@ -471,6 +471,7 @@ def load_layout(
     hangar: Hangar | None = None,
     max_carts: int | None = None,
     apron_depth: float | Literal["auto"] | None = None,
+    ground_objects: dict[str, GroundObject] | None = None,
 ) -> Layout:
     """Load a layout YAML.
 
@@ -543,6 +544,16 @@ def load_layout(
         except ValueError as e:
             raise LoaderError(f"{path}: {e}") from e
 
+    # Ground-object defs: kwarg overrides; otherwise resolve from the same
+    # manifest the fleet: key points at (which may return {} when the manifest
+    # has no ground_objects: list); absent both, default to empty (#601).
+    if ground_objects is None:
+        fleet_ref = raw.get("fleet")
+        if fleet_ref is not None:
+            ground_objects = load_ground_objects((path.parent / fleet_ref).resolve())
+        else:
+            ground_objects = {}
+
     placements_data = raw.get("placements", [])
     if not isinstance(placements_data, list):
         raise LoaderError(f"{path}: 'placements' must be a list")
@@ -576,12 +587,50 @@ def load_layout(
                     f"id if it doesn't match an aircraft in the fleet)."
                 )
 
+    # Parse the layout's optional ground_objects: block (#601). Each entry maps
+    # to a Placement (using plane_id for the object id, matching Layout's field).
+    go_data = raw.get("ground_objects", [])
+    if not isinstance(go_data, list):
+        raise LoaderError(f"{path}: 'ground_objects' must be a list")
+    _allowed_go_entry = frozenset({"object", "x_m", "y_m", "heading_deg"})
+    ground_object_placements_list: list[Placement] = []
+    for i, go_entry in enumerate(go_data):
+        if not isinstance(go_entry, dict):
+            raise LoaderError(f"{path}: ground_objects[{i}] must be a mapping")
+        unknown = set(go_entry) - _allowed_go_entry
+        if unknown:
+            raise LoaderError(
+                f"{path}: ground_objects[{i}] has unknown ground_object key(s) "
+                f"{sorted(unknown)}; allowed: {sorted(_allowed_go_entry)}"
+            )
+        for key in ("object", "x_m", "y_m", "heading_deg"):
+            if key not in go_entry:
+                raise LoaderError(f"{path}: missing required field 'ground_objects[{i}].{key}'")
+        obj_id = go_entry["object"]
+        if obj_id not in ground_objects:
+            raise LoaderError(
+                f"{path}: ground_objects[{i}] references unknown object {obj_id!r}; "
+                f"the available ground objects are: {sorted(ground_objects)}"
+            )
+        ground_object_placements_list.append(
+            Placement(
+                plane_id=obj_id,
+                x_m=_to_float(go_entry["x_m"], f"ground_objects[{i}].x_m"),
+                y_m=_to_float(go_entry["y_m"], f"ground_objects[{i}].y_m"),
+                heading_deg=_to_float(go_entry["heading_deg"], f"ground_objects[{i}].heading_deg"),
+                on_carts=False,
+            )
+        )
+    ground_object_placements = tuple(ground_object_placements_list)
+
     try:
         return Layout(
             fleet=fleet,
             hangar=hangar,
             placements=placements,
             maintenance_plane=maintenance_plane,
+            ground_objects=ground_objects,
+            ground_object_placements=ground_object_placements,
         )
     except ValueError as e:
         raise LoaderError(f"{path}: {e}") from e

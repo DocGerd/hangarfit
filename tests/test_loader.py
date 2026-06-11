@@ -24,6 +24,7 @@ from hangarfit.loader import (
     load_layout,
     load_scenario,
 )
+from hangarfit.models import GroundObject, Hangar
 from tests._fleet_test_utils import explode_fleet as _explode_fleet
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
@@ -1427,12 +1428,13 @@ placements:
 
     def test_all_allowed_layout_keys_load(self, tmp_path: Path) -> None:
         """Completeness guard: a layout declaring EVERY allowed top-level key
-        (``maintenance`` + ``placements`` alongside the ``fleet``/``hangar`` refs)
-        loads — so the allowlist can never be too strict. Self-enforcing against
-        ``_ALLOWED_LAYOUT_KEYS``."""
+        (``maintenance`` + ``placements`` + ``ground_objects`` alongside the
+        ``fleet``/``hangar`` refs) loads — so the allowlist can never be too
+        strict. Self-enforcing against ``_ALLOWED_LAYOUT_KEYS``."""
         self._minimal_fleet_and_hangar(tmp_path)
         body = (
-            "fleet: fleet.yaml\nhangar: hangar.yaml\nmaintenance:\n  plane: foo\nplacements: []\n"
+            "fleet: fleet.yaml\nhangar: hangar.yaml\nmaintenance:\n  plane: foo\n"
+            "placements: []\nground_objects: []\n"
         )
         file_keys = set(yaml.safe_load(body))
         assert file_keys == _ALLOWED_LAYOUT_KEYS, (
@@ -1443,6 +1445,8 @@ placements:
         layout = load_layout(_write(tmp_path / "layout.yaml", body))
         assert layout.maintenance_plane == "foo"
         assert layout.placements == ()
+        assert dict(layout.ground_objects) == {}
+        assert layout.ground_object_placements == ()
 
     def test_unknown_plane_reference_propagates(self, tmp_path: Path) -> None:
         self._minimal_fleet_and_hangar(tmp_path)
@@ -2181,3 +2185,153 @@ class TestStructuralNotchesLoading:
         )
         with pytest.raises(LoaderError, match="must be greater than"):
             load_hangar(path)
+
+
+# ----------------------------------------------------------------------------
+# Task 6: Layout YAML ground_objects: block parsing (#601).
+# Uses kwarg-injection so no catalog manifest is needed for the layout tests.
+# ----------------------------------------------------------------------------
+
+
+_P1_PLACEMENT = (
+    "placements:\n"
+    "  - plane: p1\n"
+    "    x_m: 20.0\n"
+    "    y_m: 20.0\n"
+    "    heading_deg: 0.0\n"
+    "    on_carts: false\n"
+)
+
+
+class TestLayoutGroundObjects:
+    """Tests for ground_objects: block in layout YAML (Task 6 / #601)."""
+
+    def _hangar(self) -> Hangar:
+        from hangarfit.models import Door, MaintenanceBay
+
+        return Hangar(
+            length_m=40.0,
+            width_m=40.0,
+            door=Door(center_x_m=20.0, width_m=12.0),
+            maintenance_bay=MaintenanceBay(center_x_m=20.0, width_m=8.0, depth_m=6.0),
+            clearance_m=0.3,
+            wing_layer_clearance_m=0.2,
+        )
+
+    def _fixed_obstacle(self, obj_id: str = "fuel_trailer") -> GroundObject:
+        from hangarfit.models import Part
+
+        part = Part(
+            kind="ground",
+            length_m=5.0,
+            width_m=2.0,
+            offset_x_m=0.0,
+            offset_y_m=0.0,
+            angle_deg=0.0,
+            z_bottom_m=0.0,
+            z_top_m=1.5,
+        )
+        return GroundObject(
+            id=obj_id,
+            name="Fuel trailer",
+            parts=(part,),
+            object_class="fixed_obstacle",
+        )
+
+    def test_ground_objects_block_parsed(self, tmp_path: Path) -> None:
+        """A valid ground_objects: block builds ground_object_placements."""
+        from tests.conftest import make_test_aircraft
+
+        ac = make_test_aircraft(id="p1")
+        obj = self._fixed_obstacle("fuel_trailer")
+        layout_path = _write(
+            tmp_path / "layout.yaml",
+            _P1_PLACEMENT
+            + "ground_objects:\n"
+            + "  - object: fuel_trailer\n    x_m: 5.0\n    y_m: 5.0\n    heading_deg: 0.0\n",
+        )
+        layout = load_layout(
+            layout_path,
+            fleet={ac.id: ac},
+            hangar=self._hangar(),
+            ground_objects={"fuel_trailer": obj},
+        )
+        assert "fuel_trailer" in layout.ground_objects
+        assert len(layout.ground_object_placements) == 1
+        assert layout.ground_object_placements[0].plane_id == "fuel_trailer"
+
+    def test_unknown_ground_object_id_raises(self, tmp_path: Path) -> None:
+        """Referencing an unknown object id must raise LoaderError naming it."""
+        from tests.conftest import make_test_aircraft
+
+        ac = make_test_aircraft(id="p1")
+        obj = self._fixed_obstacle("fuel_trailer")
+        layout_path = _write(
+            tmp_path / "layout.yaml",
+            _P1_PLACEMENT
+            + "ground_objects:\n"
+            + "  - object: ghost\n    x_m: 5.0\n    y_m: 5.0\n    heading_deg: 0.0\n",
+        )
+        with pytest.raises(LoaderError, match="ghost"):
+            load_layout(
+                layout_path,
+                fleet={ac.id: ac},
+                hangar=self._hangar(),
+                ground_objects={"fuel_trailer": obj},
+            )
+
+    def test_unknown_entry_key_raises(self, tmp_path: Path) -> None:
+        """An unknown key in a ground_objects entry (e.g. rotation:) must raise LoaderError."""
+        from tests.conftest import make_test_aircraft
+
+        ac = make_test_aircraft(id="p1")
+        obj = self._fixed_obstacle("fuel_trailer")
+        layout_path = _write(
+            tmp_path / "layout.yaml",
+            _P1_PLACEMENT
+            + "ground_objects:\n"
+            + "  - object: fuel_trailer\n    x_m: 5.0\n    y_m: 5.0\n"
+            + "    heading_deg: 0.0\n    rotation: 45.0\n",
+        )
+        with pytest.raises(LoaderError, match="unknown.*ground_object|rotation"):
+            load_layout(
+                layout_path,
+                fleet={ac.id: ac},
+                hangar=self._hangar(),
+                ground_objects={"fuel_trailer": obj},
+            )
+
+    def test_empty_ground_objects_block_allowed(self, tmp_path: Path) -> None:
+        """Layout without ground_objects: key loads fine with empty placements."""
+        from tests.conftest import make_test_aircraft
+
+        ac = make_test_aircraft(id="p1")
+        layout_path = _write(tmp_path / "layout.yaml", _P1_PLACEMENT)
+        layout = load_layout(
+            layout_path,
+            fleet={ac.id: ac},
+            hangar=self._hangar(),
+            ground_objects={},
+        )
+        assert dict(layout.ground_objects) == {}
+        assert layout.ground_object_placements == ()
+
+    def test_missing_ground_object_entry_field_raises(self, tmp_path: Path) -> None:
+        """A ground_objects entry omitting a required field (heading_deg) must raise."""
+        from tests.conftest import make_test_aircraft
+
+        ac = make_test_aircraft(id="p1")
+        obj = self._fixed_obstacle("fuel_trailer")
+        layout_path = _write(
+            tmp_path / "layout.yaml",
+            _P1_PLACEMENT
+            + "ground_objects:\n"
+            + "  - object: fuel_trailer\n    x_m: 5.0\n    y_m: 5.0\n",
+        )
+        with pytest.raises(LoaderError, match="missing required field|heading_deg"):
+            load_layout(
+                layout_path,
+                fleet={ac.id: ac},
+                hangar=self._hangar(),
+                ground_objects={"fuel_trailer": obj},
+            )
