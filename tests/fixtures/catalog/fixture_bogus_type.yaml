@@ -1,0 +1,12 @@
+type: spaceship
+id: fixture_bogus
+name: "Fixture bogus object"
+measured: false
+parts:
+  - kind: ground
+    length_m: 1.0
+    width_m: 1.0
+    offset_x_m: 0.0
+    offset_y_m: 0.0
+    z_bottom_m: 0.0
+    z_top_m: 1.0

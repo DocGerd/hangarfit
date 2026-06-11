@@ -36,7 +36,7 @@ from __future__ import annotations
 import dataclasses
 import difflib
 import math
-from collections.abc import Collection, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from pathlib import Path
 from typing import Any, Literal
 
@@ -45,9 +45,11 @@ import yaml
 from .models import (
     Aircraft,
     Door,
+    GroundObject,
     Hangar,
     Layout,
     MaintenanceBay,
+    MoverMotionMode,
     Part,
     Placement,
     PlaneConstraint,
@@ -142,8 +144,8 @@ def _reject_unknown_top_level_keys(
 
 # A fleet manifest references per-object CATALOG files (#595). Each catalog file
 # carries a `type:` discriminator (default 'aircraft') routing to a per-type
-# builder. Only 'aircraft' is registered here; non-aircraft objects (fuel
-# trailer, glider trailer, rescue vehicle) arrive in Stage A (#600).
+# builder in :data:`_CATALOG_BUILDERS`. As of #601 the registry also resolves the
+# ground-object types ('fixed_obstacle', 'car', 'trailer'); see _build_catalog_object.
 _DEFAULT_OBJECT_TYPE = "aircraft"
 
 # Operational flags a fleet manifest entry may override on a catalog object.
@@ -152,24 +154,6 @@ _DEFAULT_OBJECT_TYPE = "aircraft"
 # merged onto the catalog dict BEFORE _build_aircraft's allowlist check, so an
 # override key absent from that allowlist would be rejected as an "unknown" key.
 _ALLOWED_MANIFEST_OVERRIDE_KEYS = frozenset({"movement_mode", "tow_pivotable"})
-
-
-def _build_catalog_object(raw: Any, *, source: Path) -> Aircraft:
-    """Dispatch a catalog object on its ``type:`` discriminator to the per-type
-    builder. ``type:`` is stripped before the builder runs, so the aircraft
-    allowlist (:data:`_ALLOWED_AIRCRAFT_KEYS`, which has no ``type`` member) is
-    unchanged. An unregistered type is rejected today with a clear error (the
-    slot is reserved for the Stage A ground objects, #600)."""
-    if not isinstance(raw, dict):
-        raise LoaderError(f"{source}: catalog object must be a mapping, got {type(raw).__name__}")
-    obj_type = raw.get("type", _DEFAULT_OBJECT_TYPE)
-    if obj_type != _DEFAULT_OBJECT_TYPE:
-        raise LoaderError(
-            f"{source}: object type {obj_type!r} not yet supported (non-aircraft "
-            f"objects arrive in Stage A, #600); known types: ['aircraft']"
-        )
-    entry = {k: v for k, v in raw.items() if k != "type"}
-    return _build_aircraft(entry)
 
 
 def _parse_manifest_entry(entry: Any, *, index: int, path: Path) -> tuple[str, dict[str, Any]]:
@@ -262,12 +246,17 @@ def load_fleet(path: Path | str) -> dict[str, Aircraft]:
         if isinstance(obj_raw, dict) and overrides:
             obj_raw = {**obj_raw, **overrides}
         try:
-            aircraft = _build_catalog_object(obj_raw, source=catalog_path)
+            obj = _build_catalog_object(obj_raw, source=catalog_path)
         except (ValueError, KeyError, TypeError, LoaderError) as e:
             raise LoaderError(f"{path}: aircraft[{i}] ({ref}): {e}") from e
-        if aircraft.id in fleet:
-            raise LoaderError(f"{path}: duplicate aircraft id {aircraft.id!r}")
-        fleet[aircraft.id] = aircraft
+        if not isinstance(obj, Aircraft):
+            raise LoaderError(
+                f"{path}: aircraft[{i}] ({ref}) is a {type(obj).__name__}, not an Aircraft; "
+                f"list non-aircraft objects under 'ground_objects:' instead"
+            )
+        if obj.id in fleet:
+            raise LoaderError(f"{path}: duplicate aircraft id {obj.id!r}")
+        fleet[obj.id] = obj
     return fleet
 
 
@@ -1135,6 +1124,109 @@ def _build_aircraft(entry: Any) -> Aircraft:
     )
     _validate_wheels_vs_turn_radius(aircraft)
     return aircraft
+
+
+# Per-type key allowlists for ground objects (#601 / ADR-0025). A fixed obstacle
+# never moves, so its allowlist deliberately EXCLUDES motion_mode/turn_radius_m —
+# authoring one is a loud "unknown fixed_obstacle key" rather than a silently
+# ignored field. Movers (car/trailer) may carry an explicit motion_mode override
+# and a static turn_radius_m (carried for #602's routing; unused in #601).
+_ALLOWED_FIXED_OBSTACLE_KEYS = frozenset({"id", "name", "parts", "measured"})
+_ALLOWED_MOVER_KEYS = frozenset({"id", "name", "parts", "measured", "motion_mode", "turn_radius_m"})
+
+
+def _build_ground_parts(entry: dict[str, Any]) -> tuple[Part, ...]:
+    """Parse a ground object's ``parts`` list. Every part must be kind 'ground'
+    (a solid footprint) — ground objects do NOT do the fuselage front/aft split,
+    struts, or wheels, and an aircraft part kind (wing, tail, …) is rejected."""
+    parts_data = entry.get("parts")
+    if not isinstance(parts_data, list) or not parts_data:
+        raise LoaderError("'parts' must be a non-empty list")
+    parts = tuple(_build_part(p, i) for i, p in enumerate(parts_data))
+    for i, part in enumerate(parts):
+        if part.kind != "ground":
+            raise LoaderError(
+                f"parts[{i}] kind {part.kind!r} not allowed on a ground object; "
+                f"use kind: ground (a solid footprint)"
+            )
+    return parts
+
+
+def _check_ground_keys(entry: Any, allowed: frozenset[str], *, what: str) -> dict[str, Any]:
+    """Reject unknown keys + require id/name on a ground-object catalog dict,
+    mirroring :func:`_build_aircraft`'s allowlist discipline (#513)."""
+    if not isinstance(entry, dict):
+        raise LoaderError(f"{what} entry must be a mapping, got {type(entry).__name__}")
+    unknown = set(entry) - allowed
+    if unknown:
+        raise LoaderError(f"unknown {what} key(s) {sorted(unknown)}; allowed: {sorted(allowed)}")
+    for key in ("id", "name"):
+        if key not in entry:
+            raise LoaderError(f"missing required field {key!r}")
+    return entry
+
+
+def _build_fixed_obstacle(entry: Any) -> GroundObject:
+    entry = _check_ground_keys(entry, _ALLOWED_FIXED_OBSTACLE_KEYS, what="fixed_obstacle")
+    return GroundObject(
+        id=entry["id"],
+        name=entry["name"],
+        parts=_build_ground_parts(entry),
+        object_class="fixed_obstacle",
+        measured=_to_bool(entry.get("measured", False), "measured"),
+    )
+
+
+def _build_mover(entry: Any, *, default_motion: MoverMotionMode) -> GroundObject:
+    entry = _check_ground_keys(entry, _ALLOWED_MOVER_KEYS, what="mover")
+    motion_raw = entry.get("motion_mode", default_motion)
+    tr_raw = entry.get("turn_radius_m")
+    return GroundObject(
+        id=entry["id"],
+        name=entry["name"],
+        parts=_build_ground_parts(entry),
+        object_class="placed_routed_mover",
+        motion_mode=motion_raw,
+        turn_radius_m=None if tr_raw is None else _to_float(tr_raw, "turn_radius_m"),
+        measured=_to_bool(entry.get("measured", False), "measured"),
+    )
+
+
+def _build_car(entry: Any) -> GroundObject:
+    """A self-driving rescue car — defaults to ``steerable`` motion (#601)."""
+    return _build_mover(entry, default_motion="steerable")
+
+
+def _build_trailer(entry: Any) -> GroundObject:
+    """A towed glider/fuel trailer — defaults to ``towed`` motion (#601)."""
+    return _build_mover(entry, default_motion="towed")
+
+
+# The catalog builder registry (#595 seam; ground-object types added #601). It is
+# defined AFTER all four builders so the names resolve at dict-construction time.
+_CATALOG_BUILDERS: dict[str, Callable[[Any], Aircraft | GroundObject]] = {
+    "aircraft": _build_aircraft,
+    "fixed_obstacle": _build_fixed_obstacle,
+    "car": _build_car,
+    "trailer": _build_trailer,
+}
+
+
+def _build_catalog_object(raw: Any, *, source: Path) -> Aircraft | GroundObject:
+    """Dispatch a catalog object on its ``type:`` discriminator to the per-type
+    builder (#595 seam; ground-object types added in #601). ``type:`` is stripped
+    before the builder runs, so each per-type allowlist needs no ``type`` member.
+    An unknown type is rejected with the list of known types."""
+    if not isinstance(raw, dict):
+        raise LoaderError(f"{source}: catalog object must be a mapping, got {type(raw).__name__}")
+    obj_type = raw.get("type", _DEFAULT_OBJECT_TYPE)
+    builder = _CATALOG_BUILDERS.get(obj_type)
+    if builder is None:
+        raise LoaderError(
+            f"{source}: unknown catalog type {obj_type!r}; known types: {sorted(_CATALOG_BUILDERS)}"
+        )
+    entry = {k: v for k, v in raw.items() if k != "type"}
+    return builder(entry)
 
 
 # Strict unknown-key allowlist for a `parts[i]` entry, mirroring
