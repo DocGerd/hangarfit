@@ -498,6 +498,34 @@ class GroundObject:
                     f"GroundObject {self.id!r}: turn_radius_m must be positive, "
                     f"got {self.turn_radius_m}"
                 )
+            if self.motion_mode == "steerable" and self.turn_radius_m is None:
+                raise ValueError(
+                    f"GroundObject {self.id!r}: a steerable mover requires a "
+                    f"positive turn_radius_m (a self-driven car has a turning "
+                    f"circle; it never pivots in place)"
+                )
+            if self.motion_mode == "towed" and self.turn_radius_m is not None:
+                raise ValueError(
+                    f"GroundObject {self.id!r}: a towed mover must not carry a "
+                    f"turn_radius_m — it moves as a free-swivel cart (radius 0.0). "
+                    f"A positive-radius towed trailer is a deliberate future change "
+                    f"(relax this guard + define the semantics first); got "
+                    f"{self.turn_radius_m}"
+                )
+
+    def effective_turn_radius_m(self) -> float:
+        """Turn radius the tow planner consumes (ADR-0010, 2026-06-12 amendment).
+
+        Data-driven, mirroring :meth:`Aircraft.effective_turn_radius_m`: returns
+        ``turn_radius_m`` when present, else ``0.0``. ``__post_init__`` co-determines
+        the two fields — a ``steerable`` mover must carry a (positive) radius and a
+        ``towed`` mover must not — so a steerable car returns its radius (-> own-gear
+        Reeds-Shepp, six-primitive fan) and a towed trailer returns ``0.0`` (->
+        free-swivel cart, four-primitive reverse-capable fan, the ground-crew
+        hand-positioning model). Only ever called on movers; never raises."""
+        if self.turn_radius_m is not None:
+            return self.turn_radius_m
+        return 0.0
 
 
 @dataclass(frozen=True, slots=True)
