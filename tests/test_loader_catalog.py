@@ -120,6 +120,14 @@ def test_missing_ref_file_errors(tmp_path: Path) -> None:
         load_fleet(manifest)
 
 
+def test_invalid_ref_path_errors(tmp_path: Path) -> None:
+    # A ref pathlib can't construct (embedded null byte) → loud LoaderError, not a
+    # bare ValueError escaping the loader (fuzz-found via #595).
+    manifest = _write(tmp_path / "fleet.yaml", {"aircraft": ["\x00"]})
+    with pytest.raises(LoaderError, match="invalid catalog reference"):
+        load_fleet(manifest)
+
+
 def test_duplicate_id_across_refs(tmp_path: Path) -> None:
     cat = tmp_path / "catalog"
     cat.mkdir()

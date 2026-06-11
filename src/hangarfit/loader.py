@@ -243,8 +243,17 @@ def load_fleet(path: Path | str) -> dict[str, Aircraft]:
         # Every entry is a catalog reference (a path string or {ref, overrides});
         # inline aircraft mappings are rejected by _parse_manifest_entry (#595).
         ref, overrides = _parse_manifest_entry(entry, index=i, path=path)
-        catalog_path = (manifest_dir / ref).resolve()
-        if not catalog_path.is_file():
+        # An invalid ref (e.g. an embedded null byte) makes pathlib raise a bare
+        # ValueError/OSError — wrap it into an attributed LoaderError so a
+        # malformed reference fails loudly through the normal error contract.
+        try:
+            catalog_path = (manifest_dir / ref).resolve()
+            ref_exists = catalog_path.is_file()
+        except (ValueError, OSError) as e:
+            raise LoaderError(
+                f"{path}: aircraft[{i}] has an invalid catalog reference {ref!r}: {e}"
+            ) from e
+        if not ref_exists:
             raise LoaderError(
                 f"{path}: aircraft[{i}] references catalog file {ref!r} which does "
                 f"not exist (resolved to {catalog_path})"
