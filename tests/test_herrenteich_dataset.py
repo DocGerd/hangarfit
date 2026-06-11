@@ -172,3 +172,11 @@ def test_ground_objects_load_from_manifest() -> None:
     # each is a single solid ground footprint
     for go in gos.values():
         assert len(go.parts) == 1 and go.parts[0].kind == "ground"
+
+
+def test_hangar_clearances_calibrated() -> None:
+    """The Herrenteich clearances were calibrated to fit the full real set
+    (#605): horizontal 0.20, vertical 0.15 (placeholders were 0.30/0.20)."""
+    hangar = load_hangar(HERRENTEICH / "hangar.yaml")
+    assert hangar.clearance_m == 0.20
+    assert hangar.wing_layer_clearance_m == 0.15
