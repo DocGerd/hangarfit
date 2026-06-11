@@ -80,13 +80,19 @@ def check(layout: Layout) -> CheckResult:
     # come first so the no-ground-object case is byte-identical (same dict order):
     # with no ground objects mover_parts/obstacle_parts are empty, placed_bodies ==
     # aircraft_parts, _ground_obstacle_conflicts returns [], and the conflict order
-    # + total_penetration_m2 match pre-#601. _hangar_bounds_conflicts and
-    # _bay_intrusion_conflicts keep their aircraft-only input (ground-object bounds
-    # checking is out of #601 scope — #604/#605).
+    # + total_penetration_m2 match pre-#601. _bay_intrusion_conflicts keeps its
+    # aircraft-only input (an occupancy rule); _hangar_bounds_conflicts now also
+    # covers ground objects (#605, see bounded_bodies below).
     placed_bodies = {**aircraft_parts, **mover_parts}
+    # Ground objects (movers AND fixed obstacles) are bounds/notch-checked
+    # alongside aircraft (#605): they too must fit the floor and clear the notch.
+    # Aircraft come first so the no-ground-object case is byte-identical (empty
+    # GO dicts ⇒ bounded_bodies == aircraft_parts, same dict order). Bay
+    # intrusion stays aircraft-only (an aircraft-occupancy rule, not geometry).
+    bounded_bodies = {**aircraft_parts, **mover_parts, **obstacle_parts}
 
     conflicts: list[Conflict] = []
-    conflicts.extend(_hangar_bounds_conflicts(aircraft_parts, layout.hangar))
+    conflicts.extend(_hangar_bounds_conflicts(bounded_bodies, layout.hangar))
     conflicts.extend(_bay_intrusion_conflicts(aircraft_parts, layout))
     pairwise, total_penetration_m2 = _pairwise_conflicts(placed_bodies, layout.hangar)
     conflicts.extend(pairwise)

@@ -196,3 +196,86 @@ def test_empty_ground_objects_byte_identical() -> None:
     assert result.conflicts == ()
     assert result.conflicts == ref_result.conflicts
     assert result.total_penetration_m2 == ref_result.total_penetration_m2
+
+
+def test_ground_object_out_of_bounds_flagged() -> None:
+    """A ground object straddling the hangar wall is a hangar_bounds conflict
+    (#605 — #601 left ground objects un-bounds-checked)."""
+    hangar = _hangar()  # 40x40, no notch
+    obj = GroundObject(
+        id="trailer",
+        name="t",
+        parts=(_ground_part(length_m=4.0, width_m=2.0),),
+        object_class="placed_routed_mover",
+        motion_mode="towed",
+    )
+    layout = Layout(
+        fleet={},
+        hangar=hangar,
+        placements=(),
+        ground_objects={obj.id: obj},
+        # centred on x=0.5 with a 2 m width → half the footprint is at x<0.
+        ground_object_placements=(
+            Placement(plane_id=obj.id, x_m=0.5, y_m=20.0, heading_deg=0.0, on_carts=False),
+        ),
+    )
+    result = check(layout)
+    kinds = {c.kind for c in result.conflicts}
+    assert "hangar_bounds" in kinds
+    assert any("trailer" in "".join(c.planes) for c in result.conflicts)
+
+
+def test_ground_object_in_notch_flagged() -> None:
+    """A ground object inside a structural notch is a structural_notch conflict."""
+    from hangarfit.models import StructuralNotch
+
+    hangar = Hangar(
+        length_m=40.0,
+        width_m=40.0,
+        door=Door(center_x_m=20.0, width_m=12.0),
+        maintenance_bay=MaintenanceBay(center_x_m=20.0, width_m=8.0, depth_m=6.0),
+        clearance_m=0.3,
+        wing_layer_clearance_m=0.2,
+        structural_notches=(
+            StructuralNotch(x_min_m=30.0, y_min_m=30.0, x_max_m=40.0, y_max_m=40.0),
+        ),
+    )
+    obj = GroundObject(
+        id="caddy",
+        name="c",
+        parts=(_ground_part(length_m=3.0, width_m=2.0),),
+        object_class="placed_routed_mover",
+        motion_mode="steerable",
+    )
+    layout = Layout(
+        fleet={},
+        hangar=hangar,
+        placements=(),
+        ground_objects={obj.id: obj},
+        ground_object_placements=(
+            Placement(plane_id=obj.id, x_m=35.0, y_m=35.0, heading_deg=0.0, on_carts=False),
+        ),
+    )
+    kinds = {c.kind for c in check(layout).conflicts}
+    assert "structural_notch" in kinds
+
+
+def test_fixed_obstacle_out_of_bounds_flagged() -> None:
+    """A fixed obstacle is bounds-checked too (not just movers)."""
+    hangar = _hangar()
+    obj = GroundObject(
+        id="fuel",
+        name="f",
+        parts=(_ground_part(length_m=4.0, width_m=2.0),),
+        object_class="fixed_obstacle",
+    )
+    layout = Layout(
+        fleet={},
+        hangar=hangar,
+        placements=(),
+        ground_objects={obj.id: obj},
+        ground_object_placements=(
+            Placement(plane_id=obj.id, x_m=39.7, y_m=20.0, heading_deg=0.0, on_carts=False),
+        ),
+    )
+    assert "hangar_bounds" in {c.kind for c in check(layout).conflicts}
