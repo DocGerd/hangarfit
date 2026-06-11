@@ -653,11 +653,15 @@ def _draw_tow_paths(ax: Any, moves_plan: MovesPlan) -> None:
     currently inert — it is a deliberate forward hook for a future legend, and
     a path is already disambiguated by terminating at its annotated slot.
     """
-    plane_ids = sorted({move.plane_id for move in moves_plan.moves})
+    # Deferred moves (path=None) — a #601 ground-object mover whose route search
+    # is deferred to #602 — have no polyline to draw; skip them.
+    routed_moves = [move for move in moves_plan.moves if move.path is not None]
+    plane_ids = sorted({move.plane_id for move in routed_moves})
     colour_for = {
         pid: _TOW_PATH_COLORS[i % len(_TOW_PATH_COLORS)] for i, pid in enumerate(plane_ids)
     }
-    for move in moves_plan.moves:
+    for move in routed_moves:
+        assert move.path is not None  # filtered above; narrows for the type-checker
         poses = list(move.path.sample())
         xs = [p.x_m for p in poses]
         ys = [p.y_m for p in poses]

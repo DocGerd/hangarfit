@@ -226,8 +226,11 @@ def _timeline(
     t = 0.0
     for placement in back_first_order(layout.placements):
         move = move_by_id.get(placement.plane_id)
-        if move is None:
-            continue  # defensive: a placement with no move stays at its final pose
+        if move is None or move.path is None:
+            # No move, or a deferred (path=None) move — the body stays at its final
+            # pose. A deferred path is a #601 ground-object mover (route → #602);
+            # it never keys an aircraft placement here, so this is defensive.
+            continue
         samples = _sample_affines(move.path, max_samples_per_path)
         dur = min(max(move.path.length_m / tow_speed_mps, min_seg_s), max_seg_s)
         segments.append(
