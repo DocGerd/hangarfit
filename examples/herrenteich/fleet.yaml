@@ -1,11 +1,12 @@
-# Airfield Herrenteich real fleet — a thin MANIFEST referencing
-# examples/herrenteich/catalog/ entries by path.
+# Airfield Herrenteich real fleet — a thin MANIFEST referencing the central
+# data/catalog/ (no per-world duplication; the real-spec numbers ARE the
+# catalog's numbers, #595/#594).
 aircraft:
-  - catalog/scheibe_falke.yaml
-  - catalog/stemme_s10.yaml
-  - catalog/aviat_husky.yaml
-  - catalog/wild_thing.yaml
-  - catalog/zlin_savage.yaml
-  - catalog/cessna_140.yaml
-  - catalog/ctsl.yaml
-  - catalog/fk9_mkii.yaml
+  - ../../data/catalog/scheibe_falke.yaml
+  - ../../data/catalog/stemme_s10.yaml
+  - ../../data/catalog/aviat_husky.yaml
+  - ../../data/catalog/wild_thing.yaml
+  - ../../data/catalog/zlin_savage.yaml
+  - ../../data/catalog/cessna_140.yaml
+  - ../../data/catalog/ctsl.yaml
+  - ../../data/catalog/fk9_mkii.yaml

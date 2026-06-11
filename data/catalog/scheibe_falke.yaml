@@ -1,41 +1,52 @@
 # Catalog entry (#595). Conventions: see the catalog README.
 type: aircraft
 id: scheibe_falke
-name: "Scheibe SF-25E Falke"
-wing_position: high
-gear: monowheel
+name: "Scheibe SF-25E Super Falke"
+wing_position: high     # real aircraft is LOW-wing (EASA TCDS); modelled HIGH for the tilt — see header
+gear: monowheel         # central monowheel + under-wing outriggers + tailwheel (TCDS-confirmed)
 movement_mode: always_cart
-turn_radius_m: null  # always_cart → towplanner uses 0 (pivot); see header + ADR-0007
+turn_radius_m: null  # always_cart → towplanner uses 0 (pivot); see ADR-0007
 measured: false
-notes: "Cantilever wing; outriggers folded into wing footprint at the tips"
+notes: "18 m span (EASA TCDS A.098). Cantilever wing; real aircraft is low-wing but modelled high to represent the monowheel TILT (see header). Central monowheel + outriggers + tailwheel; parks lengthwise (too wide nose-in)."
 parts:
   - kind: fuselage
-    length_m: 7.6
-    width_m: 0.7
+    length_m: 7.58        # EASA TCDS A.098 (length)
+    width_m: 1.1          # side-by-side cabin, est. (external fuselage width unpublished)
     offset_x_m: 0.0
     offset_y_m: 0.0
     z_bottom_m: 0.0
     z_top_m: 1.5
-  - kind: wing
-    length_m: 1.2
-    width_m: 18.0
+  - kind: wing            # modelled HIGH (z 1.9-2.1) for the monowheel tilt — real aircraft is low-wing
+    length_m: 1.01        # mean chord = area 18.20 m² / span 18.00 m (EASA TCDS A.098)
+    width_m: 18.0         # span (EASA TCDS A.098)
     offset_x_m: 1.5
     offset_y_m: 0.0
     z_bottom_m: 1.9
     z_top_m: 2.1
-  - kind: tail            # horizontal stabilizer (conventional low; ~2.6 m span est.)
-    length_m: 0.9
-    width_m: 2.6
-    offset_x_m: -3.35
+    # Symmetric double-taper (no sweep, root kink at y=0) → a 6-vertex hexagon
+    # (ADR-0024). The SF-25E wing is the realistically-tapered glider whose
+    # narrowed wingtip nests where its bounding rectangle falsely conflicts with
+    # the Stemme empennage — the spike's measured 0.10–0.30 m flip window (#541).
+    # root = the existing mean-chord length_m (keeps the polygon a strict bbox
+    # subset → no golden re-pin; area is intentionally UNDER-conserved, the safe
+    # footprint direction, since the area gate reads scalars — spec §5.1 / ADR-0024).
+    # tip = 0.45 × root (the spike's measured taper ratio).
+    planform:
+      root_chord_m: 1.01
+      tip_chord_m: 0.4545
+  - kind: tail            # horizontal stabilizer (conventional-low; ~2.6 m span est.)
+    length_m: 0.9         # chord est. (unpublished)
+    width_m: 2.6          # span est.
+    offset_x_m: -3.34
     offset_y_m: 0.0
     z_bottom_m: 1.2
     z_top_m: 1.5
-  - kind: vertical_stabilizer  # fin+rudder to overall height 1.68 m
-    length_m: 1.1
+  - kind: vertical_stabilizer  # fin+rudder to overall height 1.85 m (Jane's)
+    length_m: 1.1         # fin chord est.
     width_m: 0.15
-    offset_x_m: -3.25
+    offset_x_m: -3.24
     offset_y_m: 0.0
     z_bottom_m: 1.5
-    z_top_m: 1.68
+    z_top_m: 1.85
 wheels:
   main_offset_x_m: 0.0

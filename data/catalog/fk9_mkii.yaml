@@ -1,43 +1,43 @@
 # Catalog entry (#595). Conventions: see the catalog README.
 type: aircraft
 id: fk9_mkii
-name: "FK9 Mk II"
+name: "B&F Technik FK9 Mk II"
 wing_position: high
 gear: nosewheel
 movement_mode: cart_eligible
-tow_pivotable: true  # tail-down nose-lift pivot when towed (#263)
 turn_radius_m: 4.0
 measured: false
 parts:
   - kind: fuselage
-    length_m: 5.85
-    width_m: 0.85
+    length_m: 5.85        # Mk IV spec, reused for the Mk II (shared airframe; no separate Mk II
+                          # length is published) — Wikipedia / lightsportaircraft.ca
+    width_m: 1.20         # cabin/fuselage external width ~1.20 m (technicalparameters.eu; interior 1.08 m)
     offset_x_m: -0.29
     offset_y_m: 0.0
     z_bottom_m: 0.0
     z_top_m: 1.4
   - kind: wing
-    length_m: 1.3
-    width_m: 9.85
+    length_m: 1.18        # mean chord = area 11.60 m² / span 9.85 m (all-aero, Mk II)
+    width_m: 9.85         # span (all-aero, Mk II)
     offset_x_m: 0.71
     offset_y_m: 0.0
     z_bottom_m: 1.9
     z_top_m: 2.2
-  - kind: tail            # horizontal stabilizer (conventional low; ~3.2 m span est.)
-    length_m: 0.9
-    width_m: 3.2
+  - kind: tail            # horizontal stabilizer (conventional-low; ~3.2 m span est.)
+    length_m: 0.9         # chord est. (unpublished)
+    width_m: 3.2          # span est.
     offset_x_m: -2.77
     offset_y_m: 0.0
     z_bottom_m: 1.1
     z_top_m: 1.4
   - kind: vertical_stabilizer  # fin+rudder to overall height 2.15 m
-    length_m: 1.1
+    length_m: 1.1         # fin chord est.
     width_m: 0.15
     offset_x_m: -2.67
     offset_y_m: 0.0
     z_bottom_m: 1.4
     z_top_m: 2.15
-struts:
+struts:                   # attach stations est. (unpublished)
   fuselage_attach_x_m: 0.11
   fuselage_attach_y_m: 0.425
   fuselage_attach_z_m: 0.5
@@ -45,5 +45,5 @@ struts:
   width_m: 0.05
 wheels:
   main_offset_x_m: -0.10
-  track_m: 1.4
+  track_m: 1.4            # est. (unpublished)
   third_wheel_offset_x_m: 1.40

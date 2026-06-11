@@ -550,9 +550,10 @@ class TestAircraftPartsWorldOnRealAircraft:
         maxy = max(w.polygon.bounds[3] for w in fuselage_segs)
         minx = min(w.polygon.bounds[0] for w in fuselage_segs)
         maxx = max(w.polygon.bounds[2] for w in fuselage_segs)
-        # length 6.88 → spans ≈ 6.88m along y; width 0.85 → spans ≈ 0.85m along x.
+        # length 6.88 → spans ≈ 6.88m along y; width 0.75 → spans ≈ 0.75m along x
+        # (#595: the central catalog carries the real Husky A-1C cabin width 0.75 m).
         assert _almost_equal(maxy - miny, 6.88, tol=1e-6)
-        assert _almost_equal(maxx - minx, 0.85, tol=1e-6)
+        assert _almost_equal(maxx - minx, 0.75, tol=1e-6)
         # Two struts are mirrored across plane-local +y=0; at heading 0,
         # plane +y maps to world +x, so the struts mirror across world x=0.
         struts = [w for w in worlds if w.kind == "strut"]

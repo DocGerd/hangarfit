@@ -195,10 +195,20 @@ def test_solve_deterministic_best_partial_under_max_restarts() -> None:
         fixed ``max_restarts=3``. Trigger unchanged: if a future change pushes
         ``seed=44`` natural success to ``<= 3``, re-probe and pick a
         higher-headroom seed.
+
+        Re-calibrated 2026-06-11 for #595 (central real-spec catalog): the
+        catalog refactor swapped this fixture's synthetic aircraft dims for the
+        real published-spec numbers, re-basing the min-conflicts trajectory.
+        Under the new dims ``seed=44`` finds within the cap (status flipped to
+        ``found``); re-probed seeds {3,7,…,2024} and ``seed=17`` has the most
+        headroom — first natural success at restart **8**, a 5-restart margin
+        above the fixed ``max_restarts=3``. Trigger unchanged: if a future
+        change pushes ``seed=17`` natural success to ``<= 3``, re-probe and
+        pick a higher-headroom seed.
     """
     fixture = "tests/fixtures/solve_canary_six_planes_tight.yaml"
     max_restarts = 3
-    seed = 44
+    seed = 17
 
     s1 = load_scenario(fixture)
     r1 = solve(

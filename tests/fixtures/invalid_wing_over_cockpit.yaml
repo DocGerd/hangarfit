@@ -12,8 +12,11 @@
 # fuji at (5, 9, 0): nose deeper (+y), cockpit at the high-y end; the fin /
 #   horizontal stab are at the LOW-y (door) end, away from the crossing — so the
 #   only conflict is the cockpit one (the fin does not participate here).
-# ctsl at (5.5, 13.5, 90): wing crosses fuji's `fuselage_front`; D1 ignores the
+# ctsl at (5.5, 13.6, 90): wing crosses fuji's `fuselage_front`; D1 ignores the
 #   z-gap → exactly one `fuselage_front_wing_overlap` (alphabetical kind order).
+#   (y nudged 13.5→13.6 for #595: the central catalog's real, wider ctsl pushes
+#   its `fuselage_aft` into fuji's cockpit clearance band at the old y; +0.1 m
+#   restores the isolated single conflict the canary asserts.)
 
 fleet: ../../data/fleet.yaml
 hangar: ../../data/hangar.yaml
@@ -26,6 +29,6 @@ placements:
     on_carts: false
   - plane: ctsl
     x_m: 5.5
-    y_m: 13.5
+    y_m: 13.6
     heading_deg: 90.0
     on_carts: false
