@@ -471,6 +471,12 @@ def _draw_part(ax: Any, part: WorldPart, color: str) -> None:
     elif part.kind == "ground":
         # Ground-object footprint (#601): solid keep-out, drawn opaque like a
         # fuselage body at the fuselage z-level (above wings).
+        # NOTE: currently UNREACHABLE — render_layout/scene iterate only
+        # layout.placements (aircraft), never ground_object_placements, so no
+        # ground WorldPart reaches _draw_part yet. This branch is a forward hook
+        # for #606 (ground-object rendering) AND satisfies the closed-PartKind
+        # exhaustiveness contract (the else-raise below must stay reachable for
+        # any future unknown kind).
         patch = MplPolygon(
             coords,
             closed=True,

@@ -295,3 +295,35 @@ def test_load_fleet_rejects_ground_object_under_aircraft(tmp_path: Path) -> None
     m.write_text("aircraft:\n  - ft.yaml\n")
     with pytest.raises(LoaderError, match="aircraft|not an aircraft|ground"):
         load_fleet(m)
+
+
+def test_load_ground_objects_invalid_motion_mode_raises_loader_error(tmp_path: Path) -> None:
+    # A car/trailer catalog entry with an invalid motion_mode value must raise
+    # LoaderError through the public load_ground_objects path.
+    # The model raises ValueError; load_ground_objects wraps it to LoaderError.
+    cat = tmp_path / "catalog"
+    cat.mkdir()
+    bad_catalog = {
+        "type": "trailer",
+        "id": "bad_trailer",
+        "name": "Bad trailer",
+        "parts": [
+            {
+                "kind": "ground",
+                "length_m": 2.0,
+                "width_m": 1.0,
+                "offset_x_m": 0.0,
+                "offset_y_m": 0.0,
+                "z_bottom_m": 0.0,
+                "z_top_m": 1.0,
+            }
+        ],
+        "motion_mode": "jetpack",
+    }
+    _write(cat / "bad_trailer.yaml", bad_catalog)
+    manifest = _write(
+        tmp_path / "fleet.yaml",
+        {"ground_objects": ["catalog/bad_trailer.yaml"]},
+    )
+    with pytest.raises(LoaderError, match="jetpack|motion_mode"):
+        load_ground_objects(manifest)

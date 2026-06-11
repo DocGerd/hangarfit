@@ -462,6 +462,12 @@ class GroundObject:
             raise ValueError(f"GroundObject {self.id!r}: name must be non-empty")
         if not self.parts:
             raise ValueError(f"GroundObject {self.id!r}: parts must be non-empty")
+        for p in self.parts:
+            if p.kind != "ground":
+                raise ValueError(
+                    f"GroundObject {self.id!r}: all parts must be kind 'ground' "
+                    f"(a solid footprint), got {p.kind!r}"
+                )
         if self.object_class not in _VALID_GROUND_OBJECT_CLASSES:
             raise ValueError(
                 f"GroundObject {self.id!r}: object_class must be one of "

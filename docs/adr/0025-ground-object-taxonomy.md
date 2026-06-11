@@ -256,7 +256,8 @@ deferred to #605.
 - `PartKind` is now seven values: `"fuselage_front"`, `"fuselage_aft"`,
   `"ground"`, `"strut"`, `"tail"`, `"vertical_stabilizer"`, `"wing"`. The
   alphabetical conflict-kind taxonomy auto-derives `ground_ground_overlap`
-  (suppressed by the fixed↔fixed exemption), `ground_wing_overlap`, etc.
+  (only ever between two **movers**; two fixed obstacles are exempt — obstacles
+  never enter the pairwise set), `ground_wing_overlap`, etc.
 
 ## Compliance
 

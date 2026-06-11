@@ -244,3 +244,14 @@ def test_scenario_rejects_unknown_ground_object_ref() -> None:
             ground_objects=("ghost",),
             ground_object_defs={},
         )
+
+
+def test_ground_object_rejects_non_ground_part() -> None:
+    """GroundObject.__post_init__ must reject any part whose kind != 'ground'."""
+    with pytest.raises(ValueError, match="ground"):
+        GroundObject(
+            id="bad_obj",
+            name="Bad object",
+            parts=(_rect_part(kind="wing"),),
+            object_class="fixed_obstacle",
+        )
