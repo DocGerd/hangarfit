@@ -1081,7 +1081,7 @@ def _check_pin_feasibility(scenario: Scenario) -> tuple[CheckResult, Layout] | N
     return None
 
 
-def _plane_max_extent(plane: Aircraft) -> tuple[float, float]:
+def _plane_max_extent(plane: Aircraft | GroundObject) -> tuple[float, float]:
     """Return (max_length_m, max_width_m) over all of the plane's Parts.
 
     Takes the maximum ``length_m`` and maximum ``width_m`` across all
@@ -1167,8 +1167,8 @@ def _initial_placement_for_plane(
         return constraint.pin
 
     hangar = scenario.hangar
-    plane = scenario.fleet[plane_id]
-    max_length, max_width = _plane_max_extent(plane)
+    body = _body(scenario, plane_id)
+    max_length, max_width = _plane_max_extent(body)
     margin_x = max(max_length, max_width) / 2
     margin_y = margin_x
 
@@ -1602,6 +1602,18 @@ def _initial_placements(
             scenario=scenario,
             rng=rng,
             on_carts=on_carts,
+        )
+
+    # Movers (#604): sampled AFTER all aircraft, in sorted-id order, so adding a
+    # mover never perturbs the aircraft draw sequence — a scenario with no movers
+    # is byte-identical to the pre-#604 behaviour (ADR-0003). Movers never ride
+    # carts and are excluded from cart-bucket enumeration (it iterates fleet_in).
+    for gid in sorted(scenario.mover_ids):
+        placements[gid] = _initial_placement_for_plane(
+            plane_id=gid,
+            scenario=scenario,
+            rng=rng,
+            on_carts=False,
         )
 
     return placements

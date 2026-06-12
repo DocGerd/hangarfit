@@ -1,6 +1,13 @@
+import random
+
 from hangarfit.geometry import aircraft_parts_world, cached_parts_world
 from hangarfit.models import Aircraft, GroundObject, Layout, Placement
-from hangarfit.solver import _body, _body_parts_world, _build_layout
+from hangarfit.solver import (
+    _body,
+    _body_parts_world,
+    _build_layout,
+    _initial_placements,
+)
 
 
 def _bounds_key(parts):
@@ -62,3 +69,34 @@ def test_build_layout_splits_movers_and_injects_fixed(region_scenario):
     assert {p.plane_id for p in built.placements} == {"fuji", "cessna_150"}
     go_ids = {p.plane_id for p in built.ground_object_placements}
     assert "glider_trailer_1" in go_ids and "maul_fuel_trailer" in go_ids  # mover + injected fixed
+
+
+def test_initial_placements_samples_movers(region_scenario):
+    pl = _initial_placements(
+        scenario=region_scenario, rng=random.Random(0), cart_bucket=frozenset()
+    )
+    assert "glider_trailer_1" in pl and "glider_trailer_2" in pl
+    assert pl["glider_trailer_1"].on_carts is False
+    # aircraft still present
+    assert "fuji" in pl and "cessna_150" in pl
+
+
+def test_initial_placements_deterministic_with_movers(region_scenario):
+    a = _initial_placements(scenario=region_scenario, rng=random.Random(7), cart_bucket=frozenset())
+    b = _initial_placements(scenario=region_scenario, rng=random.Random(7), cart_bucket=frozenset())
+
+    def key(d):
+        return {k: (v.x_m, v.y_m, v.heading_deg, v.on_carts) for k, v in d.items()}
+
+    assert key(a) == key(b)
+
+
+def test_initial_placements_no_go_same_seed(region_scenario_no_go):
+    a = _initial_placements(
+        scenario=region_scenario_no_go, rng=random.Random(7), cart_bucket=frozenset()
+    )
+    b = _initial_placements(
+        scenario=region_scenario_no_go, rng=random.Random(7), cart_bucket=frozenset()
+    )
+    assert {k: (v.x_m, v.y_m) for k, v in a.items()} == {k: (v.x_m, v.y_m) for k, v in b.items()}
+    assert "glider_trailer_1" not in a  # no movers in the no-GO scenario
