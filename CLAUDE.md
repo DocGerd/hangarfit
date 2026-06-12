@@ -176,14 +176,12 @@ pytest -m slow
 # Or run everything regardless of marker
 pytest -m ""
 
-# Mirror CI's #492 two-pass split locally (588 s serial → ~169 s, 3.5×; #624).
+# Mirror CI's #492 two-pass split locally (~3.5× vs a plain serial `pytest`; #624).
 # A bare `pytest -n auto` is UNSAFE — it re-flakes the @serial wall-clock
-# canaries (rationale: docs/dev/test-flakes-and-ci-gotchas.md §1). The Makefile
-# keeps the split (and lint/typecheck/format) in one place:
+# canaries (rationale: docs/dev/test-flakes-and-ci-gotchas.md §1):
 make test        # two-pass split: parallel bulk + serial canaries (the safe mirror)
-make test-fast   # parallel bulk only (5.2×; skips the serial canaries)
-make check       # full pre-push gate: lint + typecheck + two-pass tests
-make help        # list all targets
+make test-fast   # parallel bulk only (skips the serial canaries — faster iteration)
+# `make help` lists every target (test-slow / lint / typecheck / format / check).
 
 # GOTCHA (test flakes + CI quirks) → docs/dev/test-flakes-and-ci-gotchas.md.
 # Read it before treating a determinism/coverage CI failure as a regression: the

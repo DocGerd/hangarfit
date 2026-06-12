@@ -46,7 +46,7 @@ from hangarfit.towplanner import NoFeasiblePlanError, path_first_conflict, plan_
 # global cap removed) balloons the heavy fill while the easy warm-up — which
 # routes without exhausting any budget — stays flat, so the ratio still trips it.
 _PLAN_FILL_CEILING_FLOOR_S = 400.0
-_WARMUP_CEILING_MULTIPLE = 1800.0  # heavy/warm-up ≈ 871 measured; ×~2 for margin
+_WARMUP_CEILING_MULTIPLE = 1800.0  # heavy/warm-up ≈ 871 measured (WSL2 ref box); ×~2 margin
 _WARMUP_SCENARIO = "tests/fixtures/solve_feasible_smoke.yaml"
 
 
@@ -71,7 +71,12 @@ def host_plan_fill_ceiling_s() -> float:
     if not result.layouts:
         return _PLAN_FILL_CEILING_FLOOR_S
     t0 = time.monotonic()
-    plan_fill(result.layouts[0])
+    try:
+        plan_fill(result.layouts[0])
+    except NoFeasiblePlanError:
+        # A bailed warm-up is a poor speed probe (a fast bail under-measures host
+        # speed → an artificially tight ceiling), so fall back to the floor.
+        return _PLAN_FILL_CEILING_FLOOR_S
     warmup_s = time.monotonic() - t0
     return max(_PLAN_FILL_CEILING_FLOOR_S, warmup_s * _WARMUP_CEILING_MULTIPLE)
 

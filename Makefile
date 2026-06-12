@@ -1,9 +1,9 @@
 # hangarfit dev Makefile — a local mirror of the CI gates (.github/workflows/ci.yml).
 #
 # `make test` runs CI's two-pass test split (#492) LOCALLY: a parallel bulk pass
-# plus a separate serial pass for the wall-clock determinism canaries. On a
-# 32-core box this is ~169 s versus ~588 s for a plain serial `pytest`
-# (3.5x; profiling spike #617, lever #624).
+# plus a separate serial pass for the wall-clock determinism canaries. It is
+# roughly 3.5x faster than a plain serial `pytest` (~169 s vs ~588 s measured on
+# a 32-core box; profiling spike #617, lever #624).
 #
 # Why two passes and not a bare `pytest -n auto`? The `serial`-marked canaries
 # run solve() twice in-process under a wall-clock budget; under xdist CPU
@@ -26,7 +26,7 @@ test:  ## Two-pass split (parallel bulk + serial canaries) — the safe local CI
 	pytest -n auto -m "not slow and not serial"
 	pytest -m "serial and not slow"
 
-test-fast:  ## Parallel bulk only (5.2x; SKIPS the serial canaries — run `make test` before pushing)
+test-fast:  ## Parallel bulk only (~5x, #617; SKIPS the serial canaries — run `make test` before pushing)
 	pytest -n auto -m "not slow and not serial"
 
 test-slow:  ## The @slow set only (heavy solves; excluded from `make test` and from CI)
