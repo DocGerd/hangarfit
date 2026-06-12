@@ -290,6 +290,54 @@ timing scope rather than widening it (see the ADR-0003 amendment dated
 2026-06-06). The default `None` path is byte-identical to pre-F7, so the
 `spread=False` determinism canaries and `determinism-guard` are untouched.
 
+### 2026-06-12 — #604 right/left-region soft term + ground objects as solver-placed bodies
+
+**Background.** The club aligns its glider trailers to one hangar wall to keep
+the central corridor clear — a preference that the spread repulsion energy is
+position-symmetric and therefore blind to. #604 makes ground-object movers
+(glider trailers) full solver-placed citizens and adds a per-object soft
+wall-alignment preference: the soft-tier sibling of the #603 HARD Caddy
+egress gate, using the same `_spread` hill-climb as the platform.
+
+**Change.** A per-object soft wall-alignment term is folded into the SAME
+`_spread` energy, alongside the spread repulsion and the #320 back-bias:
+
+```
+E_total = Σ_{i<j} w_i·w_j·exp(−gap_ij/scale)  +  back_bias_weight·Σ_p (L−y_p)/L  +  Σ_{o∈prefs} w_o·d_o/W
+          └────────── spread (#145) ─────────┘     └──────── back bias (#320) ──────┘   └──── region (#604) ────┘
+
+where d_o = (W − x_o) for side="right", x_o for side="left", and W = hangar.width_m.
+```
+
+- The preference is **per-object scenario data** (`RegionPreference{side, weight}`,
+  `None`/absent ≡ neutral/inert) — not a global search knob; normalized by
+  `width_m` so one weight reads across hangar sizes (matching the back-bias
+  normalization by `length_m`).
+- It is **secondary**: `min_pairwise_gap_m` remains the PRIMARY cross-basin
+  selection key (#267); the region term, like the back-bias, re-ranks candidates
+  only WITHIN a basin's validity-gated hill-climb (`_spread` accepts only moves
+  keeping `_score==(0,0.0)`), and never enters basin selection.
+- **Ground objects are now solver-placed.** Movers (`placed_routed_mover`) are
+  full search citizens (sampled, perturbed in the descent, spread, routed,
+  egress-gated); fixed obstacles are authored static keep-outs. The region
+  alignment achieved is surfaced via `SolverDiagnostics.region_alignment`
+  (per-layout per-object 0-1, 1.0 = at the preferred wall).
+
+**Default & toggle.** Default INERT: a scenario with no `region_preferences`
+in its ground-object block adds nothing. The Herrenteich scenario opts its two
+glider trailers in (side `"right"`, weight 1.5).
+
+**Determinism.** The region term is RNG-free re-ranking — no random draws, no
+change to candidate generation — so same-scenario+same-seed output stays
+byte-identical (ADR-0003, max_restarts-scoped). The whole ground-object
+integration is byte-identical to pre-#604 when a scenario has no ground objects
+(no new draws, empty Layout GO args). No determinism-guard / ADR-0003 amendment
+is required (same reasoning as the #320 back-bias).
+
+**Known limitation.** The region pull is a *preference*, not a guarantee: a
+space-tight basin may keep a trailer off its preferred side (validity wins).
+Like the back-bias, it cannot move a body across an invalidating position.
+
 ### 2026-06-07 — incremental single-plane gap cache (issue #455)
 
 **Background.** A **fresh** profile taken *after* #453 (parts-world memo) and #454

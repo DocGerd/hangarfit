@@ -353,8 +353,25 @@ manually-positioned trailers in scope. The byte-identical determinism contract
 jackknife kinematics are a named later follow-on if the cart approximation proves
 insufficient.
 
+## Amendment (2026-06-12) — #604: ground-object movers as solver-placed bodies
+
+**Status:** Accepted (cross-reference note). **Context:** #604 made
+`placed_routed_mover` ground objects — specifically the glider trailers —
+full RR-MC search citizens: the solver samples their poses, perturbs them in
+the min-conflicts descent, includes them in the `_spread` hill-climb, and routes
+each via `plan_fill`. No new motion model is introduced: a towed glider trailer
+already uses the free-swivel cart model (`effective_turn_radius_m() == 0`,
+`_plan_cart(allow_reverse=True)`) per the #602 amendment above, and that
+model is reused verbatim. The only change relevant to this ADR is that the
+trailer's parked pose is now **solver-chosen** rather than hand-authored in
+the layout YAML — routing still calls the same cart-fan machinery. Fixed
+obstacles (`fixed_obstacle` class) enter the solve scene as authored static
+keep-outs and are never routed.
+
 ## More Information
 
+- Amended by #604 (2026-06-12): ground-object movers are now solver-placed;
+  routing reuses the #602 cart model unchanged (see the amendment section above).
 - Amended by #602 (2026-06-12): car own-gear RS + free-swivel-cart trailer routing
   via `GroundObject.effective_turn_radius_m()`; routing oracle widened to
   `Aircraft | GroundObject` (see the amendment section above).
