@@ -6,6 +6,17 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Ground objects render in the 2D PNG (#606).** `hangarfit check --render` /
+  `solve --render-paths` now draw the floor's ground objects: the fixed obstacle
+  (the Maul fuel trailer) as a hatched keep-out (distinct from the structural-notch
+  hatch — an object, not absent floor), and the placed/routed movers (VW Caddy + the
+  two glider trailers) as solid bodies in a neutral mover fill, deliberately outside
+  the per-plane aircraft palette so a glance separates aircraft from trailer/vehicle.
+  Each is labelled. Inert for aircraft-only layouts (byte-identical). The conflict
+  validator now also knows about ground-object ids, so a real mover/obstacle conflict
+  is not mistaken for a cross-layout mismatch. (scene/v2 + 3D-viewer rendering and the
+  Caddy egress-lane decal are the follow-up half of #606.)
+
 - **Lateral cart-strafe + free-swivel pivot tow motion (#599, ADR-0010).** The cart
   motion model gains a lateral *strafe* primitive (`Segment(kind="T")`) — a slide
   perpendicular to heading — so a broadside-parked cart-borne plane (e.g. the 18 m
