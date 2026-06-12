@@ -45,6 +45,18 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Changed
 
+- **Local test ergonomics: two-pass `make test` + host-relative perf canary
+  (#624, #625).** A root `Makefile` mirrors CI's #492 two-pass test split for
+  local dev (`make test` = a parallel bulk pass + a separate serial pass for the
+  wall-clock determinism canaries; ~588 s → ~169 s, 3.5× on a 32-core box), with
+  `make test-fast` / `lint` / `typecheck` / `format` / `check` rounding out the
+  CI-parity targets. The `@slow` `plan_fill` perf canary
+  (`tests/test_towplanner_perf.py`) is now **host-relative**: it calibrates its
+  wall-clock ceiling off a per-run warm-up probe (floored at the original 400 s)
+  rather than an absolute bound, so a slower box (e.g. WSL2) no longer
+  false-fails on byte-identical, expansion-bound work. Dev/CI tooling only — no
+  runtime, solver, or determinism impact. (#624, #625)
+
 - **Per-object catalog data model (#595).** Fleet data is now a per-object
   **catalog** (`data/catalog/`, one file per aircraft carrying a `type:`
   discriminator) referenced **by path** from thin fleet manifests; inline

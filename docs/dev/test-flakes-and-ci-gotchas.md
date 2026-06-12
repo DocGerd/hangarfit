@@ -25,8 +25,10 @@ pytest -n auto -m "not slow and not serial"
 pytest -m "serial and not slow"
 ```
 
-or just re-run a flagged canary in isolation before treating a failure as a
-regression. The `max_restarts`-scoped companion
+`make test` runs exactly this two-pass split for you (the root `Makefile`, #624),
+so the recipe and the dev shortcut stay in sync; `make test-fast` runs only the
+parallel bulk pass. Or just re-run a flagged canary in isolation before treating
+a failure as a regression. The `max_restarts`-scoped companion
 (`test_solve_deterministic_best_partial_under_max_restarts`) is the
 load-independent determinism check.
 
