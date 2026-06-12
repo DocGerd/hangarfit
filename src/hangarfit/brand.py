@@ -199,11 +199,13 @@ CART_DECK_COLOR_3D: str = CART_DECK_COLOR  # 0xaab7b8
 # Resolved Python-side in scene.py and emitted per ground-object block (the plane
 # colour-map idiom), so the viewer reads ``go.color`` and hard-codes nothing
 # (#419) — these are NOT viewer_brand_tokens() keys. The mover slate matches the
-# 2D ``_MOVER_FILL`` (visualize.py) for cross-surface parity; the fixed obstacle
-# is a warm graphite keep-out, distinct from the cool slate mover, the violet bay,
-# and the blue-grey translucent walls so the three classes never blur together.
-MOVER_3D: str = "#8A8F98"  # slate — matches the 2D mover fill
-GROUND_OBSTACLE_3D: str = "#73685E"  # warm graphite keep-out volume
+# 2D mover fill ``#8A8F98`` (visualize.py ``_MOVER_FILL``, #649) for cross-surface
+# parity. The fixed obstacle has NO 2D fill counterpart — 2D draws it as a hatched
+# keep-out outline (no fill) — so GROUND_OBSTACLE_3D is a 3D-only graphite volume,
+# chosen to stay distinct from the cool slate mover, the violet bay, and the
+# blue-grey translucent walls so the three classes never blur together.
+MOVER_3D: str = "#8A8F98"  # slate — matches the 2D _MOVER_FILL (#649)
+GROUND_OBSTACLE_3D: str = "#73685E"  # warm graphite keep-out volume (3D-only)
 
 # Conflict (viewer.js) — same STATUS ink as 2D; the label cue supplies the
 # non-colour redundancy 3D can't hatch.

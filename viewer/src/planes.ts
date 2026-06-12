@@ -31,9 +31,12 @@ export function boxMaterial(b: BoxData, colour: THREE.Color): THREE.MeshStandard
 }
 
 /** One mesh for a scene/v2 box, in plane-local coords. A polygon part (#549)
- * extrudes its (cx,cy,angle)-folded ring from z_band[0]; a scalar part is a
- * BoxGeometry placed at (cx,cy,cz) and rotated about local up. Shared by planes
- * and ground objects (#606) so both render through the identical det-−1 group. */
+ * carries its ring with (cx,cy,angle) already folded in (it matches the anchor
+ * oracle), so the polygon branch applies NO position.xy / rotation — only the
+ * z_band[0] base lift, then ExtrudeGeometry +Z over height_m (the #530
+ * ShapeGeometry L-floor is the in-tree precedent). A scalar part is a BoxGeometry
+ * placed at (cx,cy,cz) and rotated about local up. Shared by planes and ground
+ * objects (#606) so both render through the identical det-−1 group. */
 export function boxMesh(b: BoxData, colour: THREE.Color): THREE.Mesh {
   // local X = u (forward/length), local Y = v (right/width), local Z = w (height).
   let mesh: THREE.Mesh;

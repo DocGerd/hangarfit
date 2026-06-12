@@ -179,7 +179,7 @@ def _gear_anchors(layout: Layout) -> dict[str, list[list[float]]]:
 def _ground_object_blocks(layout: Layout) -> list[dict]:
     """One block per placed ground object (sorted by id): a fixed obstacle
     (keep-out) or a placed/routed mover, each a static placed body (#606) — the
-    3D analogue of the 2D :mod:`hangarfit.visualize` ground-object render.
+    3D analogue of the 2D :mod:`hangarfit.visualize` ground-object render (#649).
 
     Mirrors :func:`_plane_blocks` (same ``boxes`` shape via :func:`_box`), but a
     ground object has no wheels/carts and no per-id palette: ``color`` is

@@ -40,7 +40,7 @@ All notable changes to this project are documented here. Format follows [Keep a 
   inert-when-empty keys — `ground_objects` (placed bodies, each with its static
   `final_pose` affine) and `go_anchors` (their world corners for the viewer's
   load-time determinant-−1 self-check). This is the 3D companion of the 2D-PNG
-  ground-object render (#606 first half); same input ⇒ byte-identical scene
+  ground-object render (#649, the 2D first half of #606); same input ⇒ byte-identical scene
   (ADR-0003), and an aircraft-only layout differs only by the two empty
   collections. Mover *animation* and the Caddy egress lane are deferred follow-ups
   (the egress oracle exports no corridor geometry to draw).

@@ -170,7 +170,7 @@ constants mirroring `visualize.py`, never data: the schema carries only position
 The non-aircraft floor bodies (#606, [ADR-0025](../adr/0025-ground-object-taxonomy.md)):
 a **fixed obstacle** (a placed keep-out, e.g. the Maul fuel trailer) and the
 **placed/routed movers** (the VW Caddy + glider trailers). Each is the 3D analogue
-of the 2D PNG render (`visualize.py`): the obstacle reads as a keep-out, the movers
+of the 2D PNG render (`visualize.py`, #649): the obstacle reads as a keep-out, the movers
 as placed bodies, visually distinct from aircraft. Box geometry is the *same*
 `boxes` shape as `planes[]` (a `kind:"ground"` part is a scalar box), so the viewer
 renders both through one shared box path. A ground object has no `wheels`/`on_carts`
