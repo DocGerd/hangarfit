@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Literal
@@ -299,9 +300,12 @@ def build_parser() -> argparse.ArgumentParser:
         dest="workers",
         help=(
             "Fan the restarts across N worker processes (#544; default 1 = "
-            "serial). Byte-identical to serial in the --max-restarts + spread "
-            "regime; for any other config it runs serial (a note is printed). "
-            "Speedup is sub-linear and placement-only — most useful on roomy "
+            "serial, single-core). Effective (and byte-identical to serial) ONLY "
+            "in the --max-restarts + spread regime; for any other config (no "
+            "--max-restarts, --no-spread, or --spread-stall-restarts set) it "
+            "silently runs serial and prints a note. A multi-restart spread solve "
+            "left at the default on a multi-core box prints a hint suggesting the "
+            "flag. Speedup is sub-linear and placement-only — most useful on roomy "
             "spread-on fills with many restarts."
         ),
     )
@@ -721,6 +725,23 @@ def cmd_solve(args: argparse.Namespace) -> int:
             f"note: --workers {args.workers} ignored (runs serial) — parallel "
             "restarts need --max-restarts and the spread post-pass (drop "
             "--no-spread); see --workers help",
+            file=sys.stderr,
+        )
+    elif args.workers == 1 and _parallel_eligible(search_cfg, 2) and (os.cpu_count() or 1) > 1:
+        # This config IS parallel-eligible (--max-restarts + spread) but the
+        # restarts run serial on a multi-core box, leaving cores idle. Probe
+        # eligibility with a worker count of 2 (the predicate's first conjunct is
+        # workers > 1); the user's actual --workers is 1. Suggest the flag rather
+        # than silently waste the cores — zero behaviour change, stderr only so
+        # --json / --write-yaml stay machine-readable (#628).
+        _cores = os.cpu_count() or 1
+        # Cap the SUGGESTED count: the #544 speedup is sub-linear (~4.5x at 8
+        # workers), so don't over-promise cores-2 on a big box — it's an example.
+        _suggest = min(8, max(1, _cores - 2))
+        print(
+            f"hint: this is a multi-restart spread solve running serial on {_cores} "
+            f"cores — add --workers N (e.g. --workers {_suggest}) to fan the "
+            f"{args.max_restarts} restarts across processes (byte-identical to serial; #544).",
             file=sys.stderr,
         )
     result = solve(
