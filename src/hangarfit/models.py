@@ -1055,6 +1055,12 @@ class RegionPreference:
     secondary to ``min_pairwise_gap_m`` and never overriding the hard validity
     gate (ADR-0008 amended). Modeled on :attr:`PlaneConstraint.priority`'s
     soft-weight validation (#441).
+
+    The shape differs intentionally from that precedent: ``weight`` is a plain
+    ``float`` (not ``float | None``) because a body either has a
+    ``Scenario.region_preferences`` map entry or none — map-presence already
+    encodes the optional/neutral distinction that ``priority``'s ``| None``
+    carries inline.
     """
 
     side: RegionSide
@@ -1132,7 +1138,20 @@ class Scenario:
     - maintenance_plane (if set) must not also carry a pin or force_on_carts in
       constraints (the occupant is treated as away — those constraints would be
       incoherent and would be silently ignored by the solver)
+    - region_preferences.keys() ⊆ placeable bodies (fleet_in ∪ placed_routed_mover ids)
+    - fixed_obstacle_placements entries reference distinct fixed_obstacle ground
+      objects (in ground_object_defs)
     - fleet and constraints are wrapped in MappingProxyType (same pattern as Layout)
+
+    A fixed_obstacle may appear in ``ground_objects`` WITHOUT a matching
+    ``fixed_obstacle_placements`` entry — its pose then comes from a hand-authored
+    layout (the ``check``/``view`` path), not the solver. The scenario LOADER
+    requires a pose for any fixed_obstacle authored in a SOLVE scenario's
+    ``ground_objects:`` block (#604), so the silent-keep-out-drop that a hard
+    coverage invariant would guard against cannot arise via authored scenarios;
+    for programmatic construction it remains the caller's responsibility
+    (consistent with the #605 ground_objects model). Hence this is a documented
+    contract, not an enforced __post_init__ invariant.
 
     See spec §3.2 for the rationale.
     """
@@ -1336,7 +1355,13 @@ class Scenario:
 
         These are the ground objects the solver PLACES + routes (vs fixed
         obstacles, authored static keep-outs in :attr:`fixed_obstacle_placements`).
-        Empty ⇒ the solver is aircraft-only and byte-identical to pre-#604 (ADR-0003)."""
+        Empty ⇒ the solver is aircraft-only and byte-identical to pre-#604 (ADR-0003).
+
+        Note this exposes a DIFFERENT mover ordering than
+        :attr:`placeable_ids`: ``mover_ids`` follows ``ground_objects``
+        (declaration) order, whereas ``placeable_ids`` sorts the movers. Callers
+        must not index-align one against the other (the solver re-sorts via
+        ``sorted(scenario.mover_ids)`` at the use site)."""
         return tuple(
             gid
             for gid in self.ground_objects
@@ -1346,7 +1371,11 @@ class Scenario:
     @property
     def placeable_ids(self) -> tuple[str, ...]:
         """Aircraft (``fleet_in``) then sorted mover ids — the unified search bodies.
-        With no movers this is exactly ``fleet_in`` (ADR-0003)."""
+        With no movers this is exactly ``fleet_in`` (ADR-0003).
+
+        The mover ordering here (``fleet_in + sorted(mover_ids)``) differs from
+        :attr:`mover_ids`' ``ground_objects`` (declaration) order, so callers
+        must not index-align the two."""
         return self.fleet_in + tuple(sorted(self.mover_ids))
 
     # Picklable across the #544 ProcessPool boundary — the worker input. See

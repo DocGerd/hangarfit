@@ -38,7 +38,7 @@ import difflib
 import math
 from collections.abc import Callable, Collection, Iterable, Mapping
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import yaml
 
@@ -54,6 +54,7 @@ from .models import (
     Placement,
     PlaneConstraint,
     RegionPreference,
+    RegionSide,
     Scenario,
     StructuralNotch,
     StrutsSpec,
@@ -878,14 +879,19 @@ def load_scenario(
                     or set(rp) - _ALLOWED_REGION_PREF_KEYS
                     or "side" not in rp
                     or "weight" not in rp
+                    or not isinstance(rp["side"], str)
                 ):
                     raise LoaderError(
                         f"{path}: ground_objects[{i}] ({gid}): region_preference must be "
                         f"{{side, weight}}"
                     )
                 try:
+                    # ``side`` is known to be a str here (checked above); the
+                    # left/right membership is enforced by
+                    # RegionPreference.__post_init__ (its ValueError is caught
+                    # + rewrapped below), so the cast is sound.
                     region_preferences[gid] = RegionPreference(
-                        side=rp["side"],
+                        side=cast(RegionSide, rp["side"]),
                         weight=_to_float(
                             rp["weight"], f"ground_objects[{i}].region_preference.weight"
                         ),

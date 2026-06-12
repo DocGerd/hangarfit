@@ -73,3 +73,25 @@ def test_fixed_obstacle_forbids_region_preference(tmp_path):
 def test_unknown_object_rejected(tmp_path):
     with pytest.raises(LoaderError):
         load_scenario(_write(tmp_path, "  - object: ghost_trailer\n"))
+
+
+def test_region_preference_non_string_side_rejected(tmp_path):
+    with pytest.raises(LoaderError):
+        load_scenario(
+            _write(
+                tmp_path,
+                "  - object: glider_trailer_1\n"
+                "    region_preference: {side: [left, right], weight: 1.0}\n",
+            )
+        )
+
+
+def test_region_preference_invalid_side_string_rejected(tmp_path):
+    with pytest.raises(LoaderError):
+        load_scenario(
+            _write(
+                tmp_path,
+                "  - object: glider_trailer_1\n"
+                "    region_preference: {side: sideways, weight: 1.0}\n",
+            )
+        )
