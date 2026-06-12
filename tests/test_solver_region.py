@@ -109,3 +109,23 @@ def test_region_alignment_empty_when_no_pref(region_scenario_no_go):
         plan_paths=False,
     )
     assert r.diagnostics.region_alignment == ()
+
+
+def test_demo_solver_places_and_right_biases_both_trailers(region_scenario):
+    cfg = SearchConfig(max_restarts=8, spread=True)
+    r = solve(region_scenario, search=cfg, seed=0, budget_s=60.0, plan_paths=False)
+    assert r.status == "found"
+    layout = r.layouts[0]
+    go_x = {p.plane_id: p.x_m for p in layout.ground_object_placements}
+    # both trailers were PLACED by the solver
+    assert {"glider_trailer_1", "glider_trailer_2"}.issubset(go_x)
+    # ... and RIGHT-biased: physically in the right half of the 24 m-wide hangar
+    half = region_scenario.hangar.width_m / 2
+    assert go_x["glider_trailer_1"] > half
+    assert go_x["glider_trailer_2"] > half
+    # ... reflected in the surfaced region_alignment diagnostic (1.0 = at right wall)
+    align = dict(r.diagnostics.region_alignment[0])
+    assert align["glider_trailer_1"] > 0.5
+    assert align["glider_trailer_2"] > 0.5
+    # the fixed fuel trailer stays at its authored keep-out pose (front-left)
+    assert go_x["maul_fuel_trailer"] < half
