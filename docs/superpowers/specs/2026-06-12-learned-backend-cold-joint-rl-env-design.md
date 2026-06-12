@@ -11,8 +11,8 @@
 
 `hangarfit`'s deterministic RR-MC solver cannot find dense oblique z-nested layouts, and the Stage B probe (2026-06-12) confirmed the gap is real and two-sided:
 
-- A dense **valid** all-8 Herrenteich layout exists and is checked in (`examples/herrenteich/layout.yaml`, passes `collisions.check`), and the deterministic solver **cannot reproduce it** (the file header says so). → placement is exactly where the deterministic search fails.
-- That same valid layout is **not tow-routable** on `develop` (it dies on the broadside 18 m Scheibe), because the cart motion model cannot strafe. → routability is gated on a **motion primitive**, not on geometry (every body's minimum doorway slice ≤ the 13.46 m door).
+- A dense **valid** all-8 Herrenteich layout exists and is checked in (`examples/herrenteich/layout.yaml`, passes `collisions.check`), and the deterministic solver **cannot reproduce it** (it was found by a search driving the checker directly, not by `hangarfit solve`). → placement is exactly where the deterministic search fails.
+- That same valid layout is **not tow-routable** on `develop` (it dies on the broadside 18 m Scheibe), because the cart motion model cannot strafe. → routability is gated on a **motion primitive**, not on geometry (every body in the *current Herrenteich fleet* has a minimum doorway slice ≤ the 13.46 m door).
 
 The prior epic (#607) proposed a learned **proposer** that emits poses, warm-started by **behavior-cloning a slow "teacher nester,"** with the deterministic planner routing afterward. The Stage B finding made the teacher-nester the blocker (no routable all-8 teacher target exists yet), and the maintainer has chosen a different, **reward-driven** direction.
 
@@ -61,7 +61,7 @@ What the agent can see at each step:
 
 ### 4.3 Action space
 - The action is a **movement primitive on the active object**, drawn from that object's **legal primitive set by movement mode** (ADR-0010):
-  - **cart** (`turn_radius_m == 0`): pivot-L, pivot-R, straight-fwd `S`, straight-rev `Sr`, **strafe `T`** (the #599 lateral primitive — *required* for broadside bodies; it must exist in the abstraction or broadside entry is inexpressible).
+  - **cart** (`turn_radius_m == 0`): pivot-L, pivot-R, straight-fwd, straight-**reverse** (on `develop` reverse is `gear=-1` on an `L/S/R` `Segment`, not a distinct kind — `SegmentKind = Literal["L","S","R"]`), plus **strafe** — the lateral primitive that does **not yet exist** (the #599 capability, pending the clean ADR-0010 amendment of §6.1; *required* for broadside bodies or broadside entry is inexpressible).
   - **steerable / own-gear** (`turn_radius_m > 0`): Reeds–Shepp arcs (fwd/rev × left/straight/right).
   - plus **`park`** (commit + advance).
 - Each motion primitive carries a **magnitude** (arc length / pivot angle / strafe distance). Continuous vs discretized magnitude is a **sub-project #2/#3** decision; the env exposes both a continuous and a binned interface so the policy spec can choose.
@@ -83,14 +83,16 @@ Hard constraints **dominate** (large, **graded** so there is a gradient toward f
 
 | Tier | Term | Shape | Reuses |
 |---|---|---|---|
-| **Hard (large, graded)** | collision penetration depth (active vs parked + walls) | `−w_col · Σ depth` (graded, not binary) | the same graded penetration the RR-MC solver consumes |
-| **Hard (large, graded)** | out-of-bounds / notch / fixed-keep-out intrusion | `−w_oob · intrusion(area or depth)` | `_hangar_bounds_conflicts`, `structural_notches`, keep-outs |
+| **Hard (large, graded)** | collision overlap (active vs parked + walls) | `−w_col · Σ overlap_area` (graded m², not binary) | `total_penetration_m2` — pairwise overlap **area** (the solver's secondary tie-breaker) |
+| **Hard (large, graded)** | out-of-bounds / notch / fixed-keep-out intrusion | `−w_oob · intrusion_area` (graded magnitude **to be added** — see note) | bounds/notch *geometry* (`_hangar_bounds_conflicts`, `structural_notches`); the checks themselves are **binary** today |
 | **Hard (large)** | Caddy hard-door egress violation | large negative if the door object isn't nearest-door with a clear egress lane | the #603 / ADR-0026 egress oracle |
-| **Movement** | per-primitive cost; optional reverse-cost | small negative → efficient, forward-preferring tows | mirrors `_REVERSE_COST_FACTOR` |
+| **Movement** | per-primitive cost; per-cusp (direction-reversal) penalty | small negative → efficient, forward-preferring tows | mirrors `CUSP_PENALTY` (per-cusp, #480); note there is **no** per-metre reverse tax |
 | **Soft (small)** | inter-object gap / spread | `+w_gap · min_pairwise_gap` | ADR-0008 spread |
-| **Soft (small)** | requested door-order deviation | `+w_seq · (−deviation)` when a sequence is specified | #614 door-order |
+| **Soft (small)** | requested door-order deviation | `+w_seq · (−deviation)` when a sequence is specified | #614 door-order (**planned** — open, unbuilt) |
 | **Soft (small)** | region preference (e.g. trailers right) | `+w_region · region_match` | #604 RegionPreference |
 | **Terminal** | **fraction of the set parked** (+ all-placed bonus, + optional density) | `+R · placed/total` | — |
+
+**On "Reuses" (important — the table reuses *geometry*, not off-the-shelf graded penalties).** Today only the **pairwise collision area** (`total_penetration_m2`) exists as a graded signal, and even there the RR-MC objective is the *lexicographic tuple* `(conflict_count, total_penetration_m2)` (`solver._score`) — an integer conflict count first, area only as the tie-breaker, **not** a single graded penetration the solver "descends on." The **out-of-bounds / notch** checks are **binary** in the codebase (they emit a first-violating-vertex `Conflict`, no magnitude); this design **adds** their graded `intrusion_area`, computed from the same Shapely polygons. So each "Reuses" cell means *reuses the geometry to compute the term*, not "an existing penalty is wired up." Units are **area (m²)** throughout (overlap area / intrusion area), not a penetration *depth*.
 
 **Potential-based shaping (the trainability lever).** Add `γ·Φ(s′) − Φ(s)` to every step, with a potential such as
 `Φ(s) = −(remaining_overlap) − (distance_of_active_object_to_a_valid_parking_region) − (unplaced_count)`.
@@ -104,7 +106,7 @@ Per Ng–Harada–Russell this shaping is **policy-invariant** (it cannot change
 - This keeps the design honestly "agnostic from the algorithm": the deterministic *rules of physics* stay; the deterministic *search* is gone.
 
 ### 6.1 Hard dependency: the strafe motion primitive
-The action space **requires the lateral-strafe `T` primitive** (and the free-swivel pivot) to exist in the deterministic motion model — otherwise a broadside-parked body (e.g. the 18 m Scheibe) cannot enter through the door and is **inexpressible** in the env, exactly the wall the Stage B probe (2026-06-12) identified. This capability is currently the **paused WIP of #599** (PR #608, conflicting). Per the 2026-06-11 design note, it should land as a **clean ADR-0010 amendment**, *not* by reviving that WIP. **This sub-project is blocked on that motion capability landing** (or a deliberate scope cut to non-broadside objects for early curriculum stages). It is a shared prerequisite for *any* routable broadside body — learned or deterministic — not a cost this RL design introduces.
+The action space **requires the lateral-strafe `T` primitive** (and the free-swivel pivot) to exist in the deterministic motion model — otherwise a broadside-parked body (e.g. the 18 m Scheibe) cannot enter through the door and is **inexpressible** in the env, exactly the wall the Stage B probe (2026-06-12) identified. This capability is **tracked by #599** (an early WIP lives in the now-stale PR #608). Per the 2026-06-11 design note, it should land as a **clean ADR-0010 amendment**, *not* by reviving that WIP. **This sub-project is blocked on that motion capability landing** (or a deliberate scope cut to non-broadside objects for early curriculum stages). It is a shared prerequisite for *any* routable broadside body — learned or deterministic — not a cost this RL design introduces.
 
 ## 7. Curriculum hooks (parameterization for #3/#4)
 The env constructor must accept difficulty knobs so a curriculum can ramp:
