@@ -1425,6 +1425,18 @@ SolveStatus = Literal[
 ]
 
 
+class RegionAlignment(typing.NamedTuple):
+    """A placed body's achieved wall alignment for a returned layout (#604).
+
+    ``alignment`` is 0–1 with 1.0 meaning the body sits exactly at its preferred
+    wall. A ``tuple`` subclass, so it is byte-identical under pickle/equality/repr
+    (determinism-neutral) and ``dict(layout_alignments)`` still yields
+    ``{body_id: alignment}``."""
+
+    body_id: str
+    alignment: float
+
+
 @dataclass(frozen=True, slots=True)
 class SolverDiagnostics:
     """Per-solve diagnostic information.
@@ -1490,8 +1502,9 @@ class SolverDiagnostics:
     flipped (or with ``nose_out`` disabled). Advisory / RNG-free.
 
     ``region_alignment`` is index-aligned with :attr:`SolveResult.layouts`: for each
-    returned layout, a tuple of ``(body_id, alignment)`` pairs (sorted by id) for the
-    bodies carrying a :class:`RegionPreference`, where ``alignment`` is 0–1 with 1.0
+    returned layout, a tuple of :class:`RegionAlignment` ``(body_id, alignment)`` pairs
+    (sorted by id) for the bodies carrying a :class:`RegionPreference`, where
+    ``alignment`` is 0–1 with 1.0
     meaning the body sits exactly at its preferred wall (#604, ADR-0008 amended).
     Empty when no scenario region preferences are set. Advisory / RNG-free.
 
@@ -1544,7 +1557,7 @@ class SolverDiagnostics:
     spread_stall_applied: bool = False
     apron_shallow_drops: tuple[ApronShallowDrop, ...] = ()
     nose_out_flips: tuple[int, ...] = ()
-    region_alignment: tuple[tuple[tuple[str, float], ...], ...] = ()
+    region_alignment: tuple[tuple[RegionAlignment, ...], ...] = ()
 
     def __post_init__(self) -> None:
         if (self.best_partial is None) != (self.best_partial_layout is None):
@@ -1580,11 +1593,11 @@ class SolverDiagnostics:
                 f"got {self.nose_out_flips!r}"
             )
         for layout_alignments in self.region_alignment:
-            for _id, a in layout_alignments:
-                if math.isnan(a) or a < 0.0 or a > 1.0:
+            for ra in layout_alignments:
+                if math.isnan(ra.alignment) or ra.alignment < 0.0 or ra.alignment > 1.0:
                     raise ValueError(
                         "SolverDiagnostics.region_alignment values must be in "
-                        f"[0.0, 1.0], got {a!r}"
+                        f"[0.0, 1.0], got {ra.alignment!r}"
                     )
 
 

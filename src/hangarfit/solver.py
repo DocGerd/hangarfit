@@ -44,6 +44,7 @@ from hangarfit.models import (
     GroundObject,
     Layout,
     Placement,
+    RegionAlignment,
     Scenario,
     SearchConfig,
     SolverDiagnostics,
@@ -1347,7 +1348,7 @@ def _region_energy(placements: Mapping[str, Placement], scenario: Scenario) -> f
 
 def _region_alignment(
     placements: Mapping[str, Placement], scenario: Scenario
-) -> tuple[tuple[str, float], ...]:
+) -> tuple[RegionAlignment, ...]:
     """Per-preferring-object wall alignment in ``[0, 1]`` (1.0 = AT the preferred
     wall), sorted by id (#604). ``()`` when the scenario has no region preferences.
     RNG-free; the observability twin of :func:`_region_energy`."""
@@ -1355,13 +1356,13 @@ def _region_alignment(
     if not prefs:
         return ()
     width = scenario.hangar.width_m
-    out: list[tuple[str, float]] = []
+    out: list[RegionAlignment] = []
     for pid in sorted(prefs):
         if pid not in placements:
             continue
         x = placements[pid].x_m
         frac = (x / width) if prefs[pid].side == "right" else (1.0 - x / width)
-        out.append((pid, max(0.0, min(1.0, frac))))
+        out.append(RegionAlignment(body_id=pid, alignment=max(0.0, min(1.0, frac))))
     return tuple(out)
 
 
@@ -2006,7 +2007,7 @@ class _SpreadCandidate(NamedTuple):
     energy: float
     restart_index: int
     nose_out_flips: int = 0
-    region_alignment: tuple[tuple[str, float], ...] = ()
+    region_alignment: tuple[RegionAlignment, ...] = ()
 
 
 def _select_spread_diverse(

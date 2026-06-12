@@ -7,6 +7,7 @@ from hangarfit.models import (
     MaintenanceBay,
     Part,
     Placement,
+    RegionAlignment,
     RegionPreference,
     Scenario,
     SolverDiagnostics,
@@ -187,11 +188,13 @@ def test_region_alignment_default_empty():
 
 
 def test_region_alignment_valid():
-    d = _diag(region_alignment=((("glider_trailer_1", 0.92),),))
+    d = _diag(region_alignment=((RegionAlignment("glider_trailer_1", 0.92),),))
+    assert d.region_alignment[0][0] == RegionAlignment("glider_trailer_1", 0.92)
+    # NamedTuple compares equal to the bare tuple by value (determinism-neutral).
     assert d.region_alignment[0][0] == ("glider_trailer_1", 0.92)
 
 
 @pytest.mark.parametrize("bad", [-0.01, 1.01, float("nan")])
 def test_region_alignment_rejects_out_of_range(bad):
     with pytest.raises(ValueError):
-        _diag(region_alignment=((("t", bad),),))
+        _diag(region_alignment=((RegionAlignment("t", bad),),))

@@ -606,7 +606,7 @@ def _emit_solve_human(result: SolveResult, *, alternatives: int) -> None:
                 f"score=(0, 0.0); min gap {gap_str}"
             )
         if i - 1 < len(d.region_alignment) and d.region_alignment[i - 1]:
-            ra = ", ".join(f"{bid}={a:.2f}" for bid, a in d.region_alignment[i - 1])
+            ra = ", ".join(f"{a.body_id}={a.alignment:.2f}" for a in d.region_alignment[i - 1])
             line += f"; region alignment {ra}"
         print(line)
 
@@ -1080,7 +1080,8 @@ def _emit_solve_json(
             # at the preferred wall). Empty list when no region preferences set.
             # Backward-compatible — no schema bump.
             "region_alignment": [
-                {bid: a for bid, a in layout_align} for layout_align in d.region_alignment
+                {ra.body_id: ra.alignment for ra in layout_align}
+                for layout_align in d.region_alignment
             ],
         },
     }
