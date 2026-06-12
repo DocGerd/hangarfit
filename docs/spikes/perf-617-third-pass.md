@@ -107,7 +107,7 @@
   |---|---:|
   | `test_solver_nose_out::…prefers_out` | 26.7 |
   | `test_solver_towplanner::…bundle_is_deterministic` | 21.5 |
-  | `test_solver_nose_out::…byte_identical` (×3) | ~19 each |
+  | `test_solver_nose_out` byte-identity (×3, incl. across-processes) | ~19 each |
   | `test_solver_region::test_region_pref_pulls_trailer_right` | 17.5 |
   | `test_cli_view::…untowable` · `test_towplanner_grid_heuristic::…global_cap` | ~11.6 |
   | `test_solver_parallel::…` (×2) · `test_solver_ground_objects::…byte_identical` | ~10–11 |
@@ -170,9 +170,10 @@ aircraft-only mix is identical to #540 — as expected.
 | ↳↳ polygon overlap (shapely) | 0.3 % | 25,630 | |
 
 Same conclusion as #540: **geometry-construction-bound, not predicate-bound.** You
-cannot cache your way past evaluating new candidate poses (the cache is already
-~84 % hit, the misses are genuinely-new poses); you spread that across cores
-(#544) or make the per-pose primitive cheaper.
+cannot cache your way past evaluating new candidate poses (#540 measured the
+aircraft pose cache already ~84 % hit on this path — the misses are genuinely-new
+poses, not recomputed ones); you spread that across cores (#544) or make the
+per-pose primitive cheaper.
 
 ### Routing time goes to the same place (cProfile, `roomy_three_spread_on`)
 
@@ -196,11 +197,13 @@ shapely-Polygon rebuild, now per sampled pose along every primitive.
 left variant routes fine. cProfile of the mover routing (cap-bounded for cheap
 attribution, 674 M function calls):
 
+cumtimes are **cumulative/nested** (the harness notes "do not sum") — read the
+calls and the nesting, not a column total:
+
 | symbol | cumtime | calls | reading |
 |---|---:|---:|---|
-| `_motion_clear` | 270 s (98 %) | 257,687 | per-expansion collision sweep |
-| `cached_parts_world` (aircraft obstacles) | 231 s | 520,923 | the #453 cache *is* used for aircraft |
-| **`aircraft_parts_world` (uncached — movers + towed body)** | **231 s** | **523,684** | movers **bypass** the cache → rebuilt every check |
+| `_motion_clear` | 270 s (98 %) | 257,687 | per-expansion collision sweep — the parent of all the geometry below |
+| `cached_parts_world` → `aircraft_parts_world` (nested) | ~231 s | 520,923 → 523,684 | **one** ~231 s of geometry build at two stack depths: the cache wrapper delegates on (near-total) miss, and the **+2,761 extra `aircraft_parts_world` calls are the uncached mover/towed-body path** that bypasses the cache entirely |
 | `_mover_motion_bounds_conflict` (#602) | 140 s | 260,476 | the mover swept-bounds in-transit test |
 | `shapely Polygon.__new__` | (churn) | **7.27 M** | the allocation the rebuilds produce |
 
