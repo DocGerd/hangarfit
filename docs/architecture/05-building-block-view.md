@@ -378,9 +378,11 @@ the **empty-hangar fill** case — every plane enters once (ADR-0007).
 - **Ground-object tow wiring** (#601, [ADR-0025](../adr/0025-ground-object-taxonomy.md)) —
   fixed-obstacle world parts (sorted by id for determinism) join the **static**
   obstacle set in `_build_obstacles` alongside `notch_boxes` and placed-plane
-  parts. Movers appear in `plan_fill`'s routable enumeration alongside aircraft;
-  in A1 the per-mover path search is **deferred to #602** (a mover yields
-  `path=None`, the existing best-effort pattern). With no ground objects the
+  parts. Movers are routed per-mover through `plan_path` (car → Reeds–Shepp,
+  trailer → cart motion; #602) alongside aircraft in `plan_fill`'s routable
+  enumeration; a mover the bounded search can't route keeps a best-effort
+  `Move(path=None)` and is surfaced on stderr / `diagnostics.unroutable_movers`
+  rather than silently dropped (#627/#612). With no ground objects the
   `MovesPlan` is bit-identical to before.
 - **Failure is honest** — a layout it cannot route raises
   `NoFeasiblePlanError` naming the offending plane; `solve` records it

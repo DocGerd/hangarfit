@@ -36,7 +36,7 @@ It also renders a top-down PNG so a human can sanity-check the result by eye.
 **Still explicitly out of scope:**
 
 - No tracking of hangar state across runs — each invocation is stateless.
-- No general weighted / multi-objective optimization — the only *user-supplied* soft input is a per-plane `priority` weight ([#441](https://github.com/DocGerd/hangarfit/issues/441)) that biases the built-in inter-plane spread; pins, `force_on_carts`, and the maintenance-plane assignment remain the only inputs that can make a layout invalid. On top of `priority` the solver applies two built-in soft spatial preferences — inter-plane spread ([ADR-0008](docs/adr/0008-inter-plane-spread-soft-preference.md), default-on, toggleable with `--no-spread`) and a back-of-hangar fill bias that keeps the door-side approach corridors clear ([ADR-0008 §Amendments, #320](docs/adr/0008-inter-plane-spread-soft-preference.md), default-on, toggleable with `--no-back-fill`) — but none of these ever overrides a hard constraint.
+- No general weighted / multi-objective optimization — the only *user-supplied* soft input is a per-plane `priority` weight ([#441](https://github.com/DocGerd/hangarfit/issues/441)) that biases the built-in inter-plane spread; pins, `force_on_carts`, and the maintenance-plane assignment remain the only inputs that can make a layout invalid. On top of `priority` the solver applies several built-in soft spatial preferences — inter-plane spread ([ADR-0008](docs/adr/0008-inter-plane-spread-soft-preference.md), default-on, toggleable with `--no-spread`), a back-of-hangar fill bias that keeps the door-side approach corridors clear ([ADR-0008 §Amendments, #320](docs/adr/0008-inter-plane-spread-soft-preference.md), default-on, toggleable with `--no-back-fill`), and a soft right/left region preference that biases placed glider trailers toward a chosen hangar wall ([#604](https://github.com/DocGerd/hangarfit/issues/604), surfaced as `region_alignment` in `solve` output) — but none of these ever overrides a hard constraint.
 - No interactive editing GUI, server, or web app — the Phase 4 `hangarfit view` 3D viewer is a **read-only**, self-contained HTML *artifact* (like the PNG), not a live frontend you author layouts in.
 - No handling of late arrivals as a live event stream.
 - Multi-plane *rearrangement* (move planes around an already-occupied hangar). The tow planner only handles **empty-hangar fill** — every plane enters once. Rearrangement is planner v2+ territory.
@@ -171,7 +171,7 @@ The test suite includes a strut-aware golden set for the collision checker cover
 
 ```
 src/hangarfit/      # models, loader, geometry, collisions, solver, towplanner, visualize, scene, viewer, metrics, cli
-data/               # fleet.yaml, hangar.yaml — synthetic placeholder measurements
+data/               # fleet.yaml (thin manifest), hangar.yaml, catalog/ (per-object specs)
 examples/           # demo + real-world example artifacts (not shipped in the wheel)
   layouts/          #   hand-authored candidate layouts, one YAML per scenario
   herrenteich/      #   the real DWG-measured Airfield Herrenteich dataset
