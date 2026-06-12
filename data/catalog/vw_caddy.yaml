@@ -6,6 +6,7 @@ id: vw_caddy
 name: "VW Caddy Maxi (rescue vehicle)"
 turn_radius_m: 5.5        # carried for #602 routing; unused by static check
 measured: false
+hard_door_mover: true    # rescue vehicle: must keep a clear drive-out egress (#603)
 parts:
   - kind: ground
     length_m: 4.88        # VW Caddy Maxi overall length (manufacturer)

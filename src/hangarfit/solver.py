@@ -48,7 +48,7 @@ from hangarfit.models import (
     SolveResult,
     SolveStatus,
 )
-from hangarfit.towplanner import MovesPlan, NoFeasiblePlanError, plan_fill
+from hangarfit.towplanner import MovesPlan, NoFeasiblePlanError, egress_first_conflict, plan_fill
 
 _logger = logging.getLogger(__name__)
 
@@ -750,16 +750,30 @@ def _tow_plan_layouts(
             # exactly what a bare ``plan_fill(layout)`` applies; an explicit
             # euclidean / custom budget takes the kwargs path below.
             if tow_heuristic == "grid" and tow_max_expansions is None:
-                built.append(plan_fill(layout, apron_dropped_out=layout_drops))
+                plan = plan_fill(layout, apron_dropped_out=layout_drops)
             else:
-                built.append(
-                    plan_fill(
+                plan = plan_fill(
+                    layout,
+                    heuristic=tow_heuristic,
+                    max_expansions=tow_max_expansions,
+                    apron_dropped_out=layout_drops,
+                )
+            # #603: a hard-door mover (e.g. the rescue Caddy) must be able to drive
+            # OUT the door against the full parked scene, else the layout is
+            # operationally useless -> record it un-routable (exit 3) via the same
+            # NoFeasiblePlanError path as a boxed-in plane. Inert (byte-identical)
+            # when no hard-door mover is present (the loop body never runs).
+            for gp in layout.ground_object_placements:
+                if layout.ground_objects[gp.plane_id].hard_door_mover:
+                    egress = egress_first_conflict(
                         layout,
+                        gp.plane_id,
                         heuristic=tow_heuristic,
                         max_expansions=tow_max_expansions,
-                        apron_dropped_out=layout_drops,
                     )
-                )
+                    if egress is not None:
+                        raise NoFeasiblePlanError(gp.plane_id, egress)
+            built.append(plan)
             apron_drops.extend(layout_drops)
         except NoFeasiblePlanError as e:
             built.append(None)

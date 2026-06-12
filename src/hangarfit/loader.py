@@ -1265,7 +1265,9 @@ def _build_aircraft(entry: Any) -> Aircraft:
 # ignored field. Movers (car/trailer) may carry an explicit motion_mode override
 # and a static turn_radius_m (carried for #602's routing; unused in #601).
 _ALLOWED_FIXED_OBSTACLE_KEYS = frozenset({"id", "name", "parts", "measured"})
-_ALLOWED_MOVER_KEYS = frozenset({"id", "name", "parts", "measured", "motion_mode", "turn_radius_m"})
+_ALLOWED_MOVER_KEYS = frozenset(
+    {"id", "name", "parts", "measured", "motion_mode", "turn_radius_m", "hard_door_mover"}
+)
 
 
 def _build_ground_parts(entry: dict[str, Any]) -> tuple[Part, ...]:
@@ -1322,6 +1324,7 @@ def _build_mover(entry: Any, *, default_motion: MoverMotionMode) -> GroundObject
         motion_mode=motion_raw,
         turn_radius_m=None if tr_raw is None else _to_float(tr_raw, "turn_radius_m"),
         measured=_to_bool(entry.get("measured", False), "measured"),
+        hard_door_mover=_to_bool(entry.get("hard_door_mover", False), "hard_door_mover"),
     )
 
 

@@ -454,6 +454,7 @@ class GroundObject:
     motion_mode: MoverMotionMode | None = None
     turn_radius_m: float | None = None
     measured: bool = False
+    hard_door_mover: bool = False
 
     def __post_init__(self) -> None:
         if not self.id:
@@ -483,6 +484,12 @@ class GroundObject:
                 raise ValueError(
                     f"GroundObject {self.id!r}: a fixed_obstacle must not carry a "
                     f"turn_radius_m — it never moves"
+                )
+            if self.hard_door_mover:
+                raise ValueError(
+                    f"GroundObject {self.id!r}: a fixed_obstacle must not set "
+                    f"hard_door_mover=True — only a placed_routed_mover may be a "
+                    f"hard-door (egress) mover"
                 )
         else:  # placed_routed_mover
             if self.motion_mode not in _VALID_MOVER_MOTION_MODES:
