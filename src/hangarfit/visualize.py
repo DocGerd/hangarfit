@@ -377,7 +377,7 @@ def _draw_fixed_obstacles(ax: Any, layout: Layout) -> None:
                     closed=True,
                     facecolor="none",
                     edgecolor=_HANGAR_EDGE,
-                    hatch="oo",  # distinct from the notch "xx": an object, not absent floor
+                    hatch="oo",  # a distinct hatch from the structural notch's
                     lw=1.5,
                     zorder=0,
                 )
@@ -405,6 +405,8 @@ def _draw_movers(ax: Any, layout: Layout) -> None:
             continue
         for wp in aircraft_parts_world(obj, gp):
             _draw_part(ax, wp, _MOVER_FILL)
+        # Label above the near-opaque mover body (z=2) and any tow-path overlay,
+        # so it stays legible where a mover sits under an aircraft wing.
         ax.text(
             gp.x_m,
             gp.y_m,
@@ -540,14 +542,13 @@ def _draw_part(ax: Any, part: WorldPart, color: str) -> None:
             zorder=4,
         )
     elif part.kind == "ground":
-        # Ground-object footprint (#601): solid keep-out, drawn opaque like a
-        # fuselage body at the fuselage z-level (above wings).
-        # NOTE: currently UNREACHABLE — render_layout/scene iterate only
-        # layout.placements (aircraft), never ground_object_placements, so no
-        # ground WorldPart reaches _draw_part yet. This branch is a forward hook
-        # for #606 (ground-object rendering) AND satisfies the closed-PartKind
-        # exhaustiveness contract (the else-raise below must stay reachable for
-        # any future unknown kind).
+        # Ground-object footprint (#601): a placed/routed mover body (car /
+        # trailer), drawn near-opaque like a fuselage body at the fuselage
+        # z-level (above wings). Reached via :func:`_draw_movers` (#606); fixed
+        # obstacles take the hatched-keep-out path in :func:`_draw_fixed_obstacles`
+        # instead, so only ``placed_routed_mover`` parts arrive here. Keeping the
+        # branch also satisfies the closed-``PartKind`` exhaustiveness contract
+        # (the else-raise below stays reachable for any future unknown kind).
         patch = MplPolygon(
             coords,
             closed=True,
