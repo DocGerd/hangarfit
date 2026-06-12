@@ -42,8 +42,9 @@ A static check: test whether the `hard_door_mover` is the front-most body
 (`nearest_door_mover`) at exit 2.
 
 **Rejected** — falsified by the real `examples/herrenteich/layout_full.yaml`.
-In the calibrated 11-body arrangement, `cessna_140` parks with its min-y vertex
-at `y ≈ 0.01 m` and `ctsl` at `y ≈ 0.03 m` — both forward of the Caddy
+In the calibrated 12-body arrangement (8 aircraft + 4 ground objects),
+`cessna_140` parks with its min-y vertex at `y ≈ 0.01 m` and `ctsl` at
+`y ≈ 0.03 m` — both forward of the Caddy
 (`y ≈ 5.82 m`), and both *within the Caddy's own x-lane* laterally. The predicate
 "front-most among all bodies" is structurally unachievable in a packed hangar:
 aircraft noses park as close to the door as geometry permits, and in any dense
@@ -77,8 +78,10 @@ the door against the full parked scene. A blocked egress raises
 A `GroundObject` with `hard_door_mover: true` must be able to drive OUT the door
 against the full parked scene (all aircraft + all other ground objects in their
 parked positions). The check is implemented by `egress_first_conflict`
-in `src/hangarfit/towplanner.py`, which calls `plan_path` from the parked slot
-toward a door-cone set of exit poses.
+in `src/hangarfit/towplanner.py`, which — by the reversibility below — runs the
+equivalent **entry** search: `plan_path` from a door-cone of start poses *to* the
+parked slot, against the full parked scene (the mover excluded from `placed`,
+re-injected per sample).
 
 **Reeds–Shepp reversibility (ADR-0010):** an egress (slot → out) is feasible if
 and only if an equivalent entry (door → slot) path exists. The closed-form
@@ -102,15 +105,16 @@ the `vw_caddy` catalog entry sets it to `true`.
 ### Known-hard finding: `layout_full` Caddy is egress-blocked
 
 The calibrated `examples/herrenteich/layout_full.yaml` (8 aircraft + 4 ground
-objects, the all-11 reference layout added in #605) places the Caddy at
-`(x=11.57, y=8.26, heading=180°)` — 5th-deepest of the 11 bodies, its front edge
-at `y ≈ 5.82 m` within the door window, boxed behind `cessna_140` (`y ≈ 0.01 m`).
-A bounded scan of **96 door-adjacent Caddy poses** found **2 collision-free** and
-**0 egress-routable** — the same geometric packing wall encountered in #599.
+objects = 12 bodies, the reference layout added in #605) places the Caddy at
+`(x=11.57, y=8.26, heading=180°)`, its front edge at `y ≈ 5.82 m` within the door
+window — boxed behind `cessna_140` (front edge `y ≈ 0.01 m`) and other bodies
+parked forward of it. A bounded scan of **96 door-adjacent Caddy poses** found
+**2 collision-free** and **0 egress-routable** — the same geometric packing wall
+encountered in #599.
 
 `layout_full.yaml` is **NOT modified**. It is the real-data reference for the
 herrenteich full set; its Caddy block is a correct and expected verdict from the
-verifier. Making the Caddy egress-routable requires re-nesting the full 11-body
+verifier. Making the Caddy egress-routable requires re-nesting the full 12-body
 set, which is gated on the learned backend (Epic C, #607).
 
 #603 ships the **deterministic verifier machinery**: the egress oracle correctly
@@ -133,10 +137,13 @@ identifies the blockage and reports it as tow-unroutable.
 
 - The egress check adds one `plan_path` call per `hard_door_mover` body per
   candidate layout evaluated by the solver. For the current fleet (one Caddy)
-  this is one additional path search per layout. The search is bounded by the
-  same Hybrid-A\* expansion cap as aircraft routing, so cost is predictable.
+  this is one additional path search per layout. The search is bounded by a fixed
+  Hybrid-A\* expansion cap — the full per-plane budget, deliberately *not* the
+  globally-capped `min(budget, remaining)` that `plan_fill` applies to the same
+  mover during a fill, so an exhausted fill budget can never falsely declare the
+  rescue vehicle trapped. Cost is predictable and deterministic.
 - The real `layout_full.yaml` now surfaces an exit-3 verdict. This is the
-  correct result but means the all-11 reference layout is not fully tow-routable
+  correct result but means the 12-body reference layout is not fully tow-routable
   until a re-nesting solution is found (#607).
 
 ### Neutral

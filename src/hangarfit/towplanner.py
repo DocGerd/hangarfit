@@ -1324,7 +1324,12 @@ def egress_first_conflict(
     keep-out and every other parked body. Closed-form, RNG-free. Returns a
     ``caddy_egress`` :class:`~hangarfit.models.Conflict` when blocked."""
     mover = target.ground_objects[mover_id]
-    slot = next(gp for gp in target.ground_object_placements if gp.plane_id == mover_id)
+    slot = next((gp for gp in target.ground_object_placements if gp.plane_id == mover_id), None)
+    if slot is None:
+        raise ValueError(
+            f"egress_first_conflict: hard-door mover {mover_id!r} has no placement in "
+            f"target.ground_object_placements (nothing to check egress for)"
+        )
     placed = Layout(
         fleet=target.fleet,
         hangar=target.hangar,
@@ -1336,6 +1341,11 @@ def egress_first_conflict(
         ),
     )
     cone = entry_poses(slot, target.hangar)
+    # The egress gate is the AUTHORITATIVE safety verdict, so it routes with the
+    # full per-plane budget — deliberately NOT the globally-capped
+    # min(budget, remaining) that plan_fill applies to the same mover during a
+    # fill (an exhausted fill budget must never falsely declare the rescue vehicle
+    # trapped). Fixed _MAX_EXPANSIONS, RNG-free => deterministic (ADR-0003).
     budget = _MAX_EXPANSIONS if max_expansions is None else max_expansions
     try:
         plan_path(

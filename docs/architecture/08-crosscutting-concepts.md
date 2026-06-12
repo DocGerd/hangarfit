@@ -230,11 +230,12 @@ door** against the full parked scene in any valid layout. This is a
 it is not a geometric position test but a full tow-path search.
 
 The check is implemented by `egress_first_conflict` in
-`src/hangarfit/towplanner.py`, which calls `plan_path` (Reeds–Shepp,
-[ADR-0010](../adr/0010-reeds-shepp-motion-model.md)) from the mover's parked
-slot toward a set of door-exit poses. By Reeds–Shepp reversibility, an egress
+`src/hangarfit/towplanner.py`. By Reeds–Shepp reversibility an egress
 (slot → out) is feasible if and only if the equivalent entry path (door → slot)
-exists — the same closed-form search serves both directions. A blocked egress
+exists, so it runs the **entry** search via `plan_path` (Reeds–Shepp,
+[ADR-0010](../adr/0010-reeds-shepp-motion-model.md)) — from a door-cone of start
+poses *to* the parked slot, against the full parked scene — one closed-form
+search serving both directions. A blocked egress
 raises `NoFeasiblePlanError` in `solver._tow_plan_layouts`, producing **exit 3
 (tow-unroutable)** with the mover id named on stderr.
 
