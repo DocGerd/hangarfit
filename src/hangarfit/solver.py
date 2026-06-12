@@ -33,13 +33,14 @@ from dataclasses import replace
 from typing import Literal, NamedTuple, cast
 
 from hangarfit.collisions import check as check_layout
-from hangarfit.geometry import WorldPart, cached_parts_world, pose_cache_scope
+from hangarfit.geometry import WorldPart, aircraft_parts_world, cached_parts_world, pose_cache_scope
 from hangarfit.models import (
     Aircraft,
     ApronShallowDrop,
     CheckResult,
     Conflict,
     DiversityConfig,
+    GroundObject,
     Layout,
     Placement,
     Scenario,
@@ -1177,6 +1178,30 @@ def _initial_placement_for_plane(
         y_m=y,
         heading_deg=heading,
         on_carts=on_carts,
+    )
+
+
+def _body(scenario: Scenario, body_id: str) -> Aircraft | GroundObject:
+    """Resolve a placeable body id to its Aircraft or GroundObject definition (#604).
+
+    Aircraft (``fleet``) are checked first so the common, pre-#604 path is
+    unchanged; a placed_routed_mover id falls through to ``ground_object_defs``."""
+    plane = scenario.fleet.get(body_id)
+    if plane is not None:
+        return plane
+    return scenario.ground_object_defs[body_id]
+
+
+def _body_parts_world(scenario: Scenario, body_id: str, placement: Placement) -> list[WorldPart]:
+    """World parts for any placeable body (#604). Aircraft reuse the pose-memoized
+    ``cached_parts_world`` — BYTE-IDENTICAL to the pre-#604 solver path (ADR-0003);
+    a GroundObject mover goes through the union-typed uncached ``aircraft_parts_world``,
+    matching exactly how the towplanner computes mover geometry (#602)."""
+    body = _body(scenario, body_id)
+    return list(
+        cached_parts_world(body, placement)
+        if isinstance(body, Aircraft)
+        else aircraft_parts_world(body, placement)
     )
 
 
