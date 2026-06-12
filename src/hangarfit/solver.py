@@ -1275,7 +1275,7 @@ def _inter_plane_energy(
     if len(ids) < 2:
         return 0.0
     world: dict[str, list[WorldPart]] = {
-        pid: cached_parts_world(scenario.fleet[pid], placements[pid]) for pid in ids
+        pid: _body_parts_world(scenario, pid, placements[pid]) for pid in ids
     }
     w = {pid: _priority_weight(scenario, pid) for pid in ids}
     energy = 0.0
@@ -1344,7 +1344,7 @@ def _spread_quality(
     if len(ids) < 2:
         return (math.inf, 0.0)
     world: dict[str, list[WorldPart]] = {
-        pid: cached_parts_world(scenario.fleet[pid], placements[pid]) for pid in ids
+        pid: _body_parts_world(scenario, pid, placements[pid]) for pid in ids
     }
     w = {pid: _priority_weight(scenario, pid) for pid in ids}
     min_gap = math.inf
