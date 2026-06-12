@@ -52,10 +52,18 @@ from hangarfit.models import (
     Placement,
 )
 
-SegmentKind = Literal["L", "S", "R"]
+# Steering/translation kinds. ``L``/``S``/``R`` are the Reeds–Shepp steerings
+# (left arc, straight, right arc). ``T`` is the cart-only **lateral translate**
+# (strafe): a slide PERPENDICULAR to the heading, heading unchanged (#599,
+# ADR-0010 amendment). ``T`` is emitted only at ``turn_radius_m == 0`` — it lets
+# a broadside-parked plane (e.g. an 18 m glider too wide to enter a narrower door
+# nose-in) slide in side-on instead of pivoting in place. It never appears in a
+# Reeds–Shepp/Dubins word (those stay ``L``/``S``/``R``).
+SegmentKind = Literal["L", "S", "R", "T"]
 _VALID_SEGMENT_KINDS = frozenset(typing.get_args(SegmentKind))
 
 # A Dubins "word": the ordered kinds of its three legs (e.g. ("L", "S", "R")).
+# Always L/S/R — the lateral ``T`` is a cart primitive, never a closed-form word.
 _DubinsWord = tuple[SegmentKind, SegmentKind, SegmentKind]
 
 
@@ -150,6 +158,16 @@ class DubinsArc:
                 # Reverse negates the translation step (drive −cos/−sin).
                 x += gear * step * math.cos(theta)
                 y += gear * step * math.sin(theta)
+            elif seg.kind == "T":
+                # Lateral slide (cart strafe, #599 / ADR-0010): translate
+                # PERPENDICULAR to the heading; heading is unchanged. The +1
+                # strafe direction is the math-left of the heading (θ + 90°) =
+                # (−sin θ, cos θ); gear −1 strafes right. At heading 90° (θ = 0)
+                # a +1 strafe moves +y — i.e. straight in through the door. Only
+                # ever emitted for carts (r == 0), but the integration is
+                # radius-independent (a pure translation).
+                x += gear * step * -math.sin(theta)
+                y += gear * step * math.cos(theta)
             else:  # "L"/"R": arc of radius r; r == 0 => cart pivot in place
                 sign = 1.0 if seg.kind == "L" else -1.0
                 if r == 0.0:
@@ -194,7 +212,9 @@ class DubinsArc:
         trans_len = 0.0  # true translation distance (excludes pivots)
         sweep_deg = 0.0  # total heading sweep
         for s in self.segments:
-            if s.kind == "S":
+            if s.kind == "S" or s.kind == "T":
+                # "S" along heading, "T" perpendicular (#599) — both are pure
+                # translations of `length_m` metres, so both add to trans_len.
                 trans_len += s.length_m
             elif self.turn_radius_m > 0.0:  # real arc: length_m is arc length
                 trans_len += s.length_m
@@ -454,8 +474,11 @@ def plan_dubins(start: Pose, end: Pose, *, turn_radius_m: float) -> DubinsArc:
 # ---------------------------------------------------------------------------
 
 
-def _plan_cart(start: Pose, end: Pose, *, allow_reverse: bool) -> DubinsArc:
-    """Cart path (``turn_radius_m == 0``): pivot-in-place, or pivot-straight-pivot.
+def _plan_cart(
+    start: Pose, end: Pose, *, allow_reverse: bool, lateral_ok: bool = False
+) -> DubinsArc:
+    """Zero-radius path (``turn_radius_m == 0``): pivot-in-place, pivot-straight-pivot,
+    or — for a plane on a dolly — a lateral slide.
 
     With ``allow_reverse`` (Reeds–Shepp), the straight leg may be driven in
     reverse — pivot to the *reverse* bearing, back straight, pivot to the final
@@ -464,6 +487,14 @@ def _plan_cart(start: Pose, end: Pose, *, allow_reverse: bool) -> DubinsArc:
     0-cusp drives, so forward wins only on an exact tie). Without it (Dubins)
     only the forward option is considered, preserving the exact forward-only
     behaviour ``plan_dubins`` shipped.
+
+    ``lateral_ok`` (#599 / ADR-0010) adds a third candidate — *pivot to the final
+    heading, then straight (along) + strafe (perpendicular)* — so a plane on a
+    dolly/cart slides straight into a broadside slot. It is emitted ONLY for a
+    cart-borne mover (``mover_on_carts``); a free-swivel / pivot-in-place plane is
+    ``r == 0`` too but cannot strafe, so it keeps ``lateral_ok=False`` (pivots +
+    straights only). The candidate only wins when strictly cheaper (broadside
+    geometry), so the forward/reverse selection is unchanged otherwise.
     """
     dx = end.x_m - start.x_m
     dy = end.y_m - start.y_m
@@ -498,32 +529,49 @@ def _plan_cart(start: Pose, end: Pose, *, allow_reverse: bool) -> DubinsArc:
             segs.append(Segment(k3, abs(math.radians(seg3_deg))))
         return tuple(segs)
 
+    def _pivot_then_slide() -> tuple[Segment, ...]:
+        # Lateral cart connector (#599 / ADR-0010): pivot in place to the FINAL
+        # heading, then reach the goal point with a straight (along heading) +
+        # a lateral strafe (perpendicular). Lets a broadside-parked plane slide
+        # straight in instead of pivoting twice. Reaches (end.x, end.y,
+        # end.heading) exactly (the roundtrip-grid test is the proof).
+        segs: list[Segment] = []
+        pivot_deg = (end.heading_deg - start.heading_deg + 180.0) % 360.0 - 180.0
+        if abs(pivot_deg) > 1e-9:
+            pk: SegmentKind = "R" if pivot_deg >= 0.0 else "L"
+            segs.append(Segment(pk, abs(math.radians(pivot_deg))))
+        # Decompose the displacement in the FINAL heading frame: component along
+        # the heading is a straight, perpendicular is a strafe.
+        theta_e = compass_to_math_rad(end.heading_deg)
+        s_along = dx * math.cos(theta_e) + dy * math.sin(theta_e)
+        s_perp = dx * -math.sin(theta_e) + dy * math.cos(theta_e)
+        if abs(s_along) > 1e-9:
+            segs.append(Segment("S", abs(s_along), gear=1 if s_along >= 0.0 else -1))
+        if abs(s_perp) > 1e-9:
+            segs.append(Segment("T", abs(s_perp), gear=1 if s_perp >= 0.0 else -1))
+        # dist > 1e-9 here (the pure-pivot case returned earlier), so at least
+        # one of s_along/s_perp is non-zero and `segs` is non-empty.
+        return tuple(segs)
+
     forward = _pivot_straight_pivot(reverse=False)
     if not allow_reverse:
+        # Dubins (forward-only) mode: preserve the exact legacy path — no
+        # reverse, no lateral (plan_dubins shipped pivot-straight-pivot only).
         return DubinsArc(start, end, 0.0, forward)
     reverse = _pivot_straight_pivot(reverse=True)
-    # Weighted cost: pivots are cheap angular moves; the straight leg's metres
-    # carry the reverse factor when backing. Strict < keeps forward on an exact
-    # tie (determinism, ADR-0003) — and forward is the earlier-listed option.
-    best = min(
-        (forward, reverse),
-        key=lambda segs: math.fsum(_cart_seg_weight(s) for s in segs),
-    )
-    # Tie-break must prefer forward on EXACT equality; min() returns the first
-    # argument on a tie, and `forward` is first, so this is already correct.
+    # The lateral slide is only available to a cart-borne mover (#599); a
+    # pivot-in-place plane (free-swivel tailwheel) cannot strafe, so it is offered
+    # forward/reverse only.
+    candidates = (forward, reverse) + ((_pivot_then_slide(),) if lateral_ok else ())
+    # Rank by the #480 fewest-moves cost (cusp-aware _segments_cost). For the
+    # forward-vs-reverse pair this is monotonic in total pivot magnitude (equal
+    # straight metres, both 0-cusp single drives), so their selection is UNCHANGED
+    # from the prior pivot-magnitude (length) ranking; the lateral candidate only
+    # wins when strictly cheaper (broadside geometry), where it removes the double
+    # pivot. min() keeps the first listed on an exact tie — forward, then reverse,
+    # then lateral — for determinism (ADR-0003).
+    best = min(candidates, key=lambda segs: _segments_cost(segs, 0.0))
     return DubinsArc(start, end, 0.0, best)
-
-
-def _cart_seg_weight(seg: Segment) -> float:
-    """Unweighted cost of one cart segment for the forward-vs-reverse choice: a
-    pivot's radians (cheap, gear-agnostic) or a straight's metres. Reverse is no
-    longer taxed per-metre (#480) — both the forward and reverse
-    pivot-straight-pivot candidates are single drives (0 cusps under the
-    translating-legs-only rule), so :func:`_plan_cart`'s ``min`` reduces to a
-    pure length comparison with forward kept on an exact tie (forward first)."""
-    if seg.kind != "S":
-        return seg.length_m  # pivot: length_m is radians
-    return seg.length_m
 
 
 # ---------------------------------------------------------------------------
@@ -871,7 +919,9 @@ def _rs_word_reaches(word: _RSWord, x: float, y: float, phi: float) -> bool:
     )
 
 
-def plan_reeds_shepp(start: Pose, end: Pose, *, turn_radius_m: float) -> DubinsArc:
+def plan_reeds_shepp(
+    start: Pose, end: Pose, *, turn_radius_m: float, lateral: bool = False
+) -> DubinsArc:
     """Closed-form fewest-moves Reeds–Shepp path from ``start`` to ``end`` (ADR-0010).
 
     Reeds–Shepp extends Dubins with reverse arcs and straights, so a plane can
@@ -880,8 +930,10 @@ def plan_reeds_shepp(start: Pose, end: Pose, *, turn_radius_m: float) -> DubinsA
     length plus a fixed per-cusp (direction-change) penalty, so reverse is not
     taxed per-metre and forward is preferred only as the tie-break. Still
     closed-form and RNG-free, so the ADR-0003 byte-identical-plan contract holds.
-    ``turn_radius_m == 0`` is the cart case and delegates to :func:`_plan_cart`
-    with reverse enabled (a carted plane may back straight out of a slot).
+    ``turn_radius_m == 0`` is the zero-radius case and delegates to
+    :func:`_plan_cart` with reverse enabled (it may back straight out of a slot);
+    ``lateral`` (#599) is forwarded so a cart-borne mover may also slide in
+    sideways (a free-swivel pivot-in-place plane passes ``lateral=False``).
 
     Works in the standard math frame: positions pass through unchanged; headings
     convert via :func:`compass_to_math_rad`. The integrated endpoint
@@ -892,7 +944,7 @@ def plan_reeds_shepp(start: Pose, end: Pose, *, turn_radius_m: float) -> DubinsA
         raise ValueError(f"turn_radius_m must be finite and >= 0, got {turn_radius_m}")
 
     if turn_radius_m == 0.0:
-        return _plan_cart(start, end, allow_reverse=True)
+        return _plan_cart(start, end, allow_reverse=True, lateral_ok=lateral)
 
     r = turn_radius_m
     # Express the goal in the start frame, scaled to unit turn radius. The math
@@ -990,6 +1042,16 @@ _REVERSE_CONE_HEADINGS: tuple[float, ...] = (150.0, 165.0, 180.0, 195.0, 210.0)
 # ±30° span plus margin (so headings in [135, 225] qualify).
 _REAR_CONE_HALF_ANGLE_DEG = 45.0
 
+# Broadside entry cone (#599): emitted iff the TARGET parked heading is broadside
+# — within this half-angle of 90° or 270° (side-on to the entry axis). Motivating
+# case: a plane too wide to enter nose-in (an 18 m span vs the 13.46 m Herrenteich
+# door) that must slide in side-on via the cart lateral primitive (ADR-0010). The
+# cone is `_BROADSIDE_CONE_OFFSETS` around BOTH the target heading and
+# target + 180° (either side-on approach). Gated like the rear cone, so nose-in
+# targets keep the forward cone only and their grid stays byte-identical.
+_BROADSIDE_CONE_OFFSETS: tuple[float, ...] = (-30.0, -15.0, 0.0, 15.0, 30.0)
+_BROADSIDE_GATE_HALF_ANGLE_DEG = 45.0
+
 
 def entry_poses(target: Placement, hangar: Hangar) -> tuple[Pose, ...]:
     """All entry / apron start poses for a plane heading to ``target`` (#262, #412).
@@ -1073,7 +1135,21 @@ def entry_poses(target: Placement, hangar: Hangar) -> tuple[Pose, ...]:
     # can then be backed in (cheap under the cusp cost, ADR-0010 #480 amendment)
     # instead of pirouetting inside; a nose-in slot keeps the forward cone only.
     nose_out = abs(_wrap180(target.heading_deg - 180.0)) <= _REAR_CONE_HALF_ANGLE_DEG
+    broadside = (
+        abs(_wrap180(target.heading_deg - 90.0)) <= _BROADSIDE_GATE_HALF_ANGLE_DEG
+        or abs(_wrap180(target.heading_deg - 270.0)) <= _BROADSIDE_GATE_HALF_ANGLE_DEG
+    )
     headings: tuple[float, ...] = _CONE_HEADINGS + (_REVERSE_CONE_HEADINGS if nose_out else ())
+    if broadside:
+        # Side-on seeds around the target heading and its reverse, so the search
+        # may slide the plane in from either side; the cart lateral primitive
+        # (#599) then carries it straight in. Duplicate (x, y, heading) triples
+        # are dropped by the `seen` set below.
+        headings = (
+            headings
+            + tuple((target.heading_deg + off) % 360.0 for off in _BROADSIDE_CONE_OFFSETS)
+            + tuple((target.heading_deg + 180.0 + off) % 360.0 for off in _BROADSIDE_CONE_OFFSETS)
+        )
 
     seen: set[tuple[float, float, float]] = set()
     poses: list[Pose] = []
@@ -1737,7 +1813,7 @@ _SEARCH_STEP_M = 0.25
 _SEARCH_STEP_DEG = 5.0
 
 
-def _primitives(turn_radius_m: float) -> tuple[Segment, ...]:
+def _primitives(turn_radius_m: float, *, lateral: bool = False) -> tuple[Segment, ...]:
     """The fixed motion-primitive fan, in deterministic order (ADR-0010 v2).
 
     Own-gear (``r > 0``): **six primitives** in fixed order ``Lf, Sf, Rf, Lr,
@@ -1748,24 +1824,36 @@ def _primitives(turn_radius_m: float) -> tuple[Segment, ...]:
     (ADR-0003).
 
     Own-gear (``r > 0``): each arc/straight is ``step`` metres, chosen so a turn
-    changes heading by ~one heading cell. Cart (``r == 0``): a reverse PIVOT
-    rotates heading the same way as the forward pivot of the *opposite* steering
-    (``pose_at`` holds position fixed and flips the heading delta for a reverse
-    leg), so ``Lr``/``Rr`` are exact duplicates of ``Rf``/``Lf`` and would only
-    ever lose the ``best_g`` race to their cheaper forward twin — pure dead work
-    (an extra ``_motion_clear`` sweep per expansion that can never win). They are
-    therefore omitted: the cart fan is the four useful moves ``Lf, Sf, Rf, Sr``
-    (forward pivots + straight, plus the genuinely-new **reverse straight** that
-    backs the cart up). Fixed order ⇒ deterministic expansion (ADR-0003).
+    changes heading by ~one heading cell. Zero-radius (``r == 0``): a reverse
+    PIVOT rotates heading the same way as the forward pivot of the *opposite*
+    steering (``pose_at`` holds position fixed and flips the heading delta for a
+    reverse leg), so ``Lr``/``Rr`` are exact duplicates of ``Rf``/``Lf`` and
+    would only ever lose the ``best_g`` race to their cheaper forward twin — pure
+    dead work. They are therefore omitted: the zero-radius fan is ``Lf, Sf, Rf,
+    Sr`` (in-place pivots + straight, plus the genuinely-new **reverse straight**
+    that backs up).
+
+    ``lateral`` (#599 / ADR-0010) appends the two **strafe** primitives ``Tf,
+    Tr`` (a slide perpendicular to the heading, either side) to the zero-radius
+    fan — emitted ONLY for a plane on a dolly/cart (``mover_on_carts``). A
+    free-swivel / pivot-in-place plane (a castering tailwheel taildragger) is
+    ``r == 0`` too but is towed on its wheels, which roll fore/aft only — it
+    **cannot strafe** — so it gets ``lateral=False`` and the pivot+straight fan.
+    The strafes are listed LAST so an existing pivot/straight path still wins a
+    cost tie (minimal byte-identity churn). Fixed order ⇒ deterministic
+    expansion (ADR-0003).
     """
     if turn_radius_m == 0.0:
         dtheta = math.radians(_GRID_DEG)
-        return (
+        base = (
             Segment("L", dtheta),
             Segment("S", _GRID_XY_M),
             Segment("R", dtheta),
             Segment("S", _GRID_XY_M, gear=-1),
         )
+        if not lateral:
+            return base  # pivot-in-place only (free-swivel): no strafe.
+        return base + (Segment("T", _GRID_XY_M), Segment("T", _GRID_XY_M, gear=-1))
     step = max(_GRID_XY_M, turn_radius_m * math.radians(_GRID_DEG))
     return (
         Segment("L", step),
@@ -1798,7 +1886,8 @@ def _seg_cost(seg: Segment, turn_radius_m: float) -> float:
     an additive :data:`CUSP_PENALTY` per cusp, in the expansion loop (which knows
     the parent's travel direction); a single segment has no cusp. Forward
     preference survives as the fixed primitive-order tie-break."""
-    if seg.kind == "S":
+    if seg.kind == "S" or seg.kind == "T":
+        # "S" along heading, "T" lateral (#599): both pure translations, metres.
         return seg.length_m
     if turn_radius_m > 0.0:
         return seg.length_m + _TURN_PENALTY * (seg.length_m / turn_radius_m)
@@ -2387,7 +2476,7 @@ def plan_path(
     # keeps the pre-#480 routing speed (returns at the first clean shot).
     best_seed: tuple[float, DubinsArc] | None = None
     for start_pose in start_poses:
-        seed_arc = plan_reeds_shepp(start_pose, goal, turn_radius_m=r)
+        seed_arc = plan_reeds_shepp(start_pose, goal, turn_radius_m=r, lateral=mover_on_carts)
         seed_cost = _segments_cost(seed_arc.segments, r)
         if best_seed is not None and seed_cost >= best_seed[0]:
             continue  # can't beat the best clean seed — skip the costly checks
@@ -2449,7 +2538,7 @@ def plan_path(
         # path is exact-oracle-clean no matter what the fast checker accepted
         # during search. The `and` short-circuits left-to-right, so the cheap
         # `_motion_clear` screen always runs before the costly oracle.
-        final_arc = plan_reeds_shepp(node.pose, goal, turn_radius_m=r)
+        final_arc = plan_reeds_shepp(node.pose, goal, turn_radius_m=r, lateral=mover_on_carts)
         if all(
             _motion_clear(mover, p, obstacles, motion_hangar)
             for p in final_arc.sample(step_m=_SEARCH_STEP_M, step_deg=_SEARCH_STEP_DEG)
@@ -2496,7 +2585,7 @@ def plan_path(
 
         # Primitive expansion (fixed order L, S, R for determinism). An edge is
         # valid iff every sampled pose is clear per the fast checker.
-        for seg in _primitives(r):
+        for seg in _primitives(r, lateral=mover_on_carts):
             child_pose = _step_pose(node.pose, seg, r)
             edge = DubinsArc(node.pose, child_pose, r, (seg,))
             if not all(

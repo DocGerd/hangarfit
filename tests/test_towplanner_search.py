@@ -38,12 +38,10 @@ def test_primitives_own_gear_are_six_in_lf_sf_rf_lr_sr_rr_order() -> None:
     assert all(s.length_m > 0.0 for s in segs)
 
 
-def test_primitives_cart_are_four_pivot_straight_in_order() -> None:
-    # Cart (r == 0): four primitives Lf, Sf, Rf, Sr. Pivots encode one heading
-    # cell in radians; the straights encode metres. The reverse STRAIGHT is the
-    # genuinely-new cart move (ADR-0010); reverse pivots are omitted because a
-    # reverse pivot rotates heading the same way as the opposite forward pivot
-    # (an exact duplicate that always loses the best_g race — pure dead work).
+def test_primitives_zero_radius_default_is_pivot_straight_no_strafe() -> None:
+    # Zero-radius DEFAULT (a free-swivel / pivot-in-place plane, NOT on a dolly):
+    # Lf, Sf, Rf, Sr only — pivots + straights, NO strafe (#599). It rolls on its
+    # wheels (fore/aft) and turns on the spot, but cannot slide sideways.
     segs = _primitives(turn_radius_m=0.0)
     assert [s.kind for s in segs] == ["L", "S", "R", "S"]
     assert [s.gear for s in segs] == [1, 1, 1, -1]
@@ -51,6 +49,17 @@ def test_primitives_cart_are_four_pivot_straight_in_order() -> None:
     assert segs[1].length_m == pytest.approx(0.5)
     assert segs[2].length_m == pytest.approx(math.radians(15.0))
     assert segs[3].length_m == pytest.approx(0.5)  # reverse straight, metres
+
+
+def test_primitives_cart_adds_two_lateral_strafes_last() -> None:
+    # On a dolly/cart (lateral=True): the pivot/straight fan PLUS the two lateral
+    # strafes Tf, Tr (#599 / ADR-0010), appended LAST so an existing
+    # pivot/straight path wins a cost tie (minimal byte-identity churn).
+    segs = _primitives(turn_radius_m=0.0, lateral=True)
+    assert [s.kind for s in segs] == ["L", "S", "R", "S", "T", "T"]
+    assert [s.gear for s in segs] == [1, 1, 1, -1, 1, -1]
+    assert segs[4].length_m == pytest.approx(0.5)  # lateral strafe, metres
+    assert segs[5].length_m == pytest.approx(0.5)  # lateral strafe (other side)
 
 
 def test_step_pose_straight_advances_along_heading() -> None:
