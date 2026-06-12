@@ -91,6 +91,19 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Fixed
 
+- **Unroutable ground-object movers are surfaced, not silently dropped (#627,
+  #612).** A best-effort mover the tow planner can't route keeps a `Move(path=None)`
+  (ADR-0007 #197) — but, unlike an un-tow-routable *aircraft* (which is named on
+  stderr / in `diagnostics.unroutable_planes`), it used to be silent and just
+  rendered as a static body. `plan_fill` now threads the unroutable-mover ids out
+  via an observational out-param (the `apron_dropped_out` idiom); `solve` collects
+  them into `diagnostics.unroutable_movers` (additive `--json` field, no schema
+  bump); and `hangarfit solve --render-paths` names each on stderr. **Byte-identical**
+  (ADR-0003: the plan is unchanged) — this closes the deferred half of #602's "no
+  silent skip" acceptance. (The related #604 mover-routing *congestion* under #627
+  was separately cut ~1.8× by the #626 pose-cache extension; the residual is a
+  genuinely un-routable layout being correctly disproven.)
+
 - **Synthetic-vs-real Scheibe SF-25E divergence (#594).** The demo
   (`data/fleet.yaml`) and `examples/herrenteich/` now reference a single central
   catalog (`data/catalog/`), so each **shared** aircraft is defined exactly once

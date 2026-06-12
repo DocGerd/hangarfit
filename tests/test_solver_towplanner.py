@@ -272,11 +272,82 @@ def test_hard_door_mover_egress_blocked_is_unroutable() -> None:
         ),
     )
 
-    plans, unroutable, _ = _tow_plan_layouts(
+    plans, unroutable, *_ = _tow_plan_layouts(
         [layout], plan_paths=True, tow_heuristic="grid", tow_max_expansions=None
     )
     assert plans[0] is None, "boxed-in hard-door mover must produce plans[0]=None"
     assert "caddy" in unroutable, f"caddy must be in unroutable; got {unroutable}"
+
+
+def test_tow_plan_layouts_collects_unroutable_movers() -> None:
+    """#627/#612: a PLAIN (non-hard-door) mover that cannot be routed is collected
+    in ``_tow_plan_layouts``'s 4th return element (``unroutable_movers``), while its
+    layout's plan is STILL built (``plans[0]`` is not ``None``) — best-effort,
+    ADR-0007 #197. This is the ground-object counterpart of ``unroutable_planes``,
+    and is distinct from a hard-door mover (which raises → ``plans[0]=None`` →
+    ``unroutable``, the test above)."""
+    from hangarfit.models import Door, GroundObject, Hangar, Layout, MaintenanceBay, Part, Placement
+    from hangarfit.solver import _tow_plan_layouts
+
+    hangar = Hangar(
+        length_m=40.0,
+        width_m=40.0,
+        door=Door(center_x_m=20.0, width_m=12.0),
+        maintenance_bay=MaintenanceBay(center_x_m=20.0, width_m=8.0, depth_m=6.0),
+        clearance_m=0.3,
+        wing_layer_clearance_m=0.2,
+    )
+    wall = GroundObject(
+        id="wall",
+        name="Wall",
+        parts=(
+            Part(
+                kind="ground",
+                length_m=1.0,
+                width_m=44.0,
+                offset_x_m=0.0,
+                offset_y_m=0.0,
+                angle_deg=0.0,
+                z_bottom_m=0.0,
+                z_top_m=1.5,
+            ),
+        ),
+        object_class="fixed_obstacle",
+    )
+    trailer = GroundObject(
+        id="trailer",
+        name="Glider trailer",
+        parts=(
+            Part(
+                kind="ground",
+                length_m=6.0,
+                width_m=1.2,
+                offset_x_m=0.0,
+                offset_y_m=0.0,
+                angle_deg=0.0,
+                z_bottom_m=0.0,
+                z_top_m=1.5,
+            ),
+        ),
+        object_class="placed_routed_mover",
+        motion_mode="towed",  # plain: hard_door_mover defaults False → best-effort
+    )
+    layout = Layout(
+        fleet={},
+        hangar=hangar,
+        placements=(),
+        ground_objects={wall.id: wall, trailer.id: trailer},
+        ground_object_placements=(
+            Placement("wall", x_m=20.0, y_m=15.0, heading_deg=0.0, on_carts=False),
+            Placement("trailer", x_m=20.0, y_m=30.0, heading_deg=0.0, on_carts=False),
+        ),
+    )
+    plans, unroutable, _apron, movers = _tow_plan_layouts(
+        [layout], plan_paths=True, tow_heuristic="grid", tow_max_expansions=200
+    )
+    assert plans[0] is not None, "a best-effort mover bail must NOT null the layout's plan"
+    assert movers == ("trailer",), f"unroutable mover must be collected; got {movers}"
+    assert unroutable == (), f"no aircraft/hard-door unroutable expected; got {unroutable}"
 
 
 def test_no_hard_door_mover_egress_gate_inert() -> None:
@@ -338,10 +409,10 @@ def test_no_hard_door_mover_egress_gate_inert() -> None:
         ),
     )
 
-    p1, u1, _ = _tow_plan_layouts(
+    p1, u1, *_ = _tow_plan_layouts(
         [layout], plan_paths=True, tow_heuristic="grid", tow_max_expansions=None
     )
-    p2, u2, _ = _tow_plan_layouts(
+    p2, u2, *_ = _tow_plan_layouts(
         [layout], plan_paths=True, tow_heuristic="grid", tow_max_expansions=None
     )
     # Gate must be inert: no unroutable planes from the egress check.

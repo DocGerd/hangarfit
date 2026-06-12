@@ -1395,6 +1395,7 @@ def plan_fill(
     max_expansions: int | None = None,
     max_total_expansions: int | None = None,
     apron_dropped_out: list[ApronShallowDrop] | None = None,
+    unroutable_movers: list[str] | None = None,
 ) -> MovesPlan:
     """Plan a collision-free entry order + per-plane path for an empty fill.
 
@@ -1426,6 +1427,16 @@ def plan_fill(
     the :class:`MovesPlan`, so the plan stays byte-identical whether or not the
     list is passed (ADR-0003). ``None`` (the default) collects nothing. The caller
     (CLI / solver) emits the user-facing warning from this data, deduped.
+
+    ``unroutable_movers`` is a second diagnostics-only **out-param** (#627/#612,
+    same idiom): when supplied, it is populated — in committed-move order — with
+    the id of each ground-object **mover** that could not be routed and so kept a
+    best-effort ``Move(path=None)`` (ADR-0007 #197). Unlike an un-tow-routable
+    aircraft, which :func:`plan_fill` *raises* for (the solver records it in
+    ``diagnostics.unroutable_planes`` and the CLI warns), a None-path mover was
+    previously silent. It is equally **plan-inert** — the mover's ``Move`` still
+    carries ``path=None``, so the plan is byte-identical whether or not the list
+    is passed. ``None`` collects nothing.
 
     Walks :func:`back_first_order` (deepest slot first); for each plane searches
     for an in-bounds path from the door-cone entry poses (:func:`entry_poses`) to
@@ -1463,6 +1474,7 @@ def plan_fill(
             max_expansions=max_expansions,
             max_total_expansions=max_total_expansions,
             apron_dropped_out=apron_dropped_out,
+            unroutable_movers=unroutable_movers,
         )
 
 
@@ -1473,6 +1485,7 @@ def _plan_fill(
     max_expansions: int | None = None,
     max_total_expansions: int | None = None,
     apron_dropped_out: list[ApronShallowDrop] | None = None,
+    unroutable_movers: list[str] | None = None,
 ) -> MovesPlan:
     """Body of :func:`plan_fill`, run inside an active ``pose_cache_scope`` (#626)."""
     budget = _MAX_EXPANSIONS if max_expansions is None else max_expansions
@@ -1635,11 +1648,15 @@ def _plan_fill(
             )
         except NoFeasiblePlanError:
             # Best-effort (ADR-0007 #197): an unroutable mover keeps a None path so
-            # it never aborts the whole fill. NOTE: unlike an un-tow-routable
-            # AIRCRAFT (which raises -> solver -> stderr), a None-path mover is NOT
-            # yet surfaced to the user — it renders as a static body. Wiring that
-            # stderr surfacing is tracked as a follow-up (#612).
+            # it never aborts the whole fill. Unlike an un-tow-routable AIRCRAFT
+            # (which raises -> solver -> stderr), a None-path mover used to be
+            # silent. #627/#612: record its id in the optional ``unroutable_movers``
+            # out-param so the solver/CLI can name it on stderr — observational,
+            # plan-inert (the Move below still carries path=None), so byte-identical
+            # whether or not the list is passed (mirrors ``apron_dropped_out``).
             mover_arc = None
+            if unroutable_movers is not None:
+                unroutable_movers.append(obj.id)
         exp = mover_stats.get("expansions", 0)
         total_used += exp if isinstance(exp, int) else 0
         moves.append(Move(gp.plane_id, Pose.from_placement(gp), path=mover_arc))

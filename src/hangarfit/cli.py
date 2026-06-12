@@ -786,6 +786,7 @@ def cmd_solve(args: argparse.Namespace) -> int:
     # spread-fallback pass's drops never surface.
     if args.render_paths:
         _warn_unroutable(result)
+        _warn_unroutable_movers(result)
         _warn_apron_shallow_drops(result.diagnostics.apron_shallow_drops)
 
     # Renders / YAML writes. Only run if we have layouts to write —
@@ -878,6 +879,24 @@ def _warn_unroutable(result: SolveResult) -> None:
         print(
             f"warning: layout {layout_index}: no feasible tow path "
             f"(plane {plane!r} could not be routed); rendered without paths",
+            file=sys.stderr,
+        )
+
+
+def _warn_unroutable_movers(result: SolveResult) -> None:
+    """Emit one stderr warning per ground-object mover the tow planner could not
+    route (#627/#612). Unlike an un-tow-routable aircraft — which makes the whole
+    layout's plan ``None`` (see :func:`_warn_unroutable`) — a None-path mover keeps
+    a best-effort ``Move(path=None)`` inside an otherwise-present plan and renders
+    as a static body; without this it would be a silent skip (the deferred half of
+    the #602 'no silent skip' acceptance). ``diagnostics.unroutable_movers`` is the
+    deduped, advisory mover-id list the solver collected — empty when every mover
+    routed, there are no movers, or tow-planning was not attempted.
+    """
+    for mover in result.diagnostics.unroutable_movers:
+        print(
+            f"warning: ground-object mover {mover!r} could not be routed; "
+            "rendered as a static (un-towed) body",
             file=sys.stderr,
         )
 
@@ -1076,6 +1095,10 @@ def _emit_solve_json(
             # route, in returned-layout order. Empty unless --render-paths ran
             # the planner. Backward-compatible — no schema bump.
             "unroutable_planes": list(d.unroutable_planes),
+            # Additive (#627/#612): the ground-object movers the planner could not
+            # route (best-effort None-path, deduped). Empty unless --render-paths
+            # ran the planner. Backward-compatible — no schema bump.
+            "unroutable_movers": list(d.unroutable_movers),
             # Additive (#267): achieved min plan-view gap per returned layout
             # (null where <2 planes, i.e. math.inf) + basins the search had to
             # choose from. Backward-compatible — no schema bump.
