@@ -1723,8 +1723,8 @@ def _perturb_plane(
     trajectory.
     """
     hangar = scenario.hangar
-    plane = scenario.fleet[current.plane_id]
-    max_length, max_width = _plane_max_extent(plane)
+    body = _body(scenario, current.plane_id)
+    max_length, max_width = _plane_max_extent(body)
     margin = max(max_length, max_width) / 2
 
     if large_jump:
@@ -1859,7 +1859,11 @@ def _descent_step(
     conflicting: set[str] = set()
     for c in current_result.conflicts:
         for pid in c.planes:
-            if pid not in pinned_planes:
+            # Only perturbable bodies are candidates: skip pinned planes and any
+            # id not in the search dict (e.g. a fixed obstacle, an injected static
+            # keep-out — never moved). With no ground objects every conflict id is
+            # an aircraft already in `placements`, so this is byte-identical (#604).
+            if pid not in pinned_planes and pid in placements:
                 conflicting.add(pid)
     if not conflicting:
         return None  # restart — all conflicts are on pinned planes

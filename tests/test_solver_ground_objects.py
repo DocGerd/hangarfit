@@ -1,12 +1,14 @@
 import random
 
 from hangarfit.geometry import aircraft_parts_world, cached_parts_world
-from hangarfit.models import Aircraft, GroundObject, Layout, Placement
+from hangarfit.models import Aircraft, GroundObject, Layout, Placement, SearchConfig
 from hangarfit.solver import (
     _body,
     _body_parts_world,
     _build_layout,
+    _descent_step,
     _initial_placements,
+    _perturb_plane,
 )
 
 
@@ -100,3 +102,38 @@ def test_initial_placements_no_go_same_seed(region_scenario_no_go):
     )
     assert {k: (v.x_m, v.y_m) for k, v in a.items()} == {k: (v.x_m, v.y_m) for k, v in b.items()}
     assert "glider_trailer_1" not in a  # no movers in the no-GO scenario
+
+
+def test_perturb_mover_no_keyerror_and_stays_off_carts(region_scenario):
+    cur = Placement("glider_trailer_1", 20.0, 20.0, 90.0, on_carts=False)
+    out = _perturb_plane(
+        current=cur,
+        scenario=region_scenario,
+        rng=random.Random(0),
+        search=SearchConfig(),
+        large_jump=False,
+    )
+    assert out.plane_id == "glider_trailer_1"
+    assert out.on_carts is False
+
+
+def test_descent_step_handles_layout_with_mover(region_scenario):
+    # A placements dict that includes a mover overlapping an aircraft must not
+    # KeyError, and the descent must be able to choose the mover as a target.
+    placements = {
+        "fuji": Placement("fuji", 12.0, 12.0, 0.0, on_carts=False),
+        "cessna_150": Placement("cessna_150", 12.2, 12.0, 0.0, on_carts=False),  # overlap
+        # overlap (mover):
+        "glider_trailer_1": Placement("glider_trailer_1", 12.1, 12.0, 0.0, on_carts=False),
+    }
+    out = _descent_step(
+        placements=placements,
+        scenario=region_scenario,
+        rng=random.Random(1),
+        search=SearchConfig(),
+        current_score=(99, 9.9),
+        pinned_planes=frozenset(),
+    )
+    # returns a (placements, score, accepted) triple (or None if all conflicts pinned);
+    # the key assertion is that it ran without KeyError on the mover id.
+    assert out is None or (isinstance(out, tuple) and len(out) == 3)
