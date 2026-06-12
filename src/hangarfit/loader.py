@@ -53,6 +53,7 @@ from .models import (
     Part,
     Placement,
     PlaneConstraint,
+    RegionPreference,
     Scenario,
     StructuralNotch,
     StrutsSpec,
@@ -797,19 +798,100 @@ def load_scenario(
         except (ValueError, KeyError, TypeError, LoaderError) as e:
             raise LoaderError(f"{path}: constraint {plane_id!r}: {e}") from e
 
-    # Parse the scenario's optional ground_objects: id-list (#601). Like
-    # fleet_in, it is a list of catalog ids; each must resolve in the defs
-    # resolved above (kwarg-injected or read from the fleet manifest).
-    go_ids_raw = raw.get("ground_objects", [])
-    if not isinstance(go_ids_raw, list):
-        raise LoaderError(f"{path}: 'ground_objects' must be a list of ids")
-    scenario_ground_objects = tuple(str(x) for x in go_ids_raw)
-    for gid in scenario_ground_objects:
+    # Parse the scenario's optional ground_objects: block (#601 id-list, #604
+    # mapping form). Each entry is either a bare catalog-id string (a mover,
+    # no preference) or a mapping with an ``object:`` id and class-dependent
+    # extra fields, and must resolve in the defs resolved above (kwarg-injected
+    # or read from the fleet manifest). Branching on the resolved def's
+    # ``object_class`` (#604):
+    #   - fixed_obstacle     -> REQUIRES a pose (x_m/y_m/heading_deg), FORBIDS
+    #                           region_preference; expands to a Placement.
+    #   - placed_routed_mover -> FORBIDS a pose (the solver places it), allows
+    #                           an optional region_preference (a soft re-rank).
+    go_entries = raw.get("ground_objects", [])
+    if not isinstance(go_entries, list):
+        raise LoaderError(f"{path}: 'ground_objects' must be a list")
+
+    scenario_ground_objects: list[str] = []
+    fixed_obstacle_placements: list[Placement] = []
+    region_preferences: dict[str, RegionPreference] = {}
+
+    for i, entry in enumerate(go_entries):
+        fields: Mapping[str, Any]
+        if isinstance(entry, str):
+            gid, fields = entry, {}
+        elif isinstance(entry, dict):
+            unknown = set(entry) - _ALLOWED_SCENARIO_GO_KEYS
+            if unknown:
+                raise LoaderError(
+                    f"{path}: ground_objects[{i}] has unknown key(s) {sorted(unknown)}"
+                )
+            if "object" not in entry:
+                raise LoaderError(f"{path}: ground_objects[{i}] missing required 'object'")
+            gid, fields = entry["object"], entry
+        else:
+            raise LoaderError(f"{path}: ground_objects[{i}] must be a string or mapping")
+
         if gid not in ground_objects:
             raise LoaderError(
-                f"{path}: ground_objects references unknown object {gid!r}; "
+                f"{path}: ground_objects[{i}] references unknown object {gid!r}; "
                 f"the available ground objects are: {sorted(ground_objects)}"
             )
+        if gid in scenario_ground_objects:
+            raise LoaderError(f"{path}: duplicate scenario ground object {gid!r}")
+        scenario_ground_objects.append(gid)
+        obj_class = ground_objects[gid].object_class
+
+        has_pose = any(k in fields for k in ("x_m", "y_m", "heading_deg"))
+        if obj_class == "fixed_obstacle":
+            if "region_preference" in fields:
+                raise LoaderError(
+                    f"{path}: ground_objects[{i}] ({gid}): a fixed_obstacle cannot "
+                    f"carry a region_preference"
+                )
+            missing = [k for k in ("x_m", "y_m", "heading_deg") if k not in fields]
+            if missing:
+                raise LoaderError(
+                    f"{path}: ground_objects[{i}] ({gid}): a fixed_obstacle requires {missing}"
+                )
+            fixed_obstacle_placements.append(
+                Placement(
+                    plane_id=gid,
+                    x_m=_to_float(fields["x_m"], f"ground_objects[{i}].x_m"),
+                    y_m=_to_float(fields["y_m"], f"ground_objects[{i}].y_m"),
+                    heading_deg=_to_float(
+                        fields["heading_deg"], f"ground_objects[{i}].heading_deg"
+                    ),
+                    on_carts=False,
+                )
+            )
+        else:  # placed_routed_mover
+            if has_pose:
+                raise LoaderError(
+                    f"{path}: ground_objects[{i}] ({gid}): a placed_routed_mover must not "
+                    f"carry a pose (the solver places it)"
+                )
+            rp = fields.get("region_preference")
+            if rp is not None:
+                if (
+                    not isinstance(rp, dict)
+                    or set(rp) - _ALLOWED_REGION_PREF_KEYS
+                    or "side" not in rp
+                    or "weight" not in rp
+                ):
+                    raise LoaderError(
+                        f"{path}: ground_objects[{i}] ({gid}): region_preference must be "
+                        f"{{side, weight}}"
+                    )
+                try:
+                    region_preferences[gid] = RegionPreference(
+                        side=rp["side"],
+                        weight=_to_float(
+                            rp["weight"], f"ground_objects[{i}].region_preference.weight"
+                        ),
+                    )
+                except (ValueError, LoaderError) as e:
+                    raise LoaderError(f"{path}: ground_objects[{i}] ({gid}): {e}") from e
 
     try:
         return Scenario(
@@ -818,14 +900,22 @@ def load_scenario(
             fleet_in=fleet_in,
             maintenance_plane=maintenance_plane,
             constraints=constraints,
-            ground_objects=scenario_ground_objects,
+            ground_objects=tuple(scenario_ground_objects),
             ground_object_defs=ground_objects,
+            fixed_obstacle_placements=tuple(fixed_obstacle_placements),
+            region_preferences=region_preferences,
         )
     except ValueError as e:
         raise LoaderError(f"{path}: {e}") from e
 
 
 _ALLOWED_CONSTRAINT_KEYS = frozenset({"pin", "force_on_carts", "priority", "nose_out"})
+
+# Keys accepted in a scenario ``ground_objects:`` mapping entry (#604). ``object``
+# is the catalog id; the pose triplet is required for a fixed_obstacle and
+# forbidden for a placed_routed_mover; ``region_preference`` is the reverse.
+_ALLOWED_SCENARIO_GO_KEYS = frozenset({"object", "x_m", "y_m", "heading_deg", "region_preference"})
+_ALLOWED_REGION_PREF_KEYS = frozenset({"side", "weight"})
 
 
 def _build_plane_constraint(plane_id: str, data: Any) -> PlaneConstraint:
