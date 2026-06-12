@@ -1,5 +1,7 @@
 import random
 
+import pytest
+
 from hangarfit.geometry import aircraft_parts_world, cached_parts_world
 from hangarfit.models import Aircraft, GroundObject, Layout, Placement, SearchConfig
 from hangarfit.solver import (
@@ -9,6 +11,7 @@ from hangarfit.solver import (
     _descent_step,
     _initial_placements,
     _perturb_plane,
+    solve,
 )
 
 
@@ -137,3 +140,26 @@ def test_descent_step_handles_layout_with_mover(region_scenario):
     # returns a (placements, score, accepted) triple (or None if all conflicts pinned);
     # the key assertion is that it ran without KeyError on the mover id.
     assert out is None or (isinstance(out, tuple) and len(out) == 3)
+
+
+@pytest.mark.slow
+def test_solve_with_caddy_exercises_egress_gate(region_scenario_with_caddy):
+    # The VW Caddy is a hard_door_mover: once the solver places it, the #603
+    # egress gate runs in solve (inert before #604). Assert solve completes with a
+    # well-formed status and — when a layout is returned — the caddy is in that
+    # layout's ground_object_placements (so the gate operated on a caddy-bearing
+    # layout). A trapped caddy would drop the plan / mark it unroutable, not raise.
+    # tow_max_expansions=4000 keeps the routing budget bounded (~60-90 s on a
+    # typical dev machine); reduce to 2000 if this flakes on the CI timing gate.
+    r = solve(
+        region_scenario_with_caddy,
+        search=SearchConfig(max_restarts=4, spread=True),
+        seed=0,
+        budget_s=120.0,
+        plan_paths=True,
+        tow_max_expansions=4000,
+    )
+    assert r.status in ("found", "found_partial", "exhausted_budget")
+    if r.layouts:
+        go_ids = {p.plane_id for p in r.layouts[0].ground_object_placements}
+        assert "vw_caddy" in go_ids  # the hard-door mover is in the gated layout
