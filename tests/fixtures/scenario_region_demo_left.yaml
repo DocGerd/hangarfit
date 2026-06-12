@@ -1,0 +1,17 @@
+# #604 right-region demo — LEFT variant. Identical to scenario_region_demo.yaml
+# except the trailers prefer the LEFT wall. Used to prove the side selector is
+# live: the right-pref trailer settles further right than the left-pref one
+# (same seed).
+fleet: fleet_region_demo.yaml
+hangar: hangar_region_demo.yaml
+fleet_in: [fuji, cessna_150]
+
+ground_objects:
+  - object: maul_fuel_trailer
+    x_m: 2.5
+    y_m: 3.0
+    heading_deg: 0.0
+  - object: glider_trailer_1
+    region_preference: { side: left, weight: 1.5 }
+  - object: glider_trailer_2
+    region_preference: { side: left, weight: 1.5 }

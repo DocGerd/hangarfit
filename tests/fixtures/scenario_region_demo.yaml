@@ -1,0 +1,18 @@
+# #604 right-region demo: 2 small aircraft + 2 glider trailers (placed-routed
+# movers with a SOFT right-region preference) + the fuel trailer as a fixed
+# keep-out near the front-left (out of the way of the right-region pull).
+# The solver PLACES + routes the trailers; the right preference re-ranks valid
+# candidates so the trailers settle toward the right wall (ADR-0008 amended).
+fleet: fleet_region_demo.yaml
+hangar: hangar_region_demo.yaml
+fleet_in: [fuji, cessna_150]
+
+ground_objects:
+  - object: maul_fuel_trailer      # fixed keep-out, front-left (clear of the right side)
+    x_m: 2.5
+    y_m: 3.0
+    heading_deg: 0.0
+  - object: glider_trailer_1       # mover: solver places + routes; prefers the right wall
+    region_preference: { side: right, weight: 1.5 }
+  - object: glider_trailer_2
+    region_preference: { side: right, weight: 1.5 }

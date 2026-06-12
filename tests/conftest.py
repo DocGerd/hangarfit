@@ -9,9 +9,14 @@ constructs its objects inside its own body, on demand.
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import Any
 
+import pytest
+
 from hangarfit.models import Aircraft, Gear, Part, Wheels
+
+_FIXTURES = Path(__file__).parent / "fixtures"
 
 
 def _default_parts() -> tuple[Part, ...]:
@@ -97,3 +102,41 @@ def make_test_aircraft(
         wheels=wheels,
         **overrides,
     )
+
+
+# --- #604 right-region demo scenarios (loaded lazily; see module docstring) ---
+
+
+@pytest.fixture
+def region_scenario():
+    """Demo scenario: 2 aircraft + 2 glider trailers (movers, RIGHT preference) +
+    a fixed fuel-trailer keep-out, in a roomy bay-free-right hangar."""
+    from hangarfit.loader import load_scenario
+
+    return load_scenario(_FIXTURES / "scenario_region_demo.yaml")
+
+
+@pytest.fixture
+def region_scenario_left():
+    """As :func:`region_scenario` but the trailers prefer the LEFT wall."""
+    from hangarfit.loader import load_scenario
+
+    return load_scenario(_FIXTURES / "scenario_region_demo_left.yaml")
+
+
+@pytest.fixture
+def region_scenario_no_go():
+    """As :func:`region_scenario` but with NO ground objects — the inert /
+    byte-identity baseline (``mover_ids == ()``, no region preferences)."""
+    from hangarfit.loader import load_scenario
+
+    return load_scenario(_FIXTURES / "scenario_region_demo_no_go.yaml")
+
+
+@pytest.fixture
+def region_scenario_with_caddy():
+    """As :func:`region_scenario` plus the VW Caddy (a ``hard_door_mover``) so the
+    #603 egress gate is exercised in ``solve``."""
+    from hangarfit.loader import load_scenario
+
+    return load_scenario(_FIXTURES / "scenario_region_demo_caddy.yaml")

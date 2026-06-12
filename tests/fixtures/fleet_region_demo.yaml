@@ -1,0 +1,14 @@
+# Test-only fleet manifest for the #604 right-region demo. Thin manifest
+# referencing the central data/catalog/ (paths relative to this file).
+# Two small aircraft + the real glider-trailer / fuel-trailer / Caddy catalog
+# objects, so the demo scenarios can place + route the trailers (movers) and
+# exercise the Caddy egress gate (#603).
+aircraft:
+  - ../../data/catalog/fuji.yaml
+  - ../../data/catalog/cessna_150.yaml
+
+ground_objects:
+  - ../../data/catalog/glider_trailer_1.yaml
+  - ../../data/catalog/glider_trailer_2.yaml
+  - ../../data/catalog/maul_fuel_trailer.yaml
+  - ../../data/catalog/vw_caddy.yaml

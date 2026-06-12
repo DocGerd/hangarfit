@@ -1,0 +1,9 @@
+# #604 demo — NO ground objects. Same aircraft + hangar as scenario_region_demo,
+# but with no ground_objects block at all: mover_ids == (), region_preferences
+# empty. This is the inert/byte-identity baseline — solving it must be
+# byte-identical to the pre-#604 solver (ADR-0003), and the region term must be a
+# no-op. (The fleet manifest still lists ground-object catalog defs, but none are
+# active in this scenario.)
+fleet: fleet_region_demo.yaml
+hangar: hangar_region_demo.yaml
+fleet_in: [fuji, cessna_150]
