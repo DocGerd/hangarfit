@@ -29,6 +29,7 @@ import random as _random_module
 import secrets
 import sys
 import time
+from collections.abc import Mapping
 from dataclasses import replace
 from typing import Literal, NamedTuple, cast
 
@@ -221,6 +222,39 @@ def _restart_rng(seed: int, restart_index: int) -> _random_module.Random:
     return _random_module.Random(f"{seed}:{restart_index}")
 
 
+def _build_layout(scenario: Scenario, placements: Mapping[str, Placement]) -> Layout:
+    """Build a Layout from a unified placeable-body dict (#604).
+
+    Splits ``placements`` into aircraft (ids in ``fleet``) and mover ground
+    objects (everything else — placed_routed_mover ids), injects the authored
+    ``fixed_obstacle_placements``, and wires the active ``ground_objects`` defs.
+    With an aircraft-only dict AND a scenario with no ground objects this yields a
+    Layout byte-identical to the pre-#604 inline construction (ADR-0003): the
+    aircraft tuple preserves the dict's insertion order (== fleet_in order, since
+    movers are appended after aircraft in _initial_placements), and the GO fields
+    default empty."""
+    aircraft: list[Placement] = []
+    movers: list[Placement] = []
+    for pid, p in placements.items():
+        (aircraft if pid in scenario.fleet else movers).append(p)
+    go_placements = tuple(movers) + scenario.fixed_obstacle_placements
+    if not go_placements:
+        return Layout(
+            fleet=scenario.fleet,
+            hangar=scenario.hangar,
+            placements=tuple(aircraft),
+            maintenance_plane=scenario.maintenance_plane,
+        )
+    return Layout(
+        fleet=scenario.fleet,
+        hangar=scenario.hangar,
+        placements=tuple(aircraft),
+        maintenance_plane=scenario.maintenance_plane,
+        ground_objects={gid: scenario.ground_object_defs[gid] for gid in scenario.ground_objects},
+        ground_object_placements=go_placements,
+    )
+
+
 def _run_restart(
     scenario: Scenario,
     *,
@@ -253,12 +287,7 @@ def _run_restart(
     best_partial_layout: Layout | None = None
     candidate: _SpreadCandidate | None = None
 
-    initial_layout = Layout(
-        fleet=scenario.fleet,
-        hangar=scenario.hangar,
-        placements=tuple(placements.values()),
-        maintenance_plane=scenario.maintenance_plane,
-    )
+    initial_layout = _build_layout(scenario, placements)
     current_score = _score(initial_layout)
     if current_score < best_partial_score:
         best_partial_score = current_score
@@ -285,12 +314,7 @@ def _run_restart(
                 placements, n_flips = _nose_out(
                     placements, scenario, search, pinned_planes=pinned_planes
                 )
-            candidate_layout = Layout(
-                fleet=scenario.fleet,
-                hangar=scenario.hangar,
-                placements=tuple(placements.values()),
-                maintenance_plane=scenario.maintenance_plane,
-            )
+            candidate_layout = _build_layout(scenario, placements)
             min_gap, energy = _spread_quality(placements, scenario, spread_scale)
             candidate = _SpreadCandidate(
                 layout=candidate_layout,
@@ -318,12 +342,7 @@ def _run_restart(
 
         if current_score < best_partial_score:
             best_partial_score = current_score
-            best_partial_layout = Layout(
-                fleet=scenario.fleet,
-                hangar=scenario.hangar,
-                placements=tuple(placements.values()),
-                maintenance_plane=scenario.maintenance_plane,
-            )
+            best_partial_layout = _build_layout(scenario, placements)
 
         if iter_count - last_improved >= search.k_stall:
             break  # stall
@@ -1050,12 +1069,10 @@ def _check_pin_feasibility(scenario: Scenario) -> tuple[CheckResult, Layout] | N
     # pin.on_carts vs movement_mode). A genuinely unexpected ValueError
     # should propagate as a bug, not get silently re-wrapped as a pin
     # infeasibility.
-    pin_only_layout = Layout(
-        fleet=scenario.fleet,
-        hangar=scenario.hangar,
-        placements=tuple(pinned_placements),
-        maintenance_plane=scenario.maintenance_plane,
-    )
+    # All pins are aircraft (drawn from fleet_in) with unique ids, so the dict
+    # preserves list order and tuple(dict.values()) == tuple(pinned_placements):
+    # _build_layout yields the same aircraft-only Layout, byte-identical (#604).
+    pin_only_layout = _build_layout(scenario, {p.plane_id: p for p in pinned_placements})
 
     pin_check = check_layout(pin_only_layout)
     if not pin_check.valid:
@@ -1403,12 +1420,7 @@ def _nose_out(
         # trip any Layout cross-reference invariant (cart rule, on_carts
         # consistency, duplicate placements) — build directly. A ValueError here
         # would be a structural bug, so let it propagate rather than silently skip.
-        trial_layout = Layout(
-            fleet=scenario.fleet,
-            hangar=scenario.hangar,
-            placements=tuple(trial.values()),
-            maintenance_plane=scenario.maintenance_plane,
-        )
+        trial_layout = _build_layout(scenario, trial)
         if _score(trial_layout) != (0, 0.0):
             continue
         placements[pid] = flipped
@@ -1494,12 +1506,7 @@ def _spread(
             trial = dict(placements)
             trial[target] = cand
             try:
-                trial_layout = Layout(
-                    fleet=scenario.fleet,
-                    hangar=scenario.hangar,
-                    placements=tuple(trial.values()),
-                    maintenance_plane=scenario.maintenance_plane,
-                )
+                trial_layout = _build_layout(scenario, trial)
             except ValueError:
                 # Mirrors _descent_step's defensive catch. The only routinely-reachable
                 # trigger is the cart rule, but _perturb_plane and the 180° flip both
@@ -1830,12 +1837,7 @@ def _descent_step(
     ``Layout.__post_init__`` and are skipped.
     """
     # Build current Layout from placements (uses Layout invariants — free check).
-    current_layout = Layout(
-        fleet=scenario.fleet,
-        hangar=scenario.hangar,
-        placements=tuple(placements.values()),
-        maintenance_plane=scenario.maintenance_plane,
-    )
+    current_layout = _build_layout(scenario, placements)
 
     current_result = check_layout(current_layout)
 
@@ -1880,12 +1882,7 @@ def _descent_step(
         trial = dict(placements)
         trial[target] = cand
         try:
-            trial_layout = Layout(
-                fleet=scenario.fleet,
-                hangar=scenario.hangar,
-                placements=tuple(trial.values()),
-                maintenance_plane=scenario.maintenance_plane,
-            )
+            trial_layout = _build_layout(scenario, trial)
         except ValueError:
             # Layout invariant violated (cart rule, etc.) — skip this candidate
             continue
