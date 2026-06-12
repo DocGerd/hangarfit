@@ -67,8 +67,19 @@ structural_notches:
 # 0.15). Lowering a clearance only RELAXES the constraint, so the existing
 # layout.yaml / scenario_demo.yaml stay valid; the synthetic data/ hangar is a
 # separate file, untouched.
-clearance_m: 0.20            # minimum horizontal gap between any two parts
-wing_layer_clearance_m: 0.15 # minimum vertical gap between two parts at the same XY
+clearance_m: 0.20            # minimum horizontal gap between any two parts (PARKED)
+wing_layer_clearance_m: 0.15 # minimum vertical gap between two parts at the same XY (PARKED)
+
+# Tow-MOTION clearances (#643/#646): the margin the planner keeps while a mover
+# is IN MOTION threading past parked bodies, distinct from the PARKED spacing
+# above. A spotter hand-clears wingtips far closer during a slow guided slide than
+# the long-term parked gap — applying the 0.20 m parked margin during motion
+# falsely rejects routable maneuvers (the #642 finding). 0.05 m models the
+# hand-cleared motion margin; like the parked values it is measured: false
+# (a documented modelling assumption pending on-site measurement). Absent ⇒ the
+# motion clearance is the parked clearance (byte-identical plan, ADR-0003).
+motion_clearance_m: 0.05            # horizontal gap during tow motion
+motion_wing_layer_clearance_m: 0.05 # vertical gap during tow motion
 
 # Spare carts available to the cart_eligible pool. Bounds how many
 # cart_eligible planes may sit on carts in one layout; always_cart planes

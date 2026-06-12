@@ -33,6 +33,15 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Changed
 
+- **Herrenteich tow-motion clearance calibrated (#605/#643).** `examples/herrenteich/hangar.yaml`
+  now sets `motion_clearance_m: 0.05` / `motion_wing_layer_clearance_m: 0.05` — the
+  hand-cleared margin while a mover is in motion, distinct from the 0.20/0.15 *parked*
+  spacing (the #646 mechanism). A `measured: false` modelling assumption like the parked
+  values. With this plus the strafe (#599) and the dolly/free-swivel pivot data (#644),
+  the broadside Scheibe and small dense subsets tow-route where the parked margin
+  rejected them; the *full* dense all-8 remains gated on the greedy planner's routing
+  search at scale (not the motion model — see #642).
+
 - **Herrenteich Stemme modelled as dolly-pivotable for tow planning (#644).** The
   `examples/herrenteich/` fleet manifest now overrides the Stemme S10 to
   `movement_mode: always_cart` — it is hand-positioned on a dolly in the hangar,
