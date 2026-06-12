@@ -1259,11 +1259,17 @@ def path_first_conflict(
     path here) build ``placed`` from the full target fleet + ground objects,
     satisfying this.
     """
+    # #643: the tow-MOTION oracle clears the mover against parked bodies at the
+    # (tighter) MOTION clearance, not the parked spacing — a spotter threads the
+    # wingtips far closer in motion than the parked margin. ``motion_hangar()``
+    # IS the parked hangar when no motion clearance is set, so a layout without
+    # the motion fields is byte-identical (ADR-0003).
+    motion_hangar = placed.hangar.motion_hangar()
     for pose in arc.sample(step_m=step_m, step_deg=step_deg):
         moving = Placement(mover.id, pose.x_m, pose.y_m, pose.heading_deg, on_carts=mover_on_carts)
         # Mover hangar bounds: front-gap-exempt (a plane being towed in
         # straddles the door at y < 0). Side/back walls still bite.
-        bounds_conflict = _mover_motion_bounds_conflict(mover, moving, placed.hangar)
+        bounds_conflict = _mover_motion_bounds_conflict(mover, moving, motion_hangar)
         if bounds_conflict is not None:
             return bounds_conflict
         # Rebuilding the Layout per sample re-runs Layout.__post_init__ (cart
@@ -1274,7 +1280,7 @@ def path_first_conflict(
         if isinstance(mover, Aircraft):
             sample_layout = Layout(
                 fleet=placed.fleet,
-                hangar=placed.hangar,
+                hangar=motion_hangar,
                 placements=(*placed.placements, moving),
                 maintenance_plane=placed.maintenance_plane,
                 ground_objects=placed.ground_objects,
@@ -1283,7 +1289,7 @@ def path_first_conflict(
         else:  # GroundObject mover -> belongs in ground_object_placements
             sample_layout = Layout(
                 fleet=placed.fleet,
-                hangar=placed.hangar,
+                hangar=motion_hangar,
                 placements=placed.placements,
                 maintenance_plane=placed.maintenance_plane,
                 ground_objects=placed.ground_objects,
@@ -2296,6 +2302,14 @@ def plan_path(
     # Static obstacle set, computed once: placed planes don't move while this one
     # is routed. Drives the fast per-pose `_motion_clear` used during search.
     obstacles = _build_obstacles(placed, mover_id=mover.id)
+    # #643: the fast in-search ``_motion_clear`` screen clears the mover against
+    # parked bodies at the (tighter) MOTION clearance, matching the exact
+    # ``path_first_conflict`` oracle (which converts internally). The grid
+    # heuristic and obstacle footprints are clearance-free (bounds/geometry
+    # only), so they stay on the parked ``hangar``. ``motion_hangar()`` is the
+    # parked hangar itself when no motion clearance is set ⇒ byte-identical
+    # (ADR-0003).
+    motion_hangar = hangar.motion_hangar()
 
     # A* heuristic seam (#332). ``euclidean`` (default) is the byte-identical
     # straight-line lower bound the planner has always used. ``grid`` swaps in
@@ -2378,7 +2392,7 @@ def plan_path(
         if best_seed is not None and seed_cost >= best_seed[0]:
             continue  # can't beat the best clean seed — skip the costly checks
         if not all(
-            _motion_clear(mover, p, obstacles, hangar)
+            _motion_clear(mover, p, obstacles, motion_hangar)
             for p in seed_arc.sample(step_m=_SEARCH_STEP_M, step_deg=_SEARCH_STEP_DEG)
         ):
             continue
@@ -2437,7 +2451,7 @@ def plan_path(
         # `_motion_clear` screen always runs before the costly oracle.
         final_arc = plan_reeds_shepp(node.pose, goal, turn_radius_m=r)
         if all(
-            _motion_clear(mover, p, obstacles, hangar)
+            _motion_clear(mover, p, obstacles, motion_hangar)
             for p in final_arc.sample(step_m=_SEARCH_STEP_M, step_deg=_SEARCH_STEP_DEG)
         ):
             segs = tuple(_reconstruct_segments(node)) + final_arc.segments
@@ -2486,7 +2500,7 @@ def plan_path(
             child_pose = _step_pose(node.pose, seg, r)
             edge = DubinsArc(node.pose, child_pose, r, (seg,))
             if not all(
-                _motion_clear(mover, p, obstacles, hangar)
+                _motion_clear(mover, p, obstacles, motion_hangar)
                 for p in edge.sample(step_m=_SEARCH_STEP_M, step_deg=_SEARCH_STEP_DEG)
             ):
                 continue

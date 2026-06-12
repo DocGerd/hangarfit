@@ -1350,6 +1350,8 @@ door: {center_x_m: 12.5, width_m: 12.0}
 maintenance_bay: {center_x_m: 21.0, width_m: 6.0, depth_m: 6.0}
 clearance_m: 0.3
 wing_layer_clearance_m: 0.2
+motion_clearance_m: 0.05
+motion_wing_layer_clearance_m: 0.04
 max_carts: 2
 apron_depth_m: 6.0
 structural_notches:
