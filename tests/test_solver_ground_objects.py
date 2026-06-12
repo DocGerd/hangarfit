@@ -142,6 +142,22 @@ def test_descent_step_handles_layout_with_mover(region_scenario):
     assert out is None or (isinstance(out, tuple) and len(out) == 3)
 
 
+def test_solve_with_movers_byte_identical_same_seed(region_scenario):
+    cfg = SearchConfig(max_restarts=4, spread=True)
+    a = solve(region_scenario, search=cfg, seed=42, budget_s=120.0, plan_paths=False)
+    b = solve(region_scenario, search=cfg, seed=42, budget_s=120.0, plan_paths=False)
+
+    def sig(result):
+        return [
+            [(p.plane_id, p.x_m, p.y_m, p.heading_deg) for p in layout.placements]
+            + [(p.plane_id, p.x_m, p.y_m, p.heading_deg) for p in layout.ground_object_placements]
+            for layout in result.layouts
+        ]
+
+    assert a.layouts  # the demo scenario solves
+    assert sig(a) == sig(b)  # aircraft AND mover poses bit-identical (max_restarts-scoped)
+
+
 @pytest.mark.slow
 def test_solve_with_caddy_exercises_egress_gate(region_scenario_with_caddy):
     # The VW Caddy is a hard_door_mover: once the solver places it, the #603
