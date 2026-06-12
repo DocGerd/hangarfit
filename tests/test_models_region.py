@@ -9,6 +9,7 @@ from hangarfit.models import (
     Placement,
     RegionPreference,
     Scenario,
+    SolverDiagnostics,
 )
 from tests.conftest import make_test_aircraft  # noqa: E402
 
@@ -166,3 +167,31 @@ def test_scenario_fixed_obstacle_placement_validates():
         ),
     )
     assert len(s.fixed_obstacle_placements) == 1
+
+
+# ---------------------------------------------------------------------------
+# Task 3: SolverDiagnostics.region_alignment
+# ---------------------------------------------------------------------------
+
+
+def _diag(**kw):
+    base = dict(
+        restarts_attempted=1, wall_time_s=0.0, best_partial=None, best_partial_layout=None, seed=0
+    )
+    base.update(kw)
+    return SolverDiagnostics(**base)
+
+
+def test_region_alignment_default_empty():
+    assert _diag().region_alignment == ()
+
+
+def test_region_alignment_valid():
+    d = _diag(region_alignment=((("glider_trailer_1", 0.92),),))
+    assert d.region_alignment[0][0] == ("glider_trailer_1", 0.92)
+
+
+@pytest.mark.parametrize("bad", [-0.01, 1.01, float("nan")])
+def test_region_alignment_rejects_out_of_range(bad):
+    with pytest.raises(ValueError):
+        _diag(region_alignment=((("t", bad),),))

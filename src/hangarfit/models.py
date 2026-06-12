@@ -1460,6 +1460,12 @@ class SolverDiagnostics:
     to that returned layout (#263, ADR-0022). ``0`` for a layout where no plane was
     flipped (or with ``nose_out`` disabled). Advisory / RNG-free.
 
+    ``region_alignment`` is index-aligned with :attr:`SolveResult.layouts`: for each
+    returned layout, a tuple of ``(body_id, alignment)`` pairs (sorted by id) for the
+    bodies carrying a :class:`RegionPreference`, where ``alignment`` is 0–1 with 1.0
+    meaning the body sits exactly at its preferred wall (#604, ADR-0008 amended).
+    Empty when no scenario region preferences are set. Advisory / RNG-free.
+
     ``spread_fallback_applied`` is ``True`` when :func:`hangarfit.solver.solve`
     re-solved with the inter-plane spread post-pass disabled and substituted
     that tighter, tow-routable arrangement because the spread layout(s) came
@@ -1509,6 +1515,7 @@ class SolverDiagnostics:
     spread_stall_applied: bool = False
     apron_shallow_drops: tuple[ApronShallowDrop, ...] = ()
     nose_out_flips: tuple[int, ...] = ()
+    region_alignment: tuple[tuple[tuple[str, float], ...], ...] = ()
 
     def __post_init__(self) -> None:
         if (self.best_partial is None) != (self.best_partial_layout is None):
@@ -1543,6 +1550,13 @@ class SolverDiagnostics:
                 "SolverDiagnostics.nose_out_flips entries must be >= 0, "
                 f"got {self.nose_out_flips!r}"
             )
+        for layout_alignments in self.region_alignment:
+            for _id, a in layout_alignments:
+                if math.isnan(a) or a < 0.0 or a > 1.0:
+                    raise ValueError(
+                        "SolverDiagnostics.region_alignment values must be in "
+                        f"[0.0, 1.0], got {a!r}"
+                    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1607,6 +1621,12 @@ class SolveResult:
                 "SolveResult.diagnostics.nose_out_flips, when populated, must be "
                 f"index-aligned with layouts: got {len(self.diagnostics.nose_out_flips)} "
                 f"counts for {len(self.layouts)} layouts"
+            )
+        if self.diagnostics.region_alignment and len(self.diagnostics.region_alignment) != len(
+            self.layouts
+        ):
+            raise ValueError(
+                "SolverDiagnostics.region_alignment length must match layouts when populated"
             )
 
 
