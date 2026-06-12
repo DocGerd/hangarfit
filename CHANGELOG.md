@@ -6,6 +6,16 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **`solve` suggests `--workers` on idle-core multi-restart runs (#628).** When a
+  parallel-eligible solve (`--max-restarts` + spread) is left at the default
+  `--workers 1` on a multi-core box, `hangarfit solve` now prints a one-line
+  stderr hint naming the flag (with a capped example, e.g. `--workers 8`). Stderr
+  only — stdout / `--json` / `--write-yaml` stay untouched — and it never fires in
+  a regime where `--workers` would silently run serial (no `--max-restarts`,
+  `--no-spread`, `--spread-stall-restarts` set, or a single core), so the default
+  stays byte-identical. The `--workers` help text now states exactly when the flag
+  is effective.
+
 - **Glider-trailer placement + soft region preference (#604).** The solver now places and routes the glider trailers, with a soft right/left-region preference biasing them toward a chosen hangar wall; surfaced as per-layout `region_alignment` in `solve` output.
 - **Ground-object data model (#601).** Catalog `fixed_obstacle`/`car`/`trailer`
   types and a layout `ground_objects:` block; fixed obstacles are keep-outs

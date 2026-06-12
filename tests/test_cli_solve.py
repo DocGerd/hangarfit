@@ -1630,3 +1630,54 @@ class TestSolveApronDepth:
         with pytest.raises(SystemExit) as exc:
             main(["solve", self._SCEN, "--apron-depth=-3"])
         assert exc.value.code == 2
+
+
+class TestWorkersAutoSuggestHint:
+    """#628: when a multi-restart spread solve is parallel-eligible but ``--workers``
+    was left at its default of 1 on a multi-core box, a one-line stderr HINT names
+    the flag. Zero behaviour change (default stays 1); the hint never touches stdout
+    and never fires in a regime where ``--workers`` would silently run serial."""
+
+    def test_hint_fires_when_eligible_serial_on_multicore(self, capsys, monkeypatch):
+        monkeypatch.setattr("os.cpu_count", lambda: 8)
+        rc = main(["solve", SMOKE_FIXTURE, "--max-restarts", "2"])
+        assert rc == 0
+        out = capsys.readouterr()
+        assert "hint:" in out.err and "--workers" in out.err
+        # stdout stays machine-readable — the hint is stderr-only
+        assert "hint:" not in out.out
+
+    def test_hint_silent_without_max_restarts(self, capsys, monkeypatch):
+        """A plain solve (no --max-restarts) is wall-clock-budget, NOT parallel-
+        eligible (#267) — suggesting --workers there would mislead."""
+        monkeypatch.setattr("os.cpu_count", lambda: 8)
+        rc = main(["solve", SMOKE_FIXTURE])
+        assert rc == 0
+        assert "hint:" not in capsys.readouterr().err
+
+    def test_hint_silent_when_no_spread(self, capsys, monkeypatch):
+        monkeypatch.setattr("os.cpu_count", lambda: 8)
+        rc = main(["solve", SMOKE_FIXTURE, "--max-restarts", "2", "--no-spread"])
+        assert rc == 0
+        assert "hint:" not in capsys.readouterr().err
+
+    def test_hint_silent_when_spread_stall_set(self, capsys, monkeypatch):
+        monkeypatch.setattr("os.cpu_count", lambda: 8)
+        rc = main(["solve", SMOKE_FIXTURE, "--max-restarts", "2", "--spread-stall-restarts", "5"])
+        assert rc == 0
+        assert "hint:" not in capsys.readouterr().err
+
+    def test_hint_silent_on_single_core(self, capsys, monkeypatch):
+        monkeypatch.setattr("os.cpu_count", lambda: 1)
+        rc = main(["solve", SMOKE_FIXTURE, "--max-restarts", "2"])
+        assert rc == 0
+        assert "hint:" not in capsys.readouterr().err
+
+    def test_hint_silent_when_workers_already_set(self, capsys, monkeypatch):
+        """Eligible config with --workers>1 already: neither the 'ignored' note
+        (it's eligible) nor the suggest hint (workers already set) should fire."""
+        monkeypatch.setattr("os.cpu_count", lambda: 8)
+        rc = main(["solve", SMOKE_FIXTURE, "--max-restarts", "2", "--workers", "4"])
+        assert rc == 0
+        err = capsys.readouterr().err
+        assert "hint:" not in err and "ignored" not in err
