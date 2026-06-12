@@ -40,6 +40,19 @@ export interface PlaneData {
   on_carts: boolean;
 }
 
+// A placed non-aircraft body (#606): a fixed obstacle (keep-out) or a
+// placed/routed mover. Same `boxes` shape as a plane, but no wheels/carts; the
+// per-class fill is brand-resolved Python-side (`color`), and `final_pose` is the
+// static placement affine (no timeline yet — mover animation is a follow-up).
+export interface GroundObjectData {
+  id: string;
+  object_class: string; // 'fixed_obstacle' | 'placed_routed_mover'
+  color: string; // '#RRGGBB' — brand fill by class, resolved in scene.py
+  hard_door_mover: boolean; // the Caddy egress flag (highlight cue)
+  boxes: BoxData[];
+  final_pose: Affine; // plane-local → world affine at the placed pose
+}
+
 export interface DoorData {
   center_x_m: number;
   width_m: number;
@@ -93,6 +106,8 @@ export interface SceneV2 {
   coordinate_note: string; // human reminder of the coordinate convention
   hangar: HangarData;
   planes: PlaneData[];
+  /** Placed ground objects (#606): fixed obstacles + movers. Empty when none. */
+  ground_objects: GroundObjectData[];
   conflicts: string[];
   /** Final parked pose per plane id. */
   final_poses: Record<string, Affine>;
@@ -100,6 +115,8 @@ export interface SceneV2 {
   anchors: Record<string, number[][][]>;
   /** Oracle world wheel positions per plane: [wheel][x|y]. */
   gear_anchors: Record<string, number[][]>;
+  /** Oracle world box corners per ground object: [box][corner][x|y]. Empty when none. */
+  go_anchors: Record<string, number[][][]>;
   timeline: TimelineData;
   placeholder: boolean; // always emitted (true iff any placed aircraft is unmeasured)
   readouts: Readouts | null; // always emitted; null when the layout is invalid

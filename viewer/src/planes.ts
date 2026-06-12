@@ -30,6 +30,37 @@ export function boxMaterial(b: BoxData, colour: THREE.Color): THREE.MeshStandard
   return new THREE.MeshStandardMaterial(base);
 }
 
+/** One mesh for a scene/v2 box, in plane-local coords. A polygon part (#549)
+ * extrudes its (cx,cy,angle)-folded ring from z_band[0]; a scalar part is a
+ * BoxGeometry placed at (cx,cy,cz) and rotated about local up. Shared by planes
+ * and ground objects (#606) so both render through the identical det-−1 group. */
+export function boxMesh(b: BoxData, colour: THREE.Color): THREE.Mesh {
+  // local X = u (forward/length), local Y = v (right/width), local Z = w (height).
+  let mesh: THREE.Mesh;
+  if (b.vertices !== null) {
+    const shape = new THREE.Shape();
+    const vs = b.vertices;
+    shape.moveTo(vs[0][0], vs[0][1]);
+    for (let i = 1; i < vs.length; i++) shape.lineTo(vs[i][0], vs[i][1]);
+    shape.closePath();
+    mesh = new THREE.Mesh(
+      new THREE.ExtrudeGeometry(shape, { depth: b.height_m, bevelEnabled: false }),
+      boxMaterial(b, colour),
+    );
+    mesh.position.z = b.z_band[0];
+  } else {
+    mesh = new THREE.Mesh(
+      new THREE.BoxGeometry(b.length_m, b.width_m, b.height_m),
+      boxMaterial(b, colour),
+    );
+    mesh.position.set(b.cx, b.cy, b.cz);
+    mesh.rotation.z = THREE.MathUtils.degToRad(b.angle_deg); // CCW about local up, as oriented_rect
+  }
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  return mesh;
+}
+
 /** Build every plane's affine Group (boxes + gear + label/nose), add it to the
  * scene, and build the legend chips with safe DOM methods. Returns the per-plane
  * groups (driven by the timeline) and the toggle arrays. */
@@ -46,38 +77,9 @@ export function addPlanes(scene: THREE.Scene, SCENE: SceneV2, BRAND: BrandTokens
     g.matrixAutoUpdate = false; // we drive g.matrix per frame from the affine
     const conflicted = SCENE.conflicts.includes(p.id);
     const colour = new THREE.Color(conflicted ? CONFLICT : p.color);
-    for (const b of p.boxes) {
-      // local X = u (forward/length), local Y = v (right/width), local Z = w (height).
-      let mesh: THREE.Mesh;
-      if (b.vertices !== null) {
-        // scene/v2 polygon footprint (#549): extrude the plane-local ring into a
-        // prism. The ring already has (cx,cy,angle) folded in (it matches the
-        // anchor oracle), so we apply NO position.xy / rotation here — only lift
-        // the base to z_bottom. ExtrudeGeometry lays the Shape in XY and extrudes
-        // +Z from 0..height_m, mirroring the box's [z_bottom, z_top] span. The
-        // ShapeGeometry L-floor (hangar.ts) is the in-tree precedent (#530).
-        const shape = new THREE.Shape();
-        const vs = b.vertices;
-        shape.moveTo(vs[0][0], vs[0][1]);
-        for (let i = 1; i < vs.length; i++) shape.lineTo(vs[i][0], vs[i][1]);
-        shape.closePath();
-        mesh = new THREE.Mesh(
-          new THREE.ExtrudeGeometry(shape, { depth: b.height_m, bevelEnabled: false }),
-          boxMaterial(b, colour),
-        );
-        mesh.position.z = b.z_band[0];
-      } else {
-        mesh = new THREE.Mesh(
-          new THREE.BoxGeometry(b.length_m, b.width_m, b.height_m),
-          boxMaterial(b, colour),
-        );
-        mesh.position.set(b.cx, b.cy, b.cz);
-        mesh.rotation.z = THREE.MathUtils.degToRad(b.angle_deg); // CCW about local up, as oriented_rect
-      }
-      mesh.castShadow = true;
-      mesh.receiveShadow = true; // planes catch each other's shadows (vertical clearance)
-      g.add(mesh);
-    }
+    // Each box (scalar or #549 polygon prism) catches the others' shadows so the
+    // vertical wing/tail stacking reads; boxMesh holds the shared det-−1 geometry.
+    for (const b of p.boxes) g.add(boxMesh(b, colour));
     addGear(g, p, gearMats); // wheels + legs (+ pallets when carted), same affine Group
     addLabelAndNose(g, p, colour, conflicted, BRAND, labelMeshes, noseMeshes); // id label + nose arrow
     groups[p.id] = g;

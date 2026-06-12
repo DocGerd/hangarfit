@@ -31,6 +31,20 @@ All notable changes to this project are documented here. Format follows [Keep a 
   over-strict abstraction — applying the parked margin during motion — that made
   otherwise-routable dense layouts falsely un-routable.
 
+- **Ground objects in the scene/v2 seam + 3D viewer (#606).** The interactive 3D
+  viewer (`hangarfit view`) now renders the Stage-A ground objects — the fixed
+  obstacle (Maul fuel trailer) as a warm-graphite keep-out volume and the placed
+  movers (VW Caddy + glider trailers) as slate bodies, each visually distinct from
+  the colour-coded aircraft, with a legend that names every class (and flags the
+  hard-door egress Caddy). The `hangarfit.scene/v2` dict gains two always-emitted,
+  inert-when-empty keys — `ground_objects` (placed bodies, each with its static
+  `final_pose` affine) and `go_anchors` (their world corners for the viewer's
+  load-time determinant-−1 self-check). This is the 3D companion of the 2D-PNG
+  ground-object render (#606 first half); same input ⇒ byte-identical scene
+  (ADR-0003), and an aircraft-only layout differs only by the two empty
+  collections. Mover *animation* and the Caddy egress lane are deferred follow-ups
+  (the egress oracle exports no corridor geometry to draw).
+
 ### Changed
 
 - **Herrenteich Stemme modelled as dolly-pivotable for tow planning (#644).** The

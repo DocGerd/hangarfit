@@ -14,6 +14,7 @@ import { banner, byId } from './dom.ts';
 import { createRenderer } from './renderer.ts';
 import { addHangar } from './hangar.ts';
 import { addPlanes } from './planes.ts';
+import { addGroundObjects } from './ground_objects.ts';
 import { addTowPaths } from './paths.ts';
 import { checkAnchors } from './anchors.ts';
 import { createTimeline } from './timeline.ts';
@@ -57,6 +58,11 @@ labelsToggle.addEventListener('change', () => {
   for (const m of labelMeshes) m.visible = on;
   for (const m of noseMeshes) m.visible = on;
 });
+
+// ground objects (#606): fixed obstacles + placed movers, parked statically at
+// their final_pose. No timeline / toggle — they are always-on floor bodies. A
+// GO-free scene builds nothing here.
+addGroundObjects(scene, SCENE);
 
 // floor tow paths (#505) + paths toggle. One coloured floor line per plane's
 // tow route (the 3D analogue of `solve --render-paths`), default ON so the route

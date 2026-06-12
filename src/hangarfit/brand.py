@@ -195,6 +195,16 @@ FILL_INTENSITY: float = 0.3
 WHEEL_COLOR_3D: str = WHEEL_COLOR  # 0x566573
 CART_DECK_COLOR_3D: str = CART_DECK_COLOR  # 0xaab7b8
 
+# Ground objects (#606) — dark-surface fills for placed non-aircraft bodies.
+# Resolved Python-side in scene.py and emitted per ground-object block (the plane
+# colour-map idiom), so the viewer reads ``go.color`` and hard-codes nothing
+# (#419) — these are NOT viewer_brand_tokens() keys. The mover slate matches the
+# 2D ``_MOVER_FILL`` (visualize.py) for cross-surface parity; the fixed obstacle
+# is a warm graphite keep-out, distinct from the cool slate mover, the violet bay,
+# and the blue-grey translucent walls so the three classes never blur together.
+MOVER_3D: str = "#8A8F98"  # slate — matches the 2D mover fill
+GROUND_OBSTACLE_3D: str = "#73685E"  # warm graphite keep-out volume
+
 # Conflict (viewer.js) — same STATUS ink as 2D; the label cue supplies the
 # non-colour redundancy 3D can't hatch.
 CONFLICT_3D: str = STATUS["conflict"]  # 0xc8442c
