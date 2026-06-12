@@ -1040,6 +1040,40 @@ class CheckResult:
         return len(self.conflicts) == 0
 
 
+RegionSide = Literal["left", "right"]
+_VALID_REGION_SIDES: frozenset[str] = frozenset(("left", "right"))
+
+
+@dataclass(frozen=True, slots=True)
+class RegionPreference:
+    """A soft per-object preference to align a placed body to one hangar wall (#604).
+
+    ``side`` is the preferred wall in the x-axis (``"left"`` ≡ ``x → 0``,
+    ``"right"`` ≡ ``x → hangar.width_m``); ``weight`` is a non-negative, finite
+    soft importance (``0.0`` is permitted and inert). Realized as the RNG-free
+    ``solver._region_energy`` term folded into the ``_spread`` hill-climb,
+    secondary to ``min_pairwise_gap_m`` and never overriding the hard validity
+    gate (ADR-0008 amended). Modeled on :attr:`PlaneConstraint.priority`'s
+    soft-weight validation (#441).
+    """
+
+    side: RegionSide
+    weight: float
+
+    def __post_init__(self) -> None:
+        if self.side not in _VALID_REGION_SIDES:
+            raise ValueError(
+                f"RegionPreference.side must be one of {sorted(_VALID_REGION_SIDES)}, "
+                f"got {self.side!r}"
+            )
+        if not math.isfinite(self.weight):
+            raise ValueError(f"RegionPreference.weight={self.weight!r} must be finite")
+        if self.weight < 0.0:
+            raise ValueError(
+                f"RegionPreference.weight={self.weight!r} must be >= 0.0 (a soft weight)"
+            )
+
+
 @dataclass(frozen=True, slots=True)
 class PlaneConstraint:
     """Per-plane constraints for a Scenario.
