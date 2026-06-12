@@ -6,6 +6,7 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Glider-trailer placement + soft region preference (#604).** The solver now places and routes the glider trailers, with a soft right/left-region preference biasing them toward a chosen hangar wall; surfaced as per-layout `region_alignment` in `solve` output.
 - **Ground-object data model (#601).** Catalog `fixed_obstacle`/`car`/`trailer`
   types and a layout `ground_objects:` block; fixed obstacles are keep-outs
   (a `ground_obstacle` conflict names the overlapping aircraft/mover) and

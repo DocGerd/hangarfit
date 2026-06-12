@@ -137,8 +137,12 @@ Two `object_class` values exist:
 - **`"placed_routed_mover"`** — a moveable object (car or towed trailer)
   that must eventually drive out; its world parts join the pairwise
   overlap loop exactly like aircraft parts, emitting the standard
-  `<sorted_kinds>_overlap` conflicts. Mover route search is deferred to
-  #602.
+  `<sorted_kinds>_overlap` conflicts. In `solve` (#604), movers are **full
+  RR-MC search citizens**: their poses are sampled, perturbed in the
+  min-conflicts descent, included in the `_spread` hill-climb, routed by
+  `plan_fill`, and — if flagged `hard_door_mover` — subject to the #603
+  Caddy egress gate. In `check` and `view` their poses are authored in the
+  layout YAML, exactly as before.
 
 Three concrete catalog `type:` values author ground objects: `fixed_obstacle`,
 `car` (motion default `"steerable"`), and `trailer` (motion default `"towed"`).
@@ -620,6 +624,8 @@ ADR.
 The hard score tuple `(conflict_count, total_penetration_m2)` measures only illegal overlap. The first **soft** preference — inter-plane spread (maximize separation once valid) — ships as an isolated post-pass (`solver._spread`), deliberately *outside* the hard tuple so the conflict-resolution determinism contract ([ADR-0003](../adr/0003-rr-mc-solver-algorithm.md)) is unaffected. See [ADR-0008](../adr/0008-inter-plane-spread-soft-preference.md) for the repulsion-energy metric and why it is a post-pass rather than a third score key.
 
 The second soft preference — **nose-out parked heading** (park each plane pointing toward the door for an easy straight-out exit) — is a second isolated post-pass (`solver._nose_out`), run *after* `_spread` and independently of it. For each movable plane it applies the zero-displacement 180° antipodal flip `(h + 180) % 360` iff that is strictly more nose-out (closer to `heading 180`, the door, under the [ADR-0002](../adr/0002-determinant-minus-one-transform.md) convention) **and** the layout stays valid. It is **default ON** (`--no-nose-out`), with a per-plane tri-state `PlaneConstraint.nose_out` override for the legitimate nose-IN exemption. Crucially the pass is **RNG-free** — it draws no random numbers — so byte-identical determinism holds *even with the feature on* (strictly stronger than `_spread`, which guarantees byte-identity only when off). It is gap-neutral (position fixed), so it cannot fight spread. The companion **`tow_pivotable`** aircraft flag (a free-castering / nose-lift plane pivots in place when towed, `effective_turn_radius_m() → 0`, routed via the existing zero-radius cart-pivot fan) is a realism flag orthogonal to `movement_mode`. See [ADR-0022](../adr/0022-nose-out-parked-heading.md); the cheap *reachability* of a nose-out slot (backing in rather than looping) is the [ADR-0010](../adr/0010-reeds-shepp-motion-model.md) #480 amendment.
+
+The third soft preference — **per-object right/left-region alignment** (#604, [ADR-0008](../adr/0008-inter-plane-spread-soft-preference.md) #604 amendment) — is a normalized distance-to-wall term folded into the same `_spread` hill-climb energy alongside the repulsion and the back-bias. It is authored **per ground object** in the scenario's `ground_objects:` block as `RegionPreference{side, weight}` (`None`/absent ≡ neutral/inert) and realized as `solver._region_energy`. It is **secondary to `min_pairwise_gap_m`** (the primary cross-basin key, #267): the term re-ranks candidates only within a basin's validity-gated hill-climb and never overrides the hard gate. It is **RNG-free**, so same-scenario+same-seed output stays byte-identical (ADR-0003). The achieved alignment per layout is surfaced as `SolverDiagnostics.region_alignment` (per-object 0–1, 1.0 = at the preferred wall) in the human and `--json` CLI output. Default inert: a scenario with no `region_preferences` is byte-identical to pre-#604.
 
 ## Visualizer colour accessibility
 

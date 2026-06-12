@@ -1040,6 +1040,46 @@ class CheckResult:
         return len(self.conflicts) == 0
 
 
+RegionSide = Literal["left", "right"]
+_VALID_REGION_SIDES: frozenset[str] = frozenset(("left", "right"))
+
+
+@dataclass(frozen=True, slots=True)
+class RegionPreference:
+    """A soft per-object preference to align a placed body to one hangar wall (#604).
+
+    ``side`` is the preferred wall in the x-axis (``"left"`` ≡ ``x → 0``,
+    ``"right"`` ≡ ``x → hangar.width_m``); ``weight`` is a non-negative, finite
+    soft importance (``0.0`` is permitted and inert). Realized as the RNG-free
+    ``solver._region_energy`` term folded into the ``_spread`` hill-climb,
+    secondary to ``min_pairwise_gap_m`` and never overriding the hard validity
+    gate (ADR-0008 amended). Modeled on :attr:`PlaneConstraint.priority`'s
+    soft-weight validation (#441).
+
+    The shape differs intentionally from that precedent: ``weight`` is a plain
+    ``float`` (not ``float | None``) because a body either has a
+    ``Scenario.region_preferences`` map entry or none — map-presence already
+    encodes the optional/neutral distinction that ``priority``'s ``| None``
+    carries inline.
+    """
+
+    side: RegionSide
+    weight: float
+
+    def __post_init__(self) -> None:
+        if self.side not in _VALID_REGION_SIDES:
+            raise ValueError(
+                f"RegionPreference.side must be one of {sorted(_VALID_REGION_SIDES)}, "
+                f"got {self.side!r}"
+            )
+        if not math.isfinite(self.weight):
+            raise ValueError(f"RegionPreference.weight={self.weight!r} must be finite")
+        if self.weight < 0.0:
+            raise ValueError(
+                f"RegionPreference.weight={self.weight!r} must be >= 0.0 (a soft weight)"
+            )
+
+
 @dataclass(frozen=True, slots=True)
 class PlaneConstraint:
     """Per-plane constraints for a Scenario.
@@ -1098,7 +1138,20 @@ class Scenario:
     - maintenance_plane (if set) must not also carry a pin or force_on_carts in
       constraints (the occupant is treated as away — those constraints would be
       incoherent and would be silently ignored by the solver)
+    - region_preferences.keys() ⊆ placeable bodies (fleet_in ∪ placed_routed_mover ids)
+    - fixed_obstacle_placements entries reference distinct fixed_obstacle ground
+      objects (in ground_object_defs)
     - fleet and constraints are wrapped in MappingProxyType (same pattern as Layout)
+
+    A fixed_obstacle may appear in ``ground_objects`` WITHOUT a matching
+    ``fixed_obstacle_placements`` entry — its pose then comes from a hand-authored
+    layout (the ``check``/``view`` path), not the solver. The scenario LOADER
+    requires a pose for any fixed_obstacle authored in a SOLVE scenario's
+    ``ground_objects:`` block (#604), so the silent-keep-out-drop that a hard
+    coverage invariant would guard against cannot arise via authored scenarios;
+    for programmatic construction it remains the caller's responsibility
+    (consistent with the #605 ground_objects model). Hence this is a documented
+    contract, not an enforced __post_init__ invariant.
 
     See spec §3.2 for the rationale.
     """
@@ -1112,13 +1165,22 @@ class Scenario:
     ground_object_defs: Mapping[str, GroundObject] = field(
         default_factory=lambda: MappingProxyType({})
     )
+    fixed_obstacle_placements: tuple[Placement, ...] = ()
+    region_preferences: Mapping[str, RegionPreference] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
     # The mapping fields wrapped in MappingProxyType for immutability. This is
     # the single source of truth for both the construction-time wrap (in
     # __post_init__) and the pickle unwrap/re-wrap (in __getstate__/__setstate__,
     # #545) — listing them once means the two cannot silently drift. (ClassVar so
     # the dataclass excludes it from the field set and __slots__.)
-    _PROXY_FIELDS: typing.ClassVar[tuple[str, ...]] = ("fleet", "constraints", "ground_object_defs")
+    _PROXY_FIELDS: typing.ClassVar[tuple[str, ...]] = (
+        "fleet",
+        "constraints",
+        "ground_object_defs",
+        "region_preferences",
+    )
 
     def __post_init__(self) -> None:
         # fleet_in must be non-empty (otherwise there's nothing to solve;
@@ -1249,6 +1311,35 @@ class Scenario:
                     f"defs have: {sorted(self.ground_object_defs)}"
                 )
 
+        # Region preferences (#604): every key must reference a placeable body —
+        # an aircraft in fleet_in or a placed_routed_mover ground object.
+        placeable = set(self.fleet_in) | {
+            gid
+            for gid in self.ground_objects
+            if self.ground_object_defs[gid].object_class == "placed_routed_mover"
+        }
+        for rid in self.region_preferences:
+            if rid not in placeable:
+                raise ValueError(
+                    f"Scenario.region_preferences references {rid!r} which is not a "
+                    f"placeable body (aircraft or placed_routed_mover); "
+                    f"placeable ids: {sorted(placeable)}"
+                )
+        seen_fixed: set[str] = set()
+        for p in self.fixed_obstacle_placements:
+            if p.plane_id not in self.ground_object_defs:
+                raise ValueError(
+                    f"Scenario.fixed_obstacle_placements references unknown ground "
+                    f"object {p.plane_id!r}"
+                )
+            if self.ground_object_defs[p.plane_id].object_class != "fixed_obstacle":
+                raise ValueError(
+                    f"Scenario.fixed_obstacle_placements[{p.plane_id!r}] is not a fixed_obstacle"
+                )
+            if p.plane_id in seen_fixed:
+                raise ValueError(f"Duplicate fixed_obstacle_placement for {p.plane_id!r}")
+            seen_fixed.add(p.plane_id)
+
         # Wrap the mapping fields in MappingProxyType so a frozen Scenario can't
         # be mutated through e.g. ``scenario.fleet["x"] = …``. Always copy+wrap
         # (even an already-wrapped MappingProxyType arg): skipping the copy would
@@ -1257,6 +1348,35 @@ class Scenario:
         # pickle unwrap list stay a single source of truth.
         for name in self._PROXY_FIELDS:
             object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
+
+    @property
+    def mover_ids(self) -> tuple[str, ...]:
+        """Placed-routed-mover ids active in this scenario, in ``ground_objects`` order.
+
+        These are the ground objects the solver PLACES + routes (vs fixed
+        obstacles, authored static keep-outs in :attr:`fixed_obstacle_placements`).
+        Empty ⇒ the solver is aircraft-only and byte-identical to pre-#604 (ADR-0003).
+
+        Note this exposes a DIFFERENT mover ordering than
+        :attr:`placeable_ids`: ``mover_ids`` follows ``ground_objects``
+        (declaration) order, whereas ``placeable_ids`` sorts the movers. Callers
+        must not index-align one against the other (the solver re-sorts via
+        ``sorted(scenario.mover_ids)`` at the use site)."""
+        return tuple(
+            gid
+            for gid in self.ground_objects
+            if self.ground_object_defs[gid].object_class == "placed_routed_mover"
+        )
+
+    @property
+    def placeable_ids(self) -> tuple[str, ...]:
+        """Aircraft (``fleet_in``) then sorted mover ids — the unified search bodies.
+        With no movers this is exactly ``fleet_in`` (ADR-0003).
+
+        The mover ordering here (``fleet_in + sorted(mover_ids)``) differs from
+        :attr:`mover_ids`' ``ground_objects`` (declaration) order, so callers
+        must not index-align the two."""
+        return self.fleet_in + tuple(sorted(self.mover_ids))
 
     # Picklable across the #544 ProcessPool boundary — the worker input. See
     # _proxy_aware_getstate for the rationale (shared with Layout, #545/#544).
@@ -1303,6 +1423,18 @@ SolveStatus = Literal[
     "exhausted_budget",
     "trivially_infeasible",
 ]
+
+
+class RegionAlignment(typing.NamedTuple):
+    """A placed body's achieved wall alignment for a returned layout (#604).
+
+    ``alignment`` is 0–1 with 1.0 meaning the body sits exactly at its preferred
+    wall. A ``tuple`` subclass, so it is byte-identical under pickle/equality/repr
+    (determinism-neutral) and ``dict(layout_alignments)`` still yields
+    ``{body_id: alignment}``."""
+
+    body_id: str
+    alignment: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -1369,6 +1501,13 @@ class SolverDiagnostics:
     to that returned layout (#263, ADR-0022). ``0`` for a layout where no plane was
     flipped (or with ``nose_out`` disabled). Advisory / RNG-free.
 
+    ``region_alignment`` is index-aligned with :attr:`SolveResult.layouts`: for each
+    returned layout, a tuple of :class:`RegionAlignment` ``(body_id, alignment)`` pairs
+    (sorted by id) for the bodies carrying a :class:`RegionPreference`, where
+    ``alignment`` is 0–1 with 1.0
+    meaning the body sits exactly at its preferred wall (#604, ADR-0008 amended).
+    Empty when no scenario region preferences are set. Advisory / RNG-free.
+
     ``spread_fallback_applied`` is ``True`` when :func:`hangarfit.solver.solve`
     re-solved with the inter-plane spread post-pass disabled and substituted
     that tighter, tow-routable arrangement because the spread layout(s) came
@@ -1418,6 +1557,7 @@ class SolverDiagnostics:
     spread_stall_applied: bool = False
     apron_shallow_drops: tuple[ApronShallowDrop, ...] = ()
     nose_out_flips: tuple[int, ...] = ()
+    region_alignment: tuple[tuple[RegionAlignment, ...], ...] = ()
 
     def __post_init__(self) -> None:
         if (self.best_partial is None) != (self.best_partial_layout is None):
@@ -1452,6 +1592,13 @@ class SolverDiagnostics:
                 "SolverDiagnostics.nose_out_flips entries must be >= 0, "
                 f"got {self.nose_out_flips!r}"
             )
+        for layout_alignments in self.region_alignment:
+            for ra in layout_alignments:
+                if math.isnan(ra.alignment) or ra.alignment < 0.0 or ra.alignment > 1.0:
+                    raise ValueError(
+                        "SolverDiagnostics.region_alignment values must be in "
+                        f"[0.0, 1.0], got {ra.alignment!r}"
+                    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1516,6 +1663,12 @@ class SolveResult:
                 "SolveResult.diagnostics.nose_out_flips, when populated, must be "
                 f"index-aligned with layouts: got {len(self.diagnostics.nose_out_flips)} "
                 f"counts for {len(self.layouts)} layouts"
+            )
+        if self.diagnostics.region_alignment and len(self.diagnostics.region_alignment) != len(
+            self.layouts
+        ):
+            raise ValueError(
+                "SolverDiagnostics.region_alignment length must match layouts when populated"
             )
 
 
