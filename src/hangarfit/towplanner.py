@@ -38,9 +38,9 @@ from hangarfit.collisions import _parts_conflict
 from hangarfit.collisions import check as _check
 from hangarfit.geometry import (
     WorldPart,
-    aircraft_parts_world,
     cached_parts_world,
     polygon_overlap,
+    pose_cache_scope,
 )
 from hangarfit.models import (
     Aircraft,
@@ -1156,15 +1156,10 @@ def _mover_motion_bounds_conflict(
     door_hi = hangar.door.center_x_m + door_half
     apron_depth = hangar.apron_depth_m
 
-    # cached_parts_world is Aircraft-typed (pose-memoized for the solve scope);
-    # a GroundObject mover goes straight through the union-typed
-    # aircraft_parts_world (uncached, byte-identical geometry). The Aircraft
-    # branch is unchanged ⇒ aircraft routing stays byte-identical.
-    world_parts = list(
-        cached_parts_world(mover, placement)
-        if isinstance(mover, Aircraft)
-        else aircraft_parts_world(mover, placement)
-    )
+    # Pose-memoized for any placeable body (#626): an Aircraft or a GroundObject
+    # mover both reuse cached_parts_world. The key is pose-generic, and outside an
+    # active pose_cache_scope it is a pure passthrough ⇒ byte-identical.
+    world_parts = list(cached_parts_world(mover, placement))
     # Does the footprint cross the front-wall line (vertices on both sides of
     # y=0)? Only a crossing must thread the door (#411); a footprint wholly in
     # front (all y<=0) is staged on the apron and does not cross. Computed only
@@ -1454,6 +1449,32 @@ def plan_fill(
     scan are all RNG-free, so a given ``target`` always yields the same
     :class:`MovesPlan`.
     """
+    # #626: memoize body world-parts for the WHOLE fill. The static obstacle field
+    # is rebuilt by every plan_path's _build_obstacles, and the greedy scan re-routes
+    # the same bodies across iterations, so a fill-wide pose cache turns those
+    # repeated fixed-pose rebuilds into hits — the #453 win movers previously
+    # bypassed, and the root of the #604 routing congestion. Byte-identical
+    # (ADR-0003: the cache returns the same immutable WorldPart list); nesting
+    # inside an in-``solve`` scope is a no-op.
+    with pose_cache_scope():
+        return _plan_fill(
+            target,
+            heuristic=heuristic,
+            max_expansions=max_expansions,
+            max_total_expansions=max_total_expansions,
+            apron_dropped_out=apron_dropped_out,
+        )
+
+
+def _plan_fill(
+    target: Layout,
+    *,
+    heuristic: Literal["euclidean", "grid"] = "grid",
+    max_expansions: int | None = None,
+    max_total_expansions: int | None = None,
+    apron_dropped_out: list[ApronShallowDrop] | None = None,
+) -> MovesPlan:
+    """Body of :func:`plan_fill`, run inside an active ``pose_cache_scope`` (#626)."""
     budget = _MAX_EXPANSIONS if max_expansions is None else max_expansions
     total_budget = _MAX_FILL_EXPANSIONS if max_total_expansions is None else max_total_expansions
     total_used = 0
@@ -1928,7 +1949,10 @@ def _build_obstacles(placed: Layout, *, mover_id: str) -> _Obstacles:
         if gp.plane_id == mover_id:
             continue
         obj = placed.ground_objects[gp.plane_id]
-        parts.extend(aircraft_parts_world(obj, gp))
+        # Pose-memoized (#626): a static mover obstacle's fixed-pose world parts are
+        # rebuilt by every plan_path's _build_obstacles otherwise — the #453 churn
+        # movers bypassed, and the root of the #604 routing congestion.
+        parts.extend(cached_parts_world(obj, gp))
     bay = placed.hangar.maintenance_bay
     return _Obstacles(
         world_parts=tuple(parts),
@@ -1991,14 +2015,11 @@ def _motion_clear(
     module note above and the safety-net re-check in :func:`plan_path`.
     """
     placement = Placement(mover.id, pose.x_m, pose.y_m, pose.heading_deg, on_carts=False)
-    # cached_parts_world is Aircraft-typed; a GroundObject mover uses the
-    # union-typed aircraft_parts_world (uncached, identical geometry). Aircraft
-    # branch unchanged ⇒ byte-identical aircraft routing.
-    mover_parts = (
-        cached_parts_world(mover, placement)
-        if isinstance(mover, Aircraft)
-        else aircraft_parts_world(mover, placement)
-    )
+    # Pose-memoized for any placeable body (#626): an Aircraft or a GroundObject
+    # mover both reuse cached_parts_world. NOTE the TOWED mover's pose changes per
+    # sampled expansion, so it mostly MISSES here (expected) — the cache win is the
+    # static obstacle field (_build_obstacles), memoized across the fill.
+    mover_parts = cached_parts_world(mover, placement)
 
     # (A) Hangar bounds (front-gap-exempt for the mover).
     if _mover_motion_bounds_conflict(mover, placement, hangar) is not None:
