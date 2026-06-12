@@ -8,6 +8,13 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Changed
 
+- **Herrenteich Stemme modelled as dolly-pivotable for tow planning (#644).** The
+  `examples/herrenteich/` fleet manifest now overrides the Stemme S10 to
+  `movement_mode: always_cart` — it is hand-positioned on a dolly in the hangar,
+  so it pivots in place rather than using its 10 m *taxi* turn radius (a per-fleet
+  operational override, #595; flight specs stay in the catalog). Part of correcting
+  the tow-motion abstraction (#643).
+
 ### Fixed
 
 ## [0.15.0] — 2026-06-12
