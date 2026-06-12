@@ -33,6 +33,7 @@ This file is the durable **operational** context for the project: how we work, w
 | **The tow-path planner** (empty-hangar fill, Reeds–Shepp arcs, `solve --render-paths`, exit-3 tow-routability) | [§5 Building Block View](docs/architecture/05-building-block-view.md) (`towplanner`) + [ADR-0007](docs/adr/0007-tow-path-planner-v1-scope.md) (v1 scope) + [ADR-0010](docs/adr/0010-reeds-shepp-motion-model.md) (v2 Reeds–Shepp motion) |
 | **The staging apron** (`hangar.apron_depth_m` / `--apron-depth N\|auto`, slide-in from outside the door, reverse nose-out seeds, depth-0 byte-identical) | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#the-door-is-a-visual-marker-only) + [ADR-0021](docs/adr/0021-tow-planner-staging-apron.md). `collisions.check` is apron-inert (forbids `y<0`); the apron is a planner-level motion concept |
 | **The 3D viewer** (`hangarfit view`, interactive offline HTML, whole-fill tow timeline, the `scene/v2` JSON seam, Python-owned transform) | [§5 Building Block View](docs/architecture/05-building-block-view.md) (`scene`, `viewer`) + [ADR-0017](docs/adr/0017-3d-viewer-architecture.md) + the schema reference [docs/architecture/scene-v2-schema.md](docs/architecture/scene-v2-schema.md) |
+| **Ground objects** (fixed obstacles + placed/routed movers — cars & trailers; the Caddy hard-door egress gate; the soft right/left-region preference; movers are solver-placed since #604) | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#ground-objects) + [ADR-0025](docs/adr/0025-ground-object-taxonomy.md) (taxonomy) + [ADR-0026](docs/adr/0026-caddy-hard-door-egress.md) (Caddy egress) + [ADR-0008](docs/adr/0008-inter-plane-spread-soft-preference.md) (region soft-term amendment) + [ADR-0010](docs/adr/0010-reeds-shepp-motion-model.md) (mover motion) |
 | Why the project targets a single Python (3.12), not a range | [ADR-0009](docs/adr/0009-single-supported-python-version.md) |
 | All architecture decisions, including superseded ones | [`docs/adr/`](docs/adr/) |
 
@@ -293,3 +294,14 @@ gh pr create --draft --base develop --title "..." --body "Closes #N ..."
 # ... review arc; then flip out of draft when clean ...
 gh pr ready <n>
 ```
+
+## graphify (optional)
+
+graphify is an **optional, per-developer** tool — it is *not* required to work on this project, and `graphify-out/` is gitignored, so nothing in the build / test / CI depends on it. **If** a contributor has graphify installed and `graphify-out/graph.json` exists, it provides a knowledge graph (god nodes, community structure, cross-file relationships) that can scope codebase questions faster than raw grep:
+
+- For "what/where/how-does-X-relate/impact" questions, prefer `graphify query "<question>"` (also `graphify path "<A>" "<B>"` for relationships, `graphify explain "<concept>"` for a focused concept) — these return a scoped subgraph, usually much smaller than `GRAPH_REPORT.md` or raw grep output. Use raw grep/read for line-exact code you're about to modify.
+- If `graphify-out/wiki/index.md` exists, use it for broad navigation instead of raw source browsing.
+- Read `graphify-out/GRAPH_REPORT.md` only for broad architecture review, or when query/path/explain don't surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+
+If graphify is not installed, ignore this section.
