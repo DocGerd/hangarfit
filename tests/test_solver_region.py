@@ -82,3 +82,30 @@ def test_region_pref_pulls_trailer_right(region_scenario, region_scenario_left):
     assert _trailer_x(r) > _trailer_x(lft)
     # and the right one is actually in the right half of the 24 m-wide hangar
     assert _trailer_x(r) > region_scenario.hangar.width_m / 2
+
+
+def test_region_alignment_surfaced_in_diagnostics(region_scenario):
+    r = solve(
+        region_scenario,
+        search=SearchConfig(max_restarts=6, spread=True),
+        seed=1,
+        budget_s=120.0,
+        plan_paths=False,
+    )
+    align = r.diagnostics.region_alignment
+    assert len(align) == len(r.layouts)
+    layout0 = dict(align[0])
+    assert 0.0 <= layout0["glider_trailer_1"] <= 1.0
+    # right-pref trailer ends near the right wall ⇒ alignment high
+    assert layout0["glider_trailer_1"] > 0.5
+
+
+def test_region_alignment_empty_when_no_pref(region_scenario_no_go):
+    r = solve(
+        region_scenario_no_go,
+        search=SearchConfig(max_restarts=4, spread=True),
+        seed=0,
+        budget_s=120.0,
+        plan_paths=False,
+    )
+    assert r.diagnostics.region_alignment == ()

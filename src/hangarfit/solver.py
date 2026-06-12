@@ -316,12 +316,14 @@ def _run_restart(
                 )
             candidate_layout = _build_layout(scenario, placements)
             min_gap, energy = _spread_quality(placements, scenario, spread_scale)
+            cand_alignment = _region_alignment(placements, scenario)
             candidate = _SpreadCandidate(
                 layout=candidate_layout,
                 min_gap=min_gap,
                 energy=energy,
                 restart_index=restart_index,
                 nose_out_flips=n_flips,
+                region_alignment=cand_alignment,
             )
             break  # found a basin
 
@@ -840,6 +842,10 @@ def _build_found_result(
     accepted_layouts = [c.layout for c in selected]
     min_gaps = tuple(c.min_gap for c in selected)
     nose_out_flips = tuple(c.nose_out_flips for c in selected)
+    region_alignment_per_layout = tuple(c.region_alignment for c in selected)
+    # Collapse the no-preferences case to the empty default so a scenario without
+    # region preferences reports `()` (not a tuple of empty tuples) — #604.
+    region_alignment = region_alignment_per_layout if any(region_alignment_per_layout) else ()
     status: SolveStatus = "found" if len(accepted_layouts) >= alternatives else "found_partial"
     plans, unroutable, apron_drops = _tow_plan_layouts(
         accepted_layouts,
@@ -865,6 +871,7 @@ def _build_found_result(
             spread_stall_applied=spread_stall_applied,
             apron_shallow_drops=apron_drops,
             nose_out_flips=nose_out_flips,
+            region_alignment=region_alignment,
         ),
     )
 
@@ -1336,6 +1343,26 @@ def _region_energy(placements: Mapping[str, Placement], scenario: Scenario) -> f
         d = (width - x) if pref.side == "right" else x
         total += pref.weight * (d / width)
     return total
+
+
+def _region_alignment(
+    placements: Mapping[str, Placement], scenario: Scenario
+) -> tuple[tuple[str, float], ...]:
+    """Per-preferring-object wall alignment in ``[0, 1]`` (1.0 = AT the preferred
+    wall), sorted by id (#604). ``()`` when the scenario has no region preferences.
+    RNG-free; the observability twin of :func:`_region_energy`."""
+    prefs = scenario.region_preferences
+    if not prefs:
+        return ()
+    width = scenario.hangar.width_m
+    out: list[tuple[str, float]] = []
+    for pid in sorted(prefs):
+        if pid not in placements:
+            continue
+        x = placements[pid].x_m
+        frac = (x / width) if prefs[pid].side == "right" else (1.0 - x / width)
+        out.append((pid, max(0.0, min(1.0, frac))))
+    return tuple(out)
 
 
 def _resolve_spread_scale(scenario: Scenario, search: SearchConfig) -> float:
@@ -1979,6 +2006,7 @@ class _SpreadCandidate(NamedTuple):
     energy: float
     restart_index: int
     nose_out_flips: int = 0
+    region_alignment: tuple[tuple[str, float], ...] = ()
 
 
 def _select_spread_diverse(
