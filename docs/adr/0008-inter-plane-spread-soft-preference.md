@@ -318,9 +318,10 @@ where d_o = (W − x_o) for side="right", x_o for side="left", and W = hangar.wi
   only WITHIN a basin's validity-gated hill-climb (`_spread` accepts only moves
   keeping `_score==(0,0.0)`), and never enters basin selection.
 - **Ground objects are now solver-placed.** Movers (`placed_routed_mover`) are
-  full search citizens (sampled, perturbed in the descent, spread, routed,
-  egress-gated); fixed obstacles are authored static keep-outs. The region
-  alignment achieved is surfaced via `SolverDiagnostics.region_alignment`
+  full search citizens (sampled, perturbed in the descent, spread, routed, and —
+  when flagged `hard_door_mover` (e.g. the Caddy) — egress-gated (#603));
+  fixed obstacles are authored static keep-outs. The region alignment achieved
+  is surfaced via `SolverDiagnostics.region_alignment`
   (per-layout per-object 0-1, 1.0 = at the preferred wall).
 
 **Default & toggle.** Default INERT: a scenario with no `region_preferences`

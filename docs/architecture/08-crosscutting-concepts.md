@@ -140,9 +140,9 @@ Two `object_class` values exist:
   `<sorted_kinds>_overlap` conflicts. In `solve` (#604), movers are **full
   RR-MC search citizens**: their poses are sampled, perturbed in the
   min-conflicts descent, included in the `_spread` hill-climb, routed by
-  `plan_fill`, and subject to the #603 Caddy hard-door egress gate. In
-  `check` and `view` their poses are authored in the layout YAML, exactly
-  as before.
+  `plan_fill`, and — if flagged `hard_door_mover` — subject to the #603
+  Caddy egress gate. In `check` and `view` their poses are authored in the
+  layout YAML, exactly as before.
 
 Three concrete catalog `type:` values author ground objects: `fixed_obstacle`,
 `car` (motion default `"steerable"`), and `trailer` (motion default `"towed"`).
