@@ -6,6 +6,17 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Separate tow-MOTION clearance, distinct from the parked clearance (#643).**
+  A hangar may declare optional `motion_clearance_m` / `motion_wing_layer_clearance_m`
+  — the margin the tow planner clears a *moving* mover against parked bodies, which
+  reality threads far tighter than the parked spacing (a spotter watches the wingtips).
+  `collisions.check` keeps the parked `clearance_m` for static validity; only the tow
+  planner's per-pose checks (`path_first_conflict` and the in-search `_motion_clear`)
+  use the tighter motion margin. Absent (the default) ⇒ the motion clearance IS the
+  parked clearance, so plans are **byte-identical** (ADR-0003). This corrects an
+  over-strict abstraction — applying the parked margin during motion — that made
+  otherwise-routable dense layouts falsely un-routable.
+
 ### Changed
 
 ### Fixed

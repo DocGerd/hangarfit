@@ -356,6 +356,8 @@ _ALLOWED_HANGAR_KEYS = frozenset(
         "structural_notches",
         "clearance_m",
         "wing_layer_clearance_m",
+        "motion_clearance_m",
+        "motion_wing_layer_clearance_m",
         "max_carts",
         "apron_depth_m",
     }
@@ -442,6 +444,20 @@ def load_hangar(path: Path | str, *, fleet: Mapping[str, Aircraft] | None = None
             clearance_m=_to_float(raw.get("clearance_m", 0.3), "clearance_m"),
             wing_layer_clearance_m=_to_float(
                 raw.get("wing_layer_clearance_m", 0.2), "wing_layer_clearance_m"
+            ),
+            # #643: optional tighter tow-motion clearances. Absent ⇒ None ⇒ the
+            # motion clearance is the parked clearance (byte-identical plan).
+            motion_clearance_m=(
+                None
+                if raw.get("motion_clearance_m") is None
+                else _to_float(raw["motion_clearance_m"], "motion_clearance_m")
+            ),
+            motion_wing_layer_clearance_m=(
+                None
+                if raw.get("motion_wing_layer_clearance_m") is None
+                else _to_float(
+                    raw["motion_wing_layer_clearance_m"], "motion_wing_layer_clearance_m"
+                )
             ),
             max_carts=_to_int(raw.get("max_carts", 1), "max_carts"),
             apron_depth_m=_resolve_apron_depth(raw.get("apron_depth_m", 0.0), fleet),

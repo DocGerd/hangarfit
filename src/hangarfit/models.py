@@ -15,7 +15,7 @@ from __future__ import annotations
 import math
 import typing
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, cast
 
@@ -671,6 +671,14 @@ class Hangar:
     max_carts: int = 1
     apron_depth_m: float = 0.0
     structural_notches: tuple[StructuralNotch, ...] = ()
+    # #643: a SEPARATE, tighter clearance applied only during tow MOTION — a
+    # mover threading PAST a parked body is hand-cleared far closer than the
+    # parked spacing (a spotter watches the wingtips), so the parked
+    # ``clearance_m`` over-constrains the maneuver. ``None`` (the default) ⇒ the
+    # motion clearance IS the parked clearance, so a hangar without these fields
+    # plans byte-identically to today (ADR-0003). Consumed via ``motion_hangar``.
+    motion_clearance_m: float | None = None
+    motion_wing_layer_clearance_m: float | None = None
     # Derived L-shaped floor outline (outer rectangle minus the notches),
     # computed once in __post_init__ and cached here. ``None`` when there are
     # no notches (the common case) so the checker stays on its rectangle path.
@@ -694,6 +702,18 @@ class Hangar:
             raise ValueError(f"Hangar.max_carts must be non-negative, got {self.max_carts}")
         if self.apron_depth_m < 0:
             raise ValueError(f"Hangar.apron_depth_m must be non-negative, got {self.apron_depth_m}")
+        if self.motion_clearance_m is not None and self.motion_clearance_m < 0:
+            raise ValueError(
+                f"Hangar.motion_clearance_m must be non-negative, got {self.motion_clearance_m}"
+            )
+        if (
+            self.motion_wing_layer_clearance_m is not None
+            and self.motion_wing_layer_clearance_m < 0
+        ):
+            raise ValueError(
+                f"Hangar.motion_wing_layer_clearance_m must be non-negative, "
+                f"got {self.motion_wing_layer_clearance_m}"
+            )
         door_left = self.door.center_x_m - self.door.width_m / 2
         door_right = self.door.center_x_m + self.door.width_m / 2
         if door_left < 0 or door_right > self.width_m:
@@ -755,6 +775,33 @@ class Hangar:
         value is the L-shaped outline against which parts are tested with
         ``covers`` (ADR-0018)."""
         return self._floor_polygon
+
+    def motion_hangar(self) -> Hangar:
+        """The hangar as seen by the tow-MOTION collision checks (#643).
+
+        Returns ``self`` when no motion clearance is set, so the plan is
+        byte-identical to a hangar without these fields (ADR-0003). Otherwise
+        returns a plain parked-style hangar whose ``clearance_m`` /
+        ``wing_layer_clearance_m`` ARE the (tighter) motion values — so the
+        per-sampled-pose ``collisions.check`` the tow planner runs applies the
+        motion margin, while the static parked check keeps the original
+        spacing. The motion fields are folded into the clearances and cleared on
+        the returned hangar (it is itself a parked-style hangar)."""
+        if self.motion_clearance_m is None and self.motion_wing_layer_clearance_m is None:
+            return self
+        return replace(
+            self,
+            clearance_m=(
+                self.clearance_m if self.motion_clearance_m is None else self.motion_clearance_m
+            ),
+            wing_layer_clearance_m=(
+                self.wing_layer_clearance_m
+                if self.motion_wing_layer_clearance_m is None
+                else self.motion_wing_layer_clearance_m
+            ),
+            motion_clearance_m=None,
+            motion_wing_layer_clearance_m=None,
+        )
 
 
 @dataclass(frozen=True, slots=True)
