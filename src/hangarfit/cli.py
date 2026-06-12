@@ -720,6 +720,7 @@ def cmd_solve(args: argparse.Namespace) -> int:
     # byte-identical-eligible for this config (no --max-restarts, or --no-spread),
     # solve() transparently runs serial — say so on stderr so the user isn't
     # left believing they got the speedup.
+    cpu_cores = os.cpu_count() or 1
     if args.workers > 1 and not _parallel_eligible(search_cfg, args.workers):
         print(
             f"note: --workers {args.workers} ignored (runs serial) — parallel "
@@ -727,21 +728,21 @@ def cmd_solve(args: argparse.Namespace) -> int:
             "--no-spread); see --workers help",
             file=sys.stderr,
         )
-    elif args.workers == 1 and _parallel_eligible(search_cfg, 2) and (os.cpu_count() or 1) > 1:
+    elif args.workers == 1 and cpu_cores > 1 and _parallel_eligible(search_cfg, 2):
         # This config IS parallel-eligible (--max-restarts + spread) but the
         # restarts run serial on a multi-core box, leaving cores idle. Probe
-        # eligibility with a worker count of 2 (the predicate's first conjunct is
-        # workers > 1); the user's actual --workers is 1. Suggest the flag rather
-        # than silently waste the cores — zero behaviour change, stderr only so
-        # --json / --write-yaml stay machine-readable (#628).
-        _cores = os.cpu_count() or 1
+        # eligibility with a worker count of 2 (the predicate requires workers > 1;
+        # the user's actual --workers is 1). Suggest the flag rather than silently
+        # waste the cores — zero behaviour change, stderr only so --json /
+        # --write-yaml stay machine-readable (#628).
         # Cap the SUGGESTED count: the #544 speedup is sub-linear (~4.5x at 8
         # workers), so don't over-promise cores-2 on a big box — it's an example.
-        _suggest = min(8, max(1, _cores - 2))
+        _suggest = min(8, max(1, cpu_cores - 2))
         print(
-            f"hint: this is a multi-restart spread solve running serial on {_cores} "
-            f"cores — add --workers N (e.g. --workers {_suggest}) to fan the "
-            f"{args.max_restarts} restarts across processes (byte-identical to serial; #544).",
+            f"hint: this is a multi-restart spread solve running serial on a "
+            f"{cpu_cores}-core box — add --workers N (e.g. --workers {_suggest}) to fan "
+            f"the {args.max_restarts} restarts across processes "
+            "(byte-identical to serial; #544).",
             file=sys.stderr,
         )
     result = solve(
