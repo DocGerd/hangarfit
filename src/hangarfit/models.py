@@ -1146,13 +1146,22 @@ class Scenario:
     ground_object_defs: Mapping[str, GroundObject] = field(
         default_factory=lambda: MappingProxyType({})
     )
+    fixed_obstacle_placements: tuple[Placement, ...] = ()
+    region_preferences: Mapping[str, RegionPreference] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
     # The mapping fields wrapped in MappingProxyType for immutability. This is
     # the single source of truth for both the construction-time wrap (in
     # __post_init__) and the pickle unwrap/re-wrap (in __getstate__/__setstate__,
     # #545) — listing them once means the two cannot silently drift. (ClassVar so
     # the dataclass excludes it from the field set and __slots__.)
-    _PROXY_FIELDS: typing.ClassVar[tuple[str, ...]] = ("fleet", "constraints", "ground_object_defs")
+    _PROXY_FIELDS: typing.ClassVar[tuple[str, ...]] = (
+        "fleet",
+        "constraints",
+        "ground_object_defs",
+        "region_preferences",
+    )
 
     def __post_init__(self) -> None:
         # fleet_in must be non-empty (otherwise there's nothing to solve;
@@ -1283,6 +1292,35 @@ class Scenario:
                     f"defs have: {sorted(self.ground_object_defs)}"
                 )
 
+        # Region preferences (#604): every key must reference a placeable body —
+        # an aircraft in fleet_in or a placed_routed_mover ground object.
+        placeable = set(self.fleet_in) | {
+            gid
+            for gid in self.ground_objects
+            if self.ground_object_defs[gid].object_class == "placed_routed_mover"
+        }
+        for rid in self.region_preferences:
+            if rid not in placeable:
+                raise ValueError(
+                    f"Scenario.region_preferences references {rid!r} which is not a "
+                    f"placeable body (aircraft or placed_routed_mover); "
+                    f"placeable ids: {sorted(placeable)}"
+                )
+        seen_fixed: set[str] = set()
+        for p in self.fixed_obstacle_placements:
+            if p.plane_id not in self.ground_object_defs:
+                raise ValueError(
+                    f"Scenario.fixed_obstacle_placements references unknown ground "
+                    f"object {p.plane_id!r}"
+                )
+            if self.ground_object_defs[p.plane_id].object_class != "fixed_obstacle":
+                raise ValueError(
+                    f"Scenario.fixed_obstacle_placements[{p.plane_id!r}] is not a fixed_obstacle"
+                )
+            if p.plane_id in seen_fixed:
+                raise ValueError(f"Duplicate fixed_obstacle_placement for {p.plane_id!r}")
+            seen_fixed.add(p.plane_id)
+
         # Wrap the mapping fields in MappingProxyType so a frozen Scenario can't
         # be mutated through e.g. ``scenario.fleet["x"] = …``. Always copy+wrap
         # (even an already-wrapped MappingProxyType arg): skipping the copy would
@@ -1291,6 +1329,25 @@ class Scenario:
         # pickle unwrap list stay a single source of truth.
         for name in self._PROXY_FIELDS:
             object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
+
+    @property
+    def mover_ids(self) -> tuple[str, ...]:
+        """Placed-routed-mover ids active in this scenario, in ``ground_objects`` order.
+
+        These are the ground objects the solver PLACES + routes (vs fixed
+        obstacles, authored static keep-outs in :attr:`fixed_obstacle_placements`).
+        Empty ⇒ the solver is aircraft-only and byte-identical to pre-#604 (ADR-0003)."""
+        return tuple(
+            gid
+            for gid in self.ground_objects
+            if self.ground_object_defs[gid].object_class == "placed_routed_mover"
+        )
+
+    @property
+    def placeable_ids(self) -> tuple[str, ...]:
+        """Aircraft (``fleet_in``) then sorted mover ids — the unified search bodies.
+        With no movers this is exactly ``fleet_in`` (ADR-0003)."""
+        return self.fleet_in + tuple(sorted(self.mover_ids))
 
     # Picklable across the #544 ProcessPool boundary — the worker input. See
     # _proxy_aware_getstate for the rationale (shared with Layout, #545/#544).
