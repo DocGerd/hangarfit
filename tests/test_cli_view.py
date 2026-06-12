@@ -195,6 +195,34 @@ def test_view_layout_mode_warns_apron_shallow_once(tmp_path, monkeypatch, capsys
     assert "'z'" in err and "8.0 m" in err
 
 
+def test_view_layout_mode_warns_unroutable_mover(tmp_path, monkeypatch, capsys):
+    # #634: layout-mode view surfaces un-routable MOVERS. An un-tow-routable
+    # aircraft makes plan_fill raise (the "not tow-routable" static-degrade note);
+    # a None-path mover does NOT raise — it keeps a best-effort static body — so
+    # without the out-param it would be a silent skip, unlike `solve --render-paths`
+    # (#612). Stub plan_fill to populate the out-param + return a real plan; the
+    # CLI must name the mover on stderr.
+    import hangarfit.towplanner as tp
+    from hangarfit.towplanner import DubinsArc, Move, MovesPlan, Pose, Segment
+
+    def fake_plan_fill(target, *, unroutable_movers=None, **kwargs):
+        if unroutable_movers is not None:
+            unroutable_movers.append("vw_caddy")
+        start = Pose(x_m=2.0, y_m=0.0, heading_deg=0.0)
+        end = Pose(x_m=2.0, y_m=5.0, heading_deg=0.0)
+        arc = DubinsArc(start=start, end=end, turn_radius_m=1.0, segments=(Segment("S", 5.0),))
+        return MovesPlan(
+            target_layout=target, moves=(Move(plane_id="z", target_slot=end, path=arc),)
+        )
+
+    monkeypatch.setattr(tp, "plan_fill", fake_plan_fill)
+    out = tmp_path / "v.html"
+    rc = main(["view", NESTING, "-o", str(out)])
+    assert rc == 0 and out.exists()
+    err = capsys.readouterr().err
+    assert "vw_caddy" in err and "could not be routed" in err
+
+
 def test_view_layout_mode_no_apron_drop_no_warning(tmp_path, monkeypatch, capsys):
     # No drop recorded (deep enough apron / no apron) ⇒ no warning.
     import hangarfit.towplanner as tp

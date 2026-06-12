@@ -42,6 +42,14 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Fixed
 
+- **`view` surfaces un-routable ground-object movers (#634).** Layout-mode
+  `hangarfit view` already named an un-tow-routable *aircraft* (the static-degrade
+  note), but a None-path *mover* — which `plan_fill` keeps as a best-effort static
+  body rather than raising — rendered silently, unlike `solve --render-paths`
+  (#612). `view` now threads `plan_fill`'s `unroutable_movers` out-param and warns
+  one line per mover on stderr (the shared `_warn_unroutable_mover_ids` helper),
+  closing the last `view`/`solve` surfacing parity gap. Plan-inert (byte-identical).
+
 ## [0.15.0] — 2026-06-12
 
 ### Added
