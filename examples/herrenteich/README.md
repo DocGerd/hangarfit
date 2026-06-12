@@ -1,9 +1,11 @@
 # Airfield Herrenteich — real dataset
 
-A self-contained, **real-world** dataset for the club's main-building hangar,
-kept separate from the synthetic placeholders in `data/` (which stay as the
-project's stable demo/test fixtures). Nothing here is wired into the default
-CLI paths — point the tools at these files explicitly.
+A **real-world** dataset for the club's main-building hangar. The hangar,
+layout, and scenario files live here; the eight aircraft are defined once in the
+central catalog (`data/catalog/`) and pulled in by this directory's `fleet.yaml`
+manifest — the real published-spec numbers ARE the catalog's numbers (#595/#594,
+no per-world duplication). Nothing here is wired into the default CLI paths —
+point the tools at these files explicitly.
 
 ```bash
 # Validate the "everyone home" layout (all eight usual occupants):
@@ -23,12 +25,13 @@ hangarfit view  examples/herrenteich/scenario_demo.yaml -o demo.html --seed 3
 | File | What it is |
 |---|---|
 | `hangar.yaml` | The real hangar — **15.08 m × 31.76 m**, door **13.46 m** wide. Measured 2026-06-04 from the architect's DWG. L-shaped (back-right office notch). |
-| `fleet.yaml`  | The eight aircraft usually hangared here. Envelope (span/length/height) from published specs; part-level dimensions (wing chord, fuselage width, tail spans, gear track/wheelbase) sourced from EASA/FAA TCDS + manufacturer manuals where published (refreshed 2026-06-08, #536); the rest derived/estimated and flagged inline. |
-| `layout.yaml` | A **valid** arrangement with all eight planes parked at once (`hangarfit check` → exit 0). |
+| `fleet.yaml`  | The eight aircraft usually hangared here, plus (since #605) the four non-aircraft floor occupants under `ground_objects:` (Caddy, 2 glider trailers, fixed fuel trailer). Envelope (span/length/height) from published specs; part-level dimensions (wing chord, fuselage width, tail spans, gear track/wheelbase) sourced from EASA/FAA TCDS + manufacturer manuals where published (refreshed 2026-06-08, #536); the rest derived/estimated and flagged inline. |
+| `layout.yaml` | A **valid** arrangement with all eight aircraft parked at once (`hangarfit check` → exit 0). Aircraft only. |
+| `layout_full.yaml` | **The #605 calibration reference** — the full real set (8 aircraft + Caddy + 2 glider trailers + fixed fuel trailer) parked at once, valid at the calibrated clearances (`hangarfit check` → exit 0). |
 | `scenario.yaml` | The solver input for the all-eight "everyone home" scenario (does not fully route — see below). |
 | `scenario_demo.yaml` | A 3-aircraft subset that **solves and fully tow-routes** end-to-end in the L-shaped hangar — the working toolchain demo. |
 
-## Two things this dataset is honest about
+## Three things this dataset is honest about
 
 **1. The hangar is L-shaped, and since ADR-0018 (#527) the model knows it.**
 The real back-right corner is notched out (~2.36 m × 9.10 m) — that's
@@ -47,6 +50,20 @@ solvable + tow-routable subset is `scenario_demo.yaml`** — three aircraft the
 solver places clear of the notch and the tow planner routes from the door around
 it (the end-to-end demo above). Replace the all-eight placements with the club's
 real parking positions when known.
+
+**3. The full real set fits only at calibrated clearances (#605).** The real
+hangar parks more than aircraft: a VW Caddy, two glider trailers, and a fixed
+"Maul" fuel trailer. `layout_full.yaml` parks all eleven at once and passes
+`hangarfit check`. Getting there needed a **clearance calibration** — the
+placeholder `clearance_m 0.3` / `wing_layer_clearance_m 0.2` are too loose for a
+real club hangar packed this densely (the full set is infeasible at 0.3/0.2),
+so `hangar.yaml` was calibrated to **0.20 / 0.15** (a checker-driven search puts
+the feasibility frontier at ≤0.22/0.15). Lowering a clearance only relaxes the
+constraint, so `layout.yaml` and `scenario_demo.yaml` stay valid. The aircraft in
+`layout_full.yaml` are re-nested (vs `layout.yaml`) to free wall corridors for the
+9 m glider trailers. **Deferred:** tow-routing the full set (#602; the 18 m
+Scheibe is not yet routable), the hard Caddy nearest-door egress gate (#603), and
+rendering ground objects in the PNG/3D viewer (#606).
 
 ## Notable aircraft
 

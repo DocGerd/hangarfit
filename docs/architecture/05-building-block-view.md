@@ -16,7 +16,7 @@ flowchart TD
     solver["solver.py<br/>RR-MC search<br/>deterministic RNG"]
     towplanner["towplanner.py<br/>tow-path planning<br/>Reeds–Shepp + bound-aware Hybrid-A*"]
     visualize["visualize.py<br/>top-down PNG renderer<br/>headless matplotlib"]
-    scene["scene.py<br/>scene/v1 builder<br/>precomputed affines + timeline"]
+    scene["scene.py<br/>scene/v2 builder<br/>precomputed affines + timeline"]
     viewer["viewer.py<br/>self-contained 3D HTML<br/>inlined scene + vendored Three.js"]
     metrics["metrics.py<br/>read-only render annotations<br/>placeholder / gap / clearance / validity"]
     brand["brand.py<br/>single source of brand tokens<br/>CVD-safe palette / opacity / fonts"]
@@ -106,10 +106,19 @@ maintenance-plane-is-not-in-placements rule. A constructed instance is
 guaranteed structurally valid; nothing downstream re-checks.
 
 `PartKind` is a closed `Literal` set (`"fuselage_front"`,
-`"fuselage_aft"`, `"wing"`, `"strut"`, `"tail"`,
-`"vertical_stabilizer"`). The `Conflict.kind` taxonomy is also closed —
-adding a new conflict kind is a code change here, not just a string
-constant elsewhere.
+`"fuselage_aft"`, `"ground"`, `"strut"`, `"tail"`,
+`"vertical_stabilizer"`, `"wing"`). The `Conflict.kind` taxonomy is also
+closed — adding a new conflict kind is a code change here, not just a
+string constant elsewhere.
+
+Ground objects — non-aircraft floor occupants — are modelled as frozen
+`GroundObject` dataclasses (#601, [ADR-0025](../adr/0025-ground-object-taxonomy.md)):
+a tuple of `Part`s using the `"ground"` `PartKind`, a derived
+`object_class` (`"fixed_obstacle"` or `"placed_routed_mover"`), and an
+optional `motion_mode` / `turn_radius_m` for movers. `Layout` gains two
+parallel fields (`ground_objects` map, `ground_object_placements` tuple)
+with the same id-disjointness and invariant discipline as `fleet` /
+`placements`; `Scenario` gains a `ground_objects` id list for the solve path.
 
 This module imports nothing from the rest of the project. It is the
 project's vocabulary.
@@ -117,10 +126,33 @@ project's vocabulary.
 ### `loader.py` — YAML → models
 
 Parses `fleet.yaml`, `hangar.yaml`, layout YAMLs, and scenario YAMLs
-into the dataclasses from `models.py`. The single non-trivial
-transformation is the `struts:` block — a high-level YAML shorthand
-for strut-braced aircraft that the loader expands into two mirrored
-strut `Part`s before constructing the `Aircraft`. The constructed
+into the dataclasses from `models.py`.
+
+A fleet file is a thin **manifest** (#595): its `aircraft:` list holds
+**references** to per-object **catalog** files (`data/catalog/<id>.yaml`),
+resolved by path relative to the manifest's directory (the same idiom
+`fleet:`/`hangar:` already use). Each catalog file carries a `type:`
+discriminator (default `aircraft`) that the loader dispatches to a per-type
+builder (`_build_catalog_object` → `_build_aircraft` / `_build_fixed_obstacle`
+/ `_build_car` / `_build_trailer`). Manifest list order is preserved, so the
+resulting `dict[str, Aircraft]` insertion order is deterministic (ADR-0003).
+A manifest entry may be a bare path string or a `{ref: <path>, …}` mapping
+that **overrides a per-fleet operational flag** (`movement_mode`,
+`tow_pivotable`) on top of the shared static definition — geometry is static
+and never override-able. Inline aircraft definitions are no longer supported.
+
+The optional manifest `ground_objects:` list loads ground objects via
+`load_ground_objects` (#601, [ADR-0025](../adr/0025-ground-object-taxonomy.md));
+a layout `ground_objects:` block resolves each entry's `object` id against
+that set and builds a `Placement`. Each concrete `type:` (`fixed_obstacle`,
+`car`, `trailer`) has its own builder with a strict key allowlist and sensible
+motion defaults (`car` → `"steerable"`, `trailer` → `"towed"`). An absent
+`ground_objects:` key in the manifest returns `{}` — existing manifests are
+byte-identical.
+
+The other non-trivial transformation is the `struts:` block — a high-level
+YAML shorthand for strut-braced aircraft that the loader expands into two
+mirrored strut `Part`s before constructing the `Aircraft`. The constructed
 `Aircraft` has no `struts` field; the parts tuple is the single source
 of truth, eliminating any risk of strut volume being double-counted.
 
@@ -175,6 +207,13 @@ predicates and aggregates conflicts:
    every part-pair is tested with the two-clause predicate
    (plan-view distance < `clearance_m` AND height gap <
    `wing_layer_clearance_m`).
+4. **Ground-object keep-out and pairwise wiring** (#601,
+   [ADR-0025](../adr/0025-ground-object-taxonomy.md)) — fixed-obstacle world
+   parts are checked against every aircraft/mover part with the same
+   two-clause predicate, emitting a `ground_obstacle` conflict (single-plane,
+   naming the obstacle in `detail`); mover world parts join the pairwise loop
+   like aircraft. Fixed ↔ fixed overlaps are suppressed. With empty
+   `ground_object_placements` the `CheckResult` is bit-identical to before.
 
 The cart rule is **not** here — it is already enforced upstream in
 `Layout.__post_init__`. `collisions.py` operates on a structurally
@@ -336,6 +375,15 @@ the **empty-hangar fill** case — every plane enters once (ADR-0007).
   opt-in `auto` value. Default `0` reproduces the no-apron `MovesPlan`
   byte-for-byte (the whole apron lives behind an `apron_depth_m > 0` gate;
   ADR-0003); `collisions.check` is untouched (§8 *The door*).
+- **Ground-object tow wiring** (#601, [ADR-0025](../adr/0025-ground-object-taxonomy.md)) —
+  fixed-obstacle world parts (sorted by id for determinism) join the **static**
+  obstacle set in `_build_obstacles` alongside `notch_boxes` and placed-plane
+  parts. Movers are routed per-mover through `plan_path` (car → Reeds–Shepp,
+  trailer → cart motion; #602) alongside aircraft in `plan_fill`'s routable
+  enumeration; a mover the bounded search can't route keeps a best-effort
+  `Move(path=None)` and is surfaced on stderr / `diagnostics.unroutable_movers`
+  rather than silently dropped (#627/#612). With no ground objects the
+  `MovesPlan` is bit-identical to before.
 - **Failure is honest** — a layout it cannot route raises
   `NoFeasiblePlanError` naming the offending plane; `solve` records it
   best-effort (see the bundling bullet above), and the CLI's
@@ -384,10 +432,10 @@ plane's canonical `aircraft.wheels.positions`
 The render is the only project output that is not also JSON-encodable;
 it is the human's sanity-check.
 
-### `scene.py` — `scene/v1` builder (3D)
+### `scene.py` — `scene/v2` builder (3D)
 
 A pure builder (no I/O, no rendering) that turns a `Layout` (+ optional
-`MovesPlan`, `CheckResult`) into the JSON-serializable `hangarfit.scene/v1`
+`MovesPlan`, `CheckResult`) into the JSON-serializable `hangarfit.scene/v2`
 dict consumed by the 3D viewer. It is a leaf consumer of the core types, the
 same role `visualize.py` plays for the 2D PNG.
 
@@ -397,12 +445,12 @@ as per-frame affine matrices and emits `aircraft_parts_world` oracle corners as
 `anchors`, so the viewer applies matrices and does no transform math. It also
 builds the whole-fill timeline (one segment per plane in `back_first_order`, laid
 end-to-end, sampled from each tow `DubinsArc`). Pure and deterministic — same
-input ⇒ byte-identical scene. Schema: [`scene-v1-schema.md`](scene-v1-schema.md);
+input ⇒ byte-identical scene. Schema: [`scene-v2-schema.md`](scene-v2-schema.md);
 rationale: [ADR-0017](../adr/0017-3d-viewer-architecture.md).
 
 ### `viewer.py` — self-contained 3D HTML
 
-Assembles **one** offline HTML file: it inlines the `scene/v1` JSON plus a
+Assembles **one** offline HTML file: it inlines the `scene/v2` JSON plus a
 `data:`-URL import-map for the vendored Three.js (`_viewer_assets/three/`, shipped
 as package data) and the committed `_viewer_assets/viewer.js` bundle — built from
 the typed TypeScript sources under the dev-only top-level `viewer/` by esbuild
@@ -454,7 +502,7 @@ palette, opacities, darken factors and font stacks
 ([ADR-0019](../adr/0019-brand-tokens-single-source.md), #419). The three render
 surfaces *reference* it: `visualize.py` (2D) re-exports the names it always
 exposed, `scene.py` reads `PLANES_DARK`, and `viewer.py` builds its CSS from the
-tokens and injects a canonical `BRAND` JSON blob (separate from the `scene/v1`
+tokens and injects a canonical `BRAND` JSON blob (separate from the `scene/v2`
 blob) that the compiled `viewer.js` reads instead of hard-coded `0x` literals. A
 leaf of constants + small helpers with no project imports; it never enters the
 collision model, so it carries no determinism or correctness risk.
@@ -470,8 +518,8 @@ builders); this module owns only argparse, IO routing, and exit-code mapping.
 JSON schemas are versioned: `hangarfit.check/v1` and
 `hangarfit.solve/v1`. Bumping a version is reserved for breaking
 changes to the payload shape; additive fields do not bump. (The
-`view` subcommand emits the `hangarfit.scene/v1` JSON *inlined into its
-HTML*, not to stdout — see [`scene-v1-schema.md`](scene-v1-schema.md).)
+`view` subcommand emits the `hangarfit.scene/v2` JSON *inlined into its
+HTML*, not to stdout — see [`scene-v2-schema.md`](scene-v2-schema.md).)
 
 Exit codes:
 

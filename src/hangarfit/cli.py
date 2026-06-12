@@ -17,6 +17,7 @@ from __future__ import annotations
 import argparse
 import json
 import math
+import os
 import sys
 from collections.abc import Iterable
 from typing import TYPE_CHECKING, Literal
@@ -299,9 +300,12 @@ def build_parser() -> argparse.ArgumentParser:
         dest="workers",
         help=(
             "Fan the restarts across N worker processes (#544; default 1 = "
-            "serial). Byte-identical to serial in the --max-restarts + spread "
-            "regime; for any other config it runs serial (a note is printed). "
-            "Speedup is sub-linear and placement-only — most useful on roomy "
+            "serial, single-core). Effective (and byte-identical to serial) ONLY "
+            "in the --max-restarts + spread regime; for any other config (no "
+            "--max-restarts, --no-spread, or --spread-stall-restarts set) it "
+            "silently runs serial and prints a note. A multi-restart spread solve "
+            "left at the default on a multi-core box prints a hint suggesting the "
+            "flag. Speedup is sub-linear and placement-only — most useful on roomy "
             "spread-on fills with many restarts."
         ),
     )
@@ -605,6 +609,9 @@ def _emit_solve_human(result: SolveResult, *, alternatives: int) -> None:
                 f"  #{i}: {len(layout.placements)} planes placed; 0 conflicts; "
                 f"score=(0, 0.0); min gap {gap_str}"
             )
+        if i - 1 < len(d.region_alignment) and d.region_alignment[i - 1]:
+            ra = ", ".join(f"{a.body_id}={a.alignment:.2f}" for a in d.region_alignment[i - 1])
+            line += f"; region alignment {ra}"
         print(line)
 
 
@@ -713,11 +720,29 @@ def cmd_solve(args: argparse.Namespace) -> int:
     # byte-identical-eligible for this config (no --max-restarts, or --no-spread),
     # solve() transparently runs serial — say so on stderr so the user isn't
     # left believing they got the speedup.
+    cpu_cores = os.cpu_count() or 1
     if args.workers > 1 and not _parallel_eligible(search_cfg, args.workers):
         print(
             f"note: --workers {args.workers} ignored (runs serial) — parallel "
             "restarts need --max-restarts and the spread post-pass (drop "
             "--no-spread); see --workers help",
+            file=sys.stderr,
+        )
+    elif args.workers == 1 and cpu_cores > 1 and _parallel_eligible(search_cfg, 2):
+        # This config IS parallel-eligible (--max-restarts + spread) but the
+        # restarts run serial on a multi-core box, leaving cores idle. Probe
+        # eligibility with a worker count of 2 (the predicate requires workers > 1;
+        # the user's actual --workers is 1). Suggest the flag rather than silently
+        # waste the cores — zero behaviour change, stderr only so --json /
+        # --write-yaml stay machine-readable (#628).
+        # Cap the SUGGESTED count: the #544 speedup is sub-linear (~4.5x at 8
+        # workers), so don't over-promise cores-2 on a big box — it's an example.
+        _suggest = min(8, max(1, cpu_cores - 2))
+        print(
+            f"hint: this is a multi-restart spread solve running serial on a "
+            f"{cpu_cores}-core box — add --workers N (e.g. --workers {_suggest}) to fan "
+            f"the {args.max_restarts} restarts across processes "
+            "(byte-identical to serial; #544).",
             file=sys.stderr,
         )
     result = solve(
@@ -761,6 +786,7 @@ def cmd_solve(args: argparse.Namespace) -> int:
     # spread-fallback pass's drops never surface.
     if args.render_paths:
         _warn_unroutable(result)
+        _warn_unroutable_movers(result)
         _warn_apron_shallow_drops(result.diagnostics.apron_shallow_drops)
 
     # Renders / YAML writes. Only run if we have layouts to write —
@@ -853,6 +879,24 @@ def _warn_unroutable(result: SolveResult) -> None:
         print(
             f"warning: layout {layout_index}: no feasible tow path "
             f"(plane {plane!r} could not be routed); rendered without paths",
+            file=sys.stderr,
+        )
+
+
+def _warn_unroutable_movers(result: SolveResult) -> None:
+    """Emit one stderr warning per ground-object mover the tow planner could not
+    route (#627/#612). Unlike an un-tow-routable aircraft — which makes the whole
+    layout's plan ``None`` (see :func:`_warn_unroutable`) — a None-path mover keeps
+    a best-effort ``Move(path=None)`` inside an otherwise-present plan and renders
+    as a static body; without this it would be a silent skip (the deferred half of
+    the #602 'no silent skip' acceptance). ``diagnostics.unroutable_movers`` is the
+    deduped, advisory mover-id list the solver collected — empty when every mover
+    routed, there are no movers, or tow-planning was not attempted.
+    """
+    for mover in result.diagnostics.unroutable_movers:
+        print(
+            f"warning: ground-object mover {mover!r} could not be routed; "
+            "rendered as a static (un-towed) body",
             file=sys.stderr,
         )
 
@@ -1051,6 +1095,10 @@ def _emit_solve_json(
             # route, in returned-layout order. Empty unless --render-paths ran
             # the planner. Backward-compatible — no schema bump.
             "unroutable_planes": list(d.unroutable_planes),
+            # Additive (#627/#612): the ground-object movers the planner could not
+            # route (best-effort None-path, deduped). Empty unless --render-paths
+            # ran the planner. Backward-compatible — no schema bump.
+            "unroutable_movers": list(d.unroutable_movers),
             # Additive (#267): achieved min plan-view gap per returned layout
             # (null where <2 planes, i.e. math.inf) + basins the search had to
             # choose from. Backward-compatible — no schema bump.
@@ -1073,6 +1121,13 @@ def _emit_solve_json(
             # Additive (#263): nose-out heading flips applied per returned layout.
             # Backward-compatible — no schema bump.
             "nose_out_flips": list(d.nose_out_flips),
+            # Additive (#604): per-layout per-object region alignment (0-1, 1.0 =
+            # at the preferred wall). Empty list when no region preferences set.
+            # Backward-compatible — no schema bump.
+            "region_alignment": [
+                {ra.body_id: ra.alignment for ra in layout_align}
+                for layout_align in d.region_alignment
+            ],
         },
     }
     print(json.dumps(payload, indent=2))

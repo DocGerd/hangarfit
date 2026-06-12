@@ -23,7 +23,22 @@
 > small deterministic *global* tow-expansion cap so an un-routable layout
 > degrades to a static render in seconds (#398) — an expansion count, **not** a
 > wall-clock deadline ([ADR-0003](0003-rr-mc-solver-algorithm.md)). Schema-level
-> record of the new fields: [`scene-v1-schema.md`](../architecture/scene-v1-schema.md).
+> record of the new fields: [`scene-v2-schema.md`](../architecture/scene-v2-schema.md).
+
+> **scene/v2 amendment (#549, polygon viewer seam).** The seam bumps `v1 → v2`
+> — additive only. Each plane box gains two always-present keys: `z_band`
+> (explicit `[z_bottom_m, z_top_m]`) and `vertices` (a plane-local `(u, v)`
+> polygon footprint, or `null` for a scalar rectangle). A scalar box renders
+> byte-identically to v1 through the unchanged `BoxGeometry` path; a polygon part
+> renders as an `ExtrudeGeometry` prism. **The load-bearing decision is
+> unchanged**: the viewer still applies *only* the per-plane determinant-−1
+> affine and does no transform math (ADR-0002). The polygon `vertices[]` come
+> from `geometry.part_local_ring`, the **same** helper the `anchors` oracle
+> consumes, so the viewer's affine reproduces the oracle vertex-for-vertex and
+> the `checkAnchors` parity self-check (now generalized from 4 corners to N)
+> stays the cross-language backstop. The optional polygon footprint on `Part`
+> and its canonicalization invariant are [ADR-0024](0024-optional-polygon-parts.md);
+> the schema record is [`scene-v2-schema.md`](../architecture/scene-v2-schema.md).
 
 ## Context & Problem Statement
 
@@ -166,6 +181,6 @@ dependency stays inside the existing posture.
   [ADR-0003](0003-rr-mc-solver-algorithm.md) (determinism spirit the scene builder
   preserves).
 - Related specs: [`docs/superpowers/specs/2026-06-03-3d-viewer-design.md`](../superpowers/specs/2026-06-03-3d-viewer-design.md);
-  schema reference [`docs/architecture/scene-v1-schema.md`](../architecture/scene-v1-schema.md).
+  schema reference [`docs/architecture/scene-v2-schema.md`](../architecture/scene-v2-schema.md).
 - Related issues / PRs: #392 (epic), #388 (scene), #389 (viewer), #390 (CLI), #391 (docs).
 - External references: Three.js (https://threejs.org), import-maps spec, Reeds & Shepp (1990).

@@ -117,7 +117,7 @@ Note the **grid heuristic** already treats `y < 0` as free space within its `_GR
 
 **Answer: the `scene/v1` schema is unchanged for the slide-in to work.**
 
-The timeline's `segments[].samples` are per-frame world affines from `DubinsArc.sample()` ([scene-v1-schema](../architecture/scene-v1-schema.md)). If the path now starts at `y < 0`, `samples[0]` is simply an affine with `ty < 0`; the viewer applies it verbatim (the viewer does **no transform math** — [ADR-0017](../adr/0017-3d-viewer-architecture.md)). The viewer state machine already hides a plane while `t < segment.start_s` and then animates from `samples[0]`; today `samples[0]` is at `y = 0` (the plane "appears at the threshold"), and with an apron it is at `y < 0`, so the plane **appears in the apron and visibly slides in** — which is precisely the requested animation, achieved with zero schema change.
+The timeline's `segments[].samples` are per-frame world affines from `DubinsArc.sample()` ([scene-v2-schema](../architecture/scene-v2-schema.md)). If the path now starts at `y < 0`, `samples[0]` is simply an affine with `ty < 0`; the viewer applies it verbatim (the viewer does **no transform math** — [ADR-0017](../adr/0017-3d-viewer-architecture.md)). The viewer state machine already hides a plane while `t < segment.start_s` and then animates from `samples[0]`; today `samples[0]` is at `y = 0` (the plane "appears at the threshold"), and with an apron it is at `y < 0`, so the plane **appears in the apron and visibly slides in** — which is precisely the requested animation, achieved with zero schema change.
 
 The load-time `anchors` / `gear_anchors` self-check is computed at each plane's **final** placement (`y ≥ 0`) and is unaffected.
 
@@ -133,7 +133,7 @@ The load-time `anchors` / `gear_anchors` self-check is computed at each plane's 
 2. **`towplanner.py`** — (a) `entry_poses` → an apron-aware pose grid (add fixed `y`-offset samples, optionally reverse-entry headings); (b) `_mover_motion_bounds_conflict` → the apron-aware front-wall rule (Q5); (c) `plan_path`/`plan_fill` → reconcile the grid-heuristic's existing fixed `_GRID_H_Y_PAD_M = 6.0 m` south-pad with `−apron_depth_m` (parameterise the hard-coded pad rather than add south-extension from scratch); revisit the expansion budgets for the larger space.
 3. **`cli.py`** — a `--apron-depth N` override (mirrors `--max-carts` / `--tow-max-expansions`).
 4. **`scene.py` / viewer** — *no change required* for the slide-in; the optional additive `hangar.apron` ground field (Q6) is a separate, render-only follow-up.
-5. **Docs sweep** — arc42 [§5](../architecture/05-building-block-view.md) (`towplanner` apron note), [§8](../architecture/08-crosscutting-concepts.md) (the door section: the apron generalises the front-gap exemption), `scene-v1-schema` (only if the optional ground field is added), the ADR index, and `data/hangar.yaml` + `examples/herrenteich/` comments for the new scalar.
+5. **Docs sweep** — arc42 [§5](../architecture/05-building-block-view.md) (`towplanner` apron note), [§8](../architecture/08-crosscutting-concepts.md) (the door section: the apron generalises the front-gap exemption), `scene-v2-schema` (only if the optional ground field is added), the ADR index, and `data/hangar.yaml` + `examples/herrenteich/` comments for the new scalar.
 
 **Still deferred (rearrangement tier):** `--current-layout` input, simultaneous multi-plane apron occupancy + apron-capacity/collision-among-staged-planes, and pull-out/repark bidirectional sequencing. Named here so the entry-staging cut does not silently foreclose them.
 
@@ -192,7 +192,7 @@ Skipped, for the same reason the original tow-path spike skipped one: the work i
   - [ADR-0010](../adr/0010-reeds-shepp-motion-model.md) — reverse-capable motion that makes apron-staged nose-out cheap.
   - [ADR-0002](../adr/0002-determinant-minus-one-transform.md) — the coordinate / sign-flip trap every apron pose must respect.
   - [ADR-0003](../adr/0003-rr-mc-solver-algorithm.md) — the determinism contract the apron pose-grid preserves.
-  - [ADR-0017](../adr/0017-3d-viewer-architecture.md) + [scene-v1-schema](../architecture/scene-v1-schema.md) — the viewer seam the slide-in flows through unchanged.
+  - [ADR-0017](../adr/0017-3d-viewer-architecture.md) + [scene-v2-schema](../architecture/scene-v2-schema.md) — the viewer seam the slide-in flows through unchanged.
   - [ADR-0018](../adr/0018-non-rectangular-hangar-footprint.md) — the floor-polygon / keep-out substrate the apron+jamb model can reuse.
   - Companion decision: [ADR-0021](../adr/0021-tow-planner-staging-apron.md) (Proposed).
 - arc42: [§5 — `towplanner.py`](../architecture/05-building-block-view.md) · [§8 — the door & the coordinate convention](../architecture/08-crosscutting-concepts.md).

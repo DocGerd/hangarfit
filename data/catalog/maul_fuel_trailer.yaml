@@ -1,0 +1,15 @@
+# "Maul Tankanhänger" — the fixed fuel trailer that lives by the hangar door.
+# A fixed_obstacle (immovable keep-out). Envelope is an ESTIMATE of a Maul
+# road fuel trailer (not surveyed). measured: false.
+type: fixed_obstacle
+id: maul_fuel_trailer
+name: "Maul fuel trailer (Tankanhänger)"
+measured: false
+parts:
+  - kind: ground
+    length_m: 4.5         # estimated road-trailer length
+    width_m: 2.0          # estimated width
+    offset_x_m: 0.0
+    offset_y_m: 0.0
+    z_bottom_m: 0.0
+    z_top_m: 1.9          # estimated height

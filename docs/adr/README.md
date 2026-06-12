@@ -101,3 +101,5 @@ manual workflow above is canonical.
 | 0021 | [Tow-planner staging apron — a bounded entry-staging start-region in front of the door; rearrangement holding-area deferred](0021-tow-planner-staging-apron.md) | Proposed |
 | 0022 | [Nose-out parked heading — RNG-free 180° flip post-pass (default on), plus the `tow_pivotable` towing-motion flag](0022-nose-out-parked-heading.md) | Accepted |
 | 0023 | [Model the empennage as explicit tail surfaces so a vertical fin in the wing layer can block wing-over-tail nesting](0023-empennage-tail-surfaces.md) | Accepted |
+| 0024 | [Optional polygon footprints on `Part` — load-time-canonicalized, authored via `planform:` (refines [ADR-0001](0001-aircraft-parts-model.md))](0024-optional-polygon-parts.md) | Accepted |
+| 0025 | [Ground-object taxonomy — concrete catalog types, Layout-uniform placement, and pairwise-set keep-out seam](0025-ground-object-taxonomy.md) | Accepted |

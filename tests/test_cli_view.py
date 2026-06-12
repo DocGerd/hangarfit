@@ -308,7 +308,7 @@ def test_view_unwritable_output_returns_2(tmp_path):
 
 def test_view_check_populates_conflicts(tmp_path):
     # --check must actually flag conflicts in the scene, not be a silent no-op:
-    # assert the conflicting plane ids reach the embedded scene/v1 JSON.
+    # assert the conflicting plane ids reach the embedded scene/v2 JSON.
     import json
     import re
 

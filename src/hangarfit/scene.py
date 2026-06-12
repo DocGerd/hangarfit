@@ -1,4 +1,4 @@
-"""Pure builder for the ``hangarfit.scene/v1`` JSON contract.
+"""Pure builder for the ``hangarfit.scene/v2`` JSON contract.
 
 Turns a :class:`~hangarfit.models.Layout` (+ optional ``MovesPlan`` and
 ``CheckResult``) into a JSON-serializable dict consumed by the offline
@@ -7,7 +7,7 @@ geometry/transform value is computed here so the viewer never re-derives the
 determinant-−1 plane-local→world transform (ADR-0002, ADR-0017). The viewer
 only applies the per-frame 2×3 affine matrices this module emits.
 
-The schema is documented in ``docs/architecture/scene-v1-schema.md``. This
+The schema is documented in ``docs/architecture/scene-v2-schema.md``. This
 module is a leaf consumer of the core types — the same role
 :mod:`hangarfit.visualize` plays for the 2D PNG.
 """
@@ -19,14 +19,14 @@ from typing import TYPE_CHECKING
 
 from hangarfit import metrics
 from hangarfit.brand import PLANES_DARK
-from hangarfit.geometry import aircraft_parts_world, local_to_world
+from hangarfit.geometry import aircraft_parts_world, local_to_world, part_local_ring
 from hangarfit.models import CheckResult, Layout, Placement
 from hangarfit.towplanner import back_first_order
 
 if TYPE_CHECKING:
     from hangarfit.towplanner import DubinsArc, MovesPlan
 
-SCHEMA = "hangarfit.scene/v1"
+SCHEMA = "hangarfit.scene/v2"
 
 # A plane-local→world 2D affine, serialized as a flat list (JSON has no tuples):
 # ``[a, b, tx, c, d, ty]`` maps local (u=forward, v=right) to world via
@@ -82,24 +82,36 @@ def _plane_blocks(layout: Layout) -> list[dict]:
     box list. A box mirrors a :class:`~hangarfit.models.Part`: plane-local
     centre (cx=forward offset, cy=right offset, cz=mid-height), extents (length
     along +x/forward, width along +y/right, height along z), and ``angle_deg``
-    (CCW within plane-local, as :func:`hangarfit.geometry.oriented_rect` uses)."""
+    (CCW within plane-local, as :func:`hangarfit.geometry.oriented_rect` uses).
+
+    scene/v2 (#549) adds two always-present keys per box: ``z_band``
+    (``[z_bottom_m, z_top_m]``, the explicit height band) and ``vertices`` —
+    the plane-local ``(u, v)`` polygon footprint for a polygon part, or ``None``
+    for a scalar rectangle (which the viewer renders byte-identically to v1). The
+    polygon ring comes from :func:`hangarfit.geometry.part_local_ring`, the same
+    helper the anchor oracle consumes, so the viewer's single det-−1 affine
+    reproduces :func:`_anchors` vertex-for-vertex (ADR-0002 / ADR-0017)."""
     colour = _color_map([p.plane_id for p in layout.placements])
     blocks: list[dict] = []
     for placement in sorted(layout.placements, key=lambda p: p.plane_id):
         ac = layout.fleet[placement.plane_id]
-        boxes = [
-            {
-                "kind": part.kind,
-                "cx": part.offset_x_m,
-                "cy": part.offset_y_m,
-                "cz": (part.z_top_m + part.z_bottom_m) / 2.0,
-                "length_m": part.length_m,
-                "width_m": part.width_m,
-                "height_m": part.z_top_m - part.z_bottom_m,
-                "angle_deg": part.angle_deg,
-            }
-            for part in ac.parts
-        ]
+        boxes = []
+        for part in ac.parts:
+            ring = part_local_ring(part)
+            boxes.append(
+                {
+                    "kind": part.kind,
+                    "cx": part.offset_x_m,
+                    "cy": part.offset_y_m,
+                    "cz": (part.z_top_m + part.z_bottom_m) / 2.0,
+                    "length_m": part.length_m,
+                    "width_m": part.width_m,
+                    "height_m": part.z_top_m - part.z_bottom_m,
+                    "angle_deg": part.angle_deg,
+                    "z_band": [part.z_bottom_m, part.z_top_m],
+                    "vertices": None if ring is None else [[u, v] for u, v in ring],
+                }
+            )
         blocks.append(
             {
                 "id": placement.plane_id,
@@ -214,8 +226,11 @@ def _timeline(
     t = 0.0
     for placement in back_first_order(layout.placements):
         move = move_by_id.get(placement.plane_id)
-        if move is None:
-            continue  # defensive: a placement with no move stays at its final pose
+        if move is None or move.path is None:
+            # No move, or a deferred (path=None) move — the body stays at its final
+            # pose. A deferred path is a #601 ground-object mover (route → #602);
+            # it never keys an aircraft placement here, so this is defensive.
+            continue
         samples = _sample_affines(move.path, max_samples_per_path)
         dur = min(max(move.path.length_m / tow_speed_mps, min_seg_s), max_seg_s)
         segments.append(
@@ -259,11 +274,11 @@ def build_scene(
     max_seg_s: float = 6.0,
     max_samples_per_path: int = 240,
 ) -> dict:
-    """Assemble the full ``hangarfit.scene/v1`` dict (pure, deterministic).
+    """Assemble the full ``hangarfit.scene/v2`` dict (pure, deterministic).
 
     Same ``(layout, moves_plan, check_result)`` ⇒ byte-identical dict (the
     closed-form paths are RNG-free; the spirit of ADR-0003). See the schema
-    reference in ``docs/architecture/scene-v1-schema.md``.
+    reference in ``docs/architecture/scene-v2-schema.md``.
     """
     timeline, finals = _timeline(
         layout,

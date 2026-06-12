@@ -1,0 +1,3 @@
+# TEST-ONLY fleet for the polygon-parts determinism canary (#548).
+aircraft:
+  - catalog/taper_glider.yaml

@@ -126,8 +126,15 @@ def test_solve_pinned_one_plane_honors_pin():
     A regression that pushes this beyond 5 restarts trips the assert below
     instead of silently skipping.
 
-    wall_time_s bounded below 1.0s (#122); calibrated as
-    ``min(budget * 0.5, max(observed * 4, 1.0))`` with observed ≈ 0.09s.
+    wall_time_s bound (#122): originally 1.0s for the synthetic-data observed
+    ≈ 0.09s. Post-#595 (central real-spec catalog) the 6-plane solo solve is
+    ≈ 0.31s, and under CI's ``-n auto`` xdist pool this fixture's wall_time is
+    dominated by CPU contention rather than solver speed — a CI run measured
+    2.43s (restarts_attempted=1, i.e. NOT a per-restart regression). Re-baselined
+    to 4.0s (still < the 5.0s budget) to absorb that contention. The real
+    per-restart-slowdown guards are the ``status == "found"`` within
+    ``max_restarts=5`` assertion above and the budget cap; this wall bound is a
+    coarse contention-tolerant ceiling, not a precise solo-speed gate.
     """
     s = load_scenario(f"{FIXTURES}/solve_pinned_one_plane.yaml")
     r = solve(
@@ -144,7 +151,7 @@ def test_solve_pinned_one_plane_honors_pin():
         f"is likely (was previously found within 1 restart under seed=42)."
     )
 
-    _assert_universal_properties(r, max_wall_time_s=1.0)
+    _assert_universal_properties(r, max_wall_time_s=4.0)
     assert len(r.layouts) == 1
 
     pinned = s.constraints["aviat_husky"].pin

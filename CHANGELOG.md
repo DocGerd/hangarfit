@@ -10,6 +10,114 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Fixed
 
+## [0.15.0] — 2026-06-12
+
+### Added
+
+- **`solve` suggests `--workers` on idle-core multi-restart runs (#628).** When a
+  parallel-eligible solve (`--max-restarts` + spread) is left at the default
+  `--workers 1` on a multi-core box, `hangarfit solve` now prints a one-line
+  stderr hint naming the flag (with a capped example, e.g. `--workers 8`). Stderr
+  only — stdout / `--json` / `--write-yaml` stay untouched — and it never fires in
+  a regime where `--workers` would silently run serial (no `--max-restarts`,
+  `--no-spread`, `--spread-stall-restarts` set, or a single core), so the default
+  stays byte-identical. The `--workers` help text now states exactly when the flag
+  is effective.
+
+- **Glider-trailer placement + soft region preference (#604).** The solver now places and routes the glider trailers, with a soft right/left-region preference biasing them toward a chosen hangar wall; surfaced as per-layout `region_alignment` in `solve` output.
+- **Ground-object data model (#601).** Catalog `fixed_obstacle`/`car`/`trailer`
+  types and a layout `ground_objects:` block; fixed obstacles are keep-outs
+  (a `ground_obstacle` conflict names the overlapping aircraft/mover) and
+  movers join collision/tow enumeration. Empty-set output is byte-identical.
+  (ADR-0025)
+- **Herrenteich full real set + ground-object catalog (#605).** The real hangar's
+  four non-aircraft occupants — a VW Caddy, two glider trailers, and a fixed
+  "Maul" fuel trailer — now have `data/catalog/` entries, and a new
+  `examples/herrenteich/layout_full.yaml` parks the full real set (8 aircraft +
+  those four) in one arrangement that passes `hangarfit check`. `collisions.check`
+  now bounds/notch-checks ground objects (previously aircraft-only). The
+  Herrenteich clearances were calibrated (`clearance_m` 0.3→0.20,
+  `wing_layer_clearance_m` 0.2→0.15) so the full set is feasible — the placeholder
+  values were too loose to model real club packing density. Tow-routing of the
+  full set, the hard Caddy nearest-door egress rule, and rendering of ground
+  objects are deferred (#602/#603/#606).
+- Optional polygon part footprints: a `Part` may carry a load-time-canonicalized
+  `local_vertices` polygon (authored via a parametrized `planform: {root_chord_m,
+  tip_chord_m}` wing block), used by the collision build-path while `length_m`/
+  `width_m` stay the bounding box. Scalar fleets are byte-identical; the 3D viewer
+  still renders boxes until the scene/v2 work. (#548, ADR-0024)
+- 3D viewer renders polygon part footprints as extruded prisms (`scene/v2`): each
+  plane box now carries an explicit `z_band` and an optional plane-local `vertices`
+  ring, and the viewer extrudes polygon parts (e.g. a tapered glider wing) instead
+  of drawing their bounding box. Scalar (rectangle) parts render byte-identically
+  to v1. The det-−1 anchor self-check generalizes from 4 corners to N via the
+  shared `geometry.part_local_ring` helper. (#549, ADR-0017)
+- First shipped aircraft taper: the real Herrenteich **Scheibe SF-25E wing** is
+  now authored as a symmetric double-taper `planform` (root = the existing
+  1.01 m mean chord, tip = 0.45 × root). Its tapered wingtip nests where the
+  bounding rectangle would falsely conflict — a value-proof regression reproduces
+  the spike's flip-window order (~0.2 m wide) of rect-rejects / taper-accepts on the
+  shipped parametrization. Every other shipped part (including the folded Stemme wing —
+  folding is not a taper) stays a rectangle; the herrenteich layout stays valid
+  with no golden re-pin (the polygon is a strict subset of its bbox). (#593, ADR-0024)
+
+### Changed
+
+- **Pose cache extended to ground-object movers (#626).** The #453 per-solve
+  geometry memo now serves any placeable body — a `GroundObject` car/trailer as
+  well as an aircraft — so a static mover obstacle's world parts are no longer
+  rebuilt on every collision/clearance check (the #453 churn movers bypassed,
+  which drove the #604 mover-routing congestion). `plan_fill` now also runs
+  inside a pose-cache scope, so a *standalone* fill memoizes its obstacle field
+  across the whole search (previously only an in-`solve` fill did). Output is
+  **byte-identical** (ADR-0003: the cache returns the same immutable `WorldPart`
+  list, exact-float keyed); the speed-up is routing-only — on the measured #604
+  right-region two-trailer demo the standalone fill dropped ~1.8× and an
+  aircraft-only fill ~2×. (#626)
+
+- **Local test ergonomics: two-pass `make test` + host-relative perf canary
+  (#624, #625).** A root `Makefile` mirrors CI's #492 two-pass test split for
+  local dev (`make test` = a parallel bulk pass + a separate serial pass for the
+  wall-clock determinism canaries; ~588 s → ~169 s, 3.5× on a 32-core box), with
+  `make test-fast` / `lint` / `typecheck` / `format` / `check` rounding out the
+  CI-parity targets. The `@slow` `plan_fill` perf canary
+  (`tests/test_towplanner_perf.py`) is now **host-relative**: it calibrates its
+  wall-clock ceiling off a per-run warm-up probe (floored at the original 400 s)
+  rather than an absolute bound, so a slower box (e.g. WSL2) no longer
+  false-fails on byte-identical, expansion-bound work. Dev/CI tooling only — no
+  runtime, solver, or determinism impact. (#624, #625)
+
+- **Per-object catalog data model (#595).** Fleet data is now a per-object
+  **catalog** (`data/catalog/`, one file per aircraft carrying a `type:`
+  discriminator) referenced **by path** from thin fleet manifests; inline
+  aircraft definitions in fleet files are no longer supported (an inline mapping
+  raises a migration hint). A manifest entry may override a per-fleet operational
+  flag (`movement_mode`, `tow_pivotable`) on top of the shared static definition;
+  geometry stays static and is never override-able. The `type:` discriminator
+  reserves a clean home for non-aircraft physical objects (a future builder);
+  an unregistered type is rejected with a clear error today. (#595)
+
+### Fixed
+
+- **Unroutable ground-object movers are surfaced, not silently dropped (#627,
+  #612).** A best-effort mover the tow planner can't route keeps a `Move(path=None)`
+  (ADR-0007 #197) — but, unlike an un-tow-routable *aircraft* (which is named on
+  stderr / in `diagnostics.unroutable_planes`), it used to be silent and just
+  rendered as a static body. `plan_fill` now threads the unroutable-mover ids out
+  via an observational out-param (the `apron_dropped_out` idiom); `solve` collects
+  them into `diagnostics.unroutable_movers` (additive `--json` field, no schema
+  bump); and `hangarfit solve --render-paths` names each on stderr. **Byte-identical**
+  (ADR-0003: the plan is unchanged) — this closes the deferred half of #602's "no
+  silent skip" acceptance. (The related #604 mover-routing *congestion* under #627
+  was separately cut ~1.8× by the #626 pose-cache extension; the residual is a
+  genuinely un-routable layout being correctly disproven.)
+
+- **Synthetic-vs-real Scheibe SF-25E divergence (#594).** The demo
+  (`data/fleet.yaml`) and `examples/herrenteich/` now reference a single central
+  catalog (`data/catalog/`), so each **shared** aircraft is defined exactly once
+  with the real published-spec numbers — no per-world duplication. (`fuji` and
+  `cessna_150`, not based at Herrenteich, stay synthetic placeholders.) (#594, via #595)
+
 ## [0.14.0] — 2026-06-10
 
 ### Added
@@ -684,7 +792,8 @@ First Phase 1 cut — substrate for arranging the flying club fleet in a stack-s
 - Apache-2.0 license, public-audience README, CI matrix (Python 3.11 + 3.12), branch protection on develop + main (#13, #14, #15, #16).
 - Strut-aware golden tests + all-9-planes fixture using larger test-only hangar to accommodate strut-bracing geometry on placeholder dimensions (#5).
 
-[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.14.0...HEAD
+[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.15.0...HEAD
+[0.15.0]: https://github.com/DocGerd/hangarfit/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/DocGerd/hangarfit/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/DocGerd/hangarfit/compare/v0.12.0...v0.13.0
 [0.12.0]: https://github.com/DocGerd/hangarfit/compare/v0.11.0...v0.12.0

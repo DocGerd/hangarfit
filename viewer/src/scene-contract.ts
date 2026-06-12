@@ -1,8 +1,8 @@
-// Typed mirror of the `hangarfit.scene/v1` contract (Python `scene.py`).
+// Typed mirror of the `hangarfit.scene/v2` contract (Python `scene.py`).
 //
 // This is the EXTENSION SEAM (ADR-0020): an additive scene field becomes an
 // additive interface field here. It is the schema-faithful mirror of
-// `docs/architecture/scene-v1-schema.md`; a Python key-set parity test in
+// `docs/architecture/scene-v2-schema.md`; a Python key-set parity test in
 // `tests/test_scene.py` fails if `scene.py`'s emitted keys and these interfaces
 // drift apart (the near-term desync guard — JSON-Schema single-source is the
 // deferred principled fix, spike #444). The runtime `checkAnchors()` self-check
@@ -24,6 +24,12 @@ export interface BoxData {
   width_m: number;
   height_m: number;
   angle_deg: number;
+  // scene/v2 (#549): explicit height band [z_bottom_m, z_top_m].
+  z_band: [number, number];
+  // scene/v2 (#549): plane-local (u,v) polygon footprint (angle+offset already
+  // folded in, so the affine applies directly), or null for a scalar rectangle
+  // — which renders byte-identically to v1 via the box path.
+  vertices: [number, number][] | null;
 }
 
 export interface PlaneData {
@@ -81,8 +87,8 @@ export interface Readouts {
   min_wing_over_tail_clearance_m: number | null;
 }
 
-export interface SceneV1 {
-  schema: string; // always "hangarfit.scene/v1"
+export interface SceneV2 {
+  schema: string; // always "hangarfit.scene/v2"
   units: string; // always "m"
   coordinate_note: string; // human reminder of the coordinate convention
   hangar: HangarData;

@@ -75,9 +75,11 @@ gap is irrelevant -- the cockpit rule drops clause (2) entirely (ADR-0012, D1).
 *A wingtip may overhang a parked plane's aft fuselage / low tailplane (Case A: legal when heights are disjoint, the two-clause `wing × fuselage_aft` rule) but never its cockpit / front fuselage (Case B: a hard `fuselage_front_wing_overlap` conflict at any nesting height). The loader auto-splits a `fuselage` part at the wing trailing edge `x_break`; front is the nose side, aft the tail side. Since [ADR-0023](../adr/0023-empennage-tail-surfaces.md) Case A also requires the wing to clear the plane's centreline `vertical_stabilizer` (fin), which rises into the wing layer — see "The empennage" below.*
 
 The closed set of `PartKind` values is `{"fuselage_front",
-"fuselage_aft", "wing", "strut", "tail", "vertical_stabilizer"}`. The
-legacy `"fuselage"` is **not** a constructed kind — it survives only as a
-transient YAML keyword the loader auto-splits at the wing trailing-edge
+"fuselage_aft", "ground", "strut", "tail", "vertical_stabilizer", "wing"}`.
+The `"ground"` kind is used exclusively by `GroundObject` parts (see
+"Ground objects" above). The legacy `"fuselage"` is **not** a constructed kind
+— it survives only as a transient YAML keyword the loader auto-splits at the
+wing trailing-edge
 station (`wing.offset_x_m − wing.length_m/2`, the #282 wing-spar
 precedent), emitting an area-conserving `fuselage_front` + `fuselage_aft`
 pair whose union is the original box. An aircraft with a `fuselage` part
@@ -105,6 +107,48 @@ wing, so it stays overhangable); a T-tail (the Stemme S10) sits it at the
 fin top *inside* the wing layer (so an overhanging wing conflicts).
 The fin is never overhangable; `metrics._OVERHANGABLE` keeps only `tail`
 and `fuselage_aft`.
+
+**Optional polygon footprints** ([ADR-0024](../adr/0024-optional-polygon-parts.md)).
+A part is an oriented rectangle by default, but a `Part` may carry an
+optional polygon footprint — `local_vertices`, a load-time-canonicalized
+vertex ring authored via a parametrized `planform: {root_chord_m,
+tip_chord_m}` wing block (a symmetric double-taper hexagon). When present,
+the collision build-path (`geometry.aircraft_parts_world`) routes every
+vertex through the det(−1) transform and uses the polygon for the plan-view
+overlap test; when absent (`None`), today's bounding-rectangle path is
+unchanged. `length_m`/`width_m` always remain the bounding box for every
+scalar consumer (`metrics`, scene box, `towplanner` apron, the
+trivial-infeasibility area gate), and the polygon is constrained to be a
+subset of that box — so wing area is intentionally under-conserved in the
+conservative direction. Canonicalization at load time (force CCW, lex-min
+start, drop the closing duplicate) is the determinism crux: equivalent
+author orderings yield a byte-identical `Part`, protecting the ADR-0003
+solver contract.
+
+**Ground objects (#601, [ADR-0025](../adr/0025-ground-object-taxonomy.md)).**
+Non-aircraft floor occupants are modelled as `GroundObject` instances.
+Two `object_class` values exist:
+
+- **`"fixed_obstacle"`** — never moves; its world parts are keep-outs.
+  Any aircraft or mover whose part (plus clearance) overlaps a
+  fixed-obstacle part fires a `ground_obstacle` conflict (single-plane
+  arity, the obstacle named in `detail`). Fixed-obstacle parts use the
+  new `"ground"` `PartKind`.
+- **`"placed_routed_mover"`** — a moveable object (car or towed trailer)
+  that must eventually drive out; its world parts join the pairwise
+  overlap loop exactly like aircraft parts, emitting the standard
+  `<sorted_kinds>_overlap` conflicts. In `solve` (#604), movers are **full
+  RR-MC search citizens**: their poses are sampled, perturbed in the
+  min-conflicts descent, included in the `_spread` hill-climb, routed by
+  `plan_fill`, and — if flagged `hard_door_mover` — subject to the #603
+  Caddy egress gate. In `check` and `view` their poses are authored in the
+  layout YAML, exactly as before.
+
+Three concrete catalog `type:` values author ground objects: `fixed_obstacle`,
+`car` (motion default `"steerable"`), and `trailer` (motion default `"towed"`).
+The `"ground"` `PartKind` is a footprint-only kind — it is never overhangable
+and is never split by the fuselage front/aft loader logic. With empty
+`ground_object_placements` the system is byte-identical to before.
 
 **Fleet composition relevant to the parts model.** Of the nine
 aircraft in `data/fleet.yaml`, six are **strut-braced** (the Aviat
@@ -181,6 +225,32 @@ PRs. The current rule's decision is recorded in
 [ADR-0005](../adr/0005-maintenance-bay-rule.md) (Status: **Superseded
 by ADR-0006**). The implementation lives in
 `src/hangarfit/collisions.py::_bay_intrusion_conflicts`.
+
+### The Caddy hard-door egress gate
+
+A `GroundObject` with `hard_door_mover: true` must be able to **drive out the
+door** against the full parked scene in any valid layout. This is a
+**routability / exit-3** rule, distinct from the static keep-outs above (exit 2):
+it is not a geometric position test but a full tow-path search.
+
+The check is implemented by `egress_first_conflict` in
+`src/hangarfit/towplanner.py`. By Reeds–Shepp reversibility an egress
+(slot → out) is feasible if and only if the equivalent entry path (door → slot)
+exists, so it runs the **entry** search via `plan_path` (Reeds–Shepp,
+[ADR-0010](../adr/0010-reeds-shepp-motion-model.md)) — from a door-cone of start
+poses *to* the parked slot, against the full parked scene — one closed-form
+search serving both directions. A blocked egress
+raises `NoFeasiblePlanError` in `solver._tow_plan_layouts`, producing **exit 3
+(tow-unroutable)** with the mover id named on stderr.
+
+The flag is **data-driven**: the `vw_caddy` catalog entry sets
+`hard_door_mover: true`; all other entries default to `false`. When no
+`hard_door_mover` body is present the entire code path is a guarded no-op —
+layouts without such objects produce bit-identical output (ADR-0003 preserved).
+
+The decision and the real-data falsification of an earlier geometric
+"nearest-door" Conflict approach are recorded in
+[ADR-0026](../adr/0026-caddy-hard-door-egress.md) (Status: **Accepted**).
 
 ### Movement modes
 
@@ -554,6 +624,8 @@ ADR.
 The hard score tuple `(conflict_count, total_penetration_m2)` measures only illegal overlap. The first **soft** preference — inter-plane spread (maximize separation once valid) — ships as an isolated post-pass (`solver._spread`), deliberately *outside* the hard tuple so the conflict-resolution determinism contract ([ADR-0003](../adr/0003-rr-mc-solver-algorithm.md)) is unaffected. See [ADR-0008](../adr/0008-inter-plane-spread-soft-preference.md) for the repulsion-energy metric and why it is a post-pass rather than a third score key.
 
 The second soft preference — **nose-out parked heading** (park each plane pointing toward the door for an easy straight-out exit) — is a second isolated post-pass (`solver._nose_out`), run *after* `_spread` and independently of it. For each movable plane it applies the zero-displacement 180° antipodal flip `(h + 180) % 360` iff that is strictly more nose-out (closer to `heading 180`, the door, under the [ADR-0002](../adr/0002-determinant-minus-one-transform.md) convention) **and** the layout stays valid. It is **default ON** (`--no-nose-out`), with a per-plane tri-state `PlaneConstraint.nose_out` override for the legitimate nose-IN exemption. Crucially the pass is **RNG-free** — it draws no random numbers — so byte-identical determinism holds *even with the feature on* (strictly stronger than `_spread`, which guarantees byte-identity only when off). It is gap-neutral (position fixed), so it cannot fight spread. The companion **`tow_pivotable`** aircraft flag (a free-castering / nose-lift plane pivots in place when towed, `effective_turn_radius_m() → 0`, routed via the existing zero-radius cart-pivot fan) is a realism flag orthogonal to `movement_mode`. See [ADR-0022](../adr/0022-nose-out-parked-heading.md); the cheap *reachability* of a nose-out slot (backing in rather than looping) is the [ADR-0010](../adr/0010-reeds-shepp-motion-model.md) #480 amendment.
+
+The third soft preference — **per-object right/left-region alignment** (#604, [ADR-0008](../adr/0008-inter-plane-spread-soft-preference.md) #604 amendment) — is a normalized distance-to-wall term folded into the same `_spread` hill-climb energy alongside the repulsion and the back-bias. It is authored **per ground object** in the scenario's `ground_objects:` block as `RegionPreference{side, weight}` (`None`/absent ≡ neutral/inert) and realized as `solver._region_energy`. It is **secondary to `min_pairwise_gap_m`** (the primary cross-basin key, #267): the term re-ranks candidates only within a basin's validity-gated hill-climb and never overrides the hard gate. It is **RNG-free**, so same-scenario+same-seed output stays byte-identical (ADR-0003). The achieved alignment per layout is surfaced as `SolverDiagnostics.region_alignment` (per-object 0–1, 1.0 = at the preferred wall) in the human and `--json` CLI output. Default inert: a scenario with no `region_preferences` is byte-identical to pre-#604.
 
 ## Visualizer colour accessibility
 

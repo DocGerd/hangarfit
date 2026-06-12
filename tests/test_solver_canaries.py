@@ -102,19 +102,23 @@ def test_solve_deterministic_given_seed(fixture):
         assert la.placements == lb.placements
         assert la.maintenance_plane == lb.maintenance_plane
 
-    # If the run exhausted budget, best_partial_layout must also match.
-    bp1 = r1.diagnostics.best_partial_layout
-    bp2 = r2.diagnostics.best_partial_layout
-    if bp1 is not None:
-        assert bp2 is not None
-        assert bp1.placements == bp2.placements
-
-    # NOT asserted: diagnostics.wall_time_s and diagnostics.restarts_attempted.
-    # Both depend on machine speed and the wall-clock-based budget cutoff —
-    # a faster run completes more restarts within the same 5.0 s budget.
-    # The deterministic-layout assertion above is enough to catch any
-    # accidental non-determinism (unseeded random, set/dict ordering, etc.):
-    # different RNG state -> different layouts.
+    # NOT asserted here: diagnostics.wall_time_s, diagnostics.restarts_attempted,
+    # AND diagnostics.best_partial_layout. All three are functions of how many
+    # restarts completed inside the wall-clock budget, which is machine-/load-
+    # dependent: a slow or CPU-contended runner finishes FEWER restarts in the
+    # same 5.0 s window. best_partial_layout is the best basin *across* those
+    # restarts (monotonic via solver._merge_restart), and the per-restart descent
+    # is itself budget-interruptible (solver.py outer loop), so two runs that both
+    # exhaust the budget at different restart counts legitimately land on
+    # different partials. ADR-0003 scopes byte-identical determinism to
+    # max_restarts-bounded solves, NOT budget_s-bounded ones (#267); asserting a
+    # budget-dependent quantity here is the #492 wall-clock-canary flake class (a
+    # slow CI runner exhausted this fixture and the two runs' partials diverged).
+    # best_partial determinism is owned, machine-independently, by
+    # test_solve_deterministic_best_partial_under_max_restarts below. The
+    # deterministic found-layout assertion above is what catches accidental
+    # non-determinism (unseeded random, set/dict ordering): a real RNG leak
+    # changes the per-restart trajectory and thus the found layouts/status.
 
 
 def test_solve_deterministic_best_partial_under_max_restarts() -> None:
@@ -195,10 +199,20 @@ def test_solve_deterministic_best_partial_under_max_restarts() -> None:
         fixed ``max_restarts=3``. Trigger unchanged: if a future change pushes
         ``seed=44`` natural success to ``<= 3``, re-probe and pick a
         higher-headroom seed.
+
+        Re-calibrated 2026-06-11 for #595 (central real-spec catalog): the
+        catalog refactor swapped this fixture's synthetic aircraft dims for the
+        real published-spec numbers, re-basing the min-conflicts trajectory.
+        Under the new dims ``seed=44`` finds within the cap (status flipped to
+        ``found``); re-probed seeds {3,7,…,2024} and ``seed=17`` has the most
+        headroom — first natural success at restart **8**, a 5-restart margin
+        above the fixed ``max_restarts=3``. Trigger unchanged: if a future
+        change pushes ``seed=17`` natural success to ``<= 3``, re-probe and
+        pick a higher-headroom seed.
     """
     fixture = "tests/fixtures/solve_canary_six_planes_tight.yaml"
     max_restarts = 3
-    seed = 44
+    seed = 17
 
     s1 = load_scenario(fixture)
     r1 = solve(
@@ -253,6 +267,33 @@ def test_solve_deterministic_best_partial_under_max_restarts() -> None:
     # reproducible, not just the accepted layouts.
     assert bpl1.placements == bpl2.placements
     assert bpl1.maintenance_plane == bpl2.maintenance_plane
+
+
+def test_solve_deterministic_polygon_taper_fleet() -> None:
+    """A fleet whose wing is a polygon (tapered hexagon) solves bit-identically
+    across two runs under a fixed max_restarts cap — proving the polygon
+    build-path + load-time vertex canonicalization are determinism-safe
+    (ADR-0003). max_restarts (not wall-clock) makes this load-independent, so
+    it stays in the parallel pool (no `serial` mark)."""
+    fixture = "tests/fixtures/solve_taper_determinism.yaml"
+    cfg = SearchConfig(max_restarts=8, spread=False, nose_out=False)
+
+    s1 = load_scenario(fixture)
+    r1 = solve(s1, budget_s=30.0, alternatives=1, seed=42, search=cfg)
+    s2 = load_scenario(fixture)
+    r2 = solve(s2, budget_s=30.0, alternatives=1, seed=42, search=cfg)
+
+    assert r1.status == r2.status
+    assert len(r1.layouts) == len(r2.layouts)
+    for la, lb in zip(r1.layouts, r2.layouts, strict=True):
+        assert la.placements == lb.placements
+        assert la.maintenance_plane == lb.maintenance_plane
+
+    bp1 = r1.diagnostics.best_partial_layout
+    bp2 = r2.diagnostics.best_partial_layout
+    if bp1 is not None:
+        assert bp2 is not None
+        assert bp1.placements == bp2.placements
 
 
 def test_solve_budget_trips_before_max_restarts() -> None:

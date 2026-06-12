@@ -8,11 +8,16 @@
 // preserved behaviour-identically by the caller.
 import * as THREE from 'three';
 import { applyAffine } from './affine.ts';
-import type { BoxData, SceneV1 } from './scene-contract.ts';
+import type { BoxData, SceneV2 } from './scene-contract.ts';
 
-/** oriented_rect corner order, rotated CCW about (cx,cy):
+/** Plane-local footprint corners of a box (scene/v2). A polygon part carries its
+ * ring in `vertices`, already folded into plane-local (u,v) — returned verbatim
+ * so the oracle just applies the affine, no transform math (ADR-0002). A scalar
+ * part has `vertices: null` and its 4 corners are rebuilt from length/width/angle
+ * in oriented_rect order, rotated CCW about (cx,cy):
  *  (+hl,-hw),(+hl,+hw),(-hl,+hw),(-hl,-hw). */
-export function boxCornersLocal(b: BoxData): [number, number][] {
+export function partCornersLocal(b: BoxData): [number, number][] {
+  if (b.vertices !== null) return b.vertices;
   const h = THREE.MathUtils.degToRad(b.angle_deg);
   const cs = Math.cos(h), sn = Math.sin(h);
   const hl = b.length_m / 2, hw = b.width_m / 2;
@@ -35,7 +40,7 @@ export interface AnchorCheckResult {
  * its final affine, and compare to the Python oracle (`anchors`, `gear_anchors`).
  * PURE — no DOM, no throw. main.ts banners on `structural` or `maxErr > 1e-6`.
  */
-export function checkAnchors(scene: SceneV1): AnchorCheckResult {
+export function checkAnchors(scene: SceneV2): AnchorCheckResult {
   let maxErr = 0;
   let structural = '';
   for (const p of scene.planes) {
@@ -49,12 +54,22 @@ export function checkAnchors(scene: SceneV1): AnchorCheckResult {
       structural = 'anchor/box count mismatch for ' + p.id;
       break;
     }
-    p.boxes.forEach((b, bi) => {
-      boxCornersLocal(b).forEach(([u, v], ci) => {
+    let vertexMismatch = false;
+    for (let bi = 0; bi < p.boxes.length; bi++) {
+      const corners = partCornersLocal(p.boxes[bi]);
+      // A polygon box of N verts against an oracle box of M (≠N) is a structural
+      // breach — catch it before the per-corner loop indexes past the oracle.
+      if (want[bi].length !== corners.length) {
+        structural = 'anchor/vertex count mismatch for ' + p.id;
+        vertexMismatch = true;
+        break;
+      }
+      corners.forEach(([u, v], ci) => {
         const [wx, wy] = applyAffine(aff, u, v);
         maxErr = Math.max(maxErr, Math.abs(wx - want[bi][ci][0]), Math.abs(wy - want[bi][ci][1]));
       });
-    });
+    }
+    if (vertexMismatch) break;
     // Gear oracle (#399): the wheels[] ride the same affine Group as the boxes,
     // so a wrong transform corrupts both — but viewer.js is not pytest-covered,
     // so we cross-check the wheel world positions against the Python oracle too.

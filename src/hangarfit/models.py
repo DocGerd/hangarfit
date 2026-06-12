@@ -14,12 +14,13 @@ from __future__ import annotations
 
 import math
 import typing
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, cast
 
 from shapely import box, union_all
+from shapely.geometry import LinearRing
 from shapely.geometry.base import BaseGeometry
 
 if TYPE_CHECKING:
@@ -28,15 +29,89 @@ if TYPE_CHECKING:
 WingPosition = Literal["high", "mid", "low"]
 Gear = Literal["tailwheel", "nosewheel", "monowheel"]
 MovementMode = Literal["always_cart", "always_own_gear", "cart_eligible"]
+GroundObjectClass = Literal["fixed_obstacle", "placed_routed_mover"]
+MoverMotionMode = Literal["steerable", "towed"]
 # `tail` denotes the horizontal stabilizer specifically (a wide, usually-low
 # overhangable surface — see metrics._OVERHANGABLE); `vertical_stabilizer` is the
 # fin (thin, tall, never overhangable). Empennage split per ADR-0023.
-PartKind = Literal["fuselage_front", "fuselage_aft", "wing", "strut", "tail", "vertical_stabilizer"]
+# `ground` denotes a non-aircraft ground-object footprint (a solid keep-out/body,
+# never overhangable — #601).
+PartKind = Literal[
+    "fuselage_front", "fuselage_aft", "wing", "strut", "tail", "vertical_stabilizer", "ground"
+]
 
 _VALID_PART_KINDS = frozenset(typing.get_args(PartKind))
 _VALID_WING_POSITIONS = frozenset(typing.get_args(WingPosition))
 _VALID_GEARS = frozenset(typing.get_args(Gear))
 _VALID_MOVEMENT_MODES = frozenset(typing.get_args(MovementMode))
+_VALID_GROUND_OBJECT_CLASSES = frozenset(typing.get_args(GroundObjectClass))
+_VALID_MOVER_MOTION_MODES = frozenset(typing.get_args(MoverMotionMode))
+
+# Below this absolute |2·signed-area| a ring is treated as degenerate
+# (zero-area / collinear). 1e-9 m² is far tighter than any real part.
+_RING_MIN_ABS_SIGNED_AREA = 1e-9
+# Float slack for the local_vertices-within-bbox containment check.
+_PART_BBOX_TOL_M = 1e-9
+
+# A 2D point in a part's own (plane-local) frame; a polygon ring is a tuple of these.
+Vertex = tuple[float, float]
+
+
+def _canonicalize_ring(
+    vertices: Sequence[Vertex],
+) -> tuple[Vertex, ...]:
+    """Canonicalize an author-supplied polygon ring to a deterministic form.
+
+    Returns the ring OPEN (no closing duplicate), wound counter-clockwise,
+    rotated so the lexicographically-smallest vertex is first. Two orderings
+    of the SAME shape therefore produce a byte-identical tuple — the
+    determinism contract (ADR-0003) for polygon parts, since the geometry
+    layer never re-orients at solve time (Shapely preserves vertex order
+    verbatim). Rejects non-finite, fewer-than-3-vertex, degenerate
+    (zero-area / collinear), and self-intersecting rings.
+    """
+    pts = [(float(x), float(y)) for x, y in vertices]
+    # Drop an explicit closing duplicate if the author supplied one.
+    if len(pts) >= 2 and pts[0] == pts[-1]:
+        pts = pts[:-1]
+    if len(pts) < 3:
+        raise ValueError(f"polygon ring needs >= 3 distinct vertices, got {len(pts)}")
+    if not all(math.isfinite(x) and math.isfinite(y) for x, y in pts):
+        raise ValueError(f"polygon ring has a non-finite vertex: {pts}")
+    # Degeneracy + self-intersection gates, in this order so each case gets the
+    # right error message:
+    #   (a) max |cross-product| over consecutive triples == 0  -> "degenerate"
+    #       (rejects FULLY collinear / zero-area rings; a redundant collinear
+    #       vertex on an otherwise-valid ring is tolerated, not rejected).
+    #   (b) Shapely LinearRing.is_simple is False                -> "self-intersects".
+    #   (c) shoelace signed area: its SIGN drives the CCW flip below; the
+    #       |area| < eps check is defense-in-depth, unreachable after (a)+(b).
+    n = len(pts)
+    max_cross = max(
+        abs(
+            (pts[(i + 1) % n][0] - pts[i][0]) * (pts[(i + 2) % n][1] - pts[i][1])
+            - (pts[(i + 1) % n][1] - pts[i][1]) * (pts[(i + 2) % n][0] - pts[i][0])
+        )
+        for i in range(n)
+    )
+    if max_cross < _RING_MIN_ABS_SIGNED_AREA:
+        raise ValueError(f"polygon ring is degenerate (near-zero area): {pts}")
+    if not LinearRing(pts).is_simple:
+        raise ValueError(f"polygon ring self-intersects: {pts}")
+    # Signed area (shoelace) gives both the winding sign and a final degeneracy check.
+    signed_area2 = sum(
+        pts[i][0] * pts[(i + 1) % n][1] - pts[(i + 1) % n][0] * pts[i][1] for i in range(n)
+    )
+    # Defense-in-depth: unreachable for a simple, non-collinear polygon (both gated above).
+    if abs(signed_area2) < _RING_MIN_ABS_SIGNED_AREA:  # pragma: no cover
+        raise ValueError(f"polygon ring is degenerate (near-zero area): {pts}")
+    # Force counter-clockwise (positive signed area).
+    if signed_area2 < 0:
+        pts = list(reversed(pts))
+    # Rotate to the lexicographically-minimum start vertex.
+    start = min(range(len(pts)), key=lambda i: pts[i])
+    pts = pts[start:] + pts[:start]
+    return tuple(pts)
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +149,7 @@ class Part:
     angle_deg: float
     z_bottom_m: float
     z_top_m: float
+    local_vertices: tuple[Vertex, ...] | None = None
 
     def __post_init__(self) -> None:
         if self.kind not in _VALID_PART_KINDS:
@@ -93,6 +169,22 @@ class Part:
                 f"Part {self.kind!r}: z_top_m must exceed z_bottom_m, "
                 f"got z_bottom={self.z_bottom_m}, z_top={self.z_top_m}"
             )
+        if self.local_vertices is not None:
+            canonical = _canonicalize_ring(self.local_vertices)
+            half_l = self.length_m / 2.0
+            half_w = self.width_m / 2.0
+            # The polygon is checked against the axis-aligned bbox in the part's
+            # OWN (unrotated) frame. That is sufficient even when angle_deg != 0:
+            # aircraft_parts_world rotates the polygon and the bbox together, and a
+            # rigid rotation preserves the subset relation.
+            for x, y in canonical:
+                if abs(x) > half_l + _PART_BBOX_TOL_M or abs(y) > half_w + _PART_BBOX_TOL_M:
+                    raise ValueError(
+                        f"Part {self.kind!r}: local_vertices vertex ({x}, {y}) lies outside "
+                        f"the length_m x width_m bbox (+/-{half_l} x +/-{half_w}); the polygon "
+                        f"footprint must be a subset of the bounding box"
+                    )
+            object.__setattr__(self, "local_vertices", canonical)
 
 
 @dataclass(frozen=True, slots=True)
@@ -330,6 +422,117 @@ class Aircraft:
         if self.movement_mode == "always_cart" or self.tow_pivotable:
             return 0.0
         return self.required_turn_radius_m()
+
+
+@dataclass(frozen=True, slots=True)
+class GroundObject:
+    """A non-aircraft object on the hangar floor (#601 / ADR-0025).
+
+    Two classes, set by ``object_class`` (derived by the loader from the
+    catalog ``type:`` — ``fixed_obstacle`` → ``"fixed_obstacle"``;
+    ``car``/``trailer`` → ``"placed_routed_mover"``):
+
+    * **fixed_obstacle** — a placed-but-immovable keep-out (e.g. a fuel
+      trailer at the door). Carries no motion. Its world footprint is a
+      keep-out for aircraft/mover parts; the tow planner routes around it.
+    * **placed_routed_mover** — a placed body that is itself routed (a
+      self-driving ``steerable`` car, a ``towed`` trailer). Participates in
+      pairwise collision like an aircraft. ``motion_mode`` is carried here;
+      the actual route search lands in #602 (this type only carries the field).
+
+    Geometry reuses the parts model: ``parts`` is a tuple of ``Part`` with
+    ``kind="ground"`` (a solid footprint, never overhangable), transformed to
+    world coords by the *same* :func:`hangarfit.geometry.aircraft_parts_world`
+    path aircraft use. ``turn_radius_m`` is static catalog data carried for
+    #602's routing; it is unused in #601.
+    """
+
+    id: str
+    name: str
+    parts: tuple[Part, ...]
+    object_class: GroundObjectClass
+    motion_mode: MoverMotionMode | None = None
+    turn_radius_m: float | None = None
+    measured: bool = False
+    hard_door_mover: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.id:
+            raise ValueError("GroundObject.id must be non-empty")
+        if not self.name:
+            raise ValueError(f"GroundObject {self.id!r}: name must be non-empty")
+        if not self.parts:
+            raise ValueError(f"GroundObject {self.id!r}: parts must be non-empty")
+        for p in self.parts:
+            if p.kind != "ground":
+                raise ValueError(
+                    f"GroundObject {self.id!r}: all parts must be kind 'ground' "
+                    f"(a solid footprint), got {p.kind!r}"
+                )
+        if self.object_class not in _VALID_GROUND_OBJECT_CLASSES:
+            raise ValueError(
+                f"GroundObject {self.id!r}: object_class must be one of "
+                f"{sorted(_VALID_GROUND_OBJECT_CLASSES)}, got {self.object_class!r}"
+            )
+        if self.object_class == "fixed_obstacle":
+            if self.motion_mode is not None:
+                raise ValueError(
+                    f"GroundObject {self.id!r}: a fixed_obstacle must not carry a "
+                    f"motion_mode (got {self.motion_mode!r}) — it never moves"
+                )
+            if self.turn_radius_m is not None:
+                raise ValueError(
+                    f"GroundObject {self.id!r}: a fixed_obstacle must not carry a "
+                    f"turn_radius_m — it never moves"
+                )
+            if self.hard_door_mover:
+                raise ValueError(
+                    f"GroundObject {self.id!r}: a fixed_obstacle must not set "
+                    f"hard_door_mover=True — only a placed_routed_mover may be a "
+                    f"hard-door (egress) mover"
+                )
+        else:  # placed_routed_mover
+            if self.motion_mode not in _VALID_MOVER_MOTION_MODES:
+                raise ValueError(
+                    f"GroundObject {self.id!r}: a placed_routed_mover requires a "
+                    f"motion_mode in {sorted(_VALID_MOVER_MOTION_MODES)}, "
+                    f"got {self.motion_mode!r}"
+                )
+            # Only movers may carry a turn radius (fixed_obstacle rejects any
+            # non-None above), and when present it must be positive.
+            if self.turn_radius_m is not None and self.turn_radius_m <= 0:
+                raise ValueError(
+                    f"GroundObject {self.id!r}: turn_radius_m must be positive, "
+                    f"got {self.turn_radius_m}"
+                )
+            if self.motion_mode == "steerable" and self.turn_radius_m is None:
+                raise ValueError(
+                    f"GroundObject {self.id!r}: a steerable mover requires a "
+                    f"positive turn_radius_m (a self-driven car has a turning "
+                    f"circle; it never pivots in place)"
+                )
+            if self.motion_mode == "towed" and self.turn_radius_m is not None:
+                raise ValueError(
+                    f"GroundObject {self.id!r}: a towed mover must not carry a "
+                    f"turn_radius_m — it moves as a free-swivel cart (radius 0.0). "
+                    f"A positive-radius towed trailer is a deliberate future change "
+                    f"(relax this guard + define the semantics first); got "
+                    f"{self.turn_radius_m}"
+                )
+
+    def effective_turn_radius_m(self) -> float:
+        """Turn radius the tow planner consumes (ADR-0010, 2026-06-12 amendment).
+
+        Data-driven, mirroring :meth:`Aircraft.effective_turn_radius_m`: returns
+        ``turn_radius_m`` when present, else ``0.0``. ``__post_init__`` co-determines
+        the two fields — a ``steerable`` mover must carry a (positive) radius and a
+        ``towed`` mover must not — so a steerable car returns its radius (-> own-gear
+        Reeds-Shepp, six-primitive fan) and a towed trailer returns ``0.0`` (->
+        free-swivel cart, four-primitive reverse-capable fan, the ground-crew
+        hand-positioning model). Only ever called on movers; never raises."""
+        if self.turn_radius_m is not None:
+            return self.turn_radius_m
+        return 0.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -637,26 +840,41 @@ class Layout:
       placements** (the occupant is treated as "away" — physically
       absent from the parking problem).
 
+    Ground objects (#601 / ADR-0025) live in two parallel fields that
+    mirror ``fleet`` / ``placements``:
+
+    - ``ground_objects`` — a map of :class:`GroundObject` keyed by id (keys
+      equal their ``GroundObject.id``, like ``fleet``),
+    - ``ground_object_placements`` — the placed poses (``plane_id`` carries
+      the ground-object id, no duplicates).
+
+    Their cross-reference invariants are validated alongside the fleet's:
+    every ground-object placement resolves to a known object, and the
+    ground-object ids are **disjoint** from the fleet aircraft ids so a
+    placement id resolves unambiguously to exactly one object.
+
     The bay-closure rule (no other plane's parts may cross into the
     closed bay rectangle) is a geometric check; it lives in the
     collision checker alongside the other geometric rules.
 
-    On construction, ``fleet`` is wrapped in ``MappingProxyType`` so
-    that the cross-reference invariants stay valid for the lifetime of
-    the ``Layout`` (a plain ``dict`` field, even on a frozen dataclass,
-    can be mutated through ``layout.fleet["x"] = …``).
+    On construction, ``fleet`` and ``ground_objects`` are wrapped in
+    ``MappingProxyType`` so that the cross-reference invariants stay valid
+    for the lifetime of the ``Layout`` (a plain ``dict`` field, even on a
+    frozen dataclass, can be mutated through ``layout.fleet["x"] = …``).
     """
 
     fleet: Mapping[str, Aircraft]
     hangar: Hangar
     placements: tuple[Placement, ...]
     maintenance_plane: str | None = None
+    ground_objects: Mapping[str, GroundObject] = field(default_factory=dict)
+    ground_object_placements: tuple[Placement, ...] = ()
 
-    # The mapping field wrapped in MappingProxyType for immutability — single
+    # The mapping fields wrapped in MappingProxyType for immutability — single
     # source of truth for the construction-time wrap (__post_init__) and the
     # pickle unwrap/re-wrap (__getstate__/__setstate__, #544 ProcessPool
     # boundary). See _proxy_aware_getstate. (ClassVar ⇒ not a dataclass field.)
-    _PROXY_FIELDS: typing.ClassVar[tuple[str, ...]] = ("fleet",)
+    _PROXY_FIELDS: typing.ClassVar[tuple[str, ...]] = ("fleet", "ground_objects")
 
     def __post_init__(self) -> None:
         for k, a in self.fleet.items():
@@ -709,6 +927,33 @@ class Layout:
                     f"maintenance_plane {self.maintenance_plane!r} must NOT be in "
                     f"placements when in maintenance (occupant is treated as away)"
                 )
+
+        # Ground objects (#601): keys equal their id; placements resolve;
+        # ids disjoint from the fleet so a placement id resolves unambiguously.
+        for k, obj in self.ground_objects.items():
+            if obj.id != k:
+                raise ValueError(
+                    f"ground_objects key {k!r} does not match its GroundObject.id "
+                    f"({obj.id!r}); keys must equal their ground-object id"
+                )
+        fleet_ids = set(self.fleet)
+        ground_ids = set(self.ground_objects)
+        clash = fleet_ids & ground_ids
+        if clash:
+            raise ValueError(
+                f"ground-object id(s) {sorted(clash)} collide with fleet aircraft ids; "
+                f"ids must be disjoint so a placement resolves to exactly one object"
+            )
+        seen_ground: set[str] = set()
+        for gp in self.ground_object_placements:
+            if gp.plane_id not in self.ground_objects:
+                raise ValueError(
+                    f"ground_object_placement references unknown id {gp.plane_id!r} "
+                    f"(ground_objects has: {sorted(self.ground_objects)})"
+                )
+            if gp.plane_id in seen_ground:
+                raise ValueError(f"Duplicate ground_object_placement for id {gp.plane_id!r}")
+            seen_ground.add(gp.plane_id)
 
         for name in self._PROXY_FIELDS:
             object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
@@ -795,6 +1040,46 @@ class CheckResult:
         return len(self.conflicts) == 0
 
 
+RegionSide = Literal["left", "right"]
+_VALID_REGION_SIDES: frozenset[str] = frozenset(("left", "right"))
+
+
+@dataclass(frozen=True, slots=True)
+class RegionPreference:
+    """A soft per-object preference to align a placed body to one hangar wall (#604).
+
+    ``side`` is the preferred wall in the x-axis (``"left"`` ≡ ``x → 0``,
+    ``"right"`` ≡ ``x → hangar.width_m``); ``weight`` is a non-negative, finite
+    soft importance (``0.0`` is permitted and inert). Realized as the RNG-free
+    ``solver._region_energy`` term folded into the ``_spread`` hill-climb,
+    secondary to ``min_pairwise_gap_m`` and never overriding the hard validity
+    gate (ADR-0008 amended). Modeled on :attr:`PlaneConstraint.priority`'s
+    soft-weight validation (#441).
+
+    The shape differs intentionally from that precedent: ``weight`` is a plain
+    ``float`` (not ``float | None``) because a body either has a
+    ``Scenario.region_preferences`` map entry or none — map-presence already
+    encodes the optional/neutral distinction that ``priority``'s ``| None``
+    carries inline.
+    """
+
+    side: RegionSide
+    weight: float
+
+    def __post_init__(self) -> None:
+        if self.side not in _VALID_REGION_SIDES:
+            raise ValueError(
+                f"RegionPreference.side must be one of {sorted(_VALID_REGION_SIDES)}, "
+                f"got {self.side!r}"
+            )
+        if not math.isfinite(self.weight):
+            raise ValueError(f"RegionPreference.weight={self.weight!r} must be finite")
+        if self.weight < 0.0:
+            raise ValueError(
+                f"RegionPreference.weight={self.weight!r} must be >= 0.0 (a soft weight)"
+            )
+
+
 @dataclass(frozen=True, slots=True)
 class PlaneConstraint:
     """Per-plane constraints for a Scenario.
@@ -853,7 +1138,20 @@ class Scenario:
     - maintenance_plane (if set) must not also carry a pin or force_on_carts in
       constraints (the occupant is treated as away — those constraints would be
       incoherent and would be silently ignored by the solver)
+    - region_preferences.keys() ⊆ placeable bodies (fleet_in ∪ placed_routed_mover ids)
+    - fixed_obstacle_placements entries reference distinct fixed_obstacle ground
+      objects (in ground_object_defs)
     - fleet and constraints are wrapped in MappingProxyType (same pattern as Layout)
+
+    A fixed_obstacle may appear in ``ground_objects`` WITHOUT a matching
+    ``fixed_obstacle_placements`` entry — its pose then comes from a hand-authored
+    layout (the ``check``/``view`` path), not the solver. The scenario LOADER
+    requires a pose for any fixed_obstacle authored in a SOLVE scenario's
+    ``ground_objects:`` block (#604), so the silent-keep-out-drop that a hard
+    coverage invariant would guard against cannot arise via authored scenarios;
+    for programmatic construction it remains the caller's responsibility
+    (consistent with the #605 ground_objects model). Hence this is a documented
+    contract, not an enforced __post_init__ invariant.
 
     See spec §3.2 for the rationale.
     """
@@ -863,13 +1161,26 @@ class Scenario:
     fleet_in: tuple[str, ...]
     maintenance_plane: str | None = None
     constraints: Mapping[str, PlaneConstraint] = field(default_factory=lambda: MappingProxyType({}))
+    ground_objects: tuple[str, ...] = ()
+    ground_object_defs: Mapping[str, GroundObject] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
+    fixed_obstacle_placements: tuple[Placement, ...] = ()
+    region_preferences: Mapping[str, RegionPreference] = field(
+        default_factory=lambda: MappingProxyType({})
+    )
 
     # The mapping fields wrapped in MappingProxyType for immutability. This is
     # the single source of truth for both the construction-time wrap (in
     # __post_init__) and the pickle unwrap/re-wrap (in __getstate__/__setstate__,
     # #545) — listing them once means the two cannot silently drift. (ClassVar so
     # the dataclass excludes it from the field set and __slots__.)
-    _PROXY_FIELDS: typing.ClassVar[tuple[str, ...]] = ("fleet", "constraints")
+    _PROXY_FIELDS: typing.ClassVar[tuple[str, ...]] = (
+        "fleet",
+        "constraints",
+        "ground_object_defs",
+        "region_preferences",
+    )
 
     def __post_init__(self) -> None:
         # fleet_in must be non-empty (otherwise there's nothing to solve;
@@ -986,6 +1297,49 @@ class Scenario:
                         f"{constraint.priority!r} must be >= 0.0 (a soft importance weight)"
                     )
 
+        # Ground objects (#601): defs keys must equal their GroundObject.id;
+        # every id in ground_objects must resolve in ground_object_defs.
+        for k, obj in self.ground_object_defs.items():
+            if obj.id != k:
+                raise ValueError(
+                    f"Scenario.ground_object_defs key {k!r} != GroundObject.id ({obj.id!r})"
+                )
+        for gid in self.ground_objects:
+            if gid not in self.ground_object_defs:
+                raise ValueError(
+                    f"Scenario.ground_objects references unknown ground_object {gid!r}; "
+                    f"defs have: {sorted(self.ground_object_defs)}"
+                )
+
+        # Region preferences (#604): every key must reference a placeable body —
+        # an aircraft in fleet_in or a placed_routed_mover ground object.
+        placeable = set(self.fleet_in) | {
+            gid
+            for gid in self.ground_objects
+            if self.ground_object_defs[gid].object_class == "placed_routed_mover"
+        }
+        for rid in self.region_preferences:
+            if rid not in placeable:
+                raise ValueError(
+                    f"Scenario.region_preferences references {rid!r} which is not a "
+                    f"placeable body (aircraft or placed_routed_mover); "
+                    f"placeable ids: {sorted(placeable)}"
+                )
+        seen_fixed: set[str] = set()
+        for p in self.fixed_obstacle_placements:
+            if p.plane_id not in self.ground_object_defs:
+                raise ValueError(
+                    f"Scenario.fixed_obstacle_placements references unknown ground "
+                    f"object {p.plane_id!r}"
+                )
+            if self.ground_object_defs[p.plane_id].object_class != "fixed_obstacle":
+                raise ValueError(
+                    f"Scenario.fixed_obstacle_placements[{p.plane_id!r}] is not a fixed_obstacle"
+                )
+            if p.plane_id in seen_fixed:
+                raise ValueError(f"Duplicate fixed_obstacle_placement for {p.plane_id!r}")
+            seen_fixed.add(p.plane_id)
+
         # Wrap the mapping fields in MappingProxyType so a frozen Scenario can't
         # be mutated through e.g. ``scenario.fleet["x"] = …``. Always copy+wrap
         # (even an already-wrapped MappingProxyType arg): skipping the copy would
@@ -994,6 +1348,35 @@ class Scenario:
         # pickle unwrap list stay a single source of truth.
         for name in self._PROXY_FIELDS:
             object.__setattr__(self, name, MappingProxyType(dict(getattr(self, name))))
+
+    @property
+    def mover_ids(self) -> tuple[str, ...]:
+        """Placed-routed-mover ids active in this scenario, in ``ground_objects`` order.
+
+        These are the ground objects the solver PLACES + routes (vs fixed
+        obstacles, authored static keep-outs in :attr:`fixed_obstacle_placements`).
+        Empty ⇒ the solver is aircraft-only and byte-identical to pre-#604 (ADR-0003).
+
+        Note this exposes a DIFFERENT mover ordering than
+        :attr:`placeable_ids`: ``mover_ids`` follows ``ground_objects``
+        (declaration) order, whereas ``placeable_ids`` sorts the movers. Callers
+        must not index-align one against the other (the solver re-sorts via
+        ``sorted(scenario.mover_ids)`` at the use site)."""
+        return tuple(
+            gid
+            for gid in self.ground_objects
+            if self.ground_object_defs[gid].object_class == "placed_routed_mover"
+        )
+
+    @property
+    def placeable_ids(self) -> tuple[str, ...]:
+        """Aircraft (``fleet_in``) then sorted mover ids — the unified search bodies.
+        With no movers this is exactly ``fleet_in`` (ADR-0003).
+
+        The mover ordering here (``fleet_in + sorted(mover_ids)``) differs from
+        :attr:`mover_ids`' ``ground_objects`` (declaration) order, so callers
+        must not index-align the two."""
+        return self.fleet_in + tuple(sorted(self.mover_ids))
 
     # Picklable across the #544 ProcessPool boundary — the worker input. See
     # _proxy_aware_getstate for the rationale (shared with Layout, #545/#544).
@@ -1040,6 +1423,18 @@ SolveStatus = Literal[
     "exhausted_budget",
     "trivially_infeasible",
 ]
+
+
+class RegionAlignment(typing.NamedTuple):
+    """A placed body's achieved wall alignment for a returned layout (#604).
+
+    ``alignment`` is 0–1 with 1.0 meaning the body sits exactly at its preferred
+    wall. A ``tuple`` subclass, so it is byte-identical under pickle/equality/repr
+    (determinism-neutral) and ``dict(layout_alignments)`` still yields
+    ``{body_id: alignment}``."""
+
+    body_id: str
+    alignment: float
 
 
 @dataclass(frozen=True, slots=True)
@@ -1093,6 +1488,16 @@ class SolverDiagnostics:
     still a valid static arrangement — the entry flags a planning gap, not
     an invalid layout.
 
+    ``unroutable_movers`` is the ground-object counterpart (#627/#612): a flat,
+    deduped, advisory tuple of the **mover** ids (cars / trailers) that could not
+    be routed and so kept a best-effort ``Move(path=None)`` instead of aborting
+    the fill (ADR-0007 #197). Unlike ``unroutable_planes``, a None-path mover does
+    **not** make the whole layout's plan ``None`` (the plan is still returned with
+    the mover drawn as a static body), which is exactly why it needs its own
+    advisory list rather than reusing ``unroutable_planes``. Empty when every
+    mover routed, when there are no movers, or when tow-planning was not attempted.
+    Advisory / RNG-free ⇒ ADR-0003-safe.
+
     ``min_pairwise_gap_m`` is index-aligned with :attr:`SolveResult.layouts`:
     the achieved minimum plan-view gap (m) between any two planes in that
     returned layout — the quality the best-of-all-basins spread selection
@@ -1105,6 +1510,13 @@ class SolverDiagnostics:
     number of nose-out heading flips the RNG-free ``_nose_out`` post-pass applied
     to that returned layout (#263, ADR-0022). ``0`` for a layout where no plane was
     flipped (or with ``nose_out`` disabled). Advisory / RNG-free.
+
+    ``region_alignment`` is index-aligned with :attr:`SolveResult.layouts`: for each
+    returned layout, a tuple of :class:`RegionAlignment` ``(body_id, alignment)`` pairs
+    (sorted by id) for the bodies carrying a :class:`RegionPreference`, where
+    ``alignment`` is 0–1 with 1.0
+    meaning the body sits exactly at its preferred wall (#604, ADR-0008 amended).
+    Empty when no scenario region preferences are set. Advisory / RNG-free.
 
     ``spread_fallback_applied`` is ``True`` when :func:`hangarfit.solver.solve`
     re-solved with the inter-plane spread post-pass disabled and substituted
@@ -1155,6 +1567,8 @@ class SolverDiagnostics:
     spread_stall_applied: bool = False
     apron_shallow_drops: tuple[ApronShallowDrop, ...] = ()
     nose_out_flips: tuple[int, ...] = ()
+    region_alignment: tuple[tuple[RegionAlignment, ...], ...] = ()
+    unroutable_movers: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if (self.best_partial is None) != (self.best_partial_layout is None):
@@ -1189,6 +1603,13 @@ class SolverDiagnostics:
                 "SolverDiagnostics.nose_out_flips entries must be >= 0, "
                 f"got {self.nose_out_flips!r}"
             )
+        for layout_alignments in self.region_alignment:
+            for ra in layout_alignments:
+                if math.isnan(ra.alignment) or ra.alignment < 0.0 or ra.alignment > 1.0:
+                    raise ValueError(
+                        "SolverDiagnostics.region_alignment values must be in "
+                        f"[0.0, 1.0], got {ra.alignment!r}"
+                    )
 
 
 @dataclass(frozen=True, slots=True)
@@ -1253,6 +1674,12 @@ class SolveResult:
                 "SolveResult.diagnostics.nose_out_flips, when populated, must be "
                 f"index-aligned with layouts: got {len(self.diagnostics.nose_out_flips)} "
                 f"counts for {len(self.layouts)} layouts"
+            )
+        if self.diagnostics.region_alignment and len(self.diagnostics.region_alignment) != len(
+            self.layouts
+        ):
+            raise ValueError(
+                "SolverDiagnostics.region_alignment length must match layouts when populated"
             )
 
 

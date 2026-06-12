@@ -1,6 +1,6 @@
 // node --test units for the timeline state machine (#440). affineAt() is pure
 // given (segByPlane, finals, pid, t) — the hidden → animating → parked
-// transitions of scene-v1-schema.md, untestable from pytest.
+// transitions of scene-v2-schema.md, untestable from pytest.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { affineAt } from '../src/timeline.ts';

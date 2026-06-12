@@ -29,7 +29,7 @@ from dataclasses import dataclass
 
 from shapely.geometry import Polygon, box
 
-from .models import Aircraft, PartKind, Placement
+from .models import Aircraft, GroundObject, Part, PartKind, Placement
 
 
 @dataclass(frozen=True, slots=True)
@@ -167,11 +167,37 @@ def local_to_world(u: float, v: float, placement: Placement) -> tuple[float, flo
     return world_x, world_y
 
 
+def part_local_ring(part: Part) -> list[tuple[float, float]] | None:
+    """Plane-local ``(u, v)`` footprint ring for a polygon part, or ``None`` for a
+    scalar (oriented-rectangle) part.
+
+    For a polygon part this folds the part's ``angle_deg`` + ``(offset_x_m,
+    offset_y_m)`` into the canonical ``local_vertices`` — the **same** per-vertex
+    affine :func:`aircraft_parts_world` applies before routing each vertex through
+    the determinant-−1 :func:`local_to_world`. Sharing this one helper between the
+    collision oracle and :mod:`hangarfit.scene` is what keeps the 3D viewer's
+    emitted ``vertices[]`` bit-identical to the anchor oracle's pre-affine
+    coordinates (ADR-0002 / ADR-0017 parity): both consume the identical floats,
+    so they cannot drift. Returns ``None`` for a scalar part so callers branch on
+    presence rather than re-deriving the rectangle.
+    """
+    if part.local_vertices is None:
+        return None
+    h = math.radians(part.angle_deg)
+    cos_h = math.cos(h)
+    sin_h = math.sin(h)
+    cx = part.offset_x_m
+    cy = part.offset_y_m
+    return [
+        (cx + x * cos_h - y * sin_h, cy + x * sin_h + y * cos_h) for x, y in part.local_vertices
+    ]
+
+
 def aircraft_parts_world(
-    aircraft: Aircraft,
+    obj: Aircraft | GroundObject,
     placement: Placement,
 ) -> list[WorldPart]:
-    """Transform every part of an aircraft from plane-local to world coords.
+    """Transform every part of an aircraft **or ground object** from plane-local to world coords.
 
     ``placement.heading_deg`` is the compass-style angle of the nose,
     measured from world ``+y`` (deeper-into-hangar), CW positive.
@@ -196,23 +222,30 @@ def aircraft_parts_world(
     canonical definition of this transform (#293).
     """
     world_parts: list[WorldPart] = []
-    for part in aircraft.parts:
-        # Build the part's polygon in plane-local coordinates. ``angle_deg``
-        # rotates the part within plane-local (standard CCW). This is the
-        # "in plane-local frame, where is the part?" step.
-        local_poly = oriented_rect(
-            cx=part.offset_x_m,
-            cy=part.offset_y_m,
-            length=part.length_m,
-            width=part.width_m,
-            angle_deg=part.angle_deg,
-        )
+    for part in obj.parts:
+        ring = part_local_ring(part)
+        if ring is not None:
+            # Polygon footprint: part_local_ring has already folded the part's
+            # angle+offset into the plane-local ring (mirroring oriented_rect's
+            # per-corner affine). It is the SAME ring hangarfit.scene emits as
+            # vertices[], so the viewer's affine reproduces these anchors. Route
+            # EVERY vertex through the det(-1) local_to_world — no centroid
+            # shortcut (ADR-0002).
+            local_coords: list[tuple[float, float]] = ring
+        else:
+            # Scalar oriented rectangle (back-compat path). ``angle_deg`` rotates
+            # the part within plane-local (standard CCW).
+            local_poly = oriented_rect(
+                cx=part.offset_x_m,
+                cy=part.offset_y_m,
+                length=part.length_m,
+                width=part.width_m,
+                angle_deg=part.angle_deg,
+            )
+            # exterior.coords includes the closing-point duplicate; slice it off.
+            local_coords = [(x, y) for x, y in list(local_poly.exterior.coords)[:-1]]
         # Apply the plane-local-to-world transform to each vertex.
-        # local_poly.exterior.coords includes the closing-point duplicate;
-        # slice it off so Polygon() doesn't have to de-dup.
-        world_coords = [
-            local_to_world(u, v, placement) for u, v in list(local_poly.exterior.coords)[:-1]
-        ]
+        world_coords = [local_to_world(u, v, placement) for u, v in local_coords]
         world_poly = Polygon(world_coords)
         world_parts.append(
             WorldPart(
@@ -274,8 +307,12 @@ def pose_cache_scope() -> Iterator[None]:
         _pose_cache.reset(token)
 
 
-def cached_parts_world(aircraft: Aircraft, placement: Placement) -> list[WorldPart]:
+def cached_parts_world(obj: Aircraft | GroundObject, placement: Placement) -> list[WorldPart]:
     """Pose-memoized :func:`aircraft_parts_world` for the active solve scope.
+
+    Accepts any placeable body — an :class:`~hangarfit.models.Aircraft` or a
+    :class:`~hangarfit.models.GroundObject` mover (#626) — since the underlying
+    transform is union-typed and the key is pose-generic.
 
     When a :func:`pose_cache_scope` is active, the result is cached on
     ``(plane_id, x_m, y_m, heading_deg)`` and reused for the lifetime of that
@@ -284,14 +321,15 @@ def cached_parts_world(aircraft: Aircraft, placement: Placement) -> list[WorldPa
     so non-solve callers stay byte-identical (just uncached).
 
     Caller contract: the key omits the parts/geometry, so within one scope a
-    given ``plane_id`` must always resolve to the same aircraft geometry. That
-    holds because a single ``solve()`` is driven by one fixed ``scenario.fleet``
-    (one :class:`~hangarfit.models.Aircraft` per id) — which is exactly why the
-    cache is per-solve and never module-global.
+    given ``plane_id`` must always resolve to the same body geometry. That holds
+    because a single ``solve()`` (or :func:`~hangarfit.towplanner.plan_fill`) is
+    driven by one fixed ``scenario.fleet`` + ``ground_objects`` (one
+    :class:`~hangarfit.models.Aircraft` / :class:`~hangarfit.models.GroundObject`
+    per id) — which is exactly why the cache is per-solve and never module-global.
     """
     cache = _pose_cache.get()
     if cache is None:
-        return aircraft_parts_world(aircraft, placement)
+        return aircraft_parts_world(obj, placement)
     key: _PoseKey = (
         placement.plane_id,
         placement.x_m,
@@ -299,5 +337,5 @@ def cached_parts_world(aircraft: Aircraft, placement: Placement) -> list[WorldPa
         placement.heading_deg,
     )
     if key not in cache:
-        cache[key] = aircraft_parts_world(aircraft, placement)
+        cache[key] = aircraft_parts_world(obj, placement)
     return cache[key]

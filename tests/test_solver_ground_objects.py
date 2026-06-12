@@ -1,0 +1,181 @@
+import random
+
+import pytest
+
+from hangarfit.geometry import aircraft_parts_world, cached_parts_world
+from hangarfit.models import Aircraft, GroundObject, Layout, Placement, SearchConfig
+from hangarfit.solver import (
+    _body,
+    _body_parts_world,
+    _build_layout,
+    _descent_step,
+    _initial_placements,
+    _perturb_plane,
+    solve,
+)
+
+
+def _bounds_key(parts):
+    return [(wp.plane_id, wp.kind, tuple(round(c, 9) for c in wp.polygon.bounds)) for wp in parts]
+
+
+def test_body_returns_aircraft_for_fleet_id(region_scenario):
+    b = _body(region_scenario, "fuji")
+    assert isinstance(b, Aircraft) and b.id == "fuji"
+    # identity: same object the solver looks up today
+    assert b is region_scenario.fleet["fuji"]
+
+
+def test_body_returns_ground_object_for_mover_id(region_scenario):
+    b = _body(region_scenario, "glider_trailer_1")
+    assert isinstance(b, GroundObject) and b.object_class == "placed_routed_mover"
+
+
+def test_body_parts_world_aircraft_byte_identical(region_scenario):
+    p = Placement(plane_id="fuji", x_m=10.0, y_m=12.0, heading_deg=30.0, on_carts=False)
+    # aircraft path delegates to cached_parts_world on the SAME aircraft object
+    got = _body_parts_world(region_scenario, "fuji", p)
+    ref = cached_parts_world(region_scenario.fleet["fuji"], p)
+    assert _bounds_key(got) == _bounds_key(ref)
+
+
+def test_body_parts_world_mover_matches_uncached_transform(region_scenario):
+    p = Placement(plane_id="glider_trailer_1", x_m=20.0, y_m=15.0, heading_deg=90.0, on_carts=False)
+    got = _body_parts_world(region_scenario, "glider_trailer_1", p)
+    ref = aircraft_parts_world(region_scenario.ground_object_defs["glider_trailer_1"], p)
+    assert _bounds_key(got) == _bounds_key(ref)
+
+
+def test_build_layout_aircraft_only_matches_plain_layout(region_scenario_no_go):
+    s = region_scenario_no_go  # NO ground objects
+    placements = {
+        "fuji": Placement("fuji", 5.0, 8.0, 0.0, on_carts=False),
+        "cessna_150": Placement("cessna_150", 12.0, 9.0, 0.0, on_carts=False),
+    }
+    built = _build_layout(s, placements)
+    plain = Layout(
+        fleet=s.fleet,
+        hangar=s.hangar,
+        placements=tuple(placements.values()),
+        maintenance_plane=s.maintenance_plane,
+    )
+    assert built.placements == plain.placements  # same order, same poses
+    assert built.ground_object_placements == ()
+
+
+def test_build_layout_splits_movers_and_injects_fixed(region_scenario):
+    s = region_scenario  # fuji+cessna_150 ; movers glider_trailer_1/2 ; fixed maul_fuel_trailer
+    placements = {
+        "fuji": Placement("fuji", 5.0, 8.0, 0.0, on_carts=False),
+        "cessna_150": Placement("cessna_150", 12.0, 9.0, 0.0, on_carts=False),
+        "glider_trailer_1": Placement("glider_trailer_1", 20.0, 20.0, 90.0, on_carts=False),
+    }
+    built = _build_layout(s, placements)
+    assert {p.plane_id for p in built.placements} == {"fuji", "cessna_150"}
+    go_ids = {p.plane_id for p in built.ground_object_placements}
+    assert "glider_trailer_1" in go_ids and "maul_fuel_trailer" in go_ids  # mover + injected fixed
+
+
+def test_initial_placements_samples_movers(region_scenario):
+    pl = _initial_placements(
+        scenario=region_scenario, rng=random.Random(0), cart_bucket=frozenset()
+    )
+    assert "glider_trailer_1" in pl and "glider_trailer_2" in pl
+    assert pl["glider_trailer_1"].on_carts is False
+    # aircraft still present
+    assert "fuji" in pl and "cessna_150" in pl
+
+
+def test_initial_placements_deterministic_with_movers(region_scenario):
+    a = _initial_placements(scenario=region_scenario, rng=random.Random(7), cart_bucket=frozenset())
+    b = _initial_placements(scenario=region_scenario, rng=random.Random(7), cart_bucket=frozenset())
+
+    def key(d):
+        return {k: (v.x_m, v.y_m, v.heading_deg, v.on_carts) for k, v in d.items()}
+
+    assert key(a) == key(b)
+
+
+def test_initial_placements_no_go_same_seed(region_scenario_no_go):
+    a = _initial_placements(
+        scenario=region_scenario_no_go, rng=random.Random(7), cart_bucket=frozenset()
+    )
+    b = _initial_placements(
+        scenario=region_scenario_no_go, rng=random.Random(7), cart_bucket=frozenset()
+    )
+    assert {k: (v.x_m, v.y_m) for k, v in a.items()} == {k: (v.x_m, v.y_m) for k, v in b.items()}
+    assert "glider_trailer_1" not in a  # no movers in the no-GO scenario
+
+
+def test_perturb_mover_no_keyerror_and_stays_off_carts(region_scenario):
+    cur = Placement("glider_trailer_1", 20.0, 20.0, 90.0, on_carts=False)
+    out = _perturb_plane(
+        current=cur,
+        scenario=region_scenario,
+        rng=random.Random(0),
+        search=SearchConfig(),
+        large_jump=False,
+    )
+    assert out.plane_id == "glider_trailer_1"
+    assert out.on_carts is False
+
+
+def test_descent_step_handles_layout_with_mover(region_scenario):
+    # A placements dict that includes a mover overlapping an aircraft must not
+    # KeyError, and the descent must be able to choose the mover as a target.
+    placements = {
+        "fuji": Placement("fuji", 12.0, 12.0, 0.0, on_carts=False),
+        "cessna_150": Placement("cessna_150", 12.2, 12.0, 0.0, on_carts=False),  # overlap
+        # overlap (mover):
+        "glider_trailer_1": Placement("glider_trailer_1", 12.1, 12.0, 0.0, on_carts=False),
+    }
+    out = _descent_step(
+        placements=placements,
+        scenario=region_scenario,
+        rng=random.Random(1),
+        search=SearchConfig(),
+        current_score=(99, 9.9),
+        pinned_planes=frozenset(),
+    )
+    # returns a (placements, score, accepted) triple (or None if all conflicts pinned);
+    # the key assertion is that it ran without KeyError on the mover id.
+    assert out is None or (isinstance(out, tuple) and len(out) == 3)
+
+
+def test_solve_with_movers_byte_identical_same_seed(region_scenario):
+    cfg = SearchConfig(max_restarts=4, spread=True)
+    a = solve(region_scenario, search=cfg, seed=42, budget_s=120.0, plan_paths=False)
+    b = solve(region_scenario, search=cfg, seed=42, budget_s=120.0, plan_paths=False)
+
+    def sig(result):
+        return [
+            [(p.plane_id, p.x_m, p.y_m, p.heading_deg) for p in layout.placements]
+            + [(p.plane_id, p.x_m, p.y_m, p.heading_deg) for p in layout.ground_object_placements]
+            for layout in result.layouts
+        ]
+
+    assert a.layouts  # the demo scenario solves
+    assert sig(a) == sig(b)  # aircraft AND mover poses bit-identical (max_restarts-scoped)
+
+
+@pytest.mark.slow
+def test_solve_with_caddy_exercises_egress_gate(region_scenario_with_caddy):
+    # The VW Caddy is a hard_door_mover: once the solver places it, the #603
+    # egress gate runs in solve (inert before #604). Assert solve completes with a
+    # well-formed status and — when a layout is returned — the caddy is in that
+    # layout's ground_object_placements (so the gate operated on a caddy-bearing
+    # layout). A trapped caddy would drop the plan / mark it unroutable, not raise.
+    # tow_max_expansions=4000 keeps the routing budget bounded (~60-90 s on a
+    # typical dev machine); reduce to 2000 if this flakes on the CI timing gate.
+    r = solve(
+        region_scenario_with_caddy,
+        search=SearchConfig(max_restarts=4, spread=True),
+        seed=0,
+        budget_s=120.0,
+        plan_paths=True,
+        tow_max_expansions=4000,
+    )
+    assert r.status in ("found", "found_partial", "exhausted_budget")
+    if r.layouts:
+        go_ids = {p.plane_id for p in r.layouts[0].ground_object_placements}
+        assert "vw_caddy" in go_ids  # the hard-door mover is in the gated layout

@@ -1,0 +1,17 @@
+# VW Caddy Maxi — the club's rescue/utility vehicle, parked in the hangar.
+# Dimensions: VW Caddy Maxi (long-wheelbase) manufacturer technical data.
+# measured: false — published spec, not an on-site survey.
+type: car
+id: vw_caddy
+name: "VW Caddy Maxi (rescue vehicle)"
+turn_radius_m: 5.5        # carried for #602 routing; unused by static check
+measured: false
+hard_door_mover: true    # rescue vehicle: must keep a clear drive-out egress (#603)
+parts:
+  - kind: ground
+    length_m: 4.88        # VW Caddy Maxi overall length (manufacturer)
+    width_m: 1.79         # body width excl. mirrors (manufacturer)
+    offset_x_m: 0.0
+    offset_y_m: 0.0
+    z_bottom_m: 0.0
+    z_top_m: 1.84         # roof height (manufacturer)

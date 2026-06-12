@@ -3,7 +3,7 @@ import math
 
 import pytest
 
-from hangarfit.models import Placement
+from hangarfit.models import Door, Hangar, Layout, MaintenanceBay, Placement
 from hangarfit.towplanner import (
     DubinsArc,
     Move,
@@ -11,7 +11,9 @@ from hangarfit.towplanner import (
     Pose,
     Segment,
     back_first_order,
+    plan_fill,
 )
+from tests.conftest import make_test_aircraft
 
 
 def test_pose_from_placement_drops_identity_and_cart_state():
@@ -141,3 +143,33 @@ def test_back_first_empty_input_returns_empty_tuple():
     # An all-away / maintenance-occupant-only layout has zero placements; the
     # planner must hand that through cleanly (Layout permits zero placements).
     assert back_first_order(()) == ()
+
+
+# ── Zero-mover byte-identical canary (#602, ADR-0003) ────────────────────────
+
+
+def _small_hangar() -> Hangar:
+    """Minimal roomy hangar for the zero-mover canary."""
+    return Hangar(
+        length_m=40.0,
+        width_m=40.0,
+        door=Door(center_x_m=20.0, width_m=12.0),
+        maintenance_bay=MaintenanceBay(center_x_m=20.0, width_m=8.0, depth_m=6.0),
+        clearance_m=0.3,
+        wing_layer_clearance_m=0.2,
+    )
+
+
+def test_plan_fill_no_ground_objects_byte_identical() -> None:
+    """plan_fill is byte-identical across two runs when the Layout has no ground
+    objects — the #602 mover code is inert (ADR-0003)."""
+    hangar = _small_hangar()
+    ac = make_test_aircraft(id="p1")
+    layout = Layout(
+        fleet={ac.id: ac},
+        hangar=hangar,
+        placements=(Placement(plane_id=ac.id, x_m=6.0, y_m=8.0, heading_deg=0.0, on_carts=False),),
+    )
+    p1 = plan_fill(layout)
+    p2 = plan_fill(layout)
+    assert [(m.plane_id, m.path) for m in p1.moves] == [(m.plane_id, m.path) for m in p2.moves]

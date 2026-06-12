@@ -36,21 +36,25 @@ from __future__ import annotations
 import dataclasses
 import difflib
 import math
-from collections.abc import Collection, Iterable, Mapping
+from collections.abc import Callable, Collection, Iterable, Mapping
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, cast
 
 import yaml
 
 from .models import (
     Aircraft,
     Door,
+    GroundObject,
     Hangar,
     Layout,
     MaintenanceBay,
+    MoverMotionMode,
     Part,
     Placement,
     PlaneConstraint,
+    RegionPreference,
+    RegionSide,
     Scenario,
     StructuralNotch,
     StrutsSpec,
@@ -140,12 +144,76 @@ def _reject_unknown_top_level_keys(
         )
 
 
-def load_fleet(path: Path | str) -> dict[str, Aircraft]:
-    """Load ``fleet.yaml`` into a dict keyed by :attr:`Aircraft.id`.
+# A fleet manifest references per-object CATALOG files (#595). Each catalog file
+# carries a `type:` discriminator (default 'aircraft') routing to a per-type
+# builder in :data:`_CATALOG_BUILDERS`. As of #601 the registry also resolves the
+# ground-object types ('fixed_obstacle', 'car', 'trailer'); see _build_catalog_object.
+_DEFAULT_OBJECT_TYPE = "aircraft"
 
-    Expands the optional ``struts:`` block on each aircraft into
-    mirrored strut Parts (one per side), folded into the final
-    ``parts`` tuple.
+# Operational flags a fleet manifest entry may override on a catalog object.
+# Geometry is STATIC — never override-able (edit the catalog file). Keep tight.
+# INVARIANT: every member must also be in _ALLOWED_AIRCRAFT_KEYS — overrides are
+# merged onto the catalog dict BEFORE _build_aircraft's allowlist check, so an
+# override key absent from that allowlist would be rejected as an "unknown" key.
+_ALLOWED_MANIFEST_OVERRIDE_KEYS = frozenset({"movement_mode", "tow_pivotable"})
+
+
+def _parse_manifest_entry(entry: Any, *, index: int, path: Path) -> tuple[str, dict[str, Any]]:
+    """Normalise a fleet-manifest entry to ``(ref_path, overrides)``.
+
+    - ``"catalog/x.yaml"``           -> ``(path, {})``           bare reference
+    - ``{ref: p, movement_mode: …}`` -> ``(p, {allowed flags})`` reference + overrides
+    - ``{id|name|parts|…}`` (no ref) -> rejected: the dropped inline-aircraft form
+    """
+    if isinstance(entry, str):
+        return entry, {}
+    if isinstance(entry, dict):
+        if "ref" not in entry:
+            raise LoaderError(
+                f"{path}: aircraft[{index}] is an inline aircraft mapping, which is no "
+                f"longer supported (#595). Move the aircraft to a catalog file "
+                f"(e.g. data/catalog/<id>.yaml with `type: aircraft`) and reference it: "
+                f"`- catalog/<id>.yaml` (or `- {{ref: catalog/<id>.yaml, movement_mode: …}}` "
+                f"to override a per-fleet flag)."
+            )
+        ref = entry["ref"]
+        if not isinstance(ref, str):
+            raise LoaderError(
+                f"{path}: aircraft[{index}].ref must be a path string, got {type(ref).__name__}"
+            )
+        overrides = {k: v for k, v in entry.items() if k != "ref"}
+        unknown = set(overrides) - _ALLOWED_MANIFEST_OVERRIDE_KEYS
+        if unknown:
+            raise LoaderError(
+                f"{path}: aircraft[{index}] override key(s) {sorted(unknown)} not allowed; "
+                f"only per-fleet operational flags may be overridden "
+                f"({sorted(_ALLOWED_MANIFEST_OVERRIDE_KEYS)}) — geometry is static, edit "
+                f"the catalog file instead"
+            )
+        return ref, overrides
+    raise LoaderError(
+        f"{path}: aircraft[{index}] must be a catalog reference (a path string or a "
+        f"{{ref: path, …}} mapping), got {type(entry).__name__}"
+    )
+
+
+def load_fleet(path: Path | str) -> dict[str, Aircraft]:
+    """Load a fleet **manifest** into a dict keyed by :attr:`Aircraft.id`.
+
+    A fleet file is a thin manifest: a top-level ``aircraft:`` list whose entries
+    reference per-object **catalog** files by path (resolved relative to the
+    manifest's directory, #595). Each entry is either a path string
+    (``catalog/x.yaml``) or a ``{ref: <path>, <flag overrides>}`` mapping that
+    adds a per-fleet operational-flag override (``movement_mode``,
+    ``tow_pivotable``) on top of the shared static definition. Geometry is static
+    and never override-able.
+
+    Each referenced catalog file carries a ``type:`` discriminator (default
+    ``aircraft``); the loader dispatches on it to a per-type builder. Manifest
+    **list order is preserved** -> deterministic ``dict`` insertion (ADR-0003).
+
+    Inline aircraft definitions are not supported (#595): an inline mapping under
+    ``aircraft:`` is rejected with a hint to move it to a catalog file.
     """
     path = Path(path)
     raw = _read_yaml(path)
@@ -155,21 +223,98 @@ def load_fleet(path: Path | str) -> dict[str, Aircraft]:
     if not isinstance(aircraft_list, list):
         raise LoaderError(f"{path}: 'aircraft' must be a list")
 
+    manifest_dir = path.parent
     fleet: dict[str, Aircraft] = {}
     for i, entry in enumerate(aircraft_list):
-        if not isinstance(entry, dict):
-            raise LoaderError(
-                f"{path}: aircraft entry #{i} must be a mapping, got {type(entry).__name__}"
-            )
-        ident = entry.get("id", f"#{i}") if isinstance(entry, dict) else f"#{i}"
+        # Every entry is a catalog reference (a path string or {ref, overrides});
+        # inline aircraft mappings are rejected by _parse_manifest_entry (#595).
+        ref, overrides = _parse_manifest_entry(entry, index=i, path=path)
+        # An invalid ref (e.g. an embedded null byte) makes pathlib raise a bare
+        # ValueError/OSError — wrap it into an attributed LoaderError so a
+        # malformed reference fails loudly through the normal error contract.
         try:
-            aircraft = _build_aircraft(entry)
+            catalog_path = (manifest_dir / ref).resolve()
+            ref_exists = catalog_path.is_file()
+        except (ValueError, OSError) as e:
+            raise LoaderError(
+                f"{path}: aircraft[{i}] has an invalid catalog reference {ref!r}: {e}"
+            ) from e
+        if not ref_exists:
+            raise LoaderError(
+                f"{path}: aircraft[{i}] references catalog file {ref!r} which does "
+                f"not exist (resolved to {catalog_path})"
+            )
+        obj_raw = _read_yaml(catalog_path)
+        if isinstance(obj_raw, dict) and overrides:
+            obj_raw = {**obj_raw, **overrides}
+        try:
+            obj = _build_catalog_object(obj_raw, source=catalog_path)
         except (ValueError, KeyError, TypeError, LoaderError) as e:
-            raise LoaderError(f"{path}: aircraft {ident!r}: {e}") from e
-        if aircraft.id in fleet:
-            raise LoaderError(f"{path}: duplicate aircraft id {aircraft.id!r}")
-        fleet[aircraft.id] = aircraft
+            raise LoaderError(f"{path}: aircraft[{i}] ({ref}): {e}") from e
+        if not isinstance(obj, Aircraft):
+            raise LoaderError(
+                f"{path}: aircraft[{i}] ({ref}) is a {type(obj).__name__}, not an Aircraft; "
+                f"list non-aircraft objects under 'ground_objects:' instead"
+            )
+        if obj.id in fleet:
+            raise LoaderError(f"{path}: duplicate aircraft id {obj.id!r}")
+        fleet[obj.id] = obj
     return fleet
+
+
+def load_ground_objects(path: Path | str) -> dict[str, GroundObject]:
+    """Load the ``ground_objects:`` list of a fleet manifest into a dict keyed
+    by :attr:`GroundObject.id` (#601).
+
+    Returns ``{}`` when the key is absent, so existing manifests (aircraft-only)
+    are byte-identical. Refs resolve relative to the manifest dir, exactly like
+    ``aircraft:`` refs. Each referenced catalog file must resolve to a
+    :class:`GroundObject`; an aircraft ref under ``ground_objects:`` is rejected
+    loudly with a hint to move it under ``aircraft:`` instead.
+    """
+    path = Path(path)
+    raw = _read_yaml(path)
+    if not isinstance(raw, dict):
+        raise LoaderError(f"{path}: top-level mapping required")
+    obj_list = raw.get("ground_objects")
+    if obj_list is None:
+        return {}
+    if not isinstance(obj_list, list):
+        raise LoaderError(f"{path}: 'ground_objects' must be a list")
+    manifest_dir = path.parent
+    out: dict[str, GroundObject] = {}
+    for i, entry in enumerate(obj_list):
+        ref, overrides = _parse_manifest_entry(entry, index=i, path=path)
+        if overrides:
+            raise LoaderError(
+                f"{path}: ground_objects[{i}] overrides {sorted(overrides)} not supported; "
+                f"ground objects carry no per-fleet operational flags"
+            )
+        try:
+            catalog_path = (manifest_dir / ref).resolve()
+            ref_exists = catalog_path.is_file()
+        except (ValueError, OSError) as e:
+            raise LoaderError(
+                f"{path}: ground_objects[{i}] has an invalid catalog reference {ref!r}: {e}"
+            ) from e
+        if not ref_exists:
+            raise LoaderError(
+                f"{path}: ground_objects[{i}] references {ref!r} which does not exist "
+                f"(resolved to {catalog_path})"
+            )
+        try:
+            obj = _build_catalog_object(_read_yaml(catalog_path), source=catalog_path)
+        except (ValueError, KeyError, TypeError, LoaderError) as e:
+            raise LoaderError(f"{path}: ground_objects[{i}] ({ref}): {e}") from e
+        if not isinstance(obj, GroundObject):
+            raise LoaderError(
+                f"{path}: ground_objects[{i}] ({ref}) is a {type(obj).__name__}, not a "
+                f"GroundObject; list aircraft under 'aircraft:' instead"
+            )
+        if obj.id in out:
+            raise LoaderError(f"{path}: duplicate ground_object id {obj.id!r}")
+        out[obj.id] = obj
+    return out
 
 
 def _resolve_apron_depth(
@@ -318,7 +463,7 @@ def load_hangar(path: Path | str, *, fleet: Mapping[str, Aircraft] | None = None
 # keys read in :func:`load_layout`; ``test_all_allowed_layout_keys_load`` guards the
 # too-strict direction. ``fleet``/``hangar`` are optional in the file (they may arrive
 # as kwargs instead); the file-vs-kwarg conflict is handled separately, below.
-_ALLOWED_LAYOUT_KEYS = frozenset({"fleet", "hangar", "placements", "maintenance"})
+_ALLOWED_LAYOUT_KEYS = frozenset({"fleet", "hangar", "placements", "maintenance", "ground_objects"})
 
 
 def load_layout(
@@ -328,6 +473,7 @@ def load_layout(
     hangar: Hangar | None = None,
     max_carts: int | None = None,
     apron_depth: float | Literal["auto"] | None = None,
+    ground_objects: dict[str, GroundObject] | None = None,
 ) -> Layout:
     """Load a layout YAML.
 
@@ -400,6 +546,16 @@ def load_layout(
         except ValueError as e:
             raise LoaderError(f"{path}: {e}") from e
 
+    # Ground-object defs: kwarg overrides; otherwise resolve from the same
+    # manifest the fleet: key points at (which may return {} when the manifest
+    # has no ground_objects: list); absent both, default to empty (#601).
+    if ground_objects is None:
+        fleet_ref = raw.get("fleet")
+        if fleet_ref is not None:
+            ground_objects = load_ground_objects((path.parent / fleet_ref).resolve())
+        else:
+            ground_objects = {}
+
     placements_data = raw.get("placements", [])
     if not isinstance(placements_data, list):
         raise LoaderError(f"{path}: 'placements' must be a list")
@@ -433,12 +589,50 @@ def load_layout(
                     f"id if it doesn't match an aircraft in the fleet)."
                 )
 
+    # Parse the layout's optional ground_objects: block (#601). Each entry maps
+    # to a Placement (using plane_id for the object id, matching Layout's field).
+    go_data = raw.get("ground_objects", [])
+    if not isinstance(go_data, list):
+        raise LoaderError(f"{path}: 'ground_objects' must be a list")
+    _allowed_go_entry = frozenset({"object", "x_m", "y_m", "heading_deg"})
+    ground_object_placements_list: list[Placement] = []
+    for i, go_entry in enumerate(go_data):
+        if not isinstance(go_entry, dict):
+            raise LoaderError(f"{path}: ground_objects[{i}] must be a mapping")
+        unknown = set(go_entry) - _allowed_go_entry
+        if unknown:
+            raise LoaderError(
+                f"{path}: ground_objects[{i}] has unknown ground_object key(s) "
+                f"{sorted(unknown)}; allowed: {sorted(_allowed_go_entry)}"
+            )
+        for key in ("object", "x_m", "y_m", "heading_deg"):
+            if key not in go_entry:
+                raise LoaderError(f"{path}: missing required field 'ground_objects[{i}].{key}'")
+        obj_id = go_entry["object"]
+        if obj_id not in ground_objects:
+            raise LoaderError(
+                f"{path}: ground_objects[{i}] references unknown object {obj_id!r}; "
+                f"the available ground objects are: {sorted(ground_objects)}"
+            )
+        ground_object_placements_list.append(
+            Placement(
+                plane_id=obj_id,
+                x_m=_to_float(go_entry["x_m"], f"ground_objects[{i}].x_m"),
+                y_m=_to_float(go_entry["y_m"], f"ground_objects[{i}].y_m"),
+                heading_deg=_to_float(go_entry["heading_deg"], f"ground_objects[{i}].heading_deg"),
+                on_carts=False,
+            )
+        )
+    ground_object_placements = tuple(ground_object_placements_list)
+
     try:
         return Layout(
             fleet=fleet,
             hangar=hangar,
             placements=placements,
             maintenance_plane=maintenance_plane,
+            ground_objects=ground_objects,
+            ground_object_placements=ground_object_placements,
         )
     except ValueError as e:
         raise LoaderError(f"{path}: {e}") from e
@@ -448,7 +642,9 @@ def load_layout(
 # keys read in :func:`load_scenario`; ``test_all_allowed_scenario_keys_load`` guards
 # the too-strict direction. Per-plane ``constraints`` entries carry their own
 # allowlist (:data:`_ALLOWED_CONSTRAINT_KEYS`).
-_ALLOWED_SCENARIO_KEYS = frozenset({"fleet_in", "fleet", "hangar", "maintenance", "constraints"})
+_ALLOWED_SCENARIO_KEYS = frozenset(
+    {"fleet_in", "fleet", "hangar", "maintenance", "constraints", "ground_objects"}
+)
 
 
 def load_scenario(
@@ -458,6 +654,7 @@ def load_scenario(
     hangar: Hangar | None = None,
     max_carts: int | None = None,
     apron_depth: float | Literal["auto"] | None = None,
+    ground_objects: dict[str, GroundObject] | None = None,
 ) -> Scenario:
     """Load a scenario YAML into a validated :class:`Scenario`.
 
@@ -544,6 +741,16 @@ def load_scenario(
         except ValueError as e:
             raise LoaderError(f"{path}: {e}") from e
 
+    # Ground-object defs: kwarg overrides; otherwise resolve from the same
+    # manifest the fleet: key points at (which returns {} when the manifest has
+    # no ground_objects: list); absent both, default to empty (#601).
+    if ground_objects is None:
+        fleet_ref = raw.get("fleet")
+        if fleet_ref is not None:
+            ground_objects = load_ground_objects((path.parent / fleet_ref).resolve())
+        else:
+            ground_objects = {}
+
     for pid in fleet_in:
         _resolve_known_plane_id(pid, fleet, role="fleet_in entry", path=path)
 
@@ -592,6 +799,106 @@ def load_scenario(
         except (ValueError, KeyError, TypeError, LoaderError) as e:
             raise LoaderError(f"{path}: constraint {plane_id!r}: {e}") from e
 
+    # Parse the scenario's optional ground_objects: block (#601 id-list, #604
+    # mapping form). Each entry is either a bare catalog-id string (a mover,
+    # no preference) or a mapping with an ``object:`` id and class-dependent
+    # extra fields, and must resolve in the defs resolved above (kwarg-injected
+    # or read from the fleet manifest). Branching on the resolved def's
+    # ``object_class`` (#604):
+    #   - fixed_obstacle     -> REQUIRES a pose (x_m/y_m/heading_deg), FORBIDS
+    #                           region_preference; expands to a Placement.
+    #   - placed_routed_mover -> FORBIDS a pose (the solver places it), allows
+    #                           an optional region_preference (a soft re-rank).
+    go_entries = raw.get("ground_objects", [])
+    if not isinstance(go_entries, list):
+        raise LoaderError(f"{path}: 'ground_objects' must be a list")
+
+    scenario_ground_objects: list[str] = []
+    fixed_obstacle_placements: list[Placement] = []
+    region_preferences: dict[str, RegionPreference] = {}
+
+    for i, entry in enumerate(go_entries):
+        fields: Mapping[str, Any]
+        if isinstance(entry, str):
+            gid, fields = entry, {}
+        elif isinstance(entry, dict):
+            unknown = set(entry) - _ALLOWED_SCENARIO_GO_KEYS
+            if unknown:
+                raise LoaderError(
+                    f"{path}: ground_objects[{i}] has unknown key(s) {sorted(unknown)}"
+                )
+            if "object" not in entry:
+                raise LoaderError(f"{path}: ground_objects[{i}] missing required 'object'")
+            gid, fields = entry["object"], entry
+        else:
+            raise LoaderError(f"{path}: ground_objects[{i}] must be a string or mapping")
+
+        if gid not in ground_objects:
+            raise LoaderError(
+                f"{path}: ground_objects[{i}] references unknown object {gid!r}; "
+                f"the available ground objects are: {sorted(ground_objects)}"
+            )
+        if gid in scenario_ground_objects:
+            raise LoaderError(f"{path}: duplicate scenario ground object {gid!r}")
+        scenario_ground_objects.append(gid)
+        obj_class = ground_objects[gid].object_class
+
+        has_pose = any(k in fields for k in ("x_m", "y_m", "heading_deg"))
+        if obj_class == "fixed_obstacle":
+            if "region_preference" in fields:
+                raise LoaderError(
+                    f"{path}: ground_objects[{i}] ({gid}): a fixed_obstacle cannot "
+                    f"carry a region_preference"
+                )
+            missing = [k for k in ("x_m", "y_m", "heading_deg") if k not in fields]
+            if missing:
+                raise LoaderError(
+                    f"{path}: ground_objects[{i}] ({gid}): a fixed_obstacle requires {missing}"
+                )
+            fixed_obstacle_placements.append(
+                Placement(
+                    plane_id=gid,
+                    x_m=_to_float(fields["x_m"], f"ground_objects[{i}].x_m"),
+                    y_m=_to_float(fields["y_m"], f"ground_objects[{i}].y_m"),
+                    heading_deg=_to_float(
+                        fields["heading_deg"], f"ground_objects[{i}].heading_deg"
+                    ),
+                    on_carts=False,
+                )
+            )
+        else:  # placed_routed_mover
+            if has_pose:
+                raise LoaderError(
+                    f"{path}: ground_objects[{i}] ({gid}): a placed_routed_mover must not "
+                    f"carry a pose (the solver places it)"
+                )
+            rp = fields.get("region_preference")
+            if rp is not None:
+                if (
+                    not isinstance(rp, dict)
+                    or set(rp) - _ALLOWED_REGION_PREF_KEYS
+                    or "side" not in rp
+                    or "weight" not in rp
+                    or not isinstance(rp["side"], str)
+                ):
+                    raise LoaderError(
+                        f"{path}: ground_objects[{i}] ({gid}): region_preference must be "
+                        f"{{side, weight}}"
+                    )
+                try:
+                    # ``side`` is known to be a str here (checked above); the
+                    # left/right membership is enforced by
+                    # RegionPreference.__post_init__ (its ValueError is caught
+                    # + rewrapped below), so the cast is sound.
+                    region_preferences[gid] = RegionPreference(
+                        side=cast(RegionSide, rp["side"]),
+                        weight=_to_float(
+                            rp["weight"], f"ground_objects[{i}].region_preference.weight"
+                        ),
+                    )
+                except (ValueError, LoaderError) as e:
+                    raise LoaderError(f"{path}: ground_objects[{i}] ({gid}): {e}") from e
+
     try:
         return Scenario(
             fleet=fleet,
@@ -599,12 +906,22 @@ def load_scenario(
             fleet_in=fleet_in,
             maintenance_plane=maintenance_plane,
             constraints=constraints,
+            ground_objects=tuple(scenario_ground_objects),
+            ground_object_defs=ground_objects,
+            fixed_obstacle_placements=tuple(fixed_obstacle_placements),
+            region_preferences=region_preferences,
         )
     except ValueError as e:
         raise LoaderError(f"{path}: {e}") from e
 
 
 _ALLOWED_CONSTRAINT_KEYS = frozenset({"pin", "force_on_carts", "priority", "nose_out"})
+
+# Keys accepted in a scenario ``ground_objects:`` mapping entry (#604). ``object``
+# is the catalog id; the pose triplet is required for a fixed_obstacle and
+# forbidden for a placed_routed_mover; ``region_preference`` is the reverse.
+_ALLOWED_SCENARIO_GO_KEYS = frozenset({"object", "x_m", "y_m", "heading_deg", "region_preference"})
+_ALLOWED_REGION_PREF_KEYS = frozenset({"side", "weight"})
 
 
 def _build_plane_constraint(plane_id: str, data: Any) -> PlaneConstraint:
@@ -1038,22 +1355,214 @@ def _build_aircraft(entry: Any) -> Aircraft:
     return aircraft
 
 
+# Per-type key allowlists for ground objects (#601 / ADR-0025). A fixed obstacle
+# never moves, so its allowlist deliberately EXCLUDES motion_mode/turn_radius_m —
+# authoring one is a loud "unknown fixed_obstacle key" rather than a silently
+# ignored field. Movers (car/trailer) may carry an explicit motion_mode override
+# and a static turn_radius_m (carried for #602's routing; unused in #601).
+_ALLOWED_FIXED_OBSTACLE_KEYS = frozenset({"id", "name", "parts", "measured"})
+_ALLOWED_MOVER_KEYS = frozenset(
+    {"id", "name", "parts", "measured", "motion_mode", "turn_radius_m", "hard_door_mover"}
+)
+
+
+def _build_ground_parts(entry: dict[str, Any]) -> tuple[Part, ...]:
+    """Parse a ground object's ``parts`` list. Every part must be kind 'ground'
+    (a solid footprint) — ground objects do NOT do the fuselage front/aft split,
+    struts, or wheels, and an aircraft part kind (wing, tail, …) is rejected."""
+    parts_data = entry.get("parts")
+    if not isinstance(parts_data, list) or not parts_data:
+        raise LoaderError("'parts' must be a non-empty list")
+    parts = tuple(_build_part(p, i) for i, p in enumerate(parts_data))
+    for i, part in enumerate(parts):
+        if part.kind != "ground":
+            raise LoaderError(
+                f"parts[{i}] kind {part.kind!r} not allowed on a ground object; "
+                f"use kind: ground (a solid footprint)"
+            )
+    return parts
+
+
+def _check_ground_keys(entry: Any, allowed: frozenset[str], *, what: str) -> dict[str, Any]:
+    """Reject unknown keys + require id/name on a ground-object catalog dict,
+    mirroring :func:`_build_aircraft`'s allowlist discipline (#513)."""
+    if not isinstance(entry, dict):
+        raise LoaderError(f"{what} entry must be a mapping, got {type(entry).__name__}")
+    unknown = set(entry) - allowed
+    if unknown:
+        raise LoaderError(f"unknown {what} key(s) {sorted(unknown)}; allowed: {sorted(allowed)}")
+    for key in ("id", "name"):
+        if key not in entry:
+            raise LoaderError(f"missing required field {key!r}")
+    return entry
+
+
+def _build_fixed_obstacle(entry: Any) -> GroundObject:
+    entry = _check_ground_keys(entry, _ALLOWED_FIXED_OBSTACLE_KEYS, what="fixed_obstacle")
+    return GroundObject(
+        id=entry["id"],
+        name=entry["name"],
+        parts=_build_ground_parts(entry),
+        object_class="fixed_obstacle",
+        measured=_to_bool(entry.get("measured", False), "measured"),
+    )
+
+
+def _build_mover(entry: Any, *, default_motion: MoverMotionMode) -> GroundObject:
+    entry = _check_ground_keys(entry, _ALLOWED_MOVER_KEYS, what="mover")
+    motion_raw = entry.get("motion_mode", default_motion)
+    tr_raw = entry.get("turn_radius_m")
+    return GroundObject(
+        id=entry["id"],
+        name=entry["name"],
+        parts=_build_ground_parts(entry),
+        object_class="placed_routed_mover",
+        motion_mode=motion_raw,
+        turn_radius_m=None if tr_raw is None else _to_float(tr_raw, "turn_radius_m"),
+        measured=_to_bool(entry.get("measured", False), "measured"),
+        hard_door_mover=_to_bool(entry.get("hard_door_mover", False), "hard_door_mover"),
+    )
+
+
+def _build_car(entry: Any) -> GroundObject:
+    """A self-driving rescue car — defaults to ``steerable`` motion (#601)."""
+    return _build_mover(entry, default_motion="steerable")
+
+
+def _build_trailer(entry: Any) -> GroundObject:
+    """A towed glider/fuel trailer — defaults to ``towed`` motion (#601)."""
+    return _build_mover(entry, default_motion="towed")
+
+
+# The catalog builder registry (#595 seam; ground-object types added #601). It is
+# defined AFTER all four builders so the names resolve at dict-construction time.
+_CATALOG_BUILDERS: dict[str, Callable[[Any], Aircraft | GroundObject]] = {
+    "aircraft": _build_aircraft,
+    "fixed_obstacle": _build_fixed_obstacle,
+    "car": _build_car,
+    "trailer": _build_trailer,
+}
+
+
+def _build_catalog_object(raw: Any, *, source: Path) -> Aircraft | GroundObject:
+    """Dispatch a catalog object on its ``type:`` discriminator to the per-type
+    builder (#595 seam; ground-object types added in #601). ``type:`` is stripped
+    before the builder runs, so each per-type allowlist needs no ``type`` member.
+    An unknown type is rejected with the list of known types."""
+    if not isinstance(raw, dict):
+        raise LoaderError(f"{source}: catalog object must be a mapping, got {type(raw).__name__}")
+    obj_type = raw.get("type", _DEFAULT_OBJECT_TYPE)
+    builder = _CATALOG_BUILDERS.get(obj_type)
+    if builder is None:
+        raise LoaderError(
+            f"{source}: unknown catalog type {obj_type!r}; known types: {sorted(_CATALOG_BUILDERS)}"
+        )
+    entry = {k: v for k, v in raw.items() if k != "type"}
+    return builder(entry)
+
+
+# Strict unknown-key allowlist for a `parts[i]` entry, mirroring
+# _ALLOWED_AIRCRAFT_KEYS. `planform` is a YAML-only convenience block expanded
+# into Part.local_vertices by _build_planform (NOT a Part field). Without this,
+# a typo like `planfrm:` would be silently dropped and the wing would stay a
+# rectangle with no error.
+_ALLOWED_PART_KEYS = frozenset(
+    {
+        "kind",
+        "length_m",
+        "width_m",
+        "offset_x_m",
+        "offset_y_m",
+        "angle_deg",
+        "z_bottom_m",
+        "z_top_m",
+        "planform",
+    }
+)
+
+
+def _build_planform(
+    data: Any, span_m: float, length_m: float, index: int
+) -> tuple[tuple[float, float], ...]:
+    """Expand a parametrized symmetric double-taper wing into part-own vertices.
+
+    Convention (ADR-0024): no sweep, root kink at y=0. In the part's own frame
+    ``+x`` is the chord (forward = leading edge), and ``width_m`` is the span
+    running along ``+-y``. Produces a 6-vertex hexagon; the chord at the root
+    (y=0) is ``root_chord_m`` and at each tip (y=+-span/2) is ``tip_chord_m``.
+    Part.__post_init__ canonicalizes the ring and enforces the bbox subset.
+    """
+    if not isinstance(data, dict):
+        raise LoaderError(f"parts[{index}].planform must be a mapping")
+    required = ("root_chord_m", "tip_chord_m")
+    for key in required:
+        if key not in data:
+            raise LoaderError(f"parts[{index}].planform missing required field {key!r}")
+    unknown = set(data) - set(required)
+    if unknown:
+        raise LoaderError(f"parts[{index}].planform has unknown key(s) {sorted(unknown)}")
+    root = _to_float(data["root_chord_m"], f"parts[{index}].planform.root_chord_m")
+    tip = _to_float(data["tip_chord_m"], f"parts[{index}].planform.tip_chord_m")
+    if root <= 0 or tip <= 0:
+        raise LoaderError(
+            f"parts[{index}].planform chords must be positive, got root={root}, tip={tip}"
+        )
+    if tip > root:
+        raise LoaderError(
+            f"parts[{index}].planform tip_chord_m ({tip}) must not exceed root_chord_m "
+            f"({root}) — a wing does not taper outward"
+        )
+    if root > length_m:
+        raise LoaderError(
+            f"parts[{index}].planform root_chord_m ({root}) must not exceed the part "
+            f"length_m ({length_m}); the planform must fit the part bbox"
+        )
+    half_span = span_m / 2.0
+    hr = root / 2.0
+    ht = tip / 2.0
+    return (
+        (hr, 0.0),
+        (ht, half_span),
+        (-ht, half_span),
+        (-hr, 0.0),
+        (-ht, -half_span),
+        (ht, -half_span),
+    )
+
+
 def _build_part(data: Any, index: int) -> Part:
     if not isinstance(data, dict):
         raise LoaderError(f"parts[{index}] must be a mapping")
+    unknown = set(data) - _ALLOWED_PART_KEYS
+    if unknown:
+        raise LoaderError(
+            f"parts[{index}] has unknown key(s) {sorted(unknown)}; "
+            f"allowed: {sorted(_ALLOWED_PART_KEYS)}"
+        )
     required = ("kind", "length_m", "width_m", "z_bottom_m", "z_top_m")
     for key in required:
         if key not in data:
             raise LoaderError(f"parts[{index}] missing required field {key!r}")
+    if "planform" in data and data["kind"] != "wing":
+        raise LoaderError(
+            f"parts[{index}]: planform: is only valid on a kind 'wing' part, "
+            f"got kind {data['kind']!r}"
+        )
+    width_m = _to_float(data["width_m"], f"parts[{index}].width_m")
+    length_m = _to_float(data["length_m"], f"parts[{index}].length_m")
+    local_vertices = None
+    if "planform" in data:
+        local_vertices = _build_planform(data["planform"], width_m, length_m, index)
     return Part(
         kind=data["kind"],
-        length_m=_to_float(data["length_m"], f"parts[{index}].length_m"),
-        width_m=_to_float(data["width_m"], f"parts[{index}].width_m"),
+        length_m=length_m,
+        width_m=width_m,
         offset_x_m=_to_float(data.get("offset_x_m", 0.0), f"parts[{index}].offset_x_m"),
         offset_y_m=_to_float(data.get("offset_y_m", 0.0), f"parts[{index}].offset_y_m"),
         angle_deg=_to_float(data.get("angle_deg", 0.0), f"parts[{index}].angle_deg"),
         z_bottom_m=_to_float(data["z_bottom_m"], f"parts[{index}].z_bottom_m"),
         z_top_m=_to_float(data["z_top_m"], f"parts[{index}].z_top_m"),
+        local_vertices=local_vertices,
     )
 
 
@@ -1212,6 +1721,11 @@ def _split_fuselage(fuselage: Part, wing: Part) -> list[Part]:
     aft of the tail) — a degenerate split that would produce a zero- or
     negative-length segment.
     """
+    if fuselage.local_vertices is not None:
+        raise LoaderError(
+            "a fuselage part may not carry a polygon footprint (local_vertices); "
+            "polygon footprints are wing-only"
+        )
     c = fuselage.offset_x_m
     half_len = fuselage.length_m / 2.0
     nose_x = c + half_len  # forward tip (+x)

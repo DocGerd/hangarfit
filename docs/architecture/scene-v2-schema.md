@@ -1,4 +1,12 @@
-# `hangarfit.scene/v1` — 3D viewer scene schema
+# `hangarfit.scene/v2` — 3D viewer scene schema
+
+> **v2 (#549)** is an additive bump from v1: each plane box gains two
+> always-present keys — `z_band` (explicit `[z_bottom_m, z_top_m]`) and
+> `vertices` (a plane-local polygon footprint, or `null` for a scalar rectangle).
+> A scalar box (`vertices: null`) renders byte-identically to v1; a polygon part
+> renders as an extruded prism. The transform contract is unchanged. See the
+> `planes[]` section and [ADR-0017](../adr/0017-3d-viewer-architecture.md)'s v2
+> amendment.
 
 The JSON contract between the Python core and the 3D viewer (see
 [ADR-0017](../adr/0017-3d-viewer-architecture.md)). Produced by
@@ -23,7 +31,7 @@ metres.
 
 | Key | Type | Meaning |
 |---|---|---|
-| `schema` | string | Always `"hangarfit.scene/v1"`. |
+| `schema` | string | Always `"hangarfit.scene/v2"`. |
 | `units` | string | Always `"m"`. |
 | `coordinate_note` | string | Human reminder of the convention above. |
 | `hangar` | object | Hangar shell — see below. |
@@ -31,7 +39,7 @@ metres.
 | `timeline` | object | The whole-fill tow animation — see below. |
 | `final_poses` | object | `plane_id → affine`: each plane at its parked slot. |
 | `conflicts` | array of string | Plane ids to tint red (flattened from a `CheckResult`); `[]` if none / not checked. |
-| `anchors` | object | `plane_id → [box → [corner → [x, y]]]`: oracle world corners at the final placement, for the viewer's load-time self-check. |
+| `anchors` | object | `plane_id → [box → [corner → [x, y]]]`: oracle world corners at the final placement, for the viewer's load-time self-check. A scalar box has 4 corners; a polygon box has N (one per `vertices` entry). |
 | `gear_anchors` | object | `plane_id → [wheel → [x, y]]`: oracle world wheel positions at the final placement — each canonical plane-local wheel pushed through `geometry.local_to_world` (the same determinant-−1 map `anchors` applies via `aircraft_parts_world`), so the viewer self-check also covers the gear render and a sign-flip regression fails both at once. |
 | `placeholder` | bool | `true` iff any placed aircraft is on unmeasured (`measured: false`) data — drives the "PLACEHOLDER DATA" honesty banner on the 2D PNG and the 3D viewer (#401, #79). |
 | `readouts` | object \| null | Actionable quality numbers for a **valid** layout: `{ "min_gap_m", "min_wing_over_tail_clearance_m" }` (either may be `null` — single plane / no overhang). `null` when the layout is invalid — validity is taken from the supplied `CheckResult`, or collision-checked by `build_scene` itself when none was supplied, so readouts never imply an unverified validity. |
@@ -89,10 +97,23 @@ The list is always present and is empty for the common rectangular hangar.
     {
       "kind": "fuselage_front",          // PartKind
       "cx": 1.2, "cy": 0.0, "cz": 0.75,  // plane-local centre (forward, right, mid-height)
-      "length_m": 3.0,                   // extent along +u (forward)
-      "width_m": 0.7,                    // extent along +v (right)
+      "length_m": 3.0,                   // extent along +u (forward) — always the bbox
+      "width_m": 0.7,                    // extent along +v (right) — always the bbox
       "height_m": 1.5,                   // extent along +w (up) = z_top − z_bottom
-      "angle_deg": 0.0                   // CCW rotation within plane-local (oriented_rect)
+      "angle_deg": 0.0,                  // CCW rotation within plane-local (oriented_rect)
+      "z_band": [0.0, 1.5],              // v2: explicit [z_bottom_m, z_top_m]
+      "vertices": null                   // v2: null ⇒ scalar rectangle (box render path)
+    },
+    {
+      "kind": "wing",
+      "cx": 1.5, "cy": 0.0, "cz": 2.0,
+      "length_m": 1.2, "width_m": 18.0, "height_m": 0.2, "angle_deg": 0.0,
+      "z_band": [1.9, 2.1],
+      // v2: a polygon part's plane-local (u, v) footprint, angle+offset already
+      // folded in (so the affine applies directly, no transform math). Canonical:
+      // CCW, open (no closing-dup), lex-min-start (ADR-0024). Here a 6-vertex
+      // tapered-wing hexagon (root chord 1.2 at cx=1.5 → ±0.6 → [0.9, 2.1]).
+      "vertices": [[0.9,0.0],[1.36,-9.0],[1.64,-9.0],[2.1,0.0],[1.64,9.0],[1.36,9.0]]
     }
     // … one box per Part
   ],
@@ -104,6 +125,18 @@ The list is always present and is empty for the common rectangular hangar.
 Boxes are static plane-local geometry, built once. Each is the 3D box of one
 `Part` (`offset_x/y` → `cx/cy`, `z_bottom/z_top` → `cz`/`height_m`). The viewer
 renders `wing` boxes translucent so vertical stacking is visible.
+
+**v2 box keys (#549).** Every box always carries `z_band` (`[z_bottom_m,
+z_top_m]`) and `vertices`. `vertices` is `null` for a scalar part — the viewer
+builds a `BoxGeometry(length_m, width_m, height_m)` exactly as in v1, so scalar
+fleets render byte-identically. For a **polygon part** `vertices` is the
+plane-local `(u, v)` ring (CCW, open) from `geometry.part_local_ring` — the same
+ring the `anchors` oracle routes through the affine — and the viewer extrudes it
+into a prism (`ExtrudeGeometry`, base lifted to `z_band[0]`). `length_m`/`width_m`
+stay the **bounding box** for both kinds (the scalar consumers and the area gate
+read them), so a polygon footprint is always a subset of its box (ADR-0024). The
+ring carries the part's `angle_deg`/offset already, so the viewer applies **only**
+the per-plane affine — never any rotation of its own (ADR-0002).
 
 `wheels` is the aircraft's canonical plane-local wheel positions
 ([ADR-0013](../adr/0013-wheels-canonical-data.md)) — one `(u, v)` per wheel (1 for
@@ -160,4 +193,8 @@ slot. The viewer renders the static scene and disables the transport controls.
 order, all values from RNG-free closed-form paths. The same
 `(layout, moves_plan, check_result)` yields a byte-identical dict (the spirit of
 [ADR-0003](../adr/0003-rr-mc-solver-algorithm.md); pinned by
-`tests/test_scene.py::test_build_scene_is_byte_deterministic`).
+`tests/test_scene.py::test_build_scene_is_byte_deterministic` and, for a polygon
+part, `::test_build_scene_v2_byte_deterministic_with_polygon`). A polygon box's
+`vertices` come straight from the load-time-canonicalized `Part.local_vertices`
+(CCW, lex-min start — ADR-0024), so two equivalent author orderings produce a
+byte-identical scene.

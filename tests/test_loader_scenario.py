@@ -93,6 +93,9 @@ def test_load_scenario_rejects_maintenance_plane_not_in_fleet_in(tmp_path):
     (tmp_path / "data").mkdir()
     shutil.copy("data/fleet.yaml", tmp_path / "data" / "fleet.yaml")
     shutil.copy("data/hangar.yaml", tmp_path / "data" / "hangar.yaml")
+    # The fleet is now a MANIFEST referencing data/catalog/ by relative path (#595),
+    # so the catalog dir must travel with it for the refs to resolve from tmp_path.
+    shutil.copytree("data/catalog", tmp_path / "data" / "catalog", dirs_exist_ok=True)
     bad = tmp_path / "bad_maintenance.yaml"
     bad.write_text(
         "fleet: data/fleet.yaml\n"
@@ -149,6 +152,9 @@ def test_load_scenario_rejects_null_maintenance_plane(tmp_path):
     (tmp_path / "data").mkdir()
     shutil.copy("data/fleet.yaml", tmp_path / "data" / "fleet.yaml")
     shutil.copy("data/hangar.yaml", tmp_path / "data" / "hangar.yaml")
+    # The fleet is now a MANIFEST referencing data/catalog/ by relative path (#595),
+    # so the catalog dir must travel with it for the refs to resolve from tmp_path.
+    shutil.copytree("data/catalog", tmp_path / "data" / "catalog", dirs_exist_ok=True)
     bad = tmp_path / "null_maintenance.yaml"
     bad.write_text(
         "fleet: data/fleet.yaml\n"
@@ -168,6 +174,9 @@ def _stage_scenario(tmp_path, body: str):
     (tmp_path / "data").mkdir(exist_ok=True)
     shutil.copy("data/fleet.yaml", tmp_path / "data" / "fleet.yaml")
     shutil.copy("data/hangar.yaml", tmp_path / "data" / "hangar.yaml")
+    # The fleet is now a MANIFEST referencing data/catalog/ by relative path (#595),
+    # so the catalog dir must travel with it for the refs to resolve from tmp_path.
+    shutil.copytree("data/catalog", tmp_path / "data" / "catalog", dirs_exist_ok=True)
     p = tmp_path / "scenario.yaml"
     p.write_text("fleet: data/fleet.yaml\nhangar: data/hangar.yaml\n" + body)
     return p
@@ -341,9 +350,13 @@ def test_load_scenario_rejects_unknown_top_level_key(tmp_path, typo):
 
 def test_load_scenario_all_allowed_top_level_keys_load(tmp_path):
     """Completeness guard: a scenario declaring EVERY allowed top-level key
-    (``maintenance`` + ``constraints`` alongside ``fleet_in``/``fleet``/``hangar``)
-    loads — so the allowlist can never be too strict. Self-enforcing against
-    ``_ALLOWED_SCENARIO_KEYS``."""
+    (``maintenance`` + ``constraints`` + ``ground_objects`` alongside
+    ``fleet_in``/``fleet``/``hangar``) loads — so the allowlist can never be too
+    strict. Self-enforcing against ``_ALLOWED_SCENARIO_KEYS``. The
+    ``ground_objects:`` id-list is empty here (the real ``data/fleet.yaml``
+    manifest declares no ground objects yet), which still exercises the key's
+    presence in the allowlist; non-empty id-list resolution is covered in
+    ``tests/test_loader.py::TestScenarioGroundObjects`` (#601)."""
     import yaml
 
     from hangarfit.loader import _ALLOWED_SCENARIO_KEYS, load_scenario
@@ -355,7 +368,8 @@ def test_load_scenario_all_allowed_top_level_keys_load(tmp_path):
         "  plane: ctsl\n"
         "constraints:\n"
         "  aviat_husky:\n"
-        "    priority: 1.0\n",
+        "    priority: 1.0\n"
+        "ground_objects: []\n",
     )
     file_keys = set(yaml.safe_load(p.read_text()))
     assert file_keys == _ALLOWED_SCENARIO_KEYS, (
@@ -366,6 +380,7 @@ def test_load_scenario_all_allowed_top_level_keys_load(tmp_path):
     s = load_scenario(p)
     assert s.maintenance_plane == "ctsl"
     assert "aviat_husky" in s.constraints
+    assert s.ground_objects == ()
 
 
 def test_load_scenario_unknown_key_wins_over_missing_required(tmp_path):

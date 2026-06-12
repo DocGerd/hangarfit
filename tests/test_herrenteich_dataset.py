@@ -10,6 +10,8 @@ cannot silently break it.
 
 from pathlib import Path
 
+import pytest
+
 from hangarfit import collisions
 from hangarfit.geometry import aircraft_parts_world
 from hangarfit.loader import load_fleet, load_hangar, load_layout
@@ -150,3 +152,103 @@ def test_demo_scenario_is_a_solvable_subset() -> None:
     )
     assert result.layouts and len(result.layouts[0].placements) == 3
     assert collisions.check(result.layouts[0]).valid
+
+
+def test_ground_objects_load_from_manifest() -> None:
+    """The four real ground objects load from the herrenteich fleet manifest
+    with the right object_class + motion (#605)."""
+    from hangarfit.loader import load_ground_objects
+
+    gos = load_ground_objects(HERRENTEICH / "fleet.yaml")
+    assert set(gos) == {
+        "maul_fuel_trailer",
+        "vw_caddy",
+        "glider_trailer_1",
+        "glider_trailer_2",
+    }
+    assert gos["maul_fuel_trailer"].object_class == "fixed_obstacle"
+    assert gos["vw_caddy"].object_class == "placed_routed_mover"
+    assert gos["vw_caddy"].motion_mode == "steerable"
+    assert gos["glider_trailer_1"].motion_mode == "towed"
+    assert gos["glider_trailer_2"].motion_mode == "towed"
+    # each is a single solid ground footprint
+    for go in gos.values():
+        assert len(go.parts) == 1 and go.parts[0].kind == "ground"
+
+
+def test_hangar_clearances_calibrated() -> None:
+    """The Herrenteich clearances were calibrated to fit the full real set
+    (#605): horizontal 0.20, vertical 0.15 (placeholders were 0.30/0.20)."""
+    hangar = load_hangar(HERRENTEICH / "hangar.yaml")
+    assert hangar.clearance_m == 0.20
+    assert hangar.wing_layer_clearance_m == 0.15
+
+
+FULL_SET = USUAL_OCCUPANTS | {
+    "vw_caddy",
+    "glider_trailer_1",
+    "glider_trailer_2",
+    "maul_fuel_trailer",
+}
+
+
+def test_full_set_layout_is_valid() -> None:
+    """The full real set (8 aircraft + 4 ground objects) passes the real
+    checker at the calibrated clearances (#605 primary acceptance)."""
+    layout = load_layout(HERRENTEICH / "layout_full.yaml")
+    present = {p.plane_id for p in layout.placements} | {
+        gp.plane_id for gp in layout.ground_object_placements
+    }
+    assert present == FULL_SET
+    result = collisions.check(layout)
+    assert result.conflicts == (), [c.kind for c in result.conflicts]
+
+
+def test_full_set_ground_objects_in_bounds_and_clear_notch() -> None:
+    """Independent, model-free vertex scan: every ground object is inside the
+    L-shaped floor and clear of the office notch (belt-and-suspenders over the
+    checker's bounds/notch extension)."""
+    layout = load_layout(HERRENTEICH / "layout_full.yaml")
+    floor = layout.hangar.floor_polygon
+    assert floor is not None
+    x0, y0, x1, y1 = NOTCH
+    for gp in layout.ground_object_placements:
+        obj = layout.ground_objects[gp.plane_id]
+        for part in aircraft_parts_world(obj, gp):
+            assert floor.covers(part.polygon), f"{gp.plane_id} {part.kind} outside floor"
+            for x, y in part.polygon.exterior.coords:
+                assert not (x0 <= x <= x1 and y0 <= y <= y1), (
+                    f"{gp.plane_id} vertex ({x:.2f},{y:.2f}) in office notch"
+                )
+
+
+def test_full_set_caddy_near_door() -> None:
+    """SOFT intent (pre-#603): the Caddy is parked near the door — in the front
+    third of the hangar and within the door's x-span — the precursor to the #603
+    hard nearest-door egress gate. (Exact 'nearest' is #603's job; the 9 m glider
+    trailers run along the walls toward the door, so a strict min-y assertion
+    would fight that geometry.)"""
+    layout = load_layout(HERRENTEICH / "layout_full.yaml")
+    caddy = next(gp for gp in layout.ground_object_placements if gp.plane_id == "vw_caddy")
+    assert caddy.y_m < layout.hangar.length_m / 3
+    door = layout.hangar.door
+    assert door.center_x_m - door.width_m / 2 <= caddy.x_m <= door.center_x_m + door.width_m / 2
+
+
+@pytest.mark.slow
+def test_full_set_caddy_egress_blocked_finding() -> None:
+    """Documents the packing-wall finding: the egress oracle correctly reports
+    layout_full.yaml's Caddy as egress-blocked (the rescue vehicle is boxed in by
+    the surrounding aircraft; fixing it is gated on re-nesting / Stage C — #603).
+
+    This test records the *current* state of the dataset: the Caddy IS placed near
+    the door (per test_full_set_caddy_near_door above) but the packed fleet still
+    walls off a clear egress path at the real herrenteich clearances.
+    """
+    from hangarfit.towplanner import egress_first_conflict
+
+    layout = load_layout(HERRENTEICH / "layout_full.yaml")
+    c = egress_first_conflict(layout, "vw_caddy")
+    assert c is not None and c.kind == "caddy_egress", (
+        f"expected caddy_egress conflict from layout_full.yaml; got {c}"
+    )

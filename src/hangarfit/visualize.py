@@ -468,6 +468,24 @@ def _draw_part(ax: Any, part: WorldPart, color: str) -> None:
             lw=0.5,
             zorder=4,
         )
+    elif part.kind == "ground":
+        # Ground-object footprint (#601): solid keep-out, drawn opaque like a
+        # fuselage body at the fuselage z-level (above wings).
+        # NOTE: currently UNREACHABLE — render_layout/scene iterate only
+        # layout.placements (aircraft), never ground_object_placements, so no
+        # ground WorldPart reaches _draw_part yet. This branch is a forward hook
+        # for #606 (ground-object rendering) AND satisfies the closed-PartKind
+        # exhaustiveness contract (the else-raise below must stay reachable for
+        # any future unknown kind).
+        patch = MplPolygon(
+            coords,
+            closed=True,
+            facecolor=color,
+            edgecolor=_INK_EDGE,
+            alpha=_FUSELAGE_ALPHA,
+            lw=0.5,
+            zorder=2,
+        )
     else:
         raise ValueError(
             f"_draw_part: unhandled part kind {part.kind!r}. "
@@ -641,11 +659,15 @@ def _draw_tow_paths(ax: Any, moves_plan: MovesPlan) -> None:
     currently inert — it is a deliberate forward hook for a future legend, and
     a path is already disambiguated by terminating at its annotated slot.
     """
-    plane_ids = sorted({move.plane_id for move in moves_plan.moves})
+    # Deferred moves (path=None) — a #601 ground-object mover whose route search
+    # is deferred to #602 — have no polyline to draw; skip them.
+    routed_moves = [move for move in moves_plan.moves if move.path is not None]
+    plane_ids = sorted({move.plane_id for move in routed_moves})
     colour_for = {
         pid: _TOW_PATH_COLORS[i % len(_TOW_PATH_COLORS)] for i, pid in enumerate(plane_ids)
     }
-    for move in moves_plan.moves:
+    for move in routed_moves:
+        assert move.path is not None  # filtered above; narrows for the type-checker
         poses = list(move.path.sample())
         xs = [p.x_m for p in poses]
         ys = [p.y_m for p in poses]

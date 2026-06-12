@@ -352,6 +352,51 @@ def test_solve_json_output_has_spread_diagnostics(capsys):
     assert all(g is None or isinstance(g, (int, float)) for g in diag["min_pairwise_gap_m"])
 
 
+def test_solve_human_output_shows_region_alignment(capsys):
+    from hangarfit.cli import main
+
+    rc = main(
+        [
+            "solve",
+            str(FIXTURES_DIR / "scenario_region_demo.yaml"),
+            "--seed",
+            "7",
+            "--budget",
+            "5",
+        ]
+    )
+    out = capsys.readouterr().out
+    assert rc == 0
+    assert "region" in out.lower()  # the "region alignment ..." segment
+
+
+def test_solve_json_output_has_region_alignment(capsys):
+    import json
+
+    from hangarfit.cli import main
+
+    rc = main(
+        [
+            "solve",
+            str(FIXTURES_DIR / "scenario_region_demo.yaml"),
+            "--seed",
+            "7",
+            "--budget",
+            "5",
+            "--json",
+        ]
+    )
+    payload = json.loads(capsys.readouterr().out)
+    assert rc == 0
+    diag = payload["diagnostics"]
+    assert "region_alignment" in diag
+    assert len(diag["region_alignment"]) == len(payload["layouts"])
+    # each layout's entry is an object mapping body-id -> alignment in [0,1]
+    assert all(
+        0.0 <= a <= 1.0 for layout_align in diag["region_alignment"] for a in layout_align.values()
+    )
+
+
 def test_solve_json_single_plane_min_gap_is_null(capsys):
     """A single-plane layout has no plane pairs → min_pairwise_gap_m is
     math.inf internally, which MUST serialize as JSON null (not the invalid

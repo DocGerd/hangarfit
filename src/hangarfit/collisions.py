@@ -50,28 +50,88 @@ from __future__ import annotations
 
 from .geometry import (
     WorldPart,
+    aircraft_parts_world,
     axis_aligned_rect,
     cached_parts_world,
     polygon_overlap,
     polygon_overlap_area,
 )
-from .models import CheckResult, Conflict, Hangar, Layout
+from .models import CheckResult, Conflict, GroundObject, Hangar, Layout
 
 
 def check(layout: Layout) -> CheckResult:
     """Run all geometric checks and return a :class:`CheckResult`."""
-    world_parts: dict[str, list[WorldPart]] = {
+    aircraft_parts: dict[str, list[WorldPart]] = {
         p.plane_id: cached_parts_world(layout.fleet[p.plane_id], p) for p in layout.placements
     }
+    # Ground objects (#601): movers are placed bodies (pairwise); fixed obstacles
+    # are keep-outs. Both reuse the aircraft world-transform (det-(-1), ADR-0002).
+    mover_parts: dict[str, list[WorldPart]] = {}
+    obstacle_parts: dict[str, list[WorldPart]] = {}
+    for gp in layout.ground_object_placements:
+        obj: GroundObject = layout.ground_objects[gp.plane_id]
+        wparts = aircraft_parts_world(obj, gp)
+        if obj.object_class == "fixed_obstacle":
+            obstacle_parts[gp.plane_id] = wparts
+        else:
+            mover_parts[gp.plane_id] = wparts
+
+    # Movers join the placed-body set for bounds-free pairwise collision; aircraft
+    # come first so the no-ground-object case is byte-identical (same dict order):
+    # with no ground objects mover_parts/obstacle_parts are empty, placed_bodies ==
+    # aircraft_parts, _ground_obstacle_conflicts returns [], and the conflict order
+    # + total_penetration_m2 match pre-#601. _bay_intrusion_conflicts keeps its
+    # aircraft-only input (an occupancy rule); _hangar_bounds_conflicts now also
+    # covers ground objects (#605, see bounded_bodies below).
+    placed_bodies = {**aircraft_parts, **mover_parts}
+    # Ground objects (movers AND fixed obstacles) are bounds/notch-checked
+    # alongside aircraft (#605): they too must fit the floor and clear the notch.
+    # Aircraft come first so the no-ground-object case is byte-identical (empty
+    # GO dicts ⇒ bounded_bodies == aircraft_parts, same dict order). Bay
+    # intrusion stays aircraft-only (an aircraft-occupancy rule, not geometry).
+    bounded_bodies = {**aircraft_parts, **mover_parts, **obstacle_parts}
+
     conflicts: list[Conflict] = []
-    conflicts.extend(_hangar_bounds_conflicts(world_parts, layout.hangar))
-    conflicts.extend(_bay_intrusion_conflicts(world_parts, layout))
-    pairwise, total_penetration_m2 = _pairwise_conflicts(world_parts, layout.hangar)
+    conflicts.extend(_hangar_bounds_conflicts(bounded_bodies, layout.hangar))
+    conflicts.extend(_bay_intrusion_conflicts(aircraft_parts, layout))
+    pairwise, total_penetration_m2 = _pairwise_conflicts(placed_bodies, layout.hangar)
     conflicts.extend(pairwise)
+    conflicts.extend(_ground_obstacle_conflicts(placed_bodies, obstacle_parts, layout.hangar))
     return CheckResult(
         conflicts=tuple(conflicts),
         total_penetration_m2=total_penetration_m2,
     )
+
+
+def _ground_obstacle_conflicts(
+    placed_bodies: dict[str, list[WorldPart]],
+    obstacle_parts: dict[str, list[WorldPart]],
+    hangar: Hangar,
+) -> list[Conflict]:
+    """A fixed obstacle's footprint is a keep-out: any aircraft/mover part that
+    conflicts with it (plan-view overlap within clearance AND z-gap rule, via
+    :func:`_parts_conflict`) is a single-object ``ground_obstacle`` conflict
+    naming the offending body and the obstacle (#601 / ADR-0025).
+
+    Deterministic iteration: obstacles in dict-insertion order (manifest order),
+    bodies in placement order. Empty ``obstacle_parts`` → ``[]`` (byte-identity)."""
+    out: list[Conflict] = []
+    for obstacle_id, obs_wparts in obstacle_parts.items():
+        for body_id, body_wparts in placed_bodies.items():
+            for op in obs_wparts:
+                for bp in body_wparts:
+                    if _parts_conflict(op, bp, hangar):
+                        out.append(
+                            Conflict.single(
+                                kind="ground_obstacle",
+                                plane=body_id,
+                                detail=(
+                                    f"part {bp.kind!r} of {body_id!r} overlaps fixed "
+                                    f"obstacle {obstacle_id!r} part {op.kind!r}"
+                                ),
+                            )
+                        )
+    return out
 
 
 def _hangar_bounds_conflicts(

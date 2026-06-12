@@ -1,4 +1,4 @@
-"""Assemble a self-contained, offline 3D viewer HTML from a scene/v1 dict.
+"""Assemble a self-contained, offline 3D viewer HTML from a scene/v2 dict.
 
 The whole viewer is **one HTML file** — the scene JSON and the vendored
 Three.js are inlined, so a double-clicked ``file://`` page needs zero network.
@@ -50,7 +50,7 @@ def _embed_brand() -> str:
     same way :func:`_embed_json` escapes the scene blob — the values are
     Python-authored brand tokens, but the escape keeps a future hostile token from
     breaking out of the ``<script>`` element. This blob is SEPARATE from the
-    ``scene`` blob: the ``scene/v1`` schema is unchanged (ADR-0017)."""
+    ``scene`` blob: the ``scene/v2`` schema is unchanged (ADR-0017)."""
     tokens = brand.viewer_brand_tokens()
     return json.dumps(tokens, sort_keys=True, separators=(",", ":"), allow_nan=False).replace(
         "<", "\\u003c"
@@ -59,7 +59,7 @@ def _embed_brand() -> str:
 
 def render_viewer(scene: dict, output_path: Path | str) -> None:
     """Write a single self-contained, offline HTML viewer for ``scene`` to
-    ``output_path``. ``scene`` is a ``hangarfit.scene/v1`` dict from
+    ``output_path``. ``scene`` is a ``hangarfit.scene/v2`` dict from
     :func:`hangarfit.scene.build_scene`."""
     three_src = _asset_text(_THREE, "three.module.js")
     orbit_src = _asset_text(_THREE, "OrbitControls.js")
@@ -86,7 +86,7 @@ def render_viewer(scene: dict, output_path: Path | str) -> None:
         f'<div id="placeholder" hidden>{metrics.PLACEHOLDER_BANNER}</div>\n'
         f'<div id="hud">{_HUD}</div>\n'
         # The canonical BRAND token blob (#419), separate from the scene blob so
-        # the scene/v1 schema stays unchanged. viewer.js reads its colours from
+        # the scene/v2 schema stays unchanged. viewer.js reads its colours from
         # here instead of hard-coding 0x literals.
         f'<script type="application/json" id="brand">{_embed_brand()}</script>\n'
         f'<script type="application/json" id="scene">{_embed_json(scene)}</script>\n'

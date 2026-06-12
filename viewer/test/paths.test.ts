@@ -3,12 +3,12 @@
 // ALREADY implicit in the scene: each `timeline.segments[].samples` entry is a
 // `[a,b,tx,c,d,ty]` affine whose translation `(tx, ty)` = `(sample[2],
 // sample[5])` is exactly the plane-local origin's ground track. `pathPoints`
-// derives the floor line from those samples with NO scene/v1 change (ADR-0017).
+// derives the floor line from those samples with NO scene/v2 change (ADR-0017).
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import * as THREE from 'three';
 import { addTowPaths, pathPoints } from '../src/paths.ts';
-import type { Affine, PlaneData, SceneV1, SegmentData } from '../src/scene-contract.ts';
+import type { Affine, PlaneData, SceneV2, SegmentData } from '../src/scene-contract.ts';
 import type { BrandTokens } from '../src/brand-contract.ts';
 
 // Three samples whose translations trace door (y=0) → mid → slot. The linear
@@ -45,7 +45,7 @@ test('pathPoints: an empty-samples segment yields no points', () => {
 });
 
 // ── addTowPaths: the impure THREE-backed builder (one Line per routable plane).
-// Mirrors anchors.test.ts: build a minimal SceneV1 + BRAND blob, run the builder
+// Mirrors anchors.test.ts: build a minimal SceneV2 + BRAND blob, run the builder
 // against a real THREE.Scene (the test-only `three` devDep), and inspect the
 // returned Line objects. Only `conflict` of BRAND is read by addTowPaths, but
 // the full BrandTokens shape is supplied so the literal type-checks.
@@ -82,11 +82,11 @@ function towSeg(plane_id: string): SegmentData {
   return { plane_id, start_s: 0, end_s: 2, samples: [[1, 0, 5, 0, 1, 0], [1, 0, 5, 0, 1, 6]] };
 }
 
-// Minimal SceneV1 for the builder: it only reads planes[], conflicts[] and
+// Minimal SceneV2 for the builder: it only reads planes[], conflicts[] and
 // timeline.segments[]. Everything else is filled with valid-shape placeholders.
-function makeScene(planes: PlaneData[], conflicts: string[], segments: SegmentData[]): SceneV1 {
+function makeScene(planes: PlaneData[], conflicts: string[], segments: SegmentData[]): SceneV2 {
   return {
-    schema: 'hangarfit.scene/v1',
+    schema: 'hangarfit.scene/v2',
     units: 'm',
     coordinate_note: '',
     hangar: {

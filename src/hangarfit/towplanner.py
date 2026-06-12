@@ -36,8 +36,21 @@ from shapely.geometry import Point, Polygon
 # Importing a sibling-module private is the same pattern as `check as _check`.
 from hangarfit.collisions import _parts_conflict
 from hangarfit.collisions import check as _check
-from hangarfit.geometry import WorldPart, cached_parts_world, polygon_overlap
-from hangarfit.models import Aircraft, ApronShallowDrop, Conflict, Hangar, Layout, Placement
+from hangarfit.geometry import (
+    WorldPart,
+    cached_parts_world,
+    polygon_overlap,
+    pose_cache_scope,
+)
+from hangarfit.models import (
+    Aircraft,
+    ApronShallowDrop,
+    Conflict,
+    GroundObject,
+    Hangar,
+    Layout,
+    Placement,
+)
 
 SegmentKind = Literal["L", "S", "R"]
 _VALID_SEGMENT_KINDS = frozenset(typing.get_args(SegmentKind))
@@ -201,11 +214,24 @@ class DubinsArc:
 
 @dataclass(frozen=True, slots=True)
 class Move:
-    """One plane's entry: from the door-cone entry pose to its target slot."""
+    """One body's entry: from the door-cone entry pose to its target slot.
+
+    ``path`` is the routed tow arc, or ``None`` for a **deferred** move — a body
+    that is enumerated as something the planner must route but whose route search
+    has not been run (a #601 placed-routed ground-object mover; the search lands
+    in #602). This mirrors the established best-effort idiom where an un-routed
+    body is carried as ``None`` rather than dropped (Phase 3a / #197), now at
+    per-move granularity. Consumers that draw a path (visualize/scene) skip a
+    ``None``-path move."""
 
     plane_id: str
     target_slot: Pose
-    path: DubinsArc
+    # ``path is None`` marks a DEFERRED move: a placed-routed ground-object mover
+    # enumerated in the plan as a body the planner must route, but whose actual
+    # route search lands in #602 — today it carries no path (#601 enumerates,
+    # #602 routes). A routed aircraft (or, post-#602, a routed mover) always has a
+    # DubinsArc here. See the class docstring for the full contract.
+    path: DubinsArc | None
 
     def __post_init__(self) -> None:
         if not self.plane_id:
@@ -1088,11 +1114,15 @@ def entry_pose(target: Placement, hangar: Hangar) -> Pose:
 
 
 def _mover_motion_bounds_conflict(
-    mover: Aircraft, placement: Placement, hangar: Hangar
+    mover: Aircraft | GroundObject, placement: Placement, hangar: Hangar
 ) -> Conflict | None:
-    """First wall violation for a plane *in transit*, else ``None``.
+    """First wall violation for a mover *in transit*, else ``None``.
 
-    **Door-aware front-gap exemption (#222, refined in #411):** a plane being
+    The mover is an ``Aircraft`` or a ``GroundObject`` (#602); part geometry comes
+    from the union-typed :func:`~hangarfit.geometry.aircraft_parts_world`, so the
+    rule is identical for both.
+
+    **Door-aware front-gap exemption (#222, refined in #411):** a mover being
     towed through the door legitimately protrudes in front of it (``y < 0`` — the
     conceptual apron, spike Q6) — but *only through the door opening*. The front
     wall is solid except for the door gap, so a ``y < 0`` vertex is allowed only
@@ -1126,6 +1156,9 @@ def _mover_motion_bounds_conflict(
     door_hi = hangar.door.center_x_m + door_half
     apron_depth = hangar.apron_depth_m
 
+    # Pose-memoized for any placeable body (#626): an Aircraft or a GroundObject
+    # mover both reuse cached_parts_world. The key is pose-generic, and outside an
+    # active pose_cache_scope it is a pure passthrough ⇒ byte-identical.
     world_parts = list(cached_parts_world(mover, placement))
     # Does the footprint cross the front-wall line (vertices on both sides of
     # y=0)? Only a crossing must thread the door (#411); a footprint wholly in
@@ -1196,7 +1229,7 @@ def _mover_motion_bounds_conflict(
 
 def path_first_conflict(
     arc: DubinsArc,
-    mover: Aircraft,
+    mover: Aircraft | GroundObject,
     *,
     mover_on_carts: bool,
     placed: Layout,
@@ -1218,11 +1251,13 @@ def path_first_conflict(
     mid-tow), and conflicts that do not involve ``mover`` (e.g. a pre-existing
     clash among placed planes) are skipped so the mover is never blamed for them.
 
-    Precondition: ``mover.id`` must exist in ``placed.fleet`` — each per-sample
-    :class:`Layout` references it, so an unknown id raises ``ValueError`` from
+    Precondition: ``mover.id`` must exist in ``placed.fleet`` (an aircraft mover)
+    or ``placed.ground_objects`` (a ground-object mover, #602) — each per-sample
+    :class:`Layout` references it there, so an unknown id raises ``ValueError`` from
     ``Layout`` construction rather than being silently skipped. The callers
     (``plan_fill`` #196 and ``plan_path`` #222, which re-validates its final
-    path here) build ``placed`` from the full target fleet, satisfying this.
+    path here) build ``placed`` from the full target fleet + ground objects,
+    satisfying this.
     """
     for pose in arc.sample(step_m=step_m, step_deg=step_deg):
         moving = Placement(mover.id, pose.x_m, pose.y_m, pose.heading_deg, on_carts=mover_on_carts)
@@ -1236,12 +1271,24 @@ def path_first_conflict(
         # {mover} is a subset of a valid target layout those invariants hold;
         # a future caller that violates them gets a real ValueError, not a
         # suppressed one.
-        sample_layout = Layout(
-            fleet=placed.fleet,
-            hangar=placed.hangar,
-            placements=(*placed.placements, moving),
-            maintenance_plane=placed.maintenance_plane,
-        )
+        if isinstance(mover, Aircraft):
+            sample_layout = Layout(
+                fleet=placed.fleet,
+                hangar=placed.hangar,
+                placements=(*placed.placements, moving),
+                maintenance_plane=placed.maintenance_plane,
+                ground_objects=placed.ground_objects,
+                ground_object_placements=placed.ground_object_placements,
+            )
+        else:  # GroundObject mover -> belongs in ground_object_placements
+            sample_layout = Layout(
+                fleet=placed.fleet,
+                hangar=placed.hangar,
+                placements=placed.placements,
+                maintenance_plane=placed.maintenance_plane,
+                ground_objects=placed.ground_objects,
+                ground_object_placements=(*placed.ground_object_placements, moving),
+            )
         for conflict in _check(sample_layout).conflicts:
             if mover.id not in conflict.planes:
                 continue
@@ -1252,6 +1299,71 @@ def path_first_conflict(
                 continue
             return conflict
     return None
+
+
+def egress_first_conflict(
+    target: Layout,
+    mover_id: str,
+    *,
+    heuristic: Literal["euclidean", "grid"] = "grid",
+    max_expansions: int | None = None,
+) -> Conflict | None:
+    """First conflict blocking ``mover_id``'s drive-OUT through the door, else None.
+
+    By Reeds-Shepp reversibility (ADR-0010) an egress (slot -> out the door) is
+    feasible iff an entry (door-cone -> slot) path exists against the FULL parked
+    scene. Reuses :func:`plan_path` with the mover routed as a
+    :class:`~hangarfit.models.GroundObject`; the mover is EXCLUDED from
+    ``placed`` (:func:`path_first_conflict` re-injects it per sample — same
+    contract as :func:`plan_fill`'s mover routing, #602). Honors the fuel-trailer
+    keep-out and every other parked body. Closed-form, RNG-free. Returns a
+    ``caddy_egress`` :class:`~hangarfit.models.Conflict` when blocked."""
+    mover = target.ground_objects[mover_id]
+    slot = next((gp for gp in target.ground_object_placements if gp.plane_id == mover_id), None)
+    if slot is None:
+        raise ValueError(
+            f"egress_first_conflict: hard-door mover {mover_id!r} has no placement in "
+            f"target.ground_object_placements (nothing to check egress for)"
+        )
+    placed = Layout(
+        fleet=target.fleet,
+        hangar=target.hangar,
+        placements=target.placements,
+        maintenance_plane=target.maintenance_plane,
+        ground_objects=target.ground_objects,
+        ground_object_placements=tuple(
+            gp for gp in target.ground_object_placements if gp.plane_id != mover_id
+        ),
+    )
+    cone = entry_poses(slot, target.hangar)
+    # The egress gate is the AUTHORITATIVE safety verdict, so it routes with the
+    # full per-plane budget — deliberately NOT the globally-capped
+    # min(budget, remaining) that plan_fill applies to the same mover during a
+    # fill (an exhausted fill budget must never falsely declare the rescue vehicle
+    # trapped). Fixed _MAX_EXPANSIONS, RNG-free => deterministic (ADR-0003).
+    budget = _MAX_EXPANSIONS if max_expansions is None else max_expansions
+    try:
+        plan_path(
+            mover,
+            cone[0],
+            Pose.from_placement(slot),
+            hangar=target.hangar,
+            placed=placed,
+            mover_on_carts=False,
+            entries=cone,
+            heuristic=heuristic,
+            max_expansions=budget,
+        )
+        return None
+    except NoFeasiblePlanError as exc:
+        return Conflict.single(
+            kind="caddy_egress",
+            plane=mover_id,
+            detail=(
+                f"hard-door mover {mover_id!r} cannot drive out the door "
+                f"(no clear egress corridor): {exc.conflict.detail}"
+            ),
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -1283,6 +1395,7 @@ def plan_fill(
     max_expansions: int | None = None,
     max_total_expansions: int | None = None,
     apron_dropped_out: list[ApronShallowDrop] | None = None,
+    unroutable_movers: list[str] | None = None,
 ) -> MovesPlan:
     """Plan a collision-free entry order + per-plane path for an empty fill.
 
@@ -1315,6 +1428,16 @@ def plan_fill(
     list is passed (ADR-0003). ``None`` (the default) collects nothing. The caller
     (CLI / solver) emits the user-facing warning from this data, deduped.
 
+    ``unroutable_movers`` is a second diagnostics-only **out-param** (#627/#612,
+    same idiom): when supplied, it is populated — in committed-move order — with
+    the id of each ground-object **mover** that could not be routed and so kept a
+    best-effort ``Move(path=None)`` (ADR-0007 #197). Unlike an un-tow-routable
+    aircraft, which :func:`plan_fill` *raises* for (the solver records it in
+    ``diagnostics.unroutable_planes`` and the CLI warns), a None-path mover was
+    previously silent. It is equally **plan-inert** — the mover's ``Move`` still
+    carries ``path=None``, so the plan is byte-identical whether or not the list
+    is passed. ``None`` collects nothing.
+
     Walks :func:`back_first_order` (deepest slot first); for each plane searches
     for an in-bounds path from the door-cone entry poses (:func:`entry_poses`) to
     its target slot via :func:`plan_path` (a deterministic Hybrid-A* search with
@@ -1337,12 +1460,48 @@ def plan_fill(
     scan are all RNG-free, so a given ``target`` always yields the same
     :class:`MovesPlan`.
     """
+    # #626: memoize body world-parts for the WHOLE fill. The static obstacle field
+    # is rebuilt by every plan_path's _build_obstacles, and the greedy scan re-routes
+    # the same bodies across iterations, so a fill-wide pose cache turns those
+    # repeated fixed-pose rebuilds into hits — the #453 win movers previously
+    # bypassed, and the root of the #604 routing congestion. Byte-identical
+    # (ADR-0003: the cache returns the same immutable WorldPart list); nesting
+    # inside an in-``solve`` scope is a no-op.
+    with pose_cache_scope():
+        return _plan_fill(
+            target,
+            heuristic=heuristic,
+            max_expansions=max_expansions,
+            max_total_expansions=max_total_expansions,
+            apron_dropped_out=apron_dropped_out,
+            unroutable_movers=unroutable_movers,
+        )
+
+
+def _plan_fill(
+    target: Layout,
+    *,
+    heuristic: Literal["euclidean", "grid"] = "grid",
+    max_expansions: int | None = None,
+    max_total_expansions: int | None = None,
+    apron_dropped_out: list[ApronShallowDrop] | None = None,
+    unroutable_movers: list[str] | None = None,
+) -> MovesPlan:
+    """Body of :func:`plan_fill`, run inside an active ``pose_cache_scope`` (#626)."""
     budget = _MAX_EXPANSIONS if max_expansions is None else max_expansions
     total_budget = _MAX_FILL_EXPANSIONS if max_total_expansions is None else max_total_expansions
     total_used = 0
     ordered = list(back_first_order(target.placements))
     fleet = target.fleet
     hangar = target.hangar
+
+    # Fixed obstacles (e.g. the fuel trailer) are static keep-outs for BOTH
+    # aircraft routes and mover routes. Empty when no ground objects => inert.
+    fixed_obstacle_placements = tuple(
+        gp
+        for gp in target.ground_object_placements
+        if target.ground_objects[gp.plane_id].object_class == "fixed_obstacle"
+    )
 
     placed: list[Placement] = []
     moves: list[Move] = []
@@ -1363,6 +1522,8 @@ def plan_fill(
             hangar=hangar,
             placements=tuple(placed),
             maintenance_plane=target.maintenance_plane,
+            ground_objects=target.ground_objects,
+            ground_object_placements=fixed_obstacle_placements,
         )
         for idx, slot in enumerate(ordered):
             remaining = total_budget - total_used
@@ -1441,6 +1602,65 @@ def plan_fill(
                     min_depth_m=_plane_fore_aft_length_m(fleet[slot.plane_id]),
                 )
             )
+
+    # Ground-object movers (#602): route each placed-routed mover with its own
+    # path. id-sorted + appended after the aircraft loop => aircraft moves stay
+    # byte-identical (no ground objects => this loop is empty). Each mover routes
+    # against all parked aircraft + fixed obstacles + movers already routed this
+    # pass; the one being routed is excluded from `placed` (path_first_conflict
+    # re-injects it per sample, matching the aircraft routing contract).
+    routed_mover_placements: list[Placement] = []
+    for gp in sorted(target.ground_object_placements, key=lambda p: p.plane_id):
+        obj = target.ground_objects[gp.plane_id]
+        if obj.object_class != "placed_routed_mover":
+            continue
+        mover_placed = Layout(
+            fleet=fleet,
+            hangar=hangar,
+            placements=tuple(placed),
+            maintenance_plane=target.maintenance_plane,
+            ground_objects=target.ground_objects,
+            ground_object_placements=(*fixed_obstacle_placements, *routed_mover_placements),
+        )
+        cone = entry_poses(gp, hangar)
+        mover_stats: dict[str, object] = {}
+        # Budget-exhausted (remaining <= 0) routes with a near-zero search budget
+        # (1 expansion) so the node-expansion search bails immediately. The mover
+        # can STILL succeed if a clean closed-form analytic shot from a door-cone
+        # start exists (that path runs before the expansion cap); otherwise it is
+        # best-effort-skipped (path=None below). Unlike the aircraft scan, which
+        # RAISES on exhaustion, movers are best-effort (ADR-0007 #197), so an
+        # exhausted budget must never abort the whole plan.
+        remaining = total_budget - total_used
+        mover_arc: DubinsArc | None
+        try:
+            mover_arc = plan_path(
+                obj,
+                cone[0],
+                Pose.from_placement(gp),
+                hangar=hangar,
+                placed=mover_placed,
+                mover_on_carts=False,
+                entries=cone,
+                heuristic=heuristic,
+                max_expansions=min(budget, remaining) if remaining > 0 else 1,
+                stats=mover_stats,
+            )
+        except NoFeasiblePlanError:
+            # Best-effort (ADR-0007 #197): an unroutable mover keeps a None path so
+            # it never aborts the whole fill. Unlike an un-tow-routable AIRCRAFT
+            # (which raises -> solver -> stderr), a None-path mover used to be
+            # silent. #627/#612: record its id in the optional ``unroutable_movers``
+            # out-param so the solver/CLI can name it on stderr — observational,
+            # plan-inert (the Move below still carries path=None), so byte-identical
+            # whether or not the list is passed (mirrors ``apron_dropped_out``).
+            mover_arc = None
+            if unroutable_movers is not None:
+                unroutable_movers.append(obj.id)
+        exp = mover_stats.get("expansions", 0)
+        total_used += exp if isinstance(exp, int) else 0
+        moves.append(Move(gp.plane_id, Pose.from_placement(gp), path=mover_arc))
+        routed_mover_placements.append(gp)
 
     return MovesPlan(target_layout=target, moves=tuple(moves))
 
@@ -1736,6 +1956,20 @@ def _build_obstacles(placed: Layout, *, mover_id: str) -> _Obstacles:
         if placement.plane_id == mover_id:
             continue
         parts.extend(cached_parts_world(placed.fleet[placement.plane_id], placement))
+    # Ground objects (#601): fixed obstacles are ALWAYS static keep-outs; placed
+    # movers are static placed bodies EXCEPT the one currently being routed
+    # (mover_id), mirroring how the routed aircraft is excluded above. Iterate in
+    # id-sorted order so the world_parts tuple order is deterministic regardless
+    # of the placements' authored order (determinism-guard, ADR-0003). Empty when
+    # there are no ground objects → byte-identical to the pre-#601 obstacle set.
+    for gp in sorted(placed.ground_object_placements, key=lambda p: p.plane_id):
+        if gp.plane_id == mover_id:
+            continue
+        obj = placed.ground_objects[gp.plane_id]
+        # Pose-memoized (#626): a static mover obstacle's fixed-pose world parts are
+        # rebuilt by every plan_path's _build_obstacles otherwise — the #453 churn
+        # movers bypassed, and the root of the #604 routing congestion.
+        parts.extend(cached_parts_world(obj, gp))
     bay = placed.hangar.maintenance_bay
     return _Obstacles(
         world_parts=tuple(parts),
@@ -1762,7 +1996,9 @@ def _aabb(poly: Polygon) -> tuple[float, float, float, float]:
     return xmin, ymin, xmax, ymax
 
 
-def _motion_clear(mover: Aircraft, pose: Pose, obstacles: _Obstacles, hangar: Hangar) -> bool:
+def _motion_clear(
+    mover: Aircraft | GroundObject, pose: Pose, obstacles: _Obstacles, hangar: Hangar
+) -> bool:
     """Fast per-pose verdict: ``True`` iff the mover at ``pose`` is collision-free.
 
     Mirrors the EXACT oracle (:func:`path_first_conflict` → ``collisions.check``)
@@ -1796,6 +2032,10 @@ def _motion_clear(mover: Aircraft, pose: Pose, obstacles: _Obstacles, hangar: Ha
     module note above and the safety-net re-check in :func:`plan_path`.
     """
     placement = Placement(mover.id, pose.x_m, pose.y_m, pose.heading_deg, on_carts=False)
+    # Pose-memoized for any placeable body (#626): an Aircraft or a GroundObject
+    # mover both reuse cached_parts_world. NOTE the TOWED mover's pose changes per
+    # sampled expansion, so it mostly MISSES here (expected) — the cache win is the
+    # static obstacle field (_build_obstacles), memoized across the fill.
     mover_parts = cached_parts_world(mover, placement)
 
     # (A) Hangar bounds (front-gap-exempt for the mover).
@@ -1977,7 +2217,7 @@ def _build_grid_heuristic(
 
 
 def plan_path(
-    mover: Aircraft,
+    mover: Aircraft | GroundObject,
     entry: Pose,
     goal: Pose,
     *,

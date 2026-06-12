@@ -29,6 +29,7 @@ import random as _random_module
 import secrets
 import sys
 import time
+from collections.abc import Mapping
 from dataclasses import replace
 from typing import Literal, NamedTuple, cast
 
@@ -40,15 +41,17 @@ from hangarfit.models import (
     CheckResult,
     Conflict,
     DiversityConfig,
+    GroundObject,
     Layout,
     Placement,
+    RegionAlignment,
     Scenario,
     SearchConfig,
     SolverDiagnostics,
     SolveResult,
     SolveStatus,
 )
-from hangarfit.towplanner import MovesPlan, NoFeasiblePlanError, plan_fill
+from hangarfit.towplanner import MovesPlan, NoFeasiblePlanError, egress_first_conflict, plan_fill
 
 _logger = logging.getLogger(__name__)
 
@@ -220,6 +223,39 @@ def _restart_rng(seed: int, restart_index: int) -> _random_module.Random:
     return _random_module.Random(f"{seed}:{restart_index}")
 
 
+def _build_layout(scenario: Scenario, placements: Mapping[str, Placement]) -> Layout:
+    """Build a Layout from a unified placeable-body dict (#604).
+
+    Splits ``placements`` into aircraft (ids in ``fleet``) and mover ground
+    objects (everything else — placed_routed_mover ids), injects the authored
+    ``fixed_obstacle_placements``, and wires the active ``ground_objects`` defs.
+    With an aircraft-only dict AND a scenario with no ground objects this yields a
+    Layout byte-identical to the pre-#604 inline construction (ADR-0003): the
+    aircraft tuple preserves the dict's insertion order (== fleet_in order, since
+    movers are appended after aircraft in _initial_placements), and the GO fields
+    default empty."""
+    aircraft: list[Placement] = []
+    movers: list[Placement] = []
+    for pid, p in placements.items():
+        (aircraft if pid in scenario.fleet else movers).append(p)
+    go_placements = tuple(movers) + scenario.fixed_obstacle_placements
+    if not go_placements:
+        return Layout(
+            fleet=scenario.fleet,
+            hangar=scenario.hangar,
+            placements=tuple(aircraft),
+            maintenance_plane=scenario.maintenance_plane,
+        )
+    return Layout(
+        fleet=scenario.fleet,
+        hangar=scenario.hangar,
+        placements=tuple(aircraft),
+        maintenance_plane=scenario.maintenance_plane,
+        ground_objects={gid: scenario.ground_object_defs[gid] for gid in scenario.ground_objects},
+        ground_object_placements=go_placements,
+    )
+
+
 def _run_restart(
     scenario: Scenario,
     *,
@@ -252,12 +288,7 @@ def _run_restart(
     best_partial_layout: Layout | None = None
     candidate: _SpreadCandidate | None = None
 
-    initial_layout = Layout(
-        fleet=scenario.fleet,
-        hangar=scenario.hangar,
-        placements=tuple(placements.values()),
-        maintenance_plane=scenario.maintenance_plane,
-    )
+    initial_layout = _build_layout(scenario, placements)
     current_score = _score(initial_layout)
     if current_score < best_partial_score:
         best_partial_score = current_score
@@ -284,19 +315,16 @@ def _run_restart(
                 placements, n_flips = _nose_out(
                     placements, scenario, search, pinned_planes=pinned_planes
                 )
-            candidate_layout = Layout(
-                fleet=scenario.fleet,
-                hangar=scenario.hangar,
-                placements=tuple(placements.values()),
-                maintenance_plane=scenario.maintenance_plane,
-            )
+            candidate_layout = _build_layout(scenario, placements)
             min_gap, energy = _spread_quality(placements, scenario, spread_scale)
+            cand_alignment = _region_alignment(placements, scenario)
             candidate = _SpreadCandidate(
                 layout=candidate_layout,
                 min_gap=min_gap,
                 energy=energy,
                 restart_index=restart_index,
                 nose_out_flips=n_flips,
+                region_alignment=cand_alignment,
             )
             break  # found a basin
 
@@ -317,12 +345,7 @@ def _run_restart(
 
         if current_score < best_partial_score:
             best_partial_score = current_score
-            best_partial_layout = Layout(
-                fleet=scenario.fleet,
-                hangar=scenario.hangar,
-                placements=tuple(placements.values()),
-                maintenance_plane=scenario.maintenance_plane,
-            )
+            best_partial_layout = _build_layout(scenario, placements)
 
         if iter_count - last_improved >= search.k_stall:
             break  # stall
@@ -704,10 +727,12 @@ def _tow_plan_layouts(
     plan_paths: bool,
     tow_heuristic: Literal["euclidean", "grid"],
     tow_max_expansions: int | None,
-) -> tuple[tuple[MovesPlan | None, ...], tuple[str, ...], tuple[ApronShallowDrop, ...]]:
+) -> tuple[
+    tuple[MovesPlan | None, ...], tuple[str, ...], tuple[ApronShallowDrop, ...], tuple[str, ...]
+]:
     """Tow-plan every returned layout (best-effort enrichment, #197).
 
-    Returns ``(plans, unroutable, apron_drops)``. ``plans`` is index-aligned with
+    Returns ``(plans, unroutable, apron_drops, unroutable_movers)``. ``plans`` is index-aligned with
     ``accepted_layouts``. The v2 planner (Reeds–Shepp arcs + bounded Hybrid-A* —
     #222/#261 under ADR-0007 + ADR-0010) cannot route dense multi-plane fills and
     has documented false-negatives, so an un-routable layout is recorded as
@@ -724,15 +749,22 @@ def _tow_plan_layouts(
     never surface — only the chosen result's diagnostics are built (see
     :func:`solve`). Empty when no returned layout had a too-shallow drop.
 
+    ``unroutable_movers`` is the ground-object counterpart (#627/#612): the flat,
+    deduped list of mover ids that could not be routed and so kept a best-effort
+    ``Move(path=None)`` (collected via plan_fill's out-param, like ``apron_drops``).
+    Unlike ``unroutable`` (aircraft), a None-path mover does not make the layout's
+    plan ``None`` — the plan is still built — so it is collected on the SUCCESS path.
+
     With ``plan_paths=False`` no planning runs and ``plans`` is all-``None``
     (still index-aligned), with no ``unroutable`` planes and no ``apron_drops``.
     """
     if not plan_paths:
-        return (None,) * len(accepted_layouts), (), ()
+        return (None,) * len(accepted_layouts), (), (), ()
 
     built: list[MovesPlan | None] = []
     unroutable: list[str] = []
     apron_drops: list[ApronShallowDrop] = []
+    mover_drops: list[str] = []
     for layout in accepted_layouts:
         # Diagnostics-only out-param (#503): plan_fill populates this with the
         # too-shallow-apron drops of THIS layout's tow plan, plan-inert — it is
@@ -742,25 +774,47 @@ def _tow_plan_layouts(
         # collection so a plane dropped across multiple layouts appears once per
         # layout (the CLI dedups by plane id before warning).
         layout_drops: list[ApronShallowDrop] = []
+        layout_movers: list[str] = []
         try:
             # Default path calls ``plan_fill(layout)`` with NO budget kwargs (only
-            # the plan-inert diagnostics out-param), so the ADR-0003 determinism
-            # canaries are unaffected (the out-param never changes the plan). Since
+            # the plan-inert diagnostics out-params), so the ADR-0003 determinism
+            # canaries are unaffected (the out-params never change the plan). Since
             # #336 the shipped default is grid + the module budgets, which is
             # exactly what a bare ``plan_fill(layout)`` applies; an explicit
             # euclidean / custom budget takes the kwargs path below.
             if tow_heuristic == "grid" and tow_max_expansions is None:
-                built.append(plan_fill(layout, apron_dropped_out=layout_drops))
+                plan = plan_fill(
+                    layout, apron_dropped_out=layout_drops, unroutable_movers=layout_movers
+                )
             else:
-                built.append(
-                    plan_fill(
+                plan = plan_fill(
+                    layout,
+                    heuristic=tow_heuristic,
+                    max_expansions=tow_max_expansions,
+                    apron_dropped_out=layout_drops,
+                    unroutable_movers=layout_movers,
+                )
+            # #603: a hard-door mover (e.g. the rescue Caddy) must be able to drive
+            # OUT the door against the full parked scene, else the layout is
+            # operationally useless -> record it un-routable (exit 3) via the same
+            # NoFeasiblePlanError path as a boxed-in plane. Inert (byte-identical)
+            # when no hard-door mover is present (the loop body never runs).
+            for gp in layout.ground_object_placements:
+                if layout.ground_objects[gp.plane_id].hard_door_mover:
+                    egress = egress_first_conflict(
                         layout,
+                        gp.plane_id,
                         heuristic=tow_heuristic,
                         max_expansions=tow_max_expansions,
-                        apron_dropped_out=layout_drops,
                     )
-                )
+                    if egress is not None:
+                        raise NoFeasiblePlanError(gp.plane_id, egress)
+            built.append(plan)
             apron_drops.extend(layout_drops)
+            # Unlike apron_drops, mover drops are collected on SUCCESS: a None-path
+            # mover does not abort the layout's plan (#627/#612), so the plan IS
+            # built and its unroutable movers are the ones the user receives.
+            mover_drops.extend(layout_movers)
         except NoFeasiblePlanError as e:
             built.append(None)
             unroutable.append(e.plane_id)
@@ -778,7 +832,9 @@ def _tow_plan_layouts(
                 e.conflict.kind,
                 e.conflict.detail,
             )
-    return tuple(built), tuple(unroutable), tuple(apron_drops)
+    # dict.fromkeys: order-preserving dedup — a mover unroutable in several
+    # returned layouts is named once (advisory list, the CLI warns once).
+    return tuple(built), tuple(unroutable), tuple(apron_drops), tuple(dict.fromkeys(mover_drops))
 
 
 def _build_found_result(
@@ -806,8 +862,12 @@ def _build_found_result(
     accepted_layouts = [c.layout for c in selected]
     min_gaps = tuple(c.min_gap for c in selected)
     nose_out_flips = tuple(c.nose_out_flips for c in selected)
+    region_alignment_per_layout = tuple(c.region_alignment for c in selected)
+    # Collapse the no-preferences case to the empty default so a scenario without
+    # region preferences reports `()` (not a tuple of empty tuples) — #604.
+    region_alignment = region_alignment_per_layout if any(region_alignment_per_layout) else ()
     status: SolveStatus = "found" if len(accepted_layouts) >= alternatives else "found_partial"
-    plans, unroutable, apron_drops = _tow_plan_layouts(
+    plans, unroutable, apron_drops, unroutable_movers = _tow_plan_layouts(
         accepted_layouts,
         plan_paths=plan_paths,
         tow_heuristic=tow_heuristic,
@@ -831,6 +891,8 @@ def _build_found_result(
             spread_stall_applied=spread_stall_applied,
             apron_shallow_drops=apron_drops,
             nose_out_flips=nose_out_flips,
+            region_alignment=region_alignment,
+            unroutable_movers=unroutable_movers,
         ),
     )
 
@@ -1035,12 +1097,10 @@ def _check_pin_feasibility(scenario: Scenario) -> tuple[CheckResult, Layout] | N
     # pin.on_carts vs movement_mode). A genuinely unexpected ValueError
     # should propagate as a bug, not get silently re-wrapped as a pin
     # infeasibility.
-    pin_only_layout = Layout(
-        fleet=scenario.fleet,
-        hangar=scenario.hangar,
-        placements=tuple(pinned_placements),
-        maintenance_plane=scenario.maintenance_plane,
-    )
+    # All pins are aircraft (drawn from fleet_in) with unique ids, so the dict
+    # preserves list order and tuple(dict.values()) == tuple(pinned_placements):
+    # _build_layout yields the same aircraft-only Layout, byte-identical (#604).
+    pin_only_layout = _build_layout(scenario, {p.plane_id: p for p in pinned_placements})
 
     pin_check = check_layout(pin_only_layout)
     if not pin_check.valid:
@@ -1049,7 +1109,7 @@ def _check_pin_feasibility(scenario: Scenario) -> tuple[CheckResult, Layout] | N
     return None
 
 
-def _plane_max_extent(plane: Aircraft) -> tuple[float, float]:
+def _plane_max_extent(plane: Aircraft | GroundObject) -> tuple[float, float]:
     """Return (max_length_m, max_width_m) over all of the plane's Parts.
 
     Takes the maximum ``length_m`` and maximum ``width_m`` across all
@@ -1135,8 +1195,8 @@ def _initial_placement_for_plane(
         return constraint.pin
 
     hangar = scenario.hangar
-    plane = scenario.fleet[plane_id]
-    max_length, max_width = _plane_max_extent(plane)
+    body = _body(scenario, plane_id)
+    max_length, max_width = _plane_max_extent(body)
     margin_x = max(max_length, max_width) / 2
     margin_y = margin_x
 
@@ -1164,6 +1224,30 @@ def _initial_placement_for_plane(
         heading_deg=heading,
         on_carts=on_carts,
     )
+
+
+def _body(scenario: Scenario, body_id: str) -> Aircraft | GroundObject:
+    """Resolve a placeable body id to its Aircraft or GroundObject definition (#604).
+
+    Aircraft (``fleet``) are checked first so the common, pre-#604 path is
+    unchanged; a placed_routed_mover id falls through to ``ground_object_defs``."""
+    plane = scenario.fleet.get(body_id)
+    if plane is not None:
+        return plane
+    return scenario.ground_object_defs[body_id]
+
+
+def _body_parts_world(scenario: Scenario, body_id: str, placement: Placement) -> list[WorldPart]:
+    """World parts for any placeable body (#604/#626). Both an Aircraft and a
+    GroundObject mover reuse the pose-memoized ``cached_parts_world`` — the cache
+    key ``(plane_id, x, y, heading)`` and the union-typed transform are body-
+    generic, so a mover obstacle's fixed-pose geometry is now served from the
+    cache instead of rebuilt on every collision/clearance check (#453 churn that
+    movers previously bypassed). BYTE-IDENTICAL to the pre-#604 solver path
+    (ADR-0003): the cache returns the same immutable ``WorldPart`` list the pure
+    transform would build, exact-float keyed."""
+    body = _body(scenario, body_id)
+    return list(cached_parts_world(body, placement))
 
 
 def _priority_weight(scenario: Scenario, pid: str) -> float:
@@ -1219,7 +1303,7 @@ def _inter_plane_energy(
     if len(ids) < 2:
         return 0.0
     world: dict[str, list[WorldPart]] = {
-        pid: cached_parts_world(scenario.fleet[pid], placements[pid]) for pid in ids
+        pid: _body_parts_world(scenario, pid, placements[pid]) for pid in ids
     }
     w = {pid: _priority_weight(scenario, pid) for pid in ids}
     energy = 0.0
@@ -1257,6 +1341,51 @@ def _back_bias_energy(placements: dict[str, Placement], scenario: Scenario) -> f
     return sum((length - placements[pid].y_m) / length for pid in sorted(placements))
 
 
+def _region_energy(placements: Mapping[str, Placement], scenario: Scenario) -> float:
+    """Soft right/left wall-alignment bias ``R = Σ wₒ·dₒ / W`` (#604).
+
+    For each body ``o`` carrying a :class:`RegionPreference`, ``dₒ`` is the
+    distance from ``x_o`` to the preferred wall — ``(W − x_o)`` for ``"right"``,
+    ``x_o`` for ``"left"`` — normalized by ``W = hangar.width_m`` so one weight
+    reads across hangar sizes (mirrors ``_back_bias_energy``'s ``length_m``
+    normalization, #320). Minimized when the body sits at its preferred wall.
+    Summed over preferring ids in ``sorted`` order (order-stable float sum).
+    RNG-free. ``0.0`` when no preferences (inert ⇒ byte-identical, ADR-0003)."""
+    prefs = scenario.region_preferences
+    if not prefs:
+        return 0.0
+    width = scenario.hangar.width_m
+    total = 0.0
+    for pid in sorted(prefs):
+        if pid not in placements:
+            continue  # e.g. a maintenance plane (treated as away) — not placed
+        pref = prefs[pid]
+        x = placements[pid].x_m
+        d = (width - x) if pref.side == "right" else x
+        total += pref.weight * (d / width)
+    return total
+
+
+def _region_alignment(
+    placements: Mapping[str, Placement], scenario: Scenario
+) -> tuple[RegionAlignment, ...]:
+    """Per-preferring-object wall alignment in ``[0, 1]`` (1.0 = AT the preferred
+    wall), sorted by id (#604). ``()`` when the scenario has no region preferences.
+    RNG-free; the observability twin of :func:`_region_energy`."""
+    prefs = scenario.region_preferences
+    if not prefs:
+        return ()
+    width = scenario.hangar.width_m
+    out: list[RegionAlignment] = []
+    for pid in sorted(prefs):
+        if pid not in placements:
+            continue
+        x = placements[pid].x_m
+        frac = (x / width) if prefs[pid].side == "right" else (1.0 - x / width)
+        out.append(RegionAlignment(body_id=pid, alignment=max(0.0, min(1.0, frac))))
+    return tuple(out)
+
+
 def _resolve_spread_scale(scenario: Scenario, search: SearchConfig) -> float:
     """Repulsion length-scale for spread (spec §4): explicit override or
     20% of the smaller hangar dimension. Single source so ``_spread`` and
@@ -1288,7 +1417,7 @@ def _spread_quality(
     if len(ids) < 2:
         return (math.inf, 0.0)
     world: dict[str, list[WorldPart]] = {
-        pid: cached_parts_world(scenario.fleet[pid], placements[pid]) for pid in ids
+        pid: _body_parts_world(scenario, pid, placements[pid]) for pid in ids
     }
     w = {pid: _priority_weight(scenario, pid) for pid in ids}
     min_gap = math.inf
@@ -1364,12 +1493,7 @@ def _nose_out(
         # trip any Layout cross-reference invariant (cart rule, on_carts
         # consistency, duplicate placements) — build directly. A ValueError here
         # would be a structural bug, so let it propagate rather than silently skip.
-        trial_layout = Layout(
-            fleet=scenario.fleet,
-            hangar=scenario.hangar,
-            placements=tuple(trial.values()),
-            maintenance_plane=scenario.maintenance_plane,
-        )
+        trial_layout = _build_layout(scenario, trial)
         if _score(trial_layout) != (0, 0.0):
             continue
         placements[pid] = flipped
@@ -1402,10 +1526,12 @@ def _spread(
 
     movable = sorted(pid for pid in placements if pid not in pinned_planes)
     back_fill = search.back_bias_weight > 0.0
-    if not movable or (len(placements) < 2 and not back_fill):
-        # Nothing to optimize: no movable target, or <2 planes with no back-fill
-        # bias (inter-plane energy is identically 0.0). With back-fill active a
-        # lone plane is still pulled to the back wall, so we do NOT bail there.
+    region_active = bool(scenario.region_preferences)
+    if not movable or (len(placements) < 2 and not back_fill and not region_active):
+        # Nothing to optimize: no movable target, or <2 planes with neither the
+        # back-fill nor the region bias active (inter-plane energy is identically
+        # 0.0). With back-fill OR a region preference active a lone body is still
+        # pulled toward its wall, so we do NOT bail there.
         return placements
 
     def _energy(
@@ -1422,6 +1548,8 @@ def _spread(
         e = _inter_plane_energy(trial, scenario, scale, gap_cache=gap_cache, moved=moved)
         if back_fill:
             e += search.back_bias_weight * _back_bias_energy(trial, scenario)
+        if region_active:
+            e += _region_energy(trial, scenario)
         return e
 
     current_energy = _energy(placements)
@@ -1455,12 +1583,7 @@ def _spread(
             trial = dict(placements)
             trial[target] = cand
             try:
-                trial_layout = Layout(
-                    fleet=scenario.fleet,
-                    hangar=scenario.hangar,
-                    placements=tuple(trial.values()),
-                    maintenance_plane=scenario.maintenance_plane,
-                )
+                trial_layout = _build_layout(scenario, trial)
             except ValueError:
                 # Mirrors _descent_step's defensive catch. The only routinely-reachable
                 # trigger is the cart rule, but _perturb_plane and the 180° flip both
@@ -1556,6 +1679,18 @@ def _initial_placements(
             scenario=scenario,
             rng=rng,
             on_carts=on_carts,
+        )
+
+    # Movers (#604): sampled AFTER all aircraft, in sorted-id order, so adding a
+    # mover never perturbs the aircraft draw sequence — a scenario with no movers
+    # is byte-identical to the pre-#604 behaviour (ADR-0003). Movers never ride
+    # carts and are excluded from cart-bucket enumeration (it iterates fleet_in).
+    for gid in sorted(scenario.mover_ids):
+        placements[gid] = _initial_placement_for_plane(
+            plane_id=gid,
+            scenario=scenario,
+            rng=rng,
+            on_carts=False,
         )
 
     return placements
@@ -1665,8 +1800,8 @@ def _perturb_plane(
     trajectory.
     """
     hangar = scenario.hangar
-    plane = scenario.fleet[current.plane_id]
-    max_length, max_width = _plane_max_extent(plane)
+    body = _body(scenario, current.plane_id)
+    max_length, max_width = _plane_max_extent(body)
     margin = max(max_length, max_width) / 2
 
     if large_jump:
@@ -1791,12 +1926,7 @@ def _descent_step(
     ``Layout.__post_init__`` and are skipped.
     """
     # Build current Layout from placements (uses Layout invariants — free check).
-    current_layout = Layout(
-        fleet=scenario.fleet,
-        hangar=scenario.hangar,
-        placements=tuple(placements.values()),
-        maintenance_plane=scenario.maintenance_plane,
-    )
+    current_layout = _build_layout(scenario, placements)
 
     current_result = check_layout(current_layout)
 
@@ -1806,7 +1936,11 @@ def _descent_step(
     conflicting: set[str] = set()
     for c in current_result.conflicts:
         for pid in c.planes:
-            if pid not in pinned_planes:
+            # Only perturbable bodies are candidates: skip pinned planes and any
+            # id not in the search dict (e.g. a fixed obstacle, an injected static
+            # keep-out — never moved). With no ground objects every conflict id is
+            # an aircraft already in `placements`, so this is byte-identical (#604).
+            if pid not in pinned_planes and pid in placements:
                 conflicting.add(pid)
     if not conflicting:
         return None  # restart — all conflicts are on pinned planes
@@ -1841,12 +1975,7 @@ def _descent_step(
         trial = dict(placements)
         trial[target] = cand
         try:
-            trial_layout = Layout(
-                fleet=scenario.fleet,
-                hangar=scenario.hangar,
-                placements=tuple(trial.values()),
-                maintenance_plane=scenario.maintenance_plane,
-            )
+            trial_layout = _build_layout(scenario, trial)
         except ValueError:
             # Layout invariant violated (cart rule, etc.) — skip this candidate
             continue
@@ -1898,6 +2027,7 @@ class _SpreadCandidate(NamedTuple):
     energy: float
     restart_index: int
     nose_out_flips: int = 0
+    region_alignment: tuple[RegionAlignment, ...] = ()
 
 
 def _select_spread_diverse(

@@ -22,3 +22,19 @@ fleet_in:
   - fk9_mkii
   - stemme_s10
   - zlin_savage
+
+# Non-aircraft ground objects on the floor with the fleet (#604). The fuel
+# trailer is a FIXED keep-out at its real surveyed pose (from layout_full.yaml);
+# the two glider trailers are placed-routed MOVERS the solver positions + routes,
+# with a soft preference to align them to the RIGHT wall (the club's habit).
+# NOTE: the real all-eight set is hard to pack (the #599 wall); opting these in
+# does not guarantee a solve — the soft preference only re-ranks valid layouts.
+ground_objects:
+  - object: maul_fuel_trailer
+    x_m: 14.05
+    y_m: 13.32
+    heading_deg: 0.0
+  - object: glider_trailer_1
+    region_preference: { side: right, weight: 1.5 }
+  - object: glider_trailer_2
+    region_preference: { side: right, weight: 1.5 }

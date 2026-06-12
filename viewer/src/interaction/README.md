@@ -10,7 +10,7 @@ CI guard stays green until a real module lands with #442.
 
 ## The contract this seam will implement (#442)
 
-The viewer is, and stays, a **thin read-only consumer** of `scene/v1` whose geometry
+The viewer is, and stays, a **thin read-only consumer** of `scene/v2` whose geometry
 is computed in Python (ADR-0002/0017/0020). The editor does **not** change that: it
 captures user **intent** and hands it back to the Python solver. When #442 lands, an
 `interaction/` module will:

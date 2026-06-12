@@ -23,16 +23,17 @@ This file is the durable **operational** context for the project: how we work, w
 | **The parts model** (collision rule, why parts not bbox, `struts:` block, the fuselage front/aft split, the **empennage** `tail`+`vertical_stabilizer` surfaces — a wingtip may overhang a low-winger's *low tailplane* but not its *cockpit*, and not its *fin* which rises into the wing layer) | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#the-parts-model) + [ADR-0001](docs/adr/0001-aircraft-parts-model.md) + [ADR-0012](docs/adr/0012-fuselage-front-aft-split.md) + [ADR-0023](docs/adr/0023-empennage-tail-surfaces.md) |
 | **The coordinate convention + the determinant-−1 transform trap** | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#the-coordinate-convention) + [ADR-0002](docs/adr/0002-determinant-minus-one-transform.md) |
 | **The maintenance bay rule** (current `bay_intrusion` semantics) | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#the-maintenance-bay-rule) + [ADR-0006](docs/adr/0006-bay-intrusion-maintenance-rule.md). The Phase 1 predecessor is preserved as [ADR-0005](docs/adr/0005-maintenance-bay-rule.md) (Superseded by ADR-0006). |
-| Fleet composition (per-plane wing type, gear, movement mode, struts, canonical wheel positions) | [`data/fleet.yaml`](data/fleet.yaml) — the source of truth; §8 calls out the strut-braced subset and the only low-wing. Wheel positions are canonical per-aircraft data ([ADR-0013](docs/adr/0013-wheels-canonical-data.md)), not renderer heuristics |
+| Fleet composition (per-plane wing type, gear, movement mode, struts, canonical wheel positions) | [`data/catalog/`](data/catalog/) — per-object catalog files (one per aircraft, with a `type:` discriminator), referenced by path from the thin [`data/fleet.yaml`](data/fleet.yaml) manifest (#595); §8 calls out the strut-braced subset and the only low-wing. Wheel positions are canonical per-aircraft data ([ADR-0013](docs/adr/0013-wheels-canonical-data.md)), not renderer heuristics |
 | Hangar dimensions, door, maintenance bay rectangle | [`data/hangar.yaml`](data/hangar.yaml) — all values currently placeholders pending real measurement |
-| **The real Airfield Herrenteich dataset** (DWG-measured hangar + published-spec, second-source-verified fleet incl. a folded Stemme S10 + a valid all-8 `layout.yaml`), kept **separate** from the synthetic `data/` placeholders | [`examples/herrenteich/`](examples/herrenteich/README.md) — real data; `data/` stays the synthetic demo/test fixtures |
+| **The real Airfield Herrenteich dataset** (DWG-measured hangar + published-spec, second-source-verified fleet incl. a folded Stemme S10 + a valid all-8 `layout.yaml`) | [`examples/herrenteich/`](examples/herrenteich/README.md) — real hangar + layout/scenario; its aircraft are the shared central `data/catalog/` entries since #595 (no per-world duplication; `fuji`/`cessna_150` remain the only synthetic placeholders) |
 | Default clearances (`clearance_m`, `wing_layer_clearance_m`) | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#default-clearances) |
 | RR-MC solver algorithm and the determinism contract | [ADR-0003](docs/adr/0003-rr-mc-solver-algorithm.md) |
 | Diversity metric (edit-count, thresholds) | [ADR-0004](docs/adr/0004-diversity-metric.md) |
 | **The spread post-pass** (maximize inter-plane gap once valid) | [ADR-0008](docs/adr/0008-inter-plane-spread-soft-preference.md) |
 | **The tow-path planner** (empty-hangar fill, Reeds–Shepp arcs, `solve --render-paths`, exit-3 tow-routability) | [§5 Building Block View](docs/architecture/05-building-block-view.md) (`towplanner`) + [ADR-0007](docs/adr/0007-tow-path-planner-v1-scope.md) (v1 scope) + [ADR-0010](docs/adr/0010-reeds-shepp-motion-model.md) (v2 Reeds–Shepp motion) |
 | **The staging apron** (`hangar.apron_depth_m` / `--apron-depth N\|auto`, slide-in from outside the door, reverse nose-out seeds, depth-0 byte-identical) | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#the-door-is-a-visual-marker-only) + [ADR-0021](docs/adr/0021-tow-planner-staging-apron.md). `collisions.check` is apron-inert (forbids `y<0`); the apron is a planner-level motion concept |
-| **The 3D viewer** (`hangarfit view`, interactive offline HTML, whole-fill tow timeline, the `scene/v1` JSON seam, Python-owned transform) | [§5 Building Block View](docs/architecture/05-building-block-view.md) (`scene`, `viewer`) + [ADR-0017](docs/adr/0017-3d-viewer-architecture.md) + the schema reference [docs/architecture/scene-v1-schema.md](docs/architecture/scene-v1-schema.md) |
+| **The 3D viewer** (`hangarfit view`, interactive offline HTML, whole-fill tow timeline, the `scene/v2` JSON seam, Python-owned transform) | [§5 Building Block View](docs/architecture/05-building-block-view.md) (`scene`, `viewer`) + [ADR-0017](docs/adr/0017-3d-viewer-architecture.md) + the schema reference [docs/architecture/scene-v2-schema.md](docs/architecture/scene-v2-schema.md) |
+| **Ground objects** (fixed obstacles + placed/routed movers — cars & trailers; the Caddy hard-door egress gate; the soft right/left-region preference; movers are solver-placed since #604) | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md) + [ADR-0025](docs/adr/0025-ground-object-taxonomy.md) (taxonomy) + [ADR-0026](docs/adr/0026-caddy-hard-door-egress.md) (Caddy egress) + [ADR-0008](docs/adr/0008-inter-plane-spread-soft-preference.md) (region soft-term amendment) + [ADR-0010](docs/adr/0010-reeds-shepp-motion-model.md) (mover motion) |
 | Why the project targets a single Python (3.12), not a range | [ADR-0009](docs/adr/0009-single-supported-python-version.md) |
 | All architecture decisions, including superseded ones | [`docs/adr/`](docs/adr/) |
 
@@ -55,6 +56,8 @@ If you find yourself about to write a domain assertion in this file, **don't** �
 | `hotfix/<slug>` | Only if needed; off `main`. | No, only via PR |
 
 `required_linear_history` must **never** be enabled — it blocks GitFlow's release flow, which merges each `release/*` into both `main` and `develop`. Feature PRs land as merge commits too (squash/rebase merging is disabled repo-wide as a release-safety guardrail). The strategy is recorded in [ADR-0014](docs/adr/0014-merge-commit-only-history-strategy.md), superseding the never-adopted [ADR-0011](docs/adr/0011-linear-history-strategy-under-gitflow.md).
+
+**Releasing** (two skills, in order). `/release-prep version=X.Y.Z` promotes the CHANGELOG `[Unreleased]` block + runs a doc audit, landing via a PR that **must merge first**; then `/release-cut version=X.Y.Z` bumps `pyproject.toml` and opens the release→`main` + back-merge→`develop` PRs (its Check E refuses unless develop already carries the `[X.Y.Z]` heading). After the release PR merges, tag the **main merge commit** with an **annotated** `git tag -a vX.Y.Z` — **not** `git tag -s`: releases are signed by `release.yml`'s **Sigstore keyless cosign on the artifacts** (CI OIDC, no stored key), not a GPG-signed tag. `release.yml` then **auto-populates the Release notes from the tagged commit's `## [X.Y.Z]` CHANGELOG block** (#486) — only run `gh release edit vX.Y.Z --notes-file` if the workflow logged the CHANGELOG-mismatch fallback warning. Pushing the tag isn't a merge, so Claude may do it on the user's go-ahead — `gh pr merge` stays the user's alone.
 
 ### Per-PR process
 
@@ -81,6 +84,7 @@ deps: `gh api -X POST repos/DocGerd/hangarfit/issues/<n>/dependencies/blocked_by
 - Every change is tracked by a GitHub issue. No code without an issue.
 - Issues are organized into milestones (one milestone = one releasable cut).
 - PR bodies link to issues with `Closes #N` / `Fixes #N` (the body, not the title — only body syntax auto-closes).
+- Each user-facing change carries its own `CHANGELOG.md [Unreleased]` entry; `/release-prep` only *promotes* that block (never authors it), so any missing entries must be backfilled at cut time.
 
 ---
 
@@ -150,11 +154,11 @@ Vulnerability reporting lives in [SECURITY.md](SECURITY.md). The rationale for t
 
 ## Open questions / TBD before trusting output
 
-- **`data/` is synthetic.** Every aircraft (`measured: false` in `fleet.yaml`) and the hangar in `data/hangar.yaml` are eyeballed placeholders — kept deliberately as the stable demo/test fixtures.
-- **Real data lives in [`examples/herrenteich/`](examples/herrenteich/README.md)** (since #426): the DWG-measured L-shaped hangar (15.08 × 31.76 m, 13.46 m door) and the eight published-spec occupants (still `measured: false`). The two gaps it surfaced are **both fixed** — the back-right office **notch** is modelled as a `structural_notches` keep-out ([ADR-0018](docs/adr/0018-non-rectangular-hangar-footprint.md), epic #527), and `solve`'s trivial-infeasibility glider area-gate now sums part footprints, not bounding boxes (#425), so glider fleets reach the search.
+- **`data/` is now a per-object catalog of best-available specs (#595).** Aircraft are defined in [`data/catalog/`](data/catalog/) (one file per aircraft, with a `type:` discriminator) and referenced by path from the thin `data/fleet.yaml` manifest; a manifest entry may override per-fleet operational flags (`movement_mode`/`tow_pivotable`) on the shared static definition. The eight Airfield Herrenteich occupants carry real published-spec / TCDS-sourced numbers — a **single central catalog shared with `examples/herrenteich/`** (#594, no per-world duplication); `fuji`/`cessna_150` (not based there) remain eyeballed placeholders. Every entry keeps `measured: false` (none are on-site tape/laser measurements). `data/hangar.yaml` is still a placeholder.
+- **Real data lives in [`examples/herrenteich/`](examples/herrenteich/README.md)** (since #426): the DWG-measured L-shaped hangar (15.08 × 31.76 m, 13.46 m door) and the eight published-spec occupants — now defined once in the shared `data/catalog/` and pulled in by herrenteich's `fleet.yaml` manifest (#595; still `measured: false`). The two gaps it surfaced are **both fixed** — the back-right office **notch** is modelled as a `structural_notches` keep-out ([ADR-0018](docs/adr/0018-non-rectangular-hangar-footprint.md), epic #527), and `solve`'s trivial-infeasibility glider area-gate now sums part footprints, not bounding boxes (#425), so glider fleets reach the search.
 - **Placeholder hangar can't fit the full fleet.** The placeholder hangar in [`data/hangar.yaml`](data/hangar.yaml) — widened 18 → 22 m for the #519/#520 empennage tail surfaces, which consume lateral room — is still too tight to fit every aircraft at once under the placeholder clearance budget. The default [`examples/layouts/example.yaml`](examples/layouts/example.yaml) is a deliberate subset (5 parked + the Scheibe in the maintenance bay); test fixtures that need the full fleet use [`tests/fixtures/test_hangar_large.yaml`](tests/fixtures/test_hangar_large.yaml). The `max_restarts` exhausted-budget determinism canary keeps its own dedicated tight 18 m fixture (`solve_canary_six_planes_tight.yaml`) so demo-hangar tweaks can't re-break it.
 
-The collision checker will run on the `data/` placeholders, but until those are real, output on them is illustrative only (the `examples/herrenteich/` hangar is real; its fleet is published-spec).
+The collision checker runs on the `data/catalog/` aircraft (now mostly real published-spec), but `data/hangar.yaml` stays a placeholder, so layouts on the synthetic hangar remain illustrative (the `examples/herrenteich/` hangar is real; its fleet is the shared published-spec catalog).
 
 ---
 
@@ -171,6 +175,13 @@ pytest
 pytest -m slow
 # Or run everything regardless of marker
 pytest -m ""
+
+# Mirror CI's #492 two-pass split locally (~3.5× vs a plain serial `pytest`; #624).
+# A bare `pytest -n auto` is UNSAFE — it re-flakes the @serial wall-clock
+# canaries (rationale: docs/dev/test-flakes-and-ci-gotchas.md §1):
+make test        # two-pass split: parallel bulk + serial canaries (the safe mirror)
+make test-fast   # parallel bulk only (skips the serial canaries — faster iteration)
+# `make help` lists every target (test-slow / lint / typecheck / format / check).
 
 # GOTCHA (test flakes + CI quirks) → docs/dev/test-flakes-and-ci-gotchas.md.
 # Read it before treating a determinism/coverage CI failure as a regression: the
@@ -290,3 +301,14 @@ gh pr create --draft --base develop --title "..." --body "Closes #N ..."
 # ... review arc; then flip out of draft when clean ...
 gh pr ready <n>
 ```
+
+## graphify (optional)
+
+graphify is an **optional, per-developer** tool — it is *not* required to work on this project, and `graphify-out/` is gitignored, so nothing in the build / test / CI depends on it. **If** a contributor has graphify installed and `graphify-out/graph.json` exists, it provides a knowledge graph (god nodes, community structure, cross-file relationships) that can scope codebase questions faster than raw grep:
+
+- For "what/where/how-does-X-relate/impact" questions, prefer `graphify query "<question>"` (also `graphify path "<A>" "<B>"` for relationships, `graphify explain "<concept>"` for a focused concept) — these return a scoped subgraph, usually much smaller than `GRAPH_REPORT.md` or raw grep output. Use raw grep/read for line-exact code you're about to modify.
+- If `graphify-out/wiki/index.md` exists, use it for broad navigation instead of raw source browsing.
+- Read `graphify-out/GRAPH_REPORT.md` only for broad architecture review, or when query/path/explain don't surface enough context.
+- After modifying code, run `graphify update .` to keep the graph current (AST-only, no API cost).
+
+If graphify is not installed, ignore this section.

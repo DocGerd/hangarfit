@@ -17,7 +17,7 @@ determinism, or the collision model.
   `docs/brand-guidelines.md`.
 - **2D tokens & code:** `src/hangarfit/visualize.py` (top brand-palette block).
 - **3D surface:** `src/hangarfit/_viewer_assets/viewer.js`,
-  `src/hangarfit/viewer.py` (`_CSS` / `_HUD`); schema `docs/architecture/scene-v1-schema.md`; rationale ADR-0017.
+  `src/hangarfit/viewer.py` (`_CSS` / `_HUD`); schema `docs/architecture/scene-v2-schema.md`; rationale ADR-0017.
 - **Marks:** `docs/assets/{banner,mark,monogram,avatar,favicon}.svg`.
 
 ---

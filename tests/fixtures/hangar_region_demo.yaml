@@ -1,0 +1,23 @@
+# Test-only roomy hangar for the #604 right-region demo.
+#
+# Deliberately bay-free on the RIGHT side: the small maintenance bay sits in the
+# back-LEFT corner (x ∈ [1, 7], y ∈ [24, 30]) so the right half of the floor is
+# clear for the right-region soft preference to pull the glider trailers toward
+# the right wall (x → width_m). 30 × 24 m gives ample x-room so the pull is
+# unambiguous and the 2 aircraft + 2 trailers + fixed fuel trailer fit with slack.
+length_m: 30.0
+width_m: 24.0
+
+door:
+  center_x_m: 12.0
+  width_m: 18.0
+
+maintenance_bay:
+  center_x_m: 4.0      # x ∈ [1, 7]  (back-left, away from the right-region target)
+  width_m: 6.0
+  depth_m: 6.0         # back 6 m: y ∈ [24, 30]
+
+clearance_m: 0.3
+wing_layer_clearance_m: 0.2
+
+max_carts: 1

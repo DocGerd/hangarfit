@@ -223,7 +223,7 @@ language pytest cannot exercise — the precise hazard ADR-0002/0017 guard again
   BRAND blob the typed `brand-contract.ts` mirrors), [ADR-0003](0003-rr-mc-solver-algorithm.md)
   (the determinism spirit the build-drift guard extends).
 - Related specs: [`docs/superpowers/specs/2026-06-04-viewer-typescript-architecture-design.md`](../superpowers/specs/2026-06-04-viewer-typescript-architecture-design.md);
-  schema reference [`docs/architecture/scene-v1-schema.md`](../architecture/scene-v1-schema.md).
+  schema reference [`docs/architecture/scene-v2-schema.md`](../architecture/scene-v2-schema.md).
 - Related issues / PRs: #436 (epic), #437 (toolchain), #438 (CI), #439 (port), #440
   (typed contract + interaction seam), #441 (Python `priority` groundwork), #442
   (deferred interactive editor — Stage 2 round-trip), #444 (deferred JSON-Schema

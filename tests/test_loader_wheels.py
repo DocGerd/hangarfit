@@ -8,12 +8,7 @@ from textwrap import dedent
 import pytest
 
 from hangarfit.loader import LoaderError, load_fleet
-
-
-def _write(path: Path, text: str) -> Path:
-    path.write_text(text, encoding="utf-8")
-    return path
-
+from tests._fleet_test_utils import explode_fleet as _explode_fleet
 
 # Reusable per-test body. Tests can append a `    wheels:` block (note the
 # 4-space indent so it sits at the same level as `parts:`).
@@ -59,7 +54,7 @@ class TestWheelsLoadingHappyPath:
             "      track_m: 1.80\n"
             "      third_wheel_offset_x_m: 2.50\n"
         )
-        fleet = load_fleet(_write(tmp_path / "f.yaml", body))
+        fleet = load_fleet(_explode_fleet(tmp_path, body))
         a = fleet["testplane"]
         assert a.wheels is not None
         assert a.wheels.main_offset_x_m == -0.10
@@ -69,7 +64,7 @@ class TestWheelsLoadingHappyPath:
     def test_no_wheels_block_now_raises(self, tmp_path: Path) -> None:
         """A missing ``wheels:`` block is a hard load error (#322 ADR-0013)."""
         with pytest.raises(LoaderError, match=r"wheels: block is required"):
-            load_fleet(_write(tmp_path / "f.yaml", _NOSEWHEEL_BODY))
+            load_fleet(_explode_fleet(tmp_path, _NOSEWHEEL_BODY))
 
 
 class TestWheelsLoadingErrorPaths:
@@ -78,14 +73,14 @@ class TestWheelsLoadingErrorPaths:
             "    wheels:\n      main_offset_x_m: -0.10\n      third_wheel_offset_x_m: 2.50\n"
         )
         with pytest.raises(LoaderError, match=r"wheels.*track_m"):
-            load_fleet(_write(tmp_path / "f.yaml", body))
+            load_fleet(_explode_fleet(tmp_path, body))
 
     def test_nosewheel_missing_third_wheel(self, tmp_path: Path) -> None:
         body = _with_wheels_block(
             "    wheels:\n      main_offset_x_m: -0.10\n      track_m: 1.80\n"
         )
         with pytest.raises(LoaderError, match=r"wheels.*third_wheel_offset_x_m"):
-            load_fleet(_write(tmp_path / "f.yaml", body))
+            load_fleet(_explode_fleet(tmp_path, body))
 
     def test_monowheel_with_track_rejected(self, tmp_path: Path) -> None:
         body = (
@@ -95,7 +90,7 @@ class TestWheelsLoadingErrorPaths:
             "      third_wheel_offset_x_m: 2.50\n"
         )
         with pytest.raises(LoaderError, match=r"monowheel.*track_m"):
-            load_fleet(_write(tmp_path / "f.yaml", body))
+            load_fleet(_explode_fleet(tmp_path, body))
 
     def test_nosewheel_third_wheel_behind_mains_rejected(self, tmp_path: Path) -> None:
         body = _with_wheels_block(
@@ -105,7 +100,7 @@ class TestWheelsLoadingErrorPaths:
             "      third_wheel_offset_x_m: -2.50\n"  # WRONG sign for nosewheel
         )
         with pytest.raises(LoaderError, match=r"nosewheel.*forward"):
-            load_fleet(_write(tmp_path / "f.yaml", body))
+            load_fleet(_explode_fleet(tmp_path, body))
 
     def test_tailwheel_third_wheel_forward_of_mains_rejected(self, tmp_path: Path) -> None:
         body = (
@@ -118,7 +113,7 @@ class TestWheelsLoadingErrorPaths:
             "      third_wheel_offset_x_m: 3.00\n"  # WRONG sign for tailwheel
         )
         with pytest.raises(LoaderError, match=r"tailwheel.*aft"):
-            load_fleet(_write(tmp_path / "f.yaml", body))
+            load_fleet(_explode_fleet(tmp_path, body))
 
     def test_unsupported_gear_rejected(self, tmp_path: Path) -> None:
         """An unknown gear value reaches _parse_wheels (evaluated before
@@ -130,7 +125,7 @@ class TestWheelsLoadingErrorPaths:
             "      third_wheel_offset_x_m: 2.50\n"
         )
         with pytest.raises(LoaderError, match=r"wheels.*unsupported gear 'skid'"):
-            load_fleet(_write(tmp_path / "f.yaml", body))
+            load_fleet(_explode_fleet(tmp_path, body))
 
     def test_non_mapping_wheels_block_wraps_to_loader_error(self, tmp_path: Path) -> None:
         """A non-mapping ``wheels:`` value (e.g. a mis-indented string) raises
@@ -138,7 +133,7 @@ class TestWheelsLoadingErrorPaths:
         load_fleet's per-aircraft catch tuple."""
         body = _NOSEWHEEL_BODY + '    wheels: "not a mapping"\n'
         with pytest.raises(LoaderError, match=r"wheels.*must be a mapping"):
-            load_fleet(_write(tmp_path / "f.yaml", body))
+            load_fleet(_explode_fleet(tmp_path, body))
 
     def test_unknown_keys_rejected(self, tmp_path: Path) -> None:
         body = _with_wheels_block(
@@ -149,7 +144,7 @@ class TestWheelsLoadingErrorPaths:
             "      bogus_field: 1.0\n"
         )
         with pytest.raises(LoaderError, match=r"unknown.*bogus_field"):
-            load_fleet(_write(tmp_path / "f.yaml", body))
+            load_fleet(_explode_fleet(tmp_path, body))
 
     def test_non_positive_track_wraps_to_loader_error(self, tmp_path: Path) -> None:
         """Wheels.__post_init__ raises ValueError on track_m<=0; loader wraps it."""
@@ -160,7 +155,7 @@ class TestWheelsLoadingErrorPaths:
             "      third_wheel_offset_x_m: 2.50\n"
         )
         with pytest.raises(LoaderError, match=r"track_m must be positive"):
-            load_fleet(_write(tmp_path / "f.yaml", body))
+            load_fleet(_explode_fleet(tmp_path, body))
 
 
 class TestCrossCheck:
@@ -178,7 +173,7 @@ class TestCrossCheck:
             "      track_m: 1.80\n"
             "      third_wheel_offset_x_m: 2.50\n"
         )
-        load_fleet(_write(tmp_path / "f.yaml", body))  # no raise
+        load_fleet(_explode_fleet(tmp_path, body))  # no raise
 
     def test_turn_radius_below_band_rejected(self, tmp_path: Path) -> None:
         # wheelbase = 10.0; band [5.0, 50.0]; turn_radius_m=4.0 too small
@@ -189,7 +184,7 @@ class TestCrossCheck:
             "      third_wheel_offset_x_m: 5.0\n"
         )
         with pytest.raises(LoaderError, match=r"implausible.*wheelbase"):
-            load_fleet(_write(tmp_path / "f.yaml", body))
+            load_fleet(_explode_fleet(tmp_path, body))
 
     def test_turn_radius_above_band_rejected(self, tmp_path: Path) -> None:
         # wheelbase = 0.4; band [0.2, 2.0]; turn_radius_m=4.0 too big
@@ -200,7 +195,7 @@ class TestCrossCheck:
             "      third_wheel_offset_x_m: 0.30\n"
         )
         with pytest.raises(LoaderError, match=r"implausible.*wheelbase"):
-            load_fleet(_write(tmp_path / "f.yaml", body))
+            load_fleet(_explode_fleet(tmp_path, body))
 
     def test_always_cart_skips_cross_check(self, tmp_path: Path) -> None:
         """always_cart aircraft (turn_radius_m: null) skip the band check."""
@@ -235,7 +230,7 @@ class TestCrossCheck:
                   third_wheel_offset_x_m: 5.0
             """
         )
-        load_fleet(_write(tmp_path / "f.yaml", body))  # no raise: wheelbase=10 vs radius=null
+        load_fleet(_explode_fleet(tmp_path, body))  # no raise: wheelbase=10 vs radius=null
 
     def test_monowheel_skips_cross_check(self, tmp_path: Path) -> None:
         """Monowheel aircraft have no wheelbase concept; check is skipped."""
@@ -268,7 +263,7 @@ class TestCrossCheck:
                   main_offset_x_m: 0.0
             """
         )
-        load_fleet(_write(tmp_path / "f.yaml", body))  # no raise — no wheelbase to check
+        load_fleet(_explode_fleet(tmp_path, body))  # no raise — no wheelbase to check
 
 
 class TestMonowheelHappyPath:
@@ -286,7 +281,7 @@ class TestMonowheelHappyPath:
         # Strip the inline turn_radius_m: 4.0 line that came from _NOSEWHEEL_BODY —
         # we override it above to null for always_cart.
         body = body.replace("    turn_radius_m: 4.0\n", "")
-        fleet = load_fleet(_write(tmp_path / "f.yaml", body))
+        fleet = load_fleet(_explode_fleet(tmp_path, body))
         a = fleet["testplane"]
         assert a.wheels is not None
         assert a.wheels.main_offset_x_m == 0.0

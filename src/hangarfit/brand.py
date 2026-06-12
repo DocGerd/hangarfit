@@ -18,7 +18,7 @@ id, hatch + dashed edge in 2D; a ``⚠ conflict`` label suffix in 3D). The dark
 same plane, so 2D and 3D keep one plane→colour identity.
 
 **Render-only / determinism-neutral.** Nothing here touches the collision model,
-the determinant-−1 transform, or the ``scene/v1`` contract; changing a value
+the determinant-−1 transform, or the ``scene/v2`` contract; changing a value
 re-tints a render but never alters geometry or solver/planner output. Values
 match ``docs/assets/BRAND.md`` (esp. §2 and §4); hex casing is normalized and
 not significant (matplotlib and ``THREE.Color`` are case-insensitive).
