@@ -222,6 +222,31 @@ PRs. The current rule's decision is recorded in
 by ADR-0006**). The implementation lives in
 `src/hangarfit/collisions.py::_bay_intrusion_conflicts`.
 
+### The Caddy hard-door egress gate
+
+A `GroundObject` with `hard_door_mover: true` must be able to **drive out the
+door** against the full parked scene in any valid layout. This is a
+**routability / exit-3** rule, distinct from the static keep-outs above (exit 2):
+it is not a geometric position test but a full tow-path search.
+
+The check is implemented by `egress_first_conflict` in
+`src/hangarfit/towplanner.py`, which calls `plan_path` (Reeds–Shepp,
+[ADR-0010](../adr/0010-reeds-shepp-motion-model.md)) from the mover's parked
+slot toward a set of door-exit poses. By Reeds–Shepp reversibility, an egress
+(slot → out) is feasible if and only if the equivalent entry path (door → slot)
+exists — the same closed-form search serves both directions. A blocked egress
+raises `NoFeasiblePlanError` in `solver._tow_plan_layouts`, producing **exit 3
+(tow-unroutable)** with the mover id named on stderr.
+
+The flag is **data-driven**: the `vw_caddy` catalog entry sets
+`hard_door_mover: true`; all other entries default to `false`. When no
+`hard_door_mover` body is present the entire code path is a guarded no-op —
+layouts without such objects produce bit-identical output (ADR-0003 preserved).
+
+The decision and the real-data falsification of an earlier geometric
+"nearest-door" Conflict approach are recorded in
+[ADR-0026](../adr/0026-caddy-hard-door-egress.md) (Status: **Accepted**).
+
 ### Movement modes
 
 Each aircraft has a `movement_mode` in `{"always_cart",
