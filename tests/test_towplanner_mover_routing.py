@@ -337,3 +337,54 @@ def test_mover_routing_is_byte_identical_across_runs() -> None:
     assert [(m.plane_id, m.path) for m in a.moves] == [(m.plane_id, m.path) for m in b.moves], (
         "plan_fill must be byte-identical (ADR-0003)"
     )
+
+
+def _fixed_wall() -> GroundObject:
+    """A full-width fixed obstacle (44 m, spanning beyond the 40 m hangar) — a
+    static keep-out with no corridor around it, so a mover behind it cannot be
+    routed in from the door. A fixed_obstacle is NOT itself routed, so (unlike a
+    44 m wall *aircraft*) it doesn't abort the aircraft scan — it just blocks the
+    mover, isolating the unroutable-mover path."""
+    return GroundObject(
+        id="wall",
+        name="w",
+        parts=(_ground_part(length_m=1.0, width_m=44.0),),
+        object_class="fixed_obstacle",
+    )
+
+
+def test_unroutable_mover_is_surfaced_not_silently_dropped() -> None:
+    """#627/#612: a mover whose slot has no collision-free corridor keeps a
+    None-path Move (best-effort, ADR-0007 #197) AND is reported through the
+    optional ``unroutable_movers`` out-param — never silently dropped. The
+    ``MovesPlan`` stays byte-identical whether or not the out-param is passed (it
+    is observational, like ``apron_dropped_out``).
+
+    NON-@slow: a small global cap keeps it in the fast set so the surfacing path
+    is never dropped from coverage; the full-width wall makes the bail genuine
+    (no analytic shot), not merely budget-starved."""
+    hangar = _hangar()
+    wall = _fixed_wall()
+    caddy = _caddy(hdm=False)  # plain mover (no egress gate); slot walled off
+    layout = Layout(
+        fleet={},
+        hangar=hangar,
+        placements=(),
+        ground_objects={wall.id: wall, caddy.id: caddy},
+        ground_object_placements=(
+            Placement("wall", x_m=20.0, y_m=15.0, heading_deg=0.0, on_carts=False),
+            Placement("caddy", x_m=20.0, y_m=30.0, heading_deg=0.0, on_carts=False),
+        ),
+    )
+    movers: list[str] = []
+    plan = plan_fill(layout, unroutable_movers=movers, max_total_expansions=200)
+    # surfaced, not silently dropped
+    assert movers == ["caddy"]
+    # ...and it kept a best-effort None-path Move (not aborted/omitted)
+    caddy_move = next(m for m in plan.moves if m.plane_id == "caddy")
+    assert caddy_move.path is None
+    # byte-identical: the same fill WITHOUT the out-param yields the same plan
+    plan_no_out = plan_fill(layout, max_total_expansions=200)
+    assert [(m.plane_id, m.path) for m in plan_no_out.moves] == [
+        (m.plane_id, m.path) for m in plan.moves
+    ]

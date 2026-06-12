@@ -1488,6 +1488,16 @@ class SolverDiagnostics:
     still a valid static arrangement — the entry flags a planning gap, not
     an invalid layout.
 
+    ``unroutable_movers`` is the ground-object counterpart (#627/#612): a flat,
+    deduped, advisory tuple of the **mover** ids (cars / trailers) that could not
+    be routed and so kept a best-effort ``Move(path=None)`` instead of aborting
+    the fill (ADR-0007 #197). Unlike ``unroutable_planes``, a None-path mover does
+    **not** make the whole layout's plan ``None`` (the plan is still returned with
+    the mover drawn as a static body), which is exactly why it needs its own
+    advisory list rather than reusing ``unroutable_planes``. Empty when every
+    mover routed, when there are no movers, or when tow-planning was not attempted.
+    Advisory / RNG-free ⇒ ADR-0003-safe.
+
     ``min_pairwise_gap_m`` is index-aligned with :attr:`SolveResult.layouts`:
     the achieved minimum plan-view gap (m) between any two planes in that
     returned layout — the quality the best-of-all-basins spread selection
@@ -1558,6 +1568,7 @@ class SolverDiagnostics:
     apron_shallow_drops: tuple[ApronShallowDrop, ...] = ()
     nose_out_flips: tuple[int, ...] = ()
     region_alignment: tuple[tuple[RegionAlignment, ...], ...] = ()
+    unroutable_movers: tuple[str, ...] = ()
 
     def __post_init__(self) -> None:
         if (self.best_partial is None) != (self.best_partial_layout is None):

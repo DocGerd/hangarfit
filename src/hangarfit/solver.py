@@ -727,10 +727,12 @@ def _tow_plan_layouts(
     plan_paths: bool,
     tow_heuristic: Literal["euclidean", "grid"],
     tow_max_expansions: int | None,
-) -> tuple[tuple[MovesPlan | None, ...], tuple[str, ...], tuple[ApronShallowDrop, ...]]:
+) -> tuple[
+    tuple[MovesPlan | None, ...], tuple[str, ...], tuple[ApronShallowDrop, ...], tuple[str, ...]
+]:
     """Tow-plan every returned layout (best-effort enrichment, #197).
 
-    Returns ``(plans, unroutable, apron_drops)``. ``plans`` is index-aligned with
+    Returns ``(plans, unroutable, apron_drops, unroutable_movers)``. ``plans`` is index-aligned with
     ``accepted_layouts``. The v2 planner (Reeds–Shepp arcs + bounded Hybrid-A* —
     #222/#261 under ADR-0007 + ADR-0010) cannot route dense multi-plane fills and
     has documented false-negatives, so an un-routable layout is recorded as
@@ -747,15 +749,22 @@ def _tow_plan_layouts(
     never surface — only the chosen result's diagnostics are built (see
     :func:`solve`). Empty when no returned layout had a too-shallow drop.
 
+    ``unroutable_movers`` is the ground-object counterpart (#627/#612): the flat,
+    deduped list of mover ids that could not be routed and so kept a best-effort
+    ``Move(path=None)`` (collected via plan_fill's out-param, like ``apron_drops``).
+    Unlike ``unroutable`` (aircraft), a None-path mover does not make the layout's
+    plan ``None`` — the plan is still built — so it is collected on the SUCCESS path.
+
     With ``plan_paths=False`` no planning runs and ``plans`` is all-``None``
     (still index-aligned), with no ``unroutable`` planes and no ``apron_drops``.
     """
     if not plan_paths:
-        return (None,) * len(accepted_layouts), (), ()
+        return (None,) * len(accepted_layouts), (), (), ()
 
     built: list[MovesPlan | None] = []
     unroutable: list[str] = []
     apron_drops: list[ApronShallowDrop] = []
+    mover_drops: list[str] = []
     for layout in accepted_layouts:
         # Diagnostics-only out-param (#503): plan_fill populates this with the
         # too-shallow-apron drops of THIS layout's tow plan, plan-inert — it is
@@ -765,21 +774,25 @@ def _tow_plan_layouts(
         # collection so a plane dropped across multiple layouts appears once per
         # layout (the CLI dedups by plane id before warning).
         layout_drops: list[ApronShallowDrop] = []
+        layout_movers: list[str] = []
         try:
             # Default path calls ``plan_fill(layout)`` with NO budget kwargs (only
-            # the plan-inert diagnostics out-param), so the ADR-0003 determinism
-            # canaries are unaffected (the out-param never changes the plan). Since
+            # the plan-inert diagnostics out-params), so the ADR-0003 determinism
+            # canaries are unaffected (the out-params never change the plan). Since
             # #336 the shipped default is grid + the module budgets, which is
             # exactly what a bare ``plan_fill(layout)`` applies; an explicit
             # euclidean / custom budget takes the kwargs path below.
             if tow_heuristic == "grid" and tow_max_expansions is None:
-                plan = plan_fill(layout, apron_dropped_out=layout_drops)
+                plan = plan_fill(
+                    layout, apron_dropped_out=layout_drops, unroutable_movers=layout_movers
+                )
             else:
                 plan = plan_fill(
                     layout,
                     heuristic=tow_heuristic,
                     max_expansions=tow_max_expansions,
                     apron_dropped_out=layout_drops,
+                    unroutable_movers=layout_movers,
                 )
             # #603: a hard-door mover (e.g. the rescue Caddy) must be able to drive
             # OUT the door against the full parked scene, else the layout is
@@ -798,6 +811,10 @@ def _tow_plan_layouts(
                         raise NoFeasiblePlanError(gp.plane_id, egress)
             built.append(plan)
             apron_drops.extend(layout_drops)
+            # Unlike apron_drops, mover drops are collected on SUCCESS: a None-path
+            # mover does not abort the layout's plan (#627/#612), so the plan IS
+            # built and its unroutable movers are the ones the user receives.
+            mover_drops.extend(layout_movers)
         except NoFeasiblePlanError as e:
             built.append(None)
             unroutable.append(e.plane_id)
@@ -815,7 +832,9 @@ def _tow_plan_layouts(
                 e.conflict.kind,
                 e.conflict.detail,
             )
-    return tuple(built), tuple(unroutable), tuple(apron_drops)
+    # dict.fromkeys: order-preserving dedup — a mover unroutable in several
+    # returned layouts is named once (advisory list, the CLI warns once).
+    return tuple(built), tuple(unroutable), tuple(apron_drops), tuple(dict.fromkeys(mover_drops))
 
 
 def _build_found_result(
@@ -848,7 +867,7 @@ def _build_found_result(
     # region preferences reports `()` (not a tuple of empty tuples) — #604.
     region_alignment = region_alignment_per_layout if any(region_alignment_per_layout) else ()
     status: SolveStatus = "found" if len(accepted_layouts) >= alternatives else "found_partial"
-    plans, unroutable, apron_drops = _tow_plan_layouts(
+    plans, unroutable, apron_drops, unroutable_movers = _tow_plan_layouts(
         accepted_layouts,
         plan_paths=plan_paths,
         tow_heuristic=tow_heuristic,
@@ -873,6 +892,7 @@ def _build_found_result(
             apron_shallow_drops=apron_drops,
             nose_out_flips=nose_out_flips,
             region_alignment=region_alignment,
+            unroutable_movers=unroutable_movers,
         ),
     )
 

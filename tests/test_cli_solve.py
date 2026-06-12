@@ -867,7 +867,13 @@ class TestSolveRenderPaths:
 
     @staticmethod
     def _result(
-        status, layouts, plans, unroutable=(), spread_fallback_applied=False, apron_drops=()
+        status,
+        layouts,
+        plans,
+        unroutable=(),
+        spread_fallback_applied=False,
+        apron_drops=(),
+        unroutable_movers=(),
     ):
         from hangarfit.models import SolverDiagnostics, SolveResult
 
@@ -880,6 +886,7 @@ class TestSolveRenderPaths:
             unroutable_planes=unroutable,
             spread_fallback_applied=spread_fallback_applied,
             apron_shallow_drops=apron_drops,
+            unroutable_movers=unroutable_movers,
         )
         return SolveResult(status=status, layouts=layouts, plans=plans, diagnostics=diag)
 
@@ -906,6 +913,31 @@ class TestSolveRenderPaths:
         rc = main(["solve", SMOKE_FIXTURE, "--render-paths"])
         assert rc == 2
         assert "requires --render" in capsys.readouterr().err
+
+    def test_unroutable_mover_warned_on_stderr(self, tmp_path, monkeypatch, capsys):
+        """#627/#612: a best-effort un-routable mover (it keeps path=None inside an
+        otherwise-present plan) is NAMED on stderr under --render-paths — the
+        deferred half of #602's 'no silent skip' acceptance, for movers."""
+        layout = self._layout()
+        plan = self._plan(layout)
+        self._patch_solve(
+            monkeypatch,
+            self._result("found", (layout,), (plan,), unroutable_movers=("trailer1",)),
+        )
+        rc = main(
+            [
+                "solve",
+                SMOKE_FIXTURE,
+                "--render",
+                str(tmp_path / "p.png"),
+                "--render-paths",
+                "--seed",
+                "42",
+            ]
+        )
+        assert rc == 0
+        err = capsys.readouterr().err
+        assert "trailer1" in err and "could not be routed" in err
 
     def test_without_flag_solve_is_not_asked_to_plan(self, tmp_path, monkeypatch):
         captured = self._patch_solve(monkeypatch, self._result("found", (self._layout(),), (None,)))
