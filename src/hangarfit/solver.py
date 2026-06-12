@@ -1313,6 +1313,31 @@ def _back_bias_energy(placements: dict[str, Placement], scenario: Scenario) -> f
     return sum((length - placements[pid].y_m) / length for pid in sorted(placements))
 
 
+def _region_energy(placements: Mapping[str, Placement], scenario: Scenario) -> float:
+    """Soft right/left wall-alignment bias ``R = Σ wₒ·dₒ / W`` (#604).
+
+    For each body ``o`` carrying a :class:`RegionPreference`, ``dₒ`` is the
+    distance from ``x_o`` to the preferred wall — ``(W − x_o)`` for ``"right"``,
+    ``x_o`` for ``"left"`` — normalized by ``W = hangar.width_m`` so one weight
+    reads across hangar sizes (mirrors ``_back_bias_energy``'s ``length_m``
+    normalization, #320). Minimized when the body sits at its preferred wall.
+    Summed over preferring ids in ``sorted`` order (order-stable float sum).
+    RNG-free. ``0.0`` when no preferences (inert ⇒ byte-identical, ADR-0003)."""
+    prefs = scenario.region_preferences
+    if not prefs:
+        return 0.0
+    width = scenario.hangar.width_m
+    total = 0.0
+    for pid in sorted(prefs):
+        if pid not in placements:
+            continue  # e.g. a maintenance plane (treated as away) — not placed
+        pref = prefs[pid]
+        x = placements[pid].x_m
+        d = (width - x) if pref.side == "right" else x
+        total += pref.weight * (d / width)
+    return total
+
+
 def _resolve_spread_scale(scenario: Scenario, search: SearchConfig) -> float:
     """Repulsion length-scale for spread (spec §4): explicit override or
     20% of the smaller hangar dimension. Single source so ``_spread`` and
@@ -1453,10 +1478,12 @@ def _spread(
 
     movable = sorted(pid for pid in placements if pid not in pinned_planes)
     back_fill = search.back_bias_weight > 0.0
-    if not movable or (len(placements) < 2 and not back_fill):
-        # Nothing to optimize: no movable target, or <2 planes with no back-fill
-        # bias (inter-plane energy is identically 0.0). With back-fill active a
-        # lone plane is still pulled to the back wall, so we do NOT bail there.
+    region_active = bool(scenario.region_preferences)
+    if not movable or (len(placements) < 2 and not back_fill and not region_active):
+        # Nothing to optimize: no movable target, or <2 planes with neither the
+        # back-fill nor the region bias active (inter-plane energy is identically
+        # 0.0). With back-fill OR a region preference active a lone body is still
+        # pulled toward its wall, so we do NOT bail there.
         return placements
 
     def _energy(
@@ -1473,6 +1500,8 @@ def _spread(
         e = _inter_plane_energy(trial, scenario, scale, gap_cache=gap_cache, moved=moved)
         if back_fill:
             e += search.back_bias_weight * _back_bias_energy(trial, scenario)
+        if region_active:
+            e += _region_energy(trial, scenario)
         return e
 
     current_energy = _energy(placements)
