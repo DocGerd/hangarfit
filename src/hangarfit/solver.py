@@ -34,7 +34,7 @@ from dataclasses import replace
 from typing import Literal, NamedTuple, cast
 
 from hangarfit.collisions import check as check_layout
-from hangarfit.geometry import WorldPart, aircraft_parts_world, cached_parts_world, pose_cache_scope
+from hangarfit.geometry import WorldPart, cached_parts_world, pose_cache_scope
 from hangarfit.models import (
     Aircraft,
     ApronShallowDrop,
@@ -1218,16 +1218,16 @@ def _body(scenario: Scenario, body_id: str) -> Aircraft | GroundObject:
 
 
 def _body_parts_world(scenario: Scenario, body_id: str, placement: Placement) -> list[WorldPart]:
-    """World parts for any placeable body (#604). Aircraft reuse the pose-memoized
-    ``cached_parts_world`` — BYTE-IDENTICAL to the pre-#604 solver path (ADR-0003);
-    a GroundObject mover goes through the union-typed uncached ``aircraft_parts_world``,
-    matching exactly how the towplanner computes mover geometry (#602)."""
+    """World parts for any placeable body (#604/#626). Both an Aircraft and a
+    GroundObject mover reuse the pose-memoized ``cached_parts_world`` — the cache
+    key ``(plane_id, x, y, heading)`` and the union-typed transform are body-
+    generic, so a mover obstacle's fixed-pose geometry is now served from the
+    cache instead of rebuilt on every collision/clearance check (#453 churn that
+    movers previously bypassed). BYTE-IDENTICAL to the pre-#604 solver path
+    (ADR-0003): the cache returns the same immutable ``WorldPart`` list the pure
+    transform would build, exact-float keyed."""
     body = _body(scenario, body_id)
-    return list(
-        cached_parts_world(body, placement)
-        if isinstance(body, Aircraft)
-        else aircraft_parts_world(body, placement)
-    )
+    return list(cached_parts_world(body, placement))
 
 
 def _priority_weight(scenario: Scenario, pid: str) -> float:

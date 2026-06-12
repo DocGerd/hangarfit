@@ -9,6 +9,8 @@ route, though the actual route search is deferred to #602 (their move carries a
 
 from __future__ import annotations
 
+import pytest
+
 from hangarfit.models import Door, GroundObject, Hangar, Layout, MaintenanceBay, Part, Placement
 from hangarfit.towplanner import _build_obstacles, plan_fill
 from tests.conftest import make_test_aircraft
@@ -177,3 +179,58 @@ def test_empty_ground_objects_no_extra_obstacles() -> None:
     obstacles = _build_obstacles(layout, mover_id="p1")
     plane_ids = {wp.plane_id for wp in obstacles.world_parts}
     assert plane_ids == {"p2"}
+
+
+def test_static_mover_obstacle_served_from_pose_cache(monkeypatch: pytest.MonkeyPatch) -> None:
+    """#626: within a ``pose_cache_scope``, a STATIC mover obstacle's world parts
+    are memoized across repeated ``_build_obstacles`` calls instead of rebuilt each
+    time — the pre-#626 uncached ``aircraft_parts_world`` path that drove the #604
+    routing congestion. Pre-#626 the trailer is rebuilt once per ``_build_obstacles``
+    call; after #626 it is built once and served from the cache thereafter."""
+    import hangarfit.geometry as geom
+    import hangarfit.towplanner as tp
+    from hangarfit.geometry import pose_cache_scope
+
+    hangar = _hangar()
+    ac = make_test_aircraft(id="p1")
+    trailer = GroundObject(
+        id="trailer",
+        name="t",
+        parts=(_ground_part(width_m=2.5, length_m=8.0),),
+        object_class="placed_routed_mover",
+        motion_mode="towed",
+        turn_radius_m=None,
+    )
+    layout = Layout(
+        fleet={ac.id: ac},
+        hangar=hangar,
+        placements=(Placement(plane_id="p1", x_m=6.0, y_m=30.0, heading_deg=0.0, on_carts=False),),
+        ground_objects={trailer.id: trailer},
+        ground_object_placements=(
+            Placement(plane_id="trailer", x_m=10.0, y_m=20.0, heading_deg=90.0, on_carts=False),
+        ),
+    )
+
+    # Count world-part builds per body id. cached_parts_world (post-#626) builds
+    # via geometry's binding; the pre-#626 _build_obstacles called towplanner's
+    # imported binding directly for the mover (removed by #626, so patch it
+    # tolerantly so this test is meaningful on both sides of the change).
+    real = geom.aircraft_parts_world
+    builds: list[str] = []
+
+    def _counting(obj: object, placement: object) -> object:
+        builds.append(obj.id)  # type: ignore[attr-defined]
+        return real(obj, placement)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(geom, "aircraft_parts_world", _counting)
+    monkeypatch.setattr(tp, "aircraft_parts_world", _counting, raising=False)
+
+    # Route the aircraft (mover_id="p1") so the trailer is a STATIC obstacle.
+    with pose_cache_scope():
+        _build_obstacles(layout, mover_id="p1")
+        _build_obstacles(layout, mover_id="p1")
+
+    assert builds.count("trailer") == 1, (
+        f"static mover obstacle rebuilt {builds.count('trailer')}× across two "
+        "_build_obstacles calls — expected 1 (the pose cache should serve it; #626)"
+    )

@@ -45,6 +45,18 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Changed
 
+- **Pose cache extended to ground-object movers (#626).** The #453 per-solve
+  geometry memo now serves any placeable body — a `GroundObject` car/trailer as
+  well as an aircraft — so a static mover obstacle's world parts are no longer
+  rebuilt on every collision/clearance check (the #453 churn movers bypassed,
+  which drove the #604 mover-routing congestion). `plan_fill` now also runs
+  inside a pose-cache scope, so a *standalone* fill memoizes its obstacle field
+  across the whole search (previously only an in-`solve` fill did). Output is
+  **byte-identical** (ADR-0003: the cache returns the same immutable `WorldPart`
+  list, exact-float keyed); the speed-up is routing-only — on the measured #604
+  right-region two-trailer demo the standalone fill dropped ~1.8× and an
+  aircraft-only fill ~2×. (#626)
+
 - **Local test ergonomics: two-pass `make test` + host-relative perf canary
   (#624, #625).** A root `Makefile` mirrors CI's #492 two-pass test split for
   local dev (`make test` = a parallel bulk pass + a separate serial pass for the

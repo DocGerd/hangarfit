@@ -22,7 +22,7 @@ from __future__ import annotations
 import pytest
 
 from hangarfit.geometry import aircraft_parts_world, cached_parts_world, pose_cache_scope
-from hangarfit.models import Aircraft, Part, Placement, Wheels
+from hangarfit.models import Aircraft, GroundObject, Part, Placement, Wheels
 
 
 def _probe_aircraft() -> Aircraft:
@@ -62,9 +62,46 @@ def _probe_aircraft() -> Aircraft:
     )
 
 
+def _probe_ground_object() -> GroundObject:
+    """A placed-routed mover (trailer) — the #626 cache target. Only the geometry
+    matters here; the motion fields just satisfy the model invariants."""
+    return GroundObject(
+        id="trailer",
+        name="Trailer",
+        object_class="placed_routed_mover",
+        motion_mode="towed",
+        turn_radius_m=None,
+        parts=(
+            Part(
+                kind="ground",
+                length_m=8.0,
+                width_m=2.5,
+                offset_x_m=0.0,
+                offset_y_m=0.0,
+                angle_deg=0.0,
+                z_bottom_m=0.0,
+                z_top_m=2.0,
+            ),
+        ),
+    )
+
+
 def _coords(parts: list) -> list:
     """Exterior coords of every part polygon — a bit-exact geometry fingerprint."""
     return [list(p.polygon.exterior.coords) for p in parts]
+
+
+def test_ground_object_mover_is_a_cache_hit() -> None:
+    """#626: a GroundObject mover memoizes by pose exactly like an aircraft — a
+    repeated pose returns the *same* object (no rebuild), and the byte-identical
+    geometry the pure union-typed transform produces."""
+    go = _probe_ground_object()
+    pl = Placement(plane_id="trailer", x_m=5.0, y_m=12.0, heading_deg=20.0, on_carts=False)
+    with pose_cache_scope():
+        first = cached_parts_world(go, pl)
+        second = cached_parts_world(go, pl)
+    assert second is first  # hit: identical object, geometry not rebuilt
+    assert _coords(first) == _coords(aircraft_parts_world(go, pl))
 
 
 def test_repeated_pose_is_a_cache_hit() -> None:

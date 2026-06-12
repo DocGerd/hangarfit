@@ -307,8 +307,12 @@ def pose_cache_scope() -> Iterator[None]:
         _pose_cache.reset(token)
 
 
-def cached_parts_world(aircraft: Aircraft, placement: Placement) -> list[WorldPart]:
+def cached_parts_world(obj: Aircraft | GroundObject, placement: Placement) -> list[WorldPart]:
     """Pose-memoized :func:`aircraft_parts_world` for the active solve scope.
+
+    Accepts any placeable body — an :class:`~hangarfit.models.Aircraft` or a
+    :class:`~hangarfit.models.GroundObject` mover (#626) — since the underlying
+    transform is union-typed and the key is pose-generic.
 
     When a :func:`pose_cache_scope` is active, the result is cached on
     ``(plane_id, x_m, y_m, heading_deg)`` and reused for the lifetime of that
@@ -317,14 +321,15 @@ def cached_parts_world(aircraft: Aircraft, placement: Placement) -> list[WorldPa
     so non-solve callers stay byte-identical (just uncached).
 
     Caller contract: the key omits the parts/geometry, so within one scope a
-    given ``plane_id`` must always resolve to the same aircraft geometry. That
-    holds because a single ``solve()`` is driven by one fixed ``scenario.fleet``
-    (one :class:`~hangarfit.models.Aircraft` per id) — which is exactly why the
-    cache is per-solve and never module-global.
+    given ``plane_id`` must always resolve to the same body geometry. That holds
+    because a single ``solve()`` (or :func:`~hangarfit.towplanner.plan_fill`) is
+    driven by one fixed ``scenario.fleet`` + ``ground_objects`` (one
+    :class:`~hangarfit.models.Aircraft` / :class:`~hangarfit.models.GroundObject`
+    per id) — which is exactly why the cache is per-solve and never module-global.
     """
     cache = _pose_cache.get()
     if cache is None:
-        return aircraft_parts_world(aircraft, placement)
+        return aircraft_parts_world(obj, placement)
     key: _PoseKey = (
         placement.plane_id,
         placement.x_m,
@@ -332,5 +337,5 @@ def cached_parts_world(aircraft: Aircraft, placement: Placement) -> list[WorldPa
         placement.heading_deg,
     )
     if key not in cache:
-        cache[key] = aircraft_parts_world(aircraft, placement)
+        cache[key] = aircraft_parts_world(obj, placement)
     return cache[key]
