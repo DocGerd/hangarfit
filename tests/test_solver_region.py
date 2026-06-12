@@ -65,3 +65,20 @@ def test_solve_region_pref_active_deterministic(region_scenario):
     a = solve(region_scenario, search=cfg, seed=0, budget_s=120.0, plan_paths=False)
     b = solve(region_scenario, search=cfg, seed=0, budget_s=120.0, plan_paths=False)
     assert _key(a.layouts) == _key(b.layouts)
+
+
+def _trailer_x(result, trailer_id="glider_trailer_1"):
+    return next(
+        p.x_m for p in result.layouts[0].ground_object_placements if p.plane_id == trailer_id
+    )
+
+
+def test_region_pref_pulls_trailer_right(region_scenario, region_scenario_left):
+    cfg = SearchConfig(max_restarts=6, spread=True)
+    r = solve(region_scenario, search=cfg, seed=1, budget_s=120.0, plan_paths=False)
+    lft = solve(region_scenario_left, search=cfg, seed=1, budget_s=120.0, plan_paths=False)
+    assert r.status == "found" and lft.status == "found"
+    # right-preferring trailer settles further right than the left-preferring one
+    assert _trailer_x(r) > _trailer_x(lft)
+    # and the right one is actually in the right half of the 24 m-wide hangar
+    assert _trailer_x(r) > region_scenario.hangar.width_m / 2
