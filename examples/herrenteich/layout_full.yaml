@@ -31,7 +31,7 @@ placements:
     x_m: 3.15
     y_m: 13.65
     heading_deg: 270.0
-    on_carts: false         # always_own_gear
+    on_carts: true          # dolly-pivotable in the hangar (#644)
   - plane: aviat_husky
     x_m: 5.28
     y_m: 16.51

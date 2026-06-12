@@ -3,7 +3,12 @@
 # catalog's numbers, #595/#594).
 aircraft:
   - ../../data/catalog/scheibe_falke.yaml
-  - ../../data/catalog/stemme_s10.yaml
+  # The Stemme is hand-positioned on a dolly in the hangar, so it pivots in
+  # place — its catalog 10 m turn_radius_m is a TAXI figure, irrelevant to
+  # in-hangar maneuvering (a 10 m arc can't thread a deep slot in a 15 m-wide
+  # hangar). Model it cart-borne for tow planning via a per-fleet operational
+  # override (#595); flight specs stay in the catalog. See #644 / #643.
+  - { ref: ../../data/catalog/stemme_s10.yaml, movement_mode: always_cart }
   - ../../data/catalog/aviat_husky.yaml
   - ../../data/catalog/wild_thing.yaml
   - ../../data/catalog/zlin_savage.yaml
