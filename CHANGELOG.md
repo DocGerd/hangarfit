@@ -6,6 +6,20 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Lateral cart-strafe + free-swivel pivot tow motion (#599, ADR-0010).** The cart
+  motion model gains a lateral *strafe* primitive (`Segment(kind="T")`) — a slide
+  perpendicular to heading — so a broadside-parked cart-borne plane (e.g. the 18 m
+  Scheibe, which can't pivot in a 15 m hangar) routes in through the door as a clean
+  side-on slide, and `entry_poses` emits a broadside entry cone for broadside targets.
+  Strafe is **cart-only** and gated on `mover_on_carts`; free-swivel-gear aircraft
+  (`tow_pivotable`) pivot in place but don't strafe. The Herrenteich free-swivel
+  aircraft (Aviat Husky, Cessna 140, Flight Design CTSL, FK9 Mk II) are modelled
+  `tow_pivotable` so they pivot into their slots rather than using the catalog taxi
+  turn radius. **Determinism:** RNG-free (ADR-0003 holds); cross-version byte-identity
+  is intentionally re-baselined only for cart plans the more-capable motion now routes
+  more cheaply (no existing fixture changed; the strafes are appended last so an
+  existing pivot/straight path still wins a cost tie).
+
 - **Separate tow-MOTION clearance, distinct from the parked clearance (#643).**
   A hangar may declare optional `motion_clearance_m` / `motion_wing_layer_clearance_m`
   — the margin the tow planner clears a *moving* mover against parked bodies, which

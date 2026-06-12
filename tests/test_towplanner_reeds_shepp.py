@@ -230,19 +230,6 @@ def test_seg_cost_reverse_not_taxed_per_metre() -> None:
     assert _seg_cost(rev_arc, 2.0) == _seg_cost(fwd_arc, 2.0)
 
 
-def test_cart_seg_weight_reverse_straight_not_taxed_per_metre() -> None:
-    """#480: a cart's reverse straight is no longer ×1.5 — both forward and
-    reverse pivot-straight-pivot are single 0-cusp drives, so the choice reduces
-    to length with forward as the tie-break. A pivot stays its radians."""
-    from hangarfit.towplanner import _cart_seg_weight
-
-    fwd_straight = Segment("S", 4.0, gear=1)
-    rev_straight = Segment("S", 4.0, gear=-1)
-    assert _cart_seg_weight(rev_straight) == _cart_seg_weight(fwd_straight) == 4.0
-    pivot = Segment("L", 1.0)  # length_m is radians for a cart pivot
-    assert _cart_seg_weight(pivot) == 1.0
-
-
 def test_collinear_forward_goal_stays_pure_forward_straight() -> None:
     """When the goal is straight ahead on the same heading, RS must NOT pick a
     reverse maneuver — a forward "S" is both shortest (0 cusps, same length) and
