@@ -605,6 +605,9 @@ def _emit_solve_human(result: SolveResult, *, alternatives: int) -> None:
                 f"  #{i}: {len(layout.placements)} planes placed; 0 conflicts; "
                 f"score=(0, 0.0); min gap {gap_str}"
             )
+        if i - 1 < len(d.region_alignment) and d.region_alignment[i - 1]:
+            ra = ", ".join(f"{bid}={a:.2f}" for bid, a in d.region_alignment[i - 1])
+            line += f"; region alignment {ra}"
         print(line)
 
 
@@ -1073,6 +1076,12 @@ def _emit_solve_json(
             # Additive (#263): nose-out heading flips applied per returned layout.
             # Backward-compatible — no schema bump.
             "nose_out_flips": list(d.nose_out_flips),
+            # Additive (#604): per-layout per-object region alignment (0-1, 1.0 =
+            # at the preferred wall). Empty list when no region preferences set.
+            # Backward-compatible — no schema bump.
+            "region_alignment": [
+                {bid: a for bid, a in layout_align} for layout_align in d.region_alignment
+            ],
         },
     }
     print(json.dumps(payload, indent=2))
