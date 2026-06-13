@@ -47,6 +47,19 @@ def test_hangar_dimensions() -> None:
     assert hangar.door.center_x_m == 7.28
 
 
+def test_hangar_motion_clearance_calibrated() -> None:
+    """The Herrenteich hangar carries the calibrated tow-MOTION clearance (#605/#643):
+    tighter than the parked spacing, which stays the static-validity margin."""
+    hangar = load_hangar(HERRENTEICH / "hangar.yaml")
+    assert hangar.motion_clearance_m == 0.05
+    assert hangar.motion_wing_layer_clearance_m == 0.05
+    # parked spacing is unchanged — static validity still uses 0.20 / 0.15
+    assert hangar.clearance_m == 0.20
+    assert hangar.wing_layer_clearance_m == 0.15
+    # the tow planner sees the tighter motion margin
+    assert hangar.motion_hangar().clearance_m == 0.05
+
+
 def test_fleet_roster() -> None:
     fleet = load_fleet(HERRENTEICH / "fleet.yaml")
     assert set(fleet) == USUAL_OCCUPANTS
