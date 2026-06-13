@@ -893,7 +893,15 @@ def _warn_unroutable_movers(result: SolveResult) -> None:
     deduped, advisory mover-id list the solver collected — empty when every mover
     routed, there are no movers, or tow-planning was not attempted.
     """
-    for mover in result.diagnostics.unroutable_movers:
+    _warn_unroutable_mover_ids(result.diagnostics.unroutable_movers)
+
+
+def _warn_unroutable_mover_ids(mover_ids: Iterable[str]) -> None:
+    """Emit one stderr warning per un-routable ground-object mover id. Shared by
+    the solve path (:func:`_warn_unroutable_movers`, via ``diagnostics``) and the
+    layout-mode ``view`` path (which collects the ids from ``plan_fill``'s
+    ``unroutable_movers`` out-param directly, having no ``SolverDiagnostics``)."""
+    for mover in mover_ids:
         print(
             f"warning: ground-object mover {mover!r} could not be routed; "
             "rendered as a static (un-towed) body",
@@ -1228,13 +1236,21 @@ def cmd_view(args: argparse.Namespace) -> int:
                     # plan that is actually built (no NoFeasiblePlanError) reaches
                     # the warn call, so a discarded/failed plan never warns.
                     apron_drops: list[ApronShallowDrop] = []
+                    # #634: surface un-routable MOVERS too. An un-tow-routable
+                    # aircraft makes plan_fill raise (handled below); a None-path
+                    # mover does NOT raise — it keeps a best-effort static body — so
+                    # without the out-param it would be a silent skip here, unlike
+                    # `solve --render-paths` which warns via diagnostics (#612).
+                    unroutable_movers: list[str] = []
                     moves_plan = plan_fill(
                         layout,
                         max_expansions=args.tow_max_expansions,
                         max_total_expansions=view_total_cap,
                         apron_dropped_out=apron_drops,
+                        unroutable_movers=unroutable_movers,
                     )
                     _warn_apron_shallow_drops(apron_drops)
+                    _warn_unroutable_mover_ids(unroutable_movers)
                 except NoFeasiblePlanError as e:
                     print(
                         f"note: layout not tow-routable (plane {e.plane_id!r} could not be "
