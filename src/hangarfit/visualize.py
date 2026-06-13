@@ -183,6 +183,7 @@ def render_layout(
     try:
         _draw_hangar(ax, layout)
         _draw_aircraft(ax, layout)
+        _draw_movers(ax, layout)
         if not (check_result is None or check_result.valid):
             _draw_conflict_overlay(ax, layout, check_result)
         if moves_plan is not None:
@@ -211,7 +212,13 @@ def _validate_check_result_planes(layout: Layout, check_result: CheckResult) -> 
     caller passed a result from a *different* layout, and silently
     rendering a clean PNG for an invalid result is the precise kind of
     "looks OK so the bug ships" failure this tool exists to prevent."""
-    placed = {p.plane_id for p in layout.placements}
+    # Ground objects (#606) participate in collision/egress conflicts (ADR-0025/
+    # 0026), so a CheckResult may legitimately name a mover/obstacle id — include
+    # them in the known set so a real ground-object conflict isn't mistaken for a
+    # cross-layout mismatch.
+    placed = {p.plane_id for p in layout.placements} | {
+        gp.plane_id for gp in layout.ground_object_placements
+    }
     conflicting = {pid for c in check_result.conflicts for pid in c.planes}
     unknown = conflicting - placed
     if unknown:
@@ -253,6 +260,7 @@ def _draw_hangar(ax: Any, layout: Layout) -> None:
     # Keep-out overlays first (zorder=0) so walls and aircraft layer on top.
     _draw_maintenance_bay(ax, layout)
     _draw_structural_notches(ax, layout)
+    _draw_fixed_obstacles(ax, layout)
 
     # Back, left, right walls — solid.
     ax.plot(
@@ -344,6 +352,71 @@ def _draw_structural_notches(ax: Any, layout: Layout) -> None:
             zorder=0,
         )
         ax.add_patch(patch)
+
+
+# Mover bodies (#606) read in a neutral slate fill, deliberately OUTSIDE the
+# per-plane PLANES aircraft palette, so a glance separates "aircraft" from
+# "trailer / vehicle".
+_MOVER_FILL = "#8A8F98"
+
+
+def _draw_fixed_obstacles(ax: Any, layout: Layout) -> None:
+    """Overlay each *fixed-obstacle* ground object (#606, e.g. the Maul fuel
+    trailer) as a keep-out — like a structural notch but a distinct hatch, so it
+    reads as "an object on the floor", not "missing floor". No-op when there are
+    no fixed obstacles (mirrors :func:`_draw_structural_notches`, so an
+    aircraft-only layout renders byte-identically)."""
+    for gp in layout.ground_object_placements:
+        obj = layout.ground_objects[gp.plane_id]
+        if obj.object_class != "fixed_obstacle":
+            continue
+        for wp in aircraft_parts_world(obj, gp):
+            ax.add_patch(
+                MplPolygon(
+                    list(wp.polygon.exterior.coords),
+                    closed=True,
+                    facecolor="none",
+                    edgecolor=_HANGAR_EDGE,
+                    hatch="oo",  # a distinct hatch from the structural notch's
+                    lw=1.5,
+                    zorder=0,
+                )
+            )
+        ax.text(
+            gp.x_m,
+            gp.y_m,
+            gp.plane_id,
+            ha="center",
+            va="center",
+            fontsize=6,
+            color=_HANGAR_EDGE,
+            zorder=1,
+        )
+
+
+def _draw_movers(ax: Any, layout: Layout) -> None:
+    """Draw each *placed/routed mover* ground object (#606, the VW Caddy + glider
+    trailers) as a solid body in the neutral mover fill — visually distinct from
+    the per-plane aircraft hues — with an id label. No-op when there are no movers
+    (so an aircraft-only layout renders byte-identically)."""
+    for gp in layout.ground_object_placements:
+        obj = layout.ground_objects[gp.plane_id]
+        if obj.object_class != "placed_routed_mover":
+            continue
+        for wp in aircraft_parts_world(obj, gp):
+            _draw_part(ax, wp, _MOVER_FILL)
+        # Label above the near-opaque mover body (z=2) and any tow-path overlay,
+        # so it stays legible where a mover sits under an aircraft wing.
+        ax.text(
+            gp.x_m,
+            gp.y_m,
+            gp.plane_id,
+            ha="center",
+            va="center",
+            fontsize=6,
+            color=_INK_EDGE,
+            zorder=5,
+        )
 
 
 def _draw_aircraft(ax: Any, layout: Layout) -> None:
@@ -469,14 +542,13 @@ def _draw_part(ax: Any, part: WorldPart, color: str) -> None:
             zorder=4,
         )
     elif part.kind == "ground":
-        # Ground-object footprint (#601): solid keep-out, drawn opaque like a
-        # fuselage body at the fuselage z-level (above wings).
-        # NOTE: currently UNREACHABLE — render_layout/scene iterate only
-        # layout.placements (aircraft), never ground_object_placements, so no
-        # ground WorldPart reaches _draw_part yet. This branch is a forward hook
-        # for #606 (ground-object rendering) AND satisfies the closed-PartKind
-        # exhaustiveness contract (the else-raise below must stay reachable for
-        # any future unknown kind).
+        # Ground-object footprint (#601): a placed/routed mover body (car /
+        # trailer), drawn near-opaque like a fuselage body at the fuselage
+        # z-level (above wings). Reached via :func:`_draw_movers` (#606); fixed
+        # obstacles take the hatched-keep-out path in :func:`_draw_fixed_obstacles`
+        # instead, so only ``placed_routed_mover`` parts arrive here. Keeping the
+        # branch also satisfies the closed-``PartKind`` exhaustiveness contract
+        # (the else-raise below stays reachable for any future unknown kind).
         patch = MplPolygon(
             coords,
             closed=True,

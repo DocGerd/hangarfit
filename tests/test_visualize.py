@@ -67,6 +67,62 @@ def _assert_valid_png(path: Path) -> None:
         assert width > 0 and height > 0, f"invalid image size {img.size}"
 
 
+_HERRENTEICH = REPO_ROOT / "examples" / "herrenteich"
+
+
+class TestGroundObjectRendering:
+    """#606: fixed-obstacle keep-outs + mover bodies render in the 2D PNG."""
+
+    def test_renders_layout_with_ground_objects(self, tmp_path: Path) -> None:
+        """The Herrenteich full set (8 aircraft + fixed fuel trailer + VW Caddy +
+        2 glider trailers) renders to a valid PNG."""
+        layout = load_layout(_HERRENTEICH / "layout_full.yaml")
+        assert layout.ground_object_placements, "fixture must carry ground objects"
+        classes = {
+            layout.ground_objects[gp.plane_id].object_class
+            for gp in layout.ground_object_placements
+        }
+        assert classes == {"fixed_obstacle", "placed_routed_mover"}  # both classes exercised
+        out = tmp_path / "full.png"
+        render_layout(layout, out)
+        _assert_valid_png(out)
+
+    def test_aircraft_only_layout_renders(self, tmp_path: Path) -> None:
+        """A layout with no ground objects renders fine — the new draw helpers are
+        no-ops (inert-when-empty)."""
+        layout = load_layout(_HERRENTEICH / "layout.yaml")
+        assert not layout.ground_object_placements
+        out = tmp_path / "ac_only.png"
+        render_layout(layout, out)
+        _assert_valid_png(out)
+
+    def test_validator_accepts_a_ground_object_conflict(self) -> None:
+        """A CheckResult whose conflict names a ground-object id must NOT be
+        rejected as a cross-layout mismatch (the #606 validator widening)."""
+        from hangarfit.models import CheckResult, Conflict
+        from hangarfit.visualize import _validate_check_result_planes
+
+        layout = load_layout(_HERRENTEICH / "layout_full.yaml")
+        mover_id = next(gp.plane_id for gp in layout.ground_object_placements)
+        result = CheckResult(
+            conflicts=(Conflict.single(kind="ground_obstacle", plane=mover_id, detail="x"),)
+        )
+        _validate_check_result_planes(layout, result)  # must not raise
+
+    def test_validator_still_rejects_a_truly_unknown_id(self) -> None:
+        """The cross-layout guard still fires for an id in neither aircraft nor
+        ground objects."""
+        from hangarfit.models import CheckResult, Conflict
+        from hangarfit.visualize import _validate_check_result_planes
+
+        layout = load_layout(_HERRENTEICH / "layout_full.yaml")
+        result = CheckResult(
+            conflicts=(Conflict.single(kind="x", plane="not_a_real_body", detail="x"),)
+        )
+        with pytest.raises(ValueError, match="not placed in this layout"):
+            _validate_check_result_planes(layout, result)
+
+
 class TestRenderLayout:
     def test_produces_valid_png_for_valid_layout(self, tmp_path: Path) -> None:
         layout = _load("valid_two_separated")
