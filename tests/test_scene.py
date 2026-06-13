@@ -523,3 +523,140 @@ def test_build_scene_v2_byte_deterministic_with_polygon():
     a = json.dumps(scene.build_scene(poly_lay))
     b = json.dumps(scene.build_scene(poly_lay))
     assert a == b
+
+
+# ── #606: ground objects in scene/v2 (fixed obstacles + placed movers) ────────
+#
+# Stage A puts non-aircraft bodies on the floor: a fixed obstacle (the Maul fuel
+# trailer) reads as a keep-out; placed/routed movers (the VW Caddy + 2 glider
+# trailers) read as placed bodies. PR2 emits them as static placed bodies in the
+# scene/v2 dict (the 3D analogue of the 2D #649 render), always-emitted and
+# inert-when-empty (the structural_notches discipline). Mover *animation* and the
+# Caddy egress lane are deferred follow-ups — the egress oracle exports no corridor
+# geometry, so there is nothing to serialize here yet.
+import dataclasses  # noqa: E402
+
+from hangarfit.models import GroundObject  # noqa: E402
+
+_FIXED_OBSTACLE = GroundObject(
+    id="fuel_trailer",
+    name="Maul fuel trailer",
+    parts=(Part("ground", 2.0, 1.5, 0.0, 0.0, 0.0, 0.0, 1.2),),
+    object_class="fixed_obstacle",
+)
+_TOWED_MOVER = GroundObject(
+    id="glider_trailer",
+    name="Glider trailer",
+    parts=(Part("ground", 6.0, 2.0, 0.0, 0.0, 0.0, 0.0, 2.0),),
+    object_class="placed_routed_mover",
+    motion_mode="towed",
+)
+_HARD_DOOR_MOVER = GroundObject(
+    id="vw_caddy",
+    name="VW Caddy",
+    parts=(Part("ground", 4.5, 1.8, 0.3, 0.0, 12.0, 0.0, 1.8),),  # nonzero offset+angle
+    object_class="placed_routed_mover",
+    motion_mode="steerable",
+    turn_radius_m=5.0,
+    hard_door_mover=True,
+)
+
+
+def _layout_with_ground_objects():
+    """The default layout, plus one fixed obstacle and two movers (one a
+    hard-door Caddy) with distinct in-hangar poses — the synthetic GO fixture for
+    the scene/v2 ground-object emit, mirroring the notch test's dataclasses.replace
+    idiom (no new YAML fixture)."""
+    lay = load_layout(LAYOUT)
+    gos = {go.id: go for go in (_FIXED_OBSTACLE, _TOWED_MOVER, _HARD_DOOR_MOVER)}
+    placements = (
+        Placement("fuel_trailer", x_m=11.0, y_m=1.5, heading_deg=0.0, on_carts=False),
+        Placement("glider_trailer", x_m=2.0, y_m=18.0, heading_deg=0.0, on_carts=False),
+        Placement("vw_caddy", x_m=18.0, y_m=4.0, heading_deg=90.0, on_carts=False),
+    )
+    return dataclasses.replace(lay, ground_objects=gos, ground_object_placements=placements)
+
+
+def test_build_scene_ground_objects_always_emitted_and_inert():
+    """A GO-free layout emits an empty ground_objects list and go_anchors map —
+    the always-emitted, inert-when-empty contract (the structural_notches rule)."""
+    sc = scene.build_scene(load_layout(LAYOUT))
+    assert sc["ground_objects"] == []
+    assert sc["go_anchors"] == {}
+
+
+def test_ground_object_blocks_shape_and_sorting():
+    lay = _layout_with_ground_objects()
+    sc = scene.build_scene(lay)
+    blocks = sc["ground_objects"]
+    assert [b["id"] for b in blocks] == ["fuel_trailer", "glider_trailer", "vw_caddy"]  # sorted
+    fields = set(blocks[0])
+    assert fields == {"id", "object_class", "color", "hard_door_mover", "boxes", "final_pose"}
+    obst = next(b for b in blocks if b["id"] == "fuel_trailer")
+    mover = next(b for b in blocks if b["id"] == "vw_caddy")
+    assert obst["object_class"] == "fixed_obstacle"
+    assert obst["hard_door_mover"] is False
+    assert mover["object_class"] == "placed_routed_mover"
+    assert mover["hard_door_mover"] is True
+    # Distinct per-class fill (brand-resolved Python-side, like the plane colours):
+    # the fixed obstacle and the mover never share a hue.
+    assert obst["color"] != mover["color"]
+    # The final pose is the placement affine (no timeline for static GOs).
+    placement = next(p for p in lay.ground_object_placements if p.plane_id == "vw_caddy")
+    assert mover["final_pose"] == scene._affine(placement)
+    # A ground part is a scalar box (no polygon ring) carrying its z-band.
+    box = mover["boxes"][0]
+    assert box["kind"] == "ground"
+    assert box["vertices"] is None
+    assert box["z_band"] == [0.0, 1.8]
+
+
+def test_go_anchors_are_world_box_corners():
+    """go_anchors are the world box corners from the production
+    aircraft_parts_world oracle (it accepts a GroundObject), the det-−1 backstop
+    for the mover/obstacle render — the GO sibling of test_anchors_are_world_box_corners."""
+    lay = _layout_with_ground_objects()
+    sc = scene.build_scene(lay)
+    for gp in lay.ground_object_placements:
+        go = lay.ground_objects[gp.plane_id]
+        want = [
+            [[x, y] for x, y in list(wp.polygon.exterior.coords)[:-1]]
+            for wp in aircraft_parts_world(go, gp)
+        ]
+        assert sc["go_anchors"][gp.plane_id] == want
+
+
+def test_go_anchors_through_final_pose_reproduce_oracle():
+    # The emitted plane-local box corners, pushed through the GO's final affine,
+    # equal the world anchor oracle vertex-for-vertex (the det-−1 surface).
+    lay = _layout_with_ground_objects()
+    sc = scene.build_scene(lay)
+    from hangarfit.geometry import oriented_rect
+
+    for block in sc["ground_objects"]:
+        affine = block["final_pose"]
+        anchors = sc["go_anchors"][block["id"]]
+        for box, box_anchor in zip(block["boxes"], anchors, strict=True):
+            local = list(
+                oriented_rect(
+                    box["cx"], box["cy"], box["length_m"], box["width_m"], box["angle_deg"]
+                ).exterior.coords
+            )[:-1]
+            for (u, v), (ox, oy) in zip(local, box_anchor, strict=True):
+                ax, ay = _apply(affine, u, v)
+                assert math.isclose(ax, ox, abs_tol=1e-9) and math.isclose(ay, oy, abs_tol=1e-9)
+
+
+def test_build_scene_ground_objects_byte_deterministic():
+    lay = _layout_with_ground_objects()
+    a = json.dumps(scene.build_scene(lay))
+    b = json.dumps(scene.build_scene(lay))
+    assert a == b
+
+
+def test_scene_contract_ts_ground_object_keys_match():
+    """GroundObjectData mirror parity — the animated scene has no GOs, so pin the
+    block key set against a synthetic GO-bearing layout (the StructuralNotchData
+    precedent)."""
+    block = scene.build_scene(_layout_with_ground_objects())["ground_objects"][0]
+    assert _ts_interface_fields("scene-contract.ts", "GroundObjectData") == set(block)

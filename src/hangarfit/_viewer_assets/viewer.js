@@ -300,6 +300,31 @@ function boxMaterial(b, colour) {
   }
   return new THREE5.MeshStandardMaterial(base);
 }
+function boxMesh(b, colour) {
+  let mesh;
+  if (b.vertices !== null) {
+    const shape = new THREE5.Shape();
+    const vs = b.vertices;
+    shape.moveTo(vs[0][0], vs[0][1]);
+    for (let i = 1; i < vs.length; i++) shape.lineTo(vs[i][0], vs[i][1]);
+    shape.closePath();
+    mesh = new THREE5.Mesh(
+      new THREE5.ExtrudeGeometry(shape, { depth: b.height_m, bevelEnabled: false }),
+      boxMaterial(b, colour)
+    );
+    mesh.position.z = b.z_band[0];
+  } else {
+    mesh = new THREE5.Mesh(
+      new THREE5.BoxGeometry(b.length_m, b.width_m, b.height_m),
+      boxMaterial(b, colour)
+    );
+    mesh.position.set(b.cx, b.cy, b.cz);
+    mesh.rotation.z = THREE5.MathUtils.degToRad(b.angle_deg);
+  }
+  mesh.castShadow = true;
+  mesh.receiveShadow = true;
+  return mesh;
+}
 function addPlanes(scene2, SCENE2, BRAND2) {
   const CONFLICT = BRAND2.conflict;
   const groups2 = {};
@@ -312,31 +337,7 @@ function addPlanes(scene2, SCENE2, BRAND2) {
     g.matrixAutoUpdate = false;
     const conflicted = SCENE2.conflicts.includes(p.id);
     const colour = new THREE5.Color(conflicted ? CONFLICT : p.color);
-    for (const b of p.boxes) {
-      let mesh;
-      if (b.vertices !== null) {
-        const shape = new THREE5.Shape();
-        const vs = b.vertices;
-        shape.moveTo(vs[0][0], vs[0][1]);
-        for (let i = 1; i < vs.length; i++) shape.lineTo(vs[i][0], vs[i][1]);
-        shape.closePath();
-        mesh = new THREE5.Mesh(
-          new THREE5.ExtrudeGeometry(shape, { depth: b.height_m, bevelEnabled: false }),
-          boxMaterial(b, colour)
-        );
-        mesh.position.z = b.z_band[0];
-      } else {
-        mesh = new THREE5.Mesh(
-          new THREE5.BoxGeometry(b.length_m, b.width_m, b.height_m),
-          boxMaterial(b, colour)
-        );
-        mesh.position.set(b.cx, b.cy, b.cz);
-        mesh.rotation.z = THREE5.MathUtils.degToRad(b.angle_deg);
-      }
-      mesh.castShadow = true;
-      mesh.receiveShadow = true;
-      g.add(mesh);
-    }
+    for (const b of p.boxes) g.add(boxMesh(b, colour));
     addGear(g, p, gearMats);
     addLabelAndNose(g, p, colour, conflicted, BRAND2, labelMeshes2, noseMeshes2);
     groups2[p.id] = g;
@@ -352,46 +353,14 @@ function addPlanes(scene2, SCENE2, BRAND2) {
   return { groups: groups2, labelMeshes: labelMeshes2, noseMeshes: noseMeshes2 };
 }
 
-// src/paths.ts
-import * as THREE6 from "three";
-var TX = 2;
-var TY = 5;
-function pathPoints(seg) {
-  return seg.samples.map((s) => [s[TX], s[TY]]);
-}
-function addTowPaths(scene2, SCENE2, BRAND2) {
-  const Z_OFFSET = 0.02;
-  const segByPlane = {};
-  for (const s of SCENE2.timeline.segments) segByPlane[s.plane_id] = s;
-  const lines = [];
-  for (const p of SCENE2.planes) {
-    const seg = segByPlane[p.id];
-    if (!seg) continue;
-    const pts = pathPoints(seg);
-    if (pts.length < 2) continue;
-    const conflicted = SCENE2.conflicts.includes(p.id);
-    const colour = new THREE6.Color(conflicted ? BRAND2.conflict : p.color);
-    const geom = new THREE6.BufferGeometry().setFromPoints(
-      pts.map(([x, y]) => new THREE6.Vector3(x, y, Z_OFFSET))
-    );
-    const line = new THREE6.Line(geom, new THREE6.LineBasicMaterial({ color: colour }));
-    scene2.add(line);
-    lines.push(line);
-  }
-  const setVisible = (on) => {
-    for (const l of lines) l.visible = on;
-  };
-  return { lines, setVisible };
-}
-
-// src/anchors.ts
-import * as THREE8 from "three";
+// src/ground_objects.ts
+import * as THREE7 from "three";
 
 // src/affine.ts
-import * as THREE7 from "three";
+import * as THREE6 from "three";
 function affineMatrix(aff) {
   const [a, b, tx, c, d, ty] = aff;
-  const m = new THREE7.Matrix4();
+  const m = new THREE6.Matrix4();
   m.set(
     a,
     b,
@@ -417,10 +386,69 @@ function applyAffine(aff, u, v) {
   return [a * u + b * v + tx, c * u + d * v + ty];
 }
 
+// src/ground_objects.ts
+function addGroundObjects(scene2, SCENE2) {
+  const groups2 = {};
+  const legend = byId("legend");
+  for (const go of SCENE2.ground_objects) {
+    const g = new THREE7.Group();
+    g.matrixAutoUpdate = false;
+    const colour = new THREE7.Color(go.color);
+    for (const b of go.boxes) g.add(boxMesh(b, colour));
+    g.matrix.copy(affineMatrix(go.final_pose));
+    g.matrixWorldNeedsUpdate = true;
+    groups2[go.id] = g;
+    scene2.add(g);
+    const sw = document.createElement("span");
+    sw.className = "sw";
+    const dot = document.createElement("i");
+    dot.style.background = go.color;
+    sw.appendChild(dot);
+    const klass = go.object_class === "fixed_obstacle" ? "obstacle" : "mover";
+    const tag = go.hard_door_mover ? `${go.id} (${klass} ⮕ door)` : `${go.id} (${klass})`;
+    sw.appendChild(document.createTextNode(tag));
+    legend.appendChild(sw);
+  }
+  return { groups: groups2 };
+}
+
+// src/paths.ts
+import * as THREE8 from "three";
+var TX = 2;
+var TY = 5;
+function pathPoints(seg) {
+  return seg.samples.map((s) => [s[TX], s[TY]]);
+}
+function addTowPaths(scene2, SCENE2, BRAND2) {
+  const Z_OFFSET = 0.02;
+  const segByPlane = {};
+  for (const s of SCENE2.timeline.segments) segByPlane[s.plane_id] = s;
+  const lines = [];
+  for (const p of SCENE2.planes) {
+    const seg = segByPlane[p.id];
+    if (!seg) continue;
+    const pts = pathPoints(seg);
+    if (pts.length < 2) continue;
+    const conflicted = SCENE2.conflicts.includes(p.id);
+    const colour = new THREE8.Color(conflicted ? BRAND2.conflict : p.color);
+    const geom = new THREE8.BufferGeometry().setFromPoints(
+      pts.map(([x, y]) => new THREE8.Vector3(x, y, Z_OFFSET))
+    );
+    const line = new THREE8.Line(geom, new THREE8.LineBasicMaterial({ color: colour }));
+    scene2.add(line);
+    lines.push(line);
+  }
+  const setVisible = (on) => {
+    for (const l of lines) l.visible = on;
+  };
+  return { lines, setVisible };
+}
+
 // src/anchors.ts
+import * as THREE9 from "three";
 function partCornersLocal(b) {
   if (b.vertices !== null) return b.vertices;
-  const h = THREE8.MathUtils.degToRad(b.angle_deg);
+  const h = THREE9.MathUtils.degToRad(b.angle_deg);
   const cs = Math.cos(h), sn = Math.sin(h);
   const hl = b.length_m / 2, hw = b.width_m / 2;
   const corners = [[hl, -hw], [hl, hw], [-hl, hw], [-hl, -hw]];
@@ -428,49 +456,49 @@ function partCornersLocal(b) {
     ([lx, ly]) => [b.cx + lx * cs - ly * sn, b.cy + lx * sn + ly * cs]
   );
 }
+function compareBoxesToOracle(aff, boxes, want, label) {
+  let maxErr = 0;
+  if (!aff || !want) return { structural: "missing affine/anchors for " + label, maxErr };
+  if (want.length !== boxes.length) {
+    return { structural: "anchor/box count mismatch for " + label, maxErr };
+  }
+  for (let bi = 0; bi < boxes.length; bi++) {
+    const corners = partCornersLocal(boxes[bi]);
+    if (want[bi].length !== corners.length) {
+      return { structural: "anchor/vertex count mismatch for " + label, maxErr };
+    }
+    corners.forEach(([u, v], ci) => {
+      const [wx, wy] = applyAffine(aff, u, v);
+      maxErr = Math.max(maxErr, Math.abs(wx - want[bi][ci][0]), Math.abs(wy - want[bi][ci][1]));
+    });
+  }
+  return { structural: "", maxErr };
+}
 function checkAnchors(scene2) {
   let maxErr = 0;
-  let structural = "";
   for (const p of scene2.planes) {
     const aff = scene2.final_poses[p.id];
-    const want = scene2.anchors[p.id];
-    if (!aff || !want) {
-      structural = "missing affine/anchors for " + p.id;
-      break;
-    }
-    if (want.length !== p.boxes.length) {
-      structural = "anchor/box count mismatch for " + p.id;
-      break;
-    }
-    let vertexMismatch = false;
-    for (let bi = 0; bi < p.boxes.length; bi++) {
-      const corners = partCornersLocal(p.boxes[bi]);
-      if (want[bi].length !== corners.length) {
-        structural = "anchor/vertex count mismatch for " + p.id;
-        vertexMismatch = true;
-        break;
-      }
-      corners.forEach(([u, v], ci) => {
-        const [wx, wy] = applyAffine(aff, u, v);
-        maxErr = Math.max(maxErr, Math.abs(wx - want[bi][ci][0]), Math.abs(wy - want[bi][ci][1]));
-      });
-    }
-    if (vertexMismatch) break;
+    const r = compareBoxesToOracle(aff, p.boxes, scene2.anchors[p.id], p.id);
+    if (r.structural) return { structural: r.structural, maxErr };
+    maxErr = Math.max(maxErr, r.maxErr);
     const gw = scene2.gear_anchors[p.id];
-    if (!gw || !p.wheels) {
-      structural = "missing gear anchors/wheels for " + p.id;
-      break;
+    if (!aff || !gw || !p.wheels) {
+      return { structural: "missing gear anchors/wheels for " + p.id, maxErr };
     }
     if (gw.length !== p.wheels.length) {
-      structural = "gear anchor/wheel count mismatch for " + p.id;
-      break;
+      return { structural: "gear anchor/wheel count mismatch for " + p.id, maxErr };
     }
     p.wheels.forEach(([u, v], wi) => {
       const [wx, wy] = applyAffine(aff, u, v);
       maxErr = Math.max(maxErr, Math.abs(wx - gw[wi][0]), Math.abs(wy - gw[wi][1]));
     });
   }
-  return { structural, maxErr };
+  for (const go of scene2.ground_objects) {
+    const r = compareBoxesToOracle(go.final_pose, go.boxes, scene2.go_anchors[go.id], go.id);
+    if (r.structural) return { structural: r.structural, maxErr };
+    maxErr = Math.max(maxErr, r.maxErr);
+  }
+  return { structural: "", maxErr };
 }
 
 // src/timeline.ts
@@ -604,6 +632,7 @@ labelsToggle.addEventListener("change", () => {
   for (const m of labelMeshes) m.visible = on;
   for (const m of noseMeshes) m.visible = on;
 });
+addGroundObjects(scene, SCENE);
 var { setVisible: setPathsVisible } = addTowPaths(scene, SCENE, BRAND);
 var pathsToggle = byId("paths");
 pathsToggle.addEventListener("change", () => setPathsVisible(pathsToggle.checked));

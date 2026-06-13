@@ -8,7 +8,7 @@
 // preserved behaviour-identically by the caller.
 import * as THREE from 'three';
 import { applyAffine } from './affine.ts';
-import type { BoxData, SceneV2 } from './scene-contract.ts';
+import type { Affine, BoxData, SceneV2 } from './scene-contract.ts';
 
 /** Plane-local footprint corners of a box (scene/v2). A polygon part carries its
  * ring in `vertices`, already folded into plane-local (u,v) — returned verbatim
@@ -35,57 +35,68 @@ export interface AnchorCheckResult {
   maxErr: number;
 }
 
+/** Compare one body's recomputed world box corners (geometry + final affine) to
+ * the Python oracle. `label` names the body in any structural message. Shared by
+ * planes and ground objects (#606) — both ride the identical det-−1 box path. */
+function compareBoxesToOracle(
+  aff: Affine | undefined,
+  boxes: BoxData[],
+  want: number[][][] | undefined,
+  label: string,
+): AnchorCheckResult {
+  let maxErr = 0;
+  if (!aff || !want) return { structural: 'missing affine/anchors for ' + label, maxErr };
+  if (want.length !== boxes.length) {
+    return { structural: 'anchor/box count mismatch for ' + label, maxErr };
+  }
+  for (let bi = 0; bi < boxes.length; bi++) {
+    const corners = partCornersLocal(boxes[bi]);
+    // A polygon box of N verts against an oracle box of M (≠N) is a structural
+    // breach — catch it before the per-corner loop indexes past the oracle.
+    if (want[bi].length !== corners.length) {
+      return { structural: 'anchor/vertex count mismatch for ' + label, maxErr };
+    }
+    corners.forEach(([u, v], ci) => {
+      const [wx, wy] = applyAffine(aff, u, v);
+      maxErr = Math.max(maxErr, Math.abs(wx - want[bi][ci][0]), Math.abs(wy - want[bi][ci][1]));
+    });
+  }
+  return { structural: '', maxErr };
+}
+
 /**
- * Recompute each plane's world box corners + wheel positions from geometry and
- * its final affine, and compare to the Python oracle (`anchors`, `gear_anchors`).
- * PURE — no DOM, no throw. main.ts banners on `structural` or `maxErr > 1e-6`.
+ * Recompute each plane's world box corners + wheel positions, and each ground
+ * object's box corners (#606), from geometry and the final affine, and compare to
+ * the Python oracle (`anchors`, `gear_anchors`, `go_anchors`). PURE — no DOM, no
+ * throw. main.ts banners on `structural` or `maxErr > 1e-6`.
  */
 export function checkAnchors(scene: SceneV2): AnchorCheckResult {
   let maxErr = 0;
-  let structural = '';
   for (const p of scene.planes) {
     const aff = scene.final_poses[p.id];
-    const want = scene.anchors[p.id];
-    if (!aff || !want) {
-      structural = 'missing affine/anchors for ' + p.id;
-      break;
-    }
-    if (want.length !== p.boxes.length) {
-      structural = 'anchor/box count mismatch for ' + p.id;
-      break;
-    }
-    let vertexMismatch = false;
-    for (let bi = 0; bi < p.boxes.length; bi++) {
-      const corners = partCornersLocal(p.boxes[bi]);
-      // A polygon box of N verts against an oracle box of M (≠N) is a structural
-      // breach — catch it before the per-corner loop indexes past the oracle.
-      if (want[bi].length !== corners.length) {
-        structural = 'anchor/vertex count mismatch for ' + p.id;
-        vertexMismatch = true;
-        break;
-      }
-      corners.forEach(([u, v], ci) => {
-        const [wx, wy] = applyAffine(aff, u, v);
-        maxErr = Math.max(maxErr, Math.abs(wx - want[bi][ci][0]), Math.abs(wy - want[bi][ci][1]));
-      });
-    }
-    if (vertexMismatch) break;
+    const r = compareBoxesToOracle(aff, p.boxes, scene.anchors[p.id], p.id);
+    if (r.structural) return { structural: r.structural, maxErr };
+    maxErr = Math.max(maxErr, r.maxErr);
     // Gear oracle (#399): the wheels[] ride the same affine Group as the boxes,
     // so a wrong transform corrupts both — but viewer.js is not pytest-covered,
     // so we cross-check the wheel world positions against the Python oracle too.
     const gw = scene.gear_anchors[p.id];
-    if (!gw || !p.wheels) {
-      structural = 'missing gear anchors/wheels for ' + p.id;
-      break;
+    if (!aff || !gw || !p.wheels) {
+      return { structural: 'missing gear anchors/wheels for ' + p.id, maxErr };
     }
     if (gw.length !== p.wheels.length) {
-      structural = 'gear anchor/wheel count mismatch for ' + p.id;
-      break;
+      return { structural: 'gear anchor/wheel count mismatch for ' + p.id, maxErr };
     }
     p.wheels.forEach(([u, v], wi) => {
       const [wx, wy] = applyAffine(aff, u, v);
       maxErr = Math.max(maxErr, Math.abs(wx - gw[wi][0]), Math.abs(wy - gw[wi][1]));
     });
   }
-  return { structural, maxErr };
+  // Ground objects (#606): box corners only (no gear), same det-−1 box path.
+  for (const go of scene.ground_objects) {
+    const r = compareBoxesToOracle(go.final_pose, go.boxes, scene.go_anchors[go.id], go.id);
+    if (r.structural) return { structural: r.structural, maxErr };
+    maxErr = Math.max(maxErr, r.maxErr);
+  }
+  return { structural: '', maxErr };
 }
