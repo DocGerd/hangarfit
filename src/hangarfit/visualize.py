@@ -187,7 +187,7 @@ def render_layout(
         if not (check_result is None or check_result.valid):
             _draw_conflict_overlay(ax, layout, check_result)
         if moves_plan is not None:
-            _draw_tow_paths(ax, moves_plan)
+            _draw_tow_paths(ax, moves_plan, layout)
         _finalize_axes(ax, layout, title)
         if metrics.has_placeholder_data(layout):
             _draw_placeholder_banner(fig)
@@ -714,39 +714,51 @@ def _draw_conflict_overlay(ax: Any, layout: Layout, check_result: CheckResult) -
             ax.add_patch(patch)
 
 
-def _draw_tow_paths(ax: Any, moves_plan: MovesPlan) -> None:
-    """Overlay each plane's tow path as a polyline, one colour per plane (#192).
+def _draw_tow_paths(ax: Any, moves_plan: MovesPlan, layout: Layout | None = None) -> None:
+    """Overlay each body's tow/drive path as a polyline (#192, movers #651).
 
     Companion to :func:`_draw_conflict_overlay` at the same z-tier (5), so the
     paths read on top of the aircraft parts (zorder 1-4) — spike Q7. Each path
     is the sampled :class:`~hangarfit.towplanner.DubinsArc` polyline from the
-    door-cone entry pose to the target slot. Colours are assigned by *sorted*
-    ``plane_id`` so a given plan always renders the same plane in the same
-    colour regardless of move order (the ADR-0003 determinism spirit). The
-    in-memory ``MovesPlan`` shape is rich enough that a per-move PNG sequence
-    or animation can be added later without changing it (spike Q7).
+    door-cone entry pose to the target slot.
+
+    Aircraft get one palette colour each, assigned by *sorted* ``plane_id`` so a
+    given plan always renders the same plane in the same colour regardless of
+    move order (the ADR-0003 determinism spirit). A placed-routed ground-object
+    **mover** (#651) is drawn in the neutral mover body colour (``_MOVER_FILL``),
+    matching its :func:`_draw_movers` body so its drive path reads as a ground
+    vehicle, not an aircraft. Movers are identified via ``layout.ground_objects``;
+    when ``layout`` is ``None`` (the pre-#651 call) every path is treated as an
+    aircraft, byte-identical to before.
 
     Each polyline carries its ``plane_id`` as a matplotlib ``label``. No
     legend is rendered today (``_finalize_axes`` draws none), so the label is
     currently inert — it is a deliberate forward hook for a future legend, and
     a path is already disambiguated by terminating at its annotated slot.
     """
-    # Deferred moves (path=None) — a #601 ground-object mover whose route search
-    # is deferred to #602 — have no polyline to draw; skip them.
+    # Deferred moves (path=None) — an un-routable placed-routed mover (#197/#602)
+    # — have no polyline to draw; skip them.
     routed_moves = [move for move in moves_plan.moves if move.path is not None]
-    plane_ids = sorted({move.plane_id for move in routed_moves})
+    # All ground-object ids (obstacles + movers). Only placed-routed movers ever
+    # carry a routed path, so in practice this flags the movers among the moves;
+    # naming it for what the set literally holds avoids a future-maintainer trap.
+    ground_object_ids = set(layout.ground_objects) if layout is not None else set()
+    # Palette colours are assigned over aircraft ids only, so a ground object never
+    # shifts the deterministic aircraft colour mapping.
+    aircraft_ids = sorted({m.plane_id for m in routed_moves if m.plane_id not in ground_object_ids})
     colour_for = {
-        pid: _TOW_PATH_COLORS[i % len(_TOW_PATH_COLORS)] for i, pid in enumerate(plane_ids)
+        pid: _TOW_PATH_COLORS[i % len(_TOW_PATH_COLORS)] for i, pid in enumerate(aircraft_ids)
     }
     for move in routed_moves:
         assert move.path is not None  # filtered above; narrows for the type-checker
         poses = list(move.path.sample())
         xs = [p.x_m for p in poses]
         ys = [p.y_m for p in poses]
+        is_mover = move.plane_id in ground_object_ids
         ax.plot(
             xs,
             ys,
-            color=colour_for[move.plane_id],
+            color=_MOVER_FILL if is_mover else colour_for[move.plane_id],
             lw=_TOW_PATH_LINEWIDTH,
             zorder=5,
             label=move.plane_id,

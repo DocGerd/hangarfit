@@ -78,6 +78,11 @@ rendering ground objects in the PNG/3D viewer (#606).
 - **Stemme S10** — hangared **wings folded** (11.4 m span; 23 m unfolded), which
   is what lets a 23 m glider through a 13.46 m door. A **taildragger** (twin
   retractable mains + tailwheel, EASA TCDS) — corrected from monowheel this refresh.
+  The 11.4 m folded width is verified (EASA TCDS A.054 + Jane's + AOPA) and clears
+  the door by ~2 m; a lone Stemme routes in through the door **on its own gear**
+  (probed: 1-segment straight-in). The dolly (`always_cart` in `fleet.yaml`) is for
+  maneuvering it within the *dense multi-plane* fill, not a width limit — that
+  joint placement+routing difficulty is tracked on #607, not a folded-span error.
 
 > All fleet dimensions carry `measured: false` — the envelope is published spec
 > and the part-level dimensions are 3-view/TCDS-**sourced** but not on-site

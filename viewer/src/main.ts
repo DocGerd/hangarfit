@@ -59,10 +59,11 @@ labelsToggle.addEventListener('change', () => {
   for (const m of noseMeshes) m.visible = on;
 });
 
-// ground objects (#606): fixed obstacles + placed movers, parked statically at
-// their final_pose. No timeline / toggle — they are always-on floor bodies. A
-// GO-free scene builds nothing here.
-addGroundObjects(scene, SCENE);
+// ground objects (#606): fixed obstacles + placed movers. Fixed obstacles are
+// always-on floor bodies; placed-routed movers animate along their drive path via
+// the timeline (#651) — so we keep their Groups to drive per frame. A GO-free
+// scene builds nothing here.
+const { groups: goGroups } = addGroundObjects(scene, SCENE);
 
 // floor tow paths (#505) + paths toggle. One coloured floor line per plane's
 // tow route (the 3D analogue of `solve --render-paths`), default ON so the route
@@ -92,6 +93,7 @@ try {
   banner('TRANSFORM CHECK ERRORED: ' + (e as Error).message + ' — do not trust this render.');
 }
 
-// timeline + HUD wiring + render loop
-const timeline = createTimeline(SCENE, groups);
+// timeline + HUD wiring + render loop. Movers (#651) animate from the same
+// timeline as planes, so their Groups are passed alongside the plane Groups.
+const timeline = createTimeline(SCENE, groups, goGroups);
 startHud({ timeline, home, controls, renderer, scene, cam });

@@ -6,6 +6,17 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Placed-routed movers animate along their drive path (#651).** Building on the
+  static ground-object render (#606), a placed/routed mover (the VW Caddy + glider
+  trailers) now animates in the 3D viewer's whole-fill timeline — driving in along
+  its routed path *after* every aircraft is parked — and its 2D `--render-paths`
+  route is drawn in the neutral mover body colour (matching the `_draw_movers` body)
+  so it reads as a ground vehicle, not an aircraft. A deferred (un-routable,
+  `path=None`) mover stays at its static resting pose, like a fixed obstacle. The
+  viewer reuses the same hidden→sample→parked state machine as aircraft (new pure,
+  node-tested `framePoses`). Inert / byte-identical for aircraft-only layouts
+  (ADR-0003). The Caddy hard-door egress lane (#652) is the remaining half of #606.
+
 - **Ground objects render in the 2D PNG (#606).** `hangarfit check --render` /
   `solve --render-paths` now draw the floor's ground objects: the fixed obstacle
   (the Maul fuel trailer) as a hatched keep-out (distinct from the structural-notch

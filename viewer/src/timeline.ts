@@ -26,6 +26,28 @@ export function affineAt(
   return { vis: true, aff: seg.samples[i] };
 }
 
+/** Pure: pose + visibility of EVERY animated body — planes ∪ placed-routed
+ * ground-object movers (#651) — at time `t`. A mover reuses the SAME
+ * hidden→sample→parked state machine as a plane via `affineAt`; the only
+ * difference is its resting pose lives on its own block (`final_pose`), not in
+ * `scene.final_poses` (aircraft-only), so each GO gets a single-entry finals
+ * map. A body with no segment (a static plane, a fixed obstacle, or a deferred
+ * path=None mover) shows at its own final pose. No THREE, no DOM — node-tested. */
+export function framePoses(
+  scene: SceneV2,
+  segByPlane: Record<string, SegmentData>,
+  t: number,
+): Record<string, { vis: boolean; aff: Affine | null }> {
+  const out: Record<string, { vis: boolean; aff: Affine | null }> = {};
+  for (const p of scene.planes) {
+    out[p.id] = affineAt(segByPlane, scene.final_poses, p.id, t);
+  }
+  for (const go of scene.ground_objects) {
+    out[go.id] = affineAt(segByPlane, { [go.id]: go.final_pose }, go.id, t);
+  }
+  return out;
+}
+
 export interface Timeline {
   total: number;
   hasAnim: boolean;
@@ -33,30 +55,39 @@ export interface Timeline {
   applyTime: (t: number) => void;
 }
 
-/** Wire the timeline to the built plane Groups + the `#active`/`#clock` readouts.
- * `applyTime(t)` is the per-frame impure edge around the pure `affineAt`. */
-export function createTimeline(scene: SceneV2, groups: Record<string, THREE.Group>): Timeline {
+/** Wire the timeline to the built plane + ground-object Groups and the
+ * `#active`/`#clock` readouts. `applyTime(t)` is the per-frame impure edge around
+ * the pure `framePoses`. Movers (#651) animate from the same `segments` list —
+ * `goGroups` defaults to `{}` so a GO-free scene is unchanged. */
+export function createTimeline(
+  scene: SceneV2,
+  groups: Record<string, THREE.Group>,
+  goGroups: Record<string, THREE.Group> = {},
+): Timeline {
   const TL = scene.timeline;
   const SEGS = TL.segments;
   const TOTAL = TL.total_s;
   const hasAnim = TOTAL > 0 && SEGS.length > 0;
   const segByPlane: Record<string, SegmentData> = {};
   for (const s of SEGS) segByPlane[s.plane_id] = s;
-  const finals = scene.final_poses;
 
   const active = byId('active');
   const clock = byId('clock');
 
   const applyTime = (t: number): void => {
-    for (const p of scene.planes) {
-      const { vis, aff } = affineAt(segByPlane, finals, p.id, t);
-      const g = groups[p.id];
+    const poses = framePoses(scene, segByPlane, t);
+    const drive = (id: string, g: THREE.Group | undefined): void => {
+      if (!g) return;
+      const { vis, aff } = poses[id];
       g.visible = vis;
       if (vis && aff) {
         g.matrix.copy(affineMatrix(aff));
         g.matrixWorldNeedsUpdate = true;
       }
-    }
+    };
+    for (const p of scene.planes) drive(p.id, groups[p.id]);
+    for (const go of scene.ground_objects) drive(go.id, goGroups[go.id]);
+
     const cur = SEGS.find((s) => t >= s.start_s && t < s.end_s);
     active.textContent = cur ? 'towing: ' + cur.plane_id : '';
     clock.textContent = t.toFixed(1) + 's';

@@ -186,9 +186,10 @@ def _ground_object_blocks(layout: Layout) -> list[dict]:
     brand-resolved per *class* (a warm-graphite ``fixed_obstacle`` keep-out vs the
     slate ``placed_routed_mover``), so the viewer reads ``color`` and hard-codes
     nothing (#419, the plane colour-map idiom). ``final_pose`` is the placement
-    affine — a ground object is static (no timeline) until mover animation lands
-    (a deferred follow-up; the Caddy egress lane is too, the egress oracle exports
-    no corridor geometry). Always-emitted, inert-when-empty (the
+    (resting) affine: a fixed obstacle is static, while a placed-routed mover
+    animates along its drive path via the timeline (#651, :func:`_timeline`) and
+    rests here. (The Caddy egress lane is still a follow-up — #652 — the egress
+    oracle exports no corridor geometry.) Always-emitted, inert-when-empty (the
     ``structural_notches`` discipline)."""
     blocks: list[dict] = []
     for gp in sorted(layout.ground_object_placements, key=lambda p: p.plane_id):
@@ -273,25 +274,32 @@ def _timeline(
     move_by_id = {m.plane_id: m for m in moves_plan.moves}
     segments: list[dict] = []
     t = 0.0
-    for placement in back_first_order(layout.placements):
-        move = move_by_id.get(placement.plane_id)
+
+    def _append_segment(body_id: str, *, record_final: bool) -> None:
+        nonlocal t
+        move = move_by_id.get(body_id)
         if move is None or move.path is None:
             # No move, or a deferred (path=None) move — the body stays at its final
-            # pose. A deferred path is a #601 ground-object mover (route → #602);
-            # it never keys an aircraft placement here, so this is defensive.
-            continue
+            # pose. A deferred path is an un-routable placed-routed mover (#197/#602);
+            # for an aircraft this guard is defensive (every aircraft is routed).
+            return
         samples = _sample_affines(move.path, max_samples_per_path)
         dur = min(max(move.path.length_m / tow_speed_mps, min_seg_s), max_seg_s)
-        segments.append(
-            {
-                "plane_id": placement.plane_id,
-                "start_s": t,
-                "end_s": t + dur,
-                "samples": samples,
-            }
-        )
-        finals[placement.plane_id] = samples[-1]
+        segments.append({"plane_id": body_id, "start_s": t, "end_s": t + dur, "samples": samples})
+        if record_final:
+            finals[body_id] = samples[-1]
         t += dur
+
+    # Aircraft drive in first (deepest slot first); then placed-routed movers
+    # (id-sorted, matching _ground_object_blocks) animate after every aircraft is
+    # parked (#651) — the real fill order (plan_fill routes aircraft, then movers).
+    # A mover's resting pose lives in its ground-object block's final_pose /
+    # go_anchors, not in `finals` (aircraft-only), so record_final=False for them.
+    for placement in back_first_order(layout.placements):
+        _append_segment(placement.plane_id, record_final=True)
+    for gp in sorted(layout.ground_object_placements, key=lambda p: p.plane_id):
+        _append_segment(gp.plane_id, record_final=False)
+
     return {"total_s": t, "segments": segments}, finals
 
 
