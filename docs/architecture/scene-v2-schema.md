@@ -47,6 +47,7 @@ metres.
 | `anchors` | object | `plane_id → [box → [corner → [x, y]]]`: oracle world corners at the final placement, for the viewer's load-time self-check. A scalar box has 4 corners; a polygon box has N (one per `vertices` entry). |
 | `gear_anchors` | object | `plane_id → [wheel → [x, y]]`: oracle world wheel positions at the final placement — each canonical plane-local wheel pushed through `geometry.local_to_world` (the same determinant-−1 map `anchors` applies via `aircraft_parts_world`), so the viewer self-check also covers the gear render and a sign-flip regression fails both at once. |
 | `go_anchors` | object | `ground_object_id → [box → [corner → [x, y]]]`: oracle world corners for each placed ground object (#606), the ground-object sibling of `anchors` for the same load-time self-check. `{}` when none. |
+| `egress_lanes` | object | `mover_id → [[x, y], …]`: sampled world points of each hard-door mover's drive-out corridor (#652), drawn as the "keep clear" egress-lane decal (2D + 3D). Always present; `{}` when there is no hard-door egress lane (no hard-door mover, or its egress is blocked / undrawable). Draw-only geometry — NOT anchored / not part of the det-−1 self-check. |
 | `placeholder` | bool | `true` iff any placed aircraft is on unmeasured (`measured: false`) data — drives the "PLACEHOLDER DATA" honesty banner on the 2D PNG and the 3D viewer (#401, #79). |
 | `readouts` | object \| null | Actionable quality numbers for a **valid** layout: `{ "min_gap_m", "min_wing_over_tail_clearance_m" }` (either may be `null` — single plane / no overhang). `null` when the layout is invalid — validity is taken from the supplied `CheckResult`, or collision-checked by `build_scene` itself when none was supplied, so readouts never imply an unverified validity. |
 
@@ -177,13 +178,15 @@ renders both through one shared box path. A ground object has no `wheels`/`on_ca
 and no per-id colour — `color` is brand-resolved per **class** in Python (the plane
 colour-map idiom, #419), so the viewer reads it and hard-codes nothing.
 
-`final_pose` is the placement affine — a ground object is **static** (no `timeline`
-segment). Mover *animation* and the Caddy egress lane are deferred follow-ups: the
-egress oracle (`towplanner.egress_first_conflict`) is a feasibility predicate that
-discards the winning path, so there is no corridor geometry to serialize here yet.
-The list is always present and empty when a layout has no ground objects (the
-`structural_notches` inert-when-empty discipline). Each body's world corners are
-oracled in `go_anchors` for the same load-time det-−1 self-check as `anchors`.
+`final_pose` is the placement (resting) affine. A **fixed obstacle** is static (no
+`timeline` segment); a **placed-routed mover** animates along its drive path via a
+`timeline` segment (#651) and rests here. The Caddy hard-door egress lane is the
+drive-out corridor that mover must keep clear, surfaced from the egress oracle
+(`towplanner.egress_first_conflict` / `egress_corridors`) into the `egress_lanes`
+top-level key (#652). The `ground_objects` list is always present and empty when a
+layout has no ground objects (the `structural_notches` inert-when-empty discipline).
+Each body's world corners are oracled in `go_anchors` for the same load-time det-−1
+self-check as `anchors`; the egress lane is draw-only and not anchored.
 
 ## `timeline`
 

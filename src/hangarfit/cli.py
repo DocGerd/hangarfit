@@ -845,12 +845,31 @@ def _egress_paths_for_render(
 ) -> dict[str, DubinsArc]:
     """Hard-door egress corridors to DRAW (#652): the drive-out lane the rescue
     vehicle must keep clear, surfaced from the egress oracle. ``{}`` (no routing
-    cost) when the layout has no hard-door movers. Best-effort and
-    visualization-only: a blocked corridor is simply omitted (nothing to draw),
-    and the solver's own egress gate stays the authoritative verdict (exit 3)."""
+    cost) when the layout has no hard-door movers.
+
+    A hard-door mover that is PRESENT but yields no corridor (egress blocked, or
+    not found within ``max_expansions``) is surfaced as a stderr note — without it
+    the absent lane would be silently indistinguishable from "nothing to keep
+    clear" on ``check`` / ``view``, which run no egress *gate* (only ``solve`` does,
+    exit 3). A trapped Caddy must never look like a clean scene (#652 review; the
+    #612/#627 surface-unroutable-movers idiom). On ``solve`` the returned layout
+    already passed the gate, so a routable caddy draws and this never fires."""
     from hangarfit.towplanner import egress_corridors
 
-    return egress_corridors(layout, max_expansions=max_expansions)
+    corridors = egress_corridors(layout, max_expansions=max_expansions)
+    undrawn = sorted(
+        gp.plane_id
+        for gp in layout.ground_object_placements
+        if layout.ground_objects[gp.plane_id].hard_door_mover and gp.plane_id not in corridors
+    )
+    for mover_id in undrawn:
+        print(
+            f"note: hard-door mover {mover_id!r} has no drawable egress corridor "
+            f"(it may be trapped; run 'hangarfit solve' for the authoritative egress "
+            f"verdict).",
+            file=sys.stderr,
+        )
+    return corridors
 
 
 def _write_renders(
@@ -1284,9 +1303,10 @@ def cmd_view(args: argparse.Namespace) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 2
 
-    # Hard-door egress lane(s) (#652). Bound the corridor search by the same view
-    # cap as the fill so a blocked-egress caddy degrades fast (a clear egress routes
-    # in a handful of expansions); a layout with no hard-door movers costs nothing.
+    # Hard-door egress lane(s) (#652). Bound the PER-MOVER corridor search by the
+    # same expansion value the view uses to cap the fill (here a per-mover budget,
+    # not the fill's global cap) so a blocked-egress caddy degrades fast — a clear
+    # egress routes in a handful of expansions. No hard-door movers ⇒ costs nothing.
     egress_cap = (
         args.tow_max_expansions
         if args.tow_max_expansions is not None

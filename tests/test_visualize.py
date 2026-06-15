@@ -1419,6 +1419,12 @@ class TestDrawEgressLanes:
         assert ax.plot.call_count == 1
         kw = ax.plot.call_args.kwargs
         assert kw["color"] == brand.EGRESS_LANE_COLOR
+        # The "keep clear, below the route" visual encoding (dashed amber, drawn
+        # under the solid tow paths at zorder 5) — the load-bearing semantics.
+        assert kw["linestyle"] == (0, (6, 3))  # dashed
+        assert kw["alpha"] == brand.EGRESS_LANE_ALPHA
+        assert kw["lw"] == brand.EGRESS_LANE_LINEWIDTH
+        assert kw["zorder"] == 4.5  # below the tow-path overlay (5)
         xs, ys = ax.plot.call_args.args[0], ax.plot.call_args.args[1]
         assert (xs[0], ys[0]) == pytest.approx((5.0, 0.0))
         assert (xs[-1], ys[-1]) == pytest.approx((5.0, 6.0))

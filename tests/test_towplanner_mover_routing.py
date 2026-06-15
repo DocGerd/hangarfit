@@ -374,6 +374,84 @@ def test_egress_corridors_skips_non_hard_door_movers() -> None:
     assert egress_corridors(layout) == {}
 
 
+def test_egress_corridors_omits_blocked_hard_door_mover() -> None:
+    """#652: a hard-door mover whose egress is walled off is OMITTED from the dict
+    (the `if arc_out:` guard) — there is nothing to draw. Pins that guard: without
+    it a blocked mover would still appear keyed to a junk/None corridor."""
+    from hangarfit.towplanner import egress_corridors
+
+    wall = make_test_aircraft(id="wall", parts=_wide_wall_parts())
+    layout = Layout(
+        fleet={wall.id: wall},
+        hangar=_hangar(),
+        placements=(Placement("wall", x_m=20.0, y_m=15.0, heading_deg=0.0, on_carts=False),),
+        ground_objects={"caddy": _caddy()},
+        ground_object_placements=(
+            Placement("caddy", x_m=20.0, y_m=30.0, heading_deg=0.0, on_carts=False),
+        ),
+    )
+    # Low budget so the walled-off search bails fast; the caddy IS hard-door and IS
+    # placed, so omission can only come from the empty-corridor guard.
+    assert egress_corridors(layout, max_expansions=50) == {}
+
+
+def test_egress_paths_for_render_warns_on_undrawable_hard_door_mover(capsys) -> None:
+    """#652 review: on check/view (no egress gate runs), a present-but-undrawable
+    hard-door mover is SURFACED via stderr — never silently absent, which would
+    look identical to 'nothing to keep clear' (the #612/#627 idiom)."""
+    from hangarfit.cli import _egress_paths_for_render
+
+    wall = make_test_aircraft(id="wall", parts=_wide_wall_parts())
+    layout = Layout(
+        fleet={wall.id: wall},
+        hangar=_hangar(),
+        placements=(Placement("wall", x_m=20.0, y_m=15.0, heading_deg=0.0, on_carts=False),),
+        ground_objects={"caddy": _caddy()},
+        ground_object_placements=(
+            Placement("caddy", x_m=20.0, y_m=30.0, heading_deg=0.0, on_carts=False),
+        ),
+    )
+    paths = _egress_paths_for_render(layout, max_expansions=50)
+    assert paths == {}
+    err = capsys.readouterr().err
+    assert "caddy" in err and "no drawable egress corridor" in err
+
+
+def test_egress_paths_for_render_clear_egress_draws_without_warning(capsys) -> None:
+    """A clear-egress hard-door mover yields its corridor and emits no note."""
+    from hangarfit.cli import _egress_paths_for_render
+
+    layout = Layout(
+        fleet={},
+        hangar=_hangar(),
+        placements=(),
+        ground_objects={"caddy": _caddy()},
+        ground_object_placements=(
+            Placement("caddy", x_m=20.0, y_m=6.0, heading_deg=0.0, on_carts=False),
+        ),
+    )
+    assert set(_egress_paths_for_render(layout)) == {"caddy"}
+    assert capsys.readouterr().err == ""
+
+
+def test_egress_paths_for_render_no_hard_door_mover_is_silent(capsys) -> None:
+    """No hard-door mover ⇒ {} and no note (the absent lane is meaningful: nothing
+    to keep clear)."""
+    from hangarfit.cli import _egress_paths_for_render
+
+    layout = Layout(
+        fleet={},
+        hangar=_hangar(),
+        placements=(),
+        ground_objects={"caddy": _caddy(hdm=False)},
+        ground_object_placements=(
+            Placement("caddy", x_m=20.0, y_m=6.0, heading_deg=0.0, on_carts=False),
+        ),
+    )
+    assert _egress_paths_for_render(layout) == {}
+    assert capsys.readouterr().err == ""
+
+
 def test_mover_routing_is_byte_identical_across_runs() -> None:
     """plan_fill with ground-object movers is byte-identical across two calls
     on the same Layout — RNG-free, ADR-0003.
