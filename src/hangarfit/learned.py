@@ -1,8 +1,8 @@
 """Learned-backend seam (epic #607).
 
-The deterministic RR-MC :func:`hangarfit.solver.solve` is the default and the
-only *working* backend today. This module is the **seam** for the opt-in learned
-backend: a sibling entry point that returns the same :class:`~hangarfit.models.SolveResult`
+The deterministic RR-MC :func:`hangarfit.solver.solve` is the default backend.
+This module is the **seam** for the opt-in learned backend: a sibling entry point
+that returns the same :class:`~hangarfit.models.SolveResult`
 shape, so every downstream consumer (render / ``view`` / ``--write-yaml``) stays
 backend-agnostic.
 

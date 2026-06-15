@@ -71,6 +71,6 @@ A backend with *no* reproducibility contract cannot be debugged or regression-te
 ## More Information
 
 - Related ADRs: [ADR-0003](0003-rr-mc-solver-algorithm.md) (the byte-identical contract whose scope this amends).
-- Related specs: [`docs/superpowers/specs/2026-06-12-learned-backend-cold-joint-rl-env-design.md`](../superpowers/specs/2026-06-12-learned-backend-cold-joint-rl-env-design.md) (§8 Determinism & the verifier relationship).
-- Related spikes: `docs/spikes/cnn-layout.md` (#331), `docs/spikes/cnn-tow-path.md` (#332).
+- Related specs: [`docs/superpowers/specs/2026-06-12-learned-backend-cold-joint-rl-env-design.md`](../superpowers/specs/2026-06-12-learned-backend-cold-joint-rl-env-design.md) — its §8 (Determinism & the verifier relationship) sketches the two-tier story and *defers* the binding decision to its sub-project #5; **this ADR is that decision**.
+- Related spikes: #331 (CNN layout) and #332 (CNN tow path) — concluded in `docs/spikes/cnn-layout.md` / `docs/spikes/cnn-tow-path.md` (landing via #669).
 - Related issues: epic #607; this rung #670.
