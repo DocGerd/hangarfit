@@ -245,6 +245,29 @@ def test_plan_fill_backtracks_order_when_greedy_commit_deadlocks(
     assert [m.plane_id for m in plan.moves] == ["B", "A"]
 
 
+def test_plan_fill_backtrack_cap_bounds_the_order_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#667: the order search is bounded by ``max_backtracks`` so an un-routable
+    fill bails predictably regardless of the per-plane expansion budget. With zero
+    backtracks allowed the deadlock case (which needs one reorder) bails instead of
+    finding [B, A]; the generous default still finds it."""
+    h = _hangar(width_m=20.0, length_m=30.0)
+    fleet = {"A": _box_plane("A"), "B": _box_plane("B")}
+    target = _layout(fleet, h, _slot("A", 12.0, 22.0), _slot("B", 8.0, 8.0))
+
+    def fake_plan_path(mover, entry, goal, *, hangar, placed, mover_on_carts, **kw):  # noqa: ANN001, ANN202
+        placed_ids = {p.plane_id for p in placed.placements}
+        if mover.id == "B" and "A" in placed_ids:
+            raise _forced_infeasible("B")
+        return _fake_arc(mover, entry, goal)
+
+    monkeypatch.setattr(tp, "plan_path", fake_plan_path)
+    assert [m.plane_id for m in plan_fill(target).moves] == ["B", "A"]  # default reorders
+    with pytest.raises(NoFeasiblePlanError):
+        plan_fill(target, max_backtracks=0)  # no backtracking allowed → bails
+
+
 def test_plan_fill_bails_with_structured_error_when_unplannable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

@@ -1522,6 +1522,7 @@ def plan_fill(
     heuristic: Literal["euclidean", "grid"] = "grid",
     max_expansions: int | None = None,
     max_total_expansions: int | None = None,
+    max_backtracks: int | None = None,
     apron_dropped_out: list[ApronShallowDrop] | None = None,
     unroutable_movers: list[str] | None = None,
 ) -> MovesPlan:
@@ -1580,13 +1581,19 @@ def plan_fill(
     is stuck (spike Risk #1) and the plan bails with :class:`NoFeasiblePlanError`
     naming the deepest unplaceable plane.
 
-    No retry *budget* is needed: an already-placed plane is only ever an added
-    obstacle, so a plane infeasible against the current obstacles can never
-    become feasible later — the scan therefore makes monotonic progress (one
-    plane committed per iteration) and cannot spin. Deterministic (ADR-0003):
-    the order, the Hybrid-A* primitive fan, the cone grid, and the next-feasible
-    scan are all RNG-free, so a given ``target`` always yields the same
-    :class:`MovesPlan`.
+    Since #667 the scan is a deterministic greedy-first **backtracking** DFS over
+    placement order (``_place_rest``): the first feasible candidate at each level is
+    recursed first, so when the greedy back-first order already routes, the search
+    returns that identical path untouched (byte-identical, ADR-0003); it backtracks
+    the order only where a greedy commit deadlocks a later body — cases the old
+    monotonic loop bailed on. The search is bounded by both ``max_total_expansions``
+    (above) and ``max_backtracks`` (``None`` ⇒ the module ``_MAX_FILL_BACKTRACKS``),
+    a separate deterministic ceiling on dead-end backtracks so a generous per-plane
+    budget can't fund a runaway order search on an un-routable fill. Deterministic
+    (ADR-0003): the order, the Hybrid-A* primitive fan, the cone grid, and the
+    candidate scan are all RNG-free, so a given ``target`` always yields the same
+    :class:`MovesPlan`. (A truly cyclic lock — no order routes — still bails; the
+    move-aside that resolves those is tracked on #667.)
     """
     # #626: memoize body world-parts for the WHOLE fill. The static obstacle field
     # is rebuilt by every plan_path's _build_obstacles, and the greedy scan re-routes
@@ -1601,6 +1608,7 @@ def plan_fill(
             heuristic=heuristic,
             max_expansions=max_expansions,
             max_total_expansions=max_total_expansions,
+            max_backtracks=max_backtracks,
             apron_dropped_out=apron_dropped_out,
             unroutable_movers=unroutable_movers,
         )
@@ -1612,13 +1620,16 @@ def _plan_fill(
     heuristic: Literal["euclidean", "grid"] = "grid",
     max_expansions: int | None = None,
     max_total_expansions: int | None = None,
+    max_backtracks: int | None = None,
     apron_dropped_out: list[ApronShallowDrop] | None = None,
     unroutable_movers: list[str] | None = None,
 ) -> MovesPlan:
     """Body of :func:`plan_fill`, run inside an active ``pose_cache_scope`` (#626)."""
     budget = _MAX_EXPANSIONS if max_expansions is None else max_expansions
     total_budget = _MAX_FILL_EXPANSIONS if max_total_expansions is None else max_total_expansions
+    bt_cap = _MAX_FILL_BACKTRACKS if max_backtracks is None else max_backtracks
     total_used = 0
+    backtracks_used = 0
     fleet = target.fleet
     hangar = target.hangar
     # #667 Stage 0: HAND-POSITIONED bodies (dolly-borne gliders) are parked by
@@ -1657,7 +1668,7 @@ def _plan_fill(
         """Return the chosen (slot, arc, apron_fallback) sequence that places every
         body in ``rest`` against ``placed_list``, greedy-first with backtracking, or
         ``None`` if no order does. Raises on global-budget exhaustion."""
-        nonlocal total_used, deepest_conflict
+        nonlocal total_used, deepest_conflict, backtracks_used
         if not rest:
             return []
         # `placed_list` is constant across candidates at this level; plan_path adds
@@ -1719,8 +1730,20 @@ def _plan_fill(
             sub = _place_rest(placed_list + [slot], rest[:idx] + rest[idx + 1 :])
             if sub is not None:
                 return [(slot, arc, apron_fb), *sub]
-            # Routed here, but the rest dead-ends downstream → backtrack: try the
-            # next candidate at this level (the old monotonic loop could not).
+            # Routed here, but the rest dead-ends downstream → backtrack to the next
+            # candidate (the old monotonic loop could not). Bound the total dead-end
+            # backtracks so a generous per-plane budget can't fund a runaway order
+            # search on an un-routable fill (#667); 0 ⇒ no backtracking allowed.
+            backtracks_used += 1
+            if backtracks_used > bt_cap:
+                raise NoFeasiblePlanError(
+                    ordered[0].plane_id,
+                    Conflict.single(
+                        kind="no_feasible_path",
+                        plane=ordered[0].plane_id,
+                        detail=f"order-search backtracking cap ({bt_cap}) exceeded",
+                    ),
+                )
         return None
 
     result = _place_rest(placed, ordered)
@@ -1866,6 +1889,16 @@ _MAX_FILL_EXPANSIONS = 16000  # GLOBAL expansion budget across one whole fill (#
 # budget VALUE (not the count) with the profiling harness if a real apron site
 # needs it; bound a hard apron fill per-run with ``--tow-max-expansions``.
 # Overridable via the ``max_total_expansions`` param on ``plan_fill()``.
+
+_MAX_FILL_BACKTRACKS = 2000  # GLOBAL cap on order-search dead-end backtracks (#667).
+# The Stage-1 order search (`_place_rest`) backtracks the placement ORDER when a
+# greedy commit deadlocks a later body. The expansion budget above is the primary
+# bound, but a generous PER-PLANE budget (needed to route tight-feasible planes)
+# also funds deep order-backtracking on an UN-routable fill — so this is a separate,
+# deterministic secondary ceiling on the number of dead-end backtracks, independent
+# of the per-plane budget. Inert for the greedy-success path (0 backtracks ⇒
+# byte-identical, ADR-0003) and far above any legitimate small reorder; it only
+# bounds a pathological/un-routable order search. Overridable via ``max_backtracks``.
 # Sampling resolution for the FAST in-search `_motion_clear` validity checks
 # (edges + the analytic-shot screen). Coarser than the exact oracle's default
 # (0.05 m / 1°) to keep the search tractable: the worst case is a plane that can
