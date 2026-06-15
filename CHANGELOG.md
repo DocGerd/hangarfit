@@ -6,6 +6,17 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Cold-joint RL environment + reward (`ml/`, #607/#672).** Added the dev/CI-only
+  top-level `ml/` package with `HangarFitEnv` — a gym-style environment where an agent
+  drives objects in from the apron and parks them one at a time, scored by a
+  graded-lexicographic reward (collision/out-of-bounds/egress hard terms, movement
+  cost, soft spread/sequence/region, terminal fraction-placed) plus policy-invariant
+  potential-based shaping. Reuses the deterministic geometry oracle (`collisions.check`,
+  the parts-model transform, the ADR-0010 motion primitives incl. the #647 strafe,
+  the Caddy egress oracle) — **not** the RR-MC/Hybrid-A* search. No neural net, no
+  training, no new runtime dependency; `ml/` is excluded from the wheel like `bench/`
+  and `viewer/`. Sub-project #1 of the learned backend (ADR-0027).
+
 - **Real Airfield Herrenteich 'today' layout + clearance recalibration (#664).**
   Added `examples/herrenteich/layout_today.yaml`: the club's actual in-hangar set
   as described on 2026-06-15 — all **nine** aircraft (incl. the Scheibe Falke) +
