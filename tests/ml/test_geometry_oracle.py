@@ -97,3 +97,23 @@ def test_apply_strafe_translates_sideways():
     )
     assert abs(end.y_m - 4.0) < 1e-6  # strafe keeps the along-heading coordinate
     assert abs(end.x_m - 5.0) > 0.5  # and moves perpendicular
+
+
+# ---------------------------------------------------------------------------
+# T7: swept_intrusion_m2
+# ---------------------------------------------------------------------------
+
+
+def test_swept_intrusion_zero_for_clear_move_in_empty_hangar():
+    from hangarfit.towplanner import Pose
+
+    layout = single_object_layout(x_m=5.0, y_m=8.0)  # one body; we move it, others empty
+    body = layout.fleet[next(iter(layout.fleet))]
+    start = Pose(x_m=5.0, y_m=8.0, heading_deg=0.0)
+    _, swept = go.apply_primitive(
+        start, Primitive(kind="S", magnitude=0.5, gear=1), turn_radius_m=0.0
+    )
+    intr = go.swept_intrusion_m2(
+        body, swept, parked_layout=layout, active_id=next(iter(layout.fleet))
+    )
+    assert intr == 0.0
