@@ -24,7 +24,7 @@ Yes, with the right formulation. The layout task is **discrete placement of a va
 |---|---|---|
 | **Policy / heuristic net** (suggest next placement; RR-MC search consumes it) | Most modular, keeps determinism + oracle authoritative | Viable as an auxiliary, but not the joint co-design that was chosen |
 | **Feasibility / value net** (P(partial extends to valid)) | Good for pruning search | Useful auxiliary head, not the whole answer |
-| **Generative CNN raster → poses (image-frame output)** | Rasterises space, but **handles a variable plane *set* poorly** and couples output to the pixel grid | **Rejected** — this is precisely the coupling that falsified the original CNN grid PoC (#332 → PR #334): poses read off a grid, not the world frame |
+| **Generative CNN raster → poses (image-frame output)** | Rasterises space, but **handles a variable plane *set* poorly** and couples output to the pixel grid | **Rejected** — the image-frame-output coupling that sank the original grid-CNN hypothesis (the #332 falsification); poses must be produced in the world frame, not read off a grid |
 | **Set-Transformer / GNN over the object set** (poses in world frame) | Natural fit for "set of aircraft + 2D space"; permutation-invariant | **Chosen** |
 
 **Chosen formulation (Stage-C, #607):** a Set-Transformer over the object tokens (aircraft + ground movers), **conditioned by a small CNN that encodes the hangar keep-out mask as context only** (door throat, maintenance bay, structural notch, fixed fuel-trailer keep-out). Three heads: a **selection head** (placement/tow order, where soft door-priority is learned), a **coarse pose head** (discrete pocket + heading-bin per object), and a **feasibility head** (soft-mask obviously-bad poses). A **deterministic refiner** snaps each coarse (pocket, heading-bin) to continuous `(x, y, heading)` by local search under `collisions.check` — restoring the per-instance precision the coarse head deliberately gives up. The CNN feeds context; it never emits the pose output in pixel frame.
@@ -74,7 +74,7 @@ Validity collapses to 0 % by ~20 cm mean displacement: the calibrated all-8 sits
 3. **Scope the training target to routable daily subsets**, not the needle-thin static-dense all-8. Define the realistic ceiling empirically (the max routable count/density sweep — see #332).
 4. **Keep the verifier authoritative and the determinism scope amended, not weakened.**
 
-This spike does not flesh #607's sub-issues — those graduate to their own milestone per the spikes convention. The follow-on work is epic **#607**, whose learning approach is now the **cold-joint env design** (its sub-project #1 — the RL environment + reward — is landed; sub-projects #2–#5 cover the network/observation encoding, training, the learned-path determinism story, and packaging). Note that #607's *original* BC-proposer sub-issue list predates and is partly superseded by that cold-joint reframe.
+This spike does not flesh #607's sub-issues — those graduate to their own milestone per the spikes convention. The follow-on work is epic **#607**, whose learning approach is now the **cold-joint env design** (its sub-project #1 — the RL environment + reward **design** — is specified in PR #639; the env *code* and sub-projects #2–#5 — network/observation encoding, training, the learned-path determinism story, packaging — are not yet built). Note that #607's *original* BC-proposer sub-issue list predates and is partly superseded by that cold-joint reframe.
 
 ## Risk register
 
