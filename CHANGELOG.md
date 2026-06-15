@@ -11,9 +11,10 @@ All notable changes to this project are documented here. Format follows [Keep a 
   as described on 2026-06-15 — all **nine** aircraft (incl. the Scheibe Falke) +
   the **one** Duo Discus glider trailer (the spare is stored elsewhere) + the fixed
   fuel trailer + the rescue Caddy with a clear drive-out egress. Validating this
-  real set against the model was the existence-proof test: it is **infeasible at the
-  previous `clearance_m 0.20`** (a checker-driven search comes ~2 conflicts short)
-  but **valid at 0.10 m**, and the club confirms real wingtip-to-part gaps vary a lot
+  real set against the model was the existence-proof test: an offline checker-driven
+  search finds **no valid arrangement of it at the previous `clearance_m 0.20`** (its
+  best still leaves conflicts) but seats it cleanly **at 0.10 m**, and the club
+  confirms real wingtip-to-part gaps vary a lot
   and on dense days are very tight. So the Herrenteich `hangar.yaml` horizontal
   parked clearance is **recalibrated 0.20 → 0.10 m** (vertical wing-layer clearance
   unchanged at 0.15 m — it was not the binding constraint). Lowering the clearance

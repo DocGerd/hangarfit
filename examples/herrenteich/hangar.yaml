@@ -63,9 +63,12 @@ structural_notches:
 # <=0.22/0.15, so it was first set to 0.20/0.15. But that 0.20 m horizontal gap
 # turned out TOO LOOSE to reproduce reality: when PK described how the club
 # actually parks today (all 9 aircraft + the Duo glider trailer + fuel trailer +
-# Caddy, with a clear Caddy drive-out), a checker-driven search could NOT seat that
-# real set at 0.20 m — it always came up ~2 conflicts short — yet seats it cleanly
-# at <=0.10 m. PK confirmed the real wingtip-to-part gaps VARY A LOT and on dense
+# Caddy, with a clear Caddy drive-out), an offline checker-driven search could NOT
+# find any valid arrangement of that real set at 0.20 m (its best still left a few
+# conflicts), yet finds one cleanly at <=0.10 m. (The shipped layout_today.yaml is
+# packed to the 0.10 m frontier, so checking IT at 0.20 m shows many conflicts —
+# expected; the point is that no 0.20 m arrangement of the real set was found at
+# all.) PK confirmed the real wingtip-to-part gaps VARY A LOT and on dense
 # days are very tight (well under 0.20 m). So the horizontal clearance is
 # recalibrated to 0.10 m: the demonstrated tight-pack gap of the real all-9
 # single-trailer layout (examples/herrenteich/layout_today.yaml, whose tightest gap
@@ -79,7 +82,7 @@ wing_layer_clearance_m: 0.15 # minimum vertical gap between two parts at the sam
 # Tow-MOTION clearances (#643/#646): the margin the planner keeps while a mover
 # is IN MOTION threading past parked bodies, distinct from the PARKED spacing
 # above. A spotter hand-clears wingtips far closer during a slow guided slide than
-# the long-term parked gap — applying the 0.20 m parked margin during motion
+# the long-term parked gap — applying the full parked clearance margin during motion
 # falsely rejects routable maneuvers (the #642 finding). 0.05 m models the
 # hand-cleared motion margin; like the parked values it is measured: false
 # (a documented modelling assumption pending on-site measurement). Absent ⇒ the

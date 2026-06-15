@@ -69,10 +69,11 @@ orthogonal nest. When PK described the **actual** arrangement (2026-06-15), it w
 outside; the earlier `layout_full.yaml` had done the opposite (both trailers in →
 one aircraft out), which is why it dropped the Scheibe.
 
-Reproducing the real set exposed a **calibration gap**, not a model bug: a
-checker-driven search could not seat all nine aircraft + the trailer + fuel + Caddy
-at the previous `clearance_m 0.20` (always ~2 conflicts short) but seats them at
-**0.10 m**, and PK confirmed the real wingtip-to-part gaps **vary a lot** and on
+Reproducing the real set exposed a **calibration gap**, not a model bug: an offline
+checker-driven search could not find *any* valid arrangement of all nine aircraft +
+the trailer + fuel + Caddy at the previous `clearance_m 0.20` (its best still left a
+few conflicts) but seats them cleanly at **0.10 m**, and PK confirmed the real
+wingtip-to-part gaps **vary a lot** and on
 dense days are very tight (well under 0.20 m). So the horizontal clearance was
 recalibrated **0.20 → 0.10 m** (`layout_today.yaml`'s tightest gap is ~0.10 m); the
 0.15 m vertical (wing-layer) clearance was not the binding constraint and is
