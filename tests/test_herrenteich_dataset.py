@@ -62,7 +62,13 @@ def test_hangar_motion_clearance_calibrated() -> None:
 
 def test_fleet_roster() -> None:
     fleet = load_fleet(HERRENTEICH / "fleet.yaml")
-    assert set(fleet) == USUAL_OCCUPANTS
+    # The roster is the eight usual occupants PLUS the Fuji FA-200, a permanent
+    # ninth occupant added in the #657 realism pass (a placeholder for a future
+    # C150). The hangar cannot park all nine alongside the ground objects, so no
+    # single layout places the whole roster — layout.yaml parks the usual eight
+    # (test_everyone_home_layout_is_valid) and layout_full.yaml the realistic
+    # GO-laden subset (test_full_set_layout_is_valid).
+    assert set(fleet) == USUAL_OCCUPANTS | {"fuji"}
     # Stemme is hangared wings-folded: the wing part carries the folded span,
     # which is what lets a 23 m glider fit a 15 m hangar.
     stemme_span = next(p.width_m for p in fleet["stemme_s10"].parts if p.kind == "wing")
@@ -184,9 +190,15 @@ def test_ground_objects_load_from_manifest() -> None:
     assert gos["vw_caddy"].motion_mode == "steerable"
     assert gos["glider_trailer_1"].motion_mode == "towed"
     assert gos["glider_trailer_2"].motion_mode == "towed"
-    # each is a single solid ground footprint
+    # All parts are solid 'ground' footprints. The Caddy is multi-part (#658:
+    # a van body 0->1.84 m + a small roof-gear box 1.84->2.04 m, so a high wing
+    # may overhang the body and only has to clear the localized rack); the rest
+    # are single boxes.
     for go in gos.values():
-        assert len(go.parts) == 1 and go.parts[0].kind == "ground"
+        assert go.parts and all(p.kind == "ground" for p in go.parts)
+    assert len(gos["vw_caddy"].parts) == 2
+    for sid in ("maul_fuel_trailer", "glider_trailer_1", "glider_trailer_2"):
+        assert len(gos[sid].parts) == 1
 
 
 def test_hangar_clearances_calibrated() -> None:
@@ -197,7 +209,17 @@ def test_hangar_clearances_calibrated() -> None:
     assert hangar.wing_layer_clearance_m == 0.15
 
 
-FULL_SET = USUAL_OCCUPANTS | {
+# The realistic in-hangar set (#657/#659): SEVEN of the eight usual aircraft +
+# ALL FOUR ground objects, packed FISHBONE (mixed continuous headings). With the
+# rescue Caddy keeping a clear drive-out egress (the user's hard rule) plus the fuel
+# trailer by the door and both glider trailers inside, the hangar is one aircraft
+# over capacity — an exhaustive search (orthogonal AND fishbone) could never seat
+# all eight alongside the ground objects with a clear Caddy egress. So the
+# motor-glider Scheibe Falke parks OUTSIDE in this arrangement; it stays in the
+# fleet manifest (test_fleet_roster), this layout just doesn't place it.
+# (layout.yaml still parks all eight aircraft — with no ground clutter — so the
+# "all eight fit" promise is unchanged; it lives there, not here.)
+FULL_SET = (USUAL_OCCUPANTS - {"scheibe_falke"}) | {
     "vw_caddy",
     "glider_trailer_1",
     "glider_trailer_2",
@@ -206,8 +228,11 @@ FULL_SET = USUAL_OCCUPANTS | {
 
 
 def test_full_set_layout_is_valid() -> None:
-    """The full real set (8 aircraft + 4 ground objects) passes the real
-    checker at the calibrated clearances (#605 primary acceptance)."""
+    """The realistic in-hangar set (7 aircraft + 4 ground objects, fishbone) passes
+    the real checker at the calibrated clearances (#605/#659). The Caddy keeps a
+    clear egress (test_full_set_caddy_egress_clear) and the fuel trailer sits hard
+    against the left wall by the door; the Scheibe Falke is parked outside (see
+    FULL_SET)."""
     layout = load_layout(HERRENTEICH / "layout_full.yaml")
     present = {p.plane_id for p in layout.placements} | {
         gp.plane_id for gp in layout.ground_object_placements
@@ -236,11 +261,11 @@ def test_full_set_ground_objects_in_bounds_and_clear_notch() -> None:
 
 
 def test_full_set_caddy_near_door() -> None:
-    """SOFT intent (pre-#603): the Caddy is parked near the door — in the front
-    third of the hangar and within the door's x-span — the precursor to the #603
-    hard nearest-door egress gate. (Exact 'nearest' is #603's job; the 9 m glider
-    trailers run along the walls toward the door, so a strict min-y assertion
-    would fight that geometry.)"""
+    """The Caddy is parked near the door — in the front third of the hangar and
+    within the door's x-span — at the mouth of its rescue lane, so it can drive
+    straight out (the clear egress is asserted by test_full_set_caddy_egress_clear).
+    A strict min-y assertion would fight the surrounding nest geometry, so this
+    pins the looser near-door envelope."""
     layout = load_layout(HERRENTEICH / "layout_full.yaml")
     caddy = next(gp for gp in layout.ground_object_placements if gp.plane_id == "vw_caddy")
     assert caddy.y_m < layout.hangar.length_m / 3
@@ -249,19 +274,18 @@ def test_full_set_caddy_near_door() -> None:
 
 
 @pytest.mark.slow
-def test_full_set_caddy_egress_blocked_finding() -> None:
-    """Documents the packing-wall finding: the egress oracle correctly reports
-    layout_full.yaml's Caddy as egress-blocked (the rescue vehicle is boxed in by
-    the surrounding aircraft; fixing it is gated on re-nesting / Stage C — #603).
+def test_full_set_caddy_egress_clear() -> None:
+    """The rescue Caddy can drive out of layout_full.yaml without moving anything
+    (#657/#659 — the user's hard requirement; flips the old egress-BLOCKED finding).
 
-    This test records the *current* state of the dataset: the Caddy IS placed near
-    the door (per test_full_set_caddy_near_door above) but the packed fleet still
-    walls off a clear egress path at the real herrenteich clearances.
+    Earlier the maximally-dense all-8 + 4-GO nest walled the Caddy in (the prior
+    test recorded that packing-wall finding). The realistic arrangement instead
+    keeps a rescue lane: the 10.5 m Duo trailer parks outside and one fewer body up
+    front leaves the Caddy a clear drive-out corridor to the door. The egress oracle
+    (the authoritative #603/#652 gate, full budget) must find that corridor.
     """
     from hangarfit.towplanner import egress_first_conflict
 
     layout = load_layout(HERRENTEICH / "layout_full.yaml")
     c = egress_first_conflict(layout, "vw_caddy")
-    assert c is not None and c.kind == "caddy_egress", (
-        f"expected caddy_egress conflict from layout_full.yaml; got {c}"
-    )
+    assert c is None, f"expected the Caddy to have a clear egress; got {c}"
