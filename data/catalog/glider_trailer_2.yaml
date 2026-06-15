@@ -1,15 +1,16 @@
-# Second closed glider trailer at Herrenteich. Same TYPICAL envelope as
-# glider_trailer_1 (no per-trailer survey); a distinct catalog object because
-# ground_object_placements forbids duplicate ids. measured: false.
+# Closed road trailer for the club's SINGLE-SEAT glider (a 15 m-class Discus / LS
+# / ASW). The shorter of the two Herrenteich glider trailers. Envelope from an
+# owner-measured Cobra 15 m trailer (29'6" x 5'9" x 4'9", tongue-to-tail ≈
+# 9.0 x 1.75 x 1.45 m); measured: false — not our own on-site survey.
 type: trailer
 id: glider_trailer_2
-name: "Glider trailer 2 (closed)"
+name: "Glider trailer 2 — single-seat 15 m (closed)"
 measured: false
 parts:
   - kind: ground
-    length_m: 9.0
-    width_m: 2.1
+    length_m: 9.0         # single-seat 15 m trailer overall (Cobra, owner-measured)
+    width_m: 1.75         # slim single-seater trailer width
     offset_x_m: 0.0
     offset_y_m: 0.0
     z_bottom_m: 0.0
-    z_top_m: 2.3
+    z_top_m: 1.45         # low single-seater closed-trailer height

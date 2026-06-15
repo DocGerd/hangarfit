@@ -21,6 +21,11 @@ aircraft:
   - { ref: ../../data/catalog/cessna_140.yaml, tow_pivotable: true }
   - { ref: ../../data/catalog/ctsl.yaml, tow_pivotable: true }
   - { ref: ../../data/catalog/fk9_mkii.yaml, tow_pivotable: true }
+  # The Fuji FA-200 is currently a PERMANENT occupant (to be replaced by a C150
+  # in future). The only low-winger here; never carted (always_own_gear, the
+  # catalog default). NOTE: its catalog dims are still eyeballed placeholders
+  # (measured: false) — a real survey is a follow-up (#657).
+  - ../../data/catalog/fuji.yaml
 
 # Non-aircraft ground objects usually on the floor with the fleet (#605/#601).
 # Referenced from the central catalog, same as aircraft. The fuel trailer is a

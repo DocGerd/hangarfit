@@ -1,6 +1,19 @@
 # VW Caddy Maxi — the club's rescue/utility vehicle, parked in the hangar.
-# Dimensions: VW Caddy Maxi (long-wheelbase) manufacturer technical data.
+# Dimensions: VW Caddy Maxi (long-wheelbase) manufacturer technical data, EXCEPT
+# the height, which the club has raised ~0.20 m above stock with roof-stowed gear
+# (shovels, broom, etc.) — on-site report (PK), so height is real, the rest spec.
 # measured: false — published spec, not an on-site survey.
+#
+# MULTI-PART (#658). The Caddy is modelled as TWO stacked `ground` boxes, not one
+# full-height prism: the boxy van BODY at the stock roofline (0 -> 1.84 m) and a
+# small ROOF-STOWED GEAR rack on top (1.84 -> 2.04 m). A single full-height box
+# would block the wing layer (z ~1.9-2.3 m) across the WHOLE 4.88 x 1.79 m
+# footprint, because the body-vs-wing z-gap collapses from +0.16 m (clears the
+# 0.15 m wing-layer clearance) to -0.04 m once the roof gear's 20 cm is smeared
+# over the entire roof. Splitting confines that -0.04 m conflict to the ~1.0 x
+# 0.8 m rack footprint only, so a high wing may overhang the van body (as it does
+# in reality) and only has to clear the localized rack. This restores the Caddy's
+# placement + egress freedom in the dense Herrenteich nest (#659).
 type: car
 id: vw_caddy
 name: "VW Caddy Maxi (rescue vehicle)"
@@ -8,10 +21,17 @@ turn_radius_m: 5.5        # carried for #602 routing; unused by static check
 measured: false
 hard_door_mover: true    # rescue vehicle: must keep a clear drive-out egress (#603)
 parts:
-  - kind: ground
+  - kind: ground          # van body — boxy, full footprint, at the stock roofline
     length_m: 4.88        # VW Caddy Maxi overall length (manufacturer)
     width_m: 1.79         # body width excl. mirrors (manufacturer)
     offset_x_m: 0.0
     offset_y_m: 0.0
     z_bottom_m: 0.0
-    z_top_m: 1.84         # roof height (manufacturer)
+    z_top_m: 1.84         # stock roofline (manufacturer); a wing may overhang this
+  - kind: ground          # roof-stowed gear rack (shovels/broom) — localized, on top
+    length_m: 1.0         # small rack footprint (est., on-site PK)
+    width_m: 0.8
+    offset_x_m: 0.0       # centred on the roof
+    offset_y_m: 0.0
+    z_bottom_m: 1.84      # sits on the roofline
+    z_top_m: 2.04         # +0.20 m roof-stowed gear (on-site, PK)
