@@ -444,11 +444,40 @@ function addTowPaths(scene2, SCENE2, BRAND2) {
   return { lines, setVisible };
 }
 
-// src/anchors.ts
+// src/egress.ts
 import * as THREE9 from "three";
+function addEgressLanes(scene2, SCENE2, BRAND2) {
+  const Z_OFFSET = 0.025;
+  const colour = new THREE9.Color(BRAND2.egressLane);
+  const lines = [];
+  for (const moverId of Object.keys(SCENE2.egress_lanes).sort()) {
+    const pts = SCENE2.egress_lanes[moverId];
+    if (pts.length < 2) continue;
+    const geom = new THREE9.BufferGeometry().setFromPoints(
+      pts.map(([x, y]) => new THREE9.Vector3(x, y, Z_OFFSET))
+    );
+    const line = new THREE9.Line(
+      geom,
+      new THREE9.LineDashedMaterial({
+        color: colour,
+        dashSize: 0.6,
+        gapSize: 0.3,
+        transparent: true,
+        opacity: 0.9
+      })
+    );
+    line.computeLineDistances();
+    scene2.add(line);
+    lines.push(line);
+  }
+  return { lines };
+}
+
+// src/anchors.ts
+import * as THREE10 from "three";
 function partCornersLocal(b) {
   if (b.vertices !== null) return b.vertices;
-  const h = THREE9.MathUtils.degToRad(b.angle_deg);
+  const h = THREE10.MathUtils.degToRad(b.angle_deg);
   const cs = Math.cos(h), sn = Math.sin(h);
   const hl = b.length_m / 2, hw = b.width_m / 2;
   const corners = [[hl, -hw], [hl, hw], [-hl, hw], [-hl, -hw]];
@@ -648,6 +677,7 @@ var { groups: goGroups } = addGroundObjects(scene, SCENE);
 var { setVisible: setPathsVisible } = addTowPaths(scene, SCENE, BRAND);
 var pathsToggle = byId("paths");
 pathsToggle.addEventListener("change", () => setPathsVisible(pathsToggle.checked));
+addEgressLanes(scene, SCENE, BRAND);
 try {
   const { structural, maxErr } = checkAnchors(SCENE);
   if (structural) {

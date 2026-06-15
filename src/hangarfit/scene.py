@@ -321,11 +321,30 @@ def _readouts(layout: Layout) -> dict:
     }
 
 
+def _egress_lane_block(
+    egress_paths: dict[str, DubinsArc] | None,
+) -> dict[str, list[list[float]]]:
+    """Sampled world ``[x, y]`` corridor points per hard-door mover (#652), for the
+    egress-lane decal — the 2D/3D draw-able geometry of the drive-out path the
+    egress oracle now surfaces (:func:`hangarfit.towplanner.egress_corridors`).
+
+    Always a dict, empty when no corridors (the ``structural_notches`` /
+    ``go_anchors`` inert-when-empty discipline → byte-identical when absent).
+    Sorted by mover id so the JSON is deterministic (ADR-0003)."""
+    if not egress_paths:
+        return {}
+    return {
+        mover_id: [[p.x_m, p.y_m] for p in egress_paths[mover_id].sample()]
+        for mover_id in sorted(egress_paths)
+    }
+
+
 def build_scene(
     layout: Layout,
     *,
     moves_plan: MovesPlan | None = None,
     check_result: CheckResult | None = None,
+    egress_paths: dict[str, DubinsArc] | None = None,
     tow_speed_mps: float = 1.0,
     min_seg_s: float = 1.5,
     max_seg_s: float = 6.0,
@@ -333,9 +352,11 @@ def build_scene(
 ) -> dict:
     """Assemble the full ``hangarfit.scene/v2`` dict (pure, deterministic).
 
-    Same ``(layout, moves_plan, check_result)`` ⇒ byte-identical dict (the
-    closed-form paths are RNG-free; the spirit of ADR-0003). See the schema
-    reference in ``docs/architecture/scene-v2-schema.md``.
+    Same ``(layout, moves_plan, check_result, egress_paths)`` ⇒ byte-identical
+    dict (the closed-form paths are RNG-free; the spirit of ADR-0003).
+    ``egress_paths`` (#652, from :func:`hangarfit.towplanner.egress_corridors`)
+    is drawn as the hard-door egress lane; absent ⇒ ``egress_lanes`` is ``{}``
+    (inert). See the schema reference in ``docs/architecture/scene-v2-schema.md``.
     """
     timeline, finals = _timeline(
         layout,
@@ -364,6 +385,7 @@ def build_scene(
         "anchors": _anchors(layout),
         "gear_anchors": _gear_anchors(layout),
         "go_anchors": _go_anchors(layout),
+        "egress_lanes": _egress_lane_block(egress_paths),
         "placeholder": metrics.has_placeholder_data(layout),
         "readouts": _readouts(layout) if valid else None,
     }

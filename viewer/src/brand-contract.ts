@@ -32,6 +32,8 @@ export interface BrandTokens {
   wheel: string;
   cartDeck: string;
 
+  egressLane: string;
+
   conflict: string;
   labelConflictChip: string;
   labelChipBg: string;

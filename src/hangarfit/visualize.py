@@ -54,7 +54,7 @@ if TYPE_CHECKING:
     # (moves_plan.moves / move.path.sample()), so importing MovesPlan eagerly
     # would add a needless module dependency. towplanner does not import
     # visualize, so this is safe under TYPE_CHECKING either way.
-    from .towplanner import MovesPlan
+    from .towplanner import DubinsArc, MovesPlan
 
 # ── DocGerdSoft brand palette (Horizon-blue expression) ─────────────────────
 # All brand tokens are DEFINED ONCE in :mod:`hangarfit.brand` and re-exported
@@ -141,6 +141,7 @@ def render_layout(
     *,
     check_result: CheckResult | None = None,
     moves_plan: MovesPlan | None = None,
+    egress_paths: dict[str, DubinsArc] | None = None,
     title: str | None = None,
     dpi: int = 100,
 ) -> None:
@@ -188,6 +189,8 @@ def render_layout(
             _draw_conflict_overlay(ax, layout, check_result)
         if moves_plan is not None:
             _draw_tow_paths(ax, moves_plan, layout)
+        if egress_paths:
+            _draw_egress_lanes(ax, egress_paths)
         _finalize_axes(ax, layout, title)
         if metrics.has_placeholder_data(layout):
             _draw_placeholder_banner(fig)
@@ -762,6 +765,30 @@ def _draw_tow_paths(ax: Any, moves_plan: MovesPlan, layout: Layout | None = None
             lw=_TOW_PATH_LINEWIDTH,
             zorder=5,
             label=move.plane_id,
+        )
+
+
+def _draw_egress_lanes(ax: Any, egress_paths: dict[str, DubinsArc]) -> None:
+    """Overlay each hard-door mover's drive-out corridor as a translucent amber
+    'keep clear' polyline (#652, ``brand.EGRESS_LANE_COLOR``). The egress lane is
+    the corridor the rescue vehicle (the VW Caddy) MUST keep clear to leave; a
+    dashed wide amber line reads as a safety keep-clear zone, distinct from the
+    solid tow-path overlay (a route) and the conflict hatch (a violation). Drawn
+    just below the tow paths (zorder 4.5 < 5) so a route stays legible on top.
+    Sorted by mover id for deterministic output (ADR-0003); empty ⇒ no-op."""
+    for mover_id in sorted(egress_paths):
+        poses = list(egress_paths[mover_id].sample())
+        xs = [p.x_m for p in poses]
+        ys = [p.y_m for p in poses]
+        ax.plot(
+            xs,
+            ys,
+            color=brand.EGRESS_LANE_COLOR,
+            lw=brand.EGRESS_LANE_LINEWIDTH,
+            alpha=brand.EGRESS_LANE_ALPHA,
+            zorder=4.5,
+            linestyle=(0, (6, 3)),  # dashed = "keep clear"
+            label=f"egress:{mover_id}",
         )
 
 

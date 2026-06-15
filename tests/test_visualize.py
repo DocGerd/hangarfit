@@ -1389,3 +1389,52 @@ class TestHonestyAnnotations:
         kwargs = fig.text.call_args.kwargs
         assert kwargs["color"] == brand.PLACEHOLDER_BANNER_TEXT_2D
         assert kwargs["bbox"]["facecolor"] == brand.PLACEHOLDER_BANNER_BG_2D
+
+
+class TestDrawEgressLanes:
+    """`_draw_egress_lanes` overlays each hard-door mover's drive-out corridor as a
+    translucent amber 'keep clear' polyline (#652)."""
+
+    @staticmethod
+    def _arc(x0: float, y0: float, length: float):
+        from hangarfit.towplanner import DubinsArc, Pose, Segment
+
+        start = Pose(x_m=x0, y_m=y0, heading_deg=0.0)
+        end = Pose(x_m=x0, y_m=y0 + length, heading_deg=0.0)
+        return DubinsArc(start=start, end=end, turn_radius_m=1.0, segments=(Segment("S", length),))
+
+    def test_empty_is_noop(self) -> None:
+        from hangarfit.visualize import _draw_egress_lanes
+
+        ax = MagicMock()
+        _draw_egress_lanes(ax, {})
+        ax.plot.assert_not_called()
+
+    def test_draws_corridor_in_egress_colour(self) -> None:
+        from hangarfit import brand
+        from hangarfit.visualize import _draw_egress_lanes
+
+        ax = MagicMock()
+        _draw_egress_lanes(ax, {"caddy": self._arc(5.0, 0.0, 6.0)})
+        assert ax.plot.call_count == 1
+        kw = ax.plot.call_args.kwargs
+        assert kw["color"] == brand.EGRESS_LANE_COLOR
+        # The "keep clear, below the route" visual encoding (dashed amber, drawn
+        # under the solid tow paths at zorder 5) — the load-bearing semantics.
+        assert kw["linestyle"] == (0, (6, 3))  # dashed
+        assert kw["alpha"] == brand.EGRESS_LANE_ALPHA
+        assert kw["lw"] == brand.EGRESS_LANE_LINEWIDTH
+        assert kw["zorder"] == 4.5  # below the tow-path overlay (5)
+        xs, ys = ax.plot.call_args.args[0], ax.plot.call_args.args[1]
+        assert (xs[0], ys[0]) == pytest.approx((5.0, 0.0))
+        assert (xs[-1], ys[-1]) == pytest.approx((5.0, 6.0))
+
+    def test_multiple_corridors_sorted_by_id(self) -> None:
+        from hangarfit.visualize import _draw_egress_lanes
+
+        ax = MagicMock()
+        _draw_egress_lanes(
+            ax, {"zeta": self._arc(1.0, 0.0, 2.0), "alpha": self._arc(2.0, 0.0, 2.0)}
+        )
+        labels = [c.kwargs["label"] for c in ax.plot.call_args_list]
+        assert labels == ["egress:alpha", "egress:zeta"]  # id-sorted, deterministic

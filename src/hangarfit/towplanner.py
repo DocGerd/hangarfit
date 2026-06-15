@@ -1389,6 +1389,7 @@ def egress_first_conflict(
     *,
     heuristic: Literal["euclidean", "grid"] = "grid",
     max_expansions: int | None = None,
+    egress_path_out: list[DubinsArc] | None = None,
 ) -> Conflict | None:
     """First conflict blocking ``mover_id``'s drive-OUT through the door, else None.
 
@@ -1399,7 +1400,17 @@ def egress_first_conflict(
     ``placed`` (:func:`path_first_conflict` re-injects it per sample — same
     contract as :func:`plan_fill`'s mover routing, #602). Honors the fuel-trailer
     keep-out and every other parked body. Closed-form, RNG-free. Returns a
-    ``caddy_egress`` :class:`~hangarfit.models.Conflict` when blocked."""
+    ``caddy_egress`` :class:`~hangarfit.models.Conflict` when blocked.
+
+    ``egress_path_out`` is an optional diagnostics-only **out-param** (#652,
+    mirroring :func:`plan_path`'s ``stats`` / :func:`plan_fill`'s
+    ``apron_dropped_out``): when supplied and egress is feasible, the winning
+    door-cone -> slot :class:`DubinsArc` (which, reversed, IS the drive-out
+    corridor) is appended so a caller can DRAW the egress lane (the viewer/PNG
+    decal). It is left untouched when egress is blocked (no corridor exists). Pure
+    out-param: ``None`` (the default, which the solver passes) keeps the call
+    byte-identical — the ``plan_path`` call and the verdict are unchanged
+    (ADR-0003)."""
     mover = target.ground_objects[mover_id]
     slot = next((gp for gp in target.ground_object_placements if gp.plane_id == mover_id), None)
     if slot is None:
@@ -1425,7 +1436,7 @@ def egress_first_conflict(
     # trapped). Fixed _MAX_EXPANSIONS, RNG-free => deterministic (ADR-0003).
     budget = _MAX_EXPANSIONS if max_expansions is None else max_expansions
     try:
-        plan_path(
+        arc = plan_path(
             mover,
             cone[0],
             Pose.from_placement(slot),
@@ -1436,6 +1447,8 @@ def egress_first_conflict(
             heuristic=heuristic,
             max_expansions=budget,
         )
+        if egress_path_out is not None:
+            egress_path_out.append(arc)
         return None
     except NoFeasiblePlanError as exc:
         return Conflict.single(
@@ -1446,6 +1459,39 @@ def egress_first_conflict(
                 f"(no clear egress corridor): {exc.conflict.detail}"
             ),
         )
+
+
+def egress_corridors(
+    layout: Layout,
+    *,
+    heuristic: Literal["euclidean", "grid"] = "grid",
+    max_expansions: int | None = None,
+) -> dict[str, DubinsArc]:
+    """The drive-out corridor :class:`DubinsArc` per hard-door mover that HAS a
+    clear egress (#652). Blocked movers are omitted (no corridor to draw); a
+    non-hard-door mover has no required egress lane and is skipped. For drawing the
+    egress lane in the 2D PNG / 3D viewer — the caller passes the result to
+    :func:`hangarfit.scene.build_scene` / :func:`hangarfit.visualize.render_layout`.
+
+    Deterministic (id-sorted iteration, RNG-free closed-form routing). This re-runs
+    the egress check purely for the corridor geometry; the solve verdict already
+    ran its own gate (:func:`egress_first_conflict` in the solver), so this is a
+    visualization-only second pass."""
+    corridors: dict[str, DubinsArc] = {}
+    for gp in sorted(layout.ground_object_placements, key=lambda p: p.plane_id):
+        if not layout.ground_objects[gp.plane_id].hard_door_mover:
+            continue
+        arc_out: list[DubinsArc] = []
+        egress_first_conflict(
+            layout,
+            gp.plane_id,
+            heuristic=heuristic,
+            max_expansions=max_expansions,
+            egress_path_out=arc_out,
+        )
+        if arc_out:
+            corridors[gp.plane_id] = arc_out[0]
+    return corridors
 
 
 # ---------------------------------------------------------------------------

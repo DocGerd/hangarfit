@@ -16,6 +16,7 @@ import { addHangar } from './hangar.ts';
 import { addPlanes } from './planes.ts';
 import { addGroundObjects } from './ground_objects.ts';
 import { addTowPaths } from './paths.ts';
+import { addEgressLanes } from './egress.ts';
 import { checkAnchors } from './anchors.ts';
 import { createTimeline } from './timeline.ts';
 import { startHud } from './hud.ts';
@@ -72,6 +73,11 @@ const { groups: goGroups } = addGroundObjects(scene, SCENE);
 const { setVisible: setPathsVisible } = addTowPaths(scene, SCENE, BRAND);
 const pathsToggle = byId<HTMLInputElement>('paths');
 pathsToggle.addEventListener('change', () => setPathsVisible(pathsToggle.checked));
+
+// hard-door egress lane(s) (#652): the drive-out corridor a rescue vehicle (the
+// VW Caddy) must keep clear, as a dashed amber floor line. A safety annotation —
+// always on, no toggle. An egress-lane-free scene builds nothing here.
+addEgressLanes(scene, SCENE, BRAND);
 
 // ── load-time anchor self-check ──────────────────────────────────────────────
 // Must FAIL LOUD (banner), never throw — a throw here aborts module evaluation

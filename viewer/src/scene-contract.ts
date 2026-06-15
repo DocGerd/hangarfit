@@ -118,6 +118,9 @@ export interface SceneV2 {
   gear_anchors: Record<string, number[][]>;
   /** Oracle world box corners per ground object: [box][corner][x|y]. Empty when none. */
   go_anchors: Record<string, number[][][]>;
+  /** Hard-door mover drive-out corridors (#652): sampled [x, y] world points per
+   * mover id, for the egress-lane decal. Empty when no hard-door egress lane. */
+  egress_lanes: Record<string, [number, number][]>;
   timeline: TimelineData;
   placeholder: boolean; // always emitted (true iff any placed aircraft is unmeasured)
   readouts: Readouts | null; // always emitted; null when the layout is invalid
