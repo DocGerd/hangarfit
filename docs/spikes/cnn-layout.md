@@ -22,9 +22,9 @@ Yes, with the right formulation. The layout task is **discrete placement of a va
 
 | Formulation | Fit | Verdict |
 |---|---|---|
-| **Policy / heuristic net** (suggest next placement; RR-MC search consumes it) | Most modular, keeps determinism + oracle authoritative | Viable, lowest-risk warm-start |
+| **Policy / heuristic net** (suggest next placement; RR-MC search consumes it) | Most modular, keeps determinism + oracle authoritative | Viable as an auxiliary, but not the joint co-design that was chosen |
 | **Feasibility / value net** (P(partial extends to valid)) | Good for pruning search | Useful auxiliary head, not the whole answer |
-| **Generative CNN raster → poses (image-frame output)** | Rasterises space, but **handles a variable plane *set* poorly** and couples output to the pixel grid | **Rejected** — this is precisely the coupling that falsified the original #332-era PoC (poses read off a grid, not the world frame) |
+| **Generative CNN raster → poses (image-frame output)** | Rasterises space, but **handles a variable plane *set* poorly** and couples output to the pixel grid | **Rejected** — this is precisely the coupling that falsified the original CNN grid PoC (#332 → PR #334): poses read off a grid, not the world frame |
 | **Set-Transformer / GNN over the object set** (poses in world frame) | Natural fit for "set of aircraft + 2D space"; permutation-invariant | **Chosen** |
 
 **Chosen formulation (Stage-C, #607):** a Set-Transformer over the object tokens (aircraft + ground movers), **conditioned by a small CNN that encodes the hangar keep-out mask as context only** (door throat, maintenance bay, structural notch, fixed fuel-trailer keep-out). Three heads: a **selection head** (placement/tow order, where soft door-priority is learned), a **coarse pose head** (discrete pocket + heading-bin per object), and a **feasibility head** (soft-mask obviously-bad poses). A **deterministic refiner** snaps each coarse (pocket, heading-bin) to continuous `(x, y, heading)` by local search under `collisions.check` — restoring the per-instance precision the coarse head deliberately gives up. The CNN feeds context; it never emits the pose output in pixel frame.
@@ -33,7 +33,7 @@ Yes, with the right formulation. The layout task is **discrete placement of a va
 
 **Honestly: not for the small static fleet; yes for the dense regime.** The placeholder layout problem (~6–9 aircraft) is a tiny CSP the deterministic solver solves quickly, and ML's generalisation value proposition is weak there. The benefit is concentrated in **one measurable place**:
 
-**Baseline (the case that matters).** On the calibrated dense all-8 Herrenteich `layout.yaml`, placement-only RR-MC at a high restart budget (3 seeds × 45 s) finds **0 valid placements** (`exhausted_budget`, 0 distinct basins) — the deterministic search **cannot locate any valid dense all-8 packing**. The only known valid dense packing is the hand-authored layout, found by an offline search "the product solver cannot generate" (its own header). That is the gap: **reach, not beat.** A learned proposer that reaches valid dense oblique z-nested layouts RR-MC never finds is the entire justification; on any single small instance a slow deterministic solver may still win.
+**Baseline (the case that matters).** On the calibrated dense all-8 Herrenteich `layout.yaml`, placement-only RR-MC at a high restart budget (#642 Probe A2, 2026-06-15, at the #605 0.20/0.15 clearance calibration; 3 seeds × 45 s) finds **0 valid placements** (`exhausted_budget`, 0 distinct basins) — the deterministic search **cannot locate any valid dense all-8 packing**. The only known valid dense packing is the hand-authored layout, found by an offline search "the product solver cannot generate" (its own header). That is the gap: **reach, not beat.** A learned proposer that reaches valid dense oblique z-nested layouts RR-MC never finds is the entire justification; on any single small instance a slow deterministic solver may still win.
 
 Secondary potential wins (lower priority, not the bar): diverse/human-aesthetic layouts beyond the ADR-0004 edit-count metric; interactive "suggest as you drag"; warm-start to cut solver wall-clock.
 
@@ -48,7 +48,7 @@ Secondary potential wins (lower priority, not the bar): diverse/human-aesthetic 
 
 ## Q4 — How would it be trained?
 
-**Behavior-clone from a slow "teacher nester", then PPO fine-tune** with a potential-based (Ng–Harada–Russell) dense shaping reward read from the verifier, keeping the binary valid(+routable) verdict as the truth signal (potential-based shaping is policy-invariant → anti reward-hacking). The teacher is the offline search that already produces dense valid layouts (the same family as the `/tmp` SA harness that produced the real `layout_today`).
+Per the cold-joint env design (which **supersedes** the earlier behavior-cloning / teacher-nester framing of the primer and #607): the placement dimension is **not** trained by cloning a teacher — a **single cold-joint agent learns to place (and tow) from reward alone, no teacher, no BC.** The placement reward is the verifier's graded `collisions.check` penetration as potential-based (Ng–Harada–Russell) shaping, with the binary valid(+routable) verdict kept as the truth signal (policy-invariant → anti reward-hacking). A curriculum ramps object count / hangar shape / clearance, optionally anchored near a known-valid seed layout — *curriculum only, not BC; no teacher labels are consumed.*
 
 **⚠️ The significant caveat — Probe A says the dense target is a *needle*.** Perturb-and-reject from the all-8 anchor (400 samples/scale, fixed seed):
 
@@ -61,7 +61,7 @@ Secondary potential wins (lower priority, not the bar): diverse/human-aesthetic 
 
 Validity collapses to 0 % by ~20 cm mean displacement: the calibrated all-8 sits at a **feasibility corner** (expected — #605 tuned clearances down to 0.20/0.15 until it *just* fit). Combined with RR-MC finding 0 basins, the feasible region at the full all-8 is **thin AND hard to find**. (Caveat on the caveat: single-anchor jitter measures *one* basin and RR-MC failure is a search limit, not proof of absence — but together they read strongly needle-ish at the production peak.)
 
-**Consequence for training scope:** a reward-driven / BC agent needs broad support in the feasible region. A needle at the static-dense peak means **the joint model should target the *routable* daily subsets** (the real "who fits — and can be towed in — today" question, usually < all-8), with the curriculum ramping toward the full static-dense all-8 as a stretch it **may plateau before**. The static-dense `layout.yaml` must **not** be used as the BC target — it is tow-unreachable by any method (see #332 / the #642 routability probe), which is exactly why layout and path are co-designed: the joint model picks a *routable* density rather than reproducing the static-dense peak.
+**Consequence for training scope:** a reward-driven agent needs broad support in the feasible region. A needle at the static-dense peak means **the joint model should target the *routable* daily subsets** (the real "who fits — and can be towed in — today" question, usually < all-8), with the curriculum ramping toward the full static-dense all-8 as a stretch it **may plateau before**. The static-dense `layout.yaml` must **not** be used as the learning anchor/target — it is tow-unreachable by any method (see #332 / the #642 routability probe), which is exactly why layout and path are co-designed: the joint model picks a *routable* density rather than reproducing the static-dense peak.
 
 ---
 
@@ -74,13 +74,13 @@ Validity collapses to 0 % by ~20 cm mean displacement: the calibrated all-8 sits
 3. **Scope the training target to routable daily subsets**, not the needle-thin static-dense all-8. Define the realistic ceiling empirically (the max routable count/density sweep — see #332).
 4. **Keep the verifier authoritative and the determinism scope amended, not weakened.**
 
-This spike does not flesh #607's sub-issues — those graduate to their own milestone per the spikes convention. The follow-on dependency chain is the #607 sub-issue list (ADR + seam → teacher dataset → gym env → Set-Transformer placement-only → routability head → ONNX + wiring → packaging → evaluation), each detailed only after this GO.
+This spike does not flesh #607's sub-issues — those graduate to their own milestone per the spikes convention. The follow-on work is epic **#607**, whose learning approach is now the **cold-joint env design** (its sub-project #1 — the RL environment + reward — is landed; sub-projects #2–#5 cover the network/observation encoding, training, the learned-path determinism story, and packaging). Note that #607's *original* BC-proposer sub-issue list predates and is partly superseded by that cold-joint reframe.
 
 ## Risk register
 
 | Risk | Severity | Mitigation |
 |---|---|---|
-| **Needle feasible region** (Probe A): BC corpus thin / RL exploration high-variance at the dense peak | High | Scope to routable subsets; curriculum from easy → dense; never BC the static-dense anchor |
+| **Needle feasible region** (Probe A): RL exploration high-variance / sparse reward at the dense peak | High | Scope to routable subsets; curriculum from easy → dense; never anchor the curriculum on the tow-unreachable static-dense layout |
 | Dependency weight (torch/onnxruntime on a lean CLI) | Medium | ONNX-only inference extra; torch contributor-only; never in wheel |
 | Determinism contract erosion | Medium | Amend ADR-0003 scope explicitly; verifier stays byte-identical; learned-path canaries (within-build bit-identical, cross-machine validity-only) |
 | Image-frame output trap (re-introducing the old PoC failure) | Medium | Hard rule: CNN = context only; poses in world frame from set heads |
