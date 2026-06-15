@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     # Annotation-only: avoids importing the solver/towplanner stack at module
     # load for `hangarfit check` callers (the solver import is already deferred
     # into cmd_solve for the same reason).
-    from hangarfit.towplanner import MovesPlan
+    from hangarfit.towplanner import DubinsArc, MovesPlan
 
 _JSON_SCHEMA = "hangarfit.check/v1"
 _SOLVE_JSON_SCHEMA = "hangarfit.solve/v1"
@@ -546,7 +546,12 @@ def cmd_check(args: argparse.Namespace) -> int:
 
     if args.render is not None:
         try:
-            visualize.render_layout(layout, args.render, check_result=result)
+            visualize.render_layout(
+                layout,
+                args.render,
+                check_result=result,
+                egress_paths=_egress_paths_for_render(layout),
+            )
         except OSError as e:
             print(f"error: render failed: {e}", file=sys.stderr)
             return 2
@@ -835,6 +840,19 @@ def _expand_pattern(pattern: str, i: int) -> str:
     return pattern.replace("{i}", str(i))
 
 
+def _egress_paths_for_render(
+    layout: Layout, *, max_expansions: int | None = None
+) -> dict[str, DubinsArc]:
+    """Hard-door egress corridors to DRAW (#652): the drive-out lane the rescue
+    vehicle must keep clear, surfaced from the egress oracle. ``{}`` (no routing
+    cost) when the layout has no hard-door movers. Best-effort and
+    visualization-only: a blocked corridor is simply omitted (nothing to draw),
+    and the solver's own egress gate stays the authoritative verdict (exit 3)."""
+    from hangarfit.towplanner import egress_corridors
+
+    return egress_corridors(layout, max_expansions=max_expansions)
+
+
 def _write_renders(
     layouts: tuple[Layout, ...],
     pattern: str,
@@ -854,7 +872,12 @@ def _write_renders(
     """
     for i, layout in enumerate(layouts, start=1):
         moves_plan = plans[i - 1] if plans is not None else None
-        visualize.render_layout(layout, _expand_pattern(pattern, i), moves_plan=moves_plan)
+        visualize.render_layout(
+            layout,
+            _expand_pattern(pattern, i),
+            moves_plan=moves_plan,
+            egress_paths=_egress_paths_for_render(layout),
+        )
 
 
 def _warn_unroutable(result: SolveResult) -> None:
@@ -1261,7 +1284,18 @@ def cmd_view(args: argparse.Namespace) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 2
 
-    scene = scene_mod.build_scene(layout, moves_plan=moves_plan, check_result=check_result)
+    # Hard-door egress lane(s) (#652). Bound the corridor search by the same view
+    # cap as the fill so a blocked-egress caddy degrades fast (a clear egress routes
+    # in a handful of expansions); a layout with no hard-door movers costs nothing.
+    egress_cap = (
+        args.tow_max_expansions
+        if args.tow_max_expansions is not None
+        else _VIEW_TOW_MAX_TOTAL_EXPANSIONS
+    )
+    egress_paths = _egress_paths_for_render(layout, max_expansions=egress_cap)
+    scene = scene_mod.build_scene(
+        layout, moves_plan=moves_plan, check_result=check_result, egress_paths=egress_paths
+    )
     try:
         viewer.render_viewer(scene, args.output)
     except OSError as e:

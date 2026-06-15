@@ -57,6 +57,7 @@ function makeScene(aff: Affine, b: BoxData, wheel: [number, number]): SceneV2 {
     anchors: { p: [corners] },
     gear_anchors: { p: [applyAffine(aff, wheel[0], wheel[1])] },
     go_anchors: {},
+    egress_lanes: {},
     timeline: { segments: [], total_s: 0 },
     placeholder: false,
     readouts: null,

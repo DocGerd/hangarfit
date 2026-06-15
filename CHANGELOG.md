@@ -6,6 +6,18 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Caddy hard-door egress lane in 2D + 3D (#652).** The egress oracle
+  (`towplanner.egress_first_conflict`) now optionally *surfaces* the winning
+  drive-out corridor it used to compute and discard (new `egress_path_out`
+  out-param + an `egress_corridors` helper that collects one per hard-door mover).
+  `solve --render-paths` / `check --render` draw it as a dashed amber "keep-clear"
+  decal on the 2D PNG, and `view` draws it as a dashed amber floor line in the 3D
+  viewer (new `BRAND.egressLane` token + a `scene/v2` `egress_lanes` key, always
+  emitted, empty when there is no hard-door egress lane). A blocked or absent
+  egress is inert (`{}`) and byte-identical (ADR-0003) — the out-param defaults to
+  `None`, so the solver's egress gate stays the authoritative exit-3 verdict. This
+  completes the ground-object visualization arc opened by #606.
+
 - **Placed-routed movers animate along their drive path (#651).** Building on the
   static ground-object render (#606), a placed/routed mover (the VW Caddy + glider
   trailers) now animates in the 3D viewer's whole-fill timeline — driving in along

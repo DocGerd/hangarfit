@@ -758,3 +758,34 @@ def test_timeline_mover_animation_byte_deterministic():
     a = json.dumps(scene.build_scene(lay, moves_plan=plan))
     b = json.dumps(scene.build_scene(lay, moves_plan=plan))
     assert a == b
+
+
+# ── #652: egress lane (hard-door mover drive-out corridor) ────────────────────
+
+
+def test_build_scene_egress_lanes_always_emitted_and_inert():
+    """#652: egress_lanes is always emitted, empty when no corridors are supplied
+    (the structural_notches / go_anchors inert-when-empty discipline)."""
+    sc = scene.build_scene(load_layout(LAYOUT))
+    assert sc["egress_lanes"] == {}
+
+
+def test_build_scene_egress_lanes_carries_sampled_points():
+    """#652: a supplied egress corridor is emitted as sampled [x, y] world points,
+    keeping its start/end."""
+    arc = _routed_arc()
+    sc = scene.build_scene(load_layout(LAYOUT), egress_paths={"caddy": arc})
+    lane = sc["egress_lanes"]["caddy"]
+    assert isinstance(lane, list) and len(lane) >= 2
+    assert all(len(pt) == 2 for pt in lane)
+    poses = list(arc.sample())
+    assert lane[0] == [poses[0].x_m, poses[0].y_m]
+    assert lane[-1] == [poses[-1].x_m, poses[-1].y_m]
+
+
+def test_build_scene_egress_lanes_byte_deterministic():
+    """#652: egress-lane emit is byte-identical run-to-run (ADR-0003)."""
+    arc = _routed_arc()
+    a = json.dumps(scene.build_scene(load_layout(LAYOUT), egress_paths={"caddy": arc}))
+    b = json.dumps(scene.build_scene(load_layout(LAYOUT), egress_paths={"caddy": arc}))
+    assert a == b

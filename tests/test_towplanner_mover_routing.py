@@ -338,6 +338,42 @@ def test_egress_first_conflict_out_param_inert_when_blocked() -> None:
     assert c is not None and out == []
 
 
+def test_egress_corridors_collects_clear_hard_door_movers() -> None:
+    """#652: egress_corridors returns the drive-out arc for each hard-door mover
+    with a clear egress."""
+    from hangarfit.towplanner import egress_corridors
+
+    layout = Layout(
+        fleet={},
+        hangar=_hangar(),
+        placements=(),
+        ground_objects={"caddy": _caddy()},
+        ground_object_placements=(
+            Placement("caddy", x_m=20.0, y_m=6.0, heading_deg=0.0, on_carts=False),
+        ),
+    )
+    corridors = egress_corridors(layout)
+    assert set(corridors) == {"caddy"}
+    assert corridors["caddy"].length_m > 0
+
+
+def test_egress_corridors_skips_non_hard_door_movers() -> None:
+    """#652: a placed-routed mover that is NOT a hard-door mover has no required
+    egress lane, so it is omitted."""
+    from hangarfit.towplanner import egress_corridors
+
+    layout = Layout(
+        fleet={},
+        hangar=_hangar(),
+        placements=(),
+        ground_objects={"caddy": _caddy(hdm=False)},
+        ground_object_placements=(
+            Placement("caddy", x_m=20.0, y_m=6.0, heading_deg=0.0, on_carts=False),
+        ),
+    )
+    assert egress_corridors(layout) == {}
+
+
 def test_mover_routing_is_byte_identical_across_runs() -> None:
     """plan_fill with ground-object movers is byte-identical across two calls
     on the same Layout — RNG-free, ADR-0003.

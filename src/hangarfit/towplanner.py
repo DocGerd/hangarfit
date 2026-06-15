@@ -1461,6 +1461,39 @@ def egress_first_conflict(
         )
 
 
+def egress_corridors(
+    layout: Layout,
+    *,
+    heuristic: Literal["euclidean", "grid"] = "grid",
+    max_expansions: int | None = None,
+) -> dict[str, DubinsArc]:
+    """The drive-out corridor :class:`DubinsArc` per hard-door mover that HAS a
+    clear egress (#652). Blocked movers are omitted (no corridor to draw); a
+    non-hard-door mover has no required egress lane and is skipped. For drawing the
+    egress lane in the 2D PNG / 3D viewer — the caller passes the result to
+    :func:`hangarfit.scene.build_scene` / :func:`hangarfit.visualize.render_layout`.
+
+    Deterministic (id-sorted iteration, RNG-free closed-form routing). This re-runs
+    the egress check purely for the corridor geometry; the solve verdict already
+    ran its own gate (:func:`egress_first_conflict` in the solver), so this is a
+    visualization-only second pass."""
+    corridors: dict[str, DubinsArc] = {}
+    for gp in sorted(layout.ground_object_placements, key=lambda p: p.plane_id):
+        if not layout.ground_objects[gp.plane_id].hard_door_mover:
+            continue
+        arc_out: list[DubinsArc] = []
+        egress_first_conflict(
+            layout,
+            gp.plane_id,
+            heuristic=heuristic,
+            max_expansions=max_expansions,
+            egress_path_out=arc_out,
+        )
+        if arc_out:
+            corridors[gp.plane_id] = arc_out[0]
+    return corridors
+
+
 # ---------------------------------------------------------------------------
 # Empty-hangar fill planner + bounded order-retry (spike Q2 / ADR-0007)
 # ---------------------------------------------------------------------------
