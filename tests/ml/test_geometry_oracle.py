@@ -27,3 +27,23 @@ def test_reward_weights_ordering_invariant_holds_by_default():
 def test_overlap_area_zero_for_valid_layout():
     layout = single_object_layout(x_m=5.0, y_m=8.0)
     assert go.overlap_area_m2(layout) == 0.0
+
+
+# ---------------------------------------------------------------------------
+# T4: intrusion_area_m2
+# ---------------------------------------------------------------------------
+
+
+def test_intrusion_zero_when_inside():
+    layout = single_object_layout(x_m=5.0, y_m=8.0)
+    pid = next(iter(layout.fleet))
+    pl = layout.placements[0]
+    assert go.intrusion_area_m2(layout.fleet[pid], pl, layout.hangar) == 0.0
+
+
+def test_intrusion_positive_when_object_pushed_off_the_front():
+    # y deep-negative drives the footprint out past the front wall (y<0 beyond apron).
+    layout = single_object_layout(x_m=5.0, y_m=-50.0)
+    pid = next(iter(layout.fleet))
+    pl = layout.placements[0]
+    assert go.intrusion_area_m2(layout.fleet[pid], pl, layout.hangar) > 0.0
