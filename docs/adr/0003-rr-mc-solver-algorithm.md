@@ -3,6 +3,11 @@
 - **Status:** Accepted
 - **Date:** 2026-05-22
 - **Deciders:** [@DocGerd](https://github.com/DocGerd)
+- **Scope:** The byte-identical contract below binds the **deterministic
+  verifier/solver** (`solver.py`, `towplanner.py`). [ADR-0027](0027-learned-backend-determinism-scope.md)
+  amends the scope for the opt-in **learned backend** (#607): its neural *proposer*
+  has a weaker, documented contract and is **not** under `determinism-guard`; the
+  verifier here remains the strict ground truth regardless.
 
 ## Context & Problem Statement
 
