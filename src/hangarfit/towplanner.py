@@ -1389,6 +1389,7 @@ def egress_first_conflict(
     *,
     heuristic: Literal["euclidean", "grid"] = "grid",
     max_expansions: int | None = None,
+    egress_path_out: list[DubinsArc] | None = None,
 ) -> Conflict | None:
     """First conflict blocking ``mover_id``'s drive-OUT through the door, else None.
 
@@ -1399,7 +1400,17 @@ def egress_first_conflict(
     ``placed`` (:func:`path_first_conflict` re-injects it per sample — same
     contract as :func:`plan_fill`'s mover routing, #602). Honors the fuel-trailer
     keep-out and every other parked body. Closed-form, RNG-free. Returns a
-    ``caddy_egress`` :class:`~hangarfit.models.Conflict` when blocked."""
+    ``caddy_egress`` :class:`~hangarfit.models.Conflict` when blocked.
+
+    ``egress_path_out`` is an optional diagnostics-only **out-param** (#652,
+    mirroring :func:`plan_path`'s ``stats`` / :func:`plan_fill`'s
+    ``apron_dropped_out``): when supplied and egress is feasible, the winning
+    door-cone -> slot :class:`DubinsArc` (which, reversed, IS the drive-out
+    corridor) is appended so a caller can DRAW the egress lane (the viewer/PNG
+    decal). It is left untouched when egress is blocked (no corridor exists). Pure
+    out-param: ``None`` (the default, which the solver passes) keeps the call
+    byte-identical — the ``plan_path`` call and the verdict are unchanged
+    (ADR-0003)."""
     mover = target.ground_objects[mover_id]
     slot = next((gp for gp in target.ground_object_placements if gp.plane_id == mover_id), None)
     if slot is None:
@@ -1425,7 +1436,7 @@ def egress_first_conflict(
     # trapped). Fixed _MAX_EXPANSIONS, RNG-free => deterministic (ADR-0003).
     budget = _MAX_EXPANSIONS if max_expansions is None else max_expansions
     try:
-        plan_path(
+        arc = plan_path(
             mover,
             cone[0],
             Pose.from_placement(slot),
@@ -1436,6 +1447,8 @@ def egress_first_conflict(
             heuristic=heuristic,
             max_expansions=budget,
         )
+        if egress_path_out is not None:
+            egress_path_out.append(arc)
         return None
     except NoFeasiblePlanError as exc:
         return Conflict.single(

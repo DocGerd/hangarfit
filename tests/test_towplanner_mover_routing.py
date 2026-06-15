@@ -296,6 +296,48 @@ def test_egress_blocked_returns_caddy_egress_conflict() -> None:
     assert c is not None and c.kind == "caddy_egress" and "caddy" in c.planes
 
 
+def test_egress_first_conflict_surfaces_corridor_path() -> None:
+    """#652: when egress is feasible the out-param captures the winning corridor
+    DubinsArc — the egress oracle previously computed it then threw it away, which
+    is why the egress lane could not be drawn."""
+    from hangarfit.towplanner import DubinsArc, egress_first_conflict
+
+    layout = Layout(
+        fleet={},
+        hangar=_hangar(),
+        placements=(),
+        ground_objects={"caddy": _caddy()},
+        ground_object_placements=(
+            Placement("caddy", x_m=20.0, y_m=6.0, heading_deg=0.0, on_carts=False),
+        ),
+    )
+    out: list[DubinsArc] = []
+    assert egress_first_conflict(layout, "caddy", egress_path_out=out) is None
+    assert len(out) == 1 and isinstance(out[0], DubinsArc)
+    assert out[0].length_m > 0  # a real corridor with sampled poses
+
+
+def test_egress_first_conflict_out_param_inert_when_blocked() -> None:
+    """#652: a blocked egress returns the conflict and leaves the out-param empty —
+    there is no corridor to surface."""
+    from hangarfit.towplanner import DubinsArc, egress_first_conflict
+
+    wall = make_test_aircraft(id="wall", parts=_wide_wall_parts())
+    layout = Layout(
+        fleet={wall.id: wall},
+        hangar=_hangar(),
+        placements=(Placement("wall", x_m=20.0, y_m=15.0, heading_deg=0.0, on_carts=False),),
+        ground_objects={"caddy": _caddy()},
+        ground_object_placements=(
+            Placement("caddy", x_m=20.0, y_m=30.0, heading_deg=0.0, on_carts=False),
+        ),
+    )
+    out: list[DubinsArc] = []
+    # Low budget so the (deliberately walled-off) search bails fast.
+    c = egress_first_conflict(layout, "caddy", max_expansions=50, egress_path_out=out)
+    assert c is not None and out == []
+
+
 def test_mover_routing_is_byte_identical_across_runs() -> None:
     """plan_fill with ground-object movers is byte-identical across two calls
     on the same Layout — RNG-free, ADR-0003.
