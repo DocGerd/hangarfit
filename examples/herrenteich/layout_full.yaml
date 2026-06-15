@@ -1,19 +1,47 @@
-# Airfield Herrenteich — the FULL real set: all 8 usual aircraft PLUS the four
-# non-aircraft floor occupants (VW Caddy, two glider trailers, fixed Maul fuel
-# trailer). This is the #605 calibration reference — it passes `hangarfit check`
-# (exit 0) at the calibrated clearances (hangar.yaml: clearance_m 0.20,
-# wing_layer_clearance_m 0.15).
+# Airfield Herrenteich — the REALISTIC in-hangar set (#657/#659): seven of the
+# eight usual aircraft PLUS all four floor occupants (the rescue VW Caddy, the
+# fixed Maul fuel trailer, and BOTH glider trailers).
+#
+# FISHBONE / HERRINGBONE PARKING. Unlike layout.yaml's orthogonal nest, the
+# aircraft here sit at realistic mixed angles — a few near-square (FK9, CTSL,
+# Husky) and the rest nosed in fishbone (Zlin, Wild Thing, Stemme, Cessna). Angled
+# nose-in parking interleaves the wings instead of walling them across the door,
+# which is both how a real club packs a tight hangar AND what frees the room to
+# keep both glider trailers while leaving the rescue Caddy a clear way out.
+#
+# WHY SEVEN, NOT EIGHT. With the rescue Caddy required to keep a CLEAR DRIVE-OUT
+# egress (the club's hard rule — #603/#652) plus the fuel trailer by the door and
+# both glider trailers inside, the hangar is one aircraft over capacity: an
+# exhaustive simulated-annealing search (orthogonal AND fishbone, hundreds of
+# restarts) could never seat all eight aircraft alongside the ground objects with a
+# clear Caddy egress — it always came up one body short. So the motor-glider
+# Scheibe Falke parks OUTSIDE in this arrangement. It stays in the fleet manifest
+# (fleet.yaml); this layout just doesn't place it. That "the standard parking has
+# broken, find a valid alternative" situation is exactly what hangarfit is for.
+# (examples/herrenteich/layout.yaml still parks all eight aircraft at once — with
+# NO ground clutter — so the "all eight fit" promise is unchanged; it lives there.)
+#
+# RULES HONORED (user, on-site facts):
+#   - Maul fuel trailer: fixed, hard against the left wall right at the door
+#     (low x, low y) so it pushes straight in; goes in LAST, clear of the early tow
+#     corridors. [MUST]
+#   - VW Caddy: driven in last at any angle, parked near the door with a clear
+#     drive-out egress — it leaves without moving anything else (oracle: clear). The
+#     Caddy is a reverse-capable Reeds-Shepp mover (ADR-0010), so the drive-out may
+#     be forwards OR backwards (the egress oracle checks both). [MUST]
+#   - Glider trailers: the longer Duo (glider_trailer_1) runs along the RIGHT wall,
+#     clear of the back-right office notch; the single-seat trailer fits deeper
+#     toward the back. [soft]
+#   - Stemme + Wild Thing parked deep. [soft]
 #
 # HOW THIS WAS PRODUCED. Like layout.yaml, this is the TOOL's arrangement, not a
-# record of where the club parks: an offline search driving the real part-based
-# collision checker directly found a valid all-11 packing (the product solver does
-# not generate it). The aircraft are RE-NESTED relative to layout.yaml to free
-# wall corridors for the 9 m glider trailers — layout.yaml (aircraft-only) is
-# unchanged. Replace with real parking positions when surveyed.
-#
-# DEFERRED: tow-routing of this set (#602; the 18 m Scheibe is not yet routable),
-# the hard Caddy nearest-door egress gate (#603 — the Caddy IS placed near the
-# door here, but egress is not enforced), and rendering the ground objects (#606).
+# record of where the club parks: an offline simulated-annealing search driving the
+# real part-based collision checker (plus the Caddy egress oracle), with CONTINUOUS
+# aircraft headings, found this valid seven-aircraft + four-GO fishbone packing.
+# The product solver does not generate it. Replace with real parking positions when
+# surveyed (all dims are still measured: false). It passes `hangarfit check`
+# (exit 0) at the calibrated clearances (hangar.yaml: clearance_m 0.20,
+# wing_layer_clearance_m 0.15), and the Caddy has a clear egress.
 #
 # Coordinate convention (see hangar.yaml): world (0,0) front-left, +x right along
 # the door wall, +y deeper in; heading 0 = nose deep (+y), 90 = nose toward +x.
@@ -22,61 +50,56 @@ fleet: fleet.yaml
 hangar: hangar.yaml
 
 placements:
-  - plane: scheibe_falke
-    x_m: 8.18
-    y_m: 22.67
-    heading_deg: 90.0
-    on_carts: true          # always_cart
-  - plane: stemme_s10
-    x_m: 3.15
-    y_m: 13.65
-    heading_deg: 270.0
-    on_carts: true          # dolly-pivotable in the hangar (#644)
-  - plane: aviat_husky
-    x_m: 5.28
-    y_m: 16.51
-    heading_deg: 90.0
-    on_carts: false         # always_own_gear
-  - plane: cessna_140
-    x_m: 13.36
-    y_m: 5.09
-    heading_deg: 90.0
-    on_carts: false         # cart_eligible, on own gear
   - plane: fk9_mkii
-    x_m: 7.09
-    y_m: 9.10
-    heading_deg: 270.0
+    x_m: 5.1
+    y_m: 4.93
+    heading_deg: 1.6
     on_carts: false         # cart_eligible, on own gear
+  - plane: aviat_husky
+    x_m: 11.55
+    y_m: 10.14
+    heading_deg: 80.5
+    on_carts: false         # always_own_gear
   - plane: zlin_savage
-    x_m: 7.41
-    y_m: 25.52
-    heading_deg: 270.0
+    x_m: 1.78
+    y_m: 12.43
+    heading_deg: 253.0
     on_carts: true          # always_cart
   - plane: wild_thing
-    x_m: 11.32
-    y_m: 17.32
-    heading_deg: 90.0
+    x_m: 8.83
+    y_m: 15.65
+    heading_deg: 287.8
     on_carts: true          # always_cart
+  - plane: stemme_s10
+    x_m: 6.42
+    y_m: 19.89
+    heading_deg: 296.9
+    on_carts: true          # always_cart (dolly-pivotable in the hangar, #644)
+  - plane: cessna_140
+    x_m: 1.8
+    y_m: 22.82
+    heading_deg: 260.9
+    on_carts: false         # cart_eligible, on own gear
   - plane: ctsl
-    x_m: 5.32
-    y_m: 3.00
-    heading_deg: 180.0
+    x_m: 4.41
+    y_m: 28.59
+    heading_deg: 0.3
     on_carts: false         # cart_eligible, on own gear
 
 ground_objects:
-  - object: vw_caddy            # rescue vehicle near the door (egress precursor, #603)
-    x_m: 11.57
-    y_m: 8.26
+  - object: vw_caddy            # rescue vehicle near the door, clear drive-out egress (#603/#652)
+    x_m: 11.56
+    y_m: 1.95
+    heading_deg: 251.1
+  - object: maul_fuel_trailer   # fixed keep-out, hard left wall right at the door (straight-in, last)
+    x_m: 1.35
+    y_m: 2.35
     heading_deg: 180.0
-  - object: glider_trailer_1    # along the left wall, lengthwise
-    x_m: 1.20
-    y_m: 7.99
+  - object: glider_trailer_1    # Duo Discus trailer (10.5 m) along the right wall, clear of the notch
+    x_m: 13.98
+    y_m: 17.2
     heading_deg: 180.0
-  - object: glider_trailer_2    # along the left wall, deep
-    x_m: 2.02
-    y_m: 27.16
-    heading_deg: 0.0
-  - object: maul_fuel_trailer   # fixed keep-out (clear of the back-right office notch)
-    x_m: 14.05
-    y_m: 13.32
+  - object: glider_trailer_2    # single-seat 15 m trailer, parked deeper toward the back
+    x_m: 9.2
+    y_m: 24.56
     heading_deg: 0.0

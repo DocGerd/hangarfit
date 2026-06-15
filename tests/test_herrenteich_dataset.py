@@ -2,10 +2,12 @@
 
 These are real (DWG-measured hangar + published-spec fleet) files kept
 separate from the synthetic `data/` placeholders. The dataset's promise is
-that all eight usual occupants fit at once; this regression test pins the
-hangar dimensions and asserts the bundled layout still passes the real
-part-based collision checker, so a later edit to any of the three files
-cannot silently break it.
+that all eight usual occupants fit at once — that lives in `layout.yaml`
+(aircraft only). These tests also guard the 9-entry fleet roster (incl. the
+Fuji), the four ground objects, and the realistic GO-laden `layout_full.yaml`
+(seven aircraft + four GOs, fishbone, with a clear Caddy egress). They pin the
+hangar dimensions and assert the bundled layouts still pass the real
+part-based collision checker, so a later edit cannot silently break them.
 """
 
 from pathlib import Path
@@ -62,7 +64,13 @@ def test_hangar_motion_clearance_calibrated() -> None:
 
 def test_fleet_roster() -> None:
     fleet = load_fleet(HERRENTEICH / "fleet.yaml")
-    assert set(fleet) == USUAL_OCCUPANTS
+    # The roster is the eight usual occupants PLUS the Fuji FA-200, a permanent
+    # ninth occupant added in the #657 realism pass (a placeholder for a future
+    # C150). The hangar cannot park all nine alongside the ground objects, so no
+    # single layout places the whole roster — layout.yaml parks the usual eight
+    # (test_everyone_home_layout_is_valid) and layout_full.yaml the realistic
+    # GO-laden subset (test_full_set_layout_is_valid).
+    assert set(fleet) == USUAL_OCCUPANTS | {"fuji"}
     # Stemme is hangared wings-folded: the wing part carries the folded span,
     # which is what lets a 23 m glider fit a 15 m hangar.
     stemme_span = next(p.width_m for p in fleet["stemme_s10"].parts if p.kind == "wing")
@@ -184,9 +192,15 @@ def test_ground_objects_load_from_manifest() -> None:
     assert gos["vw_caddy"].motion_mode == "steerable"
     assert gos["glider_trailer_1"].motion_mode == "towed"
     assert gos["glider_trailer_2"].motion_mode == "towed"
-    # each is a single solid ground footprint
+    # All parts are solid 'ground' footprints. The Caddy is multi-part (#658:
+    # a van body 0->1.84 m + a small roof-gear box 1.84->2.04 m, so a high wing
+    # may overhang the body and only has to clear the localized rack); the rest
+    # are single boxes.
     for go in gos.values():
-        assert len(go.parts) == 1 and go.parts[0].kind == "ground"
+        assert go.parts and all(p.kind == "ground" for p in go.parts)
+    assert len(gos["vw_caddy"].parts) == 2
+    for sid in ("maul_fuel_trailer", "glider_trailer_1", "glider_trailer_2"):
+        assert len(gos[sid].parts) == 1
 
 
 def test_hangar_clearances_calibrated() -> None:
@@ -197,7 +211,17 @@ def test_hangar_clearances_calibrated() -> None:
     assert hangar.wing_layer_clearance_m == 0.15
 
 
-FULL_SET = USUAL_OCCUPANTS | {
+# The realistic in-hangar set (#657/#659): SEVEN of the eight usual aircraft +
+# ALL FOUR ground objects, packed FISHBONE (mixed continuous headings). With the
+# rescue Caddy keeping a clear drive-out egress (the user's hard rule) plus the fuel
+# trailer by the door and both glider trailers inside, the hangar is one aircraft
+# over capacity — an exhaustive search (orthogonal AND fishbone) could never seat
+# all eight alongside the ground objects with a clear Caddy egress. So the
+# motor-glider Scheibe Falke parks OUTSIDE in this arrangement; it stays in the
+# fleet manifest (test_fleet_roster), this layout just doesn't place it.
+# (layout.yaml still parks all eight aircraft — with no ground clutter — so the
+# "all eight fit" promise is unchanged; it lives there, not here.)
+FULL_SET = (USUAL_OCCUPANTS - {"scheibe_falke"}) | {
     "vw_caddy",
     "glider_trailer_1",
     "glider_trailer_2",
@@ -206,13 +230,17 @@ FULL_SET = USUAL_OCCUPANTS | {
 
 
 def test_full_set_layout_is_valid() -> None:
-    """The full real set (8 aircraft + 4 ground objects) passes the real
-    checker at the calibrated clearances (#605 primary acceptance)."""
+    """The realistic in-hangar set (7 aircraft + 4 ground objects, fishbone) passes
+    the real checker at the calibrated clearances (#605/#659). The Caddy keeps a
+    clear egress (test_full_set_caddy_egress_clear) and the fuel trailer sits hard
+    against the left wall by the door; the Scheibe Falke is parked outside (see
+    FULL_SET)."""
     layout = load_layout(HERRENTEICH / "layout_full.yaml")
     present = {p.plane_id for p in layout.placements} | {
         gp.plane_id for gp in layout.ground_object_placements
     }
     assert present == FULL_SET
+    assert "scheibe_falke" not in present  # the one aircraft deliberately left outside (#659)
     result = collisions.check(layout)
     assert result.conflicts == (), [c.kind for c in result.conflicts]
 
@@ -236,11 +264,11 @@ def test_full_set_ground_objects_in_bounds_and_clear_notch() -> None:
 
 
 def test_full_set_caddy_near_door() -> None:
-    """SOFT intent (pre-#603): the Caddy is parked near the door — in the front
-    third of the hangar and within the door's x-span — the precursor to the #603
-    hard nearest-door egress gate. (Exact 'nearest' is #603's job; the 9 m glider
-    trailers run along the walls toward the door, so a strict min-y assertion
-    would fight that geometry.)"""
+    """The Caddy is parked near the door — in the front third of the hangar and
+    within the door's x-span — at the mouth of its rescue lane, so it can drive
+    straight out (the clear egress is asserted by test_full_set_caddy_egress_clear).
+    A strict min-y assertion would fight the surrounding nest geometry, so this
+    pins the looser near-door envelope."""
     layout = load_layout(HERRENTEICH / "layout_full.yaml")
     caddy = next(gp for gp in layout.ground_object_placements if gp.plane_id == "vw_caddy")
     assert caddy.y_m < layout.hangar.length_m / 3
@@ -249,19 +277,84 @@ def test_full_set_caddy_near_door() -> None:
 
 
 @pytest.mark.slow
-def test_full_set_caddy_egress_blocked_finding() -> None:
-    """Documents the packing-wall finding: the egress oracle correctly reports
-    layout_full.yaml's Caddy as egress-blocked (the rescue vehicle is boxed in by
-    the surrounding aircraft; fixing it is gated on re-nesting / Stage C — #603).
+def test_full_set_caddy_egress_clear() -> None:
+    """The rescue Caddy can drive out of layout_full.yaml without moving anything
+    (#657/#659 — the user's hard requirement; flips the old egress-BLOCKED finding).
 
-    This test records the *current* state of the dataset: the Caddy IS placed near
-    the door (per test_full_set_caddy_near_door above) but the packed fleet still
-    walls off a clear egress path at the real herrenteich clearances.
+    Earlier the maximally-dense, ORTHOGONAL all-8 + 4-GO nest walled the Caddy in
+    (the prior test recorded that packing-wall finding). The realistic arrangement
+    instead parks the aircraft FISHBONE and leaves one aircraft out (the Scheibe
+    Falke parks outside — all four ground objects stay in), which frees a clear
+    drive-out corridor from the Caddy to the door. The egress oracle (the
+    authoritative #603/#652 gate, full budget) must find that corridor.
     """
     from hangarfit.towplanner import egress_first_conflict
 
     layout = load_layout(HERRENTEICH / "layout_full.yaml")
     c = egress_first_conflict(layout, "vw_caddy")
-    assert c is not None and c.kind == "caddy_egress", (
-        f"expected caddy_egress conflict from layout_full.yaml; got {c}"
-    )
+    assert c is None, f"expected the Caddy to have a clear egress; got {c}"
+
+
+def test_caddy_multipart_body_clears_wing_but_rack_conflicts() -> None:
+    """#658: the Caddy's two-box geometry, pinned by behavior, not just part count.
+
+    A high wing (z 2.0-2.3) may overhang the low VAN BODY (z 0->1.84: gap 0.16 m,
+    clears the 0.15 m wing-layer clearance) but conflicts with the localized ROOF
+    RACK (z 1.84->2.04: gap -0.04 m). This guards the exact mechanism the multi-part
+    remodel exists for — a single full-height 2.04 box would conflict everywhere, and
+    a part-count check alone would not catch a regression that flattened the rack
+    back to full height. (layout_full.yaml itself happens not to nest a wing over the
+    Caddy, so this is where the body-clears-while-rack-conflicts contract is pinned.)
+    """
+    from hangarfit.loader import load_ground_objects, load_hangar
+    from hangarfit.models import Aircraft, Layout, Part, Placement, Wheels
+
+    caddy = load_ground_objects(HERRENTEICH / "fleet.yaml")["vw_caddy"]
+    body = next(p for p in caddy.parts if p.z_top_m == 1.84)
+    rack = next(p for p in caddy.parts if p.z_bottom_m == 1.84)
+    assert (body.z_bottom_m, rack.z_top_m) == (0.0, 2.04)  # contiguous stack to 2.04 m
+    assert rack.length_m < body.length_m and rack.width_m < body.width_m  # rack is localized
+
+    hangar = load_hangar(HERRENTEICH / "hangar.yaml")
+    # Caddy heading 0 => body length (4.88) runs along +y, width (1.79) along +x;
+    # at (7.0, 8.0) the body spans x[6.1,7.9] y[5.6,10.4], the rack x[6.6,7.4] y[7.5,8.5].
+    caddy_pl = Placement("vw_caddy", x_m=7.0, y_m=8.0, heading_deg=0.0, on_carts=False)
+
+    def wing_overhang_conflicts(x: float, y: float) -> tuple[str, ...]:
+        probe = Aircraft(
+            id="probe",
+            name="Probe",
+            wing_position="high",
+            gear="nosewheel",
+            movement_mode="always_own_gear",
+            turn_radius_m=5.0,
+            measured=False,
+            parts=(
+                Part(
+                    kind="wing",
+                    length_m=1.0,
+                    width_m=1.0,
+                    offset_x_m=0.0,
+                    offset_y_m=0.0,
+                    angle_deg=0.0,
+                    z_bottom_m=2.0,
+                    z_top_m=2.3,
+                ),
+            ),
+            wheels=Wheels(main_offset_x_m=0.0, track_m=1.8, third_wheel_offset_x_m=2.0),
+        )
+        layout = Layout(
+            fleet={"probe": probe},
+            hangar=hangar,
+            placements=(Placement("probe", x_m=x, y_m=y, heading_deg=0.0, on_carts=False),),
+            maintenance_plane=None,
+            ground_objects={"vw_caddy": caddy},
+            ground_object_placements=(caddy_pl,),
+        )
+        return tuple(c.kind for c in collisions.check(layout).conflicts)
+
+    # Over the body, clear of the rack -> clears (0.16 m >= 0.15 m wing-layer gap).
+    assert wing_overhang_conflicts(7.0, 6.5) == ()
+    # Directly over the rack -> conflicts (rack top 2.04 m vs wing 2.0 m = -0.04 m).
+    over_rack = wing_overhang_conflicts(7.0, 8.0)
+    assert over_rack and all("ground" in k for k in over_rack), over_rack

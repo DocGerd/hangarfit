@@ -81,6 +81,37 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Changed
 
+- **Herrenteich dataset realism pass (#657/#658/#659).** Tightened the real
+  Airfield Herrenteich dataset to how the club actually parks (user on-site facts):
+  - The **VW Caddy** is now modelled **multi-part** (#658) — a van body box
+    (0→1.84 m) plus a small ~1.0×0.8 m roof-gear rack (1.84→2.04 m) — instead of one
+    full-height prism. The club's Caddy carries roof-stowed gear (+0.20 m over stock);
+    as a single 2.04 m box that blocked the wing layer across its whole footprint, but
+    split, a wing whose underside sits at ~2.0 m may overhang the low van body
+    (+0.16 m gap, clears) and only has to clear the localized rack — a realistic van
+    model (low body + small roof load), not a full-height wall. (It governs any dense
+    packing that nests a wing over the Caddy; inert in the shipped fishbone layout.)
+  - **Two distinct glider trailers** (#657): `glider_trailer_1` → a 10.5 m Duo Discus
+    (two-seat) closed trailer; `glider_trailer_2` → a 9.0×1.75×1.45 m single-seat
+    15 m-class trailer (owner-measured Cobra) — previously both a generic 9.0×2.1×2.3.
+  - The **Fuji FA-200-180** joins the Herrenteich `fleet.yaml` as a permanent ninth
+    occupant (the only low-winger; a placeholder for a future C150; `always_own_gear`).
+    Its envelope is published spec, cross-checked across sources (span 9.42 m, length
+    7.98 m, wing area 14.0 m², fin to 2.59 m — correcting a transposed 2.02 m height);
+    the undercarriage + tailplane spans stay estimates (`measured: false`).
+  - `examples/herrenteich/layout_full.yaml` is re-authored as the **realistic
+    in-hangar set** (#659), packed **fishbone** (continuous, mixed aircraft headings
+    instead of an orthogonal nest — far more space-efficient and how a club really
+    parks). With the rescue Caddy required to keep a clear drive-out egress
+    (#603/#652), the fuel trailer hard against the left wall by the door, and both
+    glider trailers inside, the hangar is one aircraft over capacity (confirmed by an
+    exhaustive orthogonal-and-fishbone search), so the layout parks **seven of the
+    eight aircraft + all four ground objects** (the motor-glider Scheibe Falke parks
+    outside; the Caddy near the door with a clear egress, the Duo trailer on the right
+    wall). Valid at the calibrated clearances and the Caddy's egress is now clear (was
+    the documented egress-blocked finding). `layout.yaml` (all eight aircraft, no
+    ground clutter) is unchanged — the "all eight fit" promise still lives there.
+
 - **Herrenteich tow-motion clearance calibrated (#605/#643).** `examples/herrenteich/hangar.yaml`
   now sets `motion_clearance_m: 0.05` / `motion_wing_layer_clearance_m: 0.05` — the
   hand-cleared margin while a mover is in motion, distinct from the 0.20/0.15 *parked*

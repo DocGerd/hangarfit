@@ -1,15 +1,17 @@
-# Closed single-glider road trailer (one of two at Herrenteich). Envelope is a
-# TYPICAL closed trailer for a 15-18 m glider (Cobra/Spindelberger class);
-# measured: false — not an on-site survey.
+# Closed road trailer for the club's TWO-SEAT glider (a Duo Discus class, ~20 m
+# span). The longer of the two Herrenteich glider trailers: the one-piece
+# fuselage (~8.7 m) sets the internal length, plus nose cone + towbar overhang →
+# ~10.5 m overall. Envelope is reasoned from the Duo Discus fuselage + typical
+# Cobra/Spindelberger overhang; measured: false — not an on-site survey.
 type: trailer
 id: glider_trailer_1
-name: "Glider trailer 1 (closed)"
+name: "Glider trailer 1 — Duo Discus (closed)"
 measured: false
 parts:
   - kind: ground
-    length_m: 9.0         # typical closed glider-trailer length
-    width_m: 2.1          # road-legal trailer width
+    length_m: 10.5        # two-seat trailer overall (fuselage ~8.7 m + overhang)
+    width_m: 2.0          # road-legal trailer width
     offset_x_m: 0.0
     offset_y_m: 0.0
     z_bottom_m: 0.0
-    z_top_m: 2.3          # closed-trailer height
+    z_top_m: 2.0          # closed-trailer height
