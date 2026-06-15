@@ -84,7 +84,6 @@ warn_redundant_casts = true
 [[tool.mypy.overrides]]
 module = "hangarfit.*"
 disallow_untyped_defs = true
-ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "tests.*"
@@ -97,9 +96,18 @@ ignore_errors = false
 module = "matplotlib.*"
 ignore_missing_imports = true
 
-# ml/ imports hangarfit (no py.typed marker) and its private helpers; treat
-# hangarfit as untyped rather than adding a full stub. ml.* is dev/CI-only
-# (never in the wheel) so the import-untyped errors are suppressed here.
+# ml/ (dev/CI-only, never in the wheel) imports hangarfit, which ships no
+# py.typed marker, so mypy raises import-untyped on those imports. Scope the
+# suppression to ONLY the hangarfit submodules ml/ actually imports — NOT a
+# blanket hangarfit.* — so a genuinely-typo'd third-party import inside
+# hangarfit's own source still surfaces under `mypy src/hangarfit/`. The
+# per-module ignore_missing_imports is keyed to the IMPORTED module, so it
+# must name the hangarfit submodules (an ml.* override does not suppress it).
 [[tool.mypy.overrides]]
-module = "ml.*"
+module = [
+    "hangarfit.collisions",
+    "hangarfit.geometry",
+    "hangarfit.models",
+    "hangarfit.towplanner",
+]
 ignore_missing_imports = true

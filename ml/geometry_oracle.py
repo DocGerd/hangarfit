@@ -104,6 +104,8 @@ def apply_primitive(
     motion is identical to what the rest of the system sees.
     """
     seg = Segment(kind=primitive.kind, length_m=primitive.magnitude, gear=primitive.gear)
+    # ``end`` is a placeholder: ``sample()``/``pose_at()`` integrate from ``start``
+    # and nothing reads ``arc.end``, so the stored ``end`` is unused/irrelevant here.
     arc = DubinsArc(start=pose, end=pose, turn_radius_m=turn_radius_m, segments=(seg,))
     swept = tuple(arc.sample(step_m=0.05, step_deg=1.0))
     end = arc.pose_at(primitive.magnitude)
@@ -121,9 +123,12 @@ def swept_intrusion_m2(
 
     Reuses the towplanner's motion geometry: ``_build_obstacles`` (excludes the mover)
     + ``_motion_clear`` (the exact per-pose oracle, side/back walls enforced, front
-    apron open). For any sampled pose that is NOT clear we add that pose's intrusion
-    area against the obstacle parts + walls, so the agent feels a gradient. A fully
-    clear sweep returns 0.0 (routability-by-construction along this leg).
+    apron open). For each sampled pose that is NOT clear we measure that pose's
+    overlap area against the obstacle parts, and return the **worst single-pose
+    intrusion (max), deliberately NOT a sum**: a finely-sampled arc has heavily
+    overlapping consecutive poses, so summing would inflate the penalty by the
+    sample count. A fully clear sweep returns 0.0 (routability-by-construction
+    along this leg).
     """
     obstacles = _build_obstacles(parked_layout, mover_id=active_id)
     hangar = parked_layout.hangar

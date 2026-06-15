@@ -566,7 +566,7 @@ git commit -m "feat(672): geometry_oracle.apply_primitive (DubinsArc integration
 
 ### Task 7: `swept_intrusion_m2` — graded swept-path clearance during a move
 
-Reuses `_build_obstacles` + `_motion_clear` (the motion geometry, not the search). `_motion_clear` is a boolean per-pose verdict; the env wants a graded penalty, so we sum the per-sampled-pose intrusion area against the obstacle set when a sweep is not clear.
+Reuses `_build_obstacles` + `_motion_clear` (the motion geometry, not the search). `_motion_clear` is a boolean per-pose verdict; the env wants a graded penalty, so we take the MAX per-sampled-pose intrusion area against the obstacle set when a sweep is not clear (summing would over-count overlapping fine samples).
 
 **Files:**
 - Modify: `ml/geometry_oracle.py`

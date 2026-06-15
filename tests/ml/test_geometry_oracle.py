@@ -5,7 +5,7 @@ from __future__ import annotations
 from hangarfit.loader import load_fleet
 from ml import geometry_oracle as go
 from ml.types import Park, Primitive, RewardWeights
-from tests.ml.conftest import single_object_layout
+from tests.ml.conftest import single_object_layout, two_object_layout
 
 
 def test_primitive_and_park_construct():
@@ -117,6 +117,19 @@ def test_swept_intrusion_zero_for_clear_move_in_empty_hangar():
         body, swept, parked_layout=layout, active_id=next(iter(layout.fleet))
     )
     assert intr == 0.0
+
+
+def test_swept_intrusion_positive_when_sweeping_into_a_parked_body():
+    from hangarfit.towplanner import Pose
+
+    # Park a fuji ahead; the active husky sweeps straight FORWARD into its footprint.
+    layout, active, active_id = two_object_layout(parked_y_m=10.0, active_y_m=4.0)
+    start = Pose(x_m=5.0, y_m=4.0, heading_deg=0.0)
+    _, swept = go.apply_primitive(
+        start, Primitive(kind="S", magnitude=6.0, gear=1), turn_radius_m=0.0
+    )
+    intr = go.swept_intrusion_m2(active, swept, parked_layout=layout, active_id=active_id)
+    assert intr > 0.0  # the swept path overlaps the parked obstacle → graded penalty
 
 
 # ---------------------------------------------------------------------------
