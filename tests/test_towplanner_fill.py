@@ -264,8 +264,12 @@ def test_plan_fill_backtrack_cap_bounds_the_order_search(
 
     monkeypatch.setattr(tp, "plan_path", fake_plan_path)
     assert [m.plane_id for m in plan_fill(target).moves] == ["B", "A"]  # default reorders
-    with pytest.raises(NoFeasiblePlanError):
+    with pytest.raises(NoFeasiblePlanError) as ei:
         plan_fill(target, max_backtracks=0)  # no backtracking allowed → bails
+    # The bail must name the actually-stuck body (B — unroutable once A is placed),
+    # not the already-placed deepest plane, and preserve a real conflict (#668 review).
+    assert ei.value.plane_id == "B"
+    assert ei.value.conflict is not None and ei.value.conflict.planes[0] == "B"
 
 
 def test_plan_fill_bails_with_structured_error_when_unplannable(

@@ -1003,6 +1003,16 @@ class Layout:
                     f"ground_object_placement references unknown id {gp.plane_id!r} "
                     f"(ground_objects has: {sorted(self.ground_objects)})"
                 )
+            # #667: hand_placed is an aircraft-only marker (a dolly-borne body the
+            # tow planner pre-seeds as an obstacle). A ground object is routed/fixed
+            # by its object_class, and the planner only filters AIRCRAFT placements,
+            # so hand_placed here would be silently ignored — reject it instead.
+            if gp.hand_placed:
+                raise ValueError(
+                    f"ground_object_placement {gp.plane_id!r} sets hand_placed=True, "
+                    f"which is an aircraft-only marker (ground objects are positioned "
+                    f"by their object_class, not hand-placed)"
+                )
             if gp.plane_id in seen_ground:
                 raise ValueError(f"Duplicate ground_object_placement for id {gp.plane_id!r}")
             seen_ground.add(gp.plane_id)

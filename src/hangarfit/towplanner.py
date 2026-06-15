@@ -1667,7 +1667,7 @@ def _plan_fill(
     ) -> list[tuple[Placement, DubinsArc, bool]] | None:
         """Return the chosen (slot, arc, apron_fallback) sequence that places every
         body in ``rest`` against ``placed_list``, greedy-first with backtracking, or
-        ``None`` if no order does. Raises on global-budget exhaustion."""
+        ``None`` if no order does. Raises on global-budget or backtrack-cap exhaustion."""
         nonlocal total_used, deepest_conflict, backtracks_used
         if not rest:
             return []
@@ -1736,14 +1736,16 @@ def _plan_fill(
             # search on an un-routable fill (#667); 0 ⇒ no backtracking allowed.
             backtracks_used += 1
             if backtracks_used > bt_cap:
-                raise NoFeasiblePlanError(
-                    ordered[0].plane_id,
-                    Conflict.single(
-                        kind="no_feasible_path",
-                        plane=ordered[0].plane_id,
-                        detail=f"order-search backtracking cap ({bt_cap}) exceeded",
-                    ),
+                # Surface the real per-body routing conflict (the actionable reason a
+                # body could not be seated) and name THAT body — not the already-placed
+                # deepest plane (#668 review). Synthesize a cap conflict only if nothing
+                # ever failed to route (a pure ordering lock with all routes feasible).
+                bail = deepest_conflict or Conflict.single(
+                    kind="no_feasible_path",
+                    plane=rest[0].plane_id,
+                    detail=f"order-search backtracking cap ({bt_cap}) exceeded",
                 )
+                raise NoFeasiblePlanError(bail.planes[0], bail)
         return None
 
     result = _place_rest(placed, ordered)
@@ -1756,7 +1758,10 @@ def _plan_fill(
             plane=ordered[0].plane_id,
             detail="no feasible tow order (every placement order deadlocks)",
         )
-        raise NoFeasiblePlanError(ordered[0].plane_id, bail)
+        # Name the conflict's own body so the named plane and the carried conflict
+        # always agree (#668 review): on a real routing failure that's the stuck
+        # body; on a pure ordering lock it's the deepest (the synthesized fallback).
+        raise NoFeasiblePlanError(bail.planes[0], bail)
 
     for slot, arc, apron_fb in result:
         moves.append(Move(slot.plane_id, Pose.from_placement(slot), arc))
