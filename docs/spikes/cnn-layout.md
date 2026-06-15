@@ -1,8 +1,8 @@
 # Spike #331 — Can a learned model produce a valid hangar *layout*?
 
-**Status:** CONCLUDED — verdict **GO for a learned placement *proposer*, scoped to the regime RR-MC misses** (dense oblique z-nested, Herrenteich-class), behind the deterministic verifier. Pure-feasibility spike; no shippable code.
+**Status:** CONCLUDED — verdict **GO for the placement dimension of a single *joint* learned layout+path backend** (#607), scoped to the regime RR-MC misses (dense oblique z-nested, Herrenteich-class), behind the deterministic verifier. Layout and tow path are co-designed by one model (see the sibling #332) — placement is **not** a standalone product phase with routability deferred. Pure-feasibility spike; no shippable code.
 
-**TL;DR.** For the small placeholder fleet the deterministic RR-MC solver already dominates and a learned model is *not* worth it. The learned proposer earns its place only in the **dense oblique z-nested** regime — exactly where the real Herrenteich set lives and where RR-MC fails to find *any* valid placement. The recommended formulation is **not a CNN that emits poses in the image frame** (that coupling sank the original PoC) but a **permutation-invariant set model (Set-Transformer / GNN) over the object set, conditioned by a small CNN that encodes the hangar keep-out mask as context only**, with poses produced in the world frame and the existing `collisions.check` parts-model oracle as the sole arbiter of validity. This is the Stage-C design captured in epic **#607**; this spike is its feasibility gate and returns GO for **placement-only (Milestone 1)** with one significant caveat (see Q4 / Probe A).
+**TL;DR.** For the small placeholder fleet the deterministic RR-MC solver already dominates and a learned model is *not* worth it. The learned proposer earns its place only in the **dense oblique z-nested** regime — exactly where the real Herrenteich set lives and where RR-MC fails to find *any* valid placement. The recommended formulation is **not a CNN that emits poses in the image frame** (that coupling sank the original PoC) but a **permutation-invariant set model (Set-Transformer / GNN) over the object set, conditioned by a small CNN that encodes the hangar keep-out mask as context only**, with poses produced in the world frame and the existing `collisions.check` parts-model oracle as the sole arbiter of validity. This is the Stage-C design captured in epic **#607**; this spike is its feasibility gate and returns GO for the **placement dimension of the joint backend** — co-designed with the tow path (#332), not a deferred-routability split — with one significant caveat on the *density* the joint model can realistically target (see Q4 / Probe A).
 
 ---
 
@@ -61,13 +61,13 @@ Secondary potential wins (lower priority, not the bar): diverse/human-aesthetic 
 
 Validity collapses to 0 % by ~20 cm mean displacement: the calibrated all-8 sits at a **feasibility corner** (expected — #605 tuned clearances down to 0.20/0.15 until it *just* fit). Combined with RR-MC finding 0 basins, the feasible region at the full all-8 is **thin AND hard to find**. (Caveat on the caveat: single-anchor jitter measures *one* basin and RR-MC failure is a search limit, not proof of absence — but together they read strongly needle-ish at the production peak.)
 
-**Consequence for training scope:** a reward-driven / BC agent needs broad support in the feasible region. A needle at the static-dense peak means **Milestone 1 should target the *routable* daily subsets** (the real "who fits — and can be towed in — today" question, usually < all-8), and treat the full static-dense all-8 as a stretch the curriculum ramps toward and **may plateau before**. The static-dense `layout.yaml` must **not** be used as the BC target — it is tow-unreachable (see #332 / the #642 routability probe).
+**Consequence for training scope:** a reward-driven / BC agent needs broad support in the feasible region. A needle at the static-dense peak means **the joint model should target the *routable* daily subsets** (the real "who fits — and can be towed in — today" question, usually < all-8), with the curriculum ramping toward the full static-dense all-8 as a stretch it **may plateau before**. The static-dense `layout.yaml` must **not** be used as the BC target — it is tow-unreachable by any method (see #332 / the #642 routability probe), which is exactly why layout and path are co-designed: the joint model picks a *routable* density rather than reproducing the static-dense peak.
 
 ---
 
 ## Verdict & recommendation
 
-**GO for the placement proposer, scoped to Milestone 1 (placement-only), behind the verifier — as specified in #607.** Specifically:
+**GO for the placement dimension of the joint layout+path backend, behind the verifier — as specified in #607.** Specifically:
 
 1. **Pick the set model, not a pose-emitting CNN.** The CNN is mask-context only; poses come from the set heads in the world frame.
 2. **Reach, not beat.** Justify the backend solely on reaching dense oblique z-nested layouts RR-MC misses (0 basins found today), at fast amortized inference — not on per-instance speed.
@@ -86,4 +86,4 @@ This spike does not flesh #607's sub-issues — those graduate to their own mile
 | Image-frame output trap (re-introducing the old PoC failure) | Medium | Hard rule: CNN = context only; poses in world frame from set heads |
 | "Not worth it" for small fleets | Low (by design) | Opt-in `--backend learned`; RR-MC stays default + fallback |
 
-> Companion verdict for the routability half is in [`cnn-tow-path.md`](cnn-tow-path.md) (#332): **DEFER** — the routing *search* is expensive at scale and the dense-fleet blocker is single-door sequencing / monotonic placement (#667), which a drop-in learned A* heuristic does not dissolve.
+> Companion verdict for the path half is in [`cnn-tow-path.md`](cnn-tow-path.md) (#332): **GO**, learned *jointly* with layout (routability-by-construction). Only the narrow alternative of a standalone learned A\* *heuristic* bolted onto the existing monotonic planner is set aside — it cannot break single-door cyclic locks (#667) and keeps the wrong place-then-route decomposition.

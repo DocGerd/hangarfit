@@ -1,43 +1,43 @@
 # Spike #332 — Can a learned model produce a valid *tow path*?
 
-**Status:** CONCLUDED — verdict **DEFER**. A learned cost-to-go *heuristic* is a sound, low-risk optimization for the routing *search expense*, but it does **not** address the actual dense-fleet blocker, which is **single-door multi-body sequencing / monotonic placement** (a search-*structure* problem), not heuristic quality. The real routability levers are **shuffle-aware search (#667)** and **joint place-and-route (#607 Milestone 2)** — neither of which is a drop-in A\* heuristic. Pure-feasibility spike; no shippable code.
+**Status:** CONCLUDED — verdict **GO, as the routability half of a single *joint* learned layout+path backend** (#607), where the model co-designs poses **and** the drive-in sequence so that the layout is **routable by construction**. What is *set aside* is only the narrow alternative of bolting a learned A\* *heuristic* onto the existing monotonic deterministic planner — that idea cannot dissolve the real dense-fleet blocker and does not deliver joint routability. Pure-feasibility spike; no shippable code.
 
-**TL;DR.** The original premise — "a learned A\* heuristic beats the `_MAX_EXPANSIONS` cap and makes un-routable fills routable" — was **partly invalidated by what we learned since.** The multi-body un-routability turned out to be (a) a tow-*motion abstraction* over-strictness (now fixed: #645/#646/#647/#648) and (b) **monotonic placement through a single door**: each body is routed once to its final pose and never moved again, so a body whose corridor passes through an already-parked body has no path — *regardless of heuristic quality*. A better cost-to-go field reorders A\* node expansion; it cannot dissolve a true cyclic lock. So the learned tow heuristic is **deferred** behind the structural fixes that actually move the routability ceiling.
+**TL;DR.** Tow-path generation is **not** deferred. The target is a learned model that produces a valid layout *and* its tow paths *at the same time* (the cold-joint, routability-by-construction design). The reason this is the right call — and not a drop-in A\* heuristic — is what we learned since the spike was filed: the multi-body un-routability was (a) a tow-*motion abstraction* over-strictness (now fixed: #645/#646/#647/#648) and (b) **monotonic placement through a single door** — each body routes once to its final pose and never moves again (#667), so a body whose corridor passes through an already-parked body has no path *regardless of heuristic quality*. A joint agent that drives bodies in from the apron in a co-designed order **never produces** such a box-out in the first place — routability is established by construction, with the geometry oracle as the reward/verifier. That is the GO.
 
 ---
 
 ## Evidence base
 
-- Two-probe gate **#642** (closed 2026-06-15) — Probe B (routability) results below.
-- Today's root-cause: **#667** (shuffle-aware tow routing) and its merged increment **#668** (deterministic order-search in `plan_fill._place_rest`); the #667 increment-2 (move-aside) analysis (see the #667 comment thread).
+- Two-probe gate **#642** (closed 2026-06-15) — Probe B (routability) results below; its explicit conclusion was that greedy place-then-route failing **argues *for* joint placement+routing**, not against a learned tow path.
+- Today's root-cause: **#667** (shuffle-aware tow routing) and its merged increment **#668** (deterministic order-search in `plan_fill._place_rest`).
 - Motion-abstraction fixes that overturned the interim "fundamentally un-routable" verdict: **#645** (Stemme dolly / cart turn radius), **#646** (motion clearance ≠ parked clearance), **#647** (lateral strafe + free-swivel pivot), **#648** (0.05 m calibration).
-- Incumbent planner: `src/hangarfit/towplanner.py` — Hybrid-A\* + Reeds–Shepp (ADR-0007 v1 scope, ADR-0010 v2 reverse-capable motion); determinism ADR-0003 (guarded by `determinism-guard`).
-- Sibling spike: **#331** ([`cnn-layout.md`](cnn-layout.md)) — the layout half (verdict GO, placement-only).
+- Cold-joint env + reward design: [`docs/superpowers/specs/2026-06-12-learned-backend-cold-joint-rl-env-design.md`](../superpowers/specs/2026-06-12-learned-backend-cold-joint-rl-env-design.md) — drive-in-from-apron, routability by construction, geometry as the reward oracle only.
+- Incumbent planner: `src/hangarfit/towplanner.py` — Hybrid-A\* + Reeds–Shepp (ADR-0007 v1, ADR-0010 v2 reverse-capable); determinism ADR-0003 (guarded by `determinism-guard`).
+- Sibling spike: **#331** ([`cnn-layout.md`](cnn-layout.md)) — the layout half (also GO; the two resolve **together** into the joint backend).
 
 ---
 
 ## Q1 — Is it possible?
 
-Yes, technically. Candidate formulations:
+Yes. There are two families, and the spike's job is to pick the right one:
 
-| Formulation | Fit | Verdict |
+| Formulation | What it does | Verdict |
 |---|---|---|
-| **Learned cost-to-go heuristic** (CNN: occupancy grid + goal → cost field used as the A\* heuristic) | Kinematic search + feasibility unchanged; only node ordering changes; preserves all guarantees | **Best-conditioned** — but see Q2 |
-| Neural A\* / VIN (end-to-end differentiable planner) | Higher ceiling | Higher risk; harder to keep kinematically valid |
-| MPNet-style waypoint sampler | Biases search to promising waypoints | Plausible auxiliary |
-| Direct path regression (emit full polyline) | Highest risk | Must still be post-validated for kinematics + collisions |
+| **(B) Joint learned proposer — poses + drive-in order together** | The model emits a *sequence* of (object, coarse pose) decisions; bodies drive in from the apron one at a time; the layout is routable **by construction**. The geometry oracle (`collisions.check` / `path_first_conflict` / `plan_path` per leg) is the reward + verifier only. | **CHOSEN** — this is the user's "layout + path at the same time" and the cold-joint design |
+| (A) Learned A\* cost-to-go *heuristic* for the existing planner | CNN: occupancy grid + goal → cost field that reorders A\* node expansion; kinematic search + feasibility unchanged | **Set aside** — reorders search; cannot break a single-door cyclic lock; does not produce joint layouts |
+| Neural A\* / VIN; MPNet sampler; direct path regression | Various end-to-end / sampling planners | Out of scope for this gate (higher risk; would post-validate against the same oracle) |
 
-**The hard part — non-holonomic kinematics.** Tows are reverse-capable Reeds–Shepp curves (ADR-0010) with an entry-cone constraint (#262), a `_REVERSE_COST_FACTOR`, plus the #647 cart **strafe** (`Segment "T"`) and **free-swivel pivot** primitives. A grid-CNN reasons naturally in (x, y); encoding heading + reverse cost + the entry cone + the cart primitive set is the central feasibility risk. Feasible (heading channels, multi-channel goal), but non-trivial — and, crucially, **orthogonal to the blocker** (Q2).
+**The hard part — non-holonomic kinematics — is shared by both and is feasible.** Tows are reverse-capable Reeds–Shepp curves (ADR-0010) with an entry-cone constraint (#262), a `_REVERSE_COST_FACTOR`, plus the #647 cart **strafe** (`Segment "T"`) and **free-swivel pivot** primitives. In the joint design these are the *action space* of the drive-in agent, validated leg-by-leg by the unchanged oracle — so kinematic validity is guaranteed by construction + verification, not asserted by the net.
 
 ## Q2 — Is it beneficial?
 
-**This is where the spike's premise changed.** The original benefit story was concrete: multi-plane fills were "genuinely un-routable" because Hybrid-A\* hit its expansion cap. Two findings since invalidate that framing:
+**Yes — and the benefit is the whole point of the epic.** Two findings since the spike was filed *clarified* (not killed) the benefit:
 
-**(a) The cap was not the wall — the motion abstraction was.** Probe B + follow-ups showed the interim "FUNDAMENTAL — dense all-8 proven tow-unroutable" reading was an **over-strict tow-motion model**, not physics. Two code-confirmed bugs each independently dissolved the 2-body wall: motion clearance was pinned to the full *parked* margin (reality hand-clears ~5 cm during motion), and an in-hangar body used its *taxi* turn radius instead of being dolly-pivoted. Both fixed (#645/#646/#647/#648). So a learned heuristic is **not** needed to make the *2-body* case routable — the corrected verifier already does.
+**(a) The 2-body wall was an abstraction artifact, now fixed.** Probe B's interim "FUNDAMENTAL — dense all-8 proven tow-unroutable" reading was an over-strict tow-motion model (motion clearance pinned to the full *parked* margin; in-hangar body using its *taxi* turn radius instead of dolly-pivoted). Both fixed (#645/#646/#647/#648). So routability is **not** fundamentally blocked.
 
-**(b) The remaining dense-fleet blocker is structural, not heuristic.** With the abstraction corrected, `plan_fill` is still a **monotonic greedy fill through a single 13.46 m door**: each body routes once to its final pose against the already-committed set and never moves again (#667 root cause). #668 added a deterministic *order* search (`_place_rest`) — permuting *when* each body tows — but that proved a **true cyclic lock** on the full Herrenteich fleet (no static order seats all 9; 120 k expansions exhausted ~525 s). A learned cost-to-go field changes A\*'s node *ordering*; it **cannot** break a cyclic lock where a body's only corridor passes through another body's final pose. The increment-2 *move-aside* analysis (#667) further found that even a deterministic shuffle is gated by the staging-pose model, not by heuristic quality.
+**(b) The remaining dense-fleet wall is *placement structure*, which the joint agent is designed to avoid.** With the abstraction corrected, `plan_fill` is still a monotonic greedy fill through a single 13.46 m door (#667). #668 added a deterministic order search, but it proved a **true cyclic lock** on the static-dense all-8 (no static order seats all 9; ~525 s). The static-dense `layout.yaml` is therefore **tow-unreachable by *any* method** — it is a static-feasibility artifact, not a tow-achievable configuration. **This is precisely why a joint model is needed:** it does not target the static-dense layout — it co-designs a *routable* (less-dense, differently-posed) arrangement, picking the density that *is* routable. A place-then-route decomposition (greedy *or* a learned heuristic on top of it) cannot make that trade-off; a joint agent can.
 
-**Baseline (quantified).** Routability of valid layouts at the default `_MAX_FILL_EXPANSIONS = 16000` global budget (per-plane `_MAX_EXPANSIONS = 8000`), measured on solver-found valid subsets:
+**Baseline (quantified).** Routability of solver-found valid layouts at the default `_MAX_FILL_EXPANSIONS = 16000` global budget (per-plane `_MAX_EXPANSIONS = 8000`):
 
 | subset size | routable | wall-clock |
 |---|---|---|
@@ -45,48 +45,46 @@ Yes, technically. Candidate formulations:
 | 5 aircraft | **0/1** (aviat_husky / fk9 blocked, budget exhausted) | 345 s |
 | 6 aircraft | **0/1** | 316 s |
 | lone broadside Scheibe (18 m) | ✅ routes (0.5 s with strafe) | — |
-| Scheibe + Stemme (N=2, deep poses) | ❌ no order routes both into an *empty* hangar | — |
+| Scheibe + Stemme (N=2, deep static-dense poses) | ❌ no order routes both into an *empty* hangar | — |
 
-The routing **search** is genuinely expensive at 5+ bodies (hundreds of seconds), and the ceiling is ~4 at the default budget. **Where a learned heuristic *could* help:** cutting node expansions on the already-routable cases and pushing a few more bodies inside the budget on fills that are *order-routable but expensive*. **Where it cannot help:** the cyclic-lock / single-door-sequencing cases that are the actual dense-fleet wall.
-
-**Versus RRT-Connect** (the classical alternative named in the issue): same verdict — a different sampler/search also does not address monotonic placement; it would help the search-expense axis, not the structural one.
+Read correctly: the deterministic place-then-route ceiling is ~4 at the default budget, and it is expensive — **because it is solving the wrong decomposition** (fixed dense poses, then route). The joint agent reframes the objective to *routable density*, which is strictly below static-optimal density but is the real "who fits — and can be towed in — today" question.
 
 ## Q3 — How would it integrate, modularly?
 
-Same non-negotiable as #331: **proposer + verifier.** Sketch (if pursued later):
+**Proposer + verifier, non-negotiable** — identical seam to #331 (one backend produces both poses and the tow plan):
 
-- A pluggable **heuristic seam** in `towplanner.py` behind the Hybrid-A\* interface — default = analytic heuristic, optional = learned. An *inadmissible* learned heuristic may yield sub-optimal but still-valid paths; the kinematic-feasibility + `collisions.check`/`path_first_conflict` oracle guarantees safety regardless. The spike must state whether admissibility is preserved or knowingly traded for speed.
-- **Graceful fallback** preserving the best-effort `plans[i] = None` contract: if inference is unavailable or a learned path fails validation, fall back to the deterministic planner.
-- **Determinism (ADR-0003):** the byte-identical contract extends to `towplanner.py` (guarded by `determinism-guard`). A learned heuristic would need the same scope amendment as #331's proposer (within-build bit-identical; cross-machine verifier-validity-only), or be scoped out of the determinism contract explicitly.
-- **Packaging:** ONNX-runtime-only inference; no training deps shipped.
+- `--backend learned` returns the **same `SolveResult` shape** (poses + the `MovesPlan`), so render / `view` / `--write-yaml` are unchanged. RR-MC + the deterministic planner stay the default and the fallback.
+- The learned drive-in sequence is validated **leg by leg** by the unchanged oracle (`collisions.check` + `path_first_conflict` / `plan_path`); a leg that fails validation is rejected — the model never certifies a path.
+- **Determinism (ADR-0003):** the verifier (collisions + towplanner) stays strictly byte-identical-bound and `determinism-guard`-gated; the learned proposer gets the same explicitly-amended weaker contract as #331 (within-build bit-identical with fixed weights/seed/EP; cross-machine = verifier-validity-only).
+- **Packaging:** ONNX-only inference (`[learned-infer]`); torch contributor-only (`[train]`); `ml/` never in the wheel.
 
 ## Q4 — How would it be trained?
 
-- **The deterministic planner is the data generator** — run `towplanner.py` over many (grid, start, goal) instances → optimal path / expanded cost-to-go field as imitation labels. Free, abundant, on-distribution.
-- **Free analytic label:** the closed-form Reeds–Shepp distance is an obstacle-free lower bound; train the CNN to predict the *obstacle-aware correction* on top of RS distance — an easier target than the full field.
-- Input: occupancy-grid raster (placed planes = obstacles), goal-pose heading channels; encode reverse cost + entry cone + cart primitives; bounded grid resolution vs the continuous planner.
+Per the cold-joint design: **BC warm-start from a teacher that drives bodies in from the apron** (producing routable-by-construction layouts+orders), then **PPO** with a potential-based shaping reward read from the verifier (graded penetration, routability margin, sequence-deviation), keeping the binary valid+routable verdict as the truth signal. The free analytic Reeds–Shepp distance is a useful lower-bound label for any cost-to-go auxiliary.
 
-This is sound and low-risk *if* the goal is reducing routing-search expense. It is **not** what unblocks dense fleets.
+**Honest scope caveat (from #642 Probe A):** the static-dense feasible region is a *needle*, and routable density is below static-optimal density — so the realistic target is the routable daily subsets, ramped by a curriculum, possibly plateauing before the full all-8 + all ground objects. Worth confirming the **max routable count/density** for the Herrenteich set (sweep less-dense arrangements) — that number bounds the learned backend's ambition.
 
 ---
 
 ## Verdict & recommendation
 
-**DEFER the learned tow path.** Rationale:
+**GO — the tow path is learned *jointly* with the layout** (cold-joint, routability-by-construction), as the routability dimension of epic **#607**. Specifically:
 
-1. The original "beat the expansion cap → routability" premise was **superseded**: the 2-body wall was an abstraction artifact (fixed), and the dense-fleet wall is **single-door sequencing / monotonic placement** (#667) — a search-*structure* problem a learned A\* heuristic cannot dissolve.
-2. The **right routability levers first** are structural, not learned: shuffle-aware search (**#667**, deterministic move-aside — increment 1 shipped in #668, increment 2 paused) and/or **joint place-and-route by construction** (**#607 Milestone 2**, the cold-joint RL agent that co-designs poses *and* order, avoiding packings that box out later bodies — exactly the failure Probe B exhibited).
-3. A learned cost-to-go heuristic (or RRT-Connect) remains a **legitimate later optimization** for routing-search *expense* on already-routable fills — re-open as a follow-up *after* the structural routability work, when "expensive but feasible" rather than "structurally locked" is the dominant cost. It is not the increment that moves the ceiling.
+1. **Joint, not deferred.** One learned model co-designs poses **and** the drive-in order; routability is established by construction and confirmed leg-by-leg by the unchanged oracle. This is the user's "layout + path at the same time."
+2. **Set aside idea (A)** — a learned A\* heuristic on the *existing monotonic planner*. It reorders search but cannot break single-door cyclic locks, and it keeps the place-then-route decomposition that #642 proved is the wrong tool. (It remains a *minor, optional* later optimization for routing-search *expense* on already-routable fills — not a substitute for the joint backend.)
+3. **Target routable density, not the static-dense peak.** The static-dense `layout.yaml` is tow-unreachable by any method; the joint agent's job is to find the densest *routable* arrangement.
+4. **Verifier authoritative; ADR-0003 scope amended, not weakened.**
 
-So #332's contribution to the learned-backend epic is: the routability dimension of #607 is **Milestone 2 (joint, routability-aware reward)**, gated behind the structural routing work — consistent with #331's placement-only **Milestone 1** GO and the #642 SPLIT verdict.
+This and #331 resolve **together**: a single joint learned layout+path backend (#607). The deterministic shuffle-aware planner (#667) remains a complementary, independent line that would also enrich the verifier's routability oracle.
 
 ## Risk register
 
 | Risk | Severity | Mitigation |
 |---|---|---|
-| Solving the wrong problem (heuristic quality vs structural lock) | High | Defer; do structural routability (#667 / #607 M2) first; re-open only for search-expense |
-| Non-holonomic encoding (heading / reverse / entry-cone / cart primitives) on a grid-CNN | Medium | Predict obstacle-aware correction on RS-distance lower bound; keep kinematic search + oracle unchanged |
-| Determinism contract (towplanner is `determinism-guard`-gated) | Medium | Same ADR-0003 scope amendment as #331; or scope learned heuristic out explicitly with its own canaries |
+| Routable density is low (needle region, #642 Probe A) → joint model's reachable target is modest | High | Confirm max routable count first; curriculum easy→dense; judge value vs "park fewer planes" honestly |
+| Mistaking idea (A) for the goal (a learned heuristic on the monotonic planner) | Resolved here | Joint, routability-by-construction is the GO; (A) is explicitly a minor later optimization |
+| Non-holonomic action space (heading / reverse / entry-cone / cart primitives) | Medium | Reuse the existing primitives as the agent action space; validate leg-by-leg via the oracle |
+| Determinism contract (towplanner is `determinism-guard`-gated) | Medium | Same ADR-0003 scope amendment as #331; verifier stays byte-identical |
 | Dependency weight | Low | ONNX-only inference; never in wheel |
 
-> Companion verdict for the placement half is in [`cnn-layout.md`](cnn-layout.md) (#331): **GO** for a learned placement *proposer* scoped to routable daily subsets (the dense static-optimal all-8 is a needle and tow-unreachable).
+> Companion verdict for the layout half is in [`cnn-layout.md`](cnn-layout.md) (#331): **GO** for the same joint backend's placement dimension, scoped to routable arrangements (the static-dense all-8 is a needle and tow-unreachable).
