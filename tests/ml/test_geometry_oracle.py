@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from hangarfit.loader import load_fleet
 from ml import geometry_oracle as go
 from ml.types import Park, Primitive, RewardWeights
 from tests.ml.conftest import single_object_layout
@@ -47,3 +48,24 @@ def test_intrusion_positive_when_object_pushed_off_the_front():
     pid = next(iter(layout.fleet))
     pl = layout.placements[0]
     assert go.intrusion_area_m2(layout.fleet[pid], pl, layout.hangar) > 0.0
+
+
+# ---------------------------------------------------------------------------
+# T5: legal_primitives
+# ---------------------------------------------------------------------------
+
+
+def test_legal_primitives_cart_includes_strafe():
+    # scheibe_falke: always_cart, r=0 → lateral=True → T primitives included.
+    fleet = load_fleet("data/fleet.yaml")
+    body = fleet["scheibe_falke"]
+    kinds = {p.kind for p in go.legal_primitives(body, on_carts=True)}
+    assert "T" in kinds  # carts can strafe (#647)
+
+
+def test_legal_primitives_own_gear_excludes_strafe():
+    # fuji: always_own_gear, r=7.0 → lateral ignored → no T primitive.
+    fleet = load_fleet("data/fleet.yaml")
+    body = fleet["fuji"]
+    kinds = {p.kind for p in go.legal_primitives(body, on_carts=False)}
+    assert "T" not in kinds
