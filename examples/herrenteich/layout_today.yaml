@@ -1,0 +1,95 @@
+# Airfield Herrenteich — the REAL 'today' layout (#664).
+#
+# This is the club's ACTUAL in-hangar arrangement as described by PK (2026-06-15):
+# all NINE usual aircraft PLUS three floor occupants — ONE glider trailer (the Duo
+# Discus; the second single-seat trailer is stored elsewhere), the fixed Maul fuel
+# trailer, and the rescue VW Caddy. The Caddy keeps a clear drive-out egress (the
+# club's hard rule). Order parked in (real sequence): Wild Thing, Stemme, Scheibe
+# Falke, Zlin Savage, Fuji, CTSL, FK9, Duo glider trailer, Cessna 140, Husky, fuel
+# trailer (corner), Caddy (door, last).
+#
+# WHY THIS MATTERS. The earlier layout_full.yaml insisted on parking BOTH glider
+# trailers + the Caddy egress, which is one body over capacity, so it dropped the
+# Scheibe (7 aircraft). The club does the opposite — it keeps all 9 aircraft and
+# leaves the spare trailer outside. This file is the real composition; layout_full.yaml
+# is kept as the alternative 'both-trailers-inside' scenario.
+#
+# HOW THIS WAS PRODUCED. Like the other herrenteich layouts, this is the TOOL's
+# arrangement of the real COMPOSITION, not a survey of exact parking spots: an
+# offline simulated-annealing search driving the real part-based collision checker
+# (warm-started from the valid all-8 layout.yaml) + the Caddy egress oracle found
+# this valid 9-aircraft + 3-GO packing with continuous headings. The product solver
+# does not generate it (dense 12-body nesting is beyond the search — the documented
+# motivation for the learned packer, #607). Replace with surveyed positions when
+# known. All dims are still measured: false.
+#
+# It passes `hangarfit check` (exit 0) at the recalibrated clearances (hangar.yaml:
+# clearance_m 0.10, wing_layer_clearance_m 0.15) and the Caddy has a clear egress.
+# Its tightest gap is ~0.10 m (frontier-tight; recompute if part dims change).
+#
+# Coordinate convention (see hangar.yaml): world (0,0) front-left, +x right along
+# the door wall, +y deeper in; heading 0 = nose deep (+y), 90 = nose toward +x.
+
+fleet: fleet.yaml
+hangar: hangar.yaml
+
+placements:
+  - plane: wild_thing
+    x_m: 11.59
+    y_m: 16.44
+    heading_deg: 104.3
+    on_carts: true          # always_cart
+  - plane: stemme_s10
+    x_m: 5.92
+    y_m: 13.98
+    heading_deg: 115.0
+    on_carts: true          # always_cart (dolly-pivotable, #644)
+  - plane: scheibe_falke
+    x_m: 5.92
+    y_m: 22.15
+    heading_deg: 290.0
+    on_carts: true          # always_cart
+  - plane: zlin_savage
+    x_m: 3.13
+    y_m: 27.42
+    heading_deg: 303.1
+    on_carts: true          # always_cart
+  - plane: fuji
+    x_m: 7.44
+    y_m: 4.65
+    heading_deg: 348.8
+    on_carts: false         # always_own_gear
+  - plane: ctsl
+    x_m: 3.43
+    y_m: 10.91
+    heading_deg: 299.0
+    on_carts: false         # cart_eligible, on own gear
+  - plane: fk9_mkii
+    x_m: 10.81
+    y_m: 14.21
+    heading_deg: 283.1
+    on_carts: false         # cart_eligible, on own gear
+  - plane: cessna_140
+    x_m: 12.85
+    y_m: 8.32
+    heading_deg: 103.7
+    on_carts: false         # cart_eligible, on own gear
+  - plane: aviat_husky
+    x_m: 5.60
+    y_m: 18.69
+    heading_deg: 116.6
+    on_carts: false         # always_own_gear
+
+ground_objects:
+  - object: vw_caddy            # rescue vehicle at the door, clear drive-out egress (#603/#652)
+    x_m: 12.65
+    y_m: 2.60
+    heading_deg: 200.0
+  - object: maul_fuel_trailer   # fixed keep-out, near the front-left corner
+    x_m: 1.17
+    y_m: 3.87
+    heading_deg: 176.2
+  - object: glider_trailer_1    # Duo Discus trailer (10.5 m) — the only trailer inside today
+    x_m: 11.33
+    y_m: 26.03
+    heading_deg: 183.7

@@ -58,16 +58,22 @@ structural_notches:
     x_max_m: 15.08
     y_max_m: 31.76
 
-# CALIBRATED for the full real set (#605). The placeholders were 0.3 / 0.2; the
-# full set (8 aircraft + Caddy + 2 glider trailers + fixed fuel trailer) is
-# INFEASIBLE at 0.3/0.2 and feasible at <=0.22/0.15 (checker-driven search).
-# 0.20 m lateral matches real hand-pushed club packing density; 0.15 m vertical
-# fixes a too-large wing-layer clearance that falsely rejected legal z-disjoint
-# wing-over-tail nestings (the real club clears fins ~0.40 m by hand, well above
-# 0.15). Lowering a clearance only RELAXES the constraint, so the existing
-# layout.yaml / scenario_demo.yaml stay valid; the synthetic data/ hangar is a
-# separate file, untouched.
-clearance_m: 0.20            # minimum horizontal gap between any two parts (PARKED)
+# CALIBRATED against the REAL 'today' layout (#664). History: the #605 placeholder
+# was 0.3/0.2; the all-8 + 4-GO set is INFEASIBLE at 0.3/0.2 and feasible at
+# <=0.22/0.15, so it was first set to 0.20/0.15. But that 0.20 m horizontal gap
+# turned out TOO LOOSE to reproduce reality: when PK described how the club
+# actually parks today (all 9 aircraft + the Duo glider trailer + fuel trailer +
+# Caddy, with a clear Caddy drive-out), a checker-driven search could NOT seat that
+# real set at 0.20 m — it always came up ~2 conflicts short — yet seats it cleanly
+# at <=0.10 m. PK confirmed the real wingtip-to-part gaps VARY A LOT and on dense
+# days are very tight (well under 0.20 m). So the horizontal clearance is
+# recalibrated to 0.10 m: the demonstrated tight-pack gap of the real all-9
+# single-trailer layout (examples/herrenteich/layout_today.yaml, whose tightest gap
+# is ~0.10 m). The 0.15 m VERTICAL (wing-layer) clearance is unchanged — it was not
+# the binding constraint (the real club clears fins ~0.40 m by hand). Lowering the
+# horizontal clearance only RELAXES the constraint, so layout.yaml / layout_full.yaml
+# / scenario_demo.yaml all stay valid; the synthetic data/ hangar is untouched.
+clearance_m: 0.10            # minimum horizontal gap between any two parts (PARKED)
 wing_layer_clearance_m: 0.15 # minimum vertical gap between two parts at the same XY (PARKED)
 
 # Tow-MOTION clearances (#643/#646): the margin the planner keeps while a mover
