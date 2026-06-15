@@ -514,26 +514,38 @@ function affineAt(segByPlane, finals, pid, t) {
   const i = Math.round(frac * (seg.samples.length - 1));
   return { vis: true, aff: seg.samples[i] };
 }
-function createTimeline(scene2, groups2) {
+function framePoses(scene2, segByPlane, t) {
+  const out = {};
+  for (const p of scene2.planes) {
+    out[p.id] = affineAt(segByPlane, scene2.final_poses, p.id, t);
+  }
+  for (const go of scene2.ground_objects) {
+    out[go.id] = affineAt(segByPlane, { [go.id]: go.final_pose }, go.id, t);
+  }
+  return out;
+}
+function createTimeline(scene2, groups2, goGroups2 = {}) {
   const TL = scene2.timeline;
   const SEGS = TL.segments;
   const TOTAL = TL.total_s;
   const hasAnim = TOTAL > 0 && SEGS.length > 0;
   const segByPlane = {};
   for (const s of SEGS) segByPlane[s.plane_id] = s;
-  const finals = scene2.final_poses;
   const active = byId("active");
   const clock = byId("clock");
   const applyTime = (t) => {
-    for (const p of scene2.planes) {
-      const { vis, aff } = affineAt(segByPlane, finals, p.id, t);
-      const g = groups2[p.id];
+    const poses = framePoses(scene2, segByPlane, t);
+    const drive = (id, g) => {
+      if (!g) return;
+      const { vis, aff } = poses[id];
       g.visible = vis;
       if (vis && aff) {
         g.matrix.copy(affineMatrix(aff));
         g.matrixWorldNeedsUpdate = true;
       }
-    }
+    };
+    for (const p of scene2.planes) drive(p.id, groups2[p.id]);
+    for (const go of scene2.ground_objects) drive(go.id, goGroups2[go.id]);
     const cur = SEGS.find((s) => t >= s.start_s && t < s.end_s);
     active.textContent = cur ? "towing: " + cur.plane_id : "";
     clock.textContent = t.toFixed(1) + "s";
@@ -632,7 +644,7 @@ labelsToggle.addEventListener("change", () => {
   for (const m of labelMeshes) m.visible = on;
   for (const m of noseMeshes) m.visible = on;
 });
-addGroundObjects(scene, SCENE);
+var { groups: goGroups } = addGroundObjects(scene, SCENE);
 var { setVisible: setPathsVisible } = addTowPaths(scene, SCENE, BRAND);
 var pathsToggle = byId("paths");
 pathsToggle.addEventListener("change", () => setPathsVisible(pathsToggle.checked));
@@ -648,5 +660,5 @@ try {
 } catch (e) {
   banner("TRANSFORM CHECK ERRORED: " + e.message + " — do not trust this render.");
 }
-var timeline = createTimeline(SCENE, groups);
+var timeline = createTimeline(SCENE, groups, goGroups);
 startHud({ timeline, home, controls, renderer, scene, cam });

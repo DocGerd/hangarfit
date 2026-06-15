@@ -43,7 +43,8 @@ export interface PlaneData {
 // A placed non-aircraft body (#606): a fixed obstacle (keep-out) or a
 // placed/routed mover. Same `boxes` shape as a plane, but no wheels/carts; the
 // per-class fill is brand-resolved Python-side (`color`), and `final_pose` is the
-// static placement affine (no timeline yet — mover animation is a follow-up).
+// placement (resting) affine — a fixed obstacle stays there, a placed-routed
+// mover animates to it along its drive path via the timeline (#651).
 export interface GroundObjectData {
   id: string;
   object_class: string; // 'fixed_obstacle' | 'placed_routed_mover'

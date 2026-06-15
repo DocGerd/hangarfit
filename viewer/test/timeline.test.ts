@@ -3,8 +3,8 @@
 // transitions of scene-v2-schema.md, untestable from pytest.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { affineAt } from '../src/timeline.ts';
-import type { Affine, SegmentData } from '../src/scene-contract.ts';
+import { affineAt, framePoses } from '../src/timeline.ts';
+import type { Affine, SceneV2, SegmentData } from '../src/scene-contract.ts';
 
 const FINAL: Affine = [1, 0, 9, 0, 1, 0];
 const A0: Affine = [1, 0, 0, 0, 1, 0];
@@ -36,4 +36,41 @@ test('mid-animation → sample chosen by the rounded fraction', () => {
   assert.deepEqual(affineAt(segByPlane, finals, 'p', 2), { vis: true, aff: A0 }); // frac 0 → i0
   assert.deepEqual(affineAt(segByPlane, finals, 'p', 4), { vis: true, aff: A1 }); // frac .5 → i1
   assert.deepEqual(affineAt(segByPlane, finals, 'p', 5.9), { vis: true, aff: A2 }); // frac .975 → round 2
+});
+
+// ── framePoses: planes ∪ ground-object movers, one state machine (#651) ───────
+// A mover reuses the SAME hidden→sample→parked transitions as a plane, but its
+// resting pose lives on its own block (final_pose), not in scene.final_poses.
+
+const CADDY_FINAL: Affine = [1, 0, 7, 0, 1, 0];
+const FUEL_FINAL: Affine = [1, 0, 3, 0, 1, 0];
+
+function sceneWithMover(): SceneV2 {
+  // Only the fields framePoses reads (planes/ground_objects/final_poses); a
+  // partial cast keeps the fixture honest about what the unit depends on.
+  return {
+    planes: [{ id: 'p' }],
+    ground_objects: [
+      { id: 'caddy', final_pose: CADDY_FINAL },
+      { id: 'fuel', final_pose: FUEL_FINAL },
+    ],
+    final_poses: { p: FINAL },
+    timeline: { total_s: 0, segments: [] },
+  } as unknown as SceneV2;
+}
+
+test('framePoses animates a routed mover (hidden → sample → parked); plane unaffected', () => {
+  const moverSeg: SegmentData = { plane_id: 'caddy', start_s: 4, end_s: 8, samples: [A0, A1, A2] };
+  const seg2: Record<string, SegmentData> = { caddy: moverSeg };
+  const sc = sceneWithMover();
+  assert.deepEqual(framePoses(sc, seg2, 0).caddy, { vis: false, aff: null }); // not entered
+  assert.deepEqual(framePoses(sc, seg2, 6).caddy, { vis: true, aff: A1 }); // mid-animation
+  assert.deepEqual(framePoses(sc, seg2, 99).caddy, { vis: true, aff: CADDY_FINAL }); // parked
+  assert.deepEqual(framePoses(sc, seg2, 99).p, { vis: true, aff: FINAL }); // plane still parked
+});
+
+test('framePoses keeps a segment-less ground object (obstacle / deferred mover) at its final pose', () => {
+  const sc = sceneWithMover();
+  assert.deepEqual(framePoses(sc, {}, 5).fuel, { vis: true, aff: FUEL_FINAL });
+  assert.deepEqual(framePoses(sc, {}, 5).caddy, { vis: true, aff: CADDY_FINAL });
 });

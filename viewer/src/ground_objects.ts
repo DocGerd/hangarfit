@@ -3,11 +3,13 @@
 // A thin sibling of addPlanes for the Stage-A ground objects: the fixed obstacle
 // (a keep-out, e.g. the Maul fuel trailer) and the placed/routed movers (the VW
 // Caddy + glider trailers). Each is built ONCE in plane-local coords via the
-// shared boxMesh, then parked at its static final_pose affine — there is no
-// timeline yet (mover animation + the Caddy egress lane are deferred follow-ups,
-// the egress oracle exports no corridor geometry). The viewer does NO transform
-// math: final_pose is the det-−1 affine computed in Python (ADR-0002/ADR-0017),
-// and checkAnchors() cross-checks each body's world corners against go_anchors.
+// shared boxMesh and parked at its final_pose affine. The returned Groups are
+// driven by the timeline (#651): a fixed obstacle stays static, a placed-routed
+// mover animates along its drive path (the Caddy egress lane is still a follow-up
+// — #652 — the egress oracle exports no corridor geometry). The viewer does NO
+// transform math: final_pose is the det-−1 affine computed in Python
+// (ADR-0002/ADR-0017), and checkAnchors() cross-checks each body's world corners
+// against go_anchors.
 //
 // Colour is read from each block's `color` (brand-resolved per class in
 // scene.py, the plane colour-map idiom) — nothing hard-coded here (#419).
@@ -23,8 +25,9 @@ export interface GroundObjectsBundle {
 }
 
 /** Build each ground object's affine Group (boxes only — no gear/nose), park it at
- * its static final_pose, add it to the scene, and append a legend chip. Returns
- * the groups. A GO-free scene builds nothing and is inert (no legend rows). */
+ * its final_pose, add it to the scene, and append a legend chip. Returns the
+ * groups so the timeline can drive movers per frame (#651); a fixed obstacle just
+ * stays at its pose. A GO-free scene builds nothing and is inert (no legend rows). */
 export function addGroundObjects(scene: THREE.Scene, SCENE: SceneV2): GroundObjectsBundle {
   const groups: Record<string, THREE.Group> = {};
   const legend = byId('legend');

@@ -660,3 +660,72 @@ def test_scene_contract_ts_ground_object_keys_match():
     precedent)."""
     block = scene.build_scene(_layout_with_ground_objects())["ground_objects"][0]
     assert _ts_interface_fields("scene-contract.ts", "GroundObjectData") == set(block)
+
+
+# ── #651: placed-routed movers animate in the 3D timeline ─────────────────────
+#
+# The static GO bodies already emit (#653); #651 adds their MOTION. A routed
+# mover (its Move carries a DubinsArc) gets a timeline segment so the viewer
+# drives it in along its path, AFTER every aircraft is parked; a deferred
+# (path=None) mover stays at its static final_pose, like the fixed obstacle.
+
+
+def _routed_arc():
+    """A real DubinsArc to reuse as a mover route. The synthetic GO layout does
+    not route (a trailer near the door blocks an aircraft), so we borrow a routed
+    aircraft's arc — `_timeline` only needs a path with a length and samples."""
+    arc = plan_fill(load_layout(LAYOUT)).moves[0].path
+    assert arc is not None
+    return arc
+
+
+def _plan_with_movers(lay, *, glider_path, caddy_path):
+    """The base-layout aircraft fill plus two mover Moves appended (aircraft
+    first, then movers — the order plan_fill itself emits)."""
+    from hangarfit.towplanner import Move, MovesPlan, Pose
+
+    base = plan_fill(load_layout(LAYOUT))
+    g = next(p for p in lay.ground_object_placements if p.plane_id == "glider_trailer")
+    c = next(p for p in lay.ground_object_placements if p.plane_id == "vw_caddy")
+    movers = (
+        Move("glider_trailer", Pose.from_placement(g), glider_path),
+        Move("vw_caddy", Pose.from_placement(c), caddy_path),
+    )
+    return MovesPlan(target_layout=lay, moves=base.moves + movers)
+
+
+def test_timeline_animates_only_routed_movers():
+    """#651: a routed mover (real path) gets a timeline segment so it animates; a
+    deferred (path=None) mover does not — it stays at its static final_pose."""
+    lay = _layout_with_ground_objects()
+    plan = _plan_with_movers(lay, glider_path=_routed_arc(), caddy_path=None)
+    tl, _ = scene._timeline(lay, plan)
+    seg_ids = {s["plane_id"] for s in tl["segments"]}
+    assert "glider_trailer" in seg_ids  # routed mover animates
+    assert "vw_caddy" not in seg_ids  # deferred mover stays static
+
+
+def test_timeline_mover_segments_follow_aircraft_and_stay_sequential():
+    """#651: movers drive in after every aircraft is parked, and the whole
+    timeline stays end-to-end continuous (no gaps/overlaps)."""
+    lay = _layout_with_ground_objects()
+    plan = _plan_with_movers(lay, glider_path=_routed_arc(), caddy_path=_routed_arc())
+    tl, _ = scene._timeline(lay, plan)
+    aircraft = {p.plane_id for p in lay.placements}
+    mover_segs = [s for s in tl["segments"] if s["plane_id"] not in aircraft]
+    aircraft_segs = [s for s in tl["segments"] if s["plane_id"] in aircraft]
+    assert mover_segs and aircraft_segs
+    last_aircraft_end = max(s["end_s"] for s in aircraft_segs)
+    assert all(s["start_s"] >= last_aircraft_end - 1e-9 for s in mover_segs)
+    for prev, nxt in zip(tl["segments"], tl["segments"][1:], strict=False):
+        assert math.isclose(nxt["start_s"], prev["end_s"])
+    assert math.isclose(tl["total_s"], tl["segments"][-1]["end_s"])
+
+
+def test_timeline_mover_animation_byte_deterministic():
+    """#651: animating movers keeps build_scene byte-identical run-to-run (ADR-0003)."""
+    lay = _layout_with_ground_objects()
+    plan = _plan_with_movers(lay, glider_path=_routed_arc(), caddy_path=_routed_arc())
+    a = json.dumps(scene.build_scene(lay, moves_plan=plan))
+    b = json.dumps(scene.build_scene(lay, moves_plan=plan))
+    assert a == b
