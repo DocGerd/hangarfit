@@ -1,27 +1,40 @@
 # Catalog entry (#595). Conventions: see the catalog README.
+#
+# Fuji FA-200-180 Aero Subaru (the 180 hp Lycoming IO-360 variant) — a Japanese
+# four-seat, low-wing, fixed-tricycle-gear single. The ENVELOPE is published spec,
+# cross-checked across several sources (#657): wingspan 9.42 m and wing area 14.0 m²
+# are unanimous; overall length 7.98 m is confirmed by airliners.net, flugzeuginfo
+# and all-aero (Wikipedia's 8.17 m is the outlier); interior cabin width 1.03 m is
+# from all-aero. Overall HEIGHT is contested — Wikipedia gives 2.59 m (8 ft 6 in)
+# while some aggregators give 2.02 m (6 ft 8 in); the pair is a transposed-digit
+# typo and 2.02 m is implausibly short for the FA-200's tall fin (shorter than a
+# Piper Cherokee), so the modelled fin reaches 2.59 m. The UNDERCARRIAGE track /
+# wheelbase, the tailplane span, and the per-part z-layers are NOT published — they
+# stay reasoned estimates. measured: false (published spec + estimates, not an
+# on-site survey).
 type: aircraft
 id: fuji
-name: "Fuji FA-200"
+name: "Fuji FA-200-180 Aero Subaru"
 wing_position: low
 gear: nosewheel
 movement_mode: always_own_gear
-turn_radius_m: 7.0
+turn_radius_m: 7.0        # taxi turn radius, estimate (unpublished)
 measured: false
-notes: "Only low-wing in the fleet — wing underside near ground level"
+notes: "Only low-wing in the fleet — wing underside near ground level. Undercarriage + tailplane spans estimated."
 parts:
   - kind: fuselage
-    length_m: 7.98
-    width_m: 1.0
+    length_m: 7.98        # overall length (airliners.net / flugzeuginfo / all-aero)
+    width_m: 1.0          # ~ cabin width (1.03 m interior, all-aero) — cabin-width convention
     offset_x_m: -0.40
     offset_y_m: 0.0
     z_bottom_m: 0.0
     z_top_m: 1.6
   - kind: wing
-    length_m: 1.5
-    width_m: 9.42
+    length_m: 1.5         # ~ mean chord (area 14.0 m² / span 9.42 m = 1.49)
+    width_m: 9.42         # span (manufacturer / TCDS, unanimous)
     offset_x_m: 0.10
     offset_y_m: 0.0
-    z_bottom_m: 0.8
+    z_bottom_m: 0.8       # LOW wing, underside near ground (est.)
     z_top_m: 1.1
   - kind: tail            # horizontal stabilizer (conventional low; ~3.2 m span est.)
     length_m: 1.1
@@ -30,14 +43,14 @@ parts:
     offset_y_m: 0.0
     z_bottom_m: 1.3
     z_top_m: 1.6
-  - kind: vertical_stabilizer  # fin+rudder to overall height 2.02 m
+  - kind: vertical_stabilizer  # fin+rudder to overall height 2.59 m (Wikipedia; see header)
     length_m: 1.3
     width_m: 0.15
     offset_x_m: -3.74
     offset_y_m: 0.0
     z_bottom_m: 1.6
-    z_top_m: 2.02
+    z_top_m: 2.59
 wheels:
   main_offset_x_m: -0.40
-  track_m: 2.5
-  third_wheel_offset_x_m: 1.60
+  track_m: 2.5             # main-gear track, estimate (unpublished)
+  third_wheel_offset_x_m: 1.60  # nosewheel; wheelbase ~2.0 m, estimate (unpublished)

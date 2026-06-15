@@ -87,14 +87,18 @@ All notable changes to this project are documented here. Format follows [Keep a 
     (0→1.84 m) plus a small ~1.0×0.8 m roof-gear rack (1.84→2.04 m) — instead of one
     full-height prism. The club's Caddy carries roof-stowed gear (+0.20 m over stock);
     as a single 2.04 m box that blocked the wing layer across its whole footprint, but
-    split, a high wing may overhang the van body and only has to clear the localized
-    rack (matching reality), which restores the Caddy's placement + egress freedom.
+    split, a wing whose underside sits at ~2.0 m may overhang the low van body
+    (+0.16 m gap, clears) and only has to clear the localized rack — a realistic van
+    model (low body + small roof load), not a full-height wall. (It governs any dense
+    packing that nests a wing over the Caddy; inert in the shipped fishbone layout.)
   - **Two distinct glider trailers** (#657): `glider_trailer_1` → a 10.5 m Duo Discus
     (two-seat) closed trailer; `glider_trailer_2` → a 9.0×1.75×1.45 m single-seat
     15 m-class trailer (owner-measured Cobra) — previously both a generic 9.0×2.1×2.3.
-  - The **Fuji FA-200** joins the Herrenteich `fleet.yaml` as a permanent ninth
-    occupant (the only low-winger; a placeholder for a future C150; `always_own_gear`,
-    dims still `measured: false`).
+  - The **Fuji FA-200-180** joins the Herrenteich `fleet.yaml` as a permanent ninth
+    occupant (the only low-winger; a placeholder for a future C150; `always_own_gear`).
+    Its envelope is published spec, cross-checked across sources (span 9.42 m, length
+    7.98 m, wing area 14.0 m², fin to 2.59 m — correcting a transposed 2.02 m height);
+    the undercarriage + tailplane spans stay estimates (`measured: false`).
   - `examples/herrenteich/layout_full.yaml` is re-authored as the **realistic
     in-hangar set** (#659), packed **fishbone** (continuous, mixed aircraft headings
     instead of an orthogonal nest — far more space-efficient and how a club really

@@ -2,7 +2,7 @@
 
 A **real-world** dataset for the club's main-building hangar. The hangar,
 layout, and scenario files live here; the aircraft (the eight usual occupants
-plus the permanent Fuji FA-200 added in #657) are defined once in the central
+plus the permanent Fuji FA-200-180 added in #657) are defined once in the central
 catalog (`data/catalog/`) and pulled in by this directory's `fleet.yaml`
 manifest — the real published-spec numbers ARE the catalog's numbers (#595/#594,
 no per-world duplication). Nothing here is wired into the default CLI paths —
@@ -26,7 +26,7 @@ hangarfit view  examples/herrenteich/scenario_demo.yaml -o demo.html --seed 3
 | File | What it is |
 |---|---|
 | `hangar.yaml` | The real hangar — **15.08 m × 31.76 m**, door **13.46 m** wide. Measured 2026-06-04 from the architect's DWG. L-shaped (back-right office notch). |
-| `fleet.yaml`  | The aircraft usually hangared here — the eight usual occupants plus the permanent **Fuji FA-200** (#657, the only low-winger; a placeholder for a future C150) — plus (since #605) the four non-aircraft floor occupants under `ground_objects:` (Caddy, 2 glider trailers, fixed fuel trailer). Envelope (span/length/height) from published specs; part-level dimensions (wing chord, fuselage width, tail spans, gear track/wheelbase) sourced from EASA/FAA TCDS + manufacturer manuals where published (refreshed 2026-06-08, #536); the rest derived/estimated and flagged inline. |
+| `fleet.yaml`  | The aircraft usually hangared here — the eight usual occupants plus the permanent **Fuji FA-200-180** (#657, the only low-winger; a placeholder for a future C150) — plus (since #605) the four non-aircraft floor occupants under `ground_objects:` (Caddy, 2 glider trailers, fixed fuel trailer). Envelope (span/length/height) from published specs; part-level dimensions (wing chord, fuselage width, tail spans, gear track/wheelbase) sourced from EASA/FAA TCDS + manufacturer manuals where published (refreshed 2026-06-08, #536); the rest derived/estimated and flagged inline. |
 | `layout.yaml` | A **valid** arrangement with all eight usual aircraft parked at once (`hangarfit check` → exit 0). Aircraft only — no ground clutter. This is where the "all eight fit" promise lives. |
 | `layout_full.yaml` | **The realistic in-hangar set (#657/#659)** — seven of the eight aircraft + **all four** GOs, packed **fishbone** (Caddy near the door with a clear drive-out egress, fuel hard against the left wall by the door, Duo trailer on the right wall). With the rescue Caddy keeping its egress and all four GOs inside, the floor is one aircraft over capacity, so the Scheibe Falke parks outside. Valid at the calibrated clearances (`hangarfit check` → exit 0). |
 | `scenario.yaml` | The solver input for the all-eight "everyone home" scenario (does not fully route — see below). |

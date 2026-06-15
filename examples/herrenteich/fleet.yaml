@@ -21,10 +21,11 @@ aircraft:
   - { ref: ../../data/catalog/cessna_140.yaml, tow_pivotable: true }
   - { ref: ../../data/catalog/ctsl.yaml, tow_pivotable: true }
   - { ref: ../../data/catalog/fk9_mkii.yaml, tow_pivotable: true }
-  # The Fuji FA-200 is currently a PERMANENT occupant (to be replaced by a C150
-  # in future). The only low-winger here; never carted (always_own_gear, the
-  # catalog default). NOTE: its catalog dims are still eyeballed placeholders
-  # (measured: false) — a real survey is a follow-up (#657).
+  # The Fuji FA-200-180 is currently a PERMANENT occupant (to be replaced by a C150
+  # in future). The only low-winger here; never carted (declared always_own_gear).
+  # Its envelope is now published spec, cross-checked (#657 — span/length/wing-area/
+  # height); the undercarriage track/wheelbase and tailplane span remain estimates
+  # (measured: false), pending a real survey.
   - ../../data/catalog/fuji.yaml
 
 # Non-aircraft ground objects usually on the floor with the fleet (#605/#601).

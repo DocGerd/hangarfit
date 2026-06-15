@@ -26,7 +26,9 @@
 #     (low x, low y) so it pushes straight in; goes in LAST, clear of the early tow
 #     corridors. [MUST]
 #   - VW Caddy: driven in last at any angle, parked near the door with a clear
-#     drive-out egress — it leaves without moving anything else (oracle: clear). [MUST]
+#     drive-out egress — it leaves without moving anything else (oracle: clear). The
+#     Caddy is a reverse-capable Reeds-Shepp mover (ADR-0010), so the drive-out may
+#     be forwards OR backwards (the egress oracle checks both). [MUST]
 #   - Glider trailers: the longer Duo (glider_trailer_1) runs along the RIGHT wall,
 #     clear of the back-right office notch; the single-seat trailer fits deeper
 #     toward the back. [soft]

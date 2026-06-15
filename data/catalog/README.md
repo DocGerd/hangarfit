@@ -2,10 +2,12 @@ Catalog of per-object aircraft definitions (#595) — the single source of stati
 aircraft data, referenced by both the demo `data/fleet.yaml` manifest and
 `examples/herrenteich/fleet.yaml`.
 
-DIMENSIONS ARE A MIX. The eight Airfield Herrenteich occupants (cessna_140,
+DIMENSIONS ARE A MIX. The eight usual Airfield Herrenteich occupants (cessna_140,
 ctsl, wild_thing, aviat_husky, scheibe_falke, fk9_mkii, stemme_s10, zlin_savage)
-carry published-spec / TCDS-sourced numbers — see "Real-spec provenance" below.
-`fuji` and `cessna_150` (not based at Herrenteich) remain eyeballed placeholders.
+plus the `fuji` FA-200-180 (a permanent ninth occupant, #657) carry published-spec
+/ TCDS-sourced numbers — see "Real-spec provenance" below (the Fuji's undercarriage
+track/wheelbase + tailplane span remain estimates). Only `cessna_150` (not based at
+Herrenteich) remains an eyeballed placeholder.
 Every entry keeps `measured: false` because none are on-site tape/laser
 measurements; treat the sourced figures as authoritative over the placeholders.
 
@@ -150,8 +152,8 @@ Airfield Herrenteich — real fleet (the aircraft usually hangared here).
 Kept separate from the synthetic data/fleet.yaml (the project's stable
 demo/test fixture). Roster per the operator (2026-06-04): Cessna 140,
 Flight Design CTSL, Wild Thing, Aviat Husky, Scheibe SF-25E, FK9 Mk II,
-Stemme S10 (hangared WINGS-FOLDED), Zlin Savage. (Fuji and the Cessna 150
-are not based here.)
+Stemme S10 (hangared WINGS-FOLDED), Zlin Savage, plus the Fuji FA-200-180 as a
+permanent ninth occupant (#657). (Only the Cessna 150 is not based here.)
 
 DIMENSIONS — provenance refresh 2026-06-08 (#536). The primary envelope
 (span / length / height) was looked up from published manufacturer /

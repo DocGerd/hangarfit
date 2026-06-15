@@ -6,14 +6,17 @@
 #
 # MULTI-PART (#658). The Caddy is modelled as TWO stacked `ground` boxes, not one
 # full-height prism: the boxy van BODY at the stock roofline (0 -> 1.84 m) and a
-# small ROOF-STOWED GEAR rack on top (1.84 -> 2.04 m). A single full-height box
-# would block the wing layer (z ~1.9-2.3 m) across the WHOLE 4.88 x 1.79 m
-# footprint, because the body-vs-wing z-gap collapses from +0.16 m (clears the
-# 0.15 m wing-layer clearance) to -0.04 m once the roof gear's 20 cm is smeared
-# over the entire roof. Splitting confines that -0.04 m conflict to the ~1.0 x
-# 0.8 m rack footprint only, so a high wing may overhang the van body (as it does
-# in reality) and only has to clear the localized rack. This restores the Caddy's
-# placement + egress freedom in the dense Herrenteich nest (#659).
+# small ROOF-STOWED GEAR rack on top (1.84 -> 2.04 m). Take a wing whose underside
+# sits at 2.0 m (e.g. the Cessna 140 / Husky / Wild Thing): over the 1.84 m body
+# the z-gap is +0.16 m (clears the 0.15 m wing-layer clearance), but a single
+# full-height 2.04 m box turns that into -0.04 m (overlap) across the WHOLE
+# 4.88 x 1.79 m footprint. Splitting confines that -0.04 m conflict to the ~1.0 x
+# 0.8 m rack footprint only, so such a wing may overhang the van body (as it does
+# in reality) and only has to clear the localized rack. (A van IS a low body with a
+# small roof load, so this is the honest model; it governs any dense packing that
+# nests a wing over the Caddy — e.g. the earlier orthogonal layout, where the
+# Cessna's wing sat over it. The shipped fishbone layout_full.yaml happens not to
+# nest a wing over the Caddy, so there the split is inert.)
 type: car
 id: vw_caddy
 name: "VW Caddy Maxi (rescue vehicle)"
