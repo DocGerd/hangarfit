@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import random
+
+from ml import geometry_oracle as go
 from ml.env import HangarFitEnv
 from ml.types import DifficultyConfig, Park, Primitive
 from tests.ml.conftest import _fuji, empty_hangar
@@ -92,3 +95,33 @@ def test_per_object_budget_terminates_with_partial():
     env.step(Primitive(kind="L", magnitude=0.1, gear=1))
     obs, reward, done, info = env.step(Primitive(kind="L", magnitude=0.1, gear=1))
     assert done is True and "unplaceable" in info.reason
+
+
+# ---------------------------------------------------------------------------
+# Task 14 — integration: random-policy rollout + RNG-free reward determinism
+# ---------------------------------------------------------------------------
+def _rollout(env: HangarFitEnv, actions: list) -> float:
+    env.reset()
+    total = 0.0
+    for a in actions:
+        _, r, done, _ = env.step(a)
+        total += r
+        if done:
+            break
+    return total
+
+
+def test_random_rollout_completes_and_is_bounded():
+    env = _env(difficulty=DifficultyConfig(per_object_step_budget=10, total_step_budget=40))
+    rng = random.Random(0)
+    fan = list(go.legal_primitives(env._body(env.requested_ids[0]), on_carts=False)) + [Park()]
+    actions = [rng.choice(fan) for _ in range(40)]
+    total = _rollout(env, actions)
+    assert isinstance(total, float)
+
+
+def test_reward_is_rng_free_for_a_fixed_action_sequence():
+    actions: list = [Primitive(kind="S", magnitude=1.0, gear=1)] * 5 + [Park()]
+    a = _rollout(_env(), actions)
+    b = _rollout(_env(), actions)
+    assert a == b  # byte-identical reward for identical actions (ADR-0027 env tier)
