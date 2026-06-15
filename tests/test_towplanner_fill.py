@@ -218,6 +218,33 @@ def test_plan_fill_swaps_past_a_conflicting_plane(monkeypatch: pytest.MonkeyPatc
     assert [m.plane_id for m in plan.moves] == ["A", "B"]
 
 
+def test_plan_fill_backtracks_order_when_greedy_commit_deadlocks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#667 Stage 1 (order search): greedy back-first commits the deepest routable
+    plane, but that commit can deadlock a later plane. The planner must BACKTRACK
+    the order and find a feasible one ([B, A]) rather than bail.
+
+    Unlike the swap test, here the deepest plane A IS routable first, so the
+    per-step skip happily commits it — and only then does B deadlock. Only placing
+    B before A works, which the monotonic loop cannot reach without backtracking."""
+    h = _hangar(width_m=20.0, length_m=30.0)
+    fleet = {"A": _box_plane("A"), "B": _box_plane("B")}
+    target = _layout(fleet, h, _slot("A", 12.0, 22.0), _slot("B", 8.0, 8.0))  # A deep, B shallow
+
+    def fake_plan_path(mover, entry, goal, *, hangar, placed, mover_on_carts, **kw):  # noqa: ANN001, ANN202
+        placed_ids = {p.plane_id for p in placed.placements}
+        # A is always routable; B only while A is not yet placed. Greedy commits A
+        # first (deeper, scanned first, feasible) → B deadlocks. Only [B, A] works.
+        if mover.id == "B" and "A" in placed_ids:
+            raise _forced_infeasible("B")
+        return _fake_arc(mover, entry, goal)
+
+    monkeypatch.setattr(tp, "plan_path", fake_plan_path)
+    plan = plan_fill(target)
+    assert [m.plane_id for m in plan.moves] == ["B", "A"]
+
+
 def test_plan_fill_bails_with_structured_error_when_unplannable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

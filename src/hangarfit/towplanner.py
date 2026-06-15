@@ -1640,36 +1640,46 @@ def _plan_fill(
     placed: list[Placement] = list(hand_placed_slots)
     moves: list[Move] = [Move(p.plane_id, Pose.from_placement(p), None) for p in hand_placed_slots]
 
-    while ordered:
-        chosen: int | None = None
-        chosen_arc: DubinsArc | None = None
-        chosen_apron_fallback = False
-        # The deepest unplaced plane is scanned first, so its conflict (if it
-        # is rejected) is the one reported when the whole scan finds nothing.
-        deepest_conflict: Conflict | None = None
-        # `placed` does not change within a scan pass, so the obstacle layout is
-        # constant across candidates. Only the already-committed planes are
-        # obstacles; plan_path adds the candidate mover per sample via its
-        # internal path_first_conflict check.
+    # #667 Stage 1 (order search): place the to-route bodies by a deterministic
+    # BACKTRACKING DFS over order, greedy-first. The first feasible candidate at
+    # each level is recursed first, so when the greedy back-first order already
+    # works the search returns that identical path untouched (byte-identical,
+    # ADR-0003); backtracking only happens where the old monotonic loop would have
+    # bailed — a greedy commit that deadlocks a later body. The global expansion
+    # budget bounds the search (expansions on dead branches are NOT refunded), so
+    # it terminates and then raises the structured bail. deepest_conflict captures
+    # the first (deepest plane's) routing conflict for that bail message.
+    deepest_conflict: Conflict | None = None
+
+    def _place_rest(
+        placed_list: list[Placement], rest: list[Placement]
+    ) -> list[tuple[Placement, DubinsArc, bool]] | None:
+        """Return the chosen (slot, arc, apron_fallback) sequence that places every
+        body in ``rest`` against ``placed_list``, greedy-first with backtracking, or
+        ``None`` if no order does. Raises on global-budget exhaustion."""
+        nonlocal total_used, deepest_conflict
+        if not rest:
+            return []
+        # `placed_list` is constant across candidates at this level; plan_path adds
+        # the candidate mover per sample via its internal path_first_conflict check.
         placed_layout = Layout(
             fleet=fleet,
             hangar=hangar,
-            placements=tuple(placed),
+            placements=tuple(placed_list),
             maintenance_plane=target.maintenance_plane,
             ground_objects=target.ground_objects,
             ground_object_placements=fixed_obstacle_placements,
         )
-        for idx, slot in enumerate(ordered):
+        for idx, slot in enumerate(rest):
             remaining = total_budget - total_used
             if remaining <= 0:
                 # Global fill-expansion budget exhausted (#336): bail in bounded
-                # time rather than paying per-plane budget × scan-retries on an
-                # un-routable fill. Name the deepest still-unplaced plane.
+                # time. Name the deepest still-unplaced plane at this level.
                 raise NoFeasiblePlanError(
-                    ordered[0].plane_id,
+                    rest[0].plane_id,
                     Conflict.single(
                         kind="no_feasible_path",
-                        plane=ordered[0].plane_id,
+                        plane=rest[0].plane_id,
                         detail=f"global fill expansion budget ({total_budget}) exhausted",
                     ),
                 )
@@ -1678,11 +1688,10 @@ def _plan_fill(
             try:
                 # The full door cone drives the multi-start search (#262). Compute
                 # it once and pass it as `entries=`; the positional `entry` arg is
-                # ignored by plan_path whenever `entries` is set, so reuse cone[0]
-                # for it rather than recomputing entry_pose() (which plan_path would
-                # never read here). Each call is capped at the smaller of the
-                # per-plane budget and the global remainder, and its expansions are
-                # charged to the global total whether it succeeds or fails (#336).
+                # ignored by plan_path whenever `entries` is set. Each call is capped
+                # at the smaller of the per-plane budget and the global remainder,
+                # and its expansions are charged to the global total whether it
+                # succeeds or fails (#336).
                 cone = entry_poses(slot, hangar)
                 arc = plan_path(
                     plane,
@@ -1697,8 +1706,8 @@ def _plan_fill(
                     stats=stats,
                 )
             except NoFeasiblePlanError as exc:
-                # This plane cannot be routed against the current obstacles; try
-                # the next candidate. Remember its conflict for the bail message.
+                # Cannot route this body against the current obstacles; try the next
+                # candidate. Remember its conflict for the bail message.
                 exp = stats.get("expansions", 0)
                 total_used += exp if isinstance(exp, int) else 0
                 if deepest_conflict is None:
@@ -1706,30 +1715,35 @@ def _plan_fill(
                 continue
             exp = stats.get("expansions", 0)
             total_used += exp if isinstance(exp, int) else 0
-            chosen, chosen_arc = idx, arc
-            # Only the COMMITTED candidate's fallback matters: the rejected
-            # candidates of the scan are not in the plan, so their stats are
-            # irrelevant to what the user sees (#503).
-            chosen_apron_fallback = stats.get("apron_fallback") is True
-            break
-        if chosen is None:
-            # Every remaining plane conflicts: greedy back-first is stuck. The
-            # deepest plane (ordered[0], scanned first) is the one we most
-            # wanted to place, and deepest_conflict is its own conflict.
-            assert deepest_conflict is not None  # ordered non-empty => scan ran
-            raise NoFeasiblePlanError(ordered[0].plane_id, deepest_conflict)
-        slot = ordered.pop(chosen)
-        assert chosen_arc is not None
-        moves.append(Move(slot.plane_id, Pose.from_placement(slot), chosen_arc))
+            apron_fb = stats.get("apron_fallback") is True
+            sub = _place_rest(placed_list + [slot], rest[:idx] + rest[idx + 1 :])
+            if sub is not None:
+                return [(slot, arc, apron_fb), *sub]
+            # Routed here, but the rest dead-ends downstream → backtrack: try the
+            # next candidate at this level (the old monotonic loop could not).
+        return None
+
+    result = _place_rest(placed, ordered)
+    if result is None:
+        # No placement order seats every body (a true lock — needs the Stage 1
+        # move-aside, still to come) or every candidate conflicts. Name the
+        # deepest body and carry its conflict (matches the old monotonic bail).
+        bail = deepest_conflict or Conflict.single(
+            kind="no_feasible_path",
+            plane=ordered[0].plane_id,
+            detail="no feasible tow order (every placement order deadlocks)",
+        )
+        raise NoFeasiblePlanError(ordered[0].plane_id, bail)
+
+    for slot, arc, apron_fb in result:
+        moves.append(Move(slot.plane_id, Pose.from_placement(slot), arc))
         placed.append(slot)
         # #503: record (plan-inert) the planes that towed via the y=0 door-line
         # fallback DESPITE an apron being set — their footprint is too deep for the
-        # apron, so every apron start pose was filtered and they show no slide-in.
-        # Populated in committed-move order (the deterministic move order, ADR-0003)
-        # only when the caller passed `apron_dropped_out`; the suggested min depth
-        # is the per-plane FOOTPRINT extent, NOT the fleet-wide `auto` over-margin
-        # (derive_apron_depth). Never read back into the plan.
-        if chosen_apron_fallback and apron_dropped_out is not None:
+        # apron. Committed-move order (deterministic, ADR-0003), only when the
+        # caller passed `apron_dropped_out`; the depth is the per-plane FOOTPRINT
+        # extent, not the fleet-wide `auto` over-margin. Never read back.
+        if apron_fb and apron_dropped_out is not None:
             apron_dropped_out.append(
                 ApronShallowDrop(
                     plane_id=slot.plane_id,
