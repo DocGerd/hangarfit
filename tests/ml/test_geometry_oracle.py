@@ -69,3 +69,31 @@ def test_legal_primitives_own_gear_excludes_strafe():
     body = fleet["fuji"]
     kinds = {p.kind for p in go.legal_primitives(body, on_carts=False)}
     assert "T" not in kinds
+
+
+# ---------------------------------------------------------------------------
+# T6: apply_primitive
+# ---------------------------------------------------------------------------
+
+
+def test_apply_straight_moves_along_heading():
+    from hangarfit.towplanner import Pose
+
+    start = Pose(x_m=5.0, y_m=0.0, heading_deg=0.0)  # heading 0 = +y (into hangar)
+    end, swept = go.apply_primitive(
+        start, Primitive(kind="S", magnitude=2.0, gear=1), turn_radius_m=0.0
+    )
+    assert abs(end.x_m - 5.0) < 1e-9
+    assert abs(end.y_m - 2.0) < 1e-6
+    assert swept[0] == start and len(swept) >= 2
+
+
+def test_apply_strafe_translates_sideways():
+    from hangarfit.towplanner import Pose
+
+    start = Pose(x_m=5.0, y_m=4.0, heading_deg=0.0)
+    end, _ = go.apply_primitive(
+        start, Primitive(kind="T", magnitude=1.0, gear=1), turn_radius_m=0.0
+    )
+    assert abs(end.y_m - 4.0) < 1e-6  # strafe keeps the along-heading coordinate
+    assert abs(end.x_m - 5.0) > 0.5  # and moves perpendicular
