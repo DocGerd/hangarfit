@@ -8,13 +8,16 @@ from collections.abc import Mapping
 from hangarfit.models import Aircraft, GroundObject, Hangar, Layout, Placement
 from hangarfit.towplanner import Pose
 from ml import geometry_oracle as go
-from ml.reward import potential
+from ml.reward import RewardContext, potential, step_reward
 from ml.types import (
+    Action,
     ActiveObject,
     DifficultyConfig,
     Observation,
+    Park,
     ParkedObject,
     RewardWeights,
+    StepInfo,
 )
 
 
@@ -125,3 +128,118 @@ class HangarFitEnv:
         self._spawn()
         self._prev_potential = self._potential()
         return self._observe()
+
+    def step(self, action: Action) -> tuple[Observation, float, bool, StepInfo]:
+        assert self._active_id is not None and self._active_pose is not None, "step after done"
+        active_id = self._active_id
+        active_pose = self._active_pose
+        self._steps_total += 1
+        self._steps_this_object += 1
+        body = self._body(active_id)
+        parked_layout = self._layout()
+        weights = self.weights
+
+        if isinstance(action, Park):
+            # Freeze the active pose; score its parked validity (overlap + bounds).
+            pl = Placement(
+                plane_id=active_id,
+                x_m=active_pose.x_m,
+                y_m=active_pose.y_m,
+                heading_deg=active_pose.heading_deg,
+                on_carts=self._on_carts(active_id),
+            )
+            self._parked.append(pl)
+            placed_layout = self._layout()
+            overlap = go.overlap_area_m2(placed_layout)
+            intrusion = go.intrusion_area_m2(body, pl, self.hangar)
+            egress = go.egress_blocked(placed_layout)
+            self._active_id = None
+            self._active_pose = None
+            done = not self._queue
+            terminal_fraction = len(self._parked) / len(self.requested_ids) if done else None
+            if not done:
+                self._spawn()
+            new_phi = self._potential()
+            ctx = RewardContext(
+                prev_overlap_m2=0.0,
+                overlap_m2=overlap,
+                intrusion_m2=intrusion,
+                swept_intrusion_m2=0.0,
+                egress_blocked=egress,
+                move_cost=0.0,
+                min_gap_m=0.0,
+                seq_deviation=0.0,
+                region_match=0.0,
+                prev_potential=self._prev_potential,
+                potential=new_phi,
+                parked_delta=1,
+                terminal_fraction=terminal_fraction,
+            )
+            reward = step_reward(ctx, weights)
+            self._prev_potential = new_phi
+            return (
+                self._observe(),
+                reward,
+                done,
+                self._info(ctx, done, "set complete" if done else ""),
+            )
+
+        # A movement primitive: integrate, grade the swept path, advance the pose.
+        primitive = action
+        end, swept = go.apply_primitive(
+            active_pose, primitive, turn_radius_m=body.effective_turn_radius_m()
+        )
+        swept_intr = go.swept_intrusion_m2(
+            body, swept, parked_layout=parked_layout, active_id=active_id
+        )
+        move_cost = go.movement_cost(
+            primitive, prev_gear=self._prev_gear, cusp_penalty=weights.cusp_penalty
+        )
+        self._active_pose = end
+        self._prev_gear = primitive.gear
+        new_phi = self._potential()
+        ctx = RewardContext(
+            prev_overlap_m2=0.0,
+            overlap_m2=0.0,
+            intrusion_m2=0.0,
+            swept_intrusion_m2=swept_intr,
+            egress_blocked=False,
+            move_cost=move_cost,
+            min_gap_m=0.0,
+            seq_deviation=0.0,
+            region_match=0.0,
+            prev_potential=self._prev_potential,
+            potential=new_phi,
+            parked_delta=0,
+            terminal_fraction=None,
+        )
+        reward = step_reward(ctx, weights)
+        self._prev_potential = new_phi
+
+        # Termination: per-object budget exhausted (unplaceable) or global budget hit.
+        done, reason = self._check_budget()
+        return self._observe(), reward, done, self._info(ctx, done, reason)
+
+    def _check_budget(self) -> tuple[bool, str]:
+        if self._steps_this_object >= self.difficulty.per_object_step_budget:
+            return True, "active object unplaceable (per-object budget)"
+        if self._steps_total >= self.difficulty.total_step_budget:
+            return True, "global step budget exhausted"
+        return False, ""
+
+    def _info(self, ctx: RewardContext, done: bool, reason: str) -> StepInfo:
+        return StepInfo(
+            terms={
+                "hard_overlap": ctx.overlap_m2,
+                "hard_swept": ctx.swept_intrusion_m2,
+                "hard_intrusion": ctx.intrusion_m2,
+                "hard_egress": float(ctx.egress_blocked),
+                "move_cost": ctx.move_cost,
+                "shaping": ctx.potential - ctx.prev_potential,
+                "terminal_fraction": ctx.terminal_fraction or 0.0,
+            },
+            valid=(go.overlap_area_m2(self._layout()) == 0.0),
+            placed=len(self._parked),
+            total=len(self.requested_ids),
+            reason=reason,
+        )
