@@ -13,7 +13,7 @@ from shapely.geometry import box
 from hangarfit.collisions import check
 from hangarfit.geometry import aircraft_parts_world
 from hangarfit.models import Aircraft, GroundObject, Hangar, Layout, Placement
-from hangarfit.towplanner import (  # type: ignore[attr-defined]
+from hangarfit.towplanner import (
     CUSP_PENALTY as _CUSP_PENALTY,
 )
 from hangarfit.towplanner import (

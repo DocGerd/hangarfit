@@ -84,6 +84,7 @@ warn_redundant_casts = true
 [[tool.mypy.overrides]]
 module = "hangarfit.*"
 disallow_untyped_defs = true
+ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = "tests.*"
@@ -94,4 +95,11 @@ ignore_errors = false
 # using an unofficial stub package that may not track the 3.x API.
 [[tool.mypy.overrides]]
 module = "matplotlib.*"
+ignore_missing_imports = true
+
+# ml/ imports hangarfit (no py.typed marker) and its private helpers; treat
+# hangarfit as untyped rather than adding a full stub. ml.* is dev/CI-only
+# (never in the wheel) so the import-untyped errors are suppressed here.
+[[tool.mypy.overrides]]
+module = "ml.*"
 ignore_missing_imports = true

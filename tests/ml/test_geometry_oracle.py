@@ -117,3 +117,22 @@ def test_swept_intrusion_zero_for_clear_move_in_empty_hangar():
         body, swept, parked_layout=layout, active_id=next(iter(layout.fleet))
     )
     assert intr == 0.0
+
+
+# ---------------------------------------------------------------------------
+# T8: movement_cost + egress_blocked
+# ---------------------------------------------------------------------------
+
+
+def test_movement_cost_adds_cusp_penalty_on_reversal():
+    # Forward then reverse straight => one cusp.
+    fwd = Primitive(kind="S", magnitude=1.0, gear=1)
+    rev = Primitive(kind="S", magnitude=1.0, gear=-1)
+    c_no_cusp = go.movement_cost(fwd, prev_gear=1, cusp_penalty=10.0)
+    c_cusp = go.movement_cost(rev, prev_gear=1, cusp_penalty=10.0)
+    assert c_cusp - c_no_cusp >= 10.0
+
+
+def test_egress_blocked_false_without_hard_door_mover():
+    layout = single_object_layout(x_m=5.0, y_m=8.0)
+    assert go.egress_blocked(layout) is False  # no hard-door mover present
