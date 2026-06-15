@@ -7,7 +7,7 @@ gear: tailwheel         # twin inward-retracting mains (track 1.15 m) + tailwhee
 movement_mode: always_own_gear
 turn_radius_m: 10.0
 measured: false
-notes: "Two-seat self-launching motor glider, T-tail. WINGS-FOLDED config: wing width = 11.4 m folded span (23 m unfolded; EASA TCDS A.054, cross-checked Jane's + AOPA). Length 8.42 m, longest fuselage in the fleet. Taildragger (corrected from monowheel). The 11.4 m folded span clears a 13.46 m door by ~2 m and a lone Stemme routes in on its own gear; the Herrenteich fleet sets always_cart for dense multi-plane maneuvering (#607), not because of width."
+notes: "Two-seat self-launching motor glider, T-tail. WINGS-FOLDED config: wing width = 11.4 m folded span (23 m unfolded; EASA TCDS A.054, cross-checked Jane's + AOPA). Length 8.42 m, longest fuselage in the fleet. Taildragger (corrected from monowheel). The 11.4 m folded span clears a 13.46 m door by ~2 m and a lone Stemme routes through it on its own gear; per-fleet movement mode (e.g. a dolly) is a consumer-side operational choice, not a width constraint (see examples/herrenteich)."
 parts:
   - kind: fuselage
     length_m: 8.42        # EASA TCDS A.054 (length)

@@ -712,14 +712,43 @@ def test_timeline_mover_segments_follow_aircraft_and_stay_sequential():
     plan = _plan_with_movers(lay, glider_path=_routed_arc(), caddy_path=_routed_arc())
     tl, _ = scene._timeline(lay, plan)
     aircraft = {p.plane_id for p in lay.placements}
+    seg_ids = {s["plane_id"] for s in tl["segments"]}
     mover_segs = [s for s in tl["segments"] if s["plane_id"] not in aircraft]
     aircraft_segs = [s for s in tl["segments"] if s["plane_id"] in aircraft]
     assert mover_segs and aircraft_segs
+    assert "fuel_trailer" not in seg_ids  # the fixed obstacle never animates (no Move)
     last_aircraft_end = max(s["end_s"] for s in aircraft_segs)
     assert all(s["start_s"] >= last_aircraft_end - 1e-9 for s in mover_segs)
     for prev, nxt in zip(tl["segments"], tl["segments"][1:], strict=False):
         assert math.isclose(nxt["start_s"], prev["end_s"])
     assert math.isclose(tl["total_s"], tl["segments"][-1]["end_s"])
+
+
+def test_timeline_finals_excludes_movers():
+    """#651: a mover's resting pose lives on its ground-object block (final_pose),
+    NOT in the aircraft-only `finals` map. Guards against `record_final` being
+    flipped on for movers — which the viewer would silently ignore (it reads
+    go.final_pose), leaving the contract quietly violated."""
+    lay = _layout_with_ground_objects()
+    plan = _plan_with_movers(lay, glider_path=_routed_arc(), caddy_path=_routed_arc())
+    _, finals = scene._timeline(lay, plan)
+    assert set(finals) == {p.plane_id for p in lay.placements}
+    assert "glider_trailer" not in finals and "vw_caddy" not in finals
+
+
+def test_timeline_mover_order_is_id_sorted_not_placement_order():
+    """#651: mover segments follow `_ground_object_blocks`' id-sort, independent of
+    the placement-tuple order (ADR-0003). Reverse the GO placement order so the sort
+    is load-bearing — a regression to insertion order would flip the result."""
+    lay = _layout_with_ground_objects()
+    lay = dataclasses.replace(
+        lay, ground_object_placements=tuple(reversed(lay.ground_object_placements))
+    )
+    plan = _plan_with_movers(lay, glider_path=_routed_arc(), caddy_path=_routed_arc())
+    tl, _ = scene._timeline(lay, plan)
+    aircraft = {p.plane_id for p in lay.placements}
+    mover_seg_ids = [s["plane_id"] for s in tl["segments"] if s["plane_id"] not in aircraft]
+    assert mover_seg_ids == ["glider_trailer", "vw_caddy"]  # id-sorted, not placement order
 
 
 def test_timeline_mover_animation_byte_deterministic():

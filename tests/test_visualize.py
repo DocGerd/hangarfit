@@ -675,6 +675,39 @@ class TestDrawTowPaths:
         assert by_label["trailer"] == _MOVER_FILL
         assert by_label["a"] != _MOVER_FILL  # aircraft keeps a distinct palette colour
 
+    def test_mover_does_not_shift_aircraft_palette(self) -> None:
+        """#651: adding a mover must not change any aircraft's path colour — the
+        palette is assigned over aircraft ids only, so the mapping is stable
+        whether or not a mover is present (defends the determinism comment)."""
+        from hangarfit.models import GroundObject, Part
+        from hangarfit.visualize import _draw_tow_paths
+
+        aircraft = (
+            self._vertical_move("a", 0.0, 0.0, 5.0),
+            self._vertical_move("b", 2.0, 0.0, 4.0),
+        )
+        ax0 = MagicMock()
+        _draw_tow_paths(ax0, self._plan(*aircraft))  # baseline: no mover, no layout
+        base = {c.kwargs["label"]: c.kwargs["color"] for c in ax0.plot.call_args_list}
+
+        layout = MagicMock()
+        layout.ground_objects = {
+            "trailer": GroundObject(
+                id="trailer",
+                name="Glider trailer",
+                parts=(Part("ground", 6.0, 2.0, 0.0, 0.0, 0.0, 0.0, 2.0),),
+                object_class="placed_routed_mover",
+                motion_mode="towed",
+            )
+        }
+        ax1 = MagicMock()
+        _draw_tow_paths(
+            ax1, self._plan(*aircraft, self._vertical_move("trailer", 1.0, 0.0, 3.0)), layout
+        )
+        with_mover = {c.kwargs["label"]: c.kwargs["color"] for c in ax1.plot.call_args_list}
+        assert with_mover["a"] == base["a"]
+        assert with_mover["b"] == base["b"]
+
     def test_without_layout_all_paths_use_aircraft_palette(self) -> None:
         """Backward-compat: with no layout (the pre-#651 call), every path is treated
         as an aircraft and drawn from the palette — never the mover fill."""

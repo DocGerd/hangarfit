@@ -739,10 +739,13 @@ def _draw_tow_paths(ax: Any, moves_plan: MovesPlan, layout: Layout | None = None
     # Deferred moves (path=None) — an un-routable placed-routed mover (#197/#602)
     # — have no polyline to draw; skip them.
     routed_moves = [move for move in moves_plan.moves if move.path is not None]
-    mover_ids = set(layout.ground_objects) if layout is not None else set()
-    # Palette colours are assigned over aircraft ids only, so a mover never
+    # All ground-object ids (obstacles + movers). Only placed-routed movers ever
+    # carry a routed path, so in practice this flags the movers among the moves;
+    # naming it for what the set literally holds avoids a future-maintainer trap.
+    ground_object_ids = set(layout.ground_objects) if layout is not None else set()
+    # Palette colours are assigned over aircraft ids only, so a ground object never
     # shifts the deterministic aircraft colour mapping.
-    aircraft_ids = sorted({m.plane_id for m in routed_moves if m.plane_id not in mover_ids})
+    aircraft_ids = sorted({m.plane_id for m in routed_moves if m.plane_id not in ground_object_ids})
     colour_for = {
         pid: _TOW_PATH_COLORS[i % len(_TOW_PATH_COLORS)] for i, pid in enumerate(aircraft_ids)
     }
@@ -751,7 +754,7 @@ def _draw_tow_paths(ax: Any, moves_plan: MovesPlan, layout: Layout | None = None
         poses = list(move.path.sample())
         xs = [p.x_m for p in poses]
         ys = [p.y_m for p in poses]
-        is_mover = move.plane_id in mover_ids
+        is_mover = move.plane_id in ground_object_ids
         ax.plot(
             xs,
             ys,
