@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from ml.env import HangarFitEnv
-from ml.types import Park, Primitive
+from ml.types import DifficultyConfig, Park, Primitive
 from tests.ml.conftest import _fuji, empty_hangar
 
 
@@ -69,3 +69,26 @@ def test_park_advances_to_next_object_or_finishes():
     obs, reward, done, info = env.step(Park())
     assert done is True  # the only object was parked
     assert info.placed == info.total == 1
+
+
+# ---------------------------------------------------------------------------
+# Task 13 — curriculum max_objects + per-object partial-stop termination
+# ---------------------------------------------------------------------------
+def test_max_objects_caps_the_requested_set():
+    fleet = _fuji()
+    env = HangarFitEnv(
+        hangar=empty_hangar(),
+        fleet=fleet,
+        requested_ids=tuple(fleet),
+        difficulty=DifficultyConfig(max_objects=1),
+    )
+    env.reset()
+    assert len(env._queue) + 1 == 1  # exactly one object in play
+
+
+def test_per_object_budget_terminates_with_partial():
+    env = _env(difficulty=DifficultyConfig(per_object_step_budget=2))
+    env.reset()
+    env.step(Primitive(kind="L", magnitude=0.1, gear=1))
+    obs, reward, done, info = env.step(Primitive(kind="L", magnitude=0.1, gear=1))
+    assert done is True and "unplaceable" in info.reason
