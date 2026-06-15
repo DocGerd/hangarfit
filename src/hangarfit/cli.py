@@ -353,6 +353,18 @@ def build_parser() -> argparse.ArgumentParser:
             "hard fills; a global per-fill cap bounds the worst case (#336)."
         ),
     )
+    solve.add_argument(
+        "--backend",
+        choices=("rrmc", "learned"),
+        default="rrmc",
+        dest="backend",
+        help=(
+            "Solver backend. 'rrmc' (default) is the shipped deterministic "
+            "random-restart min-conflicts solver (ADR-0003). 'learned' selects the "
+            "opt-in neural backend (epic #607) — not yet available, so it exits "
+            "cleanly with a message; the deterministic path is unchanged (ADR-0027)."
+        ),
+    )
 
     view = sub.add_parser(
         "view",
@@ -664,6 +676,7 @@ def cmd_solve(args: argparse.Namespace) -> int:
     # ``from hangarfit import visualize`` at module top (cli.py:20) already
     # eagerly imports matplotlib and pins the Agg backend, so both `check`
     # and `solve` callers pay that cost regardless.
+    from hangarfit.learned import LearnedBackendUnavailableError, solve_learned
     from hangarfit.loader import load_scenario
     from hangarfit.models import SearchConfig
     from hangarfit.solver import _parallel_eligible, solve
@@ -703,64 +716,81 @@ def cmd_solve(args: argparse.Namespace) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 2
 
-    # Tow-plan only when the user asked to render paths (#193). Otherwise
-    # plan_paths=False: the library bundle (SolveResult.plans) is available to
-    # callers, but the CLI would just pay the per-plane Hybrid-A* search cost
-    # for output it never draws.
-    try:
-        search_cfg = SearchConfig(
-            spread=args.spread,
-            nose_out=args.nose_out,
-            back_bias_weight=_BACK_FILL_DEFAULT_WEIGHT if args.back_fill else 0.0,
-            max_restarts=args.max_restarts,
-            spread_stall_restarts=args.spread_stall_restarts,
+    # Backend dispatch (#607 / ADR-0027). The default deterministic RR-MC path is
+    # unchanged and byte-identical; `--backend learned` routes to the opt-in learned
+    # proposer, which returns the same SolveResult shape. It is not yet implemented,
+    # so it surfaces a clean exit-2 error rather than a traceback.
+    if args.backend == "learned":
+        try:
+            result = solve_learned(
+                scenario,
+                budget_s=args.budget,
+                alternatives=args.alternatives,
+                seed=args.seed,
+                plan_paths=args.render_paths,
+            )
+        except LearnedBackendUnavailableError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+    else:
+        # Tow-plan only when the user asked to render paths (#193). Otherwise
+        # plan_paths=False: the library bundle (SolveResult.plans) is available to
+        # callers, but the CLI would just pay the per-plane Hybrid-A* search cost
+        # for output it never draws.
+        try:
+            search_cfg = SearchConfig(
+                spread=args.spread,
+                nose_out=args.nose_out,
+                back_bias_weight=_BACK_FILL_DEFAULT_WEIGHT if args.back_fill else 0.0,
+                max_restarts=args.max_restarts,
+                spread_stall_restarts=args.spread_stall_restarts,
+            )
+        except ValueError as e:
+            # A bad restart-budget knob (e.g. --max-restarts 0 or --spread-stall-restarts
+            # 0; both must be >= 1 when set) surfaces as a clean exit-2 input error rather
+            # than an uncaught traceback — same contract as a LoaderError on malformed input.
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+        # Never silently ignore --workers (#544): if parallel restarts aren't
+        # byte-identical-eligible for this config (no --max-restarts, or --no-spread),
+        # solve() transparently runs serial — say so on stderr so the user isn't
+        # left believing they got the speedup.
+        cpu_cores = os.cpu_count() or 1
+        if args.workers > 1 and not _parallel_eligible(search_cfg, args.workers):
+            print(
+                f"note: --workers {args.workers} ignored (runs serial) — parallel "
+                "restarts need --max-restarts and the spread post-pass (drop "
+                "--no-spread); see --workers help",
+                file=sys.stderr,
+            )
+        elif args.workers == 1 and cpu_cores > 1 and _parallel_eligible(search_cfg, 2):
+            # This config IS parallel-eligible (--max-restarts + spread) but the
+            # restarts run serial on a multi-core box, leaving cores idle. Probe
+            # eligibility with a worker count of 2 (the predicate requires workers > 1;
+            # the user's actual --workers is 1). Suggest the flag rather than silently
+            # waste the cores — zero behaviour change, stderr only so --json /
+            # --write-yaml stay machine-readable (#628).
+            # Cap the SUGGESTED count: the #544 speedup is sub-linear (~4.5x at 8
+            # workers), so don't over-promise cores-2 on a big box — it's an example.
+            _suggest = min(8, max(1, cpu_cores - 2))
+            print(
+                f"hint: this is a multi-restart spread solve running serial on a "
+                f"{cpu_cores}-core box — add --workers N (e.g. --workers {_suggest}) to fan "
+                f"the {args.max_restarts} restarts across processes "
+                "(byte-identical to serial; #544).",
+                file=sys.stderr,
+            )
+        result = solve(
+            scenario,
+            budget_s=args.budget,
+            alternatives=args.alternatives,
+            seed=args.seed,
+            search=search_cfg,
+            plan_paths=args.render_paths,
+            tow_heuristic=args.tow_heuristic,
+            tow_max_expansions=args.tow_max_expansions,
+            workers=args.workers,
         )
-    except ValueError as e:
-        # A bad restart-budget knob (e.g. --max-restarts 0 or --spread-stall-restarts
-        # 0; both must be >= 1 when set) surfaces as a clean exit-2 input error rather
-        # than an uncaught traceback — same contract as a LoaderError on malformed input.
-        print(f"error: {e}", file=sys.stderr)
-        return 2
-    # Never silently ignore --workers (#544): if parallel restarts aren't
-    # byte-identical-eligible for this config (no --max-restarts, or --no-spread),
-    # solve() transparently runs serial — say so on stderr so the user isn't
-    # left believing they got the speedup.
-    cpu_cores = os.cpu_count() or 1
-    if args.workers > 1 and not _parallel_eligible(search_cfg, args.workers):
-        print(
-            f"note: --workers {args.workers} ignored (runs serial) — parallel "
-            "restarts need --max-restarts and the spread post-pass (drop "
-            "--no-spread); see --workers help",
-            file=sys.stderr,
-        )
-    elif args.workers == 1 and cpu_cores > 1 and _parallel_eligible(search_cfg, 2):
-        # This config IS parallel-eligible (--max-restarts + spread) but the
-        # restarts run serial on a multi-core box, leaving cores idle. Probe
-        # eligibility with a worker count of 2 (the predicate requires workers > 1;
-        # the user's actual --workers is 1). Suggest the flag rather than silently
-        # waste the cores — zero behaviour change, stderr only so --json /
-        # --write-yaml stay machine-readable (#628).
-        # Cap the SUGGESTED count: the #544 speedup is sub-linear (~4.5x at 8
-        # workers), so don't over-promise cores-2 on a big box — it's an example.
-        _suggest = min(8, max(1, cpu_cores - 2))
-        print(
-            f"hint: this is a multi-restart spread solve running serial on a "
-            f"{cpu_cores}-core box — add --workers N (e.g. --workers {_suggest}) to fan "
-            f"the {args.max_restarts} restarts across processes "
-            "(byte-identical to serial; #544).",
-            file=sys.stderr,
-        )
-    result = solve(
-        scenario,
-        budget_s=args.budget,
-        alternatives=args.alternatives,
-        seed=args.seed,
-        search=search_cfg,
-        plan_paths=args.render_paths,
-        tow_heuristic=args.tow_heuristic,
-        tow_max_expansions=args.tow_max_expansions,
-        workers=args.workers,
-    )
 
     # Spread-vs-towability fallback (#280 → #402 / F5; ADR-0016). The re-solve
     # that swaps in a tighter, tow-routable no-spread arrangement when the spread

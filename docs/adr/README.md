@@ -103,3 +103,5 @@ manual workflow above is canonical.
 | 0023 | [Model the empennage as explicit tail surfaces so a vertical fin in the wing layer can block wing-over-tail nesting](0023-empennage-tail-surfaces.md) | Accepted |
 | 0024 | [Optional polygon footprints on `Part` — load-time-canonicalized, authored via `planform:` (refines [ADR-0001](0001-aircraft-parts-model.md))](0024-optional-polygon-parts.md) | Accepted |
 | 0025 | [Ground-object taxonomy — concrete catalog types, Layout-uniform placement, and pairwise-set keep-out seam](0025-ground-object-taxonomy.md) | Accepted |
+| 0026 | [Caddy hard-door egress — clear-egress routability gate](0026-caddy-hard-door-egress.md) | Accepted |
+| 0027 | [Learned-backend determinism scope — verifier strict, proposer weaker (amends [ADR-0003](0003-rr-mc-solver-algorithm.md))](0027-learned-backend-determinism-scope.md) | Proposed |

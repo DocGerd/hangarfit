@@ -17,6 +17,19 @@ All notable changes to this project are documented here. Format follows [Keep a 
   training, no new runtime dependency; `ml/` is excluded from the wheel like `bench/`
   and `viewer/`. Sub-project #1 of the learned backend (ADR-0027).
 
+- **`solve --backend {rrmc,learned}` seam + learned-backend determinism scope (ADR-0027, #607/#670).**
+  Added the opt-in backend switch on `hangarfit solve`. The default `rrmc` is the
+  unchanged deterministic random-restart solver (byte-identical — `determinism-guard`
+  intact). `--backend learned` selects the planned neural backend (epic #607); it is
+  **not yet implemented**, so it exits cleanly (code 2) with a pointer to #607 rather
+  than a traceback, and the new `hangarfit.learned.solve_learned()` library entry
+  returns the same `SolveResult` shape (stubbed to raise `LearnedBackendUnavailableError`).
+  New **ADR-0027** amends ADR-0003's *scope*: the verifier (`collisions.check` +
+  `towplanner`) stays strictly byte-identical and `determinism-guard`-gated, while the
+  learned *proposer* gets a weaker, documented contract (within-build bit-identical;
+  cross-machine validity-only) and is outside `determinism-guard`. No ML dependencies
+  are added.
+
 - **Real Airfield Herrenteich 'today' layout + clearance recalibration (#664).**
   Added `examples/herrenteich/layout_today.yaml`: the club's actual in-hangar set
   as described on 2026-06-15 — all **nine** aircraft (incl. the Scheibe Falke) +
