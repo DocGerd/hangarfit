@@ -40,8 +40,8 @@
 # aircraft headings, found this valid seven-aircraft + four-GO fishbone packing.
 # The product solver does not generate it. Replace with real parking positions when
 # surveyed (all dims are still measured: false). It passes `hangarfit check`
-# (exit 0) at the calibrated clearances (hangar.yaml: clearance_m 0.20,
-# wing_layer_clearance_m 0.15), and the Caddy has a clear egress.
+# (exit 0) at the calibrated clearances (see hangar.yaml), and the Caddy has a
+# clear egress.
 #
 # Coordinate convention (see hangar.yaml): world (0,0) front-left, +x right along
 # the door wall, +y deeper in; heading 0 = nose deep (+y), 90 = nose toward +x.

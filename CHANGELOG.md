@@ -6,6 +6,25 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Real Airfield Herrenteich 'today' layout + clearance recalibration (#664).**
+  Added `examples/herrenteich/layout_today.yaml`: the club's actual in-hangar set
+  as described on 2026-06-15 — all **nine** aircraft (incl. the Scheibe Falke) +
+  the **one** Duo Discus glider trailer (the spare is stored elsewhere) + the fixed
+  fuel trailer + the rescue Caddy with a clear drive-out egress. Validating this
+  real set against the model was the existence-proof test: an offline checker-driven
+  search finds **no valid arrangement of it at the previous `clearance_m 0.20`** (its
+  best still leaves conflicts) but seats it cleanly **at 0.10 m**, and the club
+  confirms real wingtip-to-part gaps vary a lot
+  and on dense days are very tight. So the Herrenteich `hangar.yaml` horizontal
+  parked clearance is **recalibrated 0.20 → 0.10 m** (vertical wing-layer clearance
+  unchanged at 0.15 m — it was not the binding constraint). Lowering the clearance
+  only relaxes the constraint, so `layout.yaml`, `layout_full.yaml`, and
+  `scenario_demo.yaml` stay valid; the synthetic `data/hangar.yaml` is untouched.
+  `layout_full.yaml` is reframed as the alternative "both glider trailers inside"
+  scenario (which forces one aircraft out). The collision **model** is unchanged —
+  the gap was data calibration, and reliably packing this dense a 12-body set
+  remains beyond the deterministic search (#607).
+
 - **Caddy hard-door egress lane in 2D + 3D (#652).** The egress oracle
   (`towplanner.egress_first_conflict`) now optionally *surfaces* the winning
   drive-out corridor it used to compute and discard (new `egress_path_out`

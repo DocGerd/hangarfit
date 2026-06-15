@@ -4,10 +4,13 @@ These are real (DWG-measured hangar + published-spec fleet) files kept
 separate from the synthetic `data/` placeholders. The dataset's promise is
 that all eight usual occupants fit at once — that lives in `layout.yaml`
 (aircraft only). These tests also guard the 9-entry fleet roster (incl. the
-Fuji), the four ground objects, and the realistic GO-laden `layout_full.yaml`
-(seven aircraft + four GOs, fishbone, with a clear Caddy egress). They pin the
-hangar dimensions and assert the bundled layouts still pass the real
-part-based collision checker, so a later edit cannot silently break them.
+Fuji), the four ground objects, the real 'today' `layout_today.yaml` (all nine
+aircraft + ONE glider trailer + fuel + Caddy, the #664 existence proof behind
+the 0.20 → 0.10 m clearance recalibration), and the alternative GO-laden
+`layout_full.yaml` (seven aircraft + four GOs, fishbone, with a clear Caddy
+egress). They pin the hangar dimensions and assert the bundled layouts still
+pass the real part-based collision checker, so a later edit cannot silently
+break them.
 """
 
 from pathlib import Path
@@ -55,8 +58,9 @@ def test_hangar_motion_clearance_calibrated() -> None:
     hangar = load_hangar(HERRENTEICH / "hangar.yaml")
     assert hangar.motion_clearance_m == 0.05
     assert hangar.motion_wing_layer_clearance_m == 0.05
-    # parked spacing is unchanged — static validity still uses 0.20 / 0.15
-    assert hangar.clearance_m == 0.20
+    # parked spacing is the static-validity margin, recalibrated to 0.10 / 0.15
+    # against the real 'today' layout (#664).
+    assert hangar.clearance_m == 0.10
     assert hangar.wing_layer_clearance_m == 0.15
     # the tow planner sees the tighter motion margin
     assert hangar.motion_hangar().clearance_m == 0.05
@@ -204,10 +208,14 @@ def test_ground_objects_load_from_manifest() -> None:
 
 
 def test_hangar_clearances_calibrated() -> None:
-    """The Herrenteich clearances were calibrated to fit the full real set
-    (#605): horizontal 0.20, vertical 0.15 (placeholders were 0.30/0.20)."""
+    """The Herrenteich horizontal clearance was recalibrated 0.20 -> 0.10 against
+    the real 'today' layout (#664): the actual club set (9 aircraft + Duo trailer
+    + fuel + Caddy) is infeasible at 0.20 m but valid at 0.10 m, and PK confirmed
+    real gaps vary a lot / are very tight. Vertical (wing-layer) stays 0.15 — it
+    was not the binding constraint. (History: #605 set 0.20/0.15 from the all-8 +
+    4-GO frontier of <=0.22/0.15.)"""
     hangar = load_hangar(HERRENTEICH / "hangar.yaml")
-    assert hangar.clearance_m == 0.20
+    assert hangar.clearance_m == 0.10
     assert hangar.wing_layer_clearance_m == 0.15
 
 
@@ -358,3 +366,58 @@ def test_caddy_multipart_body_clears_wing_but_rack_conflicts() -> None:
     # Directly over the rack -> conflicts (rack top 2.04 m vs wing 2.0 m = -0.04 m).
     over_rack = wing_overhang_conflicts(7.0, 8.0)
     assert over_rack and all("ground" in k for k in over_rack), over_rack
+
+
+# The REAL 'today' layout (#664): the club's actual in-hangar set as described by
+# PK — all NINE usual aircraft (incl. the Scheibe Falke) PLUS ONE glider trailer
+# (the Duo Discus; the spare is stored elsewhere), the fixed fuel trailer, and the
+# rescue Caddy with a clear drive-out. This is the existence proof that drove the
+# clearance recalibration (0.20 -> 0.10): the set is infeasible at 0.20 m but valid
+# at 0.10 m. Contrast layout_full.yaml, which keeps BOTH trailers and so must park
+# one aircraft (the Scheibe) outside.
+TODAY_PRESENT = USUAL_OCCUPANTS | {"fuji"} | {"vw_caddy", "maul_fuel_trailer", "glider_trailer_1"}
+
+
+def test_today_layout_is_valid() -> None:
+    """The real 'today' layout (9 aircraft + Duo trailer + fuel + Caddy) passes the
+    real checker at the recalibrated clearances (#664). It KEEPS the Scheibe (unlike
+    layout_full.yaml) and parks only ONE glider trailer."""
+    layout = load_layout(HERRENTEICH / "layout_today.yaml")
+    present = {p.plane_id for p in layout.placements} | {
+        gp.plane_id for gp in layout.ground_object_placements
+    }
+    assert present == TODAY_PRESENT
+    assert "scheibe_falke" in present  # the real layout keeps the Scheibe inside
+    assert "glider_trailer_2" not in present  # only the Duo trailer is inside today
+    assert len([p.plane_id for p in layout.placements]) == 9  # all nine aircraft
+    result = collisions.check(layout)
+    assert result.conflicts == (), [c.kind for c in result.conflicts]
+
+
+def test_today_layout_ground_objects_in_bounds_and_clear_notch() -> None:
+    """Independent, model-free vertex scan: every ground object in the real 'today'
+    layout is inside the L-shaped floor and clear of the office notch."""
+    layout = load_layout(HERRENTEICH / "layout_today.yaml")
+    floor = layout.hangar.floor_polygon
+    assert floor is not None
+    x0, y0, x1, y1 = NOTCH
+    for gp in layout.ground_object_placements:
+        obj = layout.ground_objects[gp.plane_id]
+        for part in aircraft_parts_world(obj, gp):
+            assert floor.covers(part.polygon), f"{gp.plane_id} {part.kind} outside floor"
+            for x, y in part.polygon.exterior.coords:
+                assert not (x0 <= x <= x1 and y0 <= y <= y1), (
+                    f"{gp.plane_id} vertex ({x:.2f},{y:.2f}) in office notch"
+                )
+
+
+@pytest.mark.slow
+def test_today_caddy_egress_clear() -> None:
+    """The rescue Caddy can drive out of the real 'today' layout without moving
+    anything (#664/#603/#652 — the club's hard rule). The egress oracle (the
+    authoritative gate, full budget) must find the drive-out corridor."""
+    from hangarfit.towplanner import egress_first_conflict
+
+    layout = load_layout(HERRENTEICH / "layout_today.yaml")
+    c = egress_first_conflict(layout, "vw_caddy")
+    assert c is None, f"expected the Caddy to have a clear egress; got {c}"

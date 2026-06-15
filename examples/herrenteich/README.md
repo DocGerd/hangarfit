@@ -12,6 +12,9 @@ point the tools at these files explicitly.
 # Validate the "everyone home" layout (all eight usual occupants):
 hangarfit check examples/herrenteich/layout.yaml --render herrenteich.png
 
+# Validate the real 'today' layout (all 9 aircraft + Duo trailer + fuel + Caddy):
+hangarfit check examples/herrenteich/layout_today.yaml --render today.png
+
 # 3D viewer:
 hangarfit view examples/herrenteich/layout.yaml -o herrenteich.html
 
@@ -28,7 +31,8 @@ hangarfit view  examples/herrenteich/scenario_demo.yaml -o demo.html --seed 3
 | `hangar.yaml` | The real hangar — **15.08 m × 31.76 m**, door **13.46 m** wide. Measured 2026-06-04 from the architect's DWG. L-shaped (back-right office notch). |
 | `fleet.yaml`  | The aircraft usually hangared here — the eight usual occupants plus the permanent **Fuji FA-200-180** (#657, the only low-winger; a placeholder for a future C150) — plus (since #605) the four non-aircraft floor occupants under `ground_objects:` (Caddy, 2 glider trailers, fixed fuel trailer). Envelope (span/length/height) from published specs; part-level dimensions (wing chord, fuselage width, tail spans, gear track/wheelbase) sourced from EASA/FAA TCDS + manufacturer manuals where published (refreshed 2026-06-08, #536); the rest derived/estimated and flagged inline. |
 | `layout.yaml` | A **valid** arrangement with all eight usual aircraft parked at once (`hangarfit check` → exit 0). Aircraft only — no ground clutter. This is where the "all eight fit" promise lives. |
-| `layout_full.yaml` | **The realistic in-hangar set (#657/#659)** — seven of the eight aircraft + **all four** GOs, packed **fishbone** (Caddy near the door with a clear drive-out egress, fuel hard against the left wall by the door, Duo trailer on the right wall). With the rescue Caddy keeping its egress and all four GOs inside, the floor is one aircraft over capacity, so the Scheibe Falke parks outside. Valid at the calibrated clearances (`hangarfit check` → exit 0). |
+| `layout_today.yaml` | **The real 'today' layout (#664)** — the club's actual in-hangar set as described on 2026-06-15: all **nine** aircraft (incl. the Scheibe Falke) + the **one** Duo Discus glider trailer (the spare trailer is stored elsewhere) + the fixed fuel trailer + the rescue Caddy with a clear drive-out egress. This real composition drove the clearance recalibration (0.20 → 0.10 m — see below). Valid (`hangarfit check` → exit 0). |
+| `layout_full.yaml` | An **alternative scenario (#657/#659)** — what if **both** glider trailers must stay inside *and* the Caddy keeps its egress? That is one body over capacity, so it parks only **seven** aircraft (the Scheibe goes outside), fishbone. Kept as the "both trailers inside" what-if; the real day keeps the aircraft instead (see `layout_today.yaml`). Valid (`hangarfit check` → exit 0). |
 | `scenario.yaml` | The solver input for the all-eight "everyone home" scenario (does not fully route — see below). |
 | `scenario_demo.yaml` | A 3-aircraft subset that **solves and fully tow-routes** end-to-end in the L-shaped hangar — the working toolchain demo. |
 
@@ -52,30 +56,37 @@ solver places clear of the notch and the tow planner routes from the door around
 it (the end-to-end demo above). Replace the all-eight placements with the club's
 real parking positions when known.
 
-**3. With the rescue Caddy + fuel inside, the standard parking breaks — which is
-the whole point.** The real hangar parks more than aircraft: a VW Caddy, two
-glider trailers, and a fixed "Maul" fuel trailer. Two on-site rules are hard
-(#657): the **fuel trailer** sits front-left hard against the wall by the door
-(pushed straight in, parked last), and the **rescue Caddy** must keep a **clear
-drive-out egress** — it has to leave without anyone moving anything else
-(#603/#652). Real hangars pack **fishbone** (aircraft nosed in at mixed angles, not
-square), which interleaves the wings and packs far tighter than an orthogonal nest;
-`layout_full.yaml` parks the aircraft this way (a few near-square, the rest angled).
-Even so, fitting all four ground objects **plus** the Caddy's rescue path leaves the
-hangar one aircraft over capacity (an exhaustive search, orthogonal and fishbone,
-confirms it), so `layout_full.yaml` parks **seven** aircraft + **all four** GOs,
-with the Scheibe Falke left outside. That is not a failure — it is exactly the
-"standard layout has broken, find a valid alternative" job hangarfit exists for. (Getting even this far needed the #605
-**clearance calibration**: the placeholder `clearance_m 0.3` /
-`wing_layer_clearance_m 0.2` are too loose for a real club hangar packed this
-densely, so `hangar.yaml` was calibrated to **0.20 / 0.15**. Lowering a clearance
-only relaxes the constraint, so `layout.yaml` and `scenario_demo.yaml` stay valid.)
-The Caddy here is modelled **multi-part** (#658 — a low van body a high wing may
-overhang, plus a small roof-gear rack on top) so it isn't a full-height wall.
-Mover tow-routing (#602), the Caddy clear-egress gate (#603/#652), and
-ground-object rendering in the PNG + 3D viewer (#606) have all shipped; routing the
-full set's 18 m Scheibe and joint placement+routing remain the open hard problem
-(#607).
+**3. The real day keeps all nine aircraft + one trailer — and that recalibrated
+the clearance (#664).** The real hangar parks more than aircraft: a VW Caddy, glider
+trailers, and a fixed "Maul" fuel trailer. Two on-site rules are hard (#657): the
+**fuel trailer** sits front-left near the door (pushed straight in, parked last),
+and the **rescue Caddy** must keep a **clear drive-out egress** — it leaves without
+anyone moving anything else (#603/#652). Real hangars pack **fishbone** (aircraft
+nosed in at mixed angles), which interleaves the wings far tighter than an
+orthogonal nest. When PK described the **actual** arrangement (2026-06-15), it was
+**all nine aircraft + ONE glider trailer (the Duo) + fuel + Caddy** —
+`layout_today.yaml`. The club keeps the aircraft and leaves the *spare* trailer
+outside; the earlier `layout_full.yaml` had done the opposite (both trailers in →
+one aircraft out), which is why it dropped the Scheibe.
+
+Reproducing the real set exposed a **calibration gap**, not a model bug: an offline
+checker-driven search could not find *any* valid arrangement of all nine aircraft +
+the trailer + fuel + Caddy at the previous `clearance_m 0.20` (its best still left a
+few conflicts) but seats them cleanly at **0.10 m**, and PK confirmed the real
+wingtip-to-part gaps **vary a lot** and on
+dense days are very tight (well under 0.20 m). So the horizontal clearance was
+recalibrated **0.20 → 0.10 m** (`layout_today.yaml`'s tightest gap is ~0.10 m); the
+0.15 m vertical (wing-layer) clearance was not the binding constraint and is
+unchanged. Lowering the horizontal clearance only relaxes the constraint, so
+`layout.yaml`, `layout_full.yaml`, and `scenario_demo.yaml` all stay valid. (History:
+the #605 placeholder `0.3 / 0.2` was first set to `0.20 / 0.15` from the all-8 + 4-GO
+frontier of ≤0.22/0.15.) The Caddy is modelled **multi-part** (#658 — a low van body
+a high wing may overhang, plus a small roof-gear rack on top) so it isn't a
+full-height wall. Mover tow-routing (#602), the Caddy clear-egress gate (#603/#652),
+and ground-object rendering (#606) have all shipped; **reliably packing this dense a
+12-body set is beyond the deterministic search** — both `layout_today.yaml` and
+`layout_full.yaml` are offline-search arrangements of the real composition, and the
+joint dense-placement+routing problem remains the open hard problem (#607).
 
 ## Notable aircraft
 
