@@ -8,7 +8,6 @@ from ml.types import RewardWeights
 
 def _ctx(**kw):
     base = dict(
-        prev_overlap_m2=0.0,
         overlap_m2=0.0,
         intrusion_m2=0.0,
         swept_intrusion_m2=0.0,
@@ -19,7 +18,6 @@ def _ctx(**kw):
         region_match=0.0,
         prev_potential=0.0,
         potential=0.0,
-        parked_delta=0,
         terminal_fraction=None,
     )
     base.update(kw)

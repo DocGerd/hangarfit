@@ -97,6 +97,46 @@ def test_per_object_budget_terminates_with_partial():
     assert done is True and "unplaceable" in info.reason
 
 
+def _two_object_env(**kw):
+    """A 2-object env: park ``fuji`` (own-gear), then drive ``aviat_husky``
+    (own-gear) so a partial-stop has one object already placed (fraction > 0)."""
+    fleet = _fuji()
+    return HangarFitEnv(
+        hangar=empty_hangar(), fleet=fleet, requested_ids=("fuji", "aviat_husky"), **kw
+    )
+
+
+def test_partial_budget_stop_includes_terminal_fraction_reward():
+    # Regression for the final-review #1 gap: a budget-driven (non-Park) stop must
+    # still earn r_terminal * (placed/total). Park object 1, then exhaust the
+    # per-object budget on object 2 with a pivot (L pivot = no pose change, so the
+    # only reward difference vs a non-terminating identical step is the terminal
+    # term). per_object_step_budget=1 makes the FIRST step on object 2 terminate.
+    pivot = Primitive(kind="L", magnitude=0.1, gear=1)
+
+    # Env A — budget=1: object 2's first step terminates with one parked (frac=0.5).
+    env_a = _two_object_env(difficulty=DifficultyConfig(per_object_step_budget=1))
+    env_a.reset()
+    _, _, done0, _ = env_a.step(Park())  # park fuji on the apron; advance to husky
+    assert done0 is False  # one object left to place, so the episode continues
+    _, reward_term, done_a, info_a = env_a.step(pivot)
+    assert done_a is True and "unplaceable" in info_a.reason
+    assert info_a.placed == 1 and info_a.total == 2
+    assert info_a.terms["terminal_fraction"] == 0.5
+
+    # Env B — budget high: the identical step on object 2 does NOT terminate.
+    env_b = _two_object_env(difficulty=DifficultyConfig(per_object_step_budget=50))
+    env_b.reset()
+    env_b.step(Park())  # park fuji identically; advance to husky at the same pose
+    _, reward_no_term, done_b, _ = env_b.step(pivot)
+    assert done_b is False
+
+    # The only reward difference between the two identical steps is the terminal
+    # term r_terminal * 0.5 — present in A, absent in B. It must be measurably added.
+    w = env_a.weights
+    assert reward_term - reward_no_term == w.r_terminal * 0.5
+
+
 # ---------------------------------------------------------------------------
 # Task 14 — integration: random-policy rollout + RNG-free reward determinism
 # ---------------------------------------------------------------------------
@@ -125,3 +165,37 @@ def test_reward_is_rng_free_for_a_fixed_action_sequence():
     a = _rollout(_env(), actions)
     b = _rollout(_env(), actions)
     assert a == b  # byte-identical reward for identical actions (ADR-0027 env tier)
+
+
+# ---------------------------------------------------------------------------
+# Final-review #3 — _on_carts is correct for ground objects (towed vs steerable)
+# ---------------------------------------------------------------------------
+def test_on_carts_for_ground_objects_towed_vs_steerable():
+    # Regression: a GroundObject has no movement_mode/on_carts; the old getattr
+    # path wrongly resolved every mover to on_carts=False (own-gear, no strafe).
+    from hangarfit.loader import load_ground_objects
+
+    gos = load_ground_objects("examples/herrenteich/fleet.yaml")
+    env = HangarFitEnv(
+        hangar=empty_hangar(),
+        fleet=_fuji(),
+        requested_ids=("glider_trailer_1",),  # a towed (free-swivel) mover
+        ground_objects=gos,
+    )
+    # A towed trailer is free-swivel cart-like → strafe-eligible.
+    assert env._on_carts("glider_trailer_1") is True
+    # A steerable car has a positive turning circle → own-gear fan, NOT cart-like.
+    assert env._on_carts("vw_caddy") is False
+    # A fixed obstacle never moves → never cart-like.
+    assert env._on_carts("maul_fuel_trailer") is False
+
+    # And the legal-primitive fan for a towed mover includes the strafe T (#647).
+    towed = env._body("glider_trailer_1")
+    kinds = {p.kind for p in go.legal_primitives(towed, on_carts=env._on_carts("glider_trailer_1"))}
+    assert "T" in kinds
+
+
+def test_on_carts_for_aircraft_unchanged():
+    env = _env()
+    # fuji is always_own_gear → not cart-like (the aircraft path is untouched).
+    assert env._on_carts("fuji") is False

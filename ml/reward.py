@@ -11,7 +11,6 @@ from ml.types import RewardWeights
 class RewardContext:
     """Everything ``step_reward`` needs, precomputed by the env from the oracle."""
 
-    prev_overlap_m2: float
     overlap_m2: float
     intrusion_m2: float
     swept_intrusion_m2: float
@@ -22,7 +21,6 @@ class RewardContext:
     region_match: float
     prev_potential: float
     potential: float
-    parked_delta: int  # +1 when this step parked an object
     terminal_fraction: float | None  # set only on the terminal step
 
 

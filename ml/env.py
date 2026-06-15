@@ -57,10 +57,19 @@ class HangarFitEnv:
         return self.fleet[object_id] if object_id in self.fleet else self.ground_objects[object_id]
 
     def _on_carts(self, object_id: str) -> bool:
+        """Whether ``object_id`` moves cart-like (free-swivel, strafe-eligible).
+
+        Handles both body types (``GroundObject`` has no ``movement_mode``/``on_carts``):
+        an aircraft is cart-like when ``always_cart`` (or already on carts); a ground
+        object is cart-like when it is a free-swivel ``towed`` mover — equivalently a
+        ``placed_routed_mover`` with ``effective_turn_radius_m() == 0.0`` (a steerable
+        car has a positive turning circle → own-gear fan, no strafe). A fixed obstacle
+        never moves, so it is never cart-like.
+        """
         body = self._body(object_id)
-        return getattr(body, "movement_mode", None) == "always_cart" or getattr(
-            body, "on_carts", False
-        )
+        if isinstance(body, GroundObject):
+            return body.object_class == "placed_routed_mover" and body.motion_mode == "towed"
+        return body.movement_mode == "always_cart" or getattr(body, "on_carts", False)
 
     def _spawn(self) -> None:
         """Pop the next queued object and place it on the apron at the door centre."""
@@ -161,7 +170,6 @@ class HangarFitEnv:
                 self._spawn()
             new_phi = self._potential()
             ctx = RewardContext(
-                prev_overlap_m2=0.0,
                 overlap_m2=overlap,
                 intrusion_m2=intrusion,
                 swept_intrusion_m2=0.0,
@@ -172,7 +180,6 @@ class HangarFitEnv:
                 region_match=0.0,
                 prev_potential=self._prev_potential,
                 potential=new_phi,
-                parked_delta=1,
                 terminal_fraction=terminal_fraction,
             )
             reward = step_reward(ctx, weights)
@@ -198,8 +205,14 @@ class HangarFitEnv:
         self._active_pose = end
         self._prev_gear = primitive.gear
         new_phi = self._potential()
+
+        # Termination: per-object budget exhausted (unplaceable) or global budget hit.
+        # Compute it BEFORE the reward so a budget-driven stop still earns the
+        # "best partial" terminal fraction (spec §4.5) — the active object stays
+        # unparked, so the fraction is over already-PARKED objects only.
+        done, reason = self._check_budget()
+        terminal_fraction = len(self._parked) / len(self.requested_ids) if done else None
         ctx = RewardContext(
-            prev_overlap_m2=0.0,
             overlap_m2=0.0,
             intrusion_m2=0.0,
             swept_intrusion_m2=swept_intr,
@@ -210,14 +223,11 @@ class HangarFitEnv:
             region_match=0.0,
             prev_potential=self._prev_potential,
             potential=new_phi,
-            parked_delta=0,
-            terminal_fraction=None,
+            terminal_fraction=terminal_fraction,
         )
         reward = step_reward(ctx, weights)
         self._prev_potential = new_phi
 
-        # Termination: per-object budget exhausted (unplaceable) or global budget hit.
-        done, reason = self._check_budget()
         return self._observe(), reward, done, self._info(ctx, done, reason)
 
     def _check_budget(self) -> tuple[bool, str]:
