@@ -813,6 +813,11 @@ class Placement:
     y_m: float
     heading_deg: float
     on_carts: bool
+    # #667 Stage 0: a HAND-POSITIONED body (e.g. a dolly-borne glider) is parked
+    # by hand, not tow-routed. The fill planner treats it as a pre-placed
+    # obstacle and emits a path-less (at-rest) move for it. Default False keeps
+    # every existing placement byte-identical.
+    hand_placed: bool = False
 
     def __post_init__(self) -> None:
         if not self.plane_id:

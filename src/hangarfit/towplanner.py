@@ -1619,9 +1619,15 @@ def _plan_fill(
     budget = _MAX_EXPANSIONS if max_expansions is None else max_expansions
     total_budget = _MAX_FILL_EXPANSIONS if max_total_expansions is None else max_total_expansions
     total_used = 0
-    ordered = list(back_first_order(target.placements))
     fleet = target.fleet
     hangar = target.hangar
+    # #667 Stage 0: HAND-POSITIONED bodies (dolly-borne gliders) are parked by
+    # hand, not tow-routed. They seed `placed` (so routed bodies treat them as
+    # obstacles) and get a path-less at-rest move emitted first. With no
+    # hand-placed body the partition is the whole fleet → `ordered` is unchanged
+    # and `placed`/`moves` start empty, so the plan stays byte-identical.
+    hand_placed_slots = back_first_order(tuple(p for p in target.placements if p.hand_placed))
+    ordered = list(back_first_order(tuple(p for p in target.placements if not p.hand_placed)))
 
     # Fixed obstacles (e.g. the fuel trailer) are static keep-outs for BOTH
     # aircraft routes and mover routes. Empty when no ground objects => inert.
@@ -1631,8 +1637,8 @@ def _plan_fill(
         if target.ground_objects[gp.plane_id].object_class == "fixed_obstacle"
     )
 
-    placed: list[Placement] = []
-    moves: list[Move] = []
+    placed: list[Placement] = list(hand_placed_slots)
+    moves: list[Move] = [Move(p.plane_id, Pose.from_placement(p), None) for p in hand_placed_slots]
 
     while ordered:
         chosen: int | None = None
