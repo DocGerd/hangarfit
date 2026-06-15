@@ -813,6 +813,11 @@ class Placement:
     y_m: float
     heading_deg: float
     on_carts: bool
+    # #667 Stage 0: a HAND-POSITIONED body (e.g. a dolly-borne glider) is parked
+    # by hand, not tow-routed. The fill planner treats it as a pre-placed
+    # obstacle and emits a path-less (at-rest) move for it. Default False keeps
+    # every existing placement byte-identical.
+    hand_placed: bool = False
 
     def __post_init__(self) -> None:
         if not self.plane_id:
@@ -997,6 +1002,16 @@ class Layout:
                 raise ValueError(
                     f"ground_object_placement references unknown id {gp.plane_id!r} "
                     f"(ground_objects has: {sorted(self.ground_objects)})"
+                )
+            # #667: hand_placed is an aircraft-only marker (a dolly-borne body the
+            # tow planner pre-seeds as an obstacle). A ground object is routed/fixed
+            # by its object_class, and the planner only filters AIRCRAFT placements,
+            # so hand_placed here would be silently ignored — reject it instead.
+            if gp.hand_placed:
+                raise ValueError(
+                    f"ground_object_placement {gp.plane_id!r} sets hand_placed=True, "
+                    f"which is an aircraft-only marker (ground objects are positioned "
+                    f"by their object_class, not hand-placed)"
                 )
             if gp.plane_id in seen_ground:
                 raise ValueError(f"Duplicate ground_object_placement for id {gp.plane_id!r}")

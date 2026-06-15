@@ -1522,6 +1522,7 @@ def plan_fill(
     heuristic: Literal["euclidean", "grid"] = "grid",
     max_expansions: int | None = None,
     max_total_expansions: int | None = None,
+    max_backtracks: int | None = None,
     apron_dropped_out: list[ApronShallowDrop] | None = None,
     unroutable_movers: list[str] | None = None,
 ) -> MovesPlan:
@@ -1580,13 +1581,19 @@ def plan_fill(
     is stuck (spike Risk #1) and the plan bails with :class:`NoFeasiblePlanError`
     naming the deepest unplaceable plane.
 
-    No retry *budget* is needed: an already-placed plane is only ever an added
-    obstacle, so a plane infeasible against the current obstacles can never
-    become feasible later — the scan therefore makes monotonic progress (one
-    plane committed per iteration) and cannot spin. Deterministic (ADR-0003):
-    the order, the Hybrid-A* primitive fan, the cone grid, and the next-feasible
-    scan are all RNG-free, so a given ``target`` always yields the same
-    :class:`MovesPlan`.
+    Since #667 the scan is a deterministic greedy-first **backtracking** DFS over
+    placement order (``_place_rest``): the first feasible candidate at each level is
+    recursed first, so when the greedy back-first order already routes, the search
+    returns that identical path untouched (byte-identical, ADR-0003); it backtracks
+    the order only where a greedy commit deadlocks a later body — cases the old
+    monotonic loop bailed on. The search is bounded by both ``max_total_expansions``
+    (above) and ``max_backtracks`` (``None`` ⇒ the module ``_MAX_FILL_BACKTRACKS``),
+    a separate deterministic ceiling on dead-end backtracks so a generous per-plane
+    budget can't fund a runaway order search on an un-routable fill. Deterministic
+    (ADR-0003): the order, the Hybrid-A* primitive fan, the cone grid, and the
+    candidate scan are all RNG-free, so a given ``target`` always yields the same
+    :class:`MovesPlan`. (A truly cyclic lock — no order routes — still bails; the
+    move-aside that resolves those is tracked on #667.)
     """
     # #626: memoize body world-parts for the WHOLE fill. The static obstacle field
     # is rebuilt by every plan_path's _build_obstacles, and the greedy scan re-routes
@@ -1601,6 +1608,7 @@ def plan_fill(
             heuristic=heuristic,
             max_expansions=max_expansions,
             max_total_expansions=max_total_expansions,
+            max_backtracks=max_backtracks,
             apron_dropped_out=apron_dropped_out,
             unroutable_movers=unroutable_movers,
         )
@@ -1612,16 +1620,25 @@ def _plan_fill(
     heuristic: Literal["euclidean", "grid"] = "grid",
     max_expansions: int | None = None,
     max_total_expansions: int | None = None,
+    max_backtracks: int | None = None,
     apron_dropped_out: list[ApronShallowDrop] | None = None,
     unroutable_movers: list[str] | None = None,
 ) -> MovesPlan:
     """Body of :func:`plan_fill`, run inside an active ``pose_cache_scope`` (#626)."""
     budget = _MAX_EXPANSIONS if max_expansions is None else max_expansions
     total_budget = _MAX_FILL_EXPANSIONS if max_total_expansions is None else max_total_expansions
+    bt_cap = _MAX_FILL_BACKTRACKS if max_backtracks is None else max_backtracks
     total_used = 0
-    ordered = list(back_first_order(target.placements))
+    backtracks_used = 0
     fleet = target.fleet
     hangar = target.hangar
+    # #667 Stage 0: HAND-POSITIONED bodies (dolly-borne gliders) are parked by
+    # hand, not tow-routed. They seed `placed` (so routed bodies treat them as
+    # obstacles) and get a path-less at-rest move emitted first. With no
+    # hand-placed body the partition is the whole fleet → `ordered` is unchanged
+    # and `placed`/`moves` start empty, so the plan stays byte-identical.
+    hand_placed_slots = back_first_order(tuple(p for p in target.placements if p.hand_placed))
+    ordered = list(back_first_order(tuple(p for p in target.placements if not p.hand_placed)))
 
     # Fixed obstacles (e.g. the fuel trailer) are static keep-outs for BOTH
     # aircraft routes and mover routes. Empty when no ground objects => inert.
@@ -1631,39 +1648,49 @@ def _plan_fill(
         if target.ground_objects[gp.plane_id].object_class == "fixed_obstacle"
     )
 
-    placed: list[Placement] = []
-    moves: list[Move] = []
+    placed: list[Placement] = list(hand_placed_slots)
+    moves: list[Move] = [Move(p.plane_id, Pose.from_placement(p), None) for p in hand_placed_slots]
 
-    while ordered:
-        chosen: int | None = None
-        chosen_arc: DubinsArc | None = None
-        chosen_apron_fallback = False
-        # The deepest unplaced plane is scanned first, so its conflict (if it
-        # is rejected) is the one reported when the whole scan finds nothing.
-        deepest_conflict: Conflict | None = None
-        # `placed` does not change within a scan pass, so the obstacle layout is
-        # constant across candidates. Only the already-committed planes are
-        # obstacles; plan_path adds the candidate mover per sample via its
-        # internal path_first_conflict check.
+    # #667 Stage 1 (order search): place the to-route bodies by a deterministic
+    # BACKTRACKING DFS over order, greedy-first. The first feasible candidate at
+    # each level is recursed first, so when the greedy back-first order already
+    # works the search returns that identical path untouched (byte-identical,
+    # ADR-0003); backtracking only happens where the old monotonic loop would have
+    # bailed — a greedy commit that deadlocks a later body. The global expansion
+    # budget bounds the search (expansions on dead branches are NOT refunded), so
+    # it terminates and then raises the structured bail. deepest_conflict captures
+    # the first (deepest plane's) routing conflict for that bail message.
+    deepest_conflict: Conflict | None = None
+
+    def _place_rest(
+        placed_list: list[Placement], rest: list[Placement]
+    ) -> list[tuple[Placement, DubinsArc, bool]] | None:
+        """Return the chosen (slot, arc, apron_fallback) sequence that places every
+        body in ``rest`` against ``placed_list``, greedy-first with backtracking, or
+        ``None`` if no order does. Raises on global-budget or backtrack-cap exhaustion."""
+        nonlocal total_used, deepest_conflict, backtracks_used
+        if not rest:
+            return []
+        # `placed_list` is constant across candidates at this level; plan_path adds
+        # the candidate mover per sample via its internal path_first_conflict check.
         placed_layout = Layout(
             fleet=fleet,
             hangar=hangar,
-            placements=tuple(placed),
+            placements=tuple(placed_list),
             maintenance_plane=target.maintenance_plane,
             ground_objects=target.ground_objects,
             ground_object_placements=fixed_obstacle_placements,
         )
-        for idx, slot in enumerate(ordered):
+        for idx, slot in enumerate(rest):
             remaining = total_budget - total_used
             if remaining <= 0:
                 # Global fill-expansion budget exhausted (#336): bail in bounded
-                # time rather than paying per-plane budget × scan-retries on an
-                # un-routable fill. Name the deepest still-unplaced plane.
+                # time. Name the deepest still-unplaced plane at this level.
                 raise NoFeasiblePlanError(
-                    ordered[0].plane_id,
+                    rest[0].plane_id,
                     Conflict.single(
                         kind="no_feasible_path",
-                        plane=ordered[0].plane_id,
+                        plane=rest[0].plane_id,
                         detail=f"global fill expansion budget ({total_budget}) exhausted",
                     ),
                 )
@@ -1672,11 +1699,10 @@ def _plan_fill(
             try:
                 # The full door cone drives the multi-start search (#262). Compute
                 # it once and pass it as `entries=`; the positional `entry` arg is
-                # ignored by plan_path whenever `entries` is set, so reuse cone[0]
-                # for it rather than recomputing entry_pose() (which plan_path would
-                # never read here). Each call is capped at the smaller of the
-                # per-plane budget and the global remainder, and its expansions are
-                # charged to the global total whether it succeeds or fails (#336).
+                # ignored by plan_path whenever `entries` is set. Each call is capped
+                # at the smaller of the per-plane budget and the global remainder,
+                # and its expansions are charged to the global total whether it
+                # succeeds or fails (#336).
                 cone = entry_poses(slot, hangar)
                 arc = plan_path(
                     plane,
@@ -1691,8 +1717,8 @@ def _plan_fill(
                     stats=stats,
                 )
             except NoFeasiblePlanError as exc:
-                # This plane cannot be routed against the current obstacles; try
-                # the next candidate. Remember its conflict for the bail message.
+                # Cannot route this body against the current obstacles; try the next
+                # candidate. Remember its conflict for the bail message.
                 exp = stats.get("expansions", 0)
                 total_used += exp if isinstance(exp, int) else 0
                 if deepest_conflict is None:
@@ -1700,30 +1726,52 @@ def _plan_fill(
                 continue
             exp = stats.get("expansions", 0)
             total_used += exp if isinstance(exp, int) else 0
-            chosen, chosen_arc = idx, arc
-            # Only the COMMITTED candidate's fallback matters: the rejected
-            # candidates of the scan are not in the plan, so their stats are
-            # irrelevant to what the user sees (#503).
-            chosen_apron_fallback = stats.get("apron_fallback") is True
-            break
-        if chosen is None:
-            # Every remaining plane conflicts: greedy back-first is stuck. The
-            # deepest plane (ordered[0], scanned first) is the one we most
-            # wanted to place, and deepest_conflict is its own conflict.
-            assert deepest_conflict is not None  # ordered non-empty => scan ran
-            raise NoFeasiblePlanError(ordered[0].plane_id, deepest_conflict)
-        slot = ordered.pop(chosen)
-        assert chosen_arc is not None
-        moves.append(Move(slot.plane_id, Pose.from_placement(slot), chosen_arc))
+            apron_fb = stats.get("apron_fallback") is True
+            sub = _place_rest(placed_list + [slot], rest[:idx] + rest[idx + 1 :])
+            if sub is not None:
+                return [(slot, arc, apron_fb), *sub]
+            # Routed here, but the rest dead-ends downstream → backtrack to the next
+            # candidate (the old monotonic loop could not). Bound the total dead-end
+            # backtracks so a generous per-plane budget can't fund a runaway order
+            # search on an un-routable fill (#667); 0 ⇒ no backtracking allowed.
+            backtracks_used += 1
+            if backtracks_used > bt_cap:
+                # Surface the real per-body routing conflict (the actionable reason a
+                # body could not be seated) and name THAT body — not the already-placed
+                # deepest plane (#668 review). Synthesize a cap conflict only if nothing
+                # ever failed to route (a pure ordering lock with all routes feasible).
+                bail = deepest_conflict or Conflict.single(
+                    kind="no_feasible_path",
+                    plane=rest[0].plane_id,
+                    detail=f"order-search backtracking cap ({bt_cap}) exceeded",
+                )
+                raise NoFeasiblePlanError(bail.planes[0], bail)
+        return None
+
+    result = _place_rest(placed, ordered)
+    if result is None:
+        # No placement order seats every body (a true lock — needs the Stage 1
+        # move-aside, still to come) or every candidate conflicts. Name the
+        # deepest body and carry its conflict (matches the old monotonic bail).
+        bail = deepest_conflict or Conflict.single(
+            kind="no_feasible_path",
+            plane=ordered[0].plane_id,
+            detail="no feasible tow order (every placement order deadlocks)",
+        )
+        # Name the conflict's own body so the named plane and the carried conflict
+        # always agree (#668 review): on a real routing failure that's the stuck
+        # body; on a pure ordering lock it's the deepest (the synthesized fallback).
+        raise NoFeasiblePlanError(bail.planes[0], bail)
+
+    for slot, arc, apron_fb in result:
+        moves.append(Move(slot.plane_id, Pose.from_placement(slot), arc))
         placed.append(slot)
         # #503: record (plan-inert) the planes that towed via the y=0 door-line
         # fallback DESPITE an apron being set — their footprint is too deep for the
-        # apron, so every apron start pose was filtered and they show no slide-in.
-        # Populated in committed-move order (the deterministic move order, ADR-0003)
-        # only when the caller passed `apron_dropped_out`; the suggested min depth
-        # is the per-plane FOOTPRINT extent, NOT the fleet-wide `auto` over-margin
-        # (derive_apron_depth). Never read back into the plan.
-        if chosen_apron_fallback and apron_dropped_out is not None:
+        # apron. Committed-move order (deterministic, ADR-0003), only when the
+        # caller passed `apron_dropped_out`; the depth is the per-plane FOOTPRINT
+        # extent, not the fleet-wide `auto` over-margin. Never read back.
+        if apron_fb and apron_dropped_out is not None:
             apron_dropped_out.append(
                 ApronShallowDrop(
                     plane_id=slot.plane_id,
@@ -1846,6 +1894,16 @@ _MAX_FILL_EXPANSIONS = 16000  # GLOBAL expansion budget across one whole fill (#
 # budget VALUE (not the count) with the profiling harness if a real apron site
 # needs it; bound a hard apron fill per-run with ``--tow-max-expansions``.
 # Overridable via the ``max_total_expansions`` param on ``plan_fill()``.
+
+_MAX_FILL_BACKTRACKS = 2000  # GLOBAL cap on order-search dead-end backtracks (#667).
+# The Stage-1 order search (`_place_rest`) backtracks the placement ORDER when a
+# greedy commit deadlocks a later body. The expansion budget above is the primary
+# bound, but a generous PER-PLANE budget (needed to route tight-feasible planes)
+# also funds deep order-backtracking on an UN-routable fill — so this is a separate,
+# deterministic secondary ceiling on the number of dead-end backtracks, independent
+# of the per-plane budget. Inert for the greedy-success path (0 backtracks ⇒
+# byte-identical, ADR-0003) and far above any legitimate small reorder; it only
+# bounds a pathological/un-routable order search. Overridable via ``max_backtracks``.
 # Sampling resolution for the FAST in-search `_motion_clear` validity checks
 # (edges + the analytic-shot screen). Coarser than the exact oracle's default
 # (0.05 m / 1°) to keep the search tractable: the worst case is a plane that can
