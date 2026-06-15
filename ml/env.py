@@ -7,6 +7,8 @@ from collections.abc import Mapping
 
 from hangarfit.models import Aircraft, GroundObject, Hangar, Layout, Placement
 from hangarfit.towplanner import Pose
+from ml import geometry_oracle as go
+from ml.reward import potential
 from ml.types import (
     ActiveObject,
     DifficultyConfig,
@@ -101,9 +103,22 @@ class HangarFitEnv:
             steps_total=self._steps_total,
         )
 
+    def _active_dist_to_slot_m(self) -> float:
+        """Distance from the active object to a valid parking region — approximated
+        as how far inside the door it still needs to travel (y from apron to >=0).
+        A coarse but monotone signal for shaping; refined in #4."""
+        if self._active_pose is None:
+            return 0.0
+        return max(0.0, -self._active_pose.y_m)
+
     def _potential(self) -> float:
-        # Temporary stub (Task 10 Step 4); replaced by the real Φ in Task 11.
-        return 0.0
+        layout = self._layout()
+        remaining_overlap = go.overlap_area_m2(layout) if self._parked else 0.0
+        return potential(
+            remaining_overlap_m2=remaining_overlap,
+            active_dist_to_slot_m=self._active_dist_to_slot_m(),
+            unplaced=len(self._queue) + (1 if self._active_id is not None else 0),
+        )
 
     def reset(self) -> Observation:
         self._reset_state()

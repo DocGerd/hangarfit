@@ -29,3 +29,16 @@ def test_reset_spawns_first_object_on_the_apron():
     assert obs.active.pose.y_m < 0.0  # spawned on the apron (y<0)
     assert obs.parked == ()
     assert len(obs.unplaced_ids) == 0  # the active one is not "unplaced"
+
+
+# ---------------------------------------------------------------------------
+# Task 11 — _potential
+# ---------------------------------------------------------------------------
+def test_potential_reflects_slot_distance_and_unplaced():
+    env = _env()
+    env.reset()
+    phi0 = env._potential()
+    # Φ is the NEGATIVE of (overlap + slot-distance + unplaced); after reset the
+    # active object sits on the apron (y<0) with one unplaced, so Φ is strictly
+    # negative — distinguishing the real Φ from the temporary 0.0 stub.
+    assert phi0 < 0.0
