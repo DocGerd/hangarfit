@@ -8,6 +8,7 @@ sub-project #4b; the reach-not-beat benchmark is #4c."""
 from __future__ import annotations
 
 import argparse
+from collections.abc import Callable
 from dataclasses import replace
 from pathlib import Path
 
@@ -15,6 +16,7 @@ import torch
 
 from hangarfit.loader import load_fleet, load_hangar
 from ml.action_space import decode
+from ml.curriculum import EpisodeStat
 from ml.encoding import EncoderConfig, encode
 from ml.env import HangarFitEnv
 from ml.policy import HangarFitPolicy, to_batch
@@ -55,13 +57,17 @@ def collect_rollout(
     policy: HangarFitPolicy,
     encoder: EncoderConfig,
     rollout_len: int,
-) -> tuple[RolloutBuffer, list[float]]:
+    *,
+    sample_request: Callable[[], tuple[str, ...]] | None = None,
+) -> tuple[RolloutBuffer, list[EpisodeStat]]:
     """Drive the env single-stream for `rollout_len` steps; return the buffer and the
-    list of completed-episode total rewards (for the reward-curve log)."""
+    per-completed-episode stats (competency + reward sum). On each episode boundary,
+    `sample_request()` (when given) picks the next episode's object subset; None keeps
+    the env's fixed requested set (the 4a trivial path)."""
     buf = RolloutBuffer()
     bodies = _bodies(env)
     obs = env.reset()
-    ep_reward, ep_rewards = 0.0, []
+    ep_reward, ep_stats = 0.0, []
     with torch.no_grad():
         while len(buf) < rollout_len:
             obs_t = encode(obs, env.hangar, bodies, encoder)
@@ -70,7 +76,7 @@ def collect_rollout(
             logprob, _ = factored_logprob_entropy(out, kind, mag)
             tr = obs.active.body.effective_turn_radius_m()  # type: ignore[union-attr]
             primitive = decode(int(kind), int(mag), turn_radius_m=tr)
-            nxt, reward, done, _info = env.step(primitive)
+            nxt, reward, done, info = env.step(primitive)
             buf.add(
                 obs_t,
                 kind_idx=int(kind),
@@ -82,16 +88,23 @@ def collect_rollout(
             )
             ep_reward += float(reward)
             if done:
-                ep_rewards.append(ep_reward)
+                # info.total = len(requested_ids) >= 1, so the division is safe.
+                ep_stats.append(
+                    EpisodeStat(
+                        fraction_placed=info.placed / info.total,
+                        valid=info.valid,
+                        total_reward=ep_reward,
+                    )
+                )
                 ep_reward = 0.0
-                obs = env.reset()
+                obs = env.reset(requested_ids=sample_request() if sample_request else None)
             else:
                 obs = nxt
         # bootstrap value for a non-done tail
         if not buf.done[-1]:
             tail = encode(obs, env.hangar, bodies, encoder)
             buf.last_value = float(policy(to_batch([tail])).value)
-    return buf, ep_rewards
+    return buf, ep_stats
 
 
 def train(
@@ -113,15 +126,15 @@ def train(
     optimizer = torch.optim.Adam(policy.parameters(), lr=cfg.lr)
     history: list[float] = []
     for it in range(iterations):
-        buf, ep_rewards = collect_rollout(env, policy, enc, rollout_len)
+        buf, ep_stats = collect_rollout(env, policy, enc, rollout_len)
         metrics = ppo_update(policy, optimizer, buf, cfg)
         # NaN (not 0.0) when no episode finished within the rollout, so a short rollout
         # is not mistaken for a genuine zero-reward iteration in the curve.
-        mean_r = sum(ep_rewards) / len(ep_rewards) if ep_rewards else float("nan")
+        mean_r = sum(s.total_reward for s in ep_stats) / len(ep_stats) if ep_stats else float("nan")
         history.append(mean_r)
         if log:
-            if ep_rewards:
-                reward_str = f"mean_ep_reward={mean_r:+.3f}  n_eps={len(ep_rewards)}"
+            if ep_stats:
+                reward_str = f"mean_ep_reward={mean_r:+.3f}  n_eps={len(ep_stats)}"
             else:
                 reward_str = "mean_ep_reward=N/A (0 episodes)"
             print(
