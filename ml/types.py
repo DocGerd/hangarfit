@@ -27,8 +27,8 @@ class Primitive:
     """One movement primitive applied to the active object.
 
     ``magnitude`` is continuous: metres for ``S``/``T`` and own-gear arcs; radians of
-    pivot for a cart turn (``L``/``R`` at turn_radius 0). ``gear`` is +1 forward / -1
-    reverse (ADR-0010). A binning helper lives in ``geometry_oracle.bin_magnitude``.
+    pivot for a cart turn (``L``/``R`` at turn_radius 0). The policy's discrete
+    magnitude bins + the ``Primitive``-decode live in ``ml.action_space`` (sub-project #3).
     """
 
     kind: SegmentKind
