@@ -8,7 +8,7 @@ torch = pytest.importorskip("torch")  # whole module skips without the [train] e
 
 from hangarfit.models import Placement  # noqa: E402
 from ml.encoding import EncoderConfig, encode  # noqa: E402
-from ml.policy import to_batch  # noqa: E402
+from ml.policy import HangarFitPolicy, PolicyOutput, to_batch  # noqa: E402
 from ml.types import ActiveObject, Observation, ParkedObject, Pose  # noqa: E402
 from tests.ml.conftest import _fuji, empty_hangar  # noqa: E402
 
@@ -42,3 +42,51 @@ def test_to_batch_shapes_and_dtypes():
         batch["legal_action_mask"].shape == (2, 9)
         and batch["legal_action_mask"].dtype == torch.bool
     )
+
+
+def _model(seed=0):
+    torch.manual_seed(seed)
+    return HangarFitPolicy(d_model=64, n_layers=2, n_heads=4).eval()
+
+
+def test_forward_output_shapes():
+    out = _model()(to_batch([_obs(), _obs()]))
+    assert isinstance(out, PolicyOutput)
+    assert out.kind_gear_logits.shape == (2, 9)
+    assert out.magnitude_bin_logits.shape == (2, 5)
+    assert out.value.shape == (2,)
+
+
+def test_illegal_kinds_are_masked_to_zero_probability():
+    batch = to_batch([_obs()])  # fuji/husky are own-gear -> strafe (idx 6,7) illegal
+    out = _model()(batch)
+    legal = batch["legal_action_mask"][0]
+    probs = out.kind_gear_logits.softmax(-1)[0]
+    assert torch.all(probs[~legal] == 0.0)  # illegal -> exactly 0 after softmax
+    assert torch.isclose(probs[legal].sum(), torch.tensor(1.0))  # legal mass sums to 1
+
+
+def test_forward_is_deterministic_in_eval():
+    batch = to_batch([_obs()])
+    m = _model(seed=3)
+    a, b = m(batch), m(batch)
+    assert torch.equal(a.kind_gear_logits, b.kind_gear_logits)
+    assert torch.equal(a.magnitude_bin_logits, b.magnitude_bin_logits)
+    assert torch.equal(a.value, b.value)
+
+
+def test_gradients_flow():
+    m = HangarFitPolicy(d_model=64, n_layers=2, n_heads=4)  # train mode
+    out = m(to_batch([_obs(), _obs()]))
+    # avoid the -inf masked kind logits in the loss; use mag logits + value
+    loss = out.magnitude_bin_logits.sum() + out.value.sum()
+    loss.backward()
+    assert any(p.grad is not None and torch.any(p.grad != 0) for p in m.parameters())
+
+
+def test_single_and_batched_consistency():
+    m = _model(seed=1)
+    o = _obs()
+    single = m(to_batch([o]))
+    batched = m(to_batch([o, o]))
+    assert torch.allclose(single.value, batched.value[:1], atol=1e-5)
