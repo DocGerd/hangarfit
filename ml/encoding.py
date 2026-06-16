@@ -13,6 +13,7 @@ import shapely
 
 from hangarfit.geometry import aircraft_parts_world
 from hangarfit.models import Aircraft, GroundObject, Hangar, Placement
+from ml import geometry_oracle as go
 from ml.types import Observation
 
 SCHEMA_VERSION = 1
@@ -257,3 +258,25 @@ def _tokens(
         tokens[i] = _token_row(body, status=status, on_carts=on_carts, pose=pose, config=config)
         mask[i] = True
     return tokens, mask, active_index
+
+
+# ---------------------------------------------------------------------------
+# Task 6: Legal-action mask
+# ---------------------------------------------------------------------------
+
+_ACTION_INDEX: dict[tuple[str, int], int] = {kg: i for i, kg in enumerate(_CANONICAL_ACTIONS)}
+
+
+def _legal_action_mask(obs: Observation, config: EncoderConfig) -> np.ndarray:
+    """(ACTION_DIM,) bool over the canonical (kind, gear) order + PARK.
+
+    Entirely False at a terminal state (no active object); PARK always legal otherwise."""
+    mask = np.zeros(ACTION_DIM, dtype=bool)
+    if obs.active is None:
+        return mask
+    for prim in go.legal_primitives(obs.active.body, on_carts=obs.active.on_carts):
+        idx = _ACTION_INDEX.get((prim.kind, prim.gear))
+        if idx is not None:
+            mask[idx] = True
+    mask[PARK_INDEX] = True
+    return mask

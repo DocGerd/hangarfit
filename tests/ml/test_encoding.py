@@ -8,10 +8,13 @@ import shapely
 from hangarfit.models import Placement
 from ml import encoding
 from ml.encoding import (
+    ACTION_DIM,
+    PARK_INDEX,
     TOKEN_DIM,
     EncoderConfig,
     _active_occupancy,
     _cell_centers,
+    _legal_action_mask,
     _parked_occupancy,
     _rasterize,
     _static_channels,
@@ -205,3 +208,46 @@ def test_tokens_wing_and_movement_one_hots():
     assert tokens[0, 8:11].sum() == 1.0
     # movement one-hot is cols 11..13; exactly one set for an aircraft
     assert tokens[0, 11:14].sum() == 1.0
+
+
+# ---------------------------------------------------------------------------
+# Task 6: Legal-action mask
+# ---------------------------------------------------------------------------
+
+
+def _active_for(fleet, pid, *, on_carts):
+    return ActiveObject(
+        object_id=pid,
+        body=fleet[pid],
+        pose=Pose(x_m=11.0, y_m=-4.0, heading_deg=0.0),
+        on_carts=on_carts,
+    )
+
+
+def test_legal_mask_own_gear_no_strafe():
+    c = EncoderConfig()
+    fleet = _fuji()
+    # fuji is always_own_gear (turn radius > 0): no strafe (idx6, idx7 False)
+    mask = _legal_action_mask(_obs(active=_active_for(fleet, "fuji", on_carts=False)), c)
+    assert mask.shape == (ACTION_DIM,) and mask.dtype == bool
+    assert mask[6] == False and mask[7] == False  # noqa: E712
+    assert mask[PARK_INDEX] == True  # noqa: E712
+
+
+def test_legal_mask_cart_has_strafe_and_holes():
+    c = EncoderConfig()
+    fleet = _fuji()
+    cart_ids = [i for i, b in fleet.items() if b.effective_turn_radius_m() == 0.0]
+    assert cart_ids, "expected at least one cart/pivot body in the fleet"
+    mask = _legal_action_mask(_obs(active=_active_for(fleet, cart_ids[0], on_carts=True)), c)
+    # strafe legal when on carts
+    assert mask[6] == True and mask[7] == True  # noqa: E712
+    # cart reverse-arc holes idx3 (L,-1) and idx5 (R,-1) are False
+    assert mask[3] == False and mask[5] == False  # noqa: E712
+    assert mask[PARK_INDEX] == True  # noqa: E712
+
+
+def test_legal_mask_terminal_all_false():
+    c = EncoderConfig()
+    mask = _legal_action_mask(_obs(), c)
+    assert mask.sum() == 0  # entirely False, including PARK
