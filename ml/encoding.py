@@ -207,7 +207,7 @@ def _token_row(
     row = np.zeros(TOKEN_DIM, dtype=np.float32)
     row[_STATUS_COL[status]] = 1.0  # status one-hot 0..2
     if isinstance(body, Aircraft):
-        row[3] = 1.0  # type: aircraft
+        row[3] = 1.0  # aircraft type bit
         row[8 + _WING_COL[body.wing_position]] = 1.0  # wing one-hot 8..10
         row[11 + _MOVE_COL[body.movement_mode]] = 1.0  # movement one-hot 11..13
         row[15] = 1.0 if body.tow_pivotable else 0.0
