@@ -25,6 +25,7 @@ from ml.curriculum import (
     sample_request,
     should_promote,
     stage_rng,
+    validate_ladder,
 )
 from ml.encoding import EncoderConfig, encode
 from ml.env import HangarFitEnv
@@ -170,6 +171,10 @@ def train_curriculum(
     cfg = ppo or PPOConfig()
     enc = encoder or EncoderConfig()
     sched = schedule or CurriculumSchedule.default()
+    # Eager invariant check on the WHOLE ladder before any (expensive) training, so a bad
+    # rung (e.g. max_objects > encoder capacity) fails by name now instead of as a deep
+    # tensorizer overflow several rungs in.
+    validate_ladder(sched.stages, encoder_max_objects=enc.max_objects)
     pol = sched.policy
     policy = HangarFitPolicy(**(policy_kwargs or {}))
     optimizer = torch.optim.Adam(policy.parameters(), lr=cfg.lr)
@@ -179,6 +184,10 @@ def train_curriculum(
         pool = effective_fleet_ids(stage)
         n = stage.difficulty.max_objects if stage.difficulty.max_objects is not None else len(pool)
         rng = stage_rng(seed, stage_index)
+        # The window holds the last `pol.window` COMPLETED EPISODES (not iterations): one
+        # rollout can complete many episodes, so a rung the transferred policy already
+        # masters can legitimately promote on its first iteration. That is intended — the
+        # curriculum advances as soon as competent, it does not "serve time" per rung.
         window: deque[EpisodeStat] = deque(maxlen=pol.window)
         # partial binds THIS stage's pool/n/rng by value (so the per-iteration closure
         # is not the flake8-bugbear B023 late-binding trap) and stays mypy-inferrable

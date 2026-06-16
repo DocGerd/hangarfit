@@ -233,3 +233,13 @@ def test_reset_rejects_empty_requested_ids():
     env = _two_object_env()
     with pytest.raises(ValueError):
         env.reset(requested_ids=())
+
+
+def test_reset_truncates_requested_ids_beyond_max_objects():
+    # max_objects caps the set: requesting more ids than the cap truncates so the episode
+    # size (StepInfo.total / fraction_placed) matches what the env actually drives.
+    env = _two_object_env(
+        difficulty=DifficultyConfig(max_objects=1, per_object_step_budget=40, total_step_budget=40)
+    )
+    env.reset(requested_ids=("fuji", "aviat_husky"))
+    assert env.requested_ids == ("fuji",)  # truncated to max_objects=1

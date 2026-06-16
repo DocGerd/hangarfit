@@ -28,8 +28,17 @@ class PromotionPolicy:
 
     metric: Literal["fraction_placed", "valid_rate"] = "fraction_placed"
     window: int = 20  # most-recent completed episodes to average
-    threshold: float = 0.9  # advance when mean(metric over window) >= threshold
+    # advance when mean(metric over window) >= threshold. The metric is a rate in
+    # [0, 1], so threshold > 1 means "never promote by competency" (always cap) and
+    # threshold <= 0 means "promote as soon as the window fills" — both are valid levers.
+    threshold: float = 0.9
     max_iters: int = 200  # safety cap: advance unconditionally after this many PPO iters
+
+    def __post_init__(self) -> None:
+        if self.window < 1:
+            raise ValueError(f"PromotionPolicy.window must be >= 1, got {self.window}")
+        if self.max_iters < 1:
+            raise ValueError(f"PromotionPolicy.max_iters must be >= 1, got {self.max_iters}")
 
 
 def should_promote(window: Sequence[EpisodeStat], policy: PromotionPolicy) -> bool:
@@ -79,6 +88,18 @@ class Stage:
     wing_layer_clearance_m: float | None = None  # override; None = file value
     apron_depth_m: float = 8.0  # override; gives the env a spawn region (matches 4a)
 
+    def __post_init__(self) -> None:
+        # Disk-free scalar invariants (the disk-needing max_objects <= len(pool) check
+        # stays in stage_builder.build_stage_env). Negative clearances/apron are illegal.
+        for name in ("clearance_m", "wing_layer_clearance_m"):
+            value = getattr(self, name)
+            if value is not None and value < 0:
+                raise ValueError(f"Stage {self.name!r}: {name} must be >= 0, got {value}")
+        if self.apron_depth_m < 0:
+            raise ValueError(
+                f"Stage {self.name!r}: apron_depth_m must be >= 0, got {self.apron_depth_m}"
+            )
+
 
 def validate_ladder(ladder: Sequence[Stage], *, encoder_max_objects: int) -> None:
     """Pure invariant check (the disk-needing 'max_objects <= len(pool)' check lives
@@ -95,10 +116,12 @@ def validate_ladder(ladder: Sequence[Stage], *, encoder_max_objects: int) -> Non
             )
 
 
-@dataclass
+@dataclass(slots=True)
 class CurriculumHistory:
     """Mutable, append-only record of training events — pure data, no torch, so CI
-    can assert equality over it for the determinism canary."""
+    can assert equality over it for the determinism canary. Mutate only via
+    ``record`` / ``note_promotion`` so the append-only + canary-equality contract
+    holds (the lists are public for read/equality, not for outside mutation)."""
 
     iterations: list[tuple[str, int, tuple[EpisodeStat, ...]]] = field(default_factory=list)
     promotions: list[tuple[str, int, str]] = field(default_factory=list)

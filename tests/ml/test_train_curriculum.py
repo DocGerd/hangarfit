@@ -90,3 +90,19 @@ def test_argparser_schedule_defaults_to_curriculum():
     parser = build_argparser()
     assert parser.parse_args([]).schedule == "curriculum"
     assert parser.parse_args(["--schedule", "trivial"]).schedule == "trivial"
+
+
+def test_train_curriculum_validates_ladder_eagerly():
+    # A rung whose max_objects exceeds the encoder token capacity must fail by name
+    # BEFORE any training, not as a deep tensorizer overflow several rungs in.
+    bad = Stage(
+        name="too-many",
+        difficulty=DifficultyConfig(max_objects=999),
+        hangar_path="data/hangar.yaml",
+        fleet_path="data/fleet.yaml",
+        fleet_ids=("fuji",),
+        clearance_m=0.05,
+    )
+    sched = CurriculumSchedule(stages=(bad,), policy=PromotionPolicy(window=1, max_iters=1))
+    with pytest.raises(ValueError):
+        train_curriculum(seed=0, schedule=sched, rollout_len=8)

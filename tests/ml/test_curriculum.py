@@ -153,3 +153,41 @@ def test_default_ladder_has_five_named_rungs_spanning_three_dimensions():
 
 def test_default_ladder_passes_validation():
     validate_ladder(DEFAULT_LADDER, encoder_max_objects=EncoderConfig().max_objects)  # no raise
+
+
+def test_promotion_policy_rejects_nonpositive_window():
+    with pytest.raises(ValueError):
+        PromotionPolicy(window=0)
+
+
+def test_promotion_policy_rejects_nonpositive_max_iters():
+    with pytest.raises(ValueError):
+        PromotionPolicy(max_iters=0)
+
+
+def test_promotion_policy_allows_out_of_range_threshold():
+    # threshold > 1 / <= 0 are valid "never/always promote by competency" levers.
+    PromotionPolicy(threshold=2.0)
+    PromotionPolicy(threshold=-1.0)
+
+
+def test_stage_rejects_negative_clearance():
+    with pytest.raises(ValueError):
+        Stage(
+            name="bad",
+            difficulty=DifficultyConfig(max_objects=1),
+            hangar_path="data/hangar.yaml",
+            fleet_path="data/fleet.yaml",
+            clearance_m=-0.1,
+        )
+
+
+def test_stage_rejects_negative_apron():
+    with pytest.raises(ValueError):
+        Stage(
+            name="bad",
+            difficulty=DifficultyConfig(max_objects=1),
+            hangar_path="data/hangar.yaml",
+            fleet_path="data/fleet.yaml",
+            apron_depth_m=-1.0,
+        )

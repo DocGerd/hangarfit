@@ -140,7 +140,14 @@ class HangarFitEnv:
             unknown = [i for i in requested_ids if i not in known]
             if unknown:
                 raise ValueError(f"reset: unknown requested ids {unknown} (known: {sorted(known)})")
-            self.requested_ids = requested_ids
+            # DifficultyConfig.max_objects caps the requested set: truncate here so the
+            # episode size the env actually drives (the queue) matches StepInfo.total /
+            # terminal_fraction, which divide by len(self.requested_ids). Without this a
+            # caller passing more ids than max_objects would make fraction_placed cap
+            # below 1.0 even on a fully-solved episode (silently starving the competency
+            # gate). No-op for the curriculum, whose sample_request draws exactly N.
+            n = self.difficulty.max_objects
+            self.requested_ids = requested_ids if n is None else requested_ids[:n]
         self._reset_state()
         self._spawn()
         self._prev_potential = self._potential()
