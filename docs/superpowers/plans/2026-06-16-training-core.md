@@ -696,7 +696,7 @@ Expected: the `mean_ep_reward` trends upward over iterations (the agent learns t
 git push -u origin feature/607-rung5-training-core
 gh pr create --draft --base develop \
   --title "feat(607): PPO training core (sub-project #4a impl)" \
-  --body "Closes #<RUNG5_ISSUE>. Roll-your-own PPO + python -m ml.train per the design spec (PR #683). PPO mechanics CI-tested (importorskip torch); learning validated by the manual reward curve below. No curriculum (#4b) / eval (#4c). Review arc: code-reviewer + silent-failure-hunter (rollout/GAE edges). <PASTE REWARD CURVE>"
+  --body "Closes #684. Roll-your-own PPO + python -m ml.train per the design spec (PR #683). PPO mechanics CI-tested (importorskip torch); learning validated by the manual reward curve below. No curriculum (#4b) / eval (#4c). Review arc: code-reviewer + silent-failure-hunter (rollout/GAE edges). <PASTE REWARD CURVE>"
 ```
 
 - [ ] **Step 6: Review arc, resolve, ready**
