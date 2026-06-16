@@ -5,12 +5,15 @@ versioned by SCHEMA_VERSION; see docs/architecture/ml-observation-schema.md."""
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass
 
 import numpy as np
 import shapely
 
-from hangarfit.models import Hangar
+from hangarfit.geometry import aircraft_parts_world
+from hangarfit.models import Aircraft, GroundObject, Hangar, Placement
+from ml.types import Observation
 
 SCHEMA_VERSION = 1
 
@@ -69,11 +72,11 @@ def _rasterize(geom: shapely.Geometry | None, config: EncoderConfig) -> np.ndarr
     ``geom``. Deterministic point-in-polygon via ``shapely.contains_xy`` (shapely
     >=2.0; NOT the deprecated ``shapely.vectorized.contains``)."""
     empty = np.zeros((config.grid_h, config.grid_w), dtype=np.float32)
-    if geom is None or geom.is_empty:
+    if geom is None or shapely.is_empty(geom):
         return empty
     _, _, xs, ys = _cell_centers(config)
     xx, yy = np.meshgrid(xs, ys)  # (grid_h, grid_w)
-    inside = shapely.contains_xy(geom, xx, yy)
+    inside = np.asarray(shapely.contains_xy(geom, xx, yy))
     return inside.astype(np.float32)
 
 
@@ -122,3 +125,39 @@ def _static_channels(hangar: Hangar, config: EncoderConfig) -> np.ndarray:
     door_ch = _rasterize(door_poly, config)
 
     return np.stack([oob, bay_ch, apron_ch, door_ch]).astype(np.float32)
+
+
+def _parked_occupancy(
+    obs: Observation, bodies: Mapping[str, Aircraft | GroundObject], config: EncoderConfig
+) -> tuple[np.ndarray, np.ndarray]:
+    """(low, wing): parked part polygons split by z-band at ``z_split_m``. A part
+    paints LOW when it has mass below the split (z_bottom < z_split) and WING when it
+    has mass above it (z_top > z_split); a part spanning the split paints both."""
+    low_polys: list[shapely.Geometry] = []
+    wing_polys: list[shapely.Geometry] = []
+    for po in obs.parked:
+        body = bodies[po.object_id]
+        for wp in aircraft_parts_world(body, po.placement):
+            if wp.z_bottom_m < config.z_split_m:
+                low_polys.append(wp.polygon)
+            if wp.z_top_m > config.z_split_m:
+                wing_polys.append(wp.polygon)
+    low = _rasterize(shapely.union_all(low_polys) if low_polys else None, config)
+    wing = _rasterize(shapely.union_all(wing_polys) if wing_polys else None, config)
+    return low, wing
+
+
+def _active_occupancy(obs: Observation, config: EncoderConfig) -> np.ndarray:
+    """Active object's footprint at its current pose (single band), or zeros if none."""
+    if obs.active is None:
+        return np.zeros((config.grid_h, config.grid_w), dtype=np.float32)
+    a = obs.active
+    placement = Placement(
+        plane_id=a.object_id,
+        x_m=a.pose.x_m,
+        y_m=a.pose.y_m,
+        heading_deg=a.pose.heading_deg,
+        on_carts=a.on_carts,
+    )
+    polys = [wp.polygon for wp in aircraft_parts_world(a.body, placement)]
+    return _rasterize(shapely.union_all(polys) if polys else None, config)

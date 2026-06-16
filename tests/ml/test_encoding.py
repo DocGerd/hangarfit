@@ -5,9 +5,28 @@ from __future__ import annotations
 import numpy as np
 import shapely
 
+from hangarfit.models import Placement
 from ml import encoding
-from ml.encoding import EncoderConfig, _cell_centers, _rasterize, _static_channels
-from tests.ml.conftest import empty_hangar
+from ml.encoding import (
+    EncoderConfig,
+    _active_occupancy,
+    _cell_centers,
+    _parked_occupancy,
+    _rasterize,
+    _static_channels,
+)
+from ml.types import ActiveObject, Observation, ParkedObject, Pose
+from tests.ml.conftest import _fuji, empty_hangar
+
+
+def _obs(*, parked=(), active=None, unplaced=()):
+    return Observation(
+        active=active,
+        parked=tuple(parked),
+        unplaced_ids=tuple(unplaced),
+        steps_this_object=0,
+        steps_total=0,
+    )
 
 
 def test_schema_version_and_dims_constants():
@@ -87,3 +106,36 @@ def test_static_channels_notch_marks_oob():
     oob_base = _static_channels(h, c)[0]
     # the notch adds out-of-floor area inside the outer rectangle
     assert oob.sum() > oob_base.sum()
+
+
+def test_parked_occupancy_has_low_and_wing_bands():
+    c = EncoderConfig()
+    fleet = _fuji()
+    pid = "aviat_husky"  # an aircraft with both low (gear/fuselage) and high (wing) parts
+    pl = Placement(plane_id=pid, x_m=11.0, y_m=12.0, heading_deg=0.0, on_carts=False)
+    obs = _obs(parked=(ParkedObject(object_id=pid, placement=pl),))
+    low, wing = _parked_occupancy(obs, fleet, c)
+    assert low.shape == (192, 96) and wing.shape == (192, 96)
+    assert low.sum() > 0.0  # low parts (gear/fuselage) below z_split
+    assert wing.sum() > 0.0  # wing/tail above z_split
+
+
+def test_active_occupancy_painted_at_pose():
+    c = EncoderConfig()
+    fleet = _fuji()
+    body = fleet["fuji"]
+    active = ActiveObject(
+        object_id="fuji",
+        body=body,
+        pose=Pose(x_m=11.0, y_m=-4.0, heading_deg=0.0),
+        on_carts=False,
+    )
+    obs = _obs(active=active)
+    occ = _active_occupancy(obs, c)
+    assert occ.shape == (192, 96) and occ.sum() > 0.0
+
+
+def test_active_occupancy_empty_when_terminal():
+    c = EncoderConfig()
+    occ = _active_occupancy(_obs(), c)
+    assert occ.sum() == 0.0
