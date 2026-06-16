@@ -5,6 +5,7 @@ env builder lives in ml/stage_builder.py; the torch training loop in ml/train.py
 
 from __future__ import annotations
 
+import random
 from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
@@ -39,3 +40,21 @@ def should_promote(window: Sequence[EpisodeStat], policy: PromotionPolicy) -> bo
     else:
         score = sum(s.fraction_placed for s in recent) / len(recent)
     return score >= policy.threshold
+
+
+_STAGE_RNG_STRIDE = 100003  # a prime, so (seed, stage_index) pairs don't collide
+
+
+def stage_rng(seed: int, stage_index: int) -> random.Random:
+    """A per-stage RNG isolated from torch's global stream. Seeded purely from
+    integers (no str/bytes), so it is reproducible within a build regardless of
+    PYTHONHASHSEED. Keyed by the rung's ladder position so a rung's episode
+    sequence is independent of how many iterations earlier rungs took."""
+    return random.Random(seed * _STAGE_RNG_STRIDE + stage_index)
+
+
+def sample_request(pool: Sequence[str], n: int, rng: random.Random) -> tuple[str, ...]:
+    """Draw a size-``n`` subset (in selection order) from an explicit id ``pool``.
+    Pure over ``pool`` — no disk. ``rng.sample`` raises ValueError if ``n`` exceeds
+    the pool, which is the loud failure we want."""
+    return tuple(rng.sample(list(pool), n))
