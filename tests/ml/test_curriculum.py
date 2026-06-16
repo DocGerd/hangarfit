@@ -191,3 +191,17 @@ def test_stage_rejects_negative_apron():
             fleet_path="data/fleet.yaml",
             apron_depth_m=-1.0,
         )
+
+
+def test_default_promotion_metric_is_valid_placed():
+    assert PromotionPolicy().metric == "valid_placed"
+
+
+def test_should_promote_valid_placed_credits_only_valid_episodes():
+    pol = PromotionPolicy(metric="valid_placed", window=2, threshold=0.5)
+    # both fully placed, but only one valid -> mean(1.0, 0.0) = 0.5 >= 0.5
+    assert should_promote([EpisodeStat(1.0, True, 0.0), EpisodeStat(1.0, False, 0.0)], pol) is True
+    # both fully placed but BOTH invalid -> mean(0.0, 0.0) = 0.0 < 0.5
+    assert (
+        should_promote([EpisodeStat(1.0, False, 0.0), EpisodeStat(1.0, False, 0.0)], pol) is False
+    )

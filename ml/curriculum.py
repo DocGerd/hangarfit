@@ -26,7 +26,11 @@ class EpisodeStat:
 class PromotionPolicy:
     """When to advance to the next (harder) rung."""
 
-    metric: Literal["fraction_placed", "valid_rate"] = "fraction_placed"
+    # The default is the compound "valid_placed": credit fraction_placed only on episodes
+    # whose final layout is collision-free, so a rung advances only when the agent places
+    # the set AND validly. "fraction_placed" ignores validity (can promote on overlapping
+    # parks); "valid_rate" ignores how much got placed. See should_promote.
+    metric: Literal["fraction_placed", "valid_rate", "valid_placed"] = "valid_placed"
     window: int = 20  # most-recent completed episodes to average
     # advance when mean(metric over window) >= threshold. The metric is a rate in
     # [0, 1], so threshold > 1 means "never promote by competency" (always cap) and
@@ -48,7 +52,11 @@ def should_promote(window: Sequence[EpisodeStat], policy: PromotionPolicy) -> bo
     recent = list(window)[-policy.window :]
     if policy.metric == "valid_rate":
         score = sum(1.0 for s in recent if s.valid) / len(recent)
-    else:
+    elif policy.metric == "valid_placed":
+        # compound: credit fraction_placed only when the final layout is valid, so a rung
+        # advances only when the agent places (most of) the set AND collision-free.
+        score = sum(s.fraction_placed if s.valid else 0.0 for s in recent) / len(recent)
+    else:  # fraction_placed
         score = sum(s.fraction_placed for s in recent) / len(recent)
     return score >= policy.threshold
 
