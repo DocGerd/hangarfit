@@ -10,6 +10,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Literal
 
+from ml.types import DifficultyConfig
+
 
 @dataclass(frozen=True, slots=True)
 class EpisodeStat:
@@ -58,3 +60,36 @@ def sample_request(pool: Sequence[str], n: int, rng: random.Random) -> tuple[str
     Pure over ``pool`` — no disk. ``rng.sample`` raises ValueError if ``n`` exceeds
     the pool, which is the loud failure we want."""
     return tuple(rng.sample(list(pool), n))
+
+
+@dataclass(frozen=True, slots=True)
+class Stage:
+    """One rung of the ladder. Holds fleet/hangar as repo-relative PATH STRINGS +
+    scalar overrides — no loading happens here (that is stage_builder.py's job),
+    so this module stays disk-free. DifficultyConfig.seed_anchor is left False;
+    anchored spawning is a later rung, out of 4b scope."""
+
+    name: str
+    difficulty: DifficultyConfig
+    hangar_path: str
+    fleet_path: str
+    # explicit sampling pool; None = whole fleet (resolved in stage_builder)
+    fleet_ids: tuple[str, ...] | None = None
+    clearance_m: float | None = None  # override on the loaded hangar; None = file value
+    wing_layer_clearance_m: float | None = None  # override; None = file value
+    apron_depth_m: float = 8.0  # override; gives the env a spawn region (matches 4a)
+
+
+def validate_ladder(ladder: Sequence[Stage], *, encoder_max_objects: int) -> None:
+    """Pure invariant check (the disk-needing 'max_objects <= len(pool)' check lives
+    in stage_builder.build_stage_env). Raises ValueError on the first violation."""
+    if not ladder:
+        raise ValueError("curriculum ladder is empty")
+    for s in ladder:
+        n = s.difficulty.max_objects
+        if n is None or n < 1:
+            raise ValueError(f"stage {s.name!r}: max_objects must be a positive int, got {n!r}")
+        if n > encoder_max_objects:
+            raise ValueError(
+                f"stage {s.name!r}: max_objects {n} exceeds encoder capacity {encoder_max_objects}"
+            )

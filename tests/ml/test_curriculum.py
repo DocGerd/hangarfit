@@ -7,10 +7,13 @@ import pytest
 from ml.curriculum import (
     EpisodeStat,
     PromotionPolicy,
+    Stage,
     sample_request,
     should_promote,
     stage_rng,
+    validate_ladder,
 )
+from ml.types import DifficultyConfig
 
 
 def test_should_promote_fires_when_windowed_mean_meets_threshold():
@@ -72,3 +75,47 @@ def test_stage_rng_keyed_by_stage_index():
 
 def test_stage_rng_keyed_by_seed():
     assert stage_rng(0, 0).random() != stage_rng(1, 0).random()
+
+
+def _stage(
+    name="s", n=1, hangar="data/hangar.yaml", fleet="data/fleet.yaml", ids=None, clearance=0.05
+):
+    return Stage(
+        name=name,
+        difficulty=DifficultyConfig(max_objects=n, per_object_step_budget=40, total_step_budget=40),
+        hangar_path=hangar,
+        fleet_path=fleet,
+        fleet_ids=ids,
+        clearance_m=clearance,
+    )
+
+
+def test_validate_ladder_accepts_a_valid_ladder():
+    validate_ladder((_stage(n=1), _stage(n=2)), encoder_max_objects=16)  # no raise
+
+
+def test_validate_ladder_rejects_empty():
+    with pytest.raises(ValueError):
+        validate_ladder((), encoder_max_objects=16)
+
+
+def test_validate_ladder_rejects_max_objects_over_encoder_cap():
+    with pytest.raises(ValueError):
+        validate_ladder((_stage(n=17),), encoder_max_objects=16)
+
+
+def test_validate_ladder_rejects_none_or_nonpositive_max_objects():
+    bad = Stage(
+        name="bad",
+        difficulty=DifficultyConfig(max_objects=None),
+        hangar_path="data/hangar.yaml",
+        fleet_path="data/fleet.yaml",
+    )
+    with pytest.raises(ValueError):
+        validate_ladder((bad,), encoder_max_objects=16)
+
+
+def test_stage_defaults():
+    s = _stage()
+    assert s.apron_depth_m == 8.0
+    assert s.wing_layer_clearance_m is None
