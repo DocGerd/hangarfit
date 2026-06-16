@@ -66,12 +66,18 @@ ml/curriculum.py   (PURE: no torch, no disk IO)
 ml/env.py     (torch-free already)
   reset(requested_ids: tuple[str, ...] | None = None)   — NEW optional override; None = 4a byte-identical
 
+ml/stage_builder.py   (disk IO, NO torch — so it is genuinely CI-testable without the [train] extra)
+  effective_fleet_ids(stage) -> tuple[str, ...]  — DISK pool resolver: stage.fleet_ids if set,
+                                                   else tuple(load_fleet(stage.fleet_path).keys())
+  build_stage_env(stage) -> HangarFitEnv         — load_hangar/load_fleet + dataclasses.replace overrides
+  (split out of train.py precisely BECAUSE train.py imports torch at module level — keeping these here
+   lets their tests run in the no-torch CI rather than importorskip-ing the torch extra.)
+
 ml/train.py   (torch)
-  build_stage_env(stage) -> HangarFitEnv   — load_hangar/load_fleet + dataclasses.replace overrides
-  effective_fleet_ids(stage) -> tuple[str, ...]  — the DISK-touching pool resolver: stage.fleet_ids
-                                                   if set, else tuple(load_fleet(stage.fleet_path).keys())
   collect_rollout(..., sample_request=None) -> (RolloutBuffer, list[EpisodeStat])   — extended
-  train_curriculum(*, seed, schedule, policy, ...) -> CurriculumHistory   — the ladder loop
+  train_curriculum(*, seed, schedule, ...) -> CurriculumHistory   — the ladder loop (imports
+                                              build_stage_env/effective_fleet_ids from stage_builder)
+  train(...)   — the 4a trivial trainer, adapted to the new list[EpisodeStat] return
   main()   — gains --schedule {trivial,curriculum}
 ```
 
@@ -115,7 +121,7 @@ Five rungs spanning all three dimensions (≥3 rungs / ≥2 dimensions, with mar
 > **Note on rung 0 vs 4a.** 4a's `_TRIVIAL_DIFFICULTY` uses `data/hangar.yaml`'s file clearance (0.3) and `requested_ids=("fuji",)`. Rung 0 may lower the clearance to a lenient value to give the agent an easier launch; the exact value is tuned. The 4a single-stage command remains reachable via `--schedule trivial`, which keeps `build_trivial_env` exactly as-is (byte-identical).
 
 ### 5.1 Hard invariants the ladder must satisfy (enforced + tested)
-**Definition — *effective fleet ids* of a rung:** `stage.fleet_ids` when set, else the keys of `load_fleet(stage.fleet_path)`. `load_fleet` yields **aircraft only** (a manifest's `ground_objects:` section loads via a separate path and is never returned by `load_fleet`), so "aircraft only" (§2) holds automatically — no extra filter needed, even for `herrenteich/fleet.yaml` which also lists 4 ground objects. This resolution is the **only disk touch** and lives in `train.py`'s `effective_fleet_ids(stage)` (resolved **once per rung**); the pure `sample_request(pool, n, rng)` in `curriculum.py` then draws from that already-resolved pool, so `curriculum.py` stays disk-free and unit-testable over a literal id list.
+**Definition — *effective fleet ids* of a rung:** `stage.fleet_ids` when set, else the keys of `load_fleet(stage.fleet_path)`. `load_fleet` yields **aircraft only** (a manifest's `ground_objects:` section loads via a separate path and is never returned by `load_fleet`), so "aircraft only" (§2) holds automatically — no extra filter needed, even for `herrenteich/fleet.yaml` which also lists 4 ground objects. This resolution is the **only disk touch** and lives in `stage_builder.py`'s `effective_fleet_ids(stage)` (resolved **once per rung**); the pure `sample_request(pool, n, rng)` in `curriculum.py` then draws from that already-resolved pool, so `curriculum.py` stays disk-free and unit-testable over a literal id list.
 
 1. **Encoder capacity:** every rung's `difficulty.max_objects ≤ EncoderConfig.max_objects` (the token-tensor height). `DifficultyConfig.max_objects` caps the *requested* set; `EncoderConfig.max_objects` is the *fixed token capacity* — the curriculum is the component responsible for never letting the first exceed the second (the `_tokens` `ValueError` guard already names "the curriculum").
 2. **Sampleable:** `difficulty.max_objects ≤ len(effective fleet ids)` for each rung (can't request more objects than the rung's fleet offers).
@@ -238,7 +244,7 @@ This trainer is **not** under ADR-0003 / `determinism-guard` (those guard `solve
 ### 9.1 CI unit tests (no torch — `ml/curriculum.py` + the env change)
 - **Ladder invariants:** `DEFAULT_LADDER` non-empty; every rung satisfies `max_objects ≤ EncoderConfig.max_objects` and `max_objects ≤ len(effective fleet ids)`; difficulty is non-decreasing along the dimensions it ramps (sanity).
 - **`sample_request(pool, n, rng)`:** over a literal id pool — seeded determinism (two RNGs seeded alike → identical successive draws); correct size (`= n`); membership ⊆ `pool`; no duplicates within a draw; raises on `n > len(pool)`.
-- **`effective_fleet_ids(stage)`** (in `train.py`, but torch-free so CI-testable): returns `stage.fleet_ids` verbatim when set; else the `load_fleet(stage.fleet_path)` keys (aircraft only — a herrenteich stage with `fleet_ids=None` excludes the 4 ground objects).
+- **`effective_fleet_ids(stage)` + `build_stage_env(stage)`** (in `stage_builder.py`, torch-free → runs in the no-torch CI): `effective_fleet_ids` returns `stage.fleet_ids` verbatim when set, else the `load_fleet(stage.fleet_path)` keys (aircraft only — a herrenteich stage with `fleet_ids=None` excludes the 4 ground objects); `build_stage_env` applies the `clearance_m`/`apron_depth_m` overrides via `replace` and constructs a `HangarFitEnv` whose `difficulty` is the stage's.
 - **`should_promote`:** returns `False` until `window` episodes accumulate; fires exactly when the windowed mean ≥ θ; honors both `metric` variants; a sub-threshold window never promotes.
 - **`env.reset(requested_ids=…)`:** override sets the queue + terminal-fraction denominator; `reset(None)` is byte-identical to the pre-4b `reset()` (a regression guard so 4a stays untouched).
 
