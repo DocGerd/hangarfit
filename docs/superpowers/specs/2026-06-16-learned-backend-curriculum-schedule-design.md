@@ -60,7 +60,8 @@ ml/curriculum.py   (PURE: no torch, no disk IO)
   DEFAULT_LADDER: tuple[Stage, ...]   — the committed 5-rung ramp (§5)
   sample_request(stage, rng) -> tuple[str, ...]   — seeded size-N subset draw
   should_promote(window, policy) -> bool          — pure gate over the last-K stats
-  CurriculumSchedule(frozen)          — (stages, policy); convenience accessor
+  CurriculumSchedule(frozen)          — (stages, policy); CurriculumSchedule.default() wraps DEFAULT_LADDER + a default PromotionPolicy
+  CurriculumHistory                   — mutable, append-only recorder of per-(stage,iter) EpisodeStats + promotion events (record(), note_promotion(stage, iter, by=...)); pure data, no torch, lives here so CI can assert over it
 
 ml/env.py     (torch-free already)
   reset(requested_ids: tuple[str, ...] | None = None)   — NEW optional override; None = 4a byte-identical
@@ -83,6 +84,8 @@ ml/train.py   (torch)
 class Stage:
     name: str
     difficulty: DifficultyConfig          # existing knobs: max_objects, per_object_step_budget, total_step_budget
+                                          # (DifficultyConfig.seed_anchor also exists but is OUT of 4b scope — anchored
+                                          #  spawning near a known-valid anchor is a later rung; the ladder leaves it False)
     hangar_path: str                      # repo-relative; resolved against the repo root in build_stage_env
     fleet_path: str                       # repo-relative manifest to sample from
     fleet_ids: tuple[str, ...] | None = None   # optional allow-list to sample WITHIN (None = whole fleet)
@@ -91,23 +94,27 @@ class Stage:
     apron_depth_m: float = 8.0            # matches 4a's build_trivial_env apron
 ```
 
-`clearance_m` ramps difficulty by overriding the loaded `Hangar` via `dataclasses.replace` — **no new `DifficultyConfig` field**; clearance is already a `Hangar` property read through `collisions.check`. **Clearance direction = easy→hard:** a *small* required gap is lenient (parts may sit close and still be valid); the ramp increases it toward the real strict value.
+`clearance_m` ramps difficulty by overriding the loaded `Hangar` via `dataclasses.replace` — **no new `DifficultyConfig` field**; clearance is already a `Hangar` property read through `collisions.check`. **Clearance direction = easy→hard:** a *smaller* required gap is lenient (parts may sit close and still be valid); a *larger* required gap is strict (parts must be well-separated to be valid), so the ramp increases `clearance_m` toward the real value.
+
+> **Real clearance reference (verify before pinning values).** `examples/herrenteich/hangar.yaml` carries `clearance_m: 0.10` (horizontal) / `wing_layer_clearance_m: 0.15` since the #664 recalibration (its prior 0.20 was "too loose to reproduce reality"); `data/hangar.yaml` (box) carries the looser placeholder `clearance_m: 0.3`. So the ladder's lenient rungs deliberately **override to ~0.05** — genuinely below the 0.10 real value — and only the final rung tightens to the herrenteich file value (0.10), giving a real easy→hard ramp (0.05 → 0.10) instead of the two coinciding.
 
 **`DEFAULT_LADDER`** — order *object count → hangar shape → clearance* (env design §7). Rung 0 **is** 4a's trivial stage (continuity):
 
 | # | `name` | hangar | clearance (illustrative) | N objects | fleet source | new dimension |
 |---|---|---|---|---|---|---|
-| 0 | `trivial` | box (`data/hangar.yaml`) | lenient (~0.10) | 1 | synthetic `data/fleet.yaml` | baseline = 4a |
-| 1 | `pair-box` | box | lenient (~0.10) | 2 | synthetic | **count** |
-| 2 | `trio-box` | box | lenient (~0.10) | 3 | synthetic | **count** |
-| 3 | `trio-notch` | L-notch (`examples/herrenteich/hangar.yaml`) | lenient (~0.10) | 3 | herrenteich (aircraft only) | **hangar shape** |
-| 4 | `trio-notch-strict` | L-notch | real strict (~0.20) | 3 | herrenteich | **clearance** |
+| 0 | `trivial` | box (`data/hangar.yaml`) | lenient (~0.05) | 1 | synthetic `data/fleet.yaml` | baseline = 4a |
+| 1 | `pair-box` | box | lenient (~0.05) | 2 | synthetic | **count** |
+| 2 | `trio-box` | box | lenient (~0.05) | 3 | synthetic | **count** |
+| 3 | `trio-notch` | L-notch (`examples/herrenteich/hangar.yaml`) | lenient (~0.05) | 3 | herrenteich (aircraft only) | **hangar shape** |
+| 4 | `trio-notch-strict` | L-notch | real strict (herrenteich file, 0.10) | 3 | herrenteich | **clearance** |
 
 Five rungs spanning all three dimensions (≥3 rungs / ≥2 dimensions, with margin). **Scalar values (N, clearance, step budgets) are a tuning surface** finalized during manual learn-validation; only the *shape* of the ladder is committed here.
 
 > **Note on rung 0 vs 4a.** 4a's `_TRIVIAL_DIFFICULTY` uses `data/hangar.yaml`'s file clearance (0.3) and `requested_ids=("fuji",)`. Rung 0 may lower the clearance to a lenient value to give the agent an easier launch; the exact value is tuned. The 4a single-stage command remains reachable via `--schedule trivial`, which keeps `build_trivial_env` exactly as-is (byte-identical).
 
 ### 5.1 Hard invariants the ladder must satisfy (enforced + tested)
+**Definition — *effective fleet ids* of a rung:** `stage.fleet_ids` when set, else the keys of `load_fleet(stage.fleet_path)`. `load_fleet` yields **aircraft only** (a manifest's `ground_objects:` section loads via a separate path and is never returned by `load_fleet`), so "aircraft only" (§2) holds automatically — no extra filter needed, even for `herrenteich/fleet.yaml` which also lists 4 ground objects.
+
 1. **Encoder capacity:** every rung's `difficulty.max_objects ≤ EncoderConfig.max_objects` (the token-tensor height). `DifficultyConfig.max_objects` caps the *requested* set; `EncoderConfig.max_objects` is the *fixed token capacity* — the curriculum is the component responsible for never letting the first exceed the second (the `_tokens` `ValueError` guard already names "the curriculum").
 2. **Sampleable:** `difficulty.max_objects ≤ len(effective fleet ids)` for each rung (can't request more objects than the rung's fleet offers).
 3. **Non-empty, ordered:** `DEFAULT_LADDER` is a non-empty tuple; rungs are climbed in tuple order.
@@ -121,6 +128,9 @@ Five rungs spanning all three dimensions (≥3 rungs / ≥2 dimensions, with mar
 class EpisodeStat:
     fraction_placed: float   # placed / total from the terminal StepInfo
     valid: bool              # StepInfo.valid (overlap == 0) at episode end
+    total_reward: float      # sum of step rewards over the episode — keeps the 4a reward curve
+                             # alive now that collect_rollout returns EpisodeStats instead of a bare
+                             # ep_rewards list; EpisodeStat stays the single source for the per-iter log
 
 @dataclass(frozen=True, slots=True)
 class PromotionPolicy:
@@ -159,20 +169,22 @@ def reset(self, requested_ids: tuple[str, ...] | None = None) -> Observation:
 ```
 - `None` ⇒ unchanged from 4a (the existing fixed `self.requested_ids`), so every 4a path and the within-build canary stay **byte-identical**.
 - When provided, the override flows through `_reset_state` (which builds `self._queue` from `self.requested_ids`) and through every `len(self.requested_ids)` terminal-fraction denominator — so a 3-object sampled episode scores out of 3 correctly.
-- Validation: `requested_ids` must be non-empty and every id must resolve in `fleet ∪ ground_objects` (else a loud `ValueError`, consistent with 4a's silent-failure hardening).
+- Validation (**net-new** guard, not preserving existing behavior): when `requested_ids` is provided it must be non-empty and every id must resolve in `fleet ∪ ground_objects`, else a loud `ValueError`. Today an unknown id surfaces later as a `KeyError` from `_body()` mid-`step`; this moves the failure to `reset` and makes it explicit (consistent with 4a's silent-failure hardening).
 
 ### 7.2 `collect_rollout` extension
 ```python
 def collect_rollout(env, policy, encoder, rollout_len, *, sample_request=None):
     ...
     if done:
-        ep_stats.append(EpisodeStat(fraction_placed=info.placed / info.total, valid=info.valid))
+        # info.total = len(requested_ids) ≥ 1 by the §7.1 non-empty invariant, so the division is safe.
+        ep_stats.append(EpisodeStat(
+            fraction_placed=info.placed / info.total, valid=info.valid, total_reward=ep_reward))
         obs = env.reset(requested_ids=sample_request() if sample_request else None)
     ...
     return buf, ep_stats   # was: buf, ep_rewards
 ```
 - `sample_request=None` keeps 4a's fixed-set behavior; the curriculum loop passes `lambda: sample_request(stage, rng)`.
-- Return type widens from `list[float]` (mean-reward) to `list[EpisodeStat]`; the per-iteration reward log derives `mean_ep_reward` from the buffer's per-episode reward sums (kept for the curve) **and** the competency stats (for promotion). (4a's reward-curve logging is preserved.)
+- Return type widens from `list[float]` (mean-reward) to `list[EpisodeStat]`. `ep_reward` is the per-episode reward accumulator 4a already maintains (`train.py:83-85`); it is now carried on `EpisodeStat.total_reward` so the per-iteration `mean_ep_reward` log derives from the **same** stats object as the competency gate — `EpisodeStat` stays the single source, and 4a's reward-curve logging is preserved without a new buffer-reduction helper.
 
 ### 7.3 `train_curriculum`
 ```python
