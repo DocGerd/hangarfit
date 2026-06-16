@@ -564,7 +564,7 @@ git commit -m "docs(607): CHANGELOG for the policy network (sub-project #3)"
 git push -u origin feature/607-rung4-policy
 gh pr create --draft --base develop \
   --title "feat(607): policy network architecture (sub-project #3 impl)" \
-  --body "Closes #<RUNG4_ISSUE>. Implements the cold-joint policy network per the design spec (PR #679). action_space.py is pure (CI-tested); policy.py needs the [train] torch extra (tests importorskip; dedicated torch CI job in #6). Review arc: code-reviewer + type-design-analyzer (new PolicyOutput/action types). No geometry/solver/towplanner change -> geometry-invariant-guard / determinism-guard not required."
+  --body "Closes #680. Implements the cold-joint policy network per the design spec (PR #679). action_space.py is pure (CI-tested); policy.py needs the [train] torch extra (tests importorskip; dedicated torch CI job in #6). Review arc: code-reviewer + type-design-analyzer (new PolicyOutput/action types). No geometry/solver/towplanner change -> geometry-invariant-guard / determinism-guard not required."
 ```
 
 - [ ] **Step 6: Review arc, resolve, ready**
