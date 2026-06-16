@@ -146,6 +146,17 @@ All notable changes to this project are documented here. Format follows [Keep a 
   `importorskip` torch. No PPO loop / curriculum / rollouts yet. Sub-project #3 of the
   learned backend (epic #607).
 
+- **Cold-joint PPO training core (`ml/ppo.py` + `ml/train.py`, #607/#684).** Added a
+  roll-your-own (cleanrl-style) PPO that drives `HangarFitEnv` + `HangarFitPolicy`
+  directly: `ml/ppo.py` (`RolloutBuffer`, GAE-λ `compute_gae`, clipped-surrogate
+  `ppo_update`, the PARK-gated factored log-prob/entropy) and `ml/train.py` —
+  `python -m ml.train` — which trains the policy on the fixed trivial curriculum stage
+  (one object driven in from the apron and parked in a loose hangar) and logs a reward
+  curve. Seedable / within-build deterministic (ADR-0027). Contributor-only (the
+  `[train]` torch extra; the PPO tests `importorskip` torch). The curriculum schedule
+  (#4b) and the reach-not-beat eval (#4c) are separate. Sub-project #4a of the learned
+  backend (epic #607).
+
 ### Changed
 
 - **Herrenteich dataset realism pass (#657/#658/#659).** Tightened the real
