@@ -134,6 +134,18 @@ All notable changes to this project are documented here. Format follows [Keep a 
   (`ml/` is not in the wheel); no new runtime dependency. Sub-project #2 of the
   learned backend (epic #607).
 
+- **Cold-joint policy network (`ml/policy.py` + `ml/action_space.py`, #607/#680).**
+  Added the policy + value `torch` `nn.Module`: a CNN over the observation raster +
+  masked self-attention over the object tokens → the active-object embedding → a
+  legal-mask-gated `(kind,gear)` head + a `K=5` magnitude-bin head + a value head
+  (movement-mode illegality hard-masked to −inf; collision stays a soft reward term).
+  `ml/action_space.py` is the pure (no-torch) action contract: the factored-discrete
+  bins + `decode(…, *, turn_radius_m) → Primitive | Park` in the units the env expects
+  (radians for cart pivots, metres otherwise), reusing `encoding`'s canonical action
+  order. Contributor-only — the new `[train]` (`torch`) extra; the network tests
+  `importorskip` torch. No PPO loop / curriculum / rollouts yet. Sub-project #3 of the
+  learned backend (epic #607).
+
 ### Changed
 
 - **Herrenteich dataset realism pass (#657/#658/#659).** Tightened the real
