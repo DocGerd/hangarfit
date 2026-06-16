@@ -41,3 +41,30 @@ def factored_logprob_entropy(
     logprob = kind_dist.log_prob(kind_idx) + not_park * mag_dist.log_prob(mag_idx)
     entropy = kind_dist.entropy() + not_park * mag_dist.entropy()
     return logprob, entropy
+
+
+def compute_gae(
+    rewards: Tensor,
+    values: Tensor,
+    dones: Tensor,
+    last_value: float,
+    *,
+    gamma: float = 0.99,
+    lam: float = 0.95,
+) -> tuple[Tensor, Tensor]:
+    """GAE-λ advantages + returns. Every `done` is a true terminal (the env emits a
+    terminal reward at both set-complete and budget-stop — §4.5): on a `done` step the
+    bootstrap is zeroed and the λ-recursion resets. `last_value` (a forward on the
+    post-buffer live obs) is used only for a non-`done` buffer tail."""
+    n = rewards.shape[0]
+    advantages = torch.zeros(n)
+    last_gae = 0.0
+    for t in reversed(range(n)):
+        nonterminal = 1.0 - float(dones[t])
+        next_value = last_value if t == n - 1 else float(values[t + 1])
+        next_value = next_value * nonterminal
+        delta = float(rewards[t]) + gamma * next_value - float(values[t])
+        last_gae = delta + gamma * lam * nonterminal * last_gae
+        advantages[t] = last_gae
+    returns = advantages + values
+    return advantages, returns
