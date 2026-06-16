@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import math
+
 import pytest
 
 torch = pytest.importorskip("torch")
@@ -216,3 +218,66 @@ def test_train_is_seed_reproducible():
     a = train(seed=7, **kw)
     b = train(seed=7, **kw)
     assert a == b
+
+
+# ---------------------------------------------------------------------------
+# Hardening: silent-failure guards (harden(607))
+# ---------------------------------------------------------------------------
+
+
+def test_train_no_completed_episodes_is_nan(monkeypatch):
+    # An episode ends either on PARK (set complete) or on a budget stop. Force every
+    # step to be a non-PARK movement (kind 0 is always a legal movement primitive) so
+    # that, with rollout_len (8) < the 40-step budget, NO episode completes this
+    # iteration -> the curve must record NaN ("0 episodes"), not a misleading 0.0.
+    import ml.train as train_mod
+
+    monkeypatch.setattr(train_mod, "sample_action", lambda out: (torch.tensor(0), torch.tensor(0)))
+    history = train(
+        seed=0,
+        iterations=1,
+        rollout_len=8,
+        policy_kwargs={"d_model": 32, "n_layers": 1, "n_heads": 2},
+    )
+    assert len(history) == 1
+    assert math.isnan(history[0])
+
+
+def test_ppo_update_degenerate_advantages_stay_finite():
+    # All values/rewards identical -> advantage std ≈ 0; the normalization guard must
+    # keep everything finite (center-only, no /std blow-up).
+    torch.manual_seed(0)
+    policy = HangarFitPolicy(d_model=32, n_layers=1, n_heads=2)
+    buf = RolloutBuffer()
+    with torch.no_grad():
+        for _ in range(16):
+            o = _obs_t()
+            out = policy(to_batch([o]))
+            kind, mag = sample_action(out)
+            lp, _ = factored_logprob_entropy(out, kind, mag)
+            buf.add(
+                o,
+                kind_idx=int(kind),
+                mag_idx=int(mag),
+                logprob=float(lp),
+                value=0.5,  # identical values
+                reward=0.5,  # identical rewards
+                done=False,
+            )
+    buf.last_value = 0.5
+    opt = torch.optim.Adam(policy.parameters(), lr=3e-4)
+    metrics = ppo_update(policy, opt, buf, PPOConfig(minibatch_size=8))
+    assert all(math.isfinite(v) for v in metrics.values())
+    assert all(torch.isfinite(p).all() for p in policy.parameters())
+
+
+def test_sample_action_all_illegal_raises():
+    # A row whose kind logits are all -inf (no legal action) must fail loud, not sample
+    # garbage from a degenerate distribution.
+    out = PolicyOutput(
+        kind_gear_logits=torch.full((1, ACTION_DIM), float("-inf")),
+        magnitude_bin_logits=torch.zeros(1, MAGNITUDE_DIM),
+        value=torch.zeros(1),
+    )
+    with pytest.raises(ValueError, match="all kind logits are -inf"):
+        sample_action(out)

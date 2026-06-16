@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 from dataclasses import replace
+from pathlib import Path
 
 import torch
 
@@ -26,9 +27,17 @@ _TRIVIAL_DIFFICULTY = DifficultyConfig(
 
 
 def build_trivial_env(seed: int = 0) -> HangarFitEnv:
-    """A 1-object, loose-hangar, small-budget env — the easiest curriculum rung."""
-    fleet = load_fleet("data/fleet.yaml")
-    hangar = replace(load_hangar("data/hangar.yaml"), apron_depth_m=8.0)
+    """A 1-object, loose-hangar, small-budget env — the easiest curriculum rung.
+
+    seed is accepted for forward-compat (#4b); the trivial env itself is deterministic
+    (no RNG), so it is unused here.
+    """
+    _ = seed  # reserved for #4b object-set sampling; the trivial env has no RNG
+    root = Path(__file__).resolve().parent.parent
+    fleet = load_fleet(str(root / "data/fleet.yaml"))
+    if "fuji" not in fleet:
+        raise ValueError(f"build_trivial_env: 'fuji' not in fleet (available: {sorted(fleet)})")
+    hangar = replace(load_hangar(str(root / "data/hangar.yaml")), apron_depth_m=8.0)
     return HangarFitEnv(
         hangar=hangar,
         fleet=fleet,
@@ -106,11 +115,17 @@ def train(
     for it in range(iterations):
         buf, ep_rewards = collect_rollout(env, policy, enc, rollout_len)
         metrics = ppo_update(policy, optimizer, buf, cfg)
-        mean_r = sum(ep_rewards) / len(ep_rewards) if ep_rewards else 0.0
+        # NaN (not 0.0) when no episode finished within the rollout, so a short rollout
+        # is not mistaken for a genuine zero-reward iteration in the curve.
+        mean_r = sum(ep_rewards) / len(ep_rewards) if ep_rewards else float("nan")
         history.append(mean_r)
         if log:
+            if ep_rewards:
+                reward_str = f"mean_ep_reward={mean_r:+.3f}  n_eps={len(ep_rewards)}"
+            else:
+                reward_str = "mean_ep_reward=N/A (0 episodes)"
             print(
-                f"iter {it:4d}  mean_ep_reward={mean_r:+.3f}  "
+                f"iter {it:4d}  {reward_str}  "
                 f"loss={metrics['loss']:+.3f}  entropy={metrics['entropy']:.3f}"
             )
     return history

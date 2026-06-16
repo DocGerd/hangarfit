@@ -55,7 +55,9 @@ def compute_gae(
     """GAE-λ advantages + returns. Every `done` is a true terminal (the env emits a
     terminal reward at both set-complete and budget-stop — §4.5): on a `done` step the
     bootstrap is zeroed and the λ-recursion resets. `last_value` (a forward on the
-    post-buffer live obs) is used only for a non-`done` buffer tail."""
+    post-buffer live obs) is used only for a non-`done` buffer tail. `last_value` is
+    multiplied by `(1 - dones[-1])` internally, so passing a non-zero `last_value` for a
+    terminal tail step is safe — it is zeroed when the final step is itself a `done`."""
     n = rewards.shape[0]
     advantages = torch.zeros(n)
     last_gae = 0.0
@@ -73,6 +75,10 @@ def compute_gae(
 def sample_action(out: PolicyOutput) -> tuple[Tensor, Tensor]:
     """Sample (kind_idx, mag_idx) from the masked kind head + the magnitude head.
     The kind logits are already -inf-masked, so an illegal kind is never sampled."""
+    if not out.kind_gear_logits.isfinite().any(dim=-1).all():
+        raise ValueError(
+            "sample_action: all kind logits are -inf in a batch row (terminal observation?)"
+        )
     kind = torch.distributions.Categorical(logits=out.kind_gear_logits).sample()
     mag = torch.distributions.Categorical(logits=out.magnitude_bin_logits).sample()
     return kind, mag
@@ -132,7 +138,8 @@ def ppo_update(
     config: PPOConfig,
 ) -> dict[str, float]:
     """One PPO update over the buffer: GAE, then `epochs` of clipped-surrogate +
-    value-loss + entropy-bonus over shuffled minibatches. Returns last-minibatch metrics."""
+    value-loss + entropy-bonus over shuffled minibatches. Returns the metrics averaged
+    over every minibatch in the update (not just the last one)."""
     data = buffer.batch()
     advantages, returns = compute_gae(
         data["reward"],
@@ -142,9 +149,23 @@ def ppo_update(
         gamma=config.gamma,
         lam=config.lam,
     )
-    advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+    # Degenerate (≈zero-variance) advantages make the usual /std normalization
+    # numerically meaningless — a tiny std can blow up or NaN the ratios. Center only
+    # in that case; normalize otherwise. Then assert finiteness so a bad batch fails
+    # loud instead of silently poisoning the gradient.
+    advantages = advantages - advantages.mean()
+    std = advantages.std()
+    if torch.isfinite(std) and std >= 1e-6:
+        advantages = advantages / std
+    if not torch.isfinite(advantages).all():
+        raise RuntimeError("advantages contain NaN/inf after normalization")
     n = len(buffer)
-    metrics: dict[str, float] = {}
+    accum: dict[str, list[float]] = {
+        "policy_loss": [],
+        "value_loss": [],
+        "entropy": [],
+        "loss": [],
+    }
     for _ in range(config.epochs):
         perm = torch.randperm(n)
         for start in range(0, n, config.minibatch_size):
@@ -169,10 +190,8 @@ def ppo_update(
             loss.backward()
             torch.nn.utils.clip_grad_norm_(policy.parameters(), config.max_grad_norm)
             optimizer.step()
-            metrics = {
-                "policy_loss": policy_loss.item(),
-                "value_loss": value_loss.item(),
-                "entropy": entropy_bonus.item(),
-                "loss": loss.item(),
-            }
-    return metrics
+            accum["policy_loss"].append(policy_loss.item())
+            accum["value_loss"].append(value_loss.item())
+            accum["entropy"].append(entropy_bonus.item())
+            accum["loss"].append(loss.item())
+    return {k: sum(vs) / len(vs) for k, vs in accum.items()}
