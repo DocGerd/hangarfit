@@ -10,6 +10,8 @@ from dataclasses import dataclass
 import numpy as np
 import shapely
 
+from hangarfit.models import Hangar
+
 SCHEMA_VERSION = 1
 
 # Canonical discrete action order for the legal-action mask. Magnitude is a
@@ -73,3 +75,50 @@ def _rasterize(geom: shapely.Geometry | None, config: EncoderConfig) -> np.ndarr
     xx, yy = np.meshgrid(xs, ys)  # (grid_h, grid_w)
     inside = shapely.contains_xy(geom, xx, yy)
     return inside.astype(np.float32)
+
+
+def _floor_polygon(hangar: Hangar) -> shapely.Geometry:
+    fp = hangar.floor_polygon
+    if fp is None:
+        return shapely.box(0.0, 0.0, hangar.width_m, hangar.length_m)
+    return fp
+
+
+def _static_channels(hangar: Hangar, config: EncoderConfig) -> np.ndarray:
+    """(4, grid_h, grid_w): [oob, bay, apron, door]."""
+    origin_x, origin_y, xs, ys = _cell_centers(config)
+    window = shapely.box(
+        origin_x,
+        origin_y,
+        origin_x + config.grid_w * config.cell_m,
+        origin_y + config.grid_h * config.cell_m,
+    )
+    # oob: window minus the hangar floor (includes the L-notch and the apron band)
+    oob = _rasterize(window.difference(_floor_polygon(hangar)), config)
+
+    bay = hangar.maintenance_bay
+    bay_poly = shapely.box(
+        bay.center_x_m - bay.width_m / 2.0,
+        hangar.length_m - bay.depth_m,
+        bay.center_x_m + bay.width_m / 2.0,
+        hangar.length_m,
+    )
+    bay_ch = _rasterize(bay_poly, config)
+
+    # apron: full-width band y in [-apron_depth, 0)
+    apron_depth = hangar.apron_depth_m or 0.0
+    apron_ch = np.zeros((config.grid_h, config.grid_w), dtype=np.float32)
+    apron_rows = (ys >= -apron_depth) & (ys < 0.0)
+    apron_ch[apron_rows, :] = 1.0
+
+    # door: a one-cell-thick band across the door opening on the front wall (y≈0)
+    door = hangar.door
+    door_poly = shapely.box(
+        door.center_x_m - door.width_m / 2.0,
+        -config.cell_m,
+        door.center_x_m + door.width_m / 2.0,
+        config.cell_m,
+    )
+    door_ch = _rasterize(door_poly, config)
+
+    return np.stack([oob, bay_ch, apron_ch, door_ch]).astype(np.float32)
