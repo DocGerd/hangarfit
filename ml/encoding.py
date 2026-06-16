@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from collections.abc import Mapping
 from dataclasses import dataclass
+from types import MappingProxyType
 
 import numpy as np
 import shapely
@@ -54,7 +55,7 @@ class ObservationTensors:
     token_mask: np.ndarray  # (max_objects,) bool
     active_index: int  # row of the active object, or -1 at a terminal state
     legal_action_mask: np.ndarray  # (ACTION_DIM,) bool
-    meta: dict[str, float]
+    meta: Mapping[str, float]
     schema_version: int = SCHEMA_VERSION
 
 
@@ -280,3 +281,47 @@ def _legal_action_mask(obs: Observation, config: EncoderConfig) -> np.ndarray:
             mask[idx] = True
     mask[PARK_INDEX] = True
     return mask
+
+
+# ---------------------------------------------------------------------------
+# Task 7: Public encode() + determinism
+# ---------------------------------------------------------------------------
+
+_DEFAULT_CONFIG = EncoderConfig()
+
+
+def encode(
+    obs: Observation,
+    hangar: Hangar,
+    bodies: Mapping[str, Aircraft | GroundObject],
+    config: EncoderConfig = _DEFAULT_CONFIG,
+) -> ObservationTensors:
+    """Tensorize a semantic Observation. Pure + deterministic (no RNG).
+
+    ``bodies`` is fleet ∪ ground_objects (Observation.parked carries only
+    id+Placement, so the encoder looks each body up for its polygons and features).
+    ``meta`` is a read-only mapping of floats for debugging / un-normalization."""
+    static = _static_channels(hangar, config)  # (4, H, W)
+    low, wing = _parked_occupancy(obs, bodies, config)
+    active_occ = _active_occupancy(obs, config)
+    raster = np.concatenate([static, np.stack([low, wing, active_occ])], axis=0).astype(np.float32)
+    tokens, token_mask, active_index = _tokens(obs, bodies, config)
+    legal = _legal_action_mask(obs, config)
+    meta: dict[str, float] = {
+        "cell_m": float(config.cell_m),
+        "origin_x_m": 0.0,
+        "origin_y_m": float(-config.apron_band_m),
+        "grid_h": float(config.grid_h),
+        "grid_w": float(config.grid_w),
+        "steps_this_object": float(obs.steps_this_object),
+        "steps_total": float(obs.steps_total),
+    }
+    return ObservationTensors(
+        raster=raster,
+        tokens=tokens,
+        token_mask=token_mask,
+        active_index=active_index,
+        legal_action_mask=legal,
+        meta=MappingProxyType(meta),
+        schema_version=SCHEMA_VERSION,
+    )

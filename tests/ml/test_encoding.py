@@ -10,6 +10,7 @@ from ml import encoding
 from ml.encoding import (
     ACTION_DIM,
     PARK_INDEX,
+    RASTER_CHANNELS,
     TOKEN_DIM,
     EncoderConfig,
     _active_occupancy,
@@ -19,6 +20,7 @@ from ml.encoding import (
     _rasterize,
     _static_channels,
     _tokens,
+    encode,
 )
 from ml.types import ActiveObject, Observation, ParkedObject, Pose
 from tests.ml.conftest import _fuji, empty_hangar
@@ -251,3 +253,66 @@ def test_legal_mask_terminal_all_false():
     c = EncoderConfig()
     mask = _legal_action_mask(_obs(), c)
     assert mask.sum() == 0  # entirely False, including PARK
+
+
+# ---------------------------------------------------------------------------
+# Task 7: Public encode() + determinism
+# ---------------------------------------------------------------------------
+
+
+def _two_body_obs(fleet):
+    pl = Placement(plane_id="fuji", x_m=11.0, y_m=12.0, heading_deg=0.0, on_carts=False)
+    active = ActiveObject(
+        object_id="aviat_husky",
+        body=fleet["aviat_husky"],
+        pose=Pose(x_m=11.0, y_m=-4.0, heading_deg=0.0),
+        on_carts=False,
+    )
+    return _obs(parked=(ParkedObject(object_id="fuji", placement=pl),), active=active)
+
+
+def test_encode_full_shapes_and_meta():
+    c = EncoderConfig()
+    fleet = _fuji()
+    h = empty_hangar()
+    out = encode(_two_body_obs(fleet), h, fleet, c)
+    assert out.schema_version == 1
+    assert out.raster.shape == (RASTER_CHANNELS, 192, 96) and out.raster.dtype == np.float32
+    assert out.tokens.shape == (16, 24) and out.tokens.dtype == np.float32
+    assert out.token_mask.shape == (16,) and out.token_mask.dtype == bool
+    assert out.legal_action_mask.shape == (9,)
+    assert out.active_index == 1
+    assert set(out.meta) == {
+        "cell_m",
+        "origin_x_m",
+        "origin_y_m",
+        "grid_h",
+        "grid_w",
+        "steps_this_object",
+        "steps_total",
+    }
+    assert all(isinstance(v, float) for v in out.meta.values())
+
+
+def test_encode_meta_is_immutable():
+    c = EncoderConfig()
+    fleet = _fuji()
+    h = empty_hangar()
+    out = encode(_two_body_obs(fleet), h, fleet, c)
+    import pytest
+
+    with pytest.raises(TypeError):
+        out.meta["cell_m"] = 999.0  # type: ignore[index]
+
+
+def test_encode_is_deterministic():
+    c = EncoderConfig()
+    fleet = _fuji()
+    h = empty_hangar()
+    a = encode(_two_body_obs(fleet), h, fleet, c)
+    b = encode(_two_body_obs(fleet), h, fleet, c)
+    assert np.array_equal(a.raster, b.raster)
+    assert np.array_equal(a.tokens, b.tokens)
+    assert np.array_equal(a.token_mask, b.token_mask)
+    assert np.array_equal(a.legal_action_mask, b.legal_action_mask)
+    assert a.active_index == b.active_index and a.meta == b.meta
