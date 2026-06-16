@@ -181,3 +181,38 @@ def test_ppo_update_overfits_fixed_batch():
         last = ppo_update(policy, opt, buf, cfg)["policy_loss"]
     # repeatedly updating on the same batch drives the surrogate down
     assert last < first + 1e-3
+
+
+# ---------------------------------------------------------------------------
+# Task 5: build_trivial_env, collect_rollout, train
+# ---------------------------------------------------------------------------
+from ml.train import build_trivial_env, train  # noqa: E402
+
+
+def test_build_trivial_env_single_object():
+    env = build_trivial_env(seed=0)
+    obs = env.reset()
+    assert obs.active is not None  # one active object on the apron
+    assert len(env.requested_ids) == 1
+
+
+def test_train_runs_and_returns_history():
+    history = train(
+        seed=0,
+        iterations=2,
+        rollout_len=32,
+        policy_kwargs={"d_model": 32, "n_layers": 1, "n_heads": 2},
+    )
+    assert len(history) == 2
+    assert all(isinstance(r, float) for r in history)
+
+
+def test_train_is_seed_reproducible():
+    kw = dict(
+        iterations=2,
+        rollout_len=32,
+        policy_kwargs={"d_model": 32, "n_layers": 1, "n_heads": 2},
+    )
+    a = train(seed=7, **kw)
+    b = train(seed=7, **kw)
+    assert a == b

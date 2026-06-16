@@ -108,6 +108,7 @@ ignore_missing_imports = true
 module = [
     "hangarfit.collisions",
     "hangarfit.geometry",
+    "hangarfit.loader",
     "hangarfit.models",
     "hangarfit.towplanner",
 ]
