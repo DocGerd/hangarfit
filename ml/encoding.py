@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import numpy as np
+import shapely
 
 SCHEMA_VERSION = 1
 
@@ -59,3 +60,16 @@ def _cell_centers(config: EncoderConfig) -> tuple[float, float, np.ndarray, np.n
     xs = origin_x + (np.arange(config.grid_w, dtype=np.float64) + 0.5) * config.cell_m
     ys = origin_y + (np.arange(config.grid_h, dtype=np.float64) + 0.5) * config.cell_m
     return origin_x, origin_y, xs, ys
+
+
+def _rasterize(geom: shapely.Geometry | None, config: EncoderConfig) -> np.ndarray:
+    """Binary occupancy (grid_h, grid_w) float32: 1.0 where a cell centre is inside
+    ``geom``. Deterministic point-in-polygon via ``shapely.contains_xy`` (shapely
+    >=2.0; NOT the deprecated ``shapely.vectorized.contains``)."""
+    empty = np.zeros((config.grid_h, config.grid_w), dtype=np.float32)
+    if geom is None or geom.is_empty:
+        return empty
+    _, _, xs, ys = _cell_centers(config)
+    xx, yy = np.meshgrid(xs, ys)  # (grid_h, grid_w)
+    inside = shapely.contains_xy(geom, xx, yy)
+    return inside.astype(np.float32)
