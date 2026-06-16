@@ -13,7 +13,7 @@ World-frame, fixed `cell_m=0.25` m/cell, hangar front-left = world origin; row 0
 | 0 | `oob_mask` | cell centre outside `hangar.floor_polygon` (incl. L-notch + apron + beyond-length margin) |
 | 1 | `bay_mask` | maintenance-bay rectangle |
 | 2 | `apron_mask` | staging band `y ∈ [-apron_depth_m, 0)` |
-| 3 | `door_gap` | one-cell band across the door opening on the front wall |
+| 3 | `door_gap` | a ~2-cell band straddling the door opening on the front wall (one cell either side of the wall line) |
 | 4 | `parked_occ_low` | parked part polygons with `z_bottom < z_split_m` |
 | 5 | `parked_occ_wing` | parked part polygons with `z_top > z_split_m` |
 | 6 | `active_occ` | active object footprint at its current pose |

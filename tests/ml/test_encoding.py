@@ -6,6 +6,7 @@ import numpy as np
 import pytest
 import shapely
 
+from hangarfit.loader import load_ground_objects
 from hangarfit.models import Placement
 from ml import encoding
 from ml.encoding import (
@@ -312,3 +313,72 @@ def test_encode_is_deterministic():
     assert np.array_equal(a.token_mask, b.token_mask)
     assert np.array_equal(a.legal_action_mask, b.legal_action_mask)
     assert a.active_index == b.active_index and a.meta == b.meta
+
+
+# ---------------------------------------------------------------------------
+# Hardening: silent-wrong paths converted to explicit errors
+# ---------------------------------------------------------------------------
+
+
+def test_tokens_overflow_raises_instead_of_terminal():
+    # max_objects=3 but 4 parked + 1 active = 5 entries; the active row would land
+    # out of range. The encoder must raise rather than silently reset active_index=-1
+    # (which would look terminal mid-episode and corrupt training).
+    c = EncoderConfig(max_objects=3)
+    fleet = _fuji()
+    parked = tuple(
+        ParkedObject(
+            object_id="fuji",
+            placement=Placement(plane_id="fuji", x_m=11.0, y_m=y, heading_deg=0.0, on_carts=False),
+        )
+        for y in (5.0, 8.0, 11.0, 14.0)
+    )
+    active = ActiveObject(
+        object_id="aviat_husky",
+        body=fleet["aviat_husky"],
+        pose=Pose(x_m=11.0, y_m=-4.0, heading_deg=0.0),
+        on_carts=False,
+    )
+    obs = _obs(parked=parked, active=active)
+    with pytest.raises(ValueError, match="max_objects"):
+        _tokens(obs, fleet, c)
+
+
+def test_require_body_missing_raises_keyerror_with_context():
+    c = EncoderConfig()
+    fleet = _fuji()
+    pl = Placement(plane_id="ghost", x_m=11.0, y_m=12.0, heading_deg=0.0, on_carts=False)
+    obs = _obs(parked=(ParkedObject(object_id="ghost", placement=pl),))
+    with pytest.raises(KeyError, match="ghost"):
+        _tokens(obs, fleet, c)
+
+
+def test_tokens_ground_object_type_and_flags():
+    c = EncoderConfig()
+    gos = load_ground_objects("examples/herrenteich/fleet.yaml")
+    fixed = gos["maul_fuel_trailer"]  # fixed_obstacle
+    mover = gos["vw_caddy"]  # placed_routed_mover, hard_door_mover=True
+    assert fixed.object_class == "fixed_obstacle"
+    assert mover.object_class == "placed_routed_mover" and mover.hard_door_mover
+    bodies = {"maul_fuel_trailer": fixed, "vw_caddy": mover}
+    pl_fixed = Placement(
+        plane_id="maul_fuel_trailer", x_m=8.0, y_m=10.0, heading_deg=0.0, on_carts=False
+    )
+    pl_mover = Placement(plane_id="vw_caddy", x_m=12.0, y_m=10.0, heading_deg=0.0, on_carts=False)
+    obs = _obs(
+        parked=(
+            ParkedObject(object_id="maul_fuel_trailer", placement=pl_fixed),
+            ParkedObject(object_id="vw_caddy", placement=pl_mover),
+        )
+    )
+    tokens, mask, _ = _tokens(obs, bodies, c)
+    assert list(mask[:2]) == [True, True]
+    # fixed_obstacle -> type col 4; placed_routed_mover -> type col 5
+    assert tokens[0, 4] == 1.0 and tokens[0, 5] == 0.0
+    assert tokens[1, 4] == 0.0 and tokens[1, 5] == 1.0
+    # neither sets the aircraft type bit (col 3)
+    assert tokens[0, 3] == 0.0 and tokens[1, 3] == 0.0
+    # hard_door_mover at col 17: only the caddy
+    assert tokens[0, 17] == 0.0 and tokens[1, 17] == 1.0
+    # wing (8..10) and movement (11..13) one-hots are all-zero for ground objects
+    assert tokens[0, 8:14].sum() == 0.0 and tokens[1, 8:14].sum() == 0.0

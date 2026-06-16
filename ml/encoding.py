@@ -116,7 +116,8 @@ def _static_channels(hangar: Hangar, config: EncoderConfig) -> np.ndarray:
     apron_rows = (ys >= -apron_depth) & (ys < 0.0)
     apron_ch[apron_rows, :] = 1.0
 
-    # door: a one-cell-thick band across the door opening on the front wall (y≈0)
+    # door: a ~2-cell band straddling the door opening on the front wall (y≈0); the box
+    # spans [-cell_m, +cell_m] so it covers one cell either side of the wall line.
     door = hangar.door
     door_poly = shapely.box(
         door.center_x_m - door.width_m / 2.0,
@@ -129,6 +130,17 @@ def _static_channels(hangar: Hangar, config: EncoderConfig) -> np.ndarray:
     return np.stack([oob, bay_ch, apron_ch, door_ch]).astype(np.float32)
 
 
+def _require_body(
+    bodies: Mapping[str, Aircraft | GroundObject], object_id: str
+) -> Aircraft | GroundObject:
+    """Look up ``object_id`` in ``bodies`` with a context-rich error instead of a bare
+    KeyError on the training path."""
+    body = bodies.get(object_id)
+    if body is None:
+        raise KeyError(f"object_id {object_id!r} not in bodies (have: {sorted(bodies)})")
+    return body
+
+
 def _parked_occupancy(
     obs: Observation, bodies: Mapping[str, Aircraft | GroundObject], config: EncoderConfig
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -138,7 +150,7 @@ def _parked_occupancy(
     low_polys: list[shapely.Geometry] = []
     wing_polys: list[shapely.Geometry] = []
     for po in obs.parked:
-        body = bodies[po.object_id]
+        body = _require_body(bodies, po.object_id)
         for wp in aircraft_parts_world(body, po.placement):
             if wp.z_bottom_m < config.z_split_m:
                 low_polys.append(wp.polygon)
@@ -162,7 +174,11 @@ def _active_occupancy(obs: Observation, config: EncoderConfig) -> np.ndarray:
         on_carts=a.on_carts,
     )
     polys = [wp.polygon for wp in aircraft_parts_world(a.body, placement)]
-    return _rasterize(shapely.union_all(polys) if polys else None, config)
+    if not polys:
+        raise ValueError(
+            f"_active_occupancy: no parts for active object {a.object_id!r} at its pose"
+        )
+    return _rasterize(shapely.union_all(polys), config)
 
 
 # ---------------------------------------------------------------------------
@@ -216,9 +232,17 @@ def _token_row(
         row[8 + _WING_COL[body.wing_position]] = 1.0  # wing one-hot 8..10
         row[11 + _MOVE_COL[body.movement_mode]] = 1.0  # movement one-hot 11..13
         row[15] = 1.0 if body.tow_pivotable else 0.0
-    else:
-        row[4 if body.object_class == "fixed_obstacle" else 5] = 1.0  # type 4..5
+    elif body.object_class == "fixed_obstacle":
+        row[4] = 1.0  # type col 4
         row[17] = 1.0 if body.hard_door_mover else 0.0  # door flag
+    elif body.object_class == "placed_routed_mover":
+        row[5] = 1.0  # type col 5
+        row[17] = 1.0 if body.hard_door_mover else 0.0  # door flag
+    else:
+        raise ValueError(
+            f"_token_row: unknown GroundObject.object_class {body.object_class!r} "
+            f"for {body.id!r} — add a token type column for it"
+        )
     length, width = _body_dims(body, config)
     row[6], row[7] = length, width  # dims 6..7 [length, width]
     row[14] = 1.0 if on_carts else 0.0  # cart flag (from placement/active)
@@ -246,7 +270,12 @@ def _tokens(
     for po in obs.parked:
         pl = po.placement
         entries.append(
-            (bodies[po.object_id], "parked", pl.on_carts, (pl.x_m, pl.y_m, pl.heading_deg))
+            (
+                _require_body(bodies, po.object_id),
+                "parked",
+                pl.on_carts,
+                (pl.x_m, pl.y_m, pl.heading_deg),
+            )
         )
     active_index = -1
     if obs.active is not None:
@@ -254,12 +283,18 @@ def _tokens(
         a = obs.active
         entries.append((a.body, "active", a.on_carts, (a.pose.x_m, a.pose.y_m, a.pose.heading_deg)))
     for oid in obs.unplaced_ids:
-        entries.append((bodies[oid], "unplaced", False, None))
-    # Curriculum config guarantees parked + active <= max_objects, so the active row is
-    # not normally truncated; the guard below is a failsafe for misconfigured callers
-    # (truncating the unplaced tail keeps the array fixed-shape).
+        entries.append((_require_body(bodies, oid), "unplaced", False, None))
+    # The curriculum config MUST guarantee parked + active <= max_objects. If it does
+    # not, an out-of-range active row would otherwise read as terminal mid-episode
+    # (active occupancy painted, no active token) and silently corrupt training — so
+    # raise loudly instead of resetting active_index.
     if active_index >= config.max_objects:
-        active_index = -1
+        raise ValueError(
+            f"_tokens: active_index {active_index} >= max_objects {config.max_objects} "
+            f"(parked={len(obs.parked)}, active={obs.active is not None}, "
+            f"unplaced={len(obs.unplaced_ids)}); the curriculum must guarantee "
+            f"parked + active <= max_objects"
+        )
     for i, (body, status, on_carts, pose) in enumerate(entries[: config.max_objects]):
         tokens[i] = _token_row(body, status=status, on_carts=on_carts, pose=pose, config=config)
         mask[i] = True
@@ -282,8 +317,13 @@ def _legal_action_mask(obs: Observation) -> np.ndarray:
         return mask
     for prim in go.legal_primitives(obs.active.body, on_carts=obs.active.on_carts):
         idx = _ACTION_INDEX.get((prim.kind, prim.gear))
-        if idx is not None:
-            mask[idx] = True
+        if idx is None:
+            raise ValueError(
+                f"_legal_action_mask: primitive ({prim.kind!r}, {prim.gear}) not in "
+                f"_CANONICAL_ACTIONS — a new motion primitive was added without "
+                f"updating the canonical action order"
+            )
+        mask[idx] = True
     mask[PARK_INDEX] = True
     return mask
 
