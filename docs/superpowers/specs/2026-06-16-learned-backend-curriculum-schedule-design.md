@@ -58,7 +58,7 @@ ml/curriculum.py   (PURE: no torch, no disk IO)
   PromotionPolicy(frozen)             — metric, window K, threshold θ, max_iters cap
   EpisodeStat(frozen)                 — (fraction_placed, valid) captured from terminal StepInfo
   DEFAULT_LADDER: tuple[Stage, ...]   — the committed 5-rung ramp (§5)
-  sample_request(stage, rng) -> tuple[str, ...]   — seeded size-N subset draw
+  sample_request(pool, n, rng) -> tuple[str, ...]  — seeded size-n subset from an EXPLICIT id pool (pure; no disk)
   should_promote(window, policy) -> bool          — pure gate over the last-K stats
   CurriculumSchedule(frozen)          — (stages, policy); CurriculumSchedule.default() wraps DEFAULT_LADDER + a default PromotionPolicy
   CurriculumHistory                   — mutable, append-only recorder of per-(stage,iter) EpisodeStats + promotion events (record(), note_promotion(stage, iter, by=...)); pure data, no torch, lives here so CI can assert over it
@@ -68,6 +68,8 @@ ml/env.py     (torch-free already)
 
 ml/train.py   (torch)
   build_stage_env(stage) -> HangarFitEnv   — load_hangar/load_fleet + dataclasses.replace overrides
+  effective_fleet_ids(stage) -> tuple[str, ...]  — the DISK-touching pool resolver: stage.fleet_ids
+                                                   if set, else tuple(load_fleet(stage.fleet_path).keys())
   collect_rollout(..., sample_request=None) -> (RolloutBuffer, list[EpisodeStat])   — extended
   train_curriculum(*, seed, schedule, policy, ...) -> CurriculumHistory   — the ladder loop
   main()   — gains --schedule {trivial,curriculum}
@@ -113,7 +115,7 @@ Five rungs spanning all three dimensions (≥3 rungs / ≥2 dimensions, with mar
 > **Note on rung 0 vs 4a.** 4a's `_TRIVIAL_DIFFICULTY` uses `data/hangar.yaml`'s file clearance (0.3) and `requested_ids=("fuji",)`. Rung 0 may lower the clearance to a lenient value to give the agent an easier launch; the exact value is tuned. The 4a single-stage command remains reachable via `--schedule trivial`, which keeps `build_trivial_env` exactly as-is (byte-identical).
 
 ### 5.1 Hard invariants the ladder must satisfy (enforced + tested)
-**Definition — *effective fleet ids* of a rung:** `stage.fleet_ids` when set, else the keys of `load_fleet(stage.fleet_path)`. `load_fleet` yields **aircraft only** (a manifest's `ground_objects:` section loads via a separate path and is never returned by `load_fleet`), so "aircraft only" (§2) holds automatically — no extra filter needed, even for `herrenteich/fleet.yaml` which also lists 4 ground objects.
+**Definition — *effective fleet ids* of a rung:** `stage.fleet_ids` when set, else the keys of `load_fleet(stage.fleet_path)`. `load_fleet` yields **aircraft only** (a manifest's `ground_objects:` section loads via a separate path and is never returned by `load_fleet`), so "aircraft only" (§2) holds automatically — no extra filter needed, even for `herrenteich/fleet.yaml` which also lists 4 ground objects. This resolution is the **only disk touch** and lives in `train.py`'s `effective_fleet_ids(stage)` (resolved **once per rung**); the pure `sample_request(pool, n, rng)` in `curriculum.py` then draws from that already-resolved pool, so `curriculum.py` stays disk-free and unit-testable over a literal id list.
 
 1. **Encoder capacity:** every rung's `difficulty.max_objects ≤ EncoderConfig.max_objects` (the token-tensor height). `DifficultyConfig.max_objects` caps the *requested* set; `EncoderConfig.max_objects` is the *fixed token capacity* — the curriculum is the component responsible for never letting the first exceed the second (the `_tokens` `ValueError` guard already names "the curriculum").
 2. **Sampleable:** `difficulty.max_objects ≤ len(effective fleet ids)` for each rung (can't request more objects than the rung's fleet offers).
@@ -195,11 +197,13 @@ def train_curriculum(*, seed, schedule=CurriculumSchedule.default(), ppo=None, .
     history = CurriculumHistory()
     for stage_index, stage in enumerate(schedule.stages):
         env = build_stage_env(stage)
+        pool = effective_fleet_ids(stage)         # disk resolve, ONCE per rung
+        n = stage.difficulty.max_objects          # samples-per-episode size
         rng = stage_rng(seed, stage_index)        # isolated from torch's global stream; keyed by ladder position
         window: deque[EpisodeStat] = deque(maxlen=policy.window)
         for it in range(policy.max_iters):
             buf, ep_stats = collect_rollout(env, policy, enc, rollout_len,
-                                            sample_request=lambda: sample_request(stage, rng))
+                                            sample_request=lambda: sample_request(pool, n, rng))
             ppo_update(policy, optimizer, buf, cfg)
             window.extend(ep_stats); history.record(stage, it, ep_stats)
             if should_promote(list(window), policy):
@@ -233,7 +237,8 @@ This trainer is **not** under ADR-0003 / `determinism-guard` (those guard `solve
 
 ### 9.1 CI unit tests (no torch — `ml/curriculum.py` + the env change)
 - **Ladder invariants:** `DEFAULT_LADDER` non-empty; every rung satisfies `max_objects ≤ EncoderConfig.max_objects` and `max_objects ≤ len(effective fleet ids)`; difficulty is non-decreasing along the dimensions it ramps (sanity).
-- **`sample_request`:** seeded determinism (same pre-seeded `stage_rng` advanced the same number of draws → identical subset); correct size (`= max_objects`); membership ⊆ effective fleet ids; no duplicates within a draw; with `fleet_ids=None` samples from the whole fleet.
+- **`sample_request(pool, n, rng)`:** over a literal id pool — seeded determinism (two RNGs seeded alike → identical successive draws); correct size (`= n`); membership ⊆ `pool`; no duplicates within a draw; raises on `n > len(pool)`.
+- **`effective_fleet_ids(stage)`** (in `train.py`, but torch-free so CI-testable): returns `stage.fleet_ids` verbatim when set; else the `load_fleet(stage.fleet_path)` keys (aircraft only — a herrenteich stage with `fleet_ids=None` excludes the 4 ground objects).
 - **`should_promote`:** returns `False` until `window` episodes accumulate; fires exactly when the windowed mean ≥ θ; honors both `metric` variants; a sub-threshold window never promotes.
 - **`env.reset(requested_ids=…)`:** override sets the queue + terminal-fraction denominator; `reset(None)` is byte-identical to the pre-4b `reset()` (a regression guard so 4a stays untouched).
 
