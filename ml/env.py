@@ -132,7 +132,15 @@ class HangarFitEnv:
             unplaced=len(self._queue) + (1 if self._active_id is not None else 0),
         )
 
-    def reset(self) -> Observation:
+    def reset(self, requested_ids: tuple[str, ...] | None = None) -> Observation:
+        if requested_ids is not None:
+            if not requested_ids:
+                raise ValueError("reset: requested_ids must be non-empty")
+            known = set(self.fleet) | set(self.ground_objects)
+            unknown = [i for i in requested_ids if i not in known]
+            if unknown:
+                raise ValueError(f"reset: unknown requested ids {unknown} (known: {sorted(known)})")
+            self.requested_ids = requested_ids
         self._reset_state()
         self._spawn()
         self._prev_potential = self._potential()

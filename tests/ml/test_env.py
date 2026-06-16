@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import random
 
+import pytest
+
 from ml import geometry_oracle as go
 from ml.env import HangarFitEnv
 from ml.types import DifficultyConfig, Park, Primitive
@@ -199,3 +201,35 @@ def test_on_carts_for_aircraft_unchanged():
     env = _env()
     # fuji is always_own_gear → not cart-like (the aircraft path is untouched).
     assert env._on_carts("fuji") is False
+
+
+# ---------------------------------------------------------------------------
+# Task 7 (#607 SP#4b) — reset(requested_ids=…) override
+# ---------------------------------------------------------------------------
+# Reuses the existing _two_object_env(**kw) helper above (fuji + aviat_husky on the
+# empty hangar) so we don't shadow it; the reset override is difficulty-agnostic.
+def test_reset_none_is_equivalent_to_passing_the_same_ids():
+    env = _two_object_env(
+        difficulty=DifficultyConfig(max_objects=2, per_object_step_budget=40, total_step_budget=80)
+    )
+    obs_default = env.reset()
+    obs_explicit = env.reset(requested_ids=("fuji", "aviat_husky"))
+    assert obs_default == obs_explicit  # Observation is a frozen dataclass
+
+
+def test_reset_override_changes_the_requested_set():
+    env = _two_object_env()
+    env.reset(requested_ids=("aviat_husky",))
+    assert env.requested_ids == ("aviat_husky",)
+
+
+def test_reset_rejects_unknown_id():
+    env = _two_object_env()
+    with pytest.raises(ValueError):
+        env.reset(requested_ids=("nope",))
+
+
+def test_reset_rejects_empty_requested_ids():
+    env = _two_object_env()
+    with pytest.raises(ValueError):
+        env.reset(requested_ids=())
