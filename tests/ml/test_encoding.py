@@ -8,12 +8,14 @@ import shapely
 from hangarfit.models import Placement
 from ml import encoding
 from ml.encoding import (
+    TOKEN_DIM,
     EncoderConfig,
     _active_occupancy,
     _cell_centers,
     _parked_occupancy,
     _rasterize,
     _static_channels,
+    _tokens,
 )
 from ml.types import ActiveObject, Observation, ParkedObject, Pose
 from tests.ml.conftest import _fuji, empty_hangar
@@ -149,3 +151,57 @@ def test_active_occupancy_empty_when_terminal():
     c = EncoderConfig()
     occ = _active_occupancy(_obs(), c)
     assert occ.sum() == 0.0
+
+
+# ---------------------------------------------------------------------------
+# Task 5: Set-token table + mask + active index
+# ---------------------------------------------------------------------------
+
+
+def test_tokens_status_type_pose_and_padding():
+    c = EncoderConfig()
+    fleet = _fuji()
+    pl = Placement(plane_id="fuji", x_m=11.0, y_m=12.0, heading_deg=0.0, on_carts=False)
+    active = ActiveObject(
+        object_id="aviat_husky",
+        body=fleet["aviat_husky"],
+        pose=Pose(x_m=11.0, y_m=-4.0, heading_deg=90.0),
+        on_carts=False,
+    )
+    obs = _obs(
+        parked=(ParkedObject(object_id="fuji", placement=pl),),
+        active=active,
+        unplaced=("cessna_150",),
+    )
+    tokens, mask, active_index = _tokens(obs, fleet, c)
+    assert tokens.shape == (16, TOKEN_DIM) and tokens.dtype == np.float32
+    assert mask.dtype == bool
+    # order = [parked, active, unplaced], padded
+    assert list(mask[:3]) == [True, True, True] and mask[3:].sum() == 0
+    assert active_index == 1
+    # status one-hots (cols 0..2): parked / active / unplaced
+    assert list(tokens[0, 0:3]) == [1.0, 0.0, 0.0]
+    assert list(tokens[1, 0:3]) == [0.0, 1.0, 0.0]
+    assert list(tokens[2, 0:3]) == [0.0, 0.0, 1.0]
+    # all three are aircraft (type col 3)
+    assert tokens[0, 3] == 1.0 and tokens[1, 3] == 1.0 and tokens[2, 3] == 1.0
+    # unplaced row has zero pose (cols 18..21)
+    assert list(tokens[2, 18:22]) == [0.0, 0.0, 0.0, 0.0]
+    # active pose is populated and heading 90deg -> sin≈1, cos≈0 (cols 20,21)
+    assert abs(tokens[1, 20] - 1.0) < 1e-6 and abs(tokens[1, 21]) < 1e-6
+    # reserved slots (22,23) are zero in v1
+    assert list(tokens[1, 22:24]) == [0.0, 0.0]
+    # padding rows are all zero
+    assert tokens[5].sum() == 0.0
+
+
+def test_tokens_wing_and_movement_one_hots():
+    c = EncoderConfig()
+    fleet = _fuji()
+    pl = Placement(plane_id="aviat_husky", x_m=11.0, y_m=12.0, heading_deg=0.0, on_carts=False)
+    obs = _obs(parked=(ParkedObject(object_id="aviat_husky", placement=pl),))
+    tokens, _, _ = _tokens(obs, fleet, c)
+    # wing one-hot is cols 8..10; exactly one set for an aircraft
+    assert tokens[0, 8:11].sum() == 1.0
+    # movement one-hot is cols 11..13; exactly one set for an aircraft
+    assert tokens[0, 11:14].sum() == 1.0
