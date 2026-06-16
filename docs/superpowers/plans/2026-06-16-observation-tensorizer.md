@@ -931,7 +931,7 @@ git push -u origin feature/607-rung3-observation-tensorizer
 ```bash
 gh pr create --draft --base develop \
   --title "feat(607): observation tensorizer (sub-project #2 impl)" \
-  --body "Closes #<RUNG3_ISSUE>. Implements the observation tensorizer per the design spec (PR #675). numpy-only; ml/ stays out of the wheel; SCHEMA_VERSION=1 contract. Review arc: code-reviewer + silent-failure-hunter (geometry/keep-out edges). geometry-invariant-guard NOT required (geometry.py/collisions.py untouched — consumed only)."
+  --body "Closes #676. Implements the observation tensorizer per the design spec (PR #675). numpy-only; ml/ stays out of the wheel; SCHEMA_VERSION=1 contract. Review arc: code-reviewer + silent-failure-hunter (geometry/keep-out edges). geometry-invariant-guard NOT required (geometry.py/collisions.py untouched — consumed only)."
 ```
 
 - [ ] **Step 6: Run the review arc, resolve threads, flip to ready**
