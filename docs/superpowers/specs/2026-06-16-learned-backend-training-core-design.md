@@ -39,7 +39,7 @@ The cold-joint env (#672) is an autoregressive per-step-primitive MDP; the tenso
 No `pyproject.toml` change (torch already in `[train]`). `ml/` stays out of the wheel.
 
 ## 4. Rollout — drive `HangarFitEnv` directly (single env)
-Per step: `obs = encoding.encode(env_observation, hangar, bodies, cfg)` → `policy.act(obs, turn_radius_m=active.effective_turn_radius_m())` returns `((kind_idx, mag_idx), joint_logprob, decoded)` and the step value (from a forward pass; `act` is extended or paired with a value read) → `env.step(decoded)`. Store `(obs, kind_idx, mag_idx, joint_logprob, value, reward, done)` in the `RolloutBuffer`. On `done` (set complete / per-object or global budget), `env.reset()` and continue until `rollout_len` (default 2048) transitions are collected. The active body's `turn_radius_m` (for `decode`) comes from the env's active object.
+Per step, on the **current live** observation: `obs = encoding.encode(env_observation, hangar, bodies, cfg)` → `policy.act(obs, turn_radius_m=env_observation.active.body.effective_turn_radius_m())` returns `((kind_idx, mag_idx), joint_logprob, decoded)`; the step **value** comes from the same forward pass (see the callout) → `env.step(decoded)`. Store `(obs, kind_idx, mag_idx, joint_logprob, value, reward, done)` in the `RolloutBuffer`. The active body is **`env_observation.active.body`** (an `Aircraft | GroundObject`; `ActiveObject` itself has no `effective_turn_radius_m` — call it on `.body`; `.active` is `None` only at a terminal observation). **Loop ordering matters:** act on the live obs, step, store the transition, and **if `done`, `env.reset()` to get the next live obs before the next `act()`** — never feed the post-`done` terminal observation to `encode()`/`act()` (its legal mask is all-False, so `act()` raises). Continue until `rollout_len` (default 2048) transitions are collected.
 
 > **Value at collection.** `policy.act()` currently returns only the action + log-prob. The trainer needs the **value** for the same forward pass. 4a either (a) extends `act()` to also return `value`, or (b) calls `forward(to_batch([obs]))` once and derives both the sampled action and the value from that single `PolicyOutput` (preferred — one forward, no recompute). The bit-identical-masking + sampling logic stays in one place.
 
@@ -47,18 +47,19 @@ Per step: `obs = encoding.encode(env_observation, hangar, bodies, cfg)` → `pol
 The action is factored — a `(kind,gear)` categorical × a magnitude-bin categorical — but **magnitude only applies to movement primitives**: for **PARK** (`kind_idx == PARK_INDEX`) the sampled magnitude bin is meaningless (`action_space.decode` ignores it). Therefore:
 
 ```
-joint_logprob = kind_logprob + (kind_idx != PARK_INDEX) * mag_logprob
-joint_entropy = kind_entropy + (mean over non-PARK steps of) mag_entropy
+per-step:   logprob = kind_logprob + (kind_idx != PARK_INDEX) * mag_logprob
+minibatch:  entropy_bonus = mean_b(kind_entropy_b) + mean_{b : kind_b != PARK_INDEX}(mag_entropy_b)
 ```
 
-Including `mag_logprob` for PARK steps would inject a spurious policy gradient on a decision the env never consumes. This resolves the concern the #3 type-design review deferred to #4. The PPO ratio uses this PARK-gated joint log-prob, recomputed under the current policy during the update from the stored observation + **stored `legal_action_mask`** (so the kind categorical is masked identically to collection time).
+The magnitude-head entropy is averaged **only over the non-PARK steps** in the minibatch — PARK steps contribute kind-entropy only (the magnitude head is unused there and must not be regularized on those steps). This single scalar is what `entropy_coef` (§6) scales. (The policy returns these indices as `kind_idx`/`mag_idx`; `decode` names the same two indices `kind_gear_idx`/`mag_bin_idx`.) Including `mag_logprob` for PARK steps would inject a spurious policy gradient on a decision the env never consumes. This resolves the concern the #3 type-design review deferred to #4. The PPO ratio uses this PARK-gated joint log-prob, recomputed under the current policy during the update from the stored observation + **stored `legal_action_mask`** (so the kind categorical is masked identically to collection time).
 
 ## 6. GAE + PPO update (`ml/ppo.py`)
-- `compute_gae(rewards, values, dones, *, gamma=0.99, lam=0.95)` → advantages + returns, `done`-masked at episode boundaries (bootstrap from the last value when truncated by budget). Advantages normalized per batch.
+- `compute_gae(rewards, values, dones, truncateds, *, gamma=0.99, lam=0.95)` → advantages + returns. `done` zeroes the GAE recursion across episode boundaries — **but `done` alone conflates two cases**: a *set-complete* episode is a true terminal (no bootstrap), while a *budget-truncated* episode is a time-limit cut whose return **should bootstrap from `V(s′)`**. The env returns a single `done`; the trainer derives **`truncated = done and info.placed < info.total`** (a budget stop leaves the active object unparked → `placed < total`; set-complete parks all → `placed == total`) and bootstraps the value on truncated-but-not-terminal steps and on the buffer's last, possibly-incomplete episode. Advantages normalized per batch.
 - `ppo_update(policy, optimizer, buffer, config)`: for `config.epochs` (default 4) over shuffled minibatches — clipped surrogate `min(ratio·A, clip(ratio, 1±ε)·A)` (ε=0.2) + value loss (MSE to returns, optionally clipped) + `−entropy_coef·entropy`; gradient-clip; Adam (lr 3e-4). `PPOConfig` holds all knobs with defaults.
+- **Two gammas, kept equal.** `PPOConfig.gamma` (the GAE/return discount) is a *different* field from `RewardWeights.gamma` (the potential-shaping discount in `ml/reward.py`), though both default to `0.99`. For the Ng–Harada–Russell potential-based shaping to stay policy-invariant the shaping discount must equal the RL discount, so 4a keeps them equal — a tuner changing one must change the other.
 
 ## 7. Determinism & seeding (ADR-0027 within-build)
-A master `seed` seeds `torch.manual_seed`, the action-sampling generator, network init, and minibatch shuffling. The env reward is RNG-free (spec §8). So a fixed seed → a **bit-identical** short run (tested). The trainer is **not** under ADR-0003 / `determinism-guard` (those guard `solver.py`/`towplanner.py`); this within-build canary is the learned-path equivalent. Cross-machine reproducibility (float/EP variance) is explicitly out of scope (a #5 concern).
+A master `seed` seeds `torch.manual_seed` (network init) and the minibatch-shuffling RNG; action sampling in `.act()` draws from the **global** torch RNG stream (no per-call `torch.Generator` is threaded through `act()` today), so a fixed seed + a deterministic collection/update order gives a bit-identical run. (If strict sampling isolation from other global-RNG consumers is ever needed, threading an explicit `Generator` into `act()` is a small policy change — flagged, not required for 4a.) The env reward is RNG-free (spec §8). So a fixed seed → a **bit-identical** short run (tested). The trainer is **not** under ADR-0003 / `determinism-guard` (those guard `solver.py`/`towplanner.py`); this within-build canary is the learned-path equivalent. Cross-machine reproducibility (float/EP variance) is explicitly out of scope (a #5 concern).
 
 ## 8. `ml/train.py` — the runnable entry
 `python -m ml.train [--seed S --iterations N --rollout-len L --lr ...]`:
@@ -84,6 +85,8 @@ Single-env; vectorization noted as a later knob. Checkpoint save/load is minimal
 | observation → tensors | `ml.encoding.encode` + `ml.policy.to_batch` |
 | action sampling + value + log-prob | `ml.policy.HangarFitPolicy` (`.act()` / `forward`) |
 | sampled action → env primitive | `ml.action_space.decode(..., turn_radius_m=...)` |
+| active body's turn radius | `observation.active.body.effective_turn_radius_m()` — on `.active.body` (`Aircraft \| GroundObject`), **not** on `ActiveObject` |
+| set-complete vs budget-truncation | `StepInfo.placed` / `.total` → `truncated = done and placed < total` |
 | `PARK_INDEX` / action dims | `ml.encoding.PARK_INDEX` / `ml.action_space` |
 
 ## 11. Workflow
