@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import random
 from collections.abc import Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Literal
 
 from ml.types import DifficultyConfig
@@ -93,3 +93,84 @@ def validate_ladder(ladder: Sequence[Stage], *, encoder_max_objects: int) -> Non
             raise ValueError(
                 f"stage {s.name!r}: max_objects {n} exceeds encoder capacity {encoder_max_objects}"
             )
+
+
+@dataclass
+class CurriculumHistory:
+    """Mutable, append-only record of training events — pure data, no torch, so CI
+    can assert equality over it for the determinism canary."""
+
+    iterations: list[tuple[str, int, tuple[EpisodeStat, ...]]] = field(default_factory=list)
+    promotions: list[tuple[str, int, str]] = field(default_factory=list)
+
+    def record(self, stage_name: str, it: int, ep_stats: Sequence[EpisodeStat]) -> None:
+        self.iterations.append((stage_name, it, tuple(ep_stats)))
+
+    def note_promotion(self, stage_name: str, it: int, *, by: str) -> None:
+        self.promotions.append((stage_name, it, by))
+
+
+@dataclass(frozen=True, slots=True)
+class CurriculumSchedule:
+    stages: tuple[Stage, ...]
+    policy: PromotionPolicy
+
+    @classmethod
+    def default(cls) -> CurriculumSchedule:
+        return cls(stages=DEFAULT_LADDER, policy=PromotionPolicy())
+
+
+_BOX_HANGAR = "data/hangar.yaml"
+_BOX_FLEET = "data/fleet.yaml"
+_NOTCH_HANGAR = "examples/herrenteich/hangar.yaml"
+_NOTCH_FLEET = "examples/herrenteich/fleet.yaml"
+_LENIENT_CLEARANCE = (
+    0.05  # below the herrenteich file value (0.10) so the clearance ramp truly tightens
+)
+
+DEFAULT_LADDER: tuple[Stage, ...] = (
+    Stage(
+        name="trivial",
+        difficulty=DifficultyConfig(max_objects=1, per_object_step_budget=40, total_step_budget=40),
+        hangar_path=_BOX_HANGAR,
+        fleet_path=_BOX_FLEET,
+        fleet_ids=("fuji",),
+        clearance_m=_LENIENT_CLEARANCE,
+    ),
+    Stage(
+        name="pair-box",
+        difficulty=DifficultyConfig(
+            max_objects=2, per_object_step_budget=60, total_step_budget=140
+        ),
+        hangar_path=_BOX_HANGAR,
+        fleet_path=_BOX_FLEET,
+        clearance_m=_LENIENT_CLEARANCE,
+    ),
+    Stage(
+        name="trio-box",
+        difficulty=DifficultyConfig(
+            max_objects=3, per_object_step_budget=60, total_step_budget=220
+        ),
+        hangar_path=_BOX_HANGAR,
+        fleet_path=_BOX_FLEET,
+        clearance_m=_LENIENT_CLEARANCE,
+    ),
+    Stage(
+        name="trio-notch",
+        difficulty=DifficultyConfig(
+            max_objects=3, per_object_step_budget=80, total_step_budget=260
+        ),
+        hangar_path=_NOTCH_HANGAR,
+        fleet_path=_NOTCH_FLEET,
+        clearance_m=_LENIENT_CLEARANCE,
+    ),
+    Stage(
+        name="trio-notch-strict",
+        difficulty=DifficultyConfig(
+            max_objects=3, per_object_step_budget=80, total_step_budget=260
+        ),
+        hangar_path=_NOTCH_HANGAR,
+        fleet_path=_NOTCH_FLEET,
+        clearance_m=None,  # inherit the herrenteich file value (0.10) — the real strict rung
+    ),
+)

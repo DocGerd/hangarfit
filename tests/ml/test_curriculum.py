@@ -5,6 +5,9 @@ from __future__ import annotations
 import pytest
 
 from ml.curriculum import (
+    DEFAULT_LADDER,
+    CurriculumHistory,
+    CurriculumSchedule,
     EpisodeStat,
     PromotionPolicy,
     Stage,
@@ -13,6 +16,7 @@ from ml.curriculum import (
     stage_rng,
     validate_ladder,
 )
+from ml.encoding import EncoderConfig
 from ml.types import DifficultyConfig
 
 
@@ -119,3 +123,33 @@ def test_stage_defaults():
     s = _stage()
     assert s.apron_depth_m == 8.0
     assert s.wing_layer_clearance_m is None
+
+
+def test_curriculum_history_records_and_notes():
+    h = CurriculumHistory()
+    h.record("s0", 0, [EpisodeStat(0.5, False, -1.0)])
+    h.note_promotion("s0", 3, by="competency")
+    assert h.iterations == [("s0", 0, (EpisodeStat(0.5, False, -1.0),))]
+    assert h.promotions == [("s0", 3, "competency")]
+
+
+def test_curriculum_schedule_default_is_the_committed_ladder():
+    sched = CurriculumSchedule.default()
+    assert sched.stages == DEFAULT_LADDER
+    assert isinstance(sched.policy, PromotionPolicy)
+
+
+def test_default_ladder_has_five_named_rungs_spanning_three_dimensions():
+    names = tuple(s.name for s in DEFAULT_LADDER)
+    assert names == ("trivial", "pair-box", "trio-box", "trio-notch", "trio-notch-strict")
+    # count ramps
+    assert [s.difficulty.max_objects for s in DEFAULT_LADDER] == [1, 2, 2 + 1, 3, 3]
+    # hangar shape changes at trio-notch
+    assert DEFAULT_LADDER[2].hangar_path != DEFAULT_LADDER[3].hangar_path
+    # clearance tightens at the final rung (lenient override -> file value)
+    assert DEFAULT_LADDER[3].clearance_m == 0.05
+    assert DEFAULT_LADDER[4].clearance_m is None  # inherits herrenteich file (0.10)
+
+
+def test_default_ladder_passes_validation():
+    validate_ladder(DEFAULT_LADDER, encoder_max_objects=EncoderConfig().max_objects)  # no raise
