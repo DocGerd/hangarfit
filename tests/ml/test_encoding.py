@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 import shapely
 
 from hangarfit.models import Placement
@@ -227,31 +228,28 @@ def _active_for(fleet, pid, *, on_carts):
 
 
 def test_legal_mask_own_gear_no_strafe():
-    c = EncoderConfig()
     fleet = _fuji()
     # fuji is always_own_gear (turn radius > 0): no strafe (idx6, idx7 False)
-    mask = _legal_action_mask(_obs(active=_active_for(fleet, "fuji", on_carts=False)), c)
+    mask = _legal_action_mask(_obs(active=_active_for(fleet, "fuji", on_carts=False)))
     assert mask.shape == (ACTION_DIM,) and mask.dtype == bool
-    assert mask[6] == False and mask[7] == False  # noqa: E712
-    assert mask[PARK_INDEX] == True  # noqa: E712
+    assert not mask[6] and not mask[7]
+    assert mask[PARK_INDEX]
 
 
 def test_legal_mask_cart_has_strafe_and_holes():
-    c = EncoderConfig()
     fleet = _fuji()
     cart_ids = [i for i, b in fleet.items() if b.effective_turn_radius_m() == 0.0]
     assert cart_ids, "expected at least one cart/pivot body in the fleet"
-    mask = _legal_action_mask(_obs(active=_active_for(fleet, cart_ids[0], on_carts=True)), c)
+    mask = _legal_action_mask(_obs(active=_active_for(fleet, cart_ids[0], on_carts=True)))
     # strafe legal when on carts
-    assert mask[6] == True and mask[7] == True  # noqa: E712
+    assert mask[6] and mask[7]
     # cart reverse-arc holes idx3 (L,-1) and idx5 (R,-1) are False
-    assert mask[3] == False and mask[5] == False  # noqa: E712
-    assert mask[PARK_INDEX] == True  # noqa: E712
+    assert not mask[3] and not mask[5]
+    assert mask[PARK_INDEX]
 
 
 def test_legal_mask_terminal_all_false():
-    c = EncoderConfig()
-    mask = _legal_action_mask(_obs(), c)
+    mask = _legal_action_mask(_obs())
     assert mask.sum() == 0  # entirely False, including PARK
 
 
@@ -299,8 +297,6 @@ def test_encode_meta_is_immutable():
     fleet = _fuji()
     h = empty_hangar()
     out = encode(_two_body_obs(fleet), h, fleet, c)
-    import pytest
-
     with pytest.raises(TypeError):
         out.meta["cell_m"] = 999.0  # type: ignore[index]
 

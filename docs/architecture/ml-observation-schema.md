@@ -36,6 +36,11 @@ Row order: parked (placement order) → active → unplaced (queue order), padde
 
 `active_index`: row of the active object, or `-1` at a terminal state.
 
+Pose `[x, y]` normalize to `[-1, 1]` over the raster **window** (`grid_w * cell_m` ×
+`grid_h * cell_m` metres), not the hangar — so a hangar smaller than the window occupies
+only part of the range (e.g. a 15 m-wide hangar in a 24 m window reaches ~+0.25 in x, not
++1). Use the `meta` `cell_m`/`grid_*`/`origin_*` keys to un-normalize.
+
 ## `legal_action_mask` — `(9,)` bool
 Canonical order `[(L,+), (S,+), (R,+), (L,−), (S,−), (R,−), (T,+), (T,−), PARK]`. Cart
 reverse-arc slots idx3/idx5 are False (`_primitives` omits `Lr`/`Rr` at r=0). Entirely

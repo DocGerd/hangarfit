@@ -178,13 +178,18 @@ def _body_dims(body: Aircraft | GroundObject, config: EncoderConfig) -> tuple[fl
         body,
         Placement(plane_id=body.id, x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False),
     )
+    if not parts:
+        raise ValueError(f"Body {body.id!r} produced no parts at identity pose")
     geom = shapely.union_all([wp.polygon for wp in parts])
     minx, miny, maxx, maxy = geom.bounds
     return (maxy - miny) / config.pos_ref_m, (maxx - minx) / config.pos_ref_m
 
 
 def _norm_pos(x_m: float, y_m: float, config: EncoderConfig) -> tuple[float, float]:
-    """World (x, y) → [-1, 1] over the raster window."""
+    """World (x, y) → [-1, 1] over the raster WINDOW (not the hangar). The window spans
+    ``grid_w * cell_m`` × ``grid_h * cell_m`` metres, so a hangar smaller than the window
+    occupies only part of [-1, 1] — e.g. a 15 m-wide hangar in a 24 m window reaches
+    ~+0.25 in x, not +1."""
     nx = 2.0 * x_m / (config.grid_w * config.cell_m) - 1.0
     origin_y = -config.apron_band_m
     ny = 2.0 * (y_m - origin_y) / (config.grid_h * config.cell_m) - 1.0
@@ -250,9 +255,9 @@ def _tokens(
         entries.append((a.body, "active", a.on_carts, (a.pose.x_m, a.pose.y_m, a.pose.heading_deg)))
     for oid in obs.unplaced_ids:
         entries.append((bodies[oid], "unplaced", False, None))
-    # Invariant: requested set <= max_objects (curriculum config). Defensive truncation
-    # of the unplaced tail keeps the array fixed-shape; the active row is never dropped
-    # because parked + active <= requested set <= max_objects.
+    # Curriculum config guarantees parked + active <= max_objects, so the active row is
+    # not normally truncated; the guard below is a failsafe for misconfigured callers
+    # (truncating the unplaced tail keeps the array fixed-shape).
     if active_index >= config.max_objects:
         active_index = -1
     for i, (body, status, on_carts, pose) in enumerate(entries[: config.max_objects]):
@@ -268,7 +273,7 @@ def _tokens(
 _ACTION_INDEX: dict[tuple[str, int], int] = {kg: i for i, kg in enumerate(_CANONICAL_ACTIONS)}
 
 
-def _legal_action_mask(obs: Observation, config: EncoderConfig) -> np.ndarray:
+def _legal_action_mask(obs: Observation) -> np.ndarray:
     """(ACTION_DIM,) bool over the canonical (kind, gear) order + PARK.
 
     Entirely False at a terminal state (no active object); PARK always legal otherwise."""
@@ -306,7 +311,7 @@ def encode(
     active_occ = _active_occupancy(obs, config)
     raster = np.concatenate([static, np.stack([low, wing, active_occ])], axis=0).astype(np.float32)
     tokens, token_mask, active_index = _tokens(obs, bodies, config)
-    legal = _legal_action_mask(obs, config)
+    legal = _legal_action_mask(obs)
     meta: dict[str, float] = {
         "cell_m": float(config.cell_m),
         "origin_x_m": 0.0,
