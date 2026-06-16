@@ -18,11 +18,25 @@ from ml.encoding import ACTION_DIM, RASTER_CHANNELS, TOKEN_DIM, ObservationTenso
 from ml.types import Park, Primitive
 
 
-@dataclass
+@dataclass(frozen=True, slots=True)
 class PolicyOutput:
+    """One forward pass: the policy logits + scalar value, batch-first.
+
+    ``kind_gear_logits`` covers the ACTION_DIM=9 canonical action slots: indices 0-7
+    are the ``(kind, gear)`` movement actions in ``encoding._CANONICAL_ACTIONS`` order
+    and index PARK_INDEX=8 is PARK. Illegal slots (per the per-observation legal mask)
+    are set to ``-inf`` so they vanish under softmax. ``magnitude_bin_logits`` is the
+    K-way (MAGNITUDE_DIM=5) magnitude head; ``value`` is the per-sample scalar critic.
+    """
+
     kind_gear_logits: Tensor  # (B, ACTION_DIM) — illegal slots are -inf
     magnitude_bin_logits: Tensor  # (B, MAGNITUDE_DIM)
     value: Tensor  # (B,)
+
+    def __post_init__(self) -> None:
+        assert self.kind_gear_logits.shape[-1] == ACTION_DIM
+        assert self.magnitude_bin_logits.shape[-1] == MAGNITUDE_DIM
+        assert self.kind_gear_logits.shape[0] == self.value.shape[0]
 
 
 def to_batch(obs: Sequence[ObservationTensors]) -> dict[str, Tensor]:
@@ -99,7 +113,23 @@ class HangarFitPolicy(nn.Module):
     ) -> tuple[tuple[int, int], float, Primitive | Park]:
         """Sample a masked (kind_gear, mag_bin) for a single live observation; return
         the indices, the joint log-prob, and the decoded Primitive | Park. Only ever
-        returns a legal (kind,gear) (illegal logits are -inf)."""
+        returns a legal (kind,gear) (illegal logits are -inf).
+
+        Preconditions: ``obs`` is a single, live observation (``active_index >= 0``) —
+        a terminal observation has an all-False legal mask, which would make the kind
+        ``Categorical`` collapse to NaN. ``deterministic=True`` requires ``eval()`` mode:
+        in ``train()`` the encoder dropout makes the argmax non-reproducible, so it is
+        rejected. (Stochastic sampling in ``train()`` is fine and not blocked.)
+        """
+        if deterministic and self.training:
+            raise RuntimeError(
+                "deterministic act() requires eval() mode (dropout is active in train())"
+            )
+        if obs.active_index < 0:
+            raise ValueError(
+                "act() called on a terminal observation (active_index < 0); the policy "
+                "is only valid on live observations"
+            )
         out = self(to_batch([obs]))
         kind_dist = torch.distributions.Categorical(logits=out.kind_gear_logits)
         mag_dist = torch.distributions.Categorical(logits=out.magnitude_bin_logits)

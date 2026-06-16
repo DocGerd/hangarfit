@@ -8,12 +8,14 @@ from __future__ import annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
+from typing import Literal
 
 import numpy as np
 import shapely
 
 from hangarfit.geometry import aircraft_parts_world
 from hangarfit.models import Aircraft, GroundObject, Hangar, Placement
+from hangarfit.towplanner import SegmentKind
 from ml import geometry_oracle as go
 from ml.types import Observation
 
@@ -21,7 +23,7 @@ SCHEMA_VERSION = 1
 
 # Canonical discrete action order for the legal-action mask. Magnitude is a
 # sub-project #3 concern; this covers only (kind, gear) legality + PARK.
-_CANONICAL_ACTIONS: tuple[tuple[str, int], ...] = (
+_CANONICAL_ACTIONS: tuple[tuple[SegmentKind, Literal[1, -1]], ...] = (
     ("L", 1),
     ("S", 1),
     ("R", 1),

@@ -112,3 +112,34 @@ def test_act_deterministic_takes_argmax():
     a = m.act(obs_t, turn_radius_m=tr, deterministic=True)
     b = m.act(obs_t, turn_radius_m=tr, deterministic=True)
     assert a[0] == b[0]  # same (kind_idx, mag_idx) every time
+
+
+def test_act_deterministic_in_train_mode_raises():
+    # A model NOT put in eval() has live dropout, so deterministic=True is not
+    # reproducible — act() must reject it rather than return a flaky argmax.
+    m = HangarFitPolicy(d_model=64, n_layers=2, n_heads=4)  # train mode (default)
+    obs_t = _obs()
+    tr = _fuji()["aviat_husky"].effective_turn_radius_m()
+    with pytest.raises(RuntimeError, match="eval"):
+        m.act(obs_t, turn_radius_m=tr, deterministic=True)
+
+
+def _terminal_obs():
+    fleet = _fuji()
+    pl = Placement(plane_id="fuji", x_m=11.0, y_m=12.0, heading_deg=0.0, on_carts=False)
+    obs = Observation(
+        active=None,  # terminal: no active object -> active_index < 0, all-False mask
+        parked=(ParkedObject(object_id="fuji", placement=pl),),
+        unplaced_ids=(),
+        steps_this_object=0,
+        steps_total=0,
+    )
+    return encode(obs, empty_hangar(), fleet, EncoderConfig())
+
+
+def test_act_on_terminal_observation_raises():
+    m = _model(seed=2)
+    obs_t = _terminal_obs()
+    assert obs_t.active_index < 0  # precondition: this really is a terminal obs
+    with pytest.raises(ValueError, match="terminal"):
+        m.act(obs_t, turn_radius_m=8.0)

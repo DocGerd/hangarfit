@@ -9,9 +9,7 @@ times a ``K``-way magnitude bin. ``decode()`` turns a sampled action into the en
 from __future__ import annotations
 
 import math
-from typing import Literal, cast
 
-from hangarfit.towplanner import SegmentKind
 from ml.encoding import _CANONICAL_ACTIONS, ACTION_DIM, PARK_INDEX
 from ml.types import Park, Primitive
 
@@ -44,6 +42,4 @@ def decode(kind_gear_idx: int, mag_bin_idx: int, *, turn_radius_m: float) -> Pri
         magnitude = math.radians(PIVOT_BINS_DEG[mag_bin_idx])
     else:
         magnitude = TRANSLATION_BINS[mag_bin_idx]
-    return Primitive(
-        kind=cast(SegmentKind, kind), magnitude=magnitude, gear=cast("Literal[1, -1]", gear)
-    )
+    return Primitive(kind=kind, magnitude=magnitude, gear=gear)
