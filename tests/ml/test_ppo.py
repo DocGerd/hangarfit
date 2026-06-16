@@ -85,3 +85,48 @@ def test_compute_gae_done_zeroes_bootstrap_and_resets():
     d0 = 1.0 + gamma * 0.6 - 0.5
     a0 = d0 + gamma * lam * d1
     assert torch.allclose(adv, torch.tensor([a0, d1, d2]), atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# Task 3: RolloutBuffer + sample_action
+# ---------------------------------------------------------------------------
+from ml.encoding import EncoderConfig, encode  # noqa: E402
+from ml.policy import HangarFitPolicy, to_batch  # noqa: E402
+from ml.ppo import RolloutBuffer, sample_action  # noqa: E402
+from ml.types import ActiveObject, Observation, Pose  # noqa: E402
+from tests.ml.conftest import _fuji, empty_hangar  # noqa: E402
+
+
+def _obs_t():
+    fleet = _fuji()
+    active = ActiveObject(
+        object_id="fuji",
+        body=fleet["fuji"],
+        pose=Pose(x_m=11.0, y_m=-4.0, heading_deg=0.0),
+        on_carts=False,
+    )
+    obs = Observation(active=active, parked=(), unplaced_ids=(), steps_this_object=0, steps_total=0)
+    return encode(obs, empty_hangar(), fleet, EncoderConfig())
+
+
+def test_rollout_buffer_batches_to_expected_shapes():
+    buf = RolloutBuffer()
+    for _ in range(5):
+        buf.add(_obs_t(), kind_idx=1, mag_idx=2, logprob=-1.0, value=0.5, reward=0.1, done=False)
+    assert len(buf) == 5
+    data = buf.batch()
+    assert data["raster"].shape[0] == 5 and data["tokens"].shape[0] == 5
+    assert data["kind_idx"].tolist() == [1, 1, 1, 1, 1]
+    assert data["kind_idx"].dtype == torch.long
+    assert data["old_logprob"].shape == (5,) and data["reward"].shape == (5,)
+    assert data["done"].dtype == torch.bool
+
+
+def test_sample_action_returns_legal_kind():
+    torch.manual_seed(0)
+    policy = HangarFitPolicy(d_model=32, n_layers=1, n_heads=2).eval()
+    batch = to_batch([_obs_t()])
+    out = policy(batch)
+    kind, mag = sample_action(out)
+    assert batch["legal_action_mask"][0][int(kind)]  # never an illegal kind
+    assert 0 <= int(mag) < 5

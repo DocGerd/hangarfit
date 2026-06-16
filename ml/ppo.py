@@ -9,8 +9,8 @@ from dataclasses import dataclass
 import torch
 from torch import Tensor
 
-from ml.encoding import PARK_INDEX
-from ml.policy import PolicyOutput
+from ml.encoding import PARK_INDEX, ObservationTensors
+from ml.policy import PolicyOutput, to_batch
 
 _OBS_KEYS = ("raster", "tokens", "token_mask", "active_index", "legal_action_mask")
 
@@ -68,3 +68,58 @@ def compute_gae(
         advantages[t] = last_gae
     returns = advantages + values
     return advantages, returns
+
+
+def sample_action(out: PolicyOutput) -> tuple[Tensor, Tensor]:
+    """Sample (kind_idx, mag_idx) from the masked kind head + the magnitude head.
+    The kind logits are already -inf-masked, so an illegal kind is never sampled."""
+    kind = torch.distributions.Categorical(logits=out.kind_gear_logits).sample()
+    mag = torch.distributions.Categorical(logits=out.magnitude_bin_logits).sample()
+    return kind, mag
+
+
+class RolloutBuffer:
+    """Accumulates single-env transitions; `batch()` stacks them into tensors (the obs
+    via policy.to_batch). `last_value` is the bootstrap value for a non-done tail."""
+
+    def __init__(self) -> None:
+        self.obs: list[ObservationTensors] = []
+        self.kind_idx: list[int] = []
+        self.mag_idx: list[int] = []
+        self.logprob: list[float] = []
+        self.value: list[float] = []
+        self.reward: list[float] = []
+        self.done: list[bool] = []
+        self.last_value: float = 0.0
+
+    def add(
+        self,
+        obs: ObservationTensors,
+        *,
+        kind_idx: int,
+        mag_idx: int,
+        logprob: float,
+        value: float,
+        reward: float,
+        done: bool,
+    ) -> None:
+        self.obs.append(obs)
+        self.kind_idx.append(kind_idx)
+        self.mag_idx.append(mag_idx)
+        self.logprob.append(logprob)
+        self.value.append(value)
+        self.reward.append(reward)
+        self.done.append(done)
+
+    def __len__(self) -> int:
+        return len(self.reward)
+
+    def batch(self) -> dict[str, Tensor]:
+        data = dict(to_batch(self.obs))
+        data["kind_idx"] = torch.tensor(self.kind_idx, dtype=torch.long)
+        data["mag_idx"] = torch.tensor(self.mag_idx, dtype=torch.long)
+        data["old_logprob"] = torch.tensor(self.logprob, dtype=torch.float32)
+        data["value"] = torch.tensor(self.value, dtype=torch.float32)
+        data["reward"] = torch.tensor(self.reward, dtype=torch.float32)
+        data["done"] = torch.tensor(self.done, dtype=torch.bool)
+        return data
