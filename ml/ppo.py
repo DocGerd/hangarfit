@@ -10,7 +10,7 @@ import torch
 from torch import Tensor
 
 from ml.encoding import PARK_INDEX, ObservationTensors
-from ml.policy import PolicyOutput, to_batch
+from ml.policy import HangarFitPolicy, PolicyOutput, to_batch
 
 _OBS_KEYS = ("raster", "tokens", "token_mask", "active_index", "legal_action_mask")
 
@@ -123,3 +123,56 @@ class RolloutBuffer:
         data["reward"] = torch.tensor(self.reward, dtype=torch.float32)
         data["done"] = torch.tensor(self.done, dtype=torch.bool)
         return data
+
+
+def ppo_update(
+    policy: HangarFitPolicy,
+    optimizer: torch.optim.Optimizer,
+    buffer: RolloutBuffer,
+    config: PPOConfig,
+) -> dict[str, float]:
+    """One PPO update over the buffer: GAE, then `epochs` of clipped-surrogate +
+    value-loss + entropy-bonus over shuffled minibatches. Returns last-minibatch metrics."""
+    data = buffer.batch()
+    advantages, returns = compute_gae(
+        data["reward"],
+        data["value"],
+        data["done"],
+        buffer.last_value,
+        gamma=config.gamma,
+        lam=config.lam,
+    )
+    advantages = (advantages - advantages.mean()) / (advantages.std() + 1e-8)
+    n = len(buffer)
+    metrics: dict[str, float] = {}
+    for _ in range(config.epochs):
+        perm = torch.randperm(n)
+        for start in range(0, n, config.minibatch_size):
+            mb = perm[start : start + config.minibatch_size]
+            mb_obs = {k: data[k][mb] for k in _OBS_KEYS}
+            out = policy(mb_obs)
+            logprob, entropy = factored_logprob_entropy(
+                out, data["kind_idx"][mb], data["mag_idx"][mb]
+            )
+            ratio = torch.exp(logprob - data["old_logprob"][mb])
+            adv = advantages[mb]
+            policy_loss = -torch.min(
+                ratio * adv,
+                torch.clamp(ratio, 1.0 - config.clip_eps, 1.0 + config.clip_eps) * adv,
+            ).mean()
+            value_loss = ((out.value - returns[mb]) ** 2).mean()
+            entropy_bonus = entropy.mean()
+            loss = (
+                policy_loss + config.value_coef * value_loss - config.entropy_coef * entropy_bonus
+            )
+            optimizer.zero_grad()
+            loss.backward()
+            torch.nn.utils.clip_grad_norm_(policy.parameters(), config.max_grad_norm)
+            optimizer.step()
+            metrics = {
+                "policy_loss": policy_loss.item(),
+                "value_loss": value_loss.item(),
+                "entropy": entropy_bonus.item(),
+                "loss": loss.item(),
+            }
+    return metrics

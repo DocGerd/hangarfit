@@ -130,3 +130,54 @@ def test_sample_action_returns_legal_kind():
     kind, mag = sample_action(out)
     assert batch["legal_action_mask"][0][int(kind)]  # never an illegal kind
     assert 0 <= int(mag) < 5
+
+
+# ---------------------------------------------------------------------------
+# Task 4: ppo_update
+# ---------------------------------------------------------------------------
+from ml.ppo import ppo_update  # noqa: E402
+
+
+def _filled_buffer(policy, n=40):
+    buf = RolloutBuffer()
+    with torch.no_grad():
+        for i in range(n):
+            o = _obs_t()
+            out = policy(to_batch([o]))
+            kind, mag = sample_action(out)
+            lp, _ = factored_logprob_entropy(out, kind, mag)
+            buf.add(
+                o,
+                kind_idx=int(kind),
+                mag_idx=int(mag),
+                logprob=float(lp),
+                value=float(out.value),
+                reward=0.1 * (i % 3),
+                done=(i % 7 == 6),
+            )
+    buf.last_value = 0.0
+    return buf
+
+
+def test_ppo_update_runs_changes_params_finite():
+    torch.manual_seed(0)
+    policy = HangarFitPolicy(d_model=32, n_layers=1, n_heads=2)
+    before = [p.detach().clone() for p in policy.parameters()]
+    opt = torch.optim.Adam(policy.parameters(), lr=3e-4)
+    metrics = ppo_update(policy, opt, _filled_buffer(policy), PPOConfig(minibatch_size=16))
+    assert all(torch.isfinite(torch.tensor(v)) for v in metrics.values())
+    changed = any(not torch.equal(b, a) for b, a in zip(before, policy.parameters(), strict=True))
+    assert changed
+
+
+def test_ppo_update_overfits_fixed_batch():
+    torch.manual_seed(1)
+    policy = HangarFitPolicy(d_model=32, n_layers=1, n_heads=2)
+    buf = _filled_buffer(policy)
+    opt = torch.optim.Adam(policy.parameters(), lr=1e-3)
+    cfg = PPOConfig(minibatch_size=16, epochs=1, entropy_coef=0.0)
+    first = ppo_update(policy, opt, buf, cfg)["policy_loss"]
+    for _ in range(8):
+        last = ppo_update(policy, opt, buf, cfg)["policy_loss"]
+    # repeatedly updating on the same batch drives the surrogate down
+    assert last < first + 1e-3
