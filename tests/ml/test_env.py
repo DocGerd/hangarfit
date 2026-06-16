@@ -243,3 +243,14 @@ def test_reset_truncates_requested_ids_beyond_max_objects():
     )
     env.reset(requested_ids=("fuji", "aviat_husky"))
     assert env.requested_ids == ("fuji",)  # truncated to max_objects=1
+
+
+def test_parked_out_of_bounds_layout_is_invalid():
+    # Park the lone object immediately, while it is still on the apron (y < 0): no overlap
+    # (single object) but out of hangar bounds. The tightened valid predicate must report
+    # invalid (the old overlap-only predicate wrongly said valid=True). #607 SP#4b review.
+    env = _env()
+    env.reset()
+    _, _, done, info = env.step(Park())
+    assert done is True and info.placed == 1
+    assert info.valid is False  # parked on the apron / out of bounds
