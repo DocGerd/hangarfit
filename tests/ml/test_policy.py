@@ -9,7 +9,7 @@ torch = pytest.importorskip("torch")  # whole module skips without the [train] e
 from hangarfit.models import Placement  # noqa: E402
 from ml.encoding import EncoderConfig, encode  # noqa: E402
 from ml.policy import HangarFitPolicy, PolicyOutput, to_batch  # noqa: E402
-from ml.types import ActiveObject, Observation, ParkedObject, Pose  # noqa: E402
+from ml.types import ActiveObject, Observation, Park, ParkedObject, Pose, Primitive  # noqa: E402
 from tests.ml.conftest import _fuji, empty_hangar  # noqa: E402
 
 
@@ -90,3 +90,25 @@ def test_single_and_batched_consistency():
     single = m(to_batch([o]))
     batched = m(to_batch([o, o]))
     assert torch.allclose(single.value, batched.value[:1], atol=1e-5)
+
+
+def test_act_returns_only_legal_actions_and_decodes():
+    m = _model(seed=2)
+    obs_t = _obs()  # active = aviat_husky, own-gear (turn_radius > 0): strafe illegal
+    tr = _fuji()["aviat_husky"].effective_turn_radius_m()
+    legal = obs_t.legal_action_mask
+    for _ in range(50):
+        (kind_idx, mag_idx), log_prob, decoded = m.act(obs_t, turn_radius_m=tr)
+        assert legal[kind_idx]  # never samples an illegal (kind,gear)
+        assert isinstance(decoded, (Primitive, Park))
+        assert isinstance(log_prob, float)
+        assert 0 <= mag_idx < 5
+
+
+def test_act_deterministic_takes_argmax():
+    m = _model(seed=2)
+    obs_t = _obs()
+    tr = _fuji()["aviat_husky"].effective_turn_radius_m()
+    a = m.act(obs_t, turn_radius_m=tr, deterministic=True)
+    b = m.act(obs_t, turn_radius_m=tr, deterministic=True)
+    assert a[0] == b[0]  # same (kind_idx, mag_idx) every time
