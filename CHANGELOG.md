@@ -122,6 +122,18 @@ All notable changes to this project are documented here. Format follows [Keep a 
   collections. Mover *animation* and the Caddy egress lane are deferred follow-ups
   (the egress oracle exports no corridor geometry to draw).
 
+- **Observation tensorizer (`ml/encoding.py`, #607).** Added a numpy-only,
+  deterministic `encode(Observation, hangar, bodies, config) → ObservationTensors`
+  that turns the cold-joint env's semantic `Observation` into fixed-shape tensors:
+  a 7-channel world-frame raster (4 static keep-out channels: oob/bay/apron/door;
+  3 dynamic occupancy channels: parked low/wing z-split + active footprint), a
+  `(16, 24)` padded set-token table with status/type/dims/wing/movement/pose
+  columns, and a `(9,)` legal-action mask. Schema versioned as `SCHEMA_VERSION=1`
+  and documented in `docs/architecture/ml-observation-schema.md`. `meta` is a
+  read-only `MappingProxyType` of floats for debugging / un-normalization. Dev-only
+  (`ml/` is not in the wheel); no new runtime dependency. Sub-project #2 of the
+  learned backend (epic #607).
+
 ### Changed
 
 - **Herrenteich dataset realism pass (#657/#658/#659).** Tightened the real
