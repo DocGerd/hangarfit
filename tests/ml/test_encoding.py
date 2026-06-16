@@ -60,8 +60,9 @@ def test_rasterize_box_cell_count_and_dtype():
     grid = _rasterize(box, c)
     assert grid.shape == (192, 96)
     assert grid.dtype == np.float32
-    # ~ (2/0.25)^2 = 64 cell centres inside; allow a 1-cell boundary slop per axis
-    assert 49 <= int(grid.sum()) <= 81
+    # Exactly (2/0.25)^2 = 64 cell centres inside: centres sit at 0.125 m half-steps
+    # and never land on the 0.25 m-aligned box edges (10/12/5/7), so no boundary slop.
+    assert int(grid.sum()) == 64
     # values are binary
     assert set(np.unique(grid)).issubset({0.0, 1.0})
 
@@ -106,6 +107,15 @@ def test_static_channels_notch_marks_oob():
     oob_base = _static_channels(h, c)[0]
     # the notch adds out-of-floor area inside the outer rectangle
     assert oob.sum() > oob_base.sum()
+
+
+def test_static_channels_zero_apron_is_empty():
+    from dataclasses import replace
+
+    c = EncoderConfig()
+    h = replace(empty_hangar(), apron_depth_m=0.0)
+    apron = _static_channels(h, c)[2]
+    assert apron.sum() == 0.0
 
 
 def test_parked_occupancy_has_low_and_wing_bands():

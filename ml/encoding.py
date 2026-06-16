@@ -89,7 +89,7 @@ def _floor_polygon(hangar: Hangar) -> shapely.Geometry:
 
 def _static_channels(hangar: Hangar, config: EncoderConfig) -> np.ndarray:
     """(4, grid_h, grid_w): [oob, bay, apron, door]."""
-    origin_x, origin_y, xs, ys = _cell_centers(config)
+    origin_x, origin_y, _, ys = _cell_centers(config)
     window = shapely.box(
         origin_x,
         origin_y,
@@ -109,7 +109,7 @@ def _static_channels(hangar: Hangar, config: EncoderConfig) -> np.ndarray:
     bay_ch = _rasterize(bay_poly, config)
 
     # apron: full-width band y in [-apron_depth, 0)
-    apron_depth = hangar.apron_depth_m or 0.0
+    apron_depth = hangar.apron_depth_m
     apron_ch = np.zeros((config.grid_h, config.grid_w), dtype=np.float32)
     apron_rows = (ys >= -apron_depth) & (ys < 0.0)
     apron_ch[apron_rows, :] = 1.0
