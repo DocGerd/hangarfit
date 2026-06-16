@@ -37,7 +37,7 @@ The built cold-joint env (#672) is an **autoregressive, per-step-primitive MDP**
 
 ## 4. Action space — `ml/action_space.py`
 
-The action is **fully factored discrete**: a `(kind, gear)` index over the canonical 9 actions × a `K`-way magnitude bin.
+The action is **fully factored discrete**: a **kind head** over the 9-wide action space — the **8** canonical `(kind, gear)` movement actions in `_CANONICAL_ACTIONS` **plus PARK** at index `PARK_INDEX == 8` — × a **`K`-way magnitude-bin** head. PARK is one slot of the kind head; it carries no gear and ignores the magnitude bin (`_CANONICAL_ACTIONS` has 8 entries; index 8 is PARK, not a `(kind, gear)` pair).
 
 **Single source of truth for the `(kind, gear)` order.** `ml/encoding.py` already defines `_CANONICAL_ACTIONS`, `ACTION_DIM` (9), and `PARK_INDEX` (8), and builds `legal_action_mask` in that order. `action_space` **reuses those constants** (imports them; the encoding module stays the owner) so the policy's kind-head index ↔ `legal_action_mask` index ↔ `decode()` are guaranteed aligned by construction.
 
@@ -78,8 +78,10 @@ return PolicyOutput(kind_gear_logits, magnitude_bin_logits, value)
 ```
 
 - **Set-Transformer = plain multi-head self-attention.** With `≤16` tokens, `O(N²)` attention is trivial; ISAB/inducing points are unnecessary. **No positional encoding** → permutation-invariant over the object set (the `status` one-hot in the token already marks parked/active/unplaced, and `active_index` gathers the controlled object).
-- **CNN context conditions the set.** The raster global vector `g` is concatenated to every token's projected features before the Transformer (simple, robust fusion; FiLM is an option but not v1).
-- **`.act(obs)` convenience.** Samples a masked `(kind_gear, mag_bin)` from the (masked) categoricals and returns it with its log-prob and the decoded `Primitive | Park` (via `action_space.decode`). Used by the forward-pass tests now and the #4 rollout later. Sampling/log-prob/entropy helpers live here; the PPO *update* is #4.
+- **CNN context conditions the set.** Each token is projected `24 → D` by a Linear; the CNN global vector `g` (also dim `D`) is concatenated to every token → `2D`, then a Linear maps `2D → D` (the Transformer's `d_model = D`). Simple, robust fusion; FiLM is an option but not v1.
+- **PARK is a kind-head slot.** Index `PARK_INDEX` (8) of the kind head is the PARK action, sampled like any other legal slot (PARK is always legal while an active object exists); `.act()` routes a sampled `PARK_INDEX` through `action_space.decode(PARK_INDEX, …) → Park`. The kind head is 9-wide; `_CANONICAL_ACTIONS` (8 entries) is indexed only for non-PARK slots.
+- **The policy is invoked only on live (non-terminal) observations** — `active_index ≥ 0` and at least one token unmasked — so `gather(active_index)` and `masked_mean(token_mask)` are always well-defined (no `-1` row-wrap, no divide-by-zero). The env never requests an action at a terminal state; callers must not pass one.
+- **`.act(obs)` convenience.** Samples a masked `(kind_gear, mag_bin)` from the (masked) categoricals and returns it with its log-prob and the decoded `Primitive | Park` (via `action_space.decode`, passing the active body's `turn_radius_m`). Used by the forward-pass tests now and the #4 rollout later. Sampling/log-prob/entropy helpers live here; the PPO *update* is #4.
 - **Hyper-parameters** (`D`, `L`, heads, CNN channels) are constructor args with sensible defaults; tuned in #4.
 
 `★ Insight ─────────────────────────────────────`
@@ -115,6 +117,6 @@ File a GitHub issue *"#607 rung 4: policy network architecture (sub-project #3)"
 
 ## 11. Open questions (resolve in #4, not here)
 - Final `D` / `L` / head sizes and CNN depth (tuned against training).
-- Whether the magnitude head should be **conditioned on the chosen kind** (v1: independent `K`-way head, decoded per-kind) — revisit if training shows kind/magnitude coupling matters.
+- Whether the magnitude head should be **conditioned on the chosen kind** (v1: a single kind-independent `K`-way head; the per-kind decode table — translation-metres vs pivot-radians — is selected by `turn_radius_m` inside `decode()`, not by the head) — revisit if training shows kind/magnitude coupling matters.
 - Exact PPO hyper-parameters, advantage estimation, and the curriculum schedule (#4).
 - Whether the value head benefits from the Reeds–Shepp closed-form distance as an auxiliary cost-to-go target (cold-joint spec §5) — a #4 experiment.
