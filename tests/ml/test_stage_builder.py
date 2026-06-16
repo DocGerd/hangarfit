@@ -3,8 +3,10 @@ runs in the no-torch CI."""
 
 from __future__ import annotations
 
+import pytest
+
 from ml.curriculum import DEFAULT_LADDER, Stage
-from ml.stage_builder import effective_fleet_ids
+from ml.stage_builder import build_stage_env, effective_fleet_ids
 from ml.types import DifficultyConfig
 
 
@@ -50,3 +52,44 @@ def test_every_default_ladder_rung_pool_covers_max_objects():
     for s in DEFAULT_LADDER:
         pool = effective_fleet_ids(s)
         assert s.difficulty.max_objects <= len(pool)
+
+
+def test_build_stage_env_applies_clearance_and_apron_overrides():
+    s = Stage(
+        name="x",
+        difficulty=DifficultyConfig(max_objects=1, per_object_step_budget=40, total_step_budget=40),
+        hangar_path="data/hangar.yaml",
+        fleet_path="data/fleet.yaml",
+        fleet_ids=("fuji",),
+        clearance_m=0.05,
+        apron_depth_m=8.0,
+    )
+    env = build_stage_env(s)
+    assert env.hangar.clearance_m == 0.05
+    assert env.hangar.apron_depth_m == 8.0
+    assert env.difficulty.max_objects == 1
+    assert "fuji" in env.fleet
+
+
+def test_build_stage_env_strict_rung_inherits_file_clearance():
+    strict = DEFAULT_LADDER[4]  # trio-notch-strict, clearance_m=None
+    env = build_stage_env(strict)
+    assert env.hangar.clearance_m == 0.10  # the herrenteich file value (#664)
+
+
+def test_build_stage_env_raises_when_max_objects_exceeds_pool():
+    s = Stage(
+        name="toobig",
+        difficulty=DifficultyConfig(max_objects=2),
+        hangar_path="data/hangar.yaml",
+        fleet_path="data/fleet.yaml",
+        fleet_ids=("fuji",),  # pool of 1, but want 2
+    )
+    with pytest.raises(ValueError):
+        build_stage_env(s)
+
+
+def test_build_stage_env_every_default_rung_constructs():
+    for s in DEFAULT_LADDER:
+        env = build_stage_env(s)
+        assert len(env.requested_ids) == s.difficulty.max_objects
