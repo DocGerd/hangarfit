@@ -74,3 +74,11 @@ def test_export_argmax_parity(tmp_path):
     onnx_mag = int(np.argmax(mag_logits, axis=-1)[0])
     assert onnx_kind == int(torch_out.kind_gear_logits.argmax(-1)[0])
     assert onnx_mag == int(torch_out.magnitude_bin_logits.argmax(-1)[0])
+
+
+def test_train_save_onnx_writes_file(tmp_path):
+    from ml.train import train
+
+    onnx_path = tmp_path / "trivial.onnx"
+    train(iterations=1, rollout_len=16, save_onnx=str(onnx_path))
+    assert onnx_path.exists() and onnx_path.stat().st_size > 0
