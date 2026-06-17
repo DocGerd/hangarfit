@@ -8,6 +8,8 @@ or Hybrid-A* search. All functions are pure and RNG-free.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from shapely.geometry import box
 
 from hangarfit.collisions import check
@@ -31,6 +33,8 @@ __all__ = [
     "overlap_area_m2",
     "intrusion_area_m2",
     "layout_valid",
+    "LayoutScore",
+    "score_layout",
     "legal_primitives",
     "apply_primitive",
     "swept_intrusion_m2",
@@ -174,6 +178,28 @@ def movement_cost(primitive: Primitive, *, prev_gear: int | None, cusp_penalty: 
     translates = primitive.kind in ("S", "T")
     cusp = 1.0 if (translates and prev_gear is not None and primitive.gear != prev_gear) else 0.0
     return abs(primitive.magnitude) + cusp_penalty * cusp
+
+
+@dataclass(frozen=True, slots=True)
+class LayoutScore:
+    """One-pass score of a frozen layout: graded penetration + the two validity gates,
+    from a single ``check`` + single ``egress_blocked``. ``layout_valid`` ==
+    ``collisions_valid and not egress_blocked``."""
+
+    penetration_m2: float
+    collisions_valid: bool
+    egress_blocked: bool
+
+
+def score_layout(layout: Layout) -> LayoutScore:
+    """Single-pass replacement for calling ``overlap_area_m2`` + ``layout_valid`` +
+    ``egress_blocked`` separately (each re-runs ``check``/rebuilds world parts)."""
+    cr = check(layout)
+    return LayoutScore(
+        penetration_m2=cr.total_penetration_m2,
+        collisions_valid=cr.valid,
+        egress_blocked=egress_blocked(layout),
+    )
 
 
 def layout_valid(layout: Layout) -> bool:

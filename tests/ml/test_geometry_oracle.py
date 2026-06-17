@@ -258,6 +258,30 @@ def test_active_misfit_never_invokes_search(monkeypatch):
     )
 
 
+# ---------------------------------------------------------------------------
+# Task 1 — score_layout / LayoutScore
+# ---------------------------------------------------------------------------
+
+
+def test_score_layout_matches_separate_calls_valid():
+    layout = single_object_layout(x_m=9.0, y_m=12.0)
+    s = go.score_layout(layout)
+    assert s.penetration_m2 == go.overlap_area_m2(layout)
+    assert s.collisions_valid == check(layout).valid
+    assert s.egress_blocked == go.egress_blocked(layout)
+    assert (s.collisions_valid and not s.egress_blocked) == go.layout_valid(layout)
+
+
+def test_score_layout_matches_separate_calls_overlapping():
+    # Both bodies parked at the same spot -> guaranteed overlap -> invalid.
+    layout, _active, _aid = two_object_layout(parked_y_m=12.0, active_y_m=12.0)
+    s = go.score_layout(layout)
+    assert s.penetration_m2 == go.overlap_area_m2(layout)
+    assert s.penetration_m2 > 0.0
+    assert s.collisions_valid == check(layout).valid
+    assert s.collisions_valid is False
+
+
 def test_active_misfit_zero_on_apron():
     """A pose on the apron (y < 0) must return 0.0 — the apron is the legitimate start
     zone (excluded by the upper y>=0 half-plane in active_misfit_m2)."""
