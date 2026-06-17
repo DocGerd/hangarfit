@@ -173,15 +173,25 @@ def solve_learned_impl(
 ) -> SolveResult:
     """Run the learned backend: argmax rollout of the ONNX policy over the env built from
     ``scenario``, then return a verifier-gated SolveResult. The verifier (collisions.check
-    + Caddy egress, via go.layout_valid) is the sole arbiter — an invalid or incomplete
-    proposal yields a no-layout 'exhausted_budget' result, never an exception.
+    + Caddy egress, via go.layout_valid) is the sole arbiter.
+
+    No-exception scope (the Prime Directive, ADR-0027): the verifier rejecting a bad
+    *proposal* — an invalid or incomplete terminal layout — never raises; it yields a
+    no-layout ``'exhausted_budget'`` result. That contract is about proposal rejection.
+    Malformed *inputs* (a degenerate scenario whose env produces no driveable object, an
+    onnxruntime load failure, a fixed obstacle missing its placement) DO propagate from
+    ``OrtPolicy`` / ``env_from_scenario`` / ``rollout`` — masking those as
+    ``exhausted_budget`` would be a silent failure hiding a real bug, so they surface loudly.
 
     ``alternatives`` > 1 is accepted but yields a single (deterministic argmax) layout;
-    diverse sampling is #696. ``budget_s`` is advisory here (the env's step budget bounds
-    the rollout); it is recorded but not enforced as a wall-clock deadline (ADR-0003-style
-    reproducibility favours the step-count bound)."""
+    diverse sampling is #696. ``budget_s`` is advisory (the env's step budget bounds the
+    rollout, not a wall-clock deadline — ADR-0003-style reproducibility favours the
+    step-count bound); it is not separately surfaced — ``diagnostics.wall_time_s`` records
+    the elapsed time actually spent."""
     start = time.monotonic()
     resolved_seed = seed if seed is not None else 0
+    # alternatives > 1 is accepted for seam signature-compat but produces one argmax layout
+    # (deterministic rollout). TODO(#696): run N sampled rollouts for diverse alternatives.
     policy = OrtPolicy(weights_path)
     env = env_from_scenario(scenario)
     layout, driven, info = rollout(env, policy)
