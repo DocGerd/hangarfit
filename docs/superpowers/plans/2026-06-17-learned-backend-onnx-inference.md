@@ -294,12 +294,20 @@ Refs #706"
 Run: `grep -n -A6 "\[project.optional-dependencies\]" pyproject.toml`
 Expected: shows `train = ["torch"]` (and `dev`, etc.).
 
-- [ ] **Step 2: Add the extra**
+- [ ] **Step 2: Add the extras**
 
-Add to `[project.optional-dependencies]` (mirror the `train` entry's style; pin floor consistent with the repo's convention):
+Add the inference extra to `[project.optional-dependencies]` (mirror the `train` entry's style):
 
 ```toml
 learned-infer = ["onnxruntime>=1.18"]
+```
+
+Also add `onnx` to the existing `train` extra — `ml/export.py`'s legacy `torch.onnx.export`
+serializes the proto via the `onnx` package (torch does not vendor it; discovered in Task 1).
+Inference (`onnxruntime`) does NOT need `onnx`; export (contributor `[train]`) does:
+
+```toml
+train = ["torch", "onnx>=1.16"]
 ```
 
 - [ ] **Step 3: Verify it resolves**
@@ -363,7 +371,16 @@ def test_ortpolicy_matches_torch_act(tmp_path):
     export_onnx(policy, onnx_path, example=obs_t)
     ort_pol = OrtPolicy(onnx_path)
 
-    (_k, _m), _lp, torch_action = policy.act(obs_t, turn_radius_m=tr, deterministic=True)
+    # OrtPolicy runs the ONNX graph (standard attention path). `policy.act` uses the fused
+    # fast path by default, which on an UNTRAINED near-tie policy can flip the argmax. Compute
+    # the torch reference on the same standard path so the comparison is apples-to-apples (a
+    # trained policy's decisive logits make this moot). Discovered in Task 1.
+    prev_fastpath = torch.backends.mha.get_fastpath_enabled()
+    torch.backends.mha.set_fastpath_enabled(False)
+    try:
+        (_k, _m), _lp, torch_action = policy.act(obs_t, turn_radius_m=tr, deterministic=True)
+    finally:
+        torch.backends.mha.set_fastpath_enabled(prev_fastpath)
     ort_action = ort_pol.act(obs_t, turn_radius_m=tr)
     assert type(ort_action) is type(torch_action)
     assert ort_action == torch_action
