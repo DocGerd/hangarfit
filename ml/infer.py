@@ -1,8 +1,8 @@
 """Torch-free inference for the learned backend (sub-project #5, epic #607).
 
 Runs a trained policy exported to ONNX (``ml/export.py``) with onnxruntime + numpy —
-NO torch in this module. ``solve_learned_impl`` (later task) drives the cold-joint env
-to a terminal layout and returns a ``SolveResult`` behind the deterministic verifier.
+NO torch in this module. ``solve_learned_impl`` drives the cold-joint env to a terminal
+layout and returns a ``SolveResult`` behind the deterministic verifier.
 
 Determinism (ADR-0027): the proposer's tier-1 contract is within-build bit-identity
 (fixed weights + seed + pinned CPUExecutionProvider). The verifier stays strict and is
@@ -10,13 +10,15 @@ the sole arbiter of validity — an invalid proposal yields a no-layout SolveRes
 
 from __future__ import annotations
 
+import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
 
-from hangarfit.models import Layout, Scenario
+from hangarfit.models import Layout, Scenario, SolverDiagnostics, SolveResult
 from hangarfit.towplanner import DubinsArc, Move, MovesPlan, Pose, Segment
+from ml import geometry_oracle as go
 from ml.action_space import decode
 from ml.encoding import EncoderConfig, ObservationTensors, encode
 from ml.env import HangarFitEnv
@@ -158,3 +160,56 @@ def build_moves_plan(layout: Layout, driven: list[_DrivenObject], env: HangarFit
         arc = DubinsArc(start=d.start_pose, end=target, turn_radius_m=tr, segments=segments)
         moves.append(Move(plane_id=d.object_id, target_slot=target, path=arc))
     return MovesPlan(target_layout=layout, moves=tuple(moves))
+
+
+def solve_learned_impl(
+    scenario: Scenario,
+    *,
+    weights_path: str | Path,
+    budget_s: float,
+    alternatives: int,
+    seed: int | None,
+    plan_paths: bool,
+) -> SolveResult:
+    """Run the learned backend: argmax rollout of the ONNX policy over the env built from
+    ``scenario``, then return a verifier-gated SolveResult. The verifier (collisions.check
+    + Caddy egress, via go.layout_valid) is the sole arbiter — an invalid or incomplete
+    proposal yields a no-layout 'exhausted_budget' result, never an exception.
+
+    ``alternatives`` > 1 is accepted but yields a single (deterministic argmax) layout;
+    diverse sampling is #696. ``budget_s`` is advisory here (the env's step budget bounds
+    the rollout); it is recorded but not enforced as a wall-clock deadline (ADR-0003-style
+    reproducibility favours the step-count bound)."""
+    start = time.monotonic()
+    resolved_seed = seed if seed is not None else 0
+    policy = OrtPolicy(weights_path)
+    env = env_from_scenario(scenario)
+    layout, driven, info = rollout(env, policy)
+
+    complete = info.placed == info.total
+    if complete and go.layout_valid(layout):
+        plan = build_moves_plan(layout, driven, env) if plan_paths else None
+        return SolveResult(
+            status="found",
+            layouts=(layout,),
+            diagnostics=SolverDiagnostics(
+                restarts_attempted=0,
+                wall_time_s=time.monotonic() - start,
+                best_partial=None,
+                best_partial_layout=None,
+                seed=resolved_seed,
+            ),
+            plans=(plan,),
+        )
+    return SolveResult(
+        status="exhausted_budget",
+        layouts=(),
+        diagnostics=SolverDiagnostics(
+            restarts_attempted=0,
+            wall_time_s=time.monotonic() - start,
+            best_partial=None,
+            best_partial_layout=None,
+            seed=resolved_seed,
+        ),
+        plans=(),
+    )

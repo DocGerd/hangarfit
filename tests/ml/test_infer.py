@@ -148,3 +148,34 @@ def test_build_moves_plan_maps_primitives_to_dubins_arc():
     # Zero-primitive object (parked at spawn) -> best-effort Move(path=None).
     assert plan.moves[1].path is None
     assert plan.moves[1].target_slot == end
+
+
+def test_solve_learned_impl_returns_well_formed_result(tmp_path):
+    import pathlib
+
+    from ml.infer import solve_learned_impl
+
+    torch.manual_seed(0)
+    policy = HangarFitPolicy()
+    policy.eval()
+    onnx_path = tmp_path / "p.onnx"
+    export_onnx(policy, onnx_path)
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    scenario = load_scenario(str(root / "tests/fixtures/scenario_minimal.yaml"))
+    result = solve_learned_impl(
+        scenario, weights_path=onnx_path, budget_s=30.0, alternatives=1, seed=0, plan_paths=True
+    )
+    # SolveResult.__post_init__ enforces status/layouts/plans coherence; construction
+    # succeeding is the structural assertion. An untrained policy almost always fails to
+    # park the whole set validly, so expect a no-layout status here.
+    assert result.status in ("found", "exhausted_budget")
+    assert len(result.plans) == len(result.layouts)
+    from ml.geometry_oracle import layout_valid
+
+    if result.status == "found":
+        assert layout_valid(result.layouts[0])
+        assert len(result.plans) == 1
+    else:
+        assert result.layouts == ()
+        assert result.plans == ()
