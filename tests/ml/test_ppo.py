@@ -328,6 +328,24 @@ def test_return_normalizer_std_only_scales_without_mean_shift():
     assert out[2] / out[0] == pytest.approx(r[2] / r[0])
 
 
+def test_return_normalizer_no_mean_subtraction_on_nonzero_mean():
+    # DISCRIMINATING: zero-mean data passes even for a mean-subtracting normalizer, so use
+    # all-positive (non-zero-mean) data. Std-only must keep every output positive and equal
+    # to r / (std + eps) exactly; a mean-subtracting normalizer would push the low values
+    # negative.
+    eps = 1e-8
+    norm = ReturnNormalizer(eps=eps, warmup=0)
+    r = torch.tensor([3.0, 4.0, 5.0, 6.0])  # mean 4.5, all positive
+    out = norm.normalize(r)
+    # Welford over this single batch: population variance = m2 / count = var(r, unbiased=False).
+    mean = r.mean()
+    pop_var = ((r - mean) ** 2).mean()
+    std = float(pop_var.item()) ** 0.5
+    expected = r / (std + eps)
+    assert torch.all(out > 0)  # no mean subtraction -> nothing flipped negative
+    assert torch.allclose(out, expected, atol=1e-6)
+
+
 def test_return_normalizer_eps_floor_finite_on_zero_variance():
     norm = ReturnNormalizer(eps=1e-8, warmup=0)
     out = norm.normalize(torch.zeros(4))

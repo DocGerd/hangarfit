@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 torch = pytest.importorskip("torch")
@@ -113,15 +115,51 @@ def test_train_curriculum_validates_ladder_eagerly():
 # ---------------------------------------------------------------------------
 
 
-def test_entropy_coef_at_rewarms_per_stage():
-    # A schedule keyed on the PER-STAGE iteration re-warms each rung (iter resets to 0).
-    from ml.ppo import entropy_coef_at
+def test_entropy_schedule_rewarms_per_stage_in_train_curriculum(monkeypatch):
+    # BEHAVIORAL: prove train_curriculum keys the entropy schedule on the PER-STAGE
+    # iteration `it` (resets 0 each rung), not a global counter that would decay to ~end
+    # by later rungs. Monkeypatch ppo_update to record the entropy_coef actually applied
+    # and collect_rollout to a cheap no-episode stub so the per-stage loop runs its full
+    # max_iters without promoting or doing any real torch training.
+    import ml.train as train_mod
+    from ml.ppo import PPOConfig, RolloutBuffer
 
-    cfg_start, cfg_end, anneal = 0.05, 0.005, 40
-    # stage 1 iter 0 and stage 2 iter 0 must BOTH be the high start (re-warm), not decayed.
-    assert entropy_coef_at(
-        0, base=0.01, start=cfg_start, end=cfg_end, anneal_iters=anneal
-    ) == pytest.approx(0.05)
+    recorded: list[float] = []
+
+    def recorder(policy, optimizer, buf, config, *, normalizer=None):
+        recorded.append(config.entropy_coef)
+        return {"policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0, "loss": 0.0}
+
+    def empty_rollout(env, policy, enc, rollout_len, *, sample_request=None):
+        return RolloutBuffer(), []  # no completed episodes -> never promotes by competency
+
+    monkeypatch.setattr(train_mod, "ppo_update", recorder)
+    monkeypatch.setattr(train_mod, "collect_rollout", empty_rollout)
+
+    max_iters = 3
+    # threshold 2.0 + zero episodes -> the window stays empty -> every rung caps at max_iters.
+    sched = _tiny_schedule(threshold=2.0)
+    sched = CurriculumSchedule(
+        stages=sched.stages,
+        policy=replace(sched.policy, max_iters=max_iters),
+    )
+    cfg = PPOConfig(entropy_coef_start=0.05, entropy_coef_end=0.005, entropy_anneal_iters=4)
+    train_curriculum(seed=0, schedule=sched, rollout_len=8, ppo=cfg)
+
+    n_stages = len(sched.stages)
+    assert len(recorded) == n_stages * max_iters  # full cap each rung, no early promote
+    stage0 = recorded[:max_iters]
+    stage1 = recorded[max_iters : 2 * max_iters]
+    # Each rung RE-WARMS to start at its first iteration (proves per-stage keying):
+    assert stage0[0] == pytest.approx(0.05)
+    assert stage1[0] == pytest.approx(0.05)
+    # ...and decays within each rung (it=0,1,2 -> start + (end-start)*it/4, non-increasing):
+    for seq in (stage0, stage1):
+        # seq[1:] is intentionally one shorter (consecutive-pair idiom) -> strict=False.
+        assert all(later <= earlier for earlier, later in zip(seq, seq[1:], strict=False))
+        assert seq[1] < seq[0]  # strictly decaying inside the anneal window
+    # If the schedule were keyed on a GLOBAL counter, stage1[0] would be the it=3 value
+    # (already decayed), NOT the 0.05 start — this is the discriminating assertion.
 
 
 def test_build_stage_env_threads_reward_weights():
