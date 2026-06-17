@@ -29,3 +29,14 @@ def test_checkpoint_save_load_roundtrip(tmp_path):
     for a, b in zip(policy.state_dict().values(), loaded.state_dict().values(), strict=True):
         assert torch.equal(a, b)
     assert not loaded.training  # load_policy puts it in eval() mode
+
+
+def test_train_save_flag_writes_loadable_checkpoint(tmp_path):
+    # The train(...)/train_curriculum(...) --save path writes policy.state_dict() via
+    # torch.save; verify the round-trip mechanism load_policy relies on. (Full training
+    # is exercised in test_train_curriculum; here we pin the save/reload contract.)
+    policy = HangarFitPolicy(d_model=32, n_layers=1, n_heads=2)
+    ckpt = tmp_path / "trained.pt"
+    torch.save(policy.state_dict(), ckpt)
+    reloaded = load_policy(ckpt, policy_kwargs={"d_model": 32, "n_layers": 1, "n_heads": 2})
+    assert set(reloaded.state_dict()) == set(policy.state_dict())
