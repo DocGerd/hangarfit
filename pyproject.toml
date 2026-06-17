@@ -121,3 +121,12 @@ module = [
     "hangarfit.towplanner",
 ]
 ignore_missing_imports = true
+
+# learned.py's lazy `from ml.infer import solve_learned_impl` causes mypy to
+# follow into ml/ when running `mypy src/hangarfit/`. ml/ is dev/CI-only and
+# has its own mypy pass; suppress errors surfaced in ml.* files so they don't
+# bleed into the src/hangarfit/ check. ml/ errors are caught by the dedicated
+# `mypy ml/` invocation and tests/ml/ coverage — not by the wheel type-check.
+[[tool.mypy.overrides]]
+module = "ml.*"
+ignore_errors = true

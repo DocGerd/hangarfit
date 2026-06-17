@@ -6,9 +6,12 @@ that returns the same :class:`~hangarfit.models.SolveResult`
 shape, so every downstream consumer (render / ``view`` / ``--write-yaml``) stays
 backend-agnostic.
 
-It is **not yet implemented**. Calling :func:`solve_learned` always raises
-:class:`LearnedBackendUnavailableError`; the learned policy, its training, and the
-``[learned-infer]`` runtime extra arrive in later rungs of #607.
+Calling :func:`solve_learned` without a ``weights_path``, with a missing weights
+file, or without the ``[learned-infer]`` / ``ml/`` dependencies installed raises
+:class:`LearnedBackendUnavailableError` with an actionable message. When a valid
+weights path is provided and the inference dependencies are present, the call
+delegates to :func:`ml.infer.solve_learned_impl` (lazy-imported inside the
+function body so the wheel never drags in ``ml``/``onnxruntime`` at module load).
 
 Determinism: the learned proposer is **not** under the ADR-0003 byte-identical
 contract — that contract stays on the verifier (``collisions.check`` + ``towplanner``),
@@ -18,6 +21,7 @@ which remains the sole arbiter of validity and routability. The learned path's o
 
 from __future__ import annotations
 
+from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
@@ -27,34 +31,54 @@ if TYPE_CHECKING:
 class LearnedBackendUnavailableError(RuntimeError):
     """Raised when the learned backend is requested but cannot run.
 
-    Today this is *always* raised: the learned backend (epic #607) is not yet
-    implemented. Once it ships, this will instead signal a missing optional
-    ``[learned-infer]`` runtime dependency or absent model weights — letting the
-    CLI surface a clean, actionable error rather than an import traceback.
+    Signals a missing optional ``[learned-infer]`` runtime dependency, absent
+    model weights, or a bare wheel distribution that does not include the ``ml/``
+    package — letting the CLI surface a clean, actionable error rather than an
+    import traceback.
     """
 
 
 def solve_learned(
     scenario: Scenario,
     *,
+    weights_path: str | Path | None = None,
     budget_s: float = 30.0,
     alternatives: int = 1,
     seed: int | None = None,
     plan_paths: bool = True,
 ) -> SolveResult:
-    """Learned-backend counterpart to :func:`hangarfit.solver.solve`.
+    """Learned-backend counterpart to :func:`hangarfit.solver.solve` (epic #607).
 
-    Intended contract (once implemented): propose poses **and** the place-and-tow
-    sequence with a learned policy, then return the same
-    :class:`~hangarfit.models.SolveResult` shape (poses + tow ``MovesPlan``) as the
-    deterministic backend, with the verifier accepting/rejecting every layout. The
-    signature mirrors the user-facing knobs of :func:`solve` so the CLI can dispatch
-    on ``--backend`` without reshaping the call.
-
-    **Not yet implemented** (epic #607): always raises
-    :class:`LearnedBackendUnavailableError`.
+    Lazy-imports the torch-free ``ml.infer`` inference path (onnxruntime). Raises
+    :class:`LearnedBackendUnavailableError` with an actionable message when the backend
+    cannot run: no ``--weights`` given, the ``ml`` package is absent (a bare wheel — see
+    #6), ``onnxruntime`` (the ``[learned-infer]`` extra) is missing, or the weights file
+    does not exist. The deterministic verifier remains the sole arbiter of validity
+    (ADR-0027); an invalid proposal returns a no-layout ``SolveResult``, not an error.
     """
-    raise LearnedBackendUnavailableError(
-        "the learned solver backend is not yet available (tracked in #607); "
-        "use the default --backend rrmc"
+    if weights_path is None:
+        raise LearnedBackendUnavailableError(
+            "the learned backend needs trained weights: pass --weights PATH "
+            "(no default weights ship yet; tracked in #6)"
+        )
+    if not Path(weights_path).is_file():
+        raise LearnedBackendUnavailableError(
+            f"learned-backend weights not found at {weights_path!r}"
+        )
+    try:
+        from ml.infer import solve_learned_impl
+    except ImportError as exc:
+        raise LearnedBackendUnavailableError(
+            "the learned backend requires the inference dependencies: install the "
+            "'[learned-infer]' extra (onnxruntime) in a source checkout that includes "
+            "the 'ml/' package (wheel distribution is tracked in #6). "
+            f"(import failed: {exc})"
+        ) from exc
+    return solve_learned_impl(
+        scenario,
+        weights_path=weights_path,
+        budget_s=budget_s,
+        alternatives=alternatives,
+        seed=seed,
+        plan_paths=plan_paths,
     )
