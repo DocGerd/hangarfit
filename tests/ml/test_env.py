@@ -338,6 +338,31 @@ def test_placed_body_overlapping_fixed_obstacle_is_invalid():
     assert env._layout_valid() is False  # fuji parts overlap the fixed fuel obstacle
 
 
+# ---------------------------------------------------------------------------
+# Task 4 (#607 SP#704) — _parked_score() episode cache
+# ---------------------------------------------------------------------------
+def test_parked_score_cache_equals_fresh_each_step():
+    env = _two_object_env(
+        difficulty=DifficultyConfig(max_objects=2, per_object_step_budget=40, total_step_budget=80)
+    )
+    env.reset()
+    fwd = Primitive(kind="S", magnitude=1.0, gear=1)
+    actions = [fwd, fwd, fwd, Park(), fwd, fwd]  # drive+park obj1, then drive obj2
+    for a in actions:
+        _, _, done, _ = env.step(a)
+        if done:
+            break
+        # After a non-terminal step the cache must equal a fresh score of the parked set.
+        assert env._parked_score() == go.score_layout(env._layout())
+
+
+def test_parked_score_empty_set_is_trivial():
+    env = _env()
+    env.reset()
+    s = env._parked_score()  # nothing parked yet
+    assert s == go.LayoutScore(0.0, True, False)
+
+
 def test_fixed_obstacle_is_perceived_in_observation_and_encoding():
     # The policy must PERCEIVE the keep-out it is penalized for hitting: the fixed obstacle
     # belongs in obs.parked (the observed frozen set) and surfaces in the encoded tokens

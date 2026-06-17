@@ -53,6 +53,7 @@ class HangarFitEnv:
         self._queue: list[str] = list(self.requested_ids if n is None else self.requested_ids[:n])
         self._parked: list[Placement] = []
         self._parked_version = 0
+        self._score_cache: tuple[int, go.LayoutScore] | None = None
         self._active_id: str | None = None
         self._active_pose: Pose | None = None
         self._prev_gear: int | None = None
@@ -107,6 +108,18 @@ class HangarFitEnv:
             ground_object_placements=tuple(p for p in frozen if p.plane_id in self.ground_objects),
         )
 
+    def _parked_score(self) -> go.LayoutScore:
+        """Cached score of the frozen ``_layout()`` (parked + fixed). Recomputed only when
+        the parked set changes (``_parked_version`` bump). Empty set short-circuits to the
+        trivial valid score without calling ``check``."""
+        if not (self._parked or self._fixed):
+            return go.LayoutScore(0.0, True, False)
+        if self._score_cache is not None and self._score_cache[0] == self._parked_version:
+            return self._score_cache[1]
+        score = go.score_layout(self._layout())
+        self._score_cache = (self._parked_version, score)
+        return score
+
     def _observe(self) -> Observation:
         active = None
         if self._active_id is not None and self._active_pose is not None:
@@ -140,7 +153,7 @@ class HangarFitEnv:
 
     def _potential(self) -> float:
         layout = self._layout()
-        remaining_overlap = go.overlap_area_m2(layout) if (self._parked or self._fixed) else 0.0
+        remaining_overlap = self._parked_score().penetration_m2
         misfit = 0.0
         if (
             self.weights.dense_slot_potential
@@ -199,11 +212,11 @@ class HangarFitEnv:
             )
             self._parked.append(pl)
             self._parked_version += 1
-            placed_layout = self._layout()
-            overlap = go.overlap_area_m2(placed_layout)
+            score = self._parked_score()  # one check + one egress, cached
+            overlap = score.penetration_m2
+            egress = score.egress_blocked
             intrusion = go.intrusion_area_m2(body, pl, self.hangar, bay_closed=False)
-            egress = go.egress_blocked(placed_layout)
-            park_valid = go.layout_valid(placed_layout)
+            park_valid = score.collisions_valid and not score.egress_blocked
             self._active_id = None
             self._active_pose = None
             done = not self._queue
@@ -285,7 +298,8 @@ class HangarFitEnv:
         via the shared ``geometry_oracle.layout_valid``. Reward terms read ctx, not this, so
         this is gate/reporting only. (Was hand-rolled overlap+intrusion+egress that
         over-enforced the inert maintenance bay — #607 SP#4c-ii / #694.)"""
-        return go.layout_valid(self._layout())
+        s = self._parked_score()
+        return s.collisions_valid and not s.egress_blocked
 
     def _info(self, ctx: RewardContext, done: bool, reason: str) -> StepInfo:
         return StepInfo(
