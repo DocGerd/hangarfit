@@ -117,6 +117,8 @@ def rollout(
     enc = encoder or EncoderConfig()
     bodies = {**env.fleet, **env.ground_objects}
     obs = env.reset()
+    if obs.active is None:
+        raise ValueError("rollout: env.reset() produced no active object to drive")
     driven: list[_DrivenObject] = []
     # The active object is identified at spawn; its primitives accumulate until a Park.
     current = _DrivenObject(obs.active.object_id, obs.active.pose, obs.active.pose)
