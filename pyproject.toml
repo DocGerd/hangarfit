@@ -123,10 +123,15 @@ module = [
 ignore_missing_imports = true
 
 # learned.py's lazy `from ml.infer import solve_learned_impl` causes mypy to
-# follow into ml/ when running `mypy src/hangarfit/`. ml/ is dev/CI-only and
-# has its own mypy pass; suppress errors surfaced in ml.* files so they don't
-# bleed into the src/hangarfit/ check. ml/ errors are caught by the dedicated
-# `mypy ml/` invocation and tests/ml/ coverage — not by the wheel type-check.
+# follow into ml/ when running `mypy src/hangarfit/`. Under that follow, ml/'s
+# own `hangarfit.*` imports resolve as Any (per the ignore_missing_imports
+# override above), which surfaces spurious errors that do NOT appear under the
+# dedicated `mypy ml/` pass. `follow_imports = skip` stops the src-check from
+# type-checking ml/ internals (the import resolves to Any in learned.py) WITHOUT
+# disabling `mypy ml/`: explicitly-passed files are always checked, so the Stop
+# hook's `mypy ml/` still fully type-checks the workspace. (Do NOT use
+# ignore_errors here — that suppresses errors even under `mypy ml/`, silently
+# neutering the ml/ type-check.)
 [[tool.mypy.overrides]]
 module = "ml.*"
-ignore_errors = true
+follow_imports = "skip"
