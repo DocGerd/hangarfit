@@ -36,6 +36,7 @@ __all__ = [
     "swept_intrusion_m2",
     "movement_cost",
     "egress_blocked",
+    "active_misfit_m2",
 ]
 
 # Re-export so callers can use go.CUSP_PENALTY
@@ -199,3 +200,45 @@ def egress_blocked(layout: Layout, *, mover_id: str | None = None) -> bool:
     if mover_id is None:
         return False
     return egress_first_conflict(layout, mover_id) is not None
+
+
+def active_misfit_m2(
+    body: Aircraft | GroundObject,
+    pose: Pose,
+    parked_layout: Layout,
+    hangar: Hangar,
+) -> float:
+    """Coarse, monotone 'how bad is parking the active body HERE' — for the
+    dense_slot_potential shaping term. Pure state→scalar shapely query: the active
+    footprint's overlap with parked bodies PLUS its in-hangar (y≥0) out-of-floor area.
+    0.0 in a clean pocket; grows with intrusion. The apron (y<0) is EXCLUDED (the object
+    legitimately starts there; the door-ingress term handles entry). NEVER calls solve()/a
+    nester — that would re-import a search's reachable-distribution bias (constraint B)."""
+    floor = hangar.floor_polygon
+    if floor is None:
+        floor = box(0.0, 0.0, hangar.width_m, hangar.length_m)
+    upper = box(-1.0e6, 0.0, 1.0e6, hangar.length_m + 1.0e6)  # y >= 0 half-plane
+    pl = Placement(
+        plane_id="__active__",
+        x_m=pose.x_m,
+        y_m=pose.y_m,
+        heading_deg=pose.heading_deg,
+        on_carts=False,
+    )
+    obstacle_parts = [
+        wp
+        for p in parked_layout.placements
+        for wp in aircraft_parts_world(parked_layout.fleet[p.plane_id], p)
+    ] + [
+        wp
+        for gp in parked_layout.ground_object_placements
+        for wp in aircraft_parts_world(parked_layout.ground_objects[gp.plane_id], gp)
+    ]
+    total = 0.0
+    for wp in aircraft_parts_world(body, pl):
+        poly = wp.polygon
+        total += poly.difference(floor).intersection(upper).area  # in-hangar wall/notch intrusion
+        for op in obstacle_parts:
+            if poly.intersects(op.polygon):
+                total += poly.intersection(op.polygon).area
+    return total

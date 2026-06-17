@@ -216,3 +216,43 @@ def test_layout_full_witness_is_valid_694_regression():
     layout = load_layout(str(_ROOT / "examples/herrenteich/layout_full.yaml"))
     assert check(layout).valid, "precondition: witness valid per collisions.check"
     assert go.layout_valid(layout) is True
+
+
+# ---------------------------------------------------------------------------
+# Task 3 — active_misfit_m2 (Step 6)
+# ---------------------------------------------------------------------------
+
+
+def test_active_misfit_zero_in_clean_pocket_and_positive_when_overlapping():
+    from ml.types import Pose
+
+    fleet = _fuji()
+    hangar = empty_hangar()
+    body = fleet["fuji"]
+    empty = single_object_layout(x_m=5.0, y_m=5.0)  # one parked body near (5,5)
+    # Clean pocket far from the parked body, well inside the floor -> misfit 0.
+    clean = Pose(x_m=14.0, y_m=20.0, heading_deg=0.0)
+    assert go.active_misfit_m2(body, clean, empty, hangar) == pytest.approx(0.0, abs=1e-9)
+    # Right on top of the parked body -> positive misfit.
+    on_top = Pose(x_m=5.0, y_m=5.0, heading_deg=0.0)
+    assert go.active_misfit_m2(body, on_top, empty, hangar) > 0.0
+
+
+def test_active_misfit_never_invokes_search(monkeypatch):
+    import hangarfit.solver as solver
+    from ml.types import Pose
+
+    monkeypatch.setattr(
+        solver,
+        "solve",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("active_misfit_m2 must not call solve()")
+        ),
+    )
+    fleet = _fuji()
+    go.active_misfit_m2(
+        fleet["fuji"],
+        Pose(x_m=5.0, y_m=5.0, heading_deg=0.0),
+        single_object_layout(x_m=12.0, y_m=20.0),
+        empty_hangar(),
+    )

@@ -133,11 +133,21 @@ class HangarFitEnv:
 
     def _potential(self) -> float:
         layout = self._layout()
-        remaining_overlap = go.overlap_area_m2(layout) if self._parked else 0.0
+        remaining_overlap = go.overlap_area_m2(layout) if (self._parked or self._fixed) else 0.0
+        misfit = 0.0
+        if (
+            self.weights.dense_slot_potential
+            and self._active_pose is not None
+            and self._active_id is not None
+        ):
+            misfit = go.active_misfit_m2(
+                self._body(self._active_id), self._active_pose, layout, self.hangar
+            )
         return potential(
             remaining_overlap_m2=remaining_overlap,
             active_dist_to_slot_m=self._active_dist_to_slot_m(),
             unplaced=len(self._queue) + (1 if self._active_id is not None else 0),
+            active_misfit_m2=misfit,
         )
 
     def reset(self, requested_ids: tuple[str, ...] | None = None) -> Observation:
@@ -185,6 +195,7 @@ class HangarFitEnv:
             overlap = go.overlap_area_m2(placed_layout)
             intrusion = go.intrusion_area_m2(body, pl, self.hangar, bay_closed=False)
             egress = go.egress_blocked(placed_layout)
+            park_valid = go.layout_valid(placed_layout)
             self._active_id = None
             self._active_pose = None
             done = not self._queue
@@ -204,6 +215,7 @@ class HangarFitEnv:
                 prev_potential=self._prev_potential,
                 potential=new_phi,
                 terminal_fraction=terminal_fraction,
+                park_valid=park_valid,
             )
             reward = step_reward(ctx, weights)
             self._prev_potential = new_phi
