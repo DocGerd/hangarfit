@@ -13,7 +13,7 @@ from pathlib import Path
 import torch
 from torch import Tensor, nn
 
-from ml.encoding import ACTION_DIM, RASTER_CHANNELS, TOKEN_DIM, EncoderConfig
+from ml.encoding import ACTION_DIM, RASTER_CHANNELS, TOKEN_DIM, EncoderConfig, ObservationTensors
 from ml.policy import HangarFitPolicy, to_batch
 
 ONNX_INPUT_NAMES = ("raster", "tokens", "token_mask", "active_index", "legal_action_mask")
@@ -64,7 +64,7 @@ def export_onnx(
     policy: HangarFitPolicy,
     path: str | Path,
     *,
-    example=None,
+    example: ObservationTensors | None = None,
     opset: int = 17,
 ) -> None:
     """Trace ``policy``'s forward to an ONNX file at ``path``. Pass ``example`` (an
