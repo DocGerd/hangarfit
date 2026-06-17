@@ -308,6 +308,11 @@ pip install -e ".[train]"      # adds torch for training/eval (CPU is fine)
 pytest tests/ml/               # the ml/ test tree (collected by default; testpaths=["tests"])
 python -m ml.train --save P    # train + export state_dict (needs [train])
 
+# #706 learned-backend inference (epic #607 sub-project #5). Export a trained policy to
+# ONNX, then run it torch-free behind the verifier. Needs the [learned-infer] extra.
+python -m ml.train --schedule trivial --save /tmp/p.pt --save-onnx /tmp/p.onnx   # [train]
+hangarfit solve tests/fixtures/scenario_minimal.yaml --backend learned --weights /tmp/p.onnx
+
 # GitFlow loops
 git switch develop && git pull
 git switch -c feature/<slug>

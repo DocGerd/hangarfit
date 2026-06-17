@@ -18,6 +18,26 @@ environment + reward (`HangarFitEnv`), reusing `hangarfit`'s geometry oracle.
   side-by-side both-rates table against the recorded RR-MC baseline (needs the
   `[train]` extra / torch).
 
+### Inference (#5)
+
+Export a trained policy to ONNX and run it torch-free via the deterministic
+verifier. Needs the `[learned-infer]` extra (`pip install -e ".[learned-infer]"`
+installs onnxruntime; no torch required at inference time).
+
+```bash
+# 1. Train (trivial schedule) and export both a state_dict and the ONNX model:
+python -m ml.train --schedule trivial --save model.pt --save-onnx model.onnx  # [train]
+
+# 2. Run the learned backend (torch-free at inference time):
+hangarfit solve <scenario.yaml> --backend learned --weights model.onnx
+hangarfit solve <scenario.yaml> --backend learned --weights model.onnx --render-paths out.png
+```
+
+The verifier (`collisions.check` + Caddy egress) is the sole arbiter of validity
+— an invalid or incomplete proposal returns a no-layout result (never an
+exception). Wheel distribution, CI lane, and signed Release-asset weights are
+deferred to sub-project #6.
+
 The benchmark judges validity via the product deterministic checker
 `collisions.check` + Caddy egress (the spec's prime directive), **not** the env
 oracle — the single shared `layout_valid` oracle is now used by both the env
