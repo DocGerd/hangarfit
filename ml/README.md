@@ -53,10 +53,14 @@ python -m ml.train --schedule curriculum --max-iters-per-stage 30 --seed 0 --rol
   --normalize-returns
 ```
 
-Primary signal: `valid_placed` rising in treatment where control stalls near 0.
-Leading indicators: `terminal_fraction` leaving ~0 (escapes place-nothing basin);
-`fraction_placed − valid_placed` gap shrinking (escapes place-invalid basin);
-entropy starting higher and decaying across rungs.
+Primary **eval-time** signal: `valid_placed` rising in treatment where control stalls
+near 0. Leading indicators: `terminal_fraction` leaving ~0 (escapes place-nothing
+basin); `fraction_placed − valid_placed` gap shrinking (escapes place-invalid basin);
+entropy starting higher and decaying across rungs. **Note:** `valid_placed` /
+`terminal_fraction` are *not* printed by `python -m ml.train` (it logs `mean_ep_reward`
++ promotions, plus `entropy` in the `trivial` schedule) — measure them via
+`python -m ml.eval` on a saved checkpoint; the `/ml-ab` skill wraps the *train-time*
+read of this A/B.
 
 **Note:** A full run-to-mastery study and statistical reach-rate measurement
 against the benchmark are deferred to the second half of #693. The knobs are
