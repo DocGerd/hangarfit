@@ -230,6 +230,18 @@ def test_reset_rejects_unknown_id():
         env.reset(requested_ids=("nope",))
 
 
+def test_parked_version_zero_then_bumps_on_park_then_resets():
+    env = _two_object_env(
+        difficulty=DifficultyConfig(max_objects=2, per_object_step_budget=40, total_step_budget=80)
+    )
+    env.reset()
+    assert env._parked_version == 0
+    env.step(Park())  # park object 1 -> version bumps (validity irrelevant)
+    assert env._parked_version == 1
+    env.reset()
+    assert env._parked_version == 0
+
+
 def test_reset_rejects_empty_requested_ids():
     env = _two_object_env()
     with pytest.raises(ValueError):
@@ -324,6 +336,44 @@ def test_placed_body_overlapping_fixed_obstacle_is_invalid():
     env._active_pose = type(env._active_pose)(x_m=9.0, y_m=10.0, heading_deg=0.0)
     env.step(Park())
     assert env._layout_valid() is False  # fuji parts overlap the fixed fuel obstacle
+
+
+# ---------------------------------------------------------------------------
+# #704 — _parked_score() episode cache
+# ---------------------------------------------------------------------------
+def test_parked_score_cache_equals_fresh_each_step():
+    env = _two_object_env(
+        difficulty=DifficultyConfig(max_objects=2, per_object_step_budget=40, total_step_budget=80)
+    )
+    env.reset()
+    fwd = Primitive(kind="S", magnitude=1.0, gear=1)
+    actions = [fwd, fwd, fwd, Park(), fwd, fwd]  # drive+park obj1, then drive obj2
+    for a in actions:
+        _, _, done, _ = env.step(a)
+        if done:
+            break
+        # After a non-terminal step the cache must equal a fresh score of the parked set.
+        assert env._parked_score() == go.score_layout(env._layout())
+
+
+def test_parked_score_empty_set_is_trivial():
+    env = _env()
+    env.reset()
+    s = env._parked_score()  # nothing parked yet
+    assert s == go.LayoutScore(0.0, True, False)
+
+
+def test_parked_obstacles_cache_is_stable_per_version_and_active():
+    env = _two_object_env(
+        difficulty=DifficultyConfig(max_objects=2, per_object_step_budget=40, total_step_budget=80)
+    )
+    env.reset()
+    env.step(Park())  # park obj1; active is now obj2
+    aid = env._active_id
+    assert aid is not None
+    o1 = env._parked_obstacles(aid)
+    o2 = env._parked_obstacles(aid)
+    assert o1 is o2  # same (version, active_id) -> cached object reused
 
 
 def test_fixed_obstacle_is_perceived_in_observation_and_encoding():

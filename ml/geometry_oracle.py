@@ -8,6 +8,8 @@ or Hybrid-A* search. All functions are pure and RNG-free.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 from shapely.geometry import box
 
 from hangarfit.collisions import check
@@ -22,17 +24,23 @@ from hangarfit.towplanner import (
     Segment,
     _build_obstacles,
     _motion_clear,
+    _Obstacles,
     _primitives,
     egress_first_conflict,
 )
 from ml.types import Primitive
 
+type ObstaclesT = _Obstacles
+
 __all__ = [
     "overlap_area_m2",
     "intrusion_area_m2",
     "layout_valid",
+    "LayoutScore",
+    "score_layout",
     "legal_primitives",
     "apply_primitive",
+    "build_obstacles",
     "swept_intrusion_m2",
     "movement_cost",
     "egress_blocked",
@@ -123,12 +131,19 @@ def apply_primitive(
     return end, swept
 
 
+def build_obstacles(parked_layout: Layout, mover_id: str) -> ObstaclesT:
+    """Frozen-parked obstacle set for swept-path clearance (the mover is excluded).
+    Exposed so the env can build it once per parked-set version and reuse it."""
+    return _build_obstacles(parked_layout, mover_id=mover_id)
+
+
 def swept_intrusion_m2(
     body: Aircraft | GroundObject,
     swept: tuple[Pose, ...],
     *,
     parked_layout: Layout,
     active_id: str,
+    obstacles: ObstaclesT | None = None,
 ) -> float:
     """Graded swept-path intrusion (m²) for a move of ``body`` along ``swept``.
 
@@ -140,8 +155,14 @@ def swept_intrusion_m2(
     overlapping consecutive poses, so summing would inflate the penalty by the
     sample count. A fully clear sweep returns 0.0 (routability-by-construction
     along this leg).
+
+    Pass a pre-built ``obstacles`` (from :func:`build_obstacles`) to avoid
+    rebuilding the frozen parked-obstacle set on every call — useful when the
+    parked layout is stable across many steps.
     """
-    obstacles = _build_obstacles(parked_layout, mover_id=active_id)
+    obstacles = (
+        obstacles if obstacles is not None else _build_obstacles(parked_layout, mover_id=active_id)
+    )
     hangar = parked_layout.hangar
     worst = 0.0
     for pose in swept:
@@ -174,6 +195,28 @@ def movement_cost(primitive: Primitive, *, prev_gear: int | None, cusp_penalty: 
     translates = primitive.kind in ("S", "T")
     cusp = 1.0 if (translates and prev_gear is not None and primitive.gear != prev_gear) else 0.0
     return abs(primitive.magnitude) + cusp_penalty * cusp
+
+
+@dataclass(frozen=True, slots=True)
+class LayoutScore:
+    """One-pass score of a frozen layout: graded penetration + the two validity gates,
+    from a single ``check`` + single ``egress_blocked``. ``layout_valid`` ==
+    ``collisions_valid and not egress_blocked``."""
+
+    penetration_m2: float
+    collisions_valid: bool
+    egress_blocked: bool
+
+
+def score_layout(layout: Layout) -> LayoutScore:
+    """Single-pass replacement for calling ``overlap_area_m2`` + ``layout_valid`` +
+    ``egress_blocked`` separately (each re-runs ``check``/rebuilds world parts)."""
+    cr = check(layout)
+    return LayoutScore(
+        penetration_m2=cr.total_penetration_m2,
+        collisions_valid=cr.valid,
+        egress_blocked=egress_blocked(layout),
+    )
 
 
 def layout_valid(layout: Layout) -> bool:
