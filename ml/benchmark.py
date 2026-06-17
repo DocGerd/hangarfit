@@ -112,9 +112,9 @@ def _verdict_from(
 
 def _layout_valid(layout: Layout) -> bool:
     """Valid per the PRODUCT deterministic checker — delegates to the shared
-    geometry_oracle.layout_valid so the env gate, the policy scorer, and witness_valid are
-    judged by one identical predicate (collisions.check + Caddy egress; the inert maintenance
-    bay is conditional, #694)."""
+    geometry_oracle.layout_valid so the env gate, the policy scorer, witness_valid, and
+    rrmc_reach are judged by one identical predicate (collisions.check + Caddy egress; the
+    inert maintenance bay is conditional, #694)."""
     return go.layout_valid(layout)
 
 
@@ -202,6 +202,13 @@ def build_scenario_env(scenario: BenchScenario) -> HangarFitEnv:
         for gid in sc.ground_objects
         if sc.ground_object_defs[gid].object_class == "fixed_obstacle"
     ]
+    missing = [g for g in fixed_ids if g not in {p.plane_id for p in sc.fixed_obstacle_placements}]
+    if missing:
+        raise ValueError(
+            f"build_scenario_env: fixed obstacle(s) {missing} have no entry in "
+            f"scenario.fixed_obstacle_placements — they would silently appear un-placed "
+            f"(absent from scoring). Add surveyed placements or remove them from ground_objects."
+        )
     # ``placeable_ids`` is ``fleet_in + sorted(mover_ids)`` (aircraft + placed-routed
     # movers), so it ALREADY excludes fixed obstacles — they are never driven. Use it
     # directly as the driven queue.

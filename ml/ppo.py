@@ -39,10 +39,11 @@ def entropy_coef_at(
     """Per-iteration entropy coefficient. Constant ``base`` when no schedule is configured
     (``start is None`` or ``anneal_iters <= 0``); else a linear ``start``→``end`` ramp over
     ``anneal_iters`` iterations, clamped at ``end`` past the window. Monotone non-increasing
-    when start >= end (the intended high→low warmup)."""
+    when start >= end (the intended high→low warmup). If ``end`` is None, anneals toward
+    ``base``."""
     if start is None or anneal_iters <= 0:
         return base
-    finish = end if end is not None else start
+    finish = end if end is not None else base
     if iteration >= anneal_iters:
         return finish
     frac = iteration / anneal_iters
@@ -55,7 +56,9 @@ class ReturnNormalizer:
     so −w_col collision spikes and +r_terminal sit on a scale the value head can fit, letting
     GAE propagate terminal credit through the drive-in. Identity until ``warmup`` samples seen
     and identity-equivalent at zero variance (eps floor). Std-only preserves the relative
-    ordering of shaped rewards."""
+    ordering of shaped rewards.
+
+    SIDE EFFECT: ``normalize()`` updates the running stats — call once per rollout batch."""
 
     def __init__(self, *, eps: float = 1e-8, warmup: int = 256) -> None:
         self.eps = eps
@@ -74,7 +77,8 @@ class ReturnNormalizer:
     def normalize(self, rewards: Tensor) -> Tensor:
         self._update(rewards)
         if self._count < self.warmup or self._count < 2:
-            return rewards
+            return rewards.clone()
+        # population (biased, ÷N) variance — deliberate, cleanrl convention
         var = self._m2 / self._count
         std = max(var, 0.0) ** 0.5
         return rewards / (std + self.eps)
@@ -200,7 +204,12 @@ def ppo_update(
     GAE. Existing callers that pass no ``normalizer`` are byte-identical (default None)."""
     data = buffer.batch()
     rewards = data["reward"]
-    if config.normalize_returns and normalizer is not None:
+    if config.normalize_returns:
+        if normalizer is None:
+            raise ValueError(
+                "ppo_update: config.normalize_returns=True but normalizer=None; "
+                "pass a ReturnNormalizer instance or set normalize_returns=False"
+            )
         rewards = normalizer.normalize(rewards)
     advantages, returns = compute_gae(
         rewards,

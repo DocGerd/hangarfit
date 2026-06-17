@@ -120,8 +120,9 @@ class HangarFitEnv:
             # The observed frozen set is parked (driven-in) PLUS the pre-placed fixed
             # obstacles, so the tensorizer rasters + tokenizes the immovable keep-outs and
             # the policy can PERCEIVE what it is penalized for colliding with. Fixed
-            # obstacles stay out of ``_parked``, so info.placed / terminal_fraction (which
-            # divide over ``_parked`` / ``requested_ids``, not ``obs.parked``) are unchanged.
+            # obstacles stay out of ``_parked``, so info.placed (= len(_parked)) and
+            # terminal_fraction (= len(_parked)/len(requested_ids)) are unchanged — the
+            # denominator is the driven/requested set only, not the full observed set.
             parked=tuple(ParkedObject(p.plane_id, p) for p in self._parked + self._fixed),
             unplaced_ids=tuple(self._queue),
             steps_this_object=self._steps_this_object,

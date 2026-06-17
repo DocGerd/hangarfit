@@ -144,8 +144,10 @@ def train(
     """Train on the trivial stage; return the per-iteration mean episode reward.
 
     ``weights``: optional reward weights forwarded to the env (defaults to neutral).
-    ``ppo.entropy_coef_start/end/anneal_iters``: per-iteration entropy schedule; keyed
-    on the iteration index so it re-warms from ``it=0`` each run.
+    ``ppo.entropy_coef_start/end/anneal_iters``: per-iteration entropy schedule; decays
+    ONCE over the run's iterations (NO per-stage reset — that is ``train_curriculum()``
+    only, where ``it`` resets to 0 at each new stage). Keyed on the iteration index so
+    it decays from ``it=0`` at the start of the run.
     ``ppo.normalize_returns``: std-only Welford return normalizer (single run-level
     normalizer; identity until warmed up)."""
     torch.manual_seed(seed)

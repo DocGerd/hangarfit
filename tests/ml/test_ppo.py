@@ -306,6 +306,19 @@ def test_entropy_coef_linear_anneal_boundaries_and_monotone():
     assert f(20) == pytest.approx(0.05 + (0.005 - 0.05) * 0.5)
 
 
+def test_entropy_coef_at_end_none_anneals_toward_base():
+    # When end=None the schedule must anneal from start toward base (not stay flat at start).
+    base = 0.01
+    start = 0.05
+    at0 = entropy_coef_at(0, base=base, start=start, end=None, anneal_iters=40)
+    at20 = entropy_coef_at(20, base=base, start=start, end=None, anneal_iters=40)
+    at40 = entropy_coef_at(40, base=base, start=start, end=None, anneal_iters=40)
+    assert at0 == pytest.approx(start)
+    assert at40 == pytest.approx(base)  # converges to base (not stuck at start)
+    assert at20 == pytest.approx(start + (base - start) * 0.5)
+    assert at0 > at20 > at40  # strictly decreasing
+
+
 # ---------------------------------------------------------------------------
 # Task 4: ReturnNormalizer
 # ---------------------------------------------------------------------------
@@ -380,7 +393,8 @@ def test_ppo_update_normalizer_off_does_not_touch_rewards(monkeypatch):
 
 
 def test_ppo_update_normalizer_on_changes_rewards(monkeypatch):
-    # When normalize_returns=True and a warm normalizer is passed, compute_gae sees scaled rewards.
+    # When normalize_returns=True and a warm normalizer is passed, compute_gae sees scaled rewards
+    # and the scaling ratio matches 1/(std+eps) for the known batch.
     import ml.ppo as ppo
 
     seen: dict[str, object] = {}
@@ -396,9 +410,34 @@ def test_ppo_update_normalizer_on_changes_rewards(monkeypatch):
     buf = _filled_buffer(policy)
     raw_rewards = buf.batch()["reward"].clone()
     opt = torch.optim.Adam(policy.parameters(), lr=3e-4)
+    eps = 1e-8
     # warmup=0 so normalizer is active immediately
-    norm = ReturnNormalizer(eps=1e-8, warmup=0)
+    norm = ReturnNormalizer(eps=eps, warmup=0)
     cfg_on = PPOConfig(minibatch_size=16, normalize_returns=True)
     ppo_update(policy, opt, buf, cfg_on, normalizer=norm)
-    # rewards should have been scaled (not equal to raw unless std=1, which is very unlikely)
+    # Rewards should have been scaled (not equal to raw unless std=1, very unlikely).
     assert not torch.equal(seen["rewards"], raw_rewards)
+    # Verify the scaling matches 1/(std+eps) for nonzero rewards: check that
+    # seen_rewards == raw_rewards / (std+eps) element-wise on non-zero entries.
+    mean = raw_rewards.mean()
+    pop_var = float(((raw_rewards - mean) ** 2).mean().item())
+    expected_std = pop_var**0.5
+    expected_scale = 1.0 / (expected_std + eps)
+    seen_rewards = seen["rewards"]
+    assert isinstance(seen_rewards, torch.Tensor)
+    expected_scaled = raw_rewards * expected_scale
+    assert torch.allclose(seen_rewards, expected_scaled, atol=1e-4), (
+        f"scaling mismatch: expected first 5={expected_scaled[:5].tolist()}, "
+        f"got {seen_rewards[:5].tolist()}"
+    )
+
+
+def test_ppo_update_raises_when_normalize_returns_true_but_normalizer_none():
+    # Loud guard: if normalize_returns=True and no normalizer is supplied → ValueError.
+    torch.manual_seed(0)
+    policy = HangarFitPolicy(d_model=32, n_layers=1, n_heads=2)
+    buf = _filled_buffer(policy)
+    opt = torch.optim.Adam(policy.parameters(), lr=3e-4)
+    cfg = PPOConfig(minibatch_size=16, normalize_returns=True)
+    with pytest.raises(ValueError, match="normalizer"):
+        ppo_update(policy, opt, buf, cfg, normalizer=None)

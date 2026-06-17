@@ -70,13 +70,14 @@ def intrusion_area_m2(
     floor = hangar.floor_polygon
     if floor is None:
         floor = box(0.0, 0.0, hangar.width_m, hangar.length_m)
-    bay = hangar.maintenance_bay
-    bay_poly = box(
-        bay.center_x_m - bay.width_m / 2.0,
-        hangar.length_m - bay.depth_m,
-        bay.center_x_m + bay.width_m / 2.0,
-        hangar.length_m,
-    )
+    if bay_closed:
+        bay = hangar.maintenance_bay
+        bay_poly = box(
+            bay.center_x_m - bay.width_m / 2.0,
+            hangar.length_m - bay.depth_m,
+            bay.center_x_m + bay.width_m / 2.0,
+            hangar.length_m,
+        )
     total = 0.0
     for wp in aircraft_parts_world(body, placement):
         poly = wp.polygon
@@ -219,7 +220,7 @@ def active_misfit_m2(
         floor = box(0.0, 0.0, hangar.width_m, hangar.length_m)
     upper = box(-1.0e6, 0.0, 1.0e6, hangar.length_m + 1.0e6)  # y >= 0 half-plane
     pl = Placement(
-        plane_id="__active__",
+        plane_id=body.id,
         x_m=pose.x_m,
         y_m=pose.y_m,
         heading_deg=pose.heading_deg,
@@ -228,11 +229,15 @@ def active_misfit_m2(
     obstacle_parts = [
         wp
         for p in parked_layout.placements
-        for wp in aircraft_parts_world(parked_layout.fleet[p.plane_id], p)
+        for b in [parked_layout.fleet.get(p.plane_id)]
+        if b is not None
+        for wp in aircraft_parts_world(b, p)
     ] + [
         wp
         for gp in parked_layout.ground_object_placements
-        for wp in aircraft_parts_world(parked_layout.ground_objects[gp.plane_id], gp)
+        for b in [parked_layout.ground_objects.get(gp.plane_id)]
+        if b is not None
+        for wp in aircraft_parts_world(b, gp)
     ]
     total = 0.0
     for wp in aircraft_parts_world(body, pl):

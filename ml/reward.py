@@ -22,8 +22,9 @@ class RewardContext:
     prev_potential: float
     potential: float
     terminal_fraction: float | None  # set only on the terminal step
-    # this Park left the whole layout valid (per layout_valid); Park steps only
-    park_valid: bool = False
+    # None = not a Park step (bonus structurally absent);
+    # False = Park step with invalid layout; True = Park step with valid layout.
+    park_valid: bool | None = None
 
 
 def potential(

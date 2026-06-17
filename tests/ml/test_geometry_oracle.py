@@ -256,3 +256,16 @@ def test_active_misfit_never_invokes_search(monkeypatch):
         single_object_layout(x_m=12.0, y_m=20.0),
         empty_hangar(),
     )
+
+
+def test_active_misfit_zero_on_apron():
+    """A pose on the apron (y < 0) must return 0.0 — the apron is the legitimate start
+    zone (excluded by the upper y>=0 half-plane in active_misfit_m2)."""
+    from ml.types import Pose
+
+    fleet = _fuji()
+    hangar = empty_hangar()
+    body = fleet["fuji"]
+    empty = single_object_layout(x_m=5.0, y_m=5.0)  # one parked body inside; empty apron
+    apron_pose = Pose(x_m=hangar.door.center_x_m, y_m=-4.0, heading_deg=0.0)  # well on apron
+    assert go.active_misfit_m2(body, apron_pose, empty, hangar) == pytest.approx(0.0, abs=1e-9)
