@@ -10,7 +10,7 @@ from shapely.geometry import box
 from hangarfit.collisions import check
 from hangarfit.geometry import aircraft_parts_world
 from hangarfit.loader import load_fleet, load_layout
-from hangarfit.models import Placement
+from hangarfit.models import GroundObject, Layout, Part, Placement
 from ml import geometry_oracle as go
 from ml.types import Park, Primitive, RewardWeights
 from tests.ml.conftest import _fuji, empty_hangar, single_object_layout, two_object_layout
@@ -280,6 +280,80 @@ def test_score_layout_matches_separate_calls_overlapping():
     assert s.penetration_m2 > 0.0
     assert s.collisions_valid == check(layout).valid
     assert s.collisions_valid is False
+
+
+def test_score_layout_matches_separate_calls_egress_blocked():
+    """score_layout equivalence in the egress-blocked regime (design spec §6).
+
+    A hard-door mover (Caddy) is placed behind a wall that spans the full hangar
+    width — the Caddy cannot reach the door so egress_blocked returns True.  The
+    wall is a fixed_obstacle (not a placement that needs routing), so
+    collisions.check itself stays valid.  This exercises the branch where
+    ``s.egress_blocked is True`` and ``layout_valid`` is False because of the
+    egress gate alone — the case not covered by the valid/overlapping pair above.
+    """
+    hangar = empty_hangar()  # 25 m long, 22 m wide placeholder hangar
+
+    # A wide wall at y=12 cuts the hangar in two: anything behind it (y>12) cannot
+    # reach the door at y=0.  Width 30 m exceeds the 22 m hangar so no gaps remain.
+    wall = GroundObject(
+        id="wall",
+        name="Wall",
+        parts=(
+            Part(
+                kind="ground",
+                length_m=1.0,
+                width_m=30.0,
+                offset_x_m=0.0,
+                offset_y_m=0.0,
+                angle_deg=0.0,
+                z_bottom_m=0.0,
+                z_top_m=1.5,
+            ),
+        ),
+        object_class="fixed_obstacle",
+    )
+    caddy = GroundObject(
+        id="caddy",
+        name="VW Caddy",
+        parts=(
+            Part(
+                kind="ground",
+                length_m=4.5,
+                width_m=1.8,
+                offset_x_m=0.0,
+                offset_y_m=0.0,
+                angle_deg=0.0,
+                z_bottom_m=0.0,
+                z_top_m=1.5,
+            ),
+        ),
+        object_class="placed_routed_mover",
+        motion_mode="steerable",
+        turn_radius_m=5.5,
+        hard_door_mover=True,
+    )
+
+    layout = Layout(
+        fleet={},
+        hangar=hangar,
+        placements=(),
+        ground_objects={wall.id: wall, caddy.id: caddy},
+        ground_object_placements=(
+            # Wall at y=12 blocks the Caddy at y=20 from reaching the door.
+            Placement("wall", x_m=11.0, y_m=12.0, heading_deg=0.0, on_carts=False),
+            Placement("caddy", x_m=11.0, y_m=20.0, heading_deg=0.0, on_carts=False),
+        ),
+    )
+
+    # Precondition: verify the fixture is actually in the positive-egress regime.
+    assert go.egress_blocked(layout) is True, (
+        "fixture must produce egress_blocked=True; adjust wall/caddy positions if False"
+    )
+
+    s = go.score_layout(layout)
+    assert s.egress_blocked == go.egress_blocked(layout)  # both True
+    assert (s.collisions_valid and not s.egress_blocked) == go.layout_valid(layout)
 
 
 def test_active_misfit_zero_on_apron():

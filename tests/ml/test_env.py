@@ -339,7 +339,7 @@ def test_placed_body_overlapping_fixed_obstacle_is_invalid():
 
 
 # ---------------------------------------------------------------------------
-# Task 4 (#607 SP#704) — _parked_score() episode cache
+# #704 — _parked_score() episode cache
 # ---------------------------------------------------------------------------
 def test_parked_score_cache_equals_fresh_each_step():
     env = _two_object_env(
