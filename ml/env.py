@@ -175,7 +175,7 @@ class HangarFitEnv:
             self._parked.append(pl)
             placed_layout = self._layout()
             overlap = go.overlap_area_m2(placed_layout)
-            intrusion = go.intrusion_area_m2(body, pl, self.hangar)
+            intrusion = go.intrusion_area_m2(body, pl, self.hangar, bay_closed=False)
             egress = go.egress_blocked(placed_layout)
             self._active_id = None
             self._active_pose = None
@@ -253,20 +253,11 @@ class HangarFitEnv:
         return False, ""
 
     def _layout_valid(self) -> bool:
-        """Whole-layout validity matching the deterministic checker the prime directive
-        enforces: no part overlap, no out-of-bounds / notch / apron (y<0) intrusion by ANY
-        parked body, and no Caddy hard-door egress violation. (StepInfo.valid previously
-        checked overlap only, leaving the promotion gate looser than the real checker —
-        #607 SP#4b review.) Reward terms read ctx, not this, so this is gate/reporting only."""
-        layout = self._layout()
-        if go.overlap_area_m2(layout) > 0.0:
-            return False
-        if go.egress_blocked(layout):
-            return False
-        return all(
-            go.intrusion_area_m2(self._body(pl.plane_id), pl, self.hangar) == 0.0
-            for pl in self._parked
-        )
+        """Whole-layout validity == the product checker (the prime directive's final gate),
+        via the shared ``geometry_oracle.layout_valid``. Reward terms read ctx, not this, so
+        this is gate/reporting only. (Was hand-rolled overlap+intrusion+egress that
+        over-enforced the inert maintenance bay — #607 SP#4c-ii / #694.)"""
+        return go.layout_valid(self._layout())
 
     def _info(self, ctx: RewardContext, done: bool, reason: str) -> StepInfo:
         return StepInfo(

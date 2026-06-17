@@ -15,7 +15,6 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
-from hangarfit.collisions import check
 from hangarfit.loader import load_layout, load_scenario
 from hangarfit.models import Layout, SearchConfig, SolveStatus
 from hangarfit.solver import solve
@@ -112,15 +111,11 @@ def _verdict_from(
 
 
 def _layout_valid(layout: Layout) -> bool:
-    """Valid per the PRODUCT deterministic checker (the spec's 'prime directive' final
-    gate, == `hangarfit check`): collisions.check reports no conflicts (overlap + hangar
-    bounds/notch + CONDITIONAL maintenance bay + ground-obstacle keep-outs) AND no Caddy
-    hard-door egress violation (ADR-0026). Deliberately NOT the env oracle's
-    `intrusion_area_m2`, which over-strictly enforces an INERT placeholder maintenance bay
-    (issue #694) — the herrenteich bay is explicitly inert, so layout_full is valid here.
-    Used identically by witness_valid, rrmc_reach, and the policy scorer so all sides are
-    judged apples-to-apples."""
-    return not check(layout).conflicts and not go.egress_blocked(layout)
+    """Valid per the PRODUCT deterministic checker — delegates to the shared
+    geometry_oracle.layout_valid so the env gate, the policy scorer, and witness_valid are
+    judged by one identical predicate (collisions.check + Caddy egress; the inert maintenance
+    bay is conditional, #694)."""
+    return go.layout_valid(layout)
 
 
 def witness_valid(scenario: BenchScenario) -> bool:

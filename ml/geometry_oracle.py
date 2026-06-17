@@ -30,6 +30,7 @@ from ml.types import Primitive
 __all__ = [
     "overlap_area_m2",
     "intrusion_area_m2",
+    "layout_valid",
     "legal_primitives",
     "apply_primitive",
     "swept_intrusion_m2",
@@ -50,15 +51,21 @@ def overlap_area_m2(layout: Layout) -> float:
     return check(layout).total_penetration_m2
 
 
-def intrusion_area_m2(body: Aircraft | GroundObject, placement: Placement, hangar: Hangar) -> float:
-    """Footprint area (m²) outside the hangar floor or inside a notch/keep-out.
+def intrusion_area_m2(
+    body: Aircraft | GroundObject,
+    placement: Placement,
+    hangar: Hangar,
+    *,
+    bay_closed: bool = False,
+) -> float:
+    """Footprint area (m²) outside the hangar floor or inside a CLOSED maintenance bay.
 
-    Graded counterpart to the binary bounds/notch checks (spec §5). Uses the same
-    shapely polygons: the L-shaped ``hangar.floor_polygon`` when present, else the
-    outer rectangle; plus the maintenance bay rectangle (a keep-out for placement).
-    The front apron (``y < 0``) is part of the *motion* model, not a parked-validity
-    region, so anything below ``y = 0`` counts as intrusion for a PARKED pose.
-    """
+    Mirrors collisions.check's ADR-0006 rule: the maintenance bay is a keep-out ONLY when
+    it is closed (``layout.maintenance_plane is not None``). The env never sets a maintenance
+    occupant, so it always passes ``bay_closed=False`` and the bay term vanishes — fixing the
+    #694 over-strict-inert-bay divergence on the reward gradient. Out-of-floor (walls/notch via
+    ``floor_polygon``) is always counted. The front apron (``y < 0``) counts as intrusion for a
+    PARKED pose (it is a motion region, not a parked-validity region)."""
     floor = hangar.floor_polygon
     if floor is None:
         floor = box(0.0, 0.0, hangar.width_m, hangar.length_m)
@@ -73,7 +80,8 @@ def intrusion_area_m2(body: Aircraft | GroundObject, placement: Placement, hanga
     for wp in aircraft_parts_world(body, placement):
         poly = wp.polygon
         total += poly.difference(floor).area  # outside the floor (walls/notch)
-        total += poly.intersection(bay_poly).area  # inside the maintenance bay
+        if bay_closed:
+            total += poly.intersection(bay_poly).area  # inside a CLOSED maintenance bay
     return total
 
 
@@ -163,6 +171,17 @@ def movement_cost(primitive: Primitive, *, prev_gear: int | None, cusp_penalty: 
     translates = primitive.kind in ("S", "T")
     cusp = 1.0 if (translates and prev_gear is not None and primitive.gear != prev_gear) else 0.0
     return abs(primitive.magnitude) + cusp_penalty * cusp
+
+
+def layout_valid(layout: Layout) -> bool:
+    """Whole-layout validity per the PRODUCT deterministic checker (== ``hangarfit check``):
+    collisions.check reports no conflicts (overlap + hangar bounds/notch + CONDITIONAL
+    maintenance bay + ground-obstacle keep-outs) AND no Caddy hard-door egress violation
+    (ADR-0026). The single source of validity truth shared by the env gate, the r_valid_park
+    bonus gate, and the benchmark — so the bonus and the promotion metric can never disagree.
+    Replaces the env's old hand-rolled overlap+intrusion+egress, which over-enforced the inert
+    maintenance bay (#694)."""
+    return check(layout).valid and not egress_blocked(layout)
 
 
 def egress_blocked(layout: Layout, *, mover_id: str | None = None) -> bool:

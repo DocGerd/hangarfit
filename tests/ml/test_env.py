@@ -254,3 +254,11 @@ def test_parked_out_of_bounds_layout_is_invalid():
     _, _, done, info = env.step(Park())
     assert done is True and info.placed == 1
     assert info.valid is False  # parked on the apron / out of bounds
+
+
+def test_env_layout_valid_delegates_to_product_checker():
+    from ml import geometry_oracle as go
+
+    env = HangarFitEnv(hangar=empty_hangar(), fleet=_fuji(), requested_ids=("fuji",))
+    env.reset()
+    assert env._layout_valid() == go.layout_valid(env._layout())
