@@ -99,6 +99,7 @@ Use the best-fitted model for the task. The model class to pick is "as much reas
 - **`pr-review-toolkit:type-design-analyzer`** — when `models.py` changes.
 - **`geometry-invariant-guard`** — for any PR touching `src/hangarfit/geometry.py` or `src/hangarfit/collisions.py`; guards the coordinate-transform sign-flip trap (see [ADR-0002](docs/adr/0002-determinant-minus-one-transform.md)).
 - **`determinism-guard`** — for any PR touching `src/hangarfit/solver.py` or `src/hangarfit/towplanner.py` (including the #544 `--workers` parallel-restart fan-out and `tests/test_solver_parallel.py`); guards the byte-identical-plan determinism contract (same scenario + seed → bit-identical output, `max_restarts`-scoped per the #267 amendment; and parallel-restart ≡ serial in the `_parallel_eligible` regime per the #544 amendment), runs the solver twice on a fixed seed and diffs (see [ADR-0003](docs/adr/0003-rr-mc-solver-algorithm.md)).
+- **`ml-rl-guard`** — for any PR touching the `ml/` RL workspace (`ml/*.py`) or `tests/ml/`; guards the four RL invariants the solver-scoped `determinism-guard` does not cover — training reproducibility/seeding, the 4c-ii **knob default-neutrality** contract, validity = the product checker (`collisions.check` + Caddy egress) not the env oracle (#694), and the numeric silent-failure + intrinsic-horizon-GAE guards. Runs `ruff`/`mypy ml/` + the targeted `tests/ml/` regression tests (see [`ml/README.md`](ml/README.md) + [ADR-0027](docs/adr/0027-learned-backend-determinism-scope.md)).
 - **`feature-dev:code-architect`** — only for genuinely novel design decisions, not routine implementation.
 
 Most coding goes direct in-session. Subagent dispatch is for review work and isolated heavy lifts.
@@ -111,7 +112,7 @@ Most coding goes direct in-session. Subagent dispatch is for review work and iso
 
 ## Project-local Claude Code config
 
-The `.claude/` directory holds team-shared Claude Code settings (currently: a PreToolUse guard that blocks hand-edits to the hash-pinned `requirements-*.txt` lockfiles, a PostToolUse hook that runs ruff + pytest after edits under `src/hangarfit/` or `tests/`, a second PostToolUse hook that reminds you to rebuild `viewer.js` after `viewer/src/*.ts` edits (#568), plus a Stop-event hook that runs mypy once when a turn finishes; and the `pyright-lsp` + `typescript-lsp` editor plugins under `enabledPlugins`). See [.claude/README.md](.claude/README.md) for what's there and how to disable per-contributor via a gitignored `.claude/settings.local.json`.
+The `.claude/` directory holds team-shared Claude Code settings (currently: a PreToolUse guard that blocks hand-edits to the hash-pinned `requirements-*.txt` lockfiles, a PostToolUse hook that runs ruff + pytest after edits under `src/hangarfit/` or `tests/` (and ruff + the scoped `pytest tests/ml/` after `ml/*.py` edits), a second PostToolUse hook that reminds you to rebuild `viewer.js` after `viewer/src/*.ts` edits (#568), plus a Stop-event hook that runs mypy — over `src/hangarfit/`, and `ml/` too when torch is importable — once when a turn finishes; and the `pyright-lsp` + `typescript-lsp` editor plugins under `enabledPlugins`). See [.claude/README.md](.claude/README.md) for what's there and how to disable per-contributor via a gitignored `.claude/settings.local.json`.
 
 ---
 
