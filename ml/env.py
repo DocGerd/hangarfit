@@ -54,6 +54,7 @@ class HangarFitEnv:
         self._parked: list[Placement] = []
         self._parked_version = 0
         self._score_cache: tuple[int, go.LayoutScore] | None = None
+        self._obstacles_cache: tuple[int, str, go.ObstaclesT] | None = None
         self._active_id: str | None = None
         self._active_pose: Pose | None = None
         self._prev_gear: int | None = None
@@ -119,6 +120,17 @@ class HangarFitEnv:
         score = go.score_layout(self._layout())
         self._score_cache = (self._parked_version, score)
         return score
+
+    def _parked_obstacles(self, active_id: str) -> go.ObstaclesT:
+        """Cached frozen-parked obstacle set for swept-path clearance. Keyed on
+        (parked_version, active_id) — the mover is excluded from obstacles, and the
+        active object changes per driven body."""
+        c = self._obstacles_cache
+        if c is not None and c[0] == self._parked_version and c[1] == active_id:
+            return c[2]
+        obs = go.build_obstacles(self._layout(), active_id)
+        self._obstacles_cache = (self._parked_version, active_id, obs)
+        return obs
 
     def _observe(self) -> Observation:
         active = None
@@ -253,7 +265,11 @@ class HangarFitEnv:
             active_pose, primitive, turn_radius_m=body.effective_turn_radius_m()
         )
         swept_intr = go.swept_intrusion_m2(
-            body, swept, parked_layout=parked_layout, active_id=active_id
+            body,
+            swept,
+            parked_layout=parked_layout,
+            active_id=active_id,
+            obstacles=self._parked_obstacles(active_id),
         )
         move_cost = go.movement_cost(
             primitive, prev_gear=self._prev_gear, cusp_penalty=weights.cusp_penalty

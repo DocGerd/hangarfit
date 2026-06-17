@@ -363,6 +363,19 @@ def test_parked_score_empty_set_is_trivial():
     assert s == go.LayoutScore(0.0, True, False)
 
 
+def test_parked_obstacles_cache_is_stable_per_version_and_active():
+    env = _two_object_env(
+        difficulty=DifficultyConfig(max_objects=2, per_object_step_budget=40, total_step_budget=80)
+    )
+    env.reset()
+    env.step(Park())  # park obj1; active is now obj2
+    aid = env._active_id
+    assert aid is not None
+    o1 = env._parked_obstacles(aid)
+    o2 = env._parked_obstacles(aid)
+    assert o1 is o2  # same (version, active_id) -> cached object reused
+
+
 def test_fixed_obstacle_is_perceived_in_observation_and_encoding():
     # The policy must PERCEIVE the keep-out it is penalized for hitting: the fixed obstacle
     # belongs in obs.parked (the observed frozen set) and surfaces in the encoded tokens
