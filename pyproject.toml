@@ -20,7 +20,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.4", "pytest-cov>=4.0", "pytest-xdist>=3.5", "ruff>=0.7.0", "mypy>=1.0", "types-PyYAML", "types-shapely", "hypothesis>=6.100"]
-train = ["torch"]
+train = ["torch", "onnx>=1.16"]
+learned-infer = ["onnxruntime>=1.18"]
 
 [project.scripts]
 hangarfit = "hangarfit.cli:main"
