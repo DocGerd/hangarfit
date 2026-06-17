@@ -13,10 +13,10 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Literal
 
+from hangarfit.collisions import check
 from hangarfit.loader import load_layout
 from hangarfit.models import Layout
 from ml import geometry_oracle as go
-from ml.types import StepInfo
 
 _ROOT = Path(__file__).resolve().parent.parent  # repo root (ml/ sits at the root)
 
@@ -66,44 +66,41 @@ class BenchScenario:
             raise ValueError(f"BenchScenario {self.name!r}: tow_max_expansions must be >= 1")
 
 
-def _verdict_from(info: StepInfo, *, done: bool, max_swept: float) -> ReachVerdict:
-    """The valid + routable-by-construction predicate (spec §4), shared by score_episode
-    (explicit actions) and ml.eval.policy_reach (policy actions). `reached` iff every
-    requested object was parked, the final layout is valid, AND no drive-in leg intruded."""
-    parked_all = done and info.placed == info.total
-    reached = parked_all and info.valid and max_swept == 0.0
+def _verdict_from(
+    *, parked: int, total: int, done: bool, final_valid: bool, max_swept: float
+) -> ReachVerdict:
+    """The valid + routable-by-construction predicate (spec §4). `final_valid` is computed
+    by the caller via `_layout_valid` (the product checker), NOT the env oracle."""
+    parked_all = done and parked == total
+    reached = parked_all and final_valid and max_swept == 0.0
     if reached:
         reason = "reached"
     elif not parked_all:
-        reason = f"only {info.placed}/{info.total} parked"
-    elif not info.valid:
+        reason = f"only {parked}/{total} parked"
+    elif not final_valid:
         reason = "invalid final layout"
     else:
         reason = "swept-path intrusion (not routable-by-construction)"
     return ReachVerdict(
         reached=reached,
-        parked=info.placed,
-        total=info.total,
-        final_valid=info.valid,
+        parked=parked,
+        total=total,
+        final_valid=final_valid,
         max_swept_intrusion=max_swept,
         reason=reason,
     )
 
 
 def _layout_valid(layout: Layout) -> bool:
-    """Whole-layout validity matching env._layout_valid + the deterministic checker:
-    no part overlap, no out-of-bounds/notch/apron intrusion by any placed body, and no
-    Caddy hard-door egress violation. Reused by witness_valid and rrmc_reach so the
-    policy and RR-MC sides apply the IDENTICAL predicate."""
-    if go.overlap_area_m2(layout) > 0.0:
-        return False
-    if go.egress_blocked(layout):
-        return False
-    bodies = {**layout.fleet, **layout.ground_objects}
-    placements = (*layout.placements, *layout.ground_object_placements)
-    return all(
-        go.intrusion_area_m2(bodies[p.plane_id], p, layout.hangar) == 0.0 for p in placements
-    )
+    """Valid per the PRODUCT deterministic checker (the spec's 'prime directive' final
+    gate, == `hangarfit check`): collisions.check reports no conflicts (overlap + hangar
+    bounds/notch + CONDITIONAL maintenance bay + ground-obstacle keep-outs) AND no Caddy
+    hard-door egress violation (ADR-0026). Deliberately NOT the env oracle's
+    `intrusion_area_m2`, which over-strictly enforces an INERT placeholder maintenance bay
+    (issue #694) — the herrenteich bay is explicitly inert, so layout_full is valid here.
+    Used identically by witness_valid, rrmc_reach, and the policy scorer so all sides are
+    judged apples-to-apples."""
+    return not check(layout).conflicts and not go.egress_blocked(layout)
 
 
 def witness_valid(scenario: BenchScenario) -> bool:
