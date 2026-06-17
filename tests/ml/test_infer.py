@@ -7,8 +7,10 @@ import pytest
 ort = pytest.importorskip("onnxruntime")
 torch = pytest.importorskip("torch")  # OrtPolicy is torch-free, but we export with torch here
 
+import numpy as np  # noqa: E402
+
 from ml.encoding import EncoderConfig, encode  # noqa: E402
-from ml.export import export_onnx  # noqa: E402
+from ml.export import ONNX_OUTPUT_NAMES, export_onnx  # noqa: E402
 from ml.infer import OrtPolicy  # noqa: E402
 from ml.policy import HangarFitPolicy  # noqa: E402
 from ml.train import build_trivial_env  # noqa: E402
@@ -151,20 +153,24 @@ def test_build_moves_plan_maps_primitives_to_dubins_arc():
 
 
 def test_learned_within_build_bit_identity(tmp_path):
-    """ADR-0027 tier-1: same weights + seed + pinned CPU EP -> bit-identical SolveResult
-    (poses + plan), within a single build. Cross-machine validity-only equivalence is a
-    separate (deferred) canary.
+    """ADR-0027 tier-1: same weights + seed + pinned CPU EP -> bit-identical learned output
+    within a single build. Cross-machine validity-only equivalence is a separate (deferred)
+    canary.
 
     Two assertions:
-    1. SolveResult equality — the spec's stated canary (status/layouts/plans).
-    2. Rollout-trajectory equality — the meaningful determinism check: two independent
-       rollouts over fresh envs with the same OrtPolicy must produce identical driven
-       trajectories (same sequence of parked objects, same primitives, same poses).
-       This catches non-deterministic ONNX forward passes even when the terminal layout
-       is empty (which would make assertion 1 vacuously true with an untrained policy)."""
+    1. SolveResult equality — the spec's stated canary (status/layouts/plans). NOTE: under an
+       UNTRAINED policy this is vacuous (both runs park nothing -> empty layouts/plans -> equal
+       trivially), so it cannot stand alone — assertion 2 is the meaningful check.
+    2. Byte-identical ONNX forward — the real tier-1 bit-identity: the source of any
+       nondeterminism is the onnxruntime forward, so drive ONE fixed observation through two
+       FRESH single-threaded CPU-EP sessions (same weights) and assert the raw logits are
+       BYTE-identical (np.array_equal, not approximate), and the decoded action matches. This
+       is non-vacuous regardless of whether any object parks. (The earlier rollout-trajectory
+       form was vacuous: ``rollout`` records only PARKED objects, so an untrained policy that
+       parks nothing yields ``[] == []``.)"""
     import pathlib
 
-    from ml.infer import OrtPolicy, env_from_scenario, rollout, solve_learned_impl
+    from ml.infer import OrtPolicy, env_from_scenario, solve_learned_impl
 
     torch.manual_seed(0)
     policy = HangarFitPolicy()
@@ -184,32 +190,44 @@ def test_learned_within_build_bit_identity(tmp_path):
     assert r1.layouts == r2.layouts  # Layout is a frozen dataclass: structural equality
     assert r1.plans == r2.plans
 
-    # --- Assertion 2: Rollout-trajectory equality ---
-    # Use a single OrtPolicy (deterministic argmax) and two fresh envs. Identical
-    # (object_id, [(kind, magnitude, gear)]) sequences prove the ONNX forward is
-    # bit-identical across calls, regardless of whether any objects are actually parked.
-    ort_pol = OrtPolicy(onnx_path)
+    # --- Assertion 2: byte-identical ONNX forward (the real tier-1 bit-identity check) ---
+    # Build one fixed observation and run it through two FRESH single-threaded CPU-EP
+    # sessions (same weights). The raw logits must be BYTE-identical — this exercises the
+    # actual source of nondeterminism (the onnxruntime forward) and is non-vacuous even
+    # though the untrained policy parks nothing.
+    env = env_from_scenario(scenario)
+    obs = env.reset()
+    assert obs.active is not None
+    obs_t = encode(obs, env.hangar, {**env.fleet, **env.ground_objects}, EncoderConfig())
+    feed = {
+        "raster": obs_t.raster[None].astype(np.float32),
+        "tokens": obs_t.tokens[None].astype(np.float32),
+        "token_mask": obs_t.token_mask[None].astype(np.bool_),
+        "active_index": np.asarray([obs_t.active_index], dtype=np.int64),
+        "legal_action_mask": obs_t.legal_action_mask[None].astype(np.bool_),
+    }
 
-    env_a = env_from_scenario(scenario)
-    _, driven_a, _ = rollout(env_a, ort_pol)
+    def _fresh_session_logits():  # type: ignore[no-untyped-def]
+        opts = ort.SessionOptions()
+        opts.intra_op_num_threads = 1
+        opts.inter_op_num_threads = 1
+        sess = ort.InferenceSession(
+            str(onnx_path), sess_options=opts, providers=["CPUExecutionProvider"]
+        )
+        return sess.run(list(ONNX_OUTPUT_NAMES), feed)
 
-    env_b = env_from_scenario(scenario)
-    _, driven_b, _ = rollout(env_b, ort_pol)
-
-    def trajectory_key(driven):  # type: ignore[no-untyped-def]
-        return [
-            (d.object_id, [(p.kind, p.magnitude, p.gear) for p in d.primitives]) for d in driven
-        ]
-
-    assert trajectory_key(driven_a) == trajectory_key(driven_b), (
-        "OrtPolicy rollout is non-deterministic: driven trajectories differ between two runs "
-        "with identical weights and fresh envs. This violates the ADR-0027 tier-1 contract."
+    kind1, mag1 = _fresh_session_logits()
+    kind2, mag2 = _fresh_session_logits()
+    assert np.array_equal(kind1, kind2), (
+        "ONNX kind-head logits differ across builds (ADR-0027 tier-1)"
     )
-    # Also verify start/end poses are identical for each driven object.
-    assert len(driven_a) == len(driven_b)
-    for da, db in zip(driven_a, driven_b, strict=True):
-        assert da.start_pose == db.start_pose
-        assert da.end_pose == db.end_pose
+    assert np.array_equal(mag1, mag2), "ONNX mag-head logits differ across builds (ADR-0027 tier-1)"
+
+    # The public OrtPolicy.act (argmax + decode) is likewise identical across two fresh sessions.
+    tr = obs.active.body.effective_turn_radius_m()
+    act1 = OrtPolicy(onnx_path).act(obs_t, turn_radius_m=tr)
+    act2 = OrtPolicy(onnx_path).act(obs_t, turn_radius_m=tr)
+    assert act1 == act2
 
 
 def test_solve_learned_impl_returns_well_formed_result(tmp_path):
