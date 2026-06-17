@@ -1,0 +1,25 @@
+# Airfield Herrenteich — solver INPUT for the REAL 'today' composition (#664/#665).
+# Sibling of layout_today.yaml (the committed witness): same body set, but this is the
+# search INPUT the RR-MC->tow baseline runs on. The product solver does not crack this
+# dense 12-body nest (the #607 motivation); layout_today.yaml is the existence witness.
+fleet: fleet.yaml
+hangar: hangar.yaml
+fleet_in:
+  - wild_thing
+  - stemme_s10
+  - scheibe_falke
+  - zlin_savage
+  - fuji
+  - ctsl
+  - fk9_mkii
+  - cessna_140
+  - aviat_husky
+ground_objects:
+  - object: maul_fuel_trailer   # FIXED keep-out (surveyed pose from layout_today.yaml)
+    x_m: 1.17
+    y_m: 3.87
+    heading_deg: 176.2
+  - object: vw_caddy            # hard-door rescue mover (solver places + routes, clear egress)
+    region_preference: { side: left, weight: 1.0 }
+  - object: glider_trailer_1    # Duo Discus trailer mover
+    region_preference: { side: right, weight: 1.5 }

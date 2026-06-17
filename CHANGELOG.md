@@ -14,6 +14,18 @@ All notable changes to this project are documented here. Format follows [Keep a 
   torch-free `ml/stage_builder.py`; `HangarFitEnv.reset()` gains an optional
   `requested_ids` override (default unchanged).
 
+- **Cold-joint RL reach-not-beat eval benchmark (`ml/benchmark.py` + `ml/eval.py`, #607
+  sub-project #4c-i).** A frozen curated set of real Herrenteich scenarios, each anchor
+  paired with a committed witness layout the deterministic checker accepts (the
+  reachability proof). `python -m ml.eval --checkpoint P` rolls a trained policy out
+  deterministically and prints a side-by-side both-rates table against the RR-MC→tow
+  baseline (recorded offline at a pre-registered budget into
+  `tests/fixtures/ml/bench_baseline.json`). Success gate = valid + routable-by-construction
+  (the product `collisions.check` + Caddy egress). `python -m ml.train --save P` exports a
+  checkpoint. Dev/CI-only (the `[train]` extra); the Herrenteich anchors' policy column and
+  env fixed-obstacle support land in 4c-ii (#693), and the env-oracle inert-bay
+  over-strictness is tracked as #694.
+
 - **Cold-joint RL environment + reward (`ml/`, #607/#672).** Added the dev/CI-only
   top-level `ml/` package with `HangarFitEnv` — a gym-style environment where an agent
   drives objects in from the apron and parks them one at a time, scored by a

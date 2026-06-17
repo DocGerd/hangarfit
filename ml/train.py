@@ -127,6 +127,7 @@ def train(
     policy_kwargs: dict | None = None,
     encoder: EncoderConfig | None = None,
     log: bool = False,
+    save: str | None = None,
 ) -> list[float]:
     """Train on the trivial stage; return the per-iteration mean episode reward."""
     torch.manual_seed(seed)
@@ -152,6 +153,8 @@ def train(
                 f"iter {it:4d}  {reward_str}  "
                 f"loss={metrics['loss']:+.3f}  entropy={metrics['entropy']:.3f}"
             )
+    if save is not None:
+        torch.save(policy.state_dict(), save)
     return history
 
 
@@ -164,6 +167,7 @@ def train_curriculum(
     policy_kwargs: dict | None = None,
     encoder: EncoderConfig | None = None,
     log: bool = False,
+    save: str | None = None,
 ) -> CurriculumHistory:
     """Climb the ladder: one policy/optimizer across rungs (transfer); per rung, run
     PPO until the competency gate fires or the per-stage cap is hit, then advance."""
@@ -218,6 +222,8 @@ def train_curriculum(
         if log:
             by = history.promotions[-1][2]
             print(f"[{stage.name}] promoted by {by}")
+    if save is not None:
+        torch.save(policy.state_dict(), save)
     return history
 
 
@@ -236,6 +242,9 @@ def build_argparser() -> argparse.ArgumentParser:
     )
     p.add_argument("--rollout-len", type=int, default=1024)
     p.add_argument("--lr", type=float, default=3e-4)
+    p.add_argument(
+        "--save", type=str, default=None, help="write the trained policy state_dict to this path"
+    )
     return p
 
 
@@ -248,6 +257,7 @@ def main() -> None:
             rollout_len=args.rollout_len,
             ppo=PPOConfig(lr=args.lr),
             log=True,
+            save=args.save,
         )
     else:
         sched = CurriculumSchedule.default()
@@ -259,6 +269,7 @@ def main() -> None:
             rollout_len=args.rollout_len,
             ppo=PPOConfig(lr=args.lr),
             log=True,
+            save=args.save,
         )
 
 

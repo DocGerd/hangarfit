@@ -108,9 +108,16 @@ reached  ==  parked_all  AND  final_layout_valid  AND  max_swept_intrusion_over_
 ```
 
 - `parked_all` — every requested object was committed (`Park`ed), not left unplaced.
-- `final_layout_valid` — the terminal layout passes `env._layout_valid` ==
-  `collisions.check` overlap==0 **+** per-body bounds/notch/apron intrusion==0 **+** Caddy
-  hard-door egress clear (ADR-0026). This is exactly the shipped `valid_placed` shape.
+- `final_layout_valid` — the terminal layout passes the **product deterministic checker**
+  (the prime-directive final gate, == `hangarfit check`): `not collisions.check(layout).conflicts`
+  (overlap + hangar bounds/notch + **conditional** maintenance bay + ground-obstacle keep-outs)
+  **+** no Caddy hard-door egress violation (ADR-0026). **Implementation note (resolved during
+  build):** this uses `collisions.check`, **not** the env's `_layout_valid`/`valid_placed` (the
+  policy *training* gate), because the env oracle's `intrusion_area_m2` over-strictly enforces an
+  **inert placeholder** maintenance bay — it would wrongly reject `layout_full` (the herrenteich
+  bay is explicitly inert). The benchmark therefore judges witnesses, RR-MC, and the policy all
+  by `collisions.check` (apples-to-apples + matching what RR-MC's solver enforces); the env-oracle
+  divergence is tracked as **#694** (a 4c-ii env fix).
 - `max_swept_intrusion_over_episode == 0` — **the routable-by-construction gate.** The env
   *penalizes* swept intrusion (`geometry_oracle.swept_intrusion_m2`) but does **not**
   hard-stop the move, so a policy could reach a valid *final* layout via a path that clips a
