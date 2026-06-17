@@ -6,6 +6,19 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Learned backend (#607, 4c-ii): cold-joint RL env fixed-obstacle support and
+  four default-neutral basin-escape knobs.** Fixed-obstacle pre-placements
+  (immovable keep-outs from `Scenario.fixed_obstacle_placements`) are now honoured
+  by `HangarFitEnv` — they are rendered into the occupancy raster and block the
+  agent from parking on top of them, unblocking the eval benchmark's policy column
+  on the Herrenteich anchors. Four optional training knobs are added, all
+  default-neutral (byte-identical to prior runs when not set): `--r-valid-park`
+  (bonus per Park action when the full layout passes `layout_valid`),
+  `--dense-slot-potential` (in-hangar nearest-free-pocket shaping),
+  `--entropy-start/--entropy-end/--entropy-anneal-iters` (per-rung entropy
+  coefficient anneal), and `--normalize-returns` (std-only Welford return
+  normalization before GAE). Training defaults are unchanged.
+
 - **Cold-joint RL curriculum schedule (#607 sub-project #4b).** `python -m ml.train
   --schedule curriculum` now climbs a competency-gated difficulty ladder (object
   count → hangar shape → clearance) instead of training a single fixed stage; the
@@ -227,6 +240,12 @@ All notable changes to this project are documented here. Format follows [Keep a 
   the tow-motion abstraction (#643).
 
 ### Fixed
+
+- **Learned backend env validity now matches `collisions.check` (#694).** The
+  `HangarFitEnv` oracle no longer over-enforces the inert placeholder maintenance
+  bay (the bay is only active when an aircraft is explicitly placed there; the
+  `layout_valid` helper that the benchmark already uses is now the single shared
+  validity gate for both the env reward and `ml/eval`).
 
 - **`view` surfaces un-routable ground-object movers (#634).** Layout-mode
   `hangarfit view` already named an un-tow-routable *aircraft* (the static-degrade

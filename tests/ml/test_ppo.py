@@ -281,3 +281,163 @@ def test_sample_action_all_illegal_raises():
     )
     with pytest.raises(ValueError, match="all kind logits are -inf"):
         sample_action(out)
+
+
+# ---------------------------------------------------------------------------
+# Task 4: entropy_coef_at schedule
+# ---------------------------------------------------------------------------
+from ml.ppo import entropy_coef_at  # noqa: E402
+
+
+def test_entropy_coef_constant_when_off():
+    # start None -> constant base regardless of iteration.
+    assert entropy_coef_at(0, base=0.01, start=None, end=None, anneal_iters=0) == 0.01
+    assert entropy_coef_at(50, base=0.01, start=None, end=None, anneal_iters=0) == 0.01
+
+
+def test_entropy_coef_linear_anneal_boundaries_and_monotone():
+    def f(it):
+        return entropy_coef_at(it, base=0.01, start=0.05, end=0.005, anneal_iters=40)
+
+    assert f(0) == pytest.approx(0.05)
+    assert f(40) == pytest.approx(0.005)
+    assert f(100) == pytest.approx(0.005)  # clamped past the window
+    assert f(10) > f(30)  # monotone non-increasing
+    assert f(20) == pytest.approx(0.05 + (0.005 - 0.05) * 0.5)
+
+
+def test_entropy_coef_at_end_none_anneals_toward_base():
+    # When end=None the schedule must anneal from start toward base (not stay flat at start).
+    base = 0.01
+    start = 0.05
+    at0 = entropy_coef_at(0, base=base, start=start, end=None, anneal_iters=40)
+    at20 = entropy_coef_at(20, base=base, start=start, end=None, anneal_iters=40)
+    at40 = entropy_coef_at(40, base=base, start=start, end=None, anneal_iters=40)
+    assert at0 == pytest.approx(start)
+    assert at40 == pytest.approx(base)  # converges to base (not stuck at start)
+    assert at20 == pytest.approx(start + (base - start) * 0.5)
+    assert at0 > at20 > at40  # strictly decreasing
+
+
+# ---------------------------------------------------------------------------
+# Task 4: ReturnNormalizer
+# ---------------------------------------------------------------------------
+from ml.ppo import ReturnNormalizer  # noqa: E402
+
+
+def test_return_normalizer_identity_during_warmup():
+    norm = ReturnNormalizer(eps=1e-8, warmup=1000)
+    r = torch.tensor([1.0, -100.0, 50.0])
+    out = norm.normalize(r)
+    assert torch.equal(out, r)  # still warming up -> identity
+
+
+def test_return_normalizer_std_only_scales_without_mean_shift():
+    norm = ReturnNormalizer(eps=1e-8, warmup=0)
+    r = torch.tensor([2.0, -2.0, 4.0, -4.0])  # mean 0
+    out = norm.normalize(r)
+    # std-only: divided by running std, NO mean subtraction -> sign preserved, ratios preserved.
+    assert torch.all(torch.sign(out) == torch.sign(r))
+    assert out[2] / out[0] == pytest.approx(r[2] / r[0])
+
+
+def test_return_normalizer_no_mean_subtraction_on_nonzero_mean():
+    # DISCRIMINATING: zero-mean data passes even for a mean-subtracting normalizer, so use
+    # all-positive (non-zero-mean) data. Std-only must keep every output positive and equal
+    # to r / (std + eps) exactly; a mean-subtracting normalizer would push the low values
+    # negative.
+    eps = 1e-8
+    norm = ReturnNormalizer(eps=eps, warmup=0)
+    r = torch.tensor([3.0, 4.0, 5.0, 6.0])  # mean 4.5, all positive
+    out = norm.normalize(r)
+    # Welford over this single batch: population variance = m2 / count = var(r, unbiased=False).
+    mean = r.mean()
+    pop_var = ((r - mean) ** 2).mean()
+    std = float(pop_var.item()) ** 0.5
+    expected = r / (std + eps)
+    assert torch.all(out > 0)  # no mean subtraction -> nothing flipped negative
+    assert torch.allclose(out, expected, atol=1e-6)
+
+
+def test_return_normalizer_eps_floor_finite_on_zero_variance():
+    norm = ReturnNormalizer(eps=1e-8, warmup=0)
+    out = norm.normalize(torch.zeros(4))
+    assert torch.isfinite(out).all()
+
+
+# ---------------------------------------------------------------------------
+# Task 4: ppo_update normalizer wiring
+# ---------------------------------------------------------------------------
+
+
+def test_ppo_update_normalizer_off_does_not_touch_rewards(monkeypatch):
+    # When normalize_returns is False, compute_gae sees the raw rewards (normalizer ignored).
+    import ml.ppo as ppo
+
+    seen: dict[str, object] = {}
+    real_gae = ppo.compute_gae
+
+    def spy(rewards, *a, **k):
+        seen["rewards"] = rewards.clone()
+        return real_gae(rewards, *a, **k)
+
+    monkeypatch.setattr(ppo, "compute_gae", spy)
+    torch.manual_seed(0)
+    policy = HangarFitPolicy(d_model=32, n_layers=1, n_heads=2)
+    buf = _filled_buffer(policy)
+    raw_rewards = buf.batch()["reward"].clone()
+    opt = torch.optim.Adam(policy.parameters(), lr=3e-4)
+    ppo_update(policy, opt, buf, PPOConfig(minibatch_size=16, normalize_returns=False))
+    # normalizer=None (default) -> rewards arrive unchanged
+    assert torch.equal(seen["rewards"], raw_rewards)
+
+
+def test_ppo_update_normalizer_on_changes_rewards(monkeypatch):
+    # When normalize_returns=True and a warm normalizer is passed, compute_gae sees scaled rewards
+    # and the scaling ratio matches 1/(std+eps) for the known batch.
+    import ml.ppo as ppo
+
+    seen: dict[str, object] = {}
+    real_gae = ppo.compute_gae
+
+    def spy(rewards, *a, **k):
+        seen["rewards"] = rewards.clone()
+        return real_gae(rewards, *a, **k)
+
+    monkeypatch.setattr(ppo, "compute_gae", spy)
+    torch.manual_seed(0)
+    policy = HangarFitPolicy(d_model=32, n_layers=1, n_heads=2)
+    buf = _filled_buffer(policy)
+    raw_rewards = buf.batch()["reward"].clone()
+    opt = torch.optim.Adam(policy.parameters(), lr=3e-4)
+    eps = 1e-8
+    # warmup=0 so normalizer is active immediately
+    norm = ReturnNormalizer(eps=eps, warmup=0)
+    cfg_on = PPOConfig(minibatch_size=16, normalize_returns=True)
+    ppo_update(policy, opt, buf, cfg_on, normalizer=norm)
+    # Rewards should have been scaled (not equal to raw unless std=1, very unlikely).
+    assert not torch.equal(seen["rewards"], raw_rewards)
+    # Verify the scaling matches 1/(std+eps) for nonzero rewards: check that
+    # seen_rewards == raw_rewards / (std+eps) element-wise on non-zero entries.
+    mean = raw_rewards.mean()
+    pop_var = float(((raw_rewards - mean) ** 2).mean().item())
+    expected_std = pop_var**0.5
+    expected_scale = 1.0 / (expected_std + eps)
+    seen_rewards = seen["rewards"]
+    assert isinstance(seen_rewards, torch.Tensor)
+    expected_scaled = raw_rewards * expected_scale
+    assert torch.allclose(seen_rewards, expected_scaled, atol=1e-4), (
+        f"scaling mismatch: expected first 5={expected_scaled[:5].tolist()}, "
+        f"got {seen_rewards[:5].tolist()}"
+    )
+
+
+def test_ppo_update_raises_when_normalize_returns_true_but_normalizer_none():
+    # Loud guard: if normalize_returns=True and no normalizer is supplied → ValueError.
+    torch.manual_seed(0)
+    policy = HangarFitPolicy(d_model=32, n_layers=1, n_heads=2)
+    buf = _filled_buffer(policy)
+    opt = torch.optim.Adam(policy.parameters(), lr=3e-4)
+    cfg = PPOConfig(minibatch_size=16, normalize_returns=True)
+    with pytest.raises(ValueError, match="normalizer"):
+        ppo_update(policy, opt, buf, cfg, normalizer=None)

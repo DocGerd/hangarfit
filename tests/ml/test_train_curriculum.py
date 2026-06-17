@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 torch = pytest.importorskip("torch")
@@ -106,3 +108,90 @@ def test_train_curriculum_validates_ladder_eagerly():
     sched = CurriculumSchedule(stages=(bad,), policy=PromotionPolicy(window=1, max_iters=1))
     with pytest.raises(ValueError):
         train_curriculum(seed=0, schedule=sched, rollout_len=8)
+
+
+# ---------------------------------------------------------------------------
+# Task 4: per-rung entropy re-warm + RewardWeights threading + defaults neutral
+# ---------------------------------------------------------------------------
+
+
+def test_entropy_schedule_rewarms_per_stage_in_train_curriculum(monkeypatch):
+    # BEHAVIORAL: prove train_curriculum keys the entropy schedule on the PER-STAGE
+    # iteration `it` (resets 0 each rung), not a global counter that would decay to ~end
+    # by later rungs. Monkeypatch ppo_update to record the entropy_coef actually applied
+    # and collect_rollout to a cheap no-episode stub so the per-stage loop runs its full
+    # max_iters without promoting or doing any real torch training.
+    import ml.train as train_mod
+    from ml.ppo import PPOConfig, RolloutBuffer
+
+    recorded: list[float] = []
+
+    def recorder(policy, optimizer, buf, config, *, normalizer=None):
+        recorded.append(config.entropy_coef)
+        return {"policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0, "loss": 0.0}
+
+    def empty_rollout(env, policy, enc, rollout_len, *, sample_request=None):
+        return RolloutBuffer(), []  # no completed episodes -> never promotes by competency
+
+    monkeypatch.setattr(train_mod, "ppo_update", recorder)
+    monkeypatch.setattr(train_mod, "collect_rollout", empty_rollout)
+
+    max_iters = 3
+    # threshold 2.0 + zero episodes -> the window stays empty -> every rung caps at max_iters.
+    sched = _tiny_schedule(threshold=2.0)
+    sched = CurriculumSchedule(
+        stages=sched.stages,
+        policy=replace(sched.policy, max_iters=max_iters),
+    )
+    cfg = PPOConfig(entropy_coef_start=0.05, entropy_coef_end=0.005, entropy_anneal_iters=4)
+    train_curriculum(seed=0, schedule=sched, rollout_len=8, ppo=cfg)
+
+    n_stages = len(sched.stages)
+    assert len(recorded) == n_stages * max_iters  # full cap each rung, no early promote
+    stage0 = recorded[:max_iters]
+    stage1 = recorded[max_iters : 2 * max_iters]
+    # Each rung RE-WARMS to start at its first iteration (proves per-stage keying):
+    assert stage0[0] == pytest.approx(0.05)
+    assert stage1[0] == pytest.approx(0.05)
+    # ...and decays within each rung (it=0,1,2 -> start + (end-start)*it/4, non-increasing):
+    for seq in (stage0, stage1):
+        # seq[1:] is intentionally one shorter (consecutive-pair idiom) -> strict=False.
+        assert all(later <= earlier for earlier, later in zip(seq, seq[1:], strict=False))
+        assert seq[1] < seq[0]  # strictly decaying inside the anneal window
+    # If the schedule were keyed on a GLOBAL counter, stage1[0] would be the it=3 value
+    # (already decayed), NOT the 0.05 start — this is the discriminating assertion.
+
+
+def test_build_stage_env_threads_reward_weights():
+    from ml.curriculum import CurriculumSchedule
+    from ml.stage_builder import build_stage_env
+    from ml.types import RewardWeights
+
+    stage = CurriculumSchedule.default().stages[0]
+    env = build_stage_env(stage, weights=RewardWeights(r_valid_park=2.0))
+    assert env.weights.r_valid_park == 2.0
+
+
+def test_build_trivial_env_threads_reward_weights():
+    from ml.train import build_trivial_env
+    from ml.types import RewardWeights
+
+    env = build_trivial_env(seed=0, weights=RewardWeights(r_valid_park=3.0))
+    assert env.weights.r_valid_park == 3.0
+
+
+def test_train_weights_default_neutral():
+    # Passing no weights → default RewardWeights() → r_valid_park == 0.0 (neutral)
+    from ml.types import RewardWeights
+
+    env_weights = RewardWeights()
+    assert env_weights.r_valid_park == 0.0
+    history = train(seed=0, iterations=1, rollout_len=16)
+    assert len(history) == 1  # runs without error
+
+
+def test_train_curriculum_weights_default_neutral():
+    # weights=None → neutral defaults; trivial schedule with cap-2 iters completes
+    sched = _tiny_schedule(threshold=2.0)  # always caps
+    h = train_curriculum(seed=0, schedule=sched, rollout_len=8)
+    assert len(h.promotions) == 2

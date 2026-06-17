@@ -176,7 +176,6 @@ def test_bench_set_anchor_witnesses_all_valid():
 
 
 _DEMO = next(s for s in BENCH_SET if s.name == "herrenteich_demo")
-_ALL8 = next(s for s in BENCH_SET if s.name == "herrenteich_all8")
 
 
 def test_build_scenario_env_go_free_control():
@@ -185,9 +184,16 @@ def test_build_scenario_env_go_free_control():
     assert env.ground_objects == {}
 
 
-def test_build_scenario_env_refuses_fixed_obstacle_scenario():
-    with pytest.raises(NotImplementedError, match="4c-ii"):
-        build_scenario_env(_ALL8)
+def test_build_scenario_env_preplaces_fixed_obstacles_for_anchors():
+    anchor = next(s for s in BENCH_SET if s.name == "herrenteich_full")
+    env = build_scenario_env(anchor)  # must NOT raise
+    env.reset()
+    layout = env._layout()
+    # The fuel trailer (fixed_obstacle) is pre-placed in the scene from step 0...
+    go_ids = {gp.plane_id for gp in layout.ground_object_placements}
+    assert "maul_fuel_trailer" in go_ids
+    # ...and is NOT in the driven queue (requested set excludes fixed obstacles).
+    assert "maul_fuel_trailer" not in env.requested_ids
 
 
 def _fuji_env() -> HangarFitEnv:

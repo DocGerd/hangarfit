@@ -26,6 +26,62 @@ class PPOConfig:
     value_coef: float = 0.5
     entropy_coef: float = 0.01
     max_grad_norm: float = 0.5
+    entropy_coef_start: float | None = None  # high->low anneal start; None = fixed entropy_coef
+    entropy_coef_end: float | None = None  # anneal end; consulted only when start is set
+    entropy_anneal_iters: int = 0  # iters over which to anneal; 0 = no schedule
+    normalize_returns: bool = False  # std-only reward normalization before GAE
+    return_norm_eps: float = 1e-8  # numerical floor on the running std
+
+
+def entropy_coef_at(
+    iteration: int, *, base: float, start: float | None, end: float | None, anneal_iters: int
+) -> float:
+    """Per-iteration entropy coefficient. Constant ``base`` when no schedule is configured
+    (``start is None`` or ``anneal_iters <= 0``); else a linear ``start``→``end`` ramp over
+    ``anneal_iters`` iterations, clamped at ``end`` past the window. Monotone non-increasing
+    when start >= end (the intended high→low warmup). If ``end`` is None, anneals toward
+    ``base``."""
+    if start is None or anneal_iters <= 0:
+        return base
+    finish = end if end is not None else base
+    if iteration >= anneal_iters:
+        return finish
+    frac = iteration / anneal_iters
+    return start + (finish - start) * frac
+
+
+class ReturnNormalizer:
+    """Std-only reward normalizer (cleanrl convention: NO mean-subtraction) with a running
+    variance (Welford) and warmup-to-identity. Divides the reward stream by the running std
+    so −w_col collision spikes and +r_terminal sit on a scale the value head can fit, letting
+    GAE propagate terminal credit through the drive-in. Identity until ``warmup`` samples seen
+    and identity-equivalent at zero variance (eps floor). Std-only preserves the relative
+    ordering of shaped rewards.
+
+    SIDE EFFECT: ``normalize()`` updates the running stats — call once per rollout batch."""
+
+    def __init__(self, *, eps: float = 1e-8, warmup: int = 256) -> None:
+        self.eps = eps
+        self.warmup = warmup
+        self._count = 0
+        self._mean = 0.0
+        self._m2 = 0.0
+
+    def _update(self, rewards: Tensor) -> None:
+        for r in rewards.tolist():
+            self._count += 1
+            delta = r - self._mean
+            self._mean += delta / self._count
+            self._m2 += delta * (r - self._mean)
+
+    def normalize(self, rewards: Tensor) -> Tensor:
+        self._update(rewards)
+        if self._count < self.warmup or self._count < 2:
+            return rewards.clone()
+        # population (biased, ÷N) variance — deliberate, cleanrl convention
+        var = self._m2 / self._count
+        std = max(var, 0.0) ** 0.5
+        return rewards / (std + self.eps)
 
 
 def factored_logprob_entropy(
@@ -136,13 +192,27 @@ def ppo_update(
     optimizer: torch.optim.Optimizer,
     buffer: RolloutBuffer,
     config: PPOConfig,
+    *,
+    normalizer: ReturnNormalizer | None = None,
 ) -> dict[str, float]:
     """One PPO update over the buffer: GAE, then `epochs` of clipped-surrogate +
     value-loss + entropy-bonus over shuffled minibatches. Returns the metrics averaged
-    over every minibatch in the update (not just the last one)."""
+    over every minibatch in the update (not just the last one).
+
+    ``normalizer``: when ``config.normalize_returns`` is True and a ``ReturnNormalizer``
+    is supplied, rewards are std-scaled (Welford running std, NO mean-subtraction) before
+    GAE. Existing callers that pass no ``normalizer`` are byte-identical (default None)."""
     data = buffer.batch()
+    rewards = data["reward"]
+    if config.normalize_returns:
+        if normalizer is None:
+            raise ValueError(
+                "ppo_update: config.normalize_returns=True but normalizer=None; "
+                "pass a ReturnNormalizer instance or set normalize_returns=False"
+            )
+        rewards = normalizer.normalize(rewards)
     advantages, returns = compute_gae(
-        data["reward"],
+        rewards,
         data["value"],
         data["done"],
         buffer.last_value,

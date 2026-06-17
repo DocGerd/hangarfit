@@ -2,10 +2,20 @@
 
 from __future__ import annotations
 
-from hangarfit.loader import load_fleet
+from pathlib import Path
+
+import pytest
+from shapely.geometry import box
+
+from hangarfit.collisions import check
+from hangarfit.geometry import aircraft_parts_world
+from hangarfit.loader import load_fleet, load_layout
+from hangarfit.models import Placement
 from ml import geometry_oracle as go
 from ml.types import Park, Primitive, RewardWeights
-from tests.ml.conftest import single_object_layout, two_object_layout
+from tests.ml.conftest import _fuji, empty_hangar, single_object_layout, two_object_layout
+
+_ROOT = Path(__file__).resolve().parents[2]  # repo root
 
 
 def test_primitive_and_park_construct():
@@ -149,3 +159,113 @@ def test_movement_cost_adds_cusp_penalty_on_reversal():
 def test_egress_blocked_false_without_hard_door_mover():
     layout = single_object_layout(x_m=5.0, y_m=8.0)
     assert go.egress_blocked(layout) is False  # no hard-door mover present
+
+
+# ---------------------------------------------------------------------------
+# T9: intrusion_area_m2 bay gate (#694)
+# ---------------------------------------------------------------------------
+
+
+def _bay_area_for(body, placement, hangar):
+    bay = hangar.maintenance_bay
+    bay_poly = box(
+        bay.center_x_m - bay.width_m / 2,
+        hangar.length_m - bay.depth_m,
+        bay.center_x_m + bay.width_m / 2,
+        hangar.length_m,
+    )
+    return sum(
+        wp.polygon.intersection(bay_poly).area for wp in aircraft_parts_world(body, placement)
+    )
+
+
+def test_intrusion_bay_term_gated_on_bay_closed():
+    fleet = _fuji()
+    hangar = empty_hangar()
+    body = fleet["fuji"]
+    bay = hangar.maintenance_bay
+    # Park inside the bay rectangle (centroid at the bay centre, one body-length in).
+    pl = Placement(
+        plane_id="fuji",
+        x_m=bay.center_x_m,
+        y_m=hangar.length_m - bay.depth_m / 2,
+        heading_deg=0.0,
+        on_carts=False,
+    )
+    overlap_area = _bay_area_for(body, pl, hangar)
+    assert overlap_area > 0.0, "fixture must actually clip the bay; adjust y if not"
+    open_intr = go.intrusion_area_m2(body, pl, hangar, bay_closed=False)
+    closed_intr = go.intrusion_area_m2(body, pl, hangar, bay_closed=True)
+    assert closed_intr - open_intr == pytest.approx(overlap_area, abs=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# T10: layout_valid + #694 regression
+# ---------------------------------------------------------------------------
+
+
+def test_layout_valid_matches_product_checker_plus_egress():
+    layout = single_object_layout(x_m=5.0, y_m=5.0)  # a clean, valid placement
+    assert go.layout_valid(layout) == (check(layout).valid and not go.egress_blocked(layout))
+    assert go.layout_valid(layout) is True
+
+
+def test_layout_full_witness_is_valid_694_regression():
+    # The committed herrenteich_full witness was WRONGLY rejected by the old env oracle
+    # (inert maintenance bay over-enforced, #694). It is valid per the product checker.
+    layout = load_layout(str(_ROOT / "examples/herrenteich/layout_full.yaml"))
+    assert check(layout).valid, "precondition: witness valid per collisions.check"
+    assert go.layout_valid(layout) is True
+
+
+# ---------------------------------------------------------------------------
+# Task 3 — active_misfit_m2 (Step 6)
+# ---------------------------------------------------------------------------
+
+
+def test_active_misfit_zero_in_clean_pocket_and_positive_when_overlapping():
+    from ml.types import Pose
+
+    fleet = _fuji()
+    hangar = empty_hangar()
+    body = fleet["fuji"]
+    empty = single_object_layout(x_m=5.0, y_m=5.0)  # one parked body near (5,5)
+    # Clean pocket far from the parked body, well inside the floor -> misfit 0.
+    clean = Pose(x_m=14.0, y_m=20.0, heading_deg=0.0)
+    assert go.active_misfit_m2(body, clean, empty, hangar) == pytest.approx(0.0, abs=1e-9)
+    # Right on top of the parked body -> positive misfit.
+    on_top = Pose(x_m=5.0, y_m=5.0, heading_deg=0.0)
+    assert go.active_misfit_m2(body, on_top, empty, hangar) > 0.0
+
+
+def test_active_misfit_never_invokes_search(monkeypatch):
+    import hangarfit.solver as solver
+    from ml.types import Pose
+
+    monkeypatch.setattr(
+        solver,
+        "solve",
+        lambda *a, **k: (_ for _ in ()).throw(
+            AssertionError("active_misfit_m2 must not call solve()")
+        ),
+    )
+    fleet = _fuji()
+    go.active_misfit_m2(
+        fleet["fuji"],
+        Pose(x_m=5.0, y_m=5.0, heading_deg=0.0),
+        single_object_layout(x_m=12.0, y_m=20.0),
+        empty_hangar(),
+    )
+
+
+def test_active_misfit_zero_on_apron():
+    """A pose on the apron (y < 0) must return 0.0 — the apron is the legitimate start
+    zone (excluded by the upper y>=0 half-plane in active_misfit_m2)."""
+    from ml.types import Pose
+
+    fleet = _fuji()
+    hangar = empty_hangar()
+    body = fleet["fuji"]
+    empty = single_object_layout(x_m=5.0, y_m=5.0)  # one parked body inside; empty apron
+    apron_pose = Pose(x_m=hangar.door.center_x_m, y_m=-4.0, heading_deg=0.0)  # well on apron
+    assert go.active_misfit_m2(body, apron_pose, empty, hangar) == pytest.approx(0.0, abs=1e-9)

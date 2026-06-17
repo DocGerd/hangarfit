@@ -20,9 +20,48 @@ environment + reward (`HangarFitEnv`), reusing `hangarfit`'s geometry oracle.
 
 The benchmark judges validity via the product deterministic checker
 `collisions.check` + Caddy egress (the spec's prime directive), **not** the env
-oracle — the oracle's over-strict treatment of the inert placeholder maintenance
-bay is tracked as #694. The Herrenteich anchors' policy column (env
-fixed-obstacle pre-placement) is deferred to 4c-ii (#693).
+oracle — the single shared `layout_valid` oracle is now used by both the env
+reward and `ml/eval` (the prior over-enforcement of the inert maintenance bay
+was fixed in 4c-ii, #694). Fixed-obstacle pre-placements from
+`Scenario.fixed_obstacle_placements` are honoured by the env since 4c-ii (#693).
+
+## Training knobs (4c-ii)
+
+Four optional basin-escape knobs were added in sub-project #4c-ii (#693). All
+are **default-neutral** — omitting them produces byte-identical results to prior
+runs. Recommended treatment values for curriculum training runs:
+
+| Flag | Default (neutral) | Recommended treatment | Effect |
+|---|---|---|---|
+| `--r-valid-park R` | `0.0` | `2.0` | Bonus per Park step when `layout_valid` passes; gates the reward on the product checker so only conflict-free placements are rewarded |
+| `--dense-slot-potential` | off | on | Adds in-hangar nearest-free-pocket potential shaping; guides the agent toward open space while it is still placing |
+| `--entropy-start S` | `None` (fixed coef) | `0.05` | Entropy coefficient anneal start; pairs with `--entropy-end` and `--entropy-anneal-iters`. With `--schedule curriculum` the schedule resets per rung (per-rung decay); with `--schedule trivial` it decays once over the run |
+| `--entropy-end E` | `None` | `0.005` | Entropy anneal end value (consulted only when `--entropy-start` is set) |
+| `--entropy-anneal-iters N` | `0` | `40` | Iterations over which to anneal entropy from start→end (0 = no schedule) |
+| `--normalize-returns` | off | on | Std-only Welford return normalization before GAE; stabilises training across rungs with different reward scales. The running std is shared **run-level** across all rungs (not reset per rung) — a deliberate global-scale choice; revisit per-rung resets in the deferred run-to-mastery study if rung reward scales diverge sharply |
+
+### One-line A/B validation command
+
+```bash
+# Control (neutral — no knobs):
+python -m ml.train --schedule curriculum --max-iters-per-stage 30 --seed 0 --rollout-len 1024
+
+# Treatment (all four knobs active):
+python -m ml.train --schedule curriculum --max-iters-per-stage 30 --seed 0 --rollout-len 1024 \
+  --r-valid-park 2.0 --dense-slot-potential \
+  --entropy-start 0.05 --entropy-end 0.005 --entropy-anneal-iters 40 \
+  --normalize-returns
+```
+
+Primary signal: `valid_placed` rising in treatment where control stalls near 0.
+Leading indicators: `terminal_fraction` leaving ~0 (escapes place-nothing basin);
+`fraction_placed − valid_placed` gap shrinking (escapes place-invalid basin);
+entropy starting higher and decaying across rungs.
+
+**Note:** A full run-to-mastery study and statistical reach-rate measurement
+against the benchmark are deferred to the second half of #693. The knobs are
+wired, unit-tested, and default-neutral; the A/B here is a smoke-level
+demonstration that they move the easy-rung metric in the expected direction.
 
 ## Design
 See `docs/superpowers/specs/2026-06-12-learned-backend-cold-joint-rl-env-design.md`

@@ -31,6 +31,7 @@ class HangarFitEnv:
         fleet: Mapping[str, Aircraft],
         requested_ids: tuple[str, ...],
         ground_objects: Mapping[str, GroundObject] | None = None,
+        fixed_placements: tuple[Placement, ...] = (),
         difficulty: DifficultyConfig | None = None,
         weights: RewardWeights | None = None,
     ) -> None:
@@ -38,6 +39,11 @@ class HangarFitEnv:
         self.fleet = dict(fleet)
         self.ground_objects = dict(ground_objects or {})
         self.requested_ids = requested_ids
+        # Pre-placed immovable keep-outs (e.g. the fuel trailer): part of the scene
+        # from step 0, but NEVER driven and NEVER in ``_parked`` (so terminal_fraction's
+        # denominator stays the requested/driven set). Set here (scenario-level) rather
+        # than in ``_reset_state`` so it survives ``reset()``.
+        self._fixed: list[Placement] = list(fixed_placements)
         self.difficulty = difficulty or DifficultyConfig()
         self.weights = weights or RewardWeights()
         self._reset_state()
@@ -84,18 +90,20 @@ class HangarFitEnv:
         self._steps_this_object = 0
 
     def _layout(self) -> Layout:
-        """The scene of FROZEN (parked) objects only — the active one is not yet in it."""
-        parked_ids = [p.plane_id for p in self._parked]
-        ac = {pid: self.fleet[pid] for pid in parked_ids if pid in self.fleet}
-        go_ids = [pid for pid in parked_ids if pid in self.ground_objects]
+        """The scene of FROZEN objects: driven-in (parked) PLUS pre-placed fixed obstacles
+        (immovable keep-outs). The active object is not yet in it. Fixed obstacles are NOT in
+        ``_parked`` (so terminal_fraction is uncorrupted) but ARE in the scene so overlap /
+        egress / motion-clearance see them."""
+        frozen = self._parked + self._fixed
+        frozen_ids = [p.plane_id for p in frozen]
+        ac = {pid: self.fleet[pid] for pid in frozen_ids if pid in self.fleet}
+        go_ids = [pid for pid in frozen_ids if pid in self.ground_objects]
         return Layout(
             fleet=ac or {next(iter(self.fleet)): next(iter(self.fleet.values()))},
             hangar=self.hangar,
-            placements=tuple(p for p in self._parked if p.plane_id in self.fleet),
+            placements=tuple(p for p in frozen if p.plane_id in self.fleet),
             ground_objects={pid: self.ground_objects[pid] for pid in go_ids},
-            ground_object_placements=tuple(
-                p for p in self._parked if p.plane_id in self.ground_objects
-            ),
+            ground_object_placements=tuple(p for p in frozen if p.plane_id in self.ground_objects),
         )
 
     def _observe(self) -> Observation:
@@ -109,7 +117,13 @@ class HangarFitEnv:
             )
         return Observation(
             active=active,
-            parked=tuple(ParkedObject(p.plane_id, p) for p in self._parked),
+            # The observed frozen set is parked (driven-in) PLUS the pre-placed fixed
+            # obstacles, so the tensorizer rasters + tokenizes the immovable keep-outs and
+            # the policy can PERCEIVE what it is penalized for colliding with. Fixed
+            # obstacles stay out of ``_parked``, so info.placed (= len(_parked)) and
+            # terminal_fraction (= len(_parked)/len(requested_ids)) are unchanged — the
+            # denominator is the driven/requested set only, not the full observed set.
+            parked=tuple(ParkedObject(p.plane_id, p) for p in self._parked + self._fixed),
             unplaced_ids=tuple(self._queue),
             steps_this_object=self._steps_this_object,
             steps_total=self._steps_total,
@@ -125,11 +139,21 @@ class HangarFitEnv:
 
     def _potential(self) -> float:
         layout = self._layout()
-        remaining_overlap = go.overlap_area_m2(layout) if self._parked else 0.0
+        remaining_overlap = go.overlap_area_m2(layout) if (self._parked or self._fixed) else 0.0
+        misfit = 0.0
+        if (
+            self.weights.dense_slot_potential
+            and self._active_pose is not None
+            and self._active_id is not None
+        ):
+            misfit = go.active_misfit_m2(
+                self._body(self._active_id), self._active_pose, layout, self.hangar
+            )
         return potential(
             remaining_overlap_m2=remaining_overlap,
             active_dist_to_slot_m=self._active_dist_to_slot_m(),
             unplaced=len(self._queue) + (1 if self._active_id is not None else 0),
+            active_misfit_m2=misfit,
         )
 
     def reset(self, requested_ids: tuple[str, ...] | None = None) -> Observation:
@@ -175,8 +199,9 @@ class HangarFitEnv:
             self._parked.append(pl)
             placed_layout = self._layout()
             overlap = go.overlap_area_m2(placed_layout)
-            intrusion = go.intrusion_area_m2(body, pl, self.hangar)
+            intrusion = go.intrusion_area_m2(body, pl, self.hangar, bay_closed=False)
             egress = go.egress_blocked(placed_layout)
+            park_valid = go.layout_valid(placed_layout)
             self._active_id = None
             self._active_pose = None
             done = not self._queue
@@ -196,6 +221,7 @@ class HangarFitEnv:
                 prev_potential=self._prev_potential,
                 potential=new_phi,
                 terminal_fraction=terminal_fraction,
+                park_valid=park_valid,
             )
             reward = step_reward(ctx, weights)
             self._prev_potential = new_phi
@@ -253,20 +279,11 @@ class HangarFitEnv:
         return False, ""
 
     def _layout_valid(self) -> bool:
-        """Whole-layout validity matching the deterministic checker the prime directive
-        enforces: no part overlap, no out-of-bounds / notch / apron (y<0) intrusion by ANY
-        parked body, and no Caddy hard-door egress violation. (StepInfo.valid previously
-        checked overlap only, leaving the promotion gate looser than the real checker —
-        #607 SP#4b review.) Reward terms read ctx, not this, so this is gate/reporting only."""
-        layout = self._layout()
-        if go.overlap_area_m2(layout) > 0.0:
-            return False
-        if go.egress_blocked(layout):
-            return False
-        return all(
-            go.intrusion_area_m2(self._body(pl.plane_id), pl, self.hangar) == 0.0
-            for pl in self._parked
-        )
+        """Whole-layout validity == the product checker (the prime directive's final gate),
+        via the shared ``geometry_oracle.layout_valid``. Reward terms read ctx, not this, so
+        this is gate/reporting only. (Was hand-rolled overlap+intrusion+egress that
+        over-enforced the inert maintenance bay — #607 SP#4c-ii / #694.)"""
+        return go.layout_valid(self._layout())
 
     def _info(self, ctx: RewardContext, done: bool, reason: str) -> StepInfo:
         return StepInfo(

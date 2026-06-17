@@ -22,6 +22,9 @@ class RewardContext:
     prev_potential: float
     potential: float
     terminal_fraction: float | None  # set only on the terminal step
+    # None = not a Park step (bonus structurally absent);
+    # False = Park step with invalid layout; True = Park step with valid layout.
+    park_valid: bool | None = None
 
 
 def potential(
@@ -29,11 +32,12 @@ def potential(
     remaining_overlap_m2: float,
     active_dist_to_slot_m: float,
     unplaced: int,
+    active_misfit_m2: float = 0.0,
 ) -> float:
-    """Shaping potential Φ(s) (spec §5). Higher is better (less overlap / closer /
-    fewer unplaced), so Φ is the NEGATIVE of those costs. Policy-invariant per
-    Ng–Harada–Russell, so it cannot be reward-hacked."""
-    return -(remaining_overlap_m2 + active_dist_to_slot_m + float(unplaced))
+    """Shaping potential Φ(s) (spec §5). Higher is better. Φ is the NEGATIVE of the costs.
+    ``active_misfit_m2`` (the dense_slot_potential in-hangar term) defaults 0.0 → byte-identical
+    when the knob is off. Policy-invariant per Ng–Harada–Russell — cannot be reward-hacked."""
+    return -(remaining_overlap_m2 + active_dist_to_slot_m + float(unplaced) + active_misfit_m2)
 
 
 def step_reward(ctx: RewardContext, w: RewardWeights) -> float:
@@ -49,4 +53,5 @@ def step_reward(ctx: RewardContext, w: RewardWeights) -> float:
     soft = w.w_gap * ctx.min_gap_m - w.w_seq * ctx.seq_deviation + w.w_region * ctx.region_match
     terminal = w.r_terminal * ctx.terminal_fraction if ctx.terminal_fraction is not None else 0.0
     shaping = w.gamma * ctx.potential - ctx.prev_potential
-    return hard + movement + soft + terminal + shaping
+    valid_park = w.r_valid_park if ctx.park_valid else 0.0
+    return hard + movement + soft + terminal + shaping + valid_park

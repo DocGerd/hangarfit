@@ -30,11 +30,13 @@ from ml.types import Primitive
 __all__ = [
     "overlap_area_m2",
     "intrusion_area_m2",
+    "layout_valid",
     "legal_primitives",
     "apply_primitive",
     "swept_intrusion_m2",
     "movement_cost",
     "egress_blocked",
+    "active_misfit_m2",
 ]
 
 # Re-export so callers can use go.CUSP_PENALTY
@@ -50,30 +52,39 @@ def overlap_area_m2(layout: Layout) -> float:
     return check(layout).total_penetration_m2
 
 
-def intrusion_area_m2(body: Aircraft | GroundObject, placement: Placement, hangar: Hangar) -> float:
-    """Footprint area (m²) outside the hangar floor or inside a notch/keep-out.
+def intrusion_area_m2(
+    body: Aircraft | GroundObject,
+    placement: Placement,
+    hangar: Hangar,
+    *,
+    bay_closed: bool = False,
+) -> float:
+    """Footprint area (m²) outside the hangar floor or inside a CLOSED maintenance bay.
 
-    Graded counterpart to the binary bounds/notch checks (spec §5). Uses the same
-    shapely polygons: the L-shaped ``hangar.floor_polygon`` when present, else the
-    outer rectangle; plus the maintenance bay rectangle (a keep-out for placement).
-    The front apron (``y < 0``) is part of the *motion* model, not a parked-validity
-    region, so anything below ``y = 0`` counts as intrusion for a PARKED pose.
-    """
+    Mirrors collisions.check's ADR-0006 rule: the maintenance bay is a keep-out ONLY when
+    it is closed (``layout.maintenance_plane is not None``). The env never sets a maintenance
+    occupant, so it always passes ``bay_closed=False`` and the bay term vanishes — fixing the
+    #694 over-strict-inert-bay divergence on the reward gradient. Out-of-floor (walls/notch via
+    ``floor_polygon``) is always counted. The front apron (``y < 0``) counts as intrusion for a
+    PARKED pose (it is a motion region, not a parked-validity region)."""
     floor = hangar.floor_polygon
     if floor is None:
         floor = box(0.0, 0.0, hangar.width_m, hangar.length_m)
-    bay = hangar.maintenance_bay
-    bay_poly = box(
-        bay.center_x_m - bay.width_m / 2.0,
-        hangar.length_m - bay.depth_m,
-        bay.center_x_m + bay.width_m / 2.0,
-        hangar.length_m,
-    )
+    bay_poly = None
+    if bay_closed:
+        bay = hangar.maintenance_bay
+        bay_poly = box(
+            bay.center_x_m - bay.width_m / 2.0,
+            hangar.length_m - bay.depth_m,
+            bay.center_x_m + bay.width_m / 2.0,
+            hangar.length_m,
+        )
     total = 0.0
     for wp in aircraft_parts_world(body, placement):
         poly = wp.polygon
         total += poly.difference(floor).area  # outside the floor (walls/notch)
-        total += poly.intersection(bay_poly).area  # inside the maintenance bay
+        if bay_poly is not None:
+            total += poly.intersection(bay_poly).area  # inside a CLOSED maintenance bay
     return total
 
 
@@ -165,6 +176,17 @@ def movement_cost(primitive: Primitive, *, prev_gear: int | None, cusp_penalty: 
     return abs(primitive.magnitude) + cusp_penalty * cusp
 
 
+def layout_valid(layout: Layout) -> bool:
+    """Whole-layout validity per the PRODUCT deterministic checker (== ``hangarfit check``):
+    collisions.check reports no conflicts (overlap + hangar bounds/notch + CONDITIONAL
+    maintenance bay + ground-obstacle keep-outs) AND no Caddy hard-door egress violation
+    (ADR-0026). The single source of validity truth shared by the env gate, the r_valid_park
+    bonus gate, and the benchmark — so the bonus and the promotion metric can never disagree.
+    Replaces the env's old hand-rolled overlap+intrusion+egress, which over-enforced the inert
+    maintenance bay (#694)."""
+    return check(layout).valid and not egress_blocked(layout)
+
+
 def egress_blocked(layout: Layout, *, mover_id: str | None = None) -> bool:
     """True iff a hard-door mover (e.g. the Caddy) cannot drive out (ADR-0026).
 
@@ -180,3 +202,49 @@ def egress_blocked(layout: Layout, *, mover_id: str | None = None) -> bool:
     if mover_id is None:
         return False
     return egress_first_conflict(layout, mover_id) is not None
+
+
+def active_misfit_m2(
+    body: Aircraft | GroundObject,
+    pose: Pose,
+    parked_layout: Layout,
+    hangar: Hangar,
+) -> float:
+    """Coarse, monotone 'how bad is parking the active body HERE' — for the
+    dense_slot_potential shaping term. Pure state→scalar shapely query: the active
+    footprint's overlap with parked bodies PLUS its in-hangar (y≥0) out-of-floor area.
+    0.0 in a clean pocket; grows with intrusion. The apron (y<0) is EXCLUDED (the object
+    legitimately starts there; the door-ingress term handles entry). NEVER calls solve()/a
+    nester — that would re-import a search's reachable-distribution bias (constraint B)."""
+    floor = hangar.floor_polygon
+    if floor is None:
+        floor = box(0.0, 0.0, hangar.width_m, hangar.length_m)
+    upper = box(-1.0e6, 0.0, 1.0e6, hangar.length_m + 1.0e6)  # y >= 0 half-plane
+    pl = Placement(
+        plane_id=body.id,
+        x_m=pose.x_m,
+        y_m=pose.y_m,
+        heading_deg=pose.heading_deg,
+        on_carts=False,
+    )
+    obstacle_parts = [
+        wp
+        for p in parked_layout.placements
+        for b in [parked_layout.fleet.get(p.plane_id)]
+        if b is not None
+        for wp in aircraft_parts_world(b, p)
+    ] + [
+        wp
+        for gp in parked_layout.ground_object_placements
+        for b in [parked_layout.ground_objects.get(gp.plane_id)]
+        if b is not None
+        for wp in aircraft_parts_world(b, gp)
+    ]
+    total = 0.0
+    for wp in aircraft_parts_world(body, pl):
+        poly = wp.polygon
+        total += poly.difference(floor).intersection(upper).area  # in-hangar wall/notch intrusion
+        for op in obstacle_parts:
+            if poly.intersects(op.polygon):
+                total += poly.intersection(op.polygon).area
+    return total

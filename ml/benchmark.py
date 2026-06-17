@@ -15,7 +15,6 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
-from hangarfit.collisions import check
 from hangarfit.loader import load_layout, load_scenario
 from hangarfit.models import Layout, SearchConfig, SolveStatus
 from hangarfit.solver import solve
@@ -112,15 +111,11 @@ def _verdict_from(
 
 
 def _layout_valid(layout: Layout) -> bool:
-    """Valid per the PRODUCT deterministic checker (the spec's 'prime directive' final
-    gate, == `hangarfit check`): collisions.check reports no conflicts (overlap + hangar
-    bounds/notch + CONDITIONAL maintenance bay + ground-obstacle keep-outs) AND no Caddy
-    hard-door egress violation (ADR-0026). Deliberately NOT the env oracle's
-    `intrusion_area_m2`, which over-strictly enforces an INERT placeholder maintenance bay
-    (issue #694) — the herrenteich bay is explicitly inert, so layout_full is valid here.
-    Used identically by witness_valid, rrmc_reach, and the policy scorer so all sides are
-    judged apples-to-apples."""
-    return not check(layout).conflicts and not go.egress_blocked(layout)
+    """Valid per the PRODUCT deterministic checker — delegates to the shared
+    geometry_oracle.layout_valid so the env gate, the policy scorer, witness_valid, and
+    rrmc_reach are judged by one identical predicate (collisions.check + Caddy egress; the
+    inert maintenance bay is conditional, #694)."""
+    return go.layout_valid(layout)
 
 
 def witness_valid(scenario: BenchScenario) -> bool:
@@ -190,34 +185,39 @@ BENCH_SET: tuple[BenchScenario, ...] = (
 
 def build_scenario_env(scenario: BenchScenario) -> HangarFitEnv:
     """Build a HangarFitEnv for a scenario's MOVABLE bodies (aircraft + placed-routed
-    movers), with an apron for drive-in. RAISES NotImplementedError if the scenario carries
-    any fixed obstacle — env pre-placement of immovable keep-outs is deferred to 4c-ii, and
-    silently dropping the keep-out would score the policy on an easier scenario than RR-MC
-    faces (spec §5.5/D11)."""
+    movers), with an apron for drive-in. Fixed obstacles (immovable keep-outs, e.g. the
+    fuel trailer) are PRE-PLACED into the env's ``_fixed`` list at their surveyed poses —
+    part of the scene from step 0, never driven and never in the requested/driven queue —
+    so the policy is scored against the SAME keep-outs RR-MC faces (spec §5.5/D11). This
+    unblocks the policy column on the fixed-obstacle anchors (#607 4c-ii / #693)."""
     sc = load_scenario(_ROOT / scenario.scenario_path)
     # Detect fixed obstacles among the scenario's ACTIVE ground objects by object_class,
     # NOT via fixed_obstacle_placements: a class-`fixed_obstacle` listed in the scenario's
-    # ground_objects but WITHOUT a placement entry would otherwise slip past the gate, land
-    # in the env un-queued, and be silently absent from scoring (the silent-keep-out-drop
-    # the gate exists to prevent). Scan sc.ground_objects (the active id tuple), not the
-    # catalog-merged ground_object_defs — the latter always carries every catalog def
-    # (e.g. the fuel trailer) even for a scenario that doesn't use it.
-    fixed = [
+    # ground_objects but WITHOUT a placement entry would otherwise slip past, land in the
+    # env un-placed, and be silently absent from scoring. Scan sc.ground_objects (the active
+    # id tuple), not the catalog-merged ground_object_defs — the latter always carries every
+    # catalog def (e.g. the fuel trailer) even for a scenario that doesn't use it.
+    fixed_ids = [
         gid
         for gid in sc.ground_objects
         if sc.ground_object_defs[gid].object_class == "fixed_obstacle"
     ]
-    if fixed:
-        raise NotImplementedError(
-            f"build_scenario_env: scenario {scenario.name!r} carries fixed obstacle(s) {fixed}; "
-            f"the env cannot yet pre-place immovable keep-outs (deferred to #607 sub-project "
-            f"4c-ii). Use a ground-object-free scenario for the policy rollout."
+    missing = [g for g in fixed_ids if g not in {p.plane_id for p in sc.fixed_obstacle_placements}]
+    if missing:
+        raise ValueError(
+            f"build_scenario_env: fixed obstacle(s) {missing} have no entry in "
+            f"scenario.fixed_obstacle_placements — they would silently appear un-placed "
+            f"(absent from scoring). Add surveyed placements or remove them from ground_objects."
         )
+    # ``placeable_ids`` is ``fleet_in + sorted(mover_ids)`` (aircraft + placed-routed
+    # movers), so it ALREADY excludes fixed obstacles — they are never driven. Use it
+    # directly as the driven queue.
     placeable = sc.placeable_ids
-    # Pass only the MOVER defs (placed-routed movers), not the whole catalog-merged
-    # ``ground_object_defs``: a GO-free scenario must yield an env with NO ground objects,
-    # and the env should carry exactly the bodies it can drive.
+    # Movers (placed_routed_mover) are driven in; fixed obstacles are pre-placed keep-outs.
+    # Pass both sets of defs so the env's ``_body()`` resolves a pre-placed fixed obstacle,
+    # but only ``placeable`` is queued.
     movers = {gid: sc.ground_object_defs[gid] for gid in sc.mover_ids}
+    fixed_defs = {gid: sc.ground_object_defs[gid] for gid in fixed_ids}
     per_object = 120
     difficulty = DifficultyConfig(
         max_objects=len(placeable),
@@ -229,7 +229,8 @@ def build_scenario_env(scenario: BenchScenario) -> HangarFitEnv:
         hangar=hangar,
         fleet=sc.fleet,
         requested_ids=placeable,
-        ground_objects=movers,
+        ground_objects={**movers, **fixed_defs},
+        fixed_placements=sc.fixed_obstacle_placements,
         difficulty=difficulty,
     )
 

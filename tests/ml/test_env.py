@@ -6,6 +6,7 @@ import random
 
 import pytest
 
+from hangarfit.models import GroundObject, Part, Placement
 from ml import geometry_oracle as go
 from ml.env import HangarFitEnv
 from ml.types import DifficultyConfig, Park, Primitive
@@ -254,3 +255,101 @@ def test_parked_out_of_bounds_layout_is_invalid():
     _, _, done, info = env.step(Park())
     assert done is True and info.placed == 1
     assert info.valid is False  # parked on the apron / out of bounds
+
+
+def test_env_layout_valid_delegates_to_product_checker():
+    # At reset, no objects are parked yet (_layout() is effectively empty of aircraft).
+    # The Layout is structurally valid (no overlaps, no out-of-bounds placements).
+    # The expected value is True for a clean empty state (not a tautology — it asserts
+    # the predicate returns a concrete expected result on a known-good state).
+    env = HangarFitEnv(hangar=empty_hangar(), fleet=_fuji(), requested_ids=("fuji",))
+    env.reset()
+    assert env._layout_valid() is True
+
+
+# ---------------------------------------------------------------------------
+# Task 2 (#607 SP#4c-ii / #693) — fixed-obstacle pre-placement
+# ---------------------------------------------------------------------------
+def _fuel_trailer() -> GroundObject:
+    # Minimal fixed obstacle; mirrors the catalog maul_fuel_trailer shape closely
+    # enough. GroundObject carries a `parts` tuple of kind="ground" Parts (no
+    # length_m/width_m/height_m fields) — Part positional args after kind are
+    # length/width/offset_x/offset_y/angle/z_bottom/z_top (verified vs
+    # tests/test_scene.py:541). A fixed_obstacle carries no motion_mode/hard_door_mover.
+    return GroundObject(
+        id="fuel",
+        name="Fuel trailer",
+        parts=(Part("ground", 2.0, 1.5, 0.0, 0.0, 0.0, 0.0, 1.2),),
+        object_class="fixed_obstacle",
+    )
+
+
+def test_fixed_obstacle_in_layout_not_parked_and_fraction_uncorrupted():
+    fleet = _fuji()
+    fuel = _fuel_trailer()
+    fixed = (Placement(plane_id="fuel", x_m=2.0, y_m=10.0, heading_deg=0.0, on_carts=False),)
+    env = HangarFitEnv(
+        hangar=empty_hangar(),
+        fleet=fleet,
+        requested_ids=("fuji",),
+        ground_objects={"fuel": fuel},
+        fixed_placements=fixed,
+    )
+    env.reset()
+    # The fixed obstacle is present in the scene from step 0...
+    layout = env._layout()
+    assert "fuel" in {gp.plane_id for gp in layout.ground_object_placements}
+    # ...but it is NOT counted as a parked (driven-in) object.
+    assert env._fixed == list(fixed)
+    assert all(p.plane_id != "fuel" for p in env._parked)
+    # terminal_fraction denominator is the requested (driven) set only -> 1 here, not 2.
+    # Drive fuji nowhere and Park it: fraction = 1/1 even with the fixed obstacle present.
+    _obs, _r, done, info = env.step(Park())
+    assert done and info.total == 1 and info.placed == 1
+
+
+def test_placed_body_overlapping_fixed_obstacle_is_invalid():
+    fleet = _fuji()
+    fuel = _fuel_trailer()
+    # Place the fuel obstacle exactly where we will park the fuji -> guaranteed overlap.
+    fixed = (Placement(plane_id="fuel", x_m=9.0, y_m=10.0, heading_deg=0.0, on_carts=False),)
+    env = HangarFitEnv(
+        hangar=empty_hangar(),
+        fleet=fleet,
+        requested_ids=("fuji",),
+        ground_objects={"fuel": fuel},
+        fixed_placements=fixed,
+    )
+    env.reset()
+    env._active_pose = type(env._active_pose)(x_m=9.0, y_m=10.0, heading_deg=0.0)
+    env.step(Park())
+    assert env._layout_valid() is False  # fuji parts overlap the fixed fuel obstacle
+
+
+def test_fixed_obstacle_is_perceived_in_observation_and_encoding():
+    # The policy must PERCEIVE the keep-out it is penalized for hitting: the fixed obstacle
+    # belongs in obs.parked (the observed frozen set) and surfaces in the encoded tokens
+    # (its fixed_obstacle type column, row[4]==1) — NOT just in the reward-side _layout().
+    from ml.encoding import EncoderConfig, encode
+
+    fuel = _fuel_trailer()
+    fixed = (Placement(plane_id="fuel", x_m=2.0, y_m=10.0, heading_deg=0.0, on_carts=False),)
+    env = HangarFitEnv(
+        hangar=empty_hangar(),
+        fleet=_fuji(),
+        requested_ids=("fuji",),
+        ground_objects={"fuel": fuel},
+        fixed_placements=fixed,
+    )
+    obs = env.reset()
+    # (a) The fixed obstacle is in the observed frozen set from step 0...
+    assert "fuel" in {po.object_id for po in obs.parked}
+    # ...and it is NOT counted as parked/driven (the LIST, not obs.parked).
+    assert all(p.plane_id != "fuel" for p in env._parked)
+    # (b) The encoded observation surfaces it: a token row with the fixed_obstacle type
+    # column (row[4]) set. (Bodies = fleet ∪ ground_objects so the encoder resolves it.)
+    tensors = encode(obs, env.hangar, {**env.fleet, **env.ground_objects}, EncoderConfig())
+    fixed_rows = [
+        i for i in range(tensors.tokens.shape[0]) if tensors.token_mask[i] and tensors.tokens[i, 4]
+    ]
+    assert fixed_rows, "no fixed_obstacle token row (row[4]) — keep-out is not perceived"

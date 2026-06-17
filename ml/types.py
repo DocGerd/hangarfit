@@ -99,6 +99,8 @@ class RewardWeights:
     w_region: float = 1.0  # soft: region preference
     r_terminal: float = 50.0  # terminal: per fraction-placed
     gamma: float = 0.99  # shaping discount
+    r_valid_park: float = 0.0  # bonus paid in Park ONLY when the layout is valid (basin escape)
+    dense_slot_potential: bool = False  # add an in-hangar nearest-free-pocket shaping term
 
 
 @dataclass(frozen=True, slots=True)
