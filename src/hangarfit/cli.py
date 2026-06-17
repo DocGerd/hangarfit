@@ -361,8 +361,9 @@ def build_parser() -> argparse.ArgumentParser:
         help=(
             "Solver backend. 'rrmc' (default) is the shipped deterministic "
             "random-restart min-conflicts solver (ADR-0003). 'learned' selects the "
-            "opt-in neural backend (epic #607) — not yet available, so it exits "
-            "cleanly with a message; the deterministic path is unchanged (ADR-0027)."
+            "opt-in neural backend (epic #607); it requires --weights PATH and the "
+            "[learned-infer] extra, else it exits cleanly with a message. The "
+            "deterministic path is unchanged (ADR-0027)."
         ),
     )
     solve.add_argument(
@@ -728,8 +729,8 @@ def cmd_solve(args: argparse.Namespace) -> int:
 
     # Backend dispatch (#607 / ADR-0027). The default deterministic RR-MC path is
     # unchanged and byte-identical; `--backend learned` routes to the opt-in learned
-    # proposer, which returns the same SolveResult shape. It is not yet implemented,
-    # so it surfaces a clean exit-2 error rather than a traceback.
+    # proposer (#706), which returns the same SolveResult shape. A missing --weights /
+    # [learned-infer] extra surfaces a clean exit-2 error rather than a traceback.
     if args.backend == "learned":
         try:
             result = solve_learned(

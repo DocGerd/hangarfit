@@ -32,7 +32,7 @@ python -m ml.train --schedule trivial --save model.pt --save-onnx model.onnx  # 
 
 # 2. Run the learned backend (torch-free at inference time):
 hangarfit solve <scenario.yaml> --backend learned --weights model.onnx
-hangarfit solve <scenario.yaml> --backend learned --weights model.onnx --render-paths out.png
+hangarfit solve <scenario.yaml> --backend learned --weights model.onnx --render out.png --render-paths
 ```
 
 Note: with weights from the **trivial** schedule (an undertrained policy) the

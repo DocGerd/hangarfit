@@ -1,7 +1,8 @@
 """CLI surface for the ``solve --backend`` switch (epic #607 rung 1, ADR-0027).
 
 The default ``rrmc`` path is the unchanged deterministic solver; ``learned`` is the
-opt-in neural backend, not yet implemented, which must fail cleanly (exit 2).
+opt-in neural backend (#706), which without ``--weights`` / the ``[learned-infer]``
+extra must fail cleanly (exit 2).
 """
 
 from __future__ import annotations
