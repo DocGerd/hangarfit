@@ -21,17 +21,24 @@ environment + reward (`HangarFitEnv`), reusing `hangarfit`'s geometry oracle.
 ### Inference (#5)
 
 Export a trained policy to ONNX and run it torch-free via the deterministic
-verifier. Needs the `[learned-infer]` extra (`pip install -e ".[learned-infer]"`
-installs onnxruntime; no torch required at inference time).
+verifier. Exporting needs the `[train]` extra (torch **and** `onnx>=1.16`, which
+`ml/export.py` uses to serialize the proto); inference needs only the
+`[learned-infer]` extra (`pip install -e ".[learned-infer]"` installs onnxruntime;
+no torch required at inference time).
 
 ```bash
 # 1. Train (trivial schedule) and export both a state_dict and the ONNX model:
-python -m ml.train --schedule trivial --save model.pt --save-onnx model.onnx  # [train]
+python -m ml.train --schedule trivial --save model.pt --save-onnx model.onnx  # [train] (torch + onnx)
 
 # 2. Run the learned backend (torch-free at inference time):
 hangarfit solve <scenario.yaml> --backend learned --weights model.onnx
 hangarfit solve <scenario.yaml> --backend learned --weights model.onnx --render-paths out.png
 ```
+
+Note: with weights from the **trivial** schedule (an undertrained policy) the
+verifier will usually reject the proposal, so `solve` returns a no-layout result
+(not an error) — the inference *plumbing* is what #5 delivers; reaching valid
+dense layouts is the train-to-mastery work (#698 / #7).
 
 The verifier (`collisions.check` + Caddy egress) is the sole arbiter of validity
 — an invalid or incomplete proposal returns a no-layout result (never an
