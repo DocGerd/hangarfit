@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import warnings
 from dataclasses import replace
 
 import pytest
@@ -17,6 +18,7 @@ from ml.benchmark import (
     _verdict_from,
     build_scenario_env,
     load_baseline,
+    rrmc_reach,
     score_episode,
     witness_valid,
 )
@@ -241,3 +243,20 @@ def test_load_baseline_roundtrip(tmp_path, monkeypatch):
     base = load_baseline()
     assert base["herrenteich_demo"]["reached"] is True
     assert base["herrenteich_demo"]["n_total"] == 3
+
+
+@pytest.mark.slow
+def test_rrmc_baseline_drift_canary():
+    """NON-blocking: re-derive the control's RR-MC verdict and WARN if it flipped vs the
+    committed fixture. A flip is a signal (curation rot / solver change), never a regression
+    — so this asserts only the stable composition invariant, never the reached value."""
+    control = next(s for s in BENCH_SET if s.kind == "control")
+    recorded = load_baseline()[control.name]
+    live = rrmc_reach(control)
+    assert live.n_total == recorded["n_total"], "scenario composition changed"
+    if live.reached != recorded["reached"]:
+        warnings.warn(
+            f"RR-MC baseline drift for {control.name!r}: recorded reached="
+            f"{recorded['reached']}, live={live.reached} — re-record the fixture.",
+            stacklevel=2,
+        )
