@@ -198,6 +198,8 @@ def _fuji_env() -> HangarFitEnv:
 
 def test_score_episode_reaches_when_driven_in_and_parked():
     env = _fuji_env()
+    # 6 x 2 m forward = 12 m > the 8 m apron, so fuji clears the door and parks INSIDE
+    # (0 < y < length); alone in an empty hangar -> valid + clear swept path -> reached.
     actions = [Primitive(kind="S", magnitude=2.0, gear=1)] * 6 + [Park()]
     v = score_episode(env, actions)
     assert v.reached, v.reason

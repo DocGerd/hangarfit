@@ -172,18 +172,29 @@ def build_scenario_env(scenario: BenchScenario) -> HangarFitEnv:
     silently dropping the keep-out would score the policy on an easier scenario than RR-MC
     faces (spec §5.5/D11)."""
     sc = load_scenario(_ROOT / scenario.scenario_path)
-    if sc.fixed_obstacle_placements:
-        ids = [p.plane_id for p in sc.fixed_obstacle_placements]
+    # Detect fixed obstacles among the scenario's ACTIVE ground objects by object_class,
+    # NOT via fixed_obstacle_placements: a class-`fixed_obstacle` listed in the scenario's
+    # ground_objects but WITHOUT a placement entry would otherwise slip past the gate, land
+    # in the env un-queued, and be silently absent from scoring (the silent-keep-out-drop
+    # the gate exists to prevent). Scan sc.ground_objects (the active id tuple), not the
+    # catalog-merged ground_object_defs — the latter always carries every catalog def
+    # (e.g. the fuel trailer) even for a scenario that doesn't use it.
+    fixed = [
+        gid
+        for gid in sc.ground_objects
+        if sc.ground_object_defs[gid].object_class == "fixed_obstacle"
+    ]
+    if fixed:
         raise NotImplementedError(
-            f"build_scenario_env: scenario {scenario.name!r} carries fixed obstacle(s) {ids}; "
+            f"build_scenario_env: scenario {scenario.name!r} carries fixed obstacle(s) {fixed}; "
             f"the env cannot yet pre-place immovable keep-outs (deferred to #607 sub-project "
             f"4c-ii). Use a ground-object-free scenario for the policy rollout."
         )
     placeable = sc.placeable_ids
-    # Pass only the IN-PLAY ground-object defs (the scenario's active mover ids), not the
-    # whole catalog-merged ``ground_object_defs``: a GO-free scenario must yield an env with
-    # NO ground objects, and the env should carry exactly the bodies it can drive.
-    ground_objects = {gid: sc.ground_object_defs[gid] for gid in sc.ground_objects}
+    # Pass only the MOVER defs (placed-routed movers), not the whole catalog-merged
+    # ``ground_object_defs``: a GO-free scenario must yield an env with NO ground objects,
+    # and the env should carry exactly the bodies it can drive.
+    movers = {gid: sc.ground_object_defs[gid] for gid in sc.mover_ids}
     per_object = 120
     difficulty = DifficultyConfig(
         max_objects=len(placeable),
@@ -195,7 +206,7 @@ def build_scenario_env(scenario: BenchScenario) -> HangarFitEnv:
         hangar=hangar,
         fleet=sc.fleet,
         requested_ids=placeable,
-        ground_objects=ground_objects,
+        ground_objects=movers,
         difficulty=difficulty,
     )
 
