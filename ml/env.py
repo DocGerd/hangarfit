@@ -52,6 +52,7 @@ class HangarFitEnv:
         n = self.difficulty.max_objects
         self._queue: list[str] = list(self.requested_ids if n is None else self.requested_ids[:n])
         self._parked: list[Placement] = []
+        self._parked_version = 0
         self._active_id: str | None = None
         self._active_pose: Pose | None = None
         self._prev_gear: int | None = None
@@ -197,6 +198,7 @@ class HangarFitEnv:
                 on_carts=self._on_carts(active_id),
             )
             self._parked.append(pl)
+            self._parked_version += 1
             placed_layout = self._layout()
             overlap = go.overlap_area_m2(placed_layout)
             intrusion = go.intrusion_area_m2(body, pl, self.hangar, bay_closed=False)

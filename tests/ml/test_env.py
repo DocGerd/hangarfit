@@ -230,6 +230,18 @@ def test_reset_rejects_unknown_id():
         env.reset(requested_ids=("nope",))
 
 
+def test_parked_version_zero_then_bumps_on_park_then_resets():
+    env = _two_object_env(
+        difficulty=DifficultyConfig(max_objects=2, per_object_step_budget=40, total_step_budget=80)
+    )
+    env.reset()
+    assert env._parked_version == 0
+    env.step(Park())  # park object 1 -> version bumps (validity irrelevant)
+    assert env._parked_version == 1
+    env.reset()
+    assert env._parked_version == 0
+
+
 def test_reset_rejects_empty_requested_ids():
     env = _two_object_env()
     with pytest.raises(ValueError):
