@@ -31,9 +31,19 @@ class TestBackendFlag:
             build_parser().parse_args(["solve", SMOKE_FIXTURE, "--backend", "bogus"])
 
     def test_backend_learned_exits_2_cleanly(self, capsys):
-        # Not implemented yet (#607): a clean exit-2 error, not a traceback.
+        # Without --weights the backend raises LearnedBackendUnavailableError with a
+        # weights-related message (Task 8 wired weights_path=None → that branch).
         code = main(["solve", SMOKE_FIXTURE, "--backend", "learned"])
         assert code == 2
         err = capsys.readouterr().err
-        assert "learned" in err.lower()
-        assert "#607" in err
+        assert "weights" in err.lower()
+
+
+def test_backend_learned_without_weights_exits_2(capsys, tmp_path):
+    from hangarfit.cli import main
+
+    # a minimal valid solve scenario fixture
+    code = main(["solve", "tests/fixtures/scenario_minimal.yaml", "--backend", "learned"])
+    assert code == 2
+    err = capsys.readouterr().err
+    assert "weights" in err.lower()

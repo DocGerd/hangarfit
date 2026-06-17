@@ -365,6 +365,16 @@ def build_parser() -> argparse.ArgumentParser:
             "cleanly with a message; the deterministic path is unchanged (ADR-0027)."
         ),
     )
+    solve.add_argument(
+        "--weights",
+        type=str,
+        default=None,
+        dest="weights",
+        help=(
+            "Path to the learned backend's ONNX weights (only with --backend learned). "
+            "No default ships yet (#6); omitting it with --backend learned exits cleanly."
+        ),
+    )
 
     view = sub.add_parser(
         "view",
@@ -724,6 +734,7 @@ def cmd_solve(args: argparse.Namespace) -> int:
         try:
             result = solve_learned(
                 scenario,
+                weights_path=args.weights,
                 budget_s=args.budget,
                 alternatives=args.alternatives,
                 seed=args.seed,
