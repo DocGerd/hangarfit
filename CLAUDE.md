@@ -34,6 +34,7 @@ This file is the durable **operational** context for the project: how we work, w
 | **The staging apron** (`hangar.apron_depth_m` / `--apron-depth N\|auto`, slide-in from outside the door, reverse nose-out seeds, depth-0 byte-identical) | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#the-door-is-a-visual-marker-only) + [ADR-0021](docs/adr/0021-tow-planner-staging-apron.md). `collisions.check` is apron-inert (forbids `y<0`); the apron is a planner-level motion concept |
 | **The 3D viewer** (`hangarfit view`, interactive offline HTML, whole-fill tow timeline, the `scene/v2` JSON seam, Python-owned transform) | [§5 Building Block View](docs/architecture/05-building-block-view.md) (`scene`, `viewer`) + [ADR-0017](docs/adr/0017-3d-viewer-architecture.md) + the schema reference [docs/architecture/scene-v2-schema.md](docs/architecture/scene-v2-schema.md) |
 | **Ground objects** (fixed obstacles + placed/routed movers — cars & trailers; the Caddy hard-door egress gate; the soft right/left-region preference; movers are solver-placed since #604) | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md) + [ADR-0025](docs/adr/0025-ground-object-taxonomy.md) (taxonomy) + [ADR-0026](docs/adr/0026-caddy-hard-door-egress.md) (Caddy egress) + [ADR-0008](docs/adr/0008-inter-plane-spread-soft-preference.md) (region soft-term amendment) + [ADR-0010](docs/adr/0010-reeds-shepp-motion-model.md) (mover motion) |
+| **The learned-backend RL workspace** (`ml/`, #607 — cold-joint env/reward, observation tensorizer, policy net, PPO, curriculum, eval/benchmark; dev/CI-only, never in the wheel) | [`ml/README.md`](ml/README.md) + [ADR-0027](docs/adr/0027-learned-backend-determinism-scope.md) + the design spec `docs/superpowers/specs/2026-06-12-learned-backend-cold-joint-rl-env-design.md` |
 | Why the project targets a single Python (3.12), not a range | [ADR-0009](docs/adr/0009-single-supported-python-version.md) |
 | All architecture decisions, including superseded ones | [`docs/adr/`](docs/adr/) |
 
@@ -101,6 +102,8 @@ Use the best-fitted model for the task. The model class to pick is "as much reas
 - **`feature-dev:code-architect`** — only for genuinely novel design decisions, not routine implementation.
 
 Most coding goes direct in-session. Subagent dispatch is for review work and isolated heavy lifts.
+
+`ml/` is reviewable source, not scratch — run the formal `/pr-review` arc on `ml/` PRs like any `src/` change. Note CI's `mypy` only covers `src/hangarfit/`, so a Pyright complaint under `tests/ml/` is usually stale-LSP noise — `mypy`/CI is the source of truth.
 
 **Review subagents must stay read-only in the shared checkout.** A review agent that runs `git switch` / `checkout` / `stash` in the shared working tree silently reverts it under any sibling agent (and under you). Point review agents at `origin/<branch>` refs instead — `gh pr diff N`, `git diff origin/develop...origin/feature/X`, and `git show origin/develop:<path>` for the pre-change state — and **never** switch branches in place. Isolate any subagent that *writes* in its own worktree.
 
@@ -291,6 +294,16 @@ VIEWER_OUTFILE=/tmp/viewer-scratch.js npm --prefix viewer/ run build
 # it — the CI skew-guard ties all three, bump in lockstep). viewer/src uses explicit `.ts`
 # imports (tsconfig allowImportingTsExtensions) so `node --test` resolves them under Node
 # 24 type-stripping; esbuild inlines internal modules, so .ts stays bundle-neutral.
+
+# Learned-backend RL workspace (ml/, #607 — DEV/CI-ONLY, never shipped in the wheel).
+# ml/ is a TOP-LEVEL package, so the editable install (packages.find where=["src"])
+# does NOT put it on sys.path — run from the repo root (cwd=root or PYTHONPATH=$PWD).
+# torch is the OPTIONAL `[train]` extra; torch-free modules (benchmark) vs torch-needing
+# (train/eval/policy/ppo, gated by importorskip in tests). Entry points + the 4c-ii
+# training-knob table + A/B command live in ml/README.md.
+pip install -e ".[train]"      # adds torch for training/eval (CPU is fine)
+pytest tests/ml/               # the ml/ test tree (collected by default; testpaths=["tests"])
+python -m ml.train --save P    # train + export state_dict (needs [train])
 
 # GitFlow loops
 git switch develop && git pull
