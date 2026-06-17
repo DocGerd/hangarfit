@@ -10,17 +10,18 @@ the sole arbiter of validity — an invalid proposal yields a no-layout SolveRes
 
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 
 import numpy as np
 
-from hangarfit.models import Scenario
+from hangarfit.models import Layout, Scenario
+from hangarfit.towplanner import DubinsArc, Move, MovesPlan, Pose, Segment
 from ml.action_space import decode
-from ml.encoding import ObservationTensors
+from ml.encoding import EncoderConfig, ObservationTensors, encode
 from ml.env import HangarFitEnv
 from ml.export import ONNX_OUTPUT_NAMES
-from ml.types import DifficultyConfig, Park, Primitive
+from ml.types import DifficultyConfig, Park, Primitive, StepInfo
 
 
 class OrtPolicy:
@@ -94,3 +95,64 @@ def env_from_scenario(scenario: Scenario, *, apron_depth_m: float = 8.0) -> Hang
         fixed_placements=scenario.fixed_obstacle_placements,
         difficulty=difficulty,
     )
+
+
+@dataclass(slots=True)
+class _DrivenObject:
+    """Record of one PARKED object: spawn pose, ordered primitives, and frozen end pose."""
+
+    object_id: str
+    start_pose: Pose
+    end_pose: Pose
+    primitives: list[Primitive] = field(default_factory=list)
+
+
+def rollout(
+    env: HangarFitEnv, policy: OrtPolicy, encoder: EncoderConfig | None = None
+) -> tuple[Layout, list[_DrivenObject], StepInfo]:
+    """Drive ``env`` to termination under ``policy`` (argmax). Record each PARKED object's
+    spawn pose, the ordered primitives it was driven with, and its frozen (parked) pose.
+    Objects abandoned at budget exhaustion are NOT recorded (they are not in the terminal
+    layout). Returns (terminal_layout, driven_objects_in_park_order, last_step_info)."""
+    enc = encoder or EncoderConfig()
+    bodies = {**env.fleet, **env.ground_objects}
+    obs = env.reset()
+    driven: list[_DrivenObject] = []
+    # The active object is identified at spawn; its primitives accumulate until a Park.
+    current = _DrivenObject(obs.active.object_id, obs.active.pose, obs.active.pose)
+    done = False
+    info: StepInfo | None = None
+    while not done and obs.active is not None:
+        obs_t = encode(obs, env.hangar, bodies, enc)
+        tr = obs.active.body.effective_turn_radius_m()
+        action = policy.act(obs_t, turn_radius_m=tr)
+        if isinstance(action, Park):
+            current.end_pose = obs.active.pose  # the pose Park freezes
+            driven.append(current)
+        else:
+            current.primitives.append(action)
+        obs, _reward, done, info = env.step(action)
+        if isinstance(action, Park) and not done and obs.active is not None:
+            current = _DrivenObject(obs.active.object_id, obs.active.pose, obs.active.pose)
+    if info is None:
+        raise ValueError("rollout: episode produced no steps")
+    return env._layout(), driven, info
+
+
+def build_moves_plan(layout: Layout, driven: list[_DrivenObject], env: HangarFitEnv) -> MovesPlan:
+    """Map each driven object's recorded primitives onto a DubinsArc tow Move (1:1
+    Primitive->Segment). A zero-primitive object (parked at spawn) gets Move(path=None)
+    — the established best-effort idiom, since DubinsArc.segments must be non-empty."""
+    moves: list[Move] = []
+    for d in driven:
+        target = Pose(x_m=d.end_pose.x_m, y_m=d.end_pose.y_m, heading_deg=d.end_pose.heading_deg)
+        if not d.primitives:
+            moves.append(Move(plane_id=d.object_id, target_slot=target, path=None))
+            continue
+        tr = env._body(d.object_id).effective_turn_radius_m()
+        segments = tuple(
+            Segment(kind=p.kind, length_m=p.magnitude, gear=p.gear) for p in d.primitives
+        )
+        arc = DubinsArc(start=d.start_pose, end=target, turn_radius_m=tr, segments=segments)
+        moves.append(Move(plane_id=d.object_id, target_slot=target, path=arc))
+    return MovesPlan(target_layout=layout, moves=tuple(moves))

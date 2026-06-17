@@ -42,7 +42,39 @@ def test_ortpolicy_matches_torch_act(tmp_path):
     assert ort_action == torch_action
 
 
+import math  # noqa: E402
+
 from hangarfit.loader import load_scenario  # noqa: E402
+from hangarfit.towplanner import DubinsArc, Segment  # noqa: E402
+from ml.geometry_oracle import apply_primitive  # noqa: E402
+from ml.types import Primitive  # noqa: E402
+
+
+def test_primitive_sequence_dubinsarc_endpoint_parity():
+    """A multi-segment DubinsArc built from a primitive sequence integrates to the same
+    pose as chaining apply_primitive — the guarantee build_moves_plan relies on."""
+    from hangarfit.towplanner import Pose
+
+    start = Pose(x_m=5.0, y_m=-4.0, heading_deg=0.0)
+    prims = [
+        Primitive(kind="S", magnitude=2.0, gear=1),
+        Primitive(kind="L", magnitude=3.0, gear=1),
+        Primitive(kind="S", magnitude=1.0, gear=1),
+    ]
+    tr = 4.0
+    pose = start
+    for p in prims:
+        pose, _ = apply_primitive(pose, p, turn_radius_m=tr)
+    arc = DubinsArc(
+        start=start,
+        end=pose,
+        turn_radius_m=tr,
+        segments=tuple(Segment(kind=p.kind, length_m=p.magnitude, gear=p.gear) for p in prims),
+    )
+    integrated = arc.pose_at(arc.length_m)
+    assert math.isclose(integrated.x_m, pose.x_m, abs_tol=1e-6)
+    assert math.isclose(integrated.y_m, pose.y_m, abs_tol=1e-6)
+    assert math.isclose(integrated.heading_deg, pose.heading_deg, abs_tol=1e-6)
 
 
 def test_env_from_scenario_queues_placeables(tmp_path):
@@ -57,3 +89,25 @@ def test_env_from_scenario_queues_placeables(tmp_path):
     assert obs.active is not None
     assert set(env.requested_ids) == set(scenario.placeable_ids)
     assert env.hangar.apron_depth_m == 8.0
+
+
+def test_rollout_builds_moves_plan(tmp_path):
+    import pathlib
+
+    from ml.infer import OrtPolicy, build_moves_plan, env_from_scenario, rollout
+
+    torch.manual_seed(0)
+    policy = HangarFitPolicy()
+    policy.eval()
+    onnx_path = tmp_path / "p.onnx"
+    export_onnx(policy, onnx_path)
+    ort_pol = OrtPolicy(onnx_path)
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    scenario = load_scenario(str(root / "tests/fixtures/scenario_minimal.yaml"))
+    env = env_from_scenario(scenario)
+    layout, driven, info = rollout(env, ort_pol)
+    plan = build_moves_plan(layout, driven, env)
+    # Every parked object has a Move; every Move targets a real slot pose.
+    assert len(plan.moves) == len(driven)
+    assert all(m.target_slot is not None for m in plan.moves)
