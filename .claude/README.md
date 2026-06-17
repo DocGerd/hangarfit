@@ -6,8 +6,10 @@ This directory holds **team-shared** [Claude Code](https://docs.claude.com/en/do
 
 | File | Status | Purpose |
 |---|---|---|
-| `settings.json` | committed | Team defaults — a `SessionStart` hook that provisions Python 3.12 in web/remote sessions, a `PreToolUse` guard that blocks hand-edits to the hash-pinned `requirements-*.txt` lockfiles, a `PostToolUse` hook that runs `ruff` + `pytest` after edits under `src/hangarfit/` or `tests/`, a second `PostToolUse` hook that reminds you to rebuild `viewer.js` after editing `viewer/src/*.ts`, plus a `Stop` hook that runs `mypy` once when a turn finishes. It also lists the team-shared **LSP plugins** under `enabledPlugins` ([see below](#lsp-plugins)). |
+| `settings.json` | committed | Team defaults — a `SessionStart` hook that provisions Python 3.12 in web/remote sessions, a `PreToolUse` guard that blocks hand-edits to the hash-pinned `requirements-*.txt` lockfiles, a `PostToolUse` hook that runs `ruff` + `pytest` after edits under `src/hangarfit/` or `tests/` (and `ruff` + the scoped `pytest tests/ml/` after edits to `ml/*.py`), a second `PostToolUse` hook that reminds you to rebuild `viewer.js` after editing `viewer/src/*.ts`, plus a `Stop` hook that runs `mypy` — over `src/hangarfit/`, and `ml/` too when `torch` is importable — once when a turn finishes. It also lists the team-shared **LSP plugins** under `enabledPlugins` ([see below](#lsp-plugins)). |
 | `hooks/session-start.sh` | committed | The `SessionStart` provisioner script (the one hook complex enough to warrant a file rather than an inline command). |
+| `agents/` | committed | Project-specific review subagents: `determinism-guard` (solver/towplanner byte-identity), `geometry-invariant-guard` (the coordinate sign-flip trap), and `ml-rl-guard` (the `ml/` RL invariants — seeding/reproducibility, the 4c-ii knob default-neutrality, product-checker validity per #694, the numeric silent-failure guards). |
+| `skills/` | committed | Project skills invoked as `/<name>`: `new-fixture`, `new-adr`, `release-prep`, `release-cut`, `trim-memory`, and `ml-ab` (the #607 4c-ii control-vs-treatment basin-escape A/B). |
 | `settings.local.json` | **gitignored** | Optional per-contributor override (see below). |
 | `README.md` | committed | This file. |
 
@@ -36,6 +38,7 @@ Before an edit lands, this hook inspects the target path. If its basename matche
 After Claude Code edits a file, this hook inspects the edited path and:
 
 - If the path matches `src/hangarfit/**` or `tests/**` → runs `ruff check` and `ruff format --check` on the edited file, then `pytest -q --no-header`, showing the tail of each in the transcript.
+- If the path matches `ml/*.py` (the RL workspace source; `tests/ml/` already matches the rule above) → runs `ruff check` and `ruff format --check` on the edited file, then the **scoped** `pytest tests/ml/` — an `ml/` change can only break `ml/` tests, since `hangarfit` never imports `ml`. Unlike the `src/`/`tests/` rule this is **not** a CI mirror: CI's `ruff check src/ tests/ bench/` and `mypy src/hangarfit` exclude `ml/` (torch isn't installed in CI), so for the RL workspace this hook plus the `ml-rl-guard` subagent are the primary local signal.
 - Otherwise → no-op.
 
 This mirrors three of the gates CI enforces (`ruff check`, `ruff format --check`, `pytest`) so problems surface on edit instead of in CI. `mypy` is deliberately omitted — too slow to run on every edit. The hook is **non-blocking**: it always exits `0`, even if a check fails. Failing output is shown to Claude as feedback, but the edit itself is never aborted. Treat it as a fast smoke signal, not a gate.
@@ -50,7 +53,7 @@ It deliberately does **not** run esbuild — that would re-impose the velocity-t
 
 ### Stop — mypy (non-blocking)
 
-When a turn finishes, this hook runs `mypy src/hangarfit` once and shows the tail of its output in the transcript. `mypy` is a hard CI gate (`.github/workflows/ci.yml`, "Type-check with mypy") and the *one* gate the on-edit `PostToolUse` hook does not mirror — running a full type-check on every single edit is too slow to be worth it. Amortizing it to once per turn surfaces type errors before a PR reaches CI without paying the cost on each keystroke. Like the `PostToolUse` hooks it is **non-blocking**: it always exits `0` even when `mypy` reports errors, so a turn is never aborted — the output is feedback, not a gate.
+When a turn finishes, this hook runs `mypy src/hangarfit` once and shows the tail of its output in the transcript; when `torch` is importable it additionally runs `mypy ml/` (the RL workspace). The `ml/` pass is gated on `torch` because `ml/` imports it — so the check is a clean no-op in the torch-less CI/web env, matching the future torch-CI rung rather than failing there. `mypy` is a hard CI gate (`.github/workflows/ci.yml`, "Type-check with mypy") and the *one* gate the on-edit `PostToolUse` hook does not mirror — running a full type-check on every single edit is too slow to be worth it. Amortizing it to once per turn surfaces type errors before a PR reaches CI without paying the cost on each keystroke. Like the `PostToolUse` hooks it is **non-blocking**: it always exits `0` even when `mypy` reports errors, so a turn is never aborted — the output is feedback, not a gate.
 
 ## Opting out (per contributor)
 
