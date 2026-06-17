@@ -4,7 +4,15 @@ from __future__ import annotations
 
 import pytest
 
-from ml.benchmark import BenchScenario, ReachVerdict, RrmcVerdict, _verdict_from, witness_valid
+from hangarfit.loader import load_layout, load_scenario
+from ml.benchmark import (
+    _ROOT,
+    BenchScenario,
+    ReachVerdict,
+    RrmcVerdict,
+    _verdict_from,
+    witness_valid,
+)
 
 
 def test_benchscenario_anchor_requires_witness():
@@ -98,3 +106,41 @@ def test_witness_valid_true_for_today_and_full():
 def test_rrmcverdict_is_constructible():
     v = RrmcVerdict(reached=True, n_routed=8, n_total=8, status="routed")
     assert v.reached and v.n_routed == 8
+
+
+_TODAY = BenchScenario(
+    name="today",
+    scenario_path="examples/herrenteich/scenario_today.yaml",
+    kind="anchor",
+    max_restarts=1,
+    tow_max_expansions=1,
+    seed=0,
+    witness_path="examples/herrenteich/layout_today.yaml",
+)
+_FULL = BenchScenario(
+    name="full",
+    scenario_path="examples/herrenteich/scenario_full.yaml",
+    kind="anchor",
+    max_restarts=1,
+    tow_max_expansions=1,
+    seed=0,
+    witness_path="examples/herrenteich/layout_full.yaml",
+)
+
+
+@pytest.mark.parametrize("sc", [_TODAY, _FULL], ids=["today", "full"])
+def test_scenario_input_matches_witness_movable_idset(sc):
+    """The scenario input's movable id-set (fleet_in + placed-routed movers) must equal
+    the witness layout's movable placements, with fixed obstacles excluded both sides."""
+    scenario = load_scenario(_ROOT / sc.scenario_path)
+    layout = load_layout(_ROOT / sc.witness_path)
+    scenario_movable = set(scenario.placeable_ids)
+    fixed_ids = {
+        p.plane_id
+        for p in layout.ground_object_placements
+        if layout.ground_objects[p.plane_id].object_class == "fixed_obstacle"
+    }
+    witness_movable = {p.plane_id for p in layout.placements} | (
+        {p.plane_id for p in layout.ground_object_placements} - fixed_ids
+    )
+    assert scenario_movable == witness_movable
