@@ -44,5 +44,7 @@ def test_solve_learned_no_weights_is_clean_error():
 
 def test_solve_learned_missing_weights_file_is_clean_error(tmp_path):
     missing = tmp_path / "nope.onnx"
-    with pytest.raises(LearnedBackendUnavailableError, match="weights"):
+    # "not found" pins the missing-FILE branch specifically; a loose "weights" match would
+    # also pass on the weights_path-is-None branch's message.
+    with pytest.raises(LearnedBackendUnavailableError, match="not found"):
         solve_learned(_minimal_scenario(), weights_path=str(missing))
