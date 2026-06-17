@@ -2,17 +2,24 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
-from hangarfit.loader import load_layout, load_scenario
+from hangarfit.loader import load_fleet, load_hangar, load_layout, load_scenario
 from ml.benchmark import (
     _ROOT,
+    BENCH_SET,
     BenchScenario,
     ReachVerdict,
     RrmcVerdict,
     _verdict_from,
+    build_scenario_env,
+    score_episode,
     witness_valid,
 )
+from ml.env import HangarFitEnv
+from ml.types import DifficultyConfig, Park, Primitive
 
 
 def test_benchscenario_anchor_requires_witness():
@@ -144,3 +151,61 @@ def test_scenario_input_matches_witness_movable_idset(sc):
         {p.plane_id for p in layout.ground_object_placements} - fixed_ids
     )
     assert scenario_movable == witness_movable
+
+
+def test_bench_set_wellformed():
+    assert len(BENCH_SET) >= 4
+    names = [s.name for s in BENCH_SET]
+    assert len(names) == len(set(names)), "duplicate scenario names"
+    assert any(s.kind == "control" for s in BENCH_SET), "need >=1 control"
+    for s in BENCH_SET:
+        assert (_ROOT / s.scenario_path).exists(), s.scenario_path
+        if s.kind == "anchor":
+            assert s.witness_path is not None and (_ROOT / s.witness_path).exists()
+
+
+def test_bench_set_anchor_witnesses_all_valid():
+    for s in BENCH_SET:
+        if s.kind == "anchor":
+            assert witness_valid(s), s.name
+
+
+_DEMO = next(s for s in BENCH_SET if s.name == "herrenteich_demo")
+_ALL8 = next(s for s in BENCH_SET if s.name == "herrenteich_all8")
+
+
+def test_build_scenario_env_go_free_control():
+    env = build_scenario_env(_DEMO)
+    assert len(env.requested_ids) == 3
+    assert env.ground_objects == {}
+
+
+def test_build_scenario_env_refuses_fixed_obstacle_scenario():
+    with pytest.raises(NotImplementedError, match="4c-ii"):
+        build_scenario_env(_ALL8)
+
+
+def _fuji_env() -> HangarFitEnv:
+    fleet = load_fleet("data/fleet.yaml")
+    hangar = replace(load_hangar("data/hangar.yaml"), apron_depth_m=8.0)
+    return HangarFitEnv(
+        hangar=hangar,
+        fleet=fleet,
+        requested_ids=("fuji",),
+        difficulty=DifficultyConfig(per_object_step_budget=40, total_step_budget=40),
+    )
+
+
+def test_score_episode_reaches_when_driven_in_and_parked():
+    env = _fuji_env()
+    actions = [Primitive(kind="S", magnitude=2.0, gear=1)] * 6 + [Park()]
+    v = score_episode(env, actions)
+    assert v.reached, v.reason
+    assert v.max_swept_intrusion == 0.0
+
+
+def test_score_episode_apron_park_is_invalid():
+    env = _fuji_env()
+    v = score_episode(env, [Park()])
+    assert not v.reached
+    assert not v.final_valid

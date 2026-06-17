@@ -9,14 +9,17 @@ loads it cleanly."""
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from collections.abc import Sequence
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Literal
 
 from hangarfit.collisions import check
-from hangarfit.loader import load_layout
+from hangarfit.loader import load_layout, load_scenario
 from hangarfit.models import Layout
 from ml import geometry_oracle as go
+from ml.env import HangarFitEnv
+from ml.types import Action, DifficultyConfig, StepInfo
 
 _ROOT = Path(__file__).resolve().parent.parent  # repo root (ml/ sits at the root)
 
@@ -110,3 +113,115 @@ def witness_valid(scenario: BenchScenario) -> bool:
         raise ValueError(f"witness_valid: scenario {scenario.name!r} has no witness_path")
     layout = load_layout(_ROOT / scenario.witness_path)
     return _layout_valid(layout)
+
+
+# Pre-registered RR-MC budgets — FROZEN before measurement (spec D4). Do NOT retune
+# after seeing baseline results: that would silently make the comparison circular.
+_ANCHOR_RESTARTS = 200
+_ANCHOR_TOW_EXPANSIONS = 16_000
+_CONTROL_RESTARTS = 64
+_CONTROL_TOW_EXPANSIONS = 8_000
+_SEED = 0
+
+BENCH_SET: tuple[BenchScenario, ...] = (
+    BenchScenario(
+        name="herrenteich_all8",
+        scenario_path="examples/herrenteich/scenario.yaml",
+        witness_path="examples/herrenteich/layout.yaml",
+        kind="anchor",
+        max_restarts=_ANCHOR_RESTARTS,
+        tow_max_expansions=_ANCHOR_TOW_EXPANSIONS,
+        seed=_SEED,
+    ),
+    BenchScenario(
+        name="herrenteich_today",
+        scenario_path="examples/herrenteich/scenario_today.yaml",
+        witness_path="examples/herrenteich/layout_today.yaml",
+        kind="anchor",
+        max_restarts=_ANCHOR_RESTARTS,
+        tow_max_expansions=_ANCHOR_TOW_EXPANSIONS,
+        seed=_SEED,
+    ),
+    BenchScenario(
+        name="herrenteich_full",
+        scenario_path="examples/herrenteich/scenario_full.yaml",
+        witness_path="examples/herrenteich/layout_full.yaml",
+        kind="anchor",
+        max_restarts=_ANCHOR_RESTARTS,
+        tow_max_expansions=_ANCHOR_TOW_EXPANSIONS,
+        seed=_SEED,
+    ),
+    # GO-free control: RR-MC routes it (reachability proof) AND it is the policy-rollout
+    # control for 4c-i (no fixed obstacle -> build_scenario_env accepts it).
+    BenchScenario(
+        name="herrenteich_demo",
+        scenario_path="examples/herrenteich/scenario_demo.yaml",
+        witness_path=None,
+        kind="control",
+        max_restarts=_CONTROL_RESTARTS,
+        tow_max_expansions=_CONTROL_TOW_EXPANSIONS,
+        seed=_SEED,
+    ),
+)
+
+
+def build_scenario_env(scenario: BenchScenario) -> HangarFitEnv:
+    """Build a HangarFitEnv for a scenario's MOVABLE bodies (aircraft + placed-routed
+    movers), with an apron for drive-in. RAISES NotImplementedError if the scenario carries
+    any fixed obstacle — env pre-placement of immovable keep-outs is deferred to 4c-ii, and
+    silently dropping the keep-out would score the policy on an easier scenario than RR-MC
+    faces (spec §5.5/D11)."""
+    sc = load_scenario(_ROOT / scenario.scenario_path)
+    if sc.fixed_obstacle_placements:
+        ids = [p.plane_id for p in sc.fixed_obstacle_placements]
+        raise NotImplementedError(
+            f"build_scenario_env: scenario {scenario.name!r} carries fixed obstacle(s) {ids}; "
+            f"the env cannot yet pre-place immovable keep-outs (deferred to #607 sub-project "
+            f"4c-ii). Use a ground-object-free scenario for the policy rollout."
+        )
+    placeable = sc.placeable_ids
+    # Pass only the IN-PLAY ground-object defs (the scenario's active mover ids), not the
+    # whole catalog-merged ``ground_object_defs``: a GO-free scenario must yield an env with
+    # NO ground objects, and the env should carry exactly the bodies it can drive.
+    ground_objects = {gid: sc.ground_object_defs[gid] for gid in sc.ground_objects}
+    per_object = 120
+    difficulty = DifficultyConfig(
+        max_objects=len(placeable),
+        per_object_step_budget=per_object,
+        total_step_budget=per_object * max(1, len(placeable)),
+    )
+    hangar = replace(sc.hangar, apron_depth_m=8.0)
+    return HangarFitEnv(
+        hangar=hangar,
+        fleet=sc.fleet,
+        requested_ids=placeable,
+        ground_objects=ground_objects,
+        difficulty=difficulty,
+    )
+
+
+def score_episode(env: HangarFitEnv, actions: Sequence[Action]) -> ReachVerdict:
+    """Reset `env`, replay an explicit action sequence, and apply the success predicate
+    (spec §4). Torch-free — the test/RR-MC path. final_valid is computed by the PRODUCT
+    checker `_layout_valid` on the env's terminal layout (env._layout()), NOT the env's
+    oracle-based StepInfo.valid (#694). ml.eval.policy_reach runs the same loop with
+    policy-chosen actions and reuses _verdict_from."""
+    env.reset()
+    max_swept = 0.0
+    info: StepInfo | None = None
+    done = False
+    for action in actions:
+        if done:
+            break
+        _obs, _reward, done, info = env.step(action)
+        max_swept = max(max_swept, info.terms.get("hard_swept", 0.0))
+    if info is None:
+        raise ValueError("score_episode: empty action sequence")
+    final_valid = _layout_valid(env._layout()) if done else False
+    return _verdict_from(
+        parked=info.placed,
+        total=info.total,
+        done=done,
+        final_valid=final_valid,
+        max_swept=max_swept,
+    )
