@@ -372,7 +372,7 @@ def build_parser() -> argparse.ArgumentParser:
         dest="weights",
         help=(
             "Path to the learned backend's ONNX weights (only with --backend learned). "
-            "No default ships yet (#6); omitting it with --backend learned exits cleanly."
+            "No default weights ship yet; omitting it with --backend learned exits cleanly."
         ),
     )
 
