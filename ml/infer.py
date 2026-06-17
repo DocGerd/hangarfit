@@ -10,14 +10,17 @@ the sole arbiter of validity — an invalid proposal yields a no-layout SolveRes
 
 from __future__ import annotations
 
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
 
+from hangarfit.models import Scenario
 from ml.action_space import decode
 from ml.encoding import ObservationTensors
+from ml.env import HangarFitEnv
 from ml.export import ONNX_OUTPUT_NAMES
-from ml.types import Park, Primitive
+from ml.types import DifficultyConfig, Park, Primitive
 
 
 class OrtPolicy:
@@ -51,3 +54,43 @@ class OrtPolicy:
         kind_idx = int(np.argmax(kind_logits[0]))
         mag_idx = int(np.argmax(mag_logits[0]))
         return decode(kind_idx, mag_idx, turn_radius_m=turn_radius_m)
+
+
+def env_from_scenario(scenario: Scenario, *, apron_depth_m: float = 8.0) -> HangarFitEnv:
+    """Build a cold-joint env from a production ``Scenario`` (the inference counterpart
+    of ``ml.benchmark.build_scenario_env``, which builds from a ``BenchScenario`` path).
+
+    Movable bodies (aircraft + placed-routed movers) are driven in from an apron; fixed
+    obstacles (immovable keep-outs) are PRE-PLACED at their surveyed poses, never driven —
+    the same scene the deterministic verifier sees. The difficulty budgets are generous
+    (a safety stop, not a curriculum cap)."""
+    fixed_ids = [
+        gid
+        for gid in scenario.ground_objects
+        if scenario.ground_object_defs[gid].object_class == "fixed_obstacle"
+    ]
+    placed = {p.plane_id for p in scenario.fixed_obstacle_placements}
+    missing = [g for g in fixed_ids if g not in placed]
+    if missing:
+        raise ValueError(
+            f"env_from_scenario: fixed obstacle(s) {missing} have no entry in "
+            f"scenario.fixed_obstacle_placements — they would silently appear un-placed."
+        )
+    placeable = scenario.placeable_ids
+    movers = {gid: scenario.ground_object_defs[gid] for gid in scenario.mover_ids}
+    fixed_defs = {gid: scenario.ground_object_defs[gid] for gid in fixed_ids}
+    per_object = 120
+    difficulty = DifficultyConfig(
+        max_objects=len(placeable),
+        per_object_step_budget=per_object,
+        total_step_budget=per_object * max(1, len(placeable)),
+    )
+    hangar = replace(scenario.hangar, apron_depth_m=apron_depth_m)
+    return HangarFitEnv(
+        hangar=hangar,
+        fleet=scenario.fleet,
+        requested_ids=placeable,
+        ground_objects={**movers, **fixed_defs},
+        fixed_placements=scenario.fixed_obstacle_placements,
+        difficulty=difficulty,
+    )

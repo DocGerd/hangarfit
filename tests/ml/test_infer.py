@@ -40,3 +40,20 @@ def test_ortpolicy_matches_torch_act(tmp_path):
     ort_action = ort_pol.act(obs_t, turn_radius_m=tr)
     assert type(ort_action) is type(torch_action)
     assert ort_action == torch_action
+
+
+from hangarfit.loader import load_scenario  # noqa: E402
+
+
+def test_env_from_scenario_queues_placeables(tmp_path):
+    import pathlib
+
+    from ml.infer import env_from_scenario
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    scenario = load_scenario(str(root / "tests/fixtures/scenario_minimal.yaml"))
+    env = env_from_scenario(scenario)
+    obs = env.reset()
+    assert obs.active is not None
+    assert set(env.requested_ids) == set(scenario.placeable_ids)
+    assert env.hangar.apron_depth_m == 8.0
