@@ -18,6 +18,33 @@ environment + reward (`HangarFitEnv`), reusing `hangarfit`'s geometry oracle.
   side-by-side both-rates table against the recorded RR-MC baseline (needs the
   `[train]` extra / torch).
 
+### Inference (#5)
+
+Export a trained policy to ONNX and run it torch-free via the deterministic
+verifier. Exporting needs the `[train]` extra (torch **and** `onnx>=1.16`, which
+`ml/export.py` uses to serialize the proto); inference needs only the
+`[learned-infer]` extra (`pip install -e ".[learned-infer]"` installs onnxruntime;
+no torch required at inference time).
+
+```bash
+# 1. Train (trivial schedule) and export both a state_dict and the ONNX model:
+python -m ml.train --schedule trivial --save model.pt --save-onnx model.onnx  # [train] (torch + onnx)
+
+# 2. Run the learned backend (torch-free at inference time):
+hangarfit solve <scenario.yaml> --backend learned --weights model.onnx
+hangarfit solve <scenario.yaml> --backend learned --weights model.onnx --render out.png --render-paths
+```
+
+Note: with weights from the **trivial** schedule (an undertrained policy) the
+verifier will usually reject the proposal, so `solve` returns a no-layout result
+(not an error) — the inference *plumbing* is what #5 delivers; reaching valid
+dense layouts is the train-to-mastery work (#698 / #7).
+
+The verifier (`collisions.check` + Caddy egress) is the sole arbiter of validity
+— an invalid or incomplete proposal returns a no-layout result (never an
+exception). Wheel distribution, CI lane, and signed Release-asset weights are
+deferred to sub-project #6.
+
 The benchmark judges validity via the product deterministic checker
 `collisions.check` + Caddy egress (the spec's prime directive), **not** the env
 oracle — the single shared `layout_valid` oracle is now used by both the env

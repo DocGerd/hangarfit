@@ -6,6 +6,16 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Learned backend inference (#706, epic #607).** `solve --backend learned --weights PATH`
+  now runs: a trained policy is exported to ONNX (`ml/export.py`, `train --save-onnx`) and
+  run torch-free via onnxruntime (`ml/infer.py`), returning a `SolveResult` (valid layout +
+  the policy's own drive-in tow plan) behind the deterministic verifier. New optional
+  `[learned-infer]` extra (onnxruntime); the `[train]` extra also gains `onnx>=1.16`
+  (required by `ml/export.py` to serialize the ONNX proto). The verifier
+  (`collisions.check` + Caddy egress) remains the sole arbiter of validity (ADR-0027); an
+  invalid proposal returns a no-layout result. Wheel distribution, CI, and signed weights
+  are tracked in #6.
+
 - **Learned backend (#607, 4c-ii): cold-joint RL env fixed-obstacle support and
   four default-neutral basin-escape knobs.** Fixed-obstacle pre-placements
   (immovable keep-outs from `Scenario.fixed_obstacle_placements`) are now honoured

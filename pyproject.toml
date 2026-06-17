@@ -20,7 +20,8 @@ dependencies = [
 
 [project.optional-dependencies]
 dev = ["pytest>=7.4", "pytest-cov>=4.0", "pytest-xdist>=3.5", "ruff>=0.7.0", "mypy>=1.0", "types-PyYAML", "types-shapely", "hypothesis>=6.100"]
-train = ["torch"]
+train = ["torch", "onnx>=1.16"]
+learned-infer = ["onnxruntime>=1.18"]
 
 [project.scripts]
 hangarfit = "hangarfit.cli:main"
@@ -97,6 +98,12 @@ ignore_errors = false
 module = "matplotlib.*"
 ignore_missing_imports = true
 
+# onnxruntime (the [learned-infer] extra, #706) ships no py.typed marker, so mypy
+# raises import-untyped on ml/infer.py's local import. Same rationale as matplotlib.
+[[tool.mypy.overrides]]
+module = "onnxruntime.*"
+ignore_missing_imports = true
+
 # ml/ (dev/CI-only, never in the wheel) imports hangarfit, which ships no
 # py.typed marker, so mypy raises import-untyped on those imports. Scope the
 # suppression to ONLY the hangarfit submodules ml/ actually imports — NOT a
@@ -114,3 +121,17 @@ module = [
     "hangarfit.towplanner",
 ]
 ignore_missing_imports = true
+
+# learned.py's lazy `from ml.infer import solve_learned_impl` causes mypy to
+# follow into ml/ when running `mypy src/hangarfit/`. Under that follow, ml/'s
+# own `hangarfit.*` imports resolve as Any (per the ignore_missing_imports
+# override above), which surfaces spurious errors that do NOT appear under the
+# dedicated `mypy ml/` pass. `follow_imports = skip` stops the src-check from
+# type-checking ml/ internals (the import resolves to Any in learned.py) WITHOUT
+# disabling `mypy ml/`: explicitly-passed files are always checked, so the Stop
+# hook's `mypy ml/` still fully type-checks the workspace. (Do NOT use
+# ignore_errors here — that suppresses errors even under `mypy ml/`, silently
+# neutering the ml/ type-check.)
+[[tool.mypy.overrides]]
+module = "ml.*"
+follow_imports = "skip"

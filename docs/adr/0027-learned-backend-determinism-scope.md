@@ -65,7 +65,7 @@ A backend with *no* reproducibility contract cannot be debugged or regression-te
 ## Compliance
 
 - Existing: `determinism-guard` (the double-solve diff on `solver.py` / `towplanner.py`) remains the compliance check for the **verifier** contract, unchanged.
-- Future (when the learned backend lands): two new learned-path canaries — within-build double-run **bit-identical** (fixed weights + seed + pinned EP), and cross-machine **verifier-validity-only** — are the compliance checks for the **proposer** contract. They are NOT `determinism-guard`.
+- **Tier-1 (within-build bit-identity) canary now exists:** `tests/ml/test_infer.py::test_learned_within_build_bit_identity` verifies that two fresh single-threaded CPU-EP ONNX sessions on the same weights + seed produce byte-identical logits. Cross-machine (tier-2) validity-equivalence remains deferred to sub-project #7 (needs a shared trained checkpoint).
 - No automated check is required while the backend is a stub (`solve_learned` raises `LearnedBackendUnavailableError`); the seam is exercised by the CLI clean-error test.
 
 ## More Information
