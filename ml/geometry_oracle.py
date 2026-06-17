@@ -24,10 +24,13 @@ from hangarfit.towplanner import (
     Segment,
     _build_obstacles,
     _motion_clear,
+    _Obstacles,
     _primitives,
     egress_first_conflict,
 )
 from ml.types import Primitive
+
+type ObstaclesT = _Obstacles
 
 __all__ = [
     "overlap_area_m2",
@@ -37,6 +40,7 @@ __all__ = [
     "score_layout",
     "legal_primitives",
     "apply_primitive",
+    "build_obstacles",
     "swept_intrusion_m2",
     "movement_cost",
     "egress_blocked",
@@ -127,12 +131,19 @@ def apply_primitive(
     return end, swept
 
 
+def build_obstacles(parked_layout: Layout, mover_id: str) -> ObstaclesT:
+    """Frozen-parked obstacle set for swept-path clearance (the mover is excluded).
+    Exposed so the env can build it once per parked-set version and reuse it."""
+    return _build_obstacles(parked_layout, mover_id=mover_id)
+
+
 def swept_intrusion_m2(
     body: Aircraft | GroundObject,
     swept: tuple[Pose, ...],
     *,
     parked_layout: Layout,
     active_id: str,
+    obstacles: ObstaclesT | None = None,
 ) -> float:
     """Graded swept-path intrusion (m²) for a move of ``body`` along ``swept``.
 
@@ -144,8 +155,14 @@ def swept_intrusion_m2(
     overlapping consecutive poses, so summing would inflate the penalty by the
     sample count. A fully clear sweep returns 0.0 (routability-by-construction
     along this leg).
+
+    Pass a pre-built ``obstacles`` (from :func:`build_obstacles`) to avoid
+    rebuilding the frozen parked-obstacle set on every call — useful when the
+    parked layout is stable across many steps.
     """
-    obstacles = _build_obstacles(parked_layout, mover_id=active_id)
+    obstacles = (
+        obstacles if obstacles is not None else _build_obstacles(parked_layout, mover_id=active_id)
+    )
     hangar = parked_layout.hangar
     worst = 0.0
     for pose in swept:

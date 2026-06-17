@@ -293,3 +293,27 @@ def test_active_misfit_zero_on_apron():
     empty = single_object_layout(x_m=5.0, y_m=5.0)  # one parked body inside; empty apron
     apron_pose = Pose(x_m=hangar.door.center_x_m, y_m=-4.0, heading_deg=0.0)  # well on apron
     assert go.active_misfit_m2(body, apron_pose, empty, hangar) == pytest.approx(0.0, abs=1e-9)
+
+
+# ---------------------------------------------------------------------------
+# Task 2 — build_obstacles + swept_intrusion_m2(obstacles=)
+# ---------------------------------------------------------------------------
+
+
+def test_swept_intrusion_prebuilt_obstacles_matches_default():
+    from hangarfit.towplanner import Pose
+    from ml.types import Primitive
+
+    layout, active, aid = two_object_layout(parked_y_m=12.0, active_y_m=6.0)
+    start = Pose(x_m=5.0, y_m=6.0, heading_deg=0.0)
+    _end, swept = go.apply_primitive(
+        start,
+        Primitive(kind="S", magnitude=6.0, gear=1),
+        turn_radius_m=active.effective_turn_radius_m(),
+    )
+    default = go.swept_intrusion_m2(active, swept, parked_layout=layout, active_id=aid)
+    obstacles = go.build_obstacles(layout, aid)
+    passed = go.swept_intrusion_m2(
+        active, swept, parked_layout=layout, active_id=aid, obstacles=obstacles
+    )
+    assert passed == default
