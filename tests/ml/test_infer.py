@@ -150,6 +150,68 @@ def test_build_moves_plan_maps_primitives_to_dubins_arc():
     assert plan.moves[1].target_slot == end
 
 
+def test_learned_within_build_bit_identity(tmp_path):
+    """ADR-0027 tier-1: same weights + seed + pinned CPU EP -> bit-identical SolveResult
+    (poses + plan), within a single build. Cross-machine validity-only equivalence is a
+    separate (deferred) canary.
+
+    Two assertions:
+    1. SolveResult equality — the spec's stated canary (status/layouts/plans).
+    2. Rollout-trajectory equality — the meaningful determinism check: two independent
+       rollouts over fresh envs with the same OrtPolicy must produce identical driven
+       trajectories (same sequence of parked objects, same primitives, same poses).
+       This catches non-deterministic ONNX forward passes even when the terminal layout
+       is empty (which would make assertion 1 vacuously true with an untrained policy)."""
+    import pathlib
+
+    from ml.infer import OrtPolicy, env_from_scenario, rollout, solve_learned_impl
+
+    torch.manual_seed(0)
+    policy = HangarFitPolicy()
+    policy.eval()
+    onnx_path = tmp_path / "p.onnx"
+    export_onnx(policy, onnx_path)
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    scenario = load_scenario(str(root / "tests/fixtures/scenario_minimal.yaml"))
+
+    # --- Assertion 1: SolveResult equality ---
+    kw = dict(weights_path=onnx_path, budget_s=30.0, alternatives=1, seed=0, plan_paths=True)
+    r1 = solve_learned_impl(scenario, **kw)
+    r2 = solve_learned_impl(scenario, **kw)
+
+    assert r1.status == r2.status
+    assert r1.layouts == r2.layouts  # Layout is a frozen dataclass: structural equality
+    assert r1.plans == r2.plans
+
+    # --- Assertion 2: Rollout-trajectory equality ---
+    # Use a single OrtPolicy (deterministic argmax) and two fresh envs. Identical
+    # (object_id, [(kind, magnitude, gear)]) sequences prove the ONNX forward is
+    # bit-identical across calls, regardless of whether any objects are actually parked.
+    ort_pol = OrtPolicy(onnx_path)
+
+    env_a = env_from_scenario(scenario)
+    _, driven_a, _ = rollout(env_a, ort_pol)
+
+    env_b = env_from_scenario(scenario)
+    _, driven_b, _ = rollout(env_b, ort_pol)
+
+    def trajectory_key(driven):  # type: ignore[no-untyped-def]
+        return [
+            (d.object_id, [(p.kind, p.magnitude, p.gear) for p in d.primitives]) for d in driven
+        ]
+
+    assert trajectory_key(driven_a) == trajectory_key(driven_b), (
+        "OrtPolicy rollout is non-deterministic: driven trajectories differ between two runs "
+        "with identical weights and fresh envs. This violates the ADR-0027 tier-1 contract."
+    )
+    # Also verify start/end poses are identical for each driven object.
+    assert len(driven_a) == len(driven_b)
+    for da, db in zip(driven_a, driven_b, strict=True):
+        assert da.start_pose == db.start_pose
+        assert da.end_pose == db.end_pose
+
+
 def test_solve_learned_impl_returns_well_formed_result(tmp_path):
     import pathlib
 
