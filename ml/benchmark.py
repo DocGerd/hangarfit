@@ -17,7 +17,7 @@ from typing import Literal
 
 from hangarfit.collisions import check
 from hangarfit.loader import load_layout, load_scenario
-from hangarfit.models import Layout, SearchConfig
+from hangarfit.models import Layout, SearchConfig, SolveStatus
 from hangarfit.solver import solve
 from hangarfit.towplanner import NoFeasiblePlanError, plan_fill
 from ml import geometry_oracle as go
@@ -38,6 +38,10 @@ class ReachVerdict:
     max_swept_intrusion: float
     reason: str
 
+    def __post_init__(self) -> None:
+        if not 0 <= self.parked <= self.total:
+            raise ValueError(f"ReachVerdict: parked {self.parked} out of range 0..{self.total}")
+
 
 @dataclass(frozen=True, slots=True)
 class RrmcVerdict:
@@ -46,7 +50,13 @@ class RrmcVerdict:
     reached: bool
     n_routed: int
     n_total: int
-    status: str
+    status: SolveStatus | Literal["invalid", "unroutable"]
+
+    def __post_init__(self) -> None:
+        if not 0 <= self.n_routed <= self.n_total:
+            raise ValueError(
+                f"RrmcVerdict: n_routed {self.n_routed} out of range 0..{self.n_total}"
+            )
 
 
 @dataclass(frozen=True, slots=True)
@@ -66,6 +76,10 @@ class BenchScenario:
     def __post_init__(self) -> None:
         if self.kind == "anchor" and self.witness_path is None:
             raise ValueError(f"BenchScenario {self.name!r}: an anchor requires a witness_path")
+        if self.kind == "control" and self.witness_path is not None:
+            raise ValueError(
+                f"BenchScenario {self.name!r}: a control must not carry a witness_path"
+            )
         if self.max_restarts < 1:
             raise ValueError(f"BenchScenario {self.name!r}: max_restarts must be >= 1")
         if self.tow_max_expansions < 1:
@@ -257,7 +271,12 @@ def rrmc_reach(scenario: BenchScenario) -> RrmcVerdict:
     _solve_placement/_route_layout via the PUBLIC solve/plan_fill (no bench import).
     `budget_s=inf` so max_restarts is the only bound — the 30 s default would make 'missed'
     machine-dependent (spec D4). 'Routable' = plan_fill returns without NoFeasiblePlanError
-    (it raises when a body can't be routed) AND every placeable body got a move."""
+    AND every placeable body got a real tow PATH (a path-less best-effort Move — an
+    unroutable mover or hand-placed body — does NOT count). NOTE: routes only the single
+    best-spread layout (alternatives=1); a 'missed' verdict means the best-spread valid
+    layout isn't routable, not that NO valid layout routes — for the committed anchors RR-MC
+    finds 0 valid layouts so this is moot, and multi-alternative routing is a 4c-ii
+    consideration (#693)."""
     sc = load_scenario(_ROOT / scenario.scenario_path)
     n_total = len(sc.placeable_ids)
     result = solve(
@@ -276,7 +295,7 @@ def rrmc_reach(scenario: BenchScenario) -> RrmcVerdict:
         plan = plan_fill(layout, heuristic="grid", max_total_expansions=scenario.tow_max_expansions)
     except NoFeasiblePlanError:
         return RrmcVerdict(reached=False, n_routed=0, n_total=n_total, status="unroutable")
-    n_routed = len(plan.moves)
+    n_routed = sum(1 for m in plan.moves if m.path is not None)
     return RrmcVerdict(
         reached=(n_routed == n_total), n_routed=n_routed, n_total=n_total, status=result.status
     )
@@ -287,6 +306,26 @@ def load_baseline() -> dict[str, dict[str, object]]:
     with _BASELINE_PATH.open(encoding="utf-8") as fh:
         data = json.load(fh)
     return {row["name"]: row for row in data["scenarios"]}
+
+
+def validate_baseline(baseline: dict[str, dict[str, object]]) -> None:
+    """Fail loudly if the committed baseline doesn't cover every BENCH_SET scenario at its
+    pinned budget — a missing/stale row would otherwise silently render as 'missed' and
+    invalidate the pre-registered comparison (spec D4)."""
+    missing = [s.name for s in BENCH_SET if s.name not in baseline]
+    if missing:
+        raise ValueError(
+            f"baseline fixture missing scenarios {missing}; re-record via "
+            f"`python -m ml.benchmark --record` and commit the fixture."
+        )
+    for s in BENCH_SET:
+        row = baseline[s.name]
+        for key in ("max_restarts", "tow_max_expansions", "seed"):
+            if row.get(key) != getattr(s, key):
+                raise ValueError(
+                    f"baseline budget mismatch for {s.name!r}: fixture {key}={row.get(key)} "
+                    f"!= scenario {key}={getattr(s, key)}; re-record the fixture."
+                )
 
 
 def record_baseline(*, repo_sha: str, recorded_at: str) -> None:

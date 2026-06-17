@@ -20,6 +20,7 @@ from ml.benchmark import (
     load_baseline,
     rrmc_reach,
     score_episode,
+    validate_baseline,
     witness_valid,
 )
 from ml.env import HangarFitEnv
@@ -243,6 +244,25 @@ def test_load_baseline_roundtrip(tmp_path, monkeypatch):
     base = load_baseline()
     assert base["herrenteich_demo"]["reached"] is True
     assert base["herrenteich_demo"]["n_total"] == 3
+
+
+def test_validate_baseline_passes_on_committed_fixture():
+    validate_baseline(load_baseline())  # must not raise
+
+
+def test_validate_baseline_raises_on_missing_scenario():
+    base = load_baseline()
+    base.pop(BENCH_SET[0].name)
+    with pytest.raises(ValueError, match="missing scenarios"):
+        validate_baseline(base)
+
+
+def test_validate_baseline_raises_on_budget_mismatch():
+    base = load_baseline()
+    name = BENCH_SET[0].name
+    base[name] = {**base[name], "max_restarts": BENCH_SET[0].max_restarts + 1}
+    with pytest.raises(ValueError, match="budget mismatch"):
+        validate_baseline(base)
 
 
 @pytest.mark.slow

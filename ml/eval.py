@@ -18,6 +18,7 @@ from ml.benchmark import (
     _verdict_from,
     build_scenario_env,
     load_baseline,
+    validate_baseline,
 )
 from ml.encoding import EncoderConfig, encode
 from ml.policy import HangarFitPolicy
@@ -74,15 +75,17 @@ def policy_reach(
 def run_benchmark(policy: HangarFitPolicy) -> list[dict[str, str]]:
     """Assemble the both-rates rows: RR-MC from the committed fixture, policy live."""
     baseline = load_baseline()
+    validate_baseline(baseline)  # loud on missing/stale rows
     rows: list[dict[str, str]] = []
     for sc in BENCH_SET:
-        rrmc = baseline.get(sc.name)
-        rrmc_cell = "reached" if (rrmc and rrmc["reached"]) else "missed"
+        rrmc_cell = "reached" if baseline[sc.name]["reached"] else "missed"
         try:
             verdict = policy_reach(sc, policy)
             policy_cell = "reached" if verdict.reached else f"missed ({verdict.reason})"
         except NotImplementedError:
             policy_cell = "n/a (GO env -> 4c-ii)"
+        except Exception as exc:  # reporting tool: surface one row's failure, don't abort
+            policy_cell = f"error ({type(exc).__name__})"
         rows.append({"name": sc.name, "kind": sc.kind, "rrmc": rrmc_cell, "policy": policy_cell})
     return rows
 
