@@ -70,6 +70,7 @@ def intrusion_area_m2(
     floor = hangar.floor_polygon
     if floor is None:
         floor = box(0.0, 0.0, hangar.width_m, hangar.length_m)
+    bay_poly = None
     if bay_closed:
         bay = hangar.maintenance_bay
         bay_poly = box(
@@ -82,7 +83,7 @@ def intrusion_area_m2(
     for wp in aircraft_parts_world(body, placement):
         poly = wp.polygon
         total += poly.difference(floor).area  # outside the floor (walls/notch)
-        if bay_closed:
+        if bay_poly is not None:
             total += poly.intersection(bay_poly).area  # inside a CLOSED maintenance bay
     return total
 
