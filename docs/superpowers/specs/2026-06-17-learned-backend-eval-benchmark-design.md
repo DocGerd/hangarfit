@@ -139,9 +139,10 @@ so it loads in the no-torch CI lane.
   scalar invariants (positive budgets; an `anchor` requires a `witness_path`).
 - `BENCH_SET: tuple[BenchScenario, ...]` — the frozen curated set (§6).
 - `build_scenario_env(scenario) -> HangarFitEnv` — load the scenario input + hangar, set
-  `requested_ids` = `scenario.fleet_in` (aircraft) + the `placed_routed_mover` ids in scenario
-  order (the movable bodies the agent drives in), and build a `HangarFitEnv` with an apron
-  depth for drive-in. (Reuses `stage_builder`-style loading; clearances come from the
+  `requested_ids` = `scenario.placeable_ids` (the aircraft `fleet_in` + the *sorted*
+  `placed_routed_mover` ids — `models.py`; pick this over `mover_ids` so the drive-in order
+  is deterministic and not declaration-order-dependent), and build a `HangarFitEnv` with an
+  apron depth for drive-in. (Reuses `stage_builder`-style loading; clearances come from the
   scenario's hangar file.) **Raises `NotImplementedError`** with a 4c-ii pointer if the
   scenario carries any `fixed_obstacle_placements` — the env cannot yet pre-place an immovable
   keep-out, and silently dropping it would score the policy on an easier scenario than RR-MC
@@ -150,17 +151,22 @@ so it loads in the no-torch CI lane.
   `overlap_area_m2 == 0` **and** every parked body's `intrusion_area_m2 == 0` **and not**
   `egress_blocked` (reuses `ml.geometry_oracle`). The never-rots reachability proof.
 - `score_episode(env, actions: Sequence[Action]) -> ReachVerdict` — **torch-free**: replay an
-  explicit action sequence through `env.step`, accumulating `max_swept_intrusion` from the
-  per-step `StepInfo`, and evaluate the success predicate (§4). Returns
-  `ReachVerdict(reached, parked, total, final_valid, max_swept_intrusion, reason)`.
+  explicit action sequence through `env.step`, accumulating `max_swept_intrusion` as the
+  running **max** of each step's `StepInfo.terms["hard_swept"]` (the only swept field;
+  `StepInfo` has no top-level swept attribute, and a `Park` step forces `hard_swept` to 0.0),
+  and `final_valid` from the terminal step's `StepInfo.valid`; then evaluate the success
+  predicate (§4). Returns `ReachVerdict(reached, parked, total, final_valid,
+  max_swept_intrusion, reason)`.
 - `rrmc_reach(scenario) -> RrmcVerdict` — the RR-MC reach-oracle. Loads the scenario via the
   public `hangarfit.loader.load_scenario`, runs `solve(..., budget_s=inf,
   SearchConfig(max_restarts=scenario.max_restarts, ...))`, then `plan_fill(...,
   max_total_expansions=scenario.tow_max_expansions)` (catching `NoFeasiblePlanError`), and
-  applies the same `valid + routable` predicate to RR-MC's output. Reuses `bench/harness`'s
-  *public* `solve`/`plan_fill` (factoring the shared bounded+inf-budget+`NoFeasiblePlanError`-
-  aware logic into a small public helper if `bench/harness` only exposes it via `_`-prefixed
-  internals — **do not import bench privates**). Returns
+  applies the same `valid + routable` predicate to RR-MC's output. Reuses the **public**
+  `hangarfit.solver.solve` / `hangarfit.towplanner.plan_fill` (the same functions
+  `bench/harness` drives — they are `hangarfit`'s public surface, not bench's). `bench/harness`
+  exposes its bounded + effectively-infinite-budget + `NoFeasiblePlanError`-aware wrapper logic
+  only via `_`-prefixed helpers (`_solve_placement`/`_route_layout`); factor that into a small
+  **public** helper to share it rather than **importing bench privates**. Returns
   `RrmcVerdict(reached, n_routed, n_total, ...)`.
 - Baseline fixture I/O: `load_baseline() -> dict[name, RrmcVerdict-as-record]`,
   `record_baseline()` (writes the committed fixture). `assemble_table(baseline,
@@ -190,8 +196,12 @@ load side lives in `ml/eval.py`. (No behavioural change to existing training pat
 - **Scenario inputs:** `examples/herrenteich/scenario.yaml` (↔ all-8 witness) and
   `scenario_demo.yaml` (the easy control) already exist. **Author** `scenario_today.yaml`
   and `scenario_full.yaml` so each anchor witness has a matching solver-input sibling. A
-  torch-free test asserts each scenario's `fleet_in` id-set **exactly matches** its witness
-  layout's placement id-set, so the input and witness can never silently drift.
+  torch-free test asserts each scenario's **movable id-set** (`fleet_in` + `placed_routed_mover`
+  ids — the Caddy is a placed-routed mover, so it *is* included) **exactly matches** its
+  witness layout's movable placements, with **`fixed_obstacle` placements excluded on both
+  sides** (a witness layout contains the fuel-trailer keep-out, which is not a solver input).
+  This pins the comparison so the test can't spuriously fail on the fixed obstacle, and the
+  input + witness can never silently drift.
 - **GO-free control input:** the policy-rollout control reuses an existing GO-free box
   fixture (e.g. `tests/fixtures/scenario_minimal.yaml`, verified to carry no
   `fixed_obstacle_placements`) — or a small authored box scenario — so `build_scenario_env`
@@ -261,8 +271,9 @@ BenchScenario
   sequence (drive in + park clear → `reached == True`) and a **losing** one (park with
   overlap, or a path that clips an obstacle → `reached == False`, exercising each predicate
   clause incl. the swept-intrusion gate).
-- scenario↔witness id-set match test for every anchor (input `fleet_in`+movers == witness
-  placement id-set, so input and witness can't silently drift).
+- scenario↔witness id-set match test for every anchor: input movable id-set
+  (`fleet_in` + `placed_routed_mover` ids) == witness movable placements, **fixed-obstacle
+  placements excluded on both sides**, so input and witness can't silently drift.
 - `build_scenario_env` **raises** on a fixed-obstacle scenario (the D11 loud refusal — proves
   no silent obstacle-drop).
 - baseline fixture schema + `load_baseline()` round-trip; `assemble_table` shape.
