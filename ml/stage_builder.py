@@ -10,6 +10,7 @@ from pathlib import Path
 from hangarfit.loader import load_fleet, load_hangar
 from ml.curriculum import Stage
 from ml.env import HangarFitEnv
+from ml.types import RewardWeights
 
 _ROOT = Path(__file__).resolve().parent.parent  # repo root (ml/ sits at the root)
 
@@ -24,11 +25,14 @@ def effective_fleet_ids(stage: Stage) -> tuple[str, ...]:
     return tuple(load_fleet(str(_ROOT / stage.fleet_path)).keys())
 
 
-def build_stage_env(stage: Stage) -> HangarFitEnv:
+def build_stage_env(stage: Stage, *, weights: RewardWeights | None = None) -> HangarFitEnv:
     """Load the rung's hangar + fleet, apply the clearance/apron overrides, and build
     a HangarFitEnv whose difficulty is the stage's. The initial requested_ids is just
     the first ``max_objects`` of the pool — every episode resamples via
-    env.reset(requested_ids=...). Raises if the pool can't supply max_objects."""
+    env.reset(requested_ids=...). Raises if the pool can't supply max_objects.
+
+    ``weights``: optional reward weights to forward to the env (defaults to
+    ``RewardWeights()`` inside the env when None)."""
     hangar = load_hangar(str(_ROOT / stage.hangar_path))
     overrides: dict[str, float] = {"apron_depth_m": stage.apron_depth_m}
     if stage.clearance_m is not None:
@@ -49,4 +53,5 @@ def build_stage_env(stage: Stage) -> HangarFitEnv:
         fleet=fleet,
         requested_ids=tuple(pool[:n]),
         difficulty=stage.difficulty,
+        weights=weights,
     )

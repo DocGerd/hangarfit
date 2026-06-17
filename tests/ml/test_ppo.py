@@ -281,3 +281,106 @@ def test_sample_action_all_illegal_raises():
     )
     with pytest.raises(ValueError, match="all kind logits are -inf"):
         sample_action(out)
+
+
+# ---------------------------------------------------------------------------
+# Task 4: entropy_coef_at schedule
+# ---------------------------------------------------------------------------
+from ml.ppo import entropy_coef_at  # noqa: E402
+
+
+def test_entropy_coef_constant_when_off():
+    # start None -> constant base regardless of iteration.
+    assert entropy_coef_at(0, base=0.01, start=None, end=None, anneal_iters=0) == 0.01
+    assert entropy_coef_at(50, base=0.01, start=None, end=None, anneal_iters=0) == 0.01
+
+
+def test_entropy_coef_linear_anneal_boundaries_and_monotone():
+    def f(it):
+        return entropy_coef_at(it, base=0.01, start=0.05, end=0.005, anneal_iters=40)
+
+    assert f(0) == pytest.approx(0.05)
+    assert f(40) == pytest.approx(0.005)
+    assert f(100) == pytest.approx(0.005)  # clamped past the window
+    assert f(10) > f(30)  # monotone non-increasing
+    assert f(20) == pytest.approx(0.05 + (0.005 - 0.05) * 0.5)
+
+
+# ---------------------------------------------------------------------------
+# Task 4: ReturnNormalizer
+# ---------------------------------------------------------------------------
+from ml.ppo import ReturnNormalizer  # noqa: E402
+
+
+def test_return_normalizer_identity_during_warmup():
+    norm = ReturnNormalizer(eps=1e-8, warmup=1000)
+    r = torch.tensor([1.0, -100.0, 50.0])
+    out = norm.normalize(r)
+    assert torch.equal(out, r)  # still warming up -> identity
+
+
+def test_return_normalizer_std_only_scales_without_mean_shift():
+    norm = ReturnNormalizer(eps=1e-8, warmup=0)
+    r = torch.tensor([2.0, -2.0, 4.0, -4.0])  # mean 0
+    out = norm.normalize(r)
+    # std-only: divided by running std, NO mean subtraction -> sign preserved, ratios preserved.
+    assert torch.all(torch.sign(out) == torch.sign(r))
+    assert out[2] / out[0] == pytest.approx(r[2] / r[0])
+
+
+def test_return_normalizer_eps_floor_finite_on_zero_variance():
+    norm = ReturnNormalizer(eps=1e-8, warmup=0)
+    out = norm.normalize(torch.zeros(4))
+    assert torch.isfinite(out).all()
+
+
+# ---------------------------------------------------------------------------
+# Task 4: ppo_update normalizer wiring
+# ---------------------------------------------------------------------------
+
+
+def test_ppo_update_normalizer_off_does_not_touch_rewards(monkeypatch):
+    # When normalize_returns is False, compute_gae sees the raw rewards (normalizer ignored).
+    import ml.ppo as ppo
+
+    seen: dict[str, object] = {}
+    real_gae = ppo.compute_gae
+
+    def spy(rewards, *a, **k):
+        seen["rewards"] = rewards.clone()
+        return real_gae(rewards, *a, **k)
+
+    monkeypatch.setattr(ppo, "compute_gae", spy)
+    torch.manual_seed(0)
+    policy = HangarFitPolicy(d_model=32, n_layers=1, n_heads=2)
+    buf = _filled_buffer(policy)
+    raw_rewards = buf.batch()["reward"].clone()
+    opt = torch.optim.Adam(policy.parameters(), lr=3e-4)
+    ppo_update(policy, opt, buf, PPOConfig(minibatch_size=16, normalize_returns=False))
+    # normalizer=None (default) -> rewards arrive unchanged
+    assert torch.equal(seen["rewards"], raw_rewards)
+
+
+def test_ppo_update_normalizer_on_changes_rewards(monkeypatch):
+    # When normalize_returns=True and a warm normalizer is passed, compute_gae sees scaled rewards.
+    import ml.ppo as ppo
+
+    seen: dict[str, object] = {}
+    real_gae = ppo.compute_gae
+
+    def spy(rewards, *a, **k):
+        seen["rewards"] = rewards.clone()
+        return real_gae(rewards, *a, **k)
+
+    monkeypatch.setattr(ppo, "compute_gae", spy)
+    torch.manual_seed(0)
+    policy = HangarFitPolicy(d_model=32, n_layers=1, n_heads=2)
+    buf = _filled_buffer(policy)
+    raw_rewards = buf.batch()["reward"].clone()
+    opt = torch.optim.Adam(policy.parameters(), lr=3e-4)
+    # warmup=0 so normalizer is active immediately
+    norm = ReturnNormalizer(eps=1e-8, warmup=0)
+    cfg_on = PPOConfig(minibatch_size=16, normalize_returns=True)
+    ppo_update(policy, opt, buf, cfg_on, normalizer=norm)
+    # rewards should have been scaled (not equal to raw unless std=1, which is very unlikely)
+    assert not torch.equal(seen["rewards"], raw_rewards)

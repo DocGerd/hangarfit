@@ -30,21 +30,31 @@ from ml.curriculum import (
 from ml.encoding import EncoderConfig, encode
 from ml.env import HangarFitEnv
 from ml.policy import HangarFitPolicy, to_batch
-from ml.ppo import PPOConfig, RolloutBuffer, factored_logprob_entropy, ppo_update, sample_action
+from ml.ppo import (
+    PPOConfig,
+    ReturnNormalizer,
+    RolloutBuffer,
+    entropy_coef_at,
+    factored_logprob_entropy,
+    ppo_update,
+    sample_action,
+)
 from ml.stage_builder import build_stage_env, effective_fleet_ids
-from ml.types import DifficultyConfig
+from ml.types import DifficultyConfig, RewardWeights
 
 _TRIVIAL_DIFFICULTY = DifficultyConfig(
     max_objects=1, per_object_step_budget=40, total_step_budget=40
 )
 
 
-def build_trivial_env(seed: int = 0) -> HangarFitEnv:
+def build_trivial_env(seed: int = 0, *, weights: RewardWeights | None = None) -> HangarFitEnv:
     """A 1-object, loose-hangar, small-budget env — the easiest curriculum rung.
 
     seed is accepted for forward-compat (#4b); the trivial env itself is deterministic
     (no RNG), so it is unused here.
-    """
+
+    ``weights``: optional reward weights forwarded to the env (defaults to
+    ``RewardWeights()`` inside the env when None)."""
     _ = seed  # reserved for #4b object-set sampling; the trivial env has no RNG
     root = Path(__file__).resolve().parent.parent
     fleet = load_fleet(str(root / "data/fleet.yaml"))
@@ -56,6 +66,7 @@ def build_trivial_env(seed: int = 0) -> HangarFitEnv:
         fleet=fleet,
         requested_ids=("fuji",),
         difficulty=_TRIVIAL_DIFFICULTY,
+        weights=weights,
     )
 
 
@@ -126,20 +137,38 @@ def train(
     ppo: PPOConfig | None = None,
     policy_kwargs: dict | None = None,
     encoder: EncoderConfig | None = None,
+    weights: RewardWeights | None = None,
     log: bool = False,
     save: str | None = None,
 ) -> list[float]:
-    """Train on the trivial stage; return the per-iteration mean episode reward."""
+    """Train on the trivial stage; return the per-iteration mean episode reward.
+
+    ``weights``: optional reward weights forwarded to the env (defaults to neutral).
+    ``ppo.entropy_coef_start/end/anneal_iters``: per-iteration entropy schedule; keyed
+    on the iteration index so it re-warms from ``it=0`` each run.
+    ``ppo.normalize_returns``: std-only Welford return normalizer (single run-level
+    normalizer; identity until warmed up)."""
     torch.manual_seed(seed)
     cfg = ppo or PPOConfig()
     enc = encoder or EncoderConfig()
-    env = build_trivial_env(seed)
+    env = build_trivial_env(seed, weights=weights)
     policy = HangarFitPolicy(**(policy_kwargs or {}))
     optimizer = torch.optim.Adam(policy.parameters(), lr=cfg.lr)
+    normalizer = ReturnNormalizer(eps=cfg.return_norm_eps) if cfg.normalize_returns else None
     history: list[float] = []
     for it in range(iterations):
+        it_cfg = replace(
+            cfg,
+            entropy_coef=entropy_coef_at(
+                it,
+                base=cfg.entropy_coef,
+                start=cfg.entropy_coef_start,
+                end=cfg.entropy_coef_end,
+                anneal_iters=cfg.entropy_anneal_iters,
+            ),
+        )
         buf, ep_stats = collect_rollout(env, policy, enc, rollout_len)
-        metrics = ppo_update(policy, optimizer, buf, cfg)
+        metrics = ppo_update(policy, optimizer, buf, it_cfg, normalizer=normalizer)
         # NaN (not 0.0) when no episode finished within the rollout, so a short rollout
         # is not mistaken for a genuine zero-reward iteration in the curve.
         mean_r = sum(s.total_reward for s in ep_stats) / len(ep_stats) if ep_stats else float("nan")
@@ -166,11 +195,18 @@ def train_curriculum(
     ppo: PPOConfig | None = None,
     policy_kwargs: dict | None = None,
     encoder: EncoderConfig | None = None,
+    weights: RewardWeights | None = None,
     log: bool = False,
     save: str | None = None,
 ) -> CurriculumHistory:
     """Climb the ladder: one policy/optimizer across rungs (transfer); per rung, run
-    PPO until the competency gate fires or the per-stage cap is hit, then advance."""
+    PPO until the competency gate fires or the per-stage cap is hit, then advance.
+
+    ``weights``: optional reward weights forwarded to every stage env (defaults to neutral).
+    ``ppo.entropy_coef_start/end/anneal_iters``: per-rung entropy schedule; the iteration
+    index resets to 0 at each new stage, so each rung re-warms from the high start.
+    ``ppo.normalize_returns``: std-only Welford return normalizer (single run-level
+    normalizer shared across all rungs; identity until warmed up)."""
     torch.manual_seed(seed)
     cfg = ppo or PPOConfig()
     enc = encoder or EncoderConfig()
@@ -182,9 +218,10 @@ def train_curriculum(
     pol = sched.policy
     policy = HangarFitPolicy(**(policy_kwargs or {}))
     optimizer = torch.optim.Adam(policy.parameters(), lr=cfg.lr)
+    normalizer = ReturnNormalizer(eps=cfg.return_norm_eps) if cfg.normalize_returns else None
     history = CurriculumHistory()
     for stage_index, stage in enumerate(sched.stages):
-        env = build_stage_env(stage)
+        env = build_stage_env(stage, weights=weights)
         pool = effective_fleet_ids(stage)
         n = stage.difficulty.max_objects if stage.difficulty.max_objects is not None else len(pool)
         rng = stage_rng(seed, stage_index)
@@ -198,10 +235,22 @@ def train_curriculum(
         # where a default-arg lambda would not be.
         next_request = partial(sample_request, pool, n, rng)
         for it in range(pol.max_iters):
+            # Per-rung entropy schedule: `it` resets to 0 each stage, so each rung
+            # re-warms from entropy_coef_start (the intended high→low warmup per rung).
+            it_cfg = replace(
+                cfg,
+                entropy_coef=entropy_coef_at(
+                    it,
+                    base=cfg.entropy_coef,
+                    start=cfg.entropy_coef_start,
+                    end=cfg.entropy_coef_end,
+                    anneal_iters=cfg.entropy_anneal_iters,
+                ),
+            )
             buf, ep_stats = collect_rollout(
                 env, policy, enc, rollout_len, sample_request=next_request
             )
-            ppo_update(policy, optimizer, buf, cfg)
+            ppo_update(policy, optimizer, buf, it_cfg, normalizer=normalizer)
             window.extend(ep_stats)
             history.record(stage.name, it, ep_stats)
             if log:
@@ -245,17 +294,63 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument(
         "--save", type=str, default=None, help="write the trained policy state_dict to this path"
     )
+    p.add_argument(
+        "--r-valid-park",
+        type=float,
+        default=0.0,
+        help="bonus per Park action when the full layout is valid (basin-escape shaping)",
+    )
+    p.add_argument(
+        "--dense-slot-potential",
+        action="store_true",
+        help="add in-hangar nearest-free-pocket shaping term",
+    )
+    p.add_argument(
+        "--entropy-start",
+        type=float,
+        default=None,
+        help="entropy coef anneal start (high→low per rung); None = fixed entropy_coef",
+    )
+    p.add_argument(
+        "--entropy-end",
+        type=float,
+        default=None,
+        help="entropy coef anneal end value (consulted only when --entropy-start is set)",
+    )
+    p.add_argument(
+        "--entropy-anneal-iters",
+        type=int,
+        default=0,
+        help="number of iterations over which to anneal entropy_coef (0 = no schedule)",
+    )
+    p.add_argument(
+        "--normalize-returns",
+        action="store_true",
+        help="std-only Welford return normalization before GAE",
+    )
     return p
 
 
 def main() -> None:
     args = build_argparser().parse_args()
+    weights = RewardWeights(
+        r_valid_park=args.r_valid_park,
+        dense_slot_potential=args.dense_slot_potential,
+    )
+    ppo_cfg = PPOConfig(
+        lr=args.lr,
+        entropy_coef_start=args.entropy_start,
+        entropy_coef_end=args.entropy_end,
+        entropy_anneal_iters=args.entropy_anneal_iters,
+        normalize_returns=args.normalize_returns,
+    )
     if args.schedule == "trivial":
         train(
             seed=args.seed,
             iterations=args.iterations,
             rollout_len=args.rollout_len,
-            ppo=PPOConfig(lr=args.lr),
+            ppo=ppo_cfg,
+            weights=weights,
             log=True,
             save=args.save,
         )
@@ -267,7 +362,8 @@ def main() -> None:
             seed=args.seed,
             schedule=sched,
             rollout_len=args.rollout_len,
-            ppo=PPOConfig(lr=args.lr),
+            ppo=ppo_cfg,
+            weights=weights,
             log=True,
             save=args.save,
         )

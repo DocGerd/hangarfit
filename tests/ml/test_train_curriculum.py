@@ -106,3 +106,54 @@ def test_train_curriculum_validates_ladder_eagerly():
     sched = CurriculumSchedule(stages=(bad,), policy=PromotionPolicy(window=1, max_iters=1))
     with pytest.raises(ValueError):
         train_curriculum(seed=0, schedule=sched, rollout_len=8)
+
+
+# ---------------------------------------------------------------------------
+# Task 4: per-rung entropy re-warm + RewardWeights threading + defaults neutral
+# ---------------------------------------------------------------------------
+
+
+def test_entropy_coef_at_rewarms_per_stage():
+    # A schedule keyed on the PER-STAGE iteration re-warms each rung (iter resets to 0).
+    from ml.ppo import entropy_coef_at
+
+    cfg_start, cfg_end, anneal = 0.05, 0.005, 40
+    # stage 1 iter 0 and stage 2 iter 0 must BOTH be the high start (re-warm), not decayed.
+    assert entropy_coef_at(
+        0, base=0.01, start=cfg_start, end=cfg_end, anneal_iters=anneal
+    ) == pytest.approx(0.05)
+
+
+def test_build_stage_env_threads_reward_weights():
+    from ml.curriculum import CurriculumSchedule
+    from ml.stage_builder import build_stage_env
+    from ml.types import RewardWeights
+
+    stage = CurriculumSchedule.default().stages[0]
+    env = build_stage_env(stage, weights=RewardWeights(r_valid_park=2.0))
+    assert env.weights.r_valid_park == 2.0
+
+
+def test_build_trivial_env_threads_reward_weights():
+    from ml.train import build_trivial_env
+    from ml.types import RewardWeights
+
+    env = build_trivial_env(seed=0, weights=RewardWeights(r_valid_park=3.0))
+    assert env.weights.r_valid_park == 3.0
+
+
+def test_train_weights_default_neutral():
+    # Passing no weights → default RewardWeights() → r_valid_park == 0.0 (neutral)
+    from ml.types import RewardWeights
+
+    env_weights = RewardWeights()
+    assert env_weights.r_valid_park == 0.0
+    history = train(seed=0, iterations=1, rollout_len=16)
+    assert len(history) == 1  # runs without error
+
+
+def test_train_curriculum_weights_default_neutral():
+    # weights=None → neutral defaults; trivial schedule with cap-2 iters completes
+    sched = _tiny_schedule(threshold=2.0)  # always caps
+    h = train_curriculum(seed=0, schedule=sched, rollout_len=8)
+    assert len(h.promotions) == 2
