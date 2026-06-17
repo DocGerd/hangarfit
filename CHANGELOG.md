@@ -6,6 +6,14 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Cold-joint RL curriculum schedule (#607 sub-project #4b).** `python -m ml.train
+  --schedule curriculum` now climbs a competency-gated difficulty ladder (object
+  count → hangar shape → clearance) instead of training a single fixed stage; the
+  fixed trivial stage remains reachable via `--schedule trivial`. New pure
+  `ml/curriculum.py` (Stage ladder, promotion gate, seeded object sampling) and
+  torch-free `ml/stage_builder.py`; `HangarFitEnv.reset()` gains an optional
+  `requested_ids` override (default unchanged).
+
 - **Cold-joint RL environment + reward (`ml/`, #607/#672).** Added the dev/CI-only
   top-level `ml/` package with `HangarFitEnv` — a gym-style environment where an agent
   drives objects in from the apron and parks them one at a time, scored by a

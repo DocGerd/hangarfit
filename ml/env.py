@@ -132,7 +132,22 @@ class HangarFitEnv:
             unplaced=len(self._queue) + (1 if self._active_id is not None else 0),
         )
 
-    def reset(self) -> Observation:
+    def reset(self, requested_ids: tuple[str, ...] | None = None) -> Observation:
+        if requested_ids is not None:
+            if not requested_ids:
+                raise ValueError("reset: requested_ids must be non-empty")
+            known = set(self.fleet) | set(self.ground_objects)
+            unknown = [i for i in requested_ids if i not in known]
+            if unknown:
+                raise ValueError(f"reset: unknown requested ids {unknown} (known: {sorted(known)})")
+            # DifficultyConfig.max_objects caps the requested set: truncate here so the
+            # episode size the env actually drives (the queue) matches StepInfo.total /
+            # terminal_fraction, which divide by len(self.requested_ids). Without this a
+            # caller passing more ids than max_objects would make fraction_placed cap
+            # below 1.0 even on a fully-solved episode (silently starving the competency
+            # gate). No-op for the curriculum, whose sample_request draws exactly N.
+            n = self.difficulty.max_objects
+            self.requested_ids = requested_ids if n is None else requested_ids[:n]
         self._reset_state()
         self._spawn()
         self._prev_potential = self._potential()
@@ -237,6 +252,22 @@ class HangarFitEnv:
             return True, "global step budget exhausted"
         return False, ""
 
+    def _layout_valid(self) -> bool:
+        """Whole-layout validity matching the deterministic checker the prime directive
+        enforces: no part overlap, no out-of-bounds / notch / apron (y<0) intrusion by ANY
+        parked body, and no Caddy hard-door egress violation. (StepInfo.valid previously
+        checked overlap only, leaving the promotion gate looser than the real checker —
+        #607 SP#4b review.) Reward terms read ctx, not this, so this is gate/reporting only."""
+        layout = self._layout()
+        if go.overlap_area_m2(layout) > 0.0:
+            return False
+        if go.egress_blocked(layout):
+            return False
+        return all(
+            go.intrusion_area_m2(self._body(pl.plane_id), pl, self.hangar) == 0.0
+            for pl in self._parked
+        )
+
     def _info(self, ctx: RewardContext, done: bool, reason: str) -> StepInfo:
         return StepInfo(
             terms={
@@ -248,7 +279,7 @@ class HangarFitEnv:
                 "shaping": ctx.potential - ctx.prev_potential,
                 "terminal_fraction": ctx.terminal_fraction or 0.0,
             },
-            valid=(go.overlap_area_m2(self._layout()) == 0.0),
+            valid=self._layout_valid(),
             placed=len(self._parked),
             total=len(self.requested_ids),
             reason=reason,

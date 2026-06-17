@@ -8,17 +8,30 @@ sub-project #4b; the reach-not-beat benchmark is #4c."""
 from __future__ import annotations
 
 import argparse
+from collections import deque
+from collections.abc import Callable
 from dataclasses import replace
+from functools import partial
 from pathlib import Path
 
 import torch
 
 from hangarfit.loader import load_fleet, load_hangar
 from ml.action_space import decode
+from ml.curriculum import (
+    CurriculumHistory,
+    CurriculumSchedule,
+    EpisodeStat,
+    sample_request,
+    should_promote,
+    stage_rng,
+    validate_ladder,
+)
 from ml.encoding import EncoderConfig, encode
 from ml.env import HangarFitEnv
 from ml.policy import HangarFitPolicy, to_batch
 from ml.ppo import PPOConfig, RolloutBuffer, factored_logprob_entropy, ppo_update, sample_action
+from ml.stage_builder import build_stage_env, effective_fleet_ids
 from ml.types import DifficultyConfig
 
 _TRIVIAL_DIFFICULTY = DifficultyConfig(
@@ -55,13 +68,17 @@ def collect_rollout(
     policy: HangarFitPolicy,
     encoder: EncoderConfig,
     rollout_len: int,
-) -> tuple[RolloutBuffer, list[float]]:
+    *,
+    sample_request: Callable[[], tuple[str, ...]] | None = None,
+) -> tuple[RolloutBuffer, list[EpisodeStat]]:
     """Drive the env single-stream for `rollout_len` steps; return the buffer and the
-    list of completed-episode total rewards (for the reward-curve log)."""
+    per-completed-episode stats (competency + reward sum). On each episode boundary,
+    `sample_request()` (when given) picks the next episode's object subset; None keeps
+    the env's fixed requested set (the 4a trivial path)."""
     buf = RolloutBuffer()
     bodies = _bodies(env)
     obs = env.reset()
-    ep_reward, ep_rewards = 0.0, []
+    ep_reward, ep_stats = 0.0, []
     with torch.no_grad():
         while len(buf) < rollout_len:
             obs_t = encode(obs, env.hangar, bodies, encoder)
@@ -70,7 +87,7 @@ def collect_rollout(
             logprob, _ = factored_logprob_entropy(out, kind, mag)
             tr = obs.active.body.effective_turn_radius_m()  # type: ignore[union-attr]
             primitive = decode(int(kind), int(mag), turn_radius_m=tr)
-            nxt, reward, done, _info = env.step(primitive)
+            nxt, reward, done, info = env.step(primitive)
             buf.add(
                 obs_t,
                 kind_idx=int(kind),
@@ -82,16 +99,23 @@ def collect_rollout(
             )
             ep_reward += float(reward)
             if done:
-                ep_rewards.append(ep_reward)
+                # info.total = len(requested_ids) >= 1, so the division is safe.
+                ep_stats.append(
+                    EpisodeStat(
+                        fraction_placed=info.placed / info.total,
+                        valid=info.valid,
+                        total_reward=ep_reward,
+                    )
+                )
                 ep_reward = 0.0
-                obs = env.reset()
+                obs = env.reset(requested_ids=sample_request() if sample_request else None)
             else:
                 obs = nxt
         # bootstrap value for a non-done tail
         if not buf.done[-1]:
             tail = encode(obs, env.hangar, bodies, encoder)
             buf.last_value = float(policy(to_batch([tail])).value)
-    return buf, ep_rewards
+    return buf, ep_stats
 
 
 def train(
@@ -113,15 +137,15 @@ def train(
     optimizer = torch.optim.Adam(policy.parameters(), lr=cfg.lr)
     history: list[float] = []
     for it in range(iterations):
-        buf, ep_rewards = collect_rollout(env, policy, enc, rollout_len)
+        buf, ep_stats = collect_rollout(env, policy, enc, rollout_len)
         metrics = ppo_update(policy, optimizer, buf, cfg)
         # NaN (not 0.0) when no episode finished within the rollout, so a short rollout
         # is not mistaken for a genuine zero-reward iteration in the curve.
-        mean_r = sum(ep_rewards) / len(ep_rewards) if ep_rewards else float("nan")
+        mean_r = sum(s.total_reward for s in ep_stats) / len(ep_stats) if ep_stats else float("nan")
         history.append(mean_r)
         if log:
-            if ep_rewards:
-                reward_str = f"mean_ep_reward={mean_r:+.3f}  n_eps={len(ep_rewards)}"
+            if ep_stats:
+                reward_str = f"mean_ep_reward={mean_r:+.3f}  n_eps={len(ep_stats)}"
             else:
                 reward_str = "mean_ep_reward=N/A (0 episodes)"
             print(
@@ -131,20 +155,111 @@ def train(
     return history
 
 
-def main() -> None:
-    p = argparse.ArgumentParser(description="Train the cold-joint policy on the trivial stage.")
+def train_curriculum(
+    *,
+    seed: int = 0,
+    schedule: CurriculumSchedule | None = None,
+    rollout_len: int = 512,
+    ppo: PPOConfig | None = None,
+    policy_kwargs: dict | None = None,
+    encoder: EncoderConfig | None = None,
+    log: bool = False,
+) -> CurriculumHistory:
+    """Climb the ladder: one policy/optimizer across rungs (transfer); per rung, run
+    PPO until the competency gate fires or the per-stage cap is hit, then advance."""
+    torch.manual_seed(seed)
+    cfg = ppo or PPOConfig()
+    enc = encoder or EncoderConfig()
+    sched = schedule or CurriculumSchedule.default()
+    # Eager invariant check on the WHOLE ladder before any (expensive) training, so a bad
+    # rung (e.g. max_objects > encoder capacity) fails by name now instead of as a deep
+    # tensorizer overflow several rungs in.
+    validate_ladder(sched.stages, encoder_max_objects=enc.max_objects)
+    pol = sched.policy
+    policy = HangarFitPolicy(**(policy_kwargs or {}))
+    optimizer = torch.optim.Adam(policy.parameters(), lr=cfg.lr)
+    history = CurriculumHistory()
+    for stage_index, stage in enumerate(sched.stages):
+        env = build_stage_env(stage)
+        pool = effective_fleet_ids(stage)
+        n = stage.difficulty.max_objects if stage.difficulty.max_objects is not None else len(pool)
+        rng = stage_rng(seed, stage_index)
+        # The window holds the last `pol.window` COMPLETED EPISODES (not iterations): one
+        # rollout can complete many episodes, so a rung the transferred policy already
+        # masters can legitimately promote on its first iteration. That is intended — the
+        # curriculum advances as soon as competent, it does not "serve time" per rung.
+        window: deque[EpisodeStat] = deque(maxlen=pol.window)
+        # partial binds THIS stage's pool/n/rng by value (so the per-iteration closure
+        # is not the flake8-bugbear B023 late-binding trap) and stays mypy-inferrable
+        # where a default-arg lambda would not be.
+        next_request = partial(sample_request, pool, n, rng)
+        for it in range(pol.max_iters):
+            buf, ep_stats = collect_rollout(
+                env, policy, enc, rollout_len, sample_request=next_request
+            )
+            ppo_update(policy, optimizer, buf, cfg)
+            window.extend(ep_stats)
+            history.record(stage.name, it, ep_stats)
+            if log:
+                mean_r = (
+                    sum(s.total_reward for s in ep_stats) / len(ep_stats)
+                    if ep_stats
+                    else float("nan")
+                )
+                print(
+                    f"[{stage.name}] iter {it:4d}  mean_ep_reward={mean_r:+.3f}  "
+                    f"n_eps={len(ep_stats)}"
+                )
+            if should_promote(list(window), pol):
+                history.note_promotion(stage.name, it, by="competency")
+                break
+        else:
+            history.note_promotion(stage.name, pol.max_iters - 1, by="cap")
+        if log:
+            by = history.promotions[-1][2]
+            print(f"[{stage.name}] promoted by {by}")
+    return history
+
+
+def build_argparser() -> argparse.ArgumentParser:
+    p = argparse.ArgumentParser(
+        description="Train the cold-joint policy (trivial stage or curriculum)."
+    )
+    p.add_argument("--schedule", choices=["trivial", "curriculum"], default="curriculum")
     p.add_argument("--seed", type=int, default=0)
-    p.add_argument("--iterations", type=int, default=200)
+    p.add_argument("--iterations", type=int, default=200, help="trivial: PPO iters")
+    p.add_argument(
+        "--max-iters-per-stage",
+        type=int,
+        default=None,
+        help="curriculum: per-rung safety cap (default = schedule policy)",
+    )
     p.add_argument("--rollout-len", type=int, default=1024)
     p.add_argument("--lr", type=float, default=3e-4)
-    args = p.parse_args()
-    train(
-        seed=args.seed,
-        iterations=args.iterations,
-        rollout_len=args.rollout_len,
-        ppo=PPOConfig(lr=args.lr),
-        log=True,
-    )
+    return p
+
+
+def main() -> None:
+    args = build_argparser().parse_args()
+    if args.schedule == "trivial":
+        train(
+            seed=args.seed,
+            iterations=args.iterations,
+            rollout_len=args.rollout_len,
+            ppo=PPOConfig(lr=args.lr),
+            log=True,
+        )
+    else:
+        sched = CurriculumSchedule.default()
+        if args.max_iters_per_stage is not None:
+            sched = replace(sched, policy=replace(sched.policy, max_iters=args.max_iters_per_stage))
+        train_curriculum(
+            seed=args.seed,
+            schedule=sched,
+            rollout_len=args.rollout_len,
+            ppo=PPOConfig(lr=args.lr),
+            log=True,
+        )
 
 
 if __name__ == "__main__":
