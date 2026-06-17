@@ -5,7 +5,7 @@ from __future__ import annotations
 import pytest
 
 from ml.reward import RewardContext, potential, step_reward
-from ml.types import Park, Primitive, RewardWeights
+from ml.types import RewardWeights
 
 
 def _ctx(**kw):
@@ -47,7 +47,7 @@ def test_terminal_fraction_rewards_more_placed():
 
 
 def test_r_valid_park_default_zero_is_byte_identical():
-    # park_valid defaults False and r_valid_park defaults 0.0 -> no change.
+    # park_valid defaults None (not a Park step) and r_valid_park defaults 0.0 -> no change.
     ctx = _ctx()
     assert step_reward(ctx, RewardWeights()) == step_reward(ctx, RewardWeights(r_valid_park=0.0))
 
@@ -94,49 +94,41 @@ def test_potential_active_misfit_lowers_potential():
 # ---------------------------------------------------------------------------
 
 
-def test_dense_slot_potential_on_lowers_reward_vs_off():
-    """dense_slot_potential=True must produce a LOWER reward than False when the active
-    object sits in a bad position (active_misfit_m2 > 0), catching a gate-inversion the
-    pure helper-level potential() test would miss (the env wires it via _potential())."""
+def test_dense_slot_potential_on_lowers_potential_when_misfit_positive():
+    """dense_slot_potential=True must STRICTLY lower the shaping potential vs False when the
+    active object sits in a bad pose (active_misfit_m2 > 0), catching a gate-inversion the
+    pure helper-level potential() test would miss (the env wires it via _potential()).
+
+    NOTE: active_misfit_m2 EXCLUDES the apron (y<0) — misfit comes only from in-hangar
+    (y>=0) out-of-floor (wall/notch) intrusion, so we place the object inside the y-band but
+    poking the left wall (x<0), and assert that pose has positive misfit before comparing."""
+    from ml import geometry_oracle as go
     from ml.env import HangarFitEnv
-    from tests.ml.conftest import _fuji, empty_hangar
+    from ml.types import Pose
+    from tests.ml.conftest import _fuji, empty_hangar, single_object_layout
 
     fleet = _fuji()
     hangar = empty_hangar()
-
-    # Same env geometry, only dense_slot_potential differs.
-    env_off = HangarFitEnv(
-        hangar=hangar,
-        fleet=fleet,
-        requested_ids=("fuji",),
-        weights=RewardWeights(dense_slot_potential=False),
-    )
-    env_on = HangarFitEnv(
-        hangar=hangar,
-        fleet=fleet,
-        requested_ids=("fuji",),
-        weights=RewardWeights(dense_slot_potential=True),
+    # In the hangar y-band (y>=0) but straddling the left wall (x<0) -> out-of-floor area > 0.
+    # A far-away parked fuji stands in for "some obstacle layout"; it does not overlap bad_pose,
+    # so the misfit here is pure in-hangar wall intrusion (matching the env's empty _layout()).
+    bad_pose = Pose(x_m=-3.0, y_m=10.0, heading_deg=0.0)
+    obstacle_layout = single_object_layout(x_m=15.0, y_m=25.0)
+    assert go.active_misfit_m2(fleet["fuji"], bad_pose, obstacle_layout, hangar) > 0.0, (
+        "fixture must put the active object in a positive-misfit pose"
     )
 
-    # Drive both envs along the same path (straight into the hangar, then Park).
-    # The active object is outside the floor until it crosses y=0, so the misfit
-    # term is non-zero when dense_slot_potential=True (in-hangar wall/notch intrusion).
-    actions: list = [Primitive(kind="S", magnitude=1.0, gear=1)] * 3 + [Park()]
-
-    def rollout(env):
+    def potential_at(dense: bool) -> float:
+        env = HangarFitEnv(
+            hangar=hangar,
+            fleet=fleet,
+            requested_ids=("fuji",),
+            weights=RewardWeights(dense_slot_potential=dense),
+        )
         env.reset()
-        total = 0.0
-        for a in actions:
-            _, r, done, _ = env.step(a)
-            total += r
-            if done:
-                break
-        return total
+        env._active_pose = bad_pose  # override the apron spawn with the bad in-hangar pose
+        return env._potential()
 
-    r_off = rollout(env_off)
-    r_on = rollout(env_on)
-    # When dense_slot_potential=True the misfit penalty lowers the shaping term,
-    # so total reward must be strictly lower than with the knob off.
-    assert r_on <= r_off, (
-        f"dense_slot_potential=True should lower reward vs off (got on={r_on}, off={r_off})"
-    )
+    # Only the misfit term differs between the two (same dist-to-slot, unplaced, overlap),
+    # so the knob-on potential must be STRICTLY lower by exactly the misfit penalty.
+    assert potential_at(dense=True) < potential_at(dense=False)
