@@ -6,6 +6,7 @@ import random
 
 import pytest
 
+from hangarfit.models import GroundObject, Part, Placement
 from ml import geometry_oracle as go
 from ml.env import HangarFitEnv
 from ml.types import DifficultyConfig, Park, Primitive
@@ -262,3 +263,62 @@ def test_env_layout_valid_delegates_to_product_checker():
     env = HangarFitEnv(hangar=empty_hangar(), fleet=_fuji(), requested_ids=("fuji",))
     env.reset()
     assert env._layout_valid() == go.layout_valid(env._layout())
+
+
+# ---------------------------------------------------------------------------
+# Task 2 (#607 SP#4c-ii / #693) — fixed-obstacle pre-placement
+# ---------------------------------------------------------------------------
+def _fuel_trailer() -> GroundObject:
+    # Minimal fixed obstacle; mirrors the catalog maul_fuel_trailer shape closely
+    # enough. GroundObject carries a `parts` tuple of kind="ground" Parts (no
+    # length_m/width_m/height_m fields) — Part positional args after kind are
+    # length/width/offset_x/offset_y/angle/z_bottom/z_top (verified vs
+    # tests/test_scene.py:541). A fixed_obstacle carries no motion_mode/hard_door_mover.
+    return GroundObject(
+        id="fuel",
+        name="Fuel trailer",
+        parts=(Part("ground", 2.0, 1.5, 0.0, 0.0, 0.0, 0.0, 1.2),),
+        object_class="fixed_obstacle",
+    )
+
+
+def test_fixed_obstacle_in_layout_not_parked_and_fraction_uncorrupted():
+    fleet = _fuji()
+    fuel = _fuel_trailer()
+    fixed = (Placement(plane_id="fuel", x_m=2.0, y_m=10.0, heading_deg=0.0, on_carts=False),)
+    env = HangarFitEnv(
+        hangar=empty_hangar(),
+        fleet=fleet,
+        requested_ids=("fuji",),
+        ground_objects={"fuel": fuel},
+        fixed_placements=fixed,
+    )
+    env.reset()
+    # The fixed obstacle is present in the scene from step 0...
+    layout = env._layout()
+    assert "fuel" in {gp.plane_id for gp in layout.ground_object_placements}
+    # ...but it is NOT counted as a parked (driven-in) object.
+    assert env._fixed == list(fixed)
+    assert all(p.plane_id != "fuel" for p in env._parked)
+    # terminal_fraction denominator is the requested (driven) set only -> 1 here, not 2.
+    # Drive fuji nowhere and Park it: fraction = 1/1 even with the fixed obstacle present.
+    _obs, _r, done, info = env.step(Park())
+    assert done and info.total == 1 and info.placed == 1
+
+
+def test_placed_body_overlapping_fixed_obstacle_is_invalid():
+    fleet = _fuji()
+    fuel = _fuel_trailer()
+    # Place the fuel obstacle exactly where we will park the fuji -> guaranteed overlap.
+    fixed = (Placement(plane_id="fuel", x_m=9.0, y_m=10.0, heading_deg=0.0, on_carts=False),)
+    env = HangarFitEnv(
+        hangar=empty_hangar(),
+        fleet=fleet,
+        requested_ids=("fuji",),
+        ground_objects={"fuel": fuel},
+        fixed_placements=fixed,
+    )
+    env.reset()
+    env._active_pose = type(env._active_pose)(x_m=9.0, y_m=10.0, heading_deg=0.0)
+    env.step(Park())
+    assert env._layout_valid() is False  # fuji parts overlap the fixed fuel obstacle

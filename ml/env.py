@@ -31,6 +31,7 @@ class HangarFitEnv:
         fleet: Mapping[str, Aircraft],
         requested_ids: tuple[str, ...],
         ground_objects: Mapping[str, GroundObject] | None = None,
+        fixed_placements: tuple[Placement, ...] = (),
         difficulty: DifficultyConfig | None = None,
         weights: RewardWeights | None = None,
     ) -> None:
@@ -38,6 +39,11 @@ class HangarFitEnv:
         self.fleet = dict(fleet)
         self.ground_objects = dict(ground_objects or {})
         self.requested_ids = requested_ids
+        # Pre-placed immovable keep-outs (e.g. the fuel trailer): part of the scene
+        # from step 0, but NEVER driven and NEVER in ``_parked`` (so terminal_fraction's
+        # denominator stays the requested/driven set). Set here (scenario-level) rather
+        # than in ``_reset_state`` so it survives ``reset()``.
+        self._fixed: list[Placement] = list(fixed_placements)
         self.difficulty = difficulty or DifficultyConfig()
         self.weights = weights or RewardWeights()
         self._reset_state()
@@ -84,18 +90,20 @@ class HangarFitEnv:
         self._steps_this_object = 0
 
     def _layout(self) -> Layout:
-        """The scene of FROZEN (parked) objects only — the active one is not yet in it."""
-        parked_ids = [p.plane_id for p in self._parked]
-        ac = {pid: self.fleet[pid] for pid in parked_ids if pid in self.fleet}
-        go_ids = [pid for pid in parked_ids if pid in self.ground_objects]
+        """The scene of FROZEN objects: driven-in (parked) PLUS pre-placed fixed obstacles
+        (immovable keep-outs). The active object is not yet in it. Fixed obstacles are NOT in
+        ``_parked`` (so terminal_fraction is uncorrupted) but ARE in the scene so overlap /
+        egress / motion-clearance see them."""
+        frozen = self._parked + self._fixed
+        frozen_ids = [p.plane_id for p in frozen]
+        ac = {pid: self.fleet[pid] for pid in frozen_ids if pid in self.fleet}
+        go_ids = [pid for pid in frozen_ids if pid in self.ground_objects]
         return Layout(
             fleet=ac or {next(iter(self.fleet)): next(iter(self.fleet.values()))},
             hangar=self.hangar,
-            placements=tuple(p for p in self._parked if p.plane_id in self.fleet),
+            placements=tuple(p for p in frozen if p.plane_id in self.fleet),
             ground_objects={pid: self.ground_objects[pid] for pid in go_ids},
-            ground_object_placements=tuple(
-                p for p in self._parked if p.plane_id in self.ground_objects
-            ),
+            ground_object_placements=tuple(p for p in frozen if p.plane_id in self.ground_objects),
         )
 
     def _observe(self) -> Observation:
