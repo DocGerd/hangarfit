@@ -147,7 +147,7 @@ def build_moves_plan(layout: Layout, driven: list[_DrivenObject], env: HangarFit
     — the established best-effort idiom, since DubinsArc.segments must be non-empty."""
     moves: list[Move] = []
     for d in driven:
-        target = Pose(x_m=d.end_pose.x_m, y_m=d.end_pose.y_m, heading_deg=d.end_pose.heading_deg)
+        target = d.end_pose  # Pose is frozen; no need to reconstruct
         if not d.primitives:
             moves.append(Move(plane_id=d.object_id, target_slot=target, path=None))
             continue

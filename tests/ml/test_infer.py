@@ -111,3 +111,40 @@ def test_rollout_builds_moves_plan(tmp_path):
     # Every parked object has a Move; every Move targets a real slot pose.
     assert len(plan.moves) == len(driven)
     assert all(m.target_slot is not None for m in plan.moves)
+
+
+def test_build_moves_plan_maps_primitives_to_dubins_arc():
+    """Direct coverage of the core Primitive->Segment->DubinsArc mapping (the rollout
+    integration test parks 0 objects under an untrained policy, so it cannot exercise this
+    path). Handcraft driven objects and assert the arc mirrors the primitives 1:1, plus the
+    zero-primitive -> Move(path=None) best-effort edge case."""
+    from hangarfit.towplanner import Pose
+    from ml.infer import _DrivenObject, build_moves_plan
+
+    env = build_trivial_env()
+    env.reset()
+    layout = env._layout()
+    start = Pose(x_m=11.0, y_m=-4.0, heading_deg=0.0)
+    end = Pose(x_m=11.0, y_m=6.0, heading_deg=0.0)
+    prims = [Primitive(kind="S", magnitude=2.0, gear=1), Primitive(kind="L", magnitude=1.0, gear=1)]
+    driven = [
+        _DrivenObject(object_id="fuji", start_pose=start, end_pose=end, primitives=list(prims)),
+        _DrivenObject(object_id="fuji", start_pose=start, end_pose=end, primitives=[]),
+    ]
+    plan = build_moves_plan(layout, driven, env)
+    assert len(plan.moves) == 2
+
+    # Object with primitives -> a DubinsArc whose segments mirror them 1:1.
+    arc = plan.moves[0].path
+    assert arc is not None
+    assert [(s.kind, s.length_m, s.gear) for s in arc.segments] == [
+        (p.kind, p.magnitude, p.gear) for p in prims
+    ]
+    assert arc.start == start
+    assert arc.end == end
+    assert arc.turn_radius_m == env._body("fuji").effective_turn_radius_m()
+    assert plan.moves[0].target_slot == end
+
+    # Zero-primitive object (parked at spawn) -> best-effort Move(path=None).
+    assert plan.moves[1].path is None
+    assert plan.moves[1].target_slot == end
