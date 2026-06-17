@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from dataclasses import replace
 
 import pytest
@@ -15,6 +16,7 @@ from ml.benchmark import (
     RrmcVerdict,
     _verdict_from,
     build_scenario_env,
+    load_baseline,
     score_episode,
     witness_valid,
 )
@@ -211,3 +213,31 @@ def test_score_episode_apron_park_is_invalid():
     v = score_episode(env, [Park()])
     assert not v.reached
     assert not v.final_valid
+
+
+def test_load_baseline_roundtrip(tmp_path, monkeypatch):
+    fixture = tmp_path / "bench_baseline.json"
+    fixture.write_text(
+        json.dumps(
+            {
+                "scenarios": [
+                    {
+                        "name": "herrenteich_demo",
+                        "reached": True,
+                        "n_routed": 3,
+                        "n_total": 3,
+                        "status": "found",
+                        "max_restarts": 64,
+                        "tow_max_expansions": 8000,
+                        "seed": 0,
+                        "repo_sha": "abc123",
+                        "recorded_at": "2026-06-17T00:00:00+00:00",
+                    },
+                ]
+            }
+        )
+    )
+    monkeypatch.setattr("ml.benchmark._BASELINE_PATH", fixture)
+    base = load_baseline()
+    assert base["herrenteich_demo"]["reached"] is True
+    assert base["herrenteich_demo"]["n_total"] == 3

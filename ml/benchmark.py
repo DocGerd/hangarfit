@@ -9,6 +9,7 @@ loads it cleanly."""
 
 from __future__ import annotations
 
+import json
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
@@ -16,7 +17,9 @@ from typing import Literal
 
 from hangarfit.collisions import check
 from hangarfit.loader import load_layout, load_scenario
-from hangarfit.models import Layout
+from hangarfit.models import Layout, SearchConfig
+from hangarfit.solver import solve
+from hangarfit.towplanner import NoFeasiblePlanError, plan_fill
 from ml import geometry_oracle as go
 from ml.env import HangarFitEnv
 from ml.types import Action, DifficultyConfig, StepInfo
@@ -236,3 +239,96 @@ def score_episode(env: HangarFitEnv, actions: Sequence[Action]) -> ReachVerdict:
         final_valid=final_valid,
         max_swept=max_swept,
     )
+
+
+_BASELINE_PATH = _ROOT / "tests/fixtures/ml/bench_baseline.json"
+
+
+def rrmc_reach(scenario: BenchScenario) -> RrmcVerdict:
+    """Run the RR-MC -> tow pipeline on `scenario` at its pinned budget and apply the SAME
+    valid+routable predicate as the policy side (_layout_valid, the product checker). OFFLINE/
+    dev-only (RR-MC is slow; CI reads the committed fixture). Mirrors bench/harness's
+    _solve_placement/_route_layout via the PUBLIC solve/plan_fill (no bench import).
+    `budget_s=inf` so max_restarts is the only bound — the 30 s default would make 'missed'
+    machine-dependent (spec D4). 'Routable' = plan_fill returns without NoFeasiblePlanError
+    (it raises when a body can't be routed) AND every placeable body got a move."""
+    sc = load_scenario(_ROOT / scenario.scenario_path)
+    n_total = len(sc.placeable_ids)
+    result = solve(
+        sc,
+        budget_s=float("inf"),
+        seed=scenario.seed,
+        search=SearchConfig(spread=True, max_restarts=scenario.max_restarts),
+        plan_paths=False,
+    )
+    if not result.layouts:
+        return RrmcVerdict(reached=False, n_routed=0, n_total=n_total, status=result.status)
+    layout = result.layouts[0]
+    if not _layout_valid(layout):
+        return RrmcVerdict(reached=False, n_routed=0, n_total=n_total, status="invalid")
+    try:
+        plan = plan_fill(layout, heuristic="grid", max_total_expansions=scenario.tow_max_expansions)
+    except NoFeasiblePlanError:
+        return RrmcVerdict(reached=False, n_routed=0, n_total=n_total, status="unroutable")
+    n_routed = len(plan.moves)
+    return RrmcVerdict(
+        reached=(n_routed == n_total), n_routed=n_routed, n_total=n_total, status=result.status
+    )
+
+
+def load_baseline() -> dict[str, dict[str, object]]:
+    """Read the committed RR-MC baseline fixture into {scenario_name: record}."""
+    with _BASELINE_PATH.open(encoding="utf-8") as fh:
+        data = json.load(fh)
+    return {row["name"]: row for row in data["scenarios"]}
+
+
+def record_baseline(*, repo_sha: str, recorded_at: str) -> None:
+    """Re-derive every scenario's RR-MC verdict and WRITE the committed fixture. OFFLINE
+    only (slow). repo_sha + recorded_at are passed in (the module is RNG/clock-free)."""
+    rows = []
+    for s in BENCH_SET:
+        v = rrmc_reach(s)
+        rows.append(
+            {
+                "name": s.name,
+                "reached": v.reached,
+                "n_routed": v.n_routed,
+                "n_total": v.n_total,
+                "status": v.status,
+                "max_restarts": s.max_restarts,
+                "tow_max_expansions": s.tow_max_expansions,
+                "seed": s.seed,
+                "repo_sha": repo_sha,
+                "recorded_at": recorded_at,
+            }
+        )
+    _BASELINE_PATH.parent.mkdir(parents=True, exist_ok=True)
+    with _BASELINE_PATH.open("w", encoding="utf-8") as fh:
+        json.dump({"scenarios": rows}, fh, indent=2)
+        fh.write("\n")
+
+
+def _main(argv: Sequence[str] | None = None) -> None:
+    import argparse
+    import datetime
+    import subprocess
+
+    parser = argparse.ArgumentParser(description="Eval benchmark (RR-MC baseline recorder).")
+    parser.add_argument(
+        "--record",
+        action="store_true",
+        help="re-derive + write the baseline fixture (slow, offline)",
+    )
+    args = parser.parse_args(argv)
+    if args.record:
+        sha = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=_ROOT).decode().strip()
+        now = datetime.datetime.now(datetime.UTC).isoformat()
+        record_baseline(repo_sha=sha, recorded_at=now)
+        print(f"wrote {_BASELINE_PATH} @ {sha}")
+    else:
+        parser.error("nothing to do; pass --record to regenerate the baseline fixture")
+
+
+if __name__ == "__main__":
+    _main()
