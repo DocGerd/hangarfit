@@ -43,9 +43,9 @@ class OrtPolicy:
         feed = {
             "raster": obs.raster[None].astype(np.float32),
             "tokens": obs.tokens[None].astype(np.float32),
-            "token_mask": obs.token_mask[None],
+            "token_mask": obs.token_mask[None].astype(np.bool_),
             "active_index": np.asarray([obs.active_index], dtype=np.int64),
-            "legal_action_mask": obs.legal_action_mask[None],
+            "legal_action_mask": obs.legal_action_mask[None].astype(np.bool_),
         }
         kind_logits, mag_logits = self._session.run(list(ONNX_OUTPUT_NAMES), feed)
         kind_idx = int(np.argmax(kind_logits[0]))

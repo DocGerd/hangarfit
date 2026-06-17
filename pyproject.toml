@@ -98,6 +98,12 @@ ignore_errors = false
 module = "matplotlib.*"
 ignore_missing_imports = true
 
+# onnxruntime (the [learned-infer] extra, #706) ships no py.typed marker, so mypy
+# raises import-untyped on ml/infer.py's local import. Same rationale as matplotlib.
+[[tool.mypy.overrides]]
+module = "onnxruntime.*"
+ignore_missing_imports = true
+
 # ml/ (dev/CI-only, never in the wheel) imports hangarfit, which ships no
 # py.typed marker, so mypy raises import-untyped on those imports. Scope the
 # suppression to ONLY the hangarfit submodules ml/ actually imports — NOT a
