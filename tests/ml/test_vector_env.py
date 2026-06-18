@@ -97,7 +97,7 @@ def test_sync_equals_subproc_byte_identical():
         assert np.array_equal(a.raster, b.raster) and np.array_equal(a.tokens, b.tokens)
     assert ss.rewards == bs.rewards and ss.dones == bs.dones
     for a, b in zip(ss.obs, bs.obs, strict=True):
-        assert np.array_equal(a.raster, b.raster)
+        assert np.array_equal(a.raster, b.raster) and np.array_equal(a.tokens, b.tokens)
 
 
 def _broken_worker_fn():
