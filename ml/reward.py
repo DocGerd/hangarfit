@@ -65,8 +65,14 @@ def step_reward(ctx: RewardContext, w: RewardWeights) -> float:
         terminal = 0.0
     else:
         eff_fraction = ctx.terminal_fraction
-        if w.validity_conditional_terminal and not ctx.terminal_valid:
-            eff_fraction = 0.0
+        if w.validity_conditional_terminal:
+            # The env sets terminal_valid whenever terminal_fraction is set (both gated on
+            # `done`); assert that here so a future call-site that forgets it fails LOUD rather
+            # than silently zeroing a valid layout via `not None`. Zero only on a known-invalid
+            # layout (`is False`), never on the None sentinel.
+            assert ctx.terminal_valid is not None, "terminal_valid unset at a terminal step"
+            if ctx.terminal_valid is False:
+                eff_fraction = 0.0
         terminal = w.r_terminal * eff_fraction - w.r_unplaced_penalty * (1.0 - eff_fraction)
     shaping = w.gamma * ctx.potential - ctx.prev_potential
     valid_park = w.r_valid_park if ctx.park_valid else 0.0

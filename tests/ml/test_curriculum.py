@@ -353,3 +353,14 @@ def test_with_solo_box_rung_preserves_policy_and_validates():
 def test_with_solo_box_rung_does_not_mutate_the_default_ladder():
     with_solo_box_rung(CurriculumSchedule.default())
     assert all(s.name != "solo-box" for s in DEFAULT_LADDER)  # default still pristine
+
+
+def test_with_solo_box_rung_raises_without_trivial_rung():
+    # No 'trivial' rung => no anchor to insert after => loud ValueError (not a leaked
+    # StopIteration from the internal next()).
+    no_trivial = CurriculumSchedule(
+        stages=tuple(s for s in DEFAULT_LADDER if s.name != "trivial"),
+        policy=PromotionPolicy(),
+    )
+    with pytest.raises(ValueError, match="trivial"):
+        with_solo_box_rung(no_trivial)

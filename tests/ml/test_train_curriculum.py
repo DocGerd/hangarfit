@@ -817,3 +817,73 @@ def test_main_device_cuda_unavailable_errors(monkeypatch):
     with pytest.raises(SystemExit):
         train_mod.main(["--schedule", "curriculum", "--device", "cuda"])
     assert ran["train_curriculum"] is False
+
+
+# ---------------------------------------------------------------------------
+# #714 — validity-conditional terminal + solo-box rung CLI wiring.
+# ---------------------------------------------------------------------------
+
+
+def test_argparser_validity_conditional_terminal_defaults_false():
+    assert build_argparser().parse_args([]).validity_conditional_terminal is False
+
+
+def test_main_threads_validity_conditional_terminal_into_weights(monkeypatch):
+    import ml.train as train_mod
+    from ml.curriculum import CurriculumHistory
+
+    captured: dict = {}
+
+    def fake(**kw):
+        captured.update(kw)
+        return CurriculumHistory()
+
+    monkeypatch.setattr(train_mod, "train_curriculum", fake)
+    train_mod.main(["--schedule", "curriculum", "--validity-conditional-terminal"])
+    assert captured["weights"].validity_conditional_terminal is True
+
+
+def test_main_solo_box_rung_requires_curriculum_schedule(monkeypatch):
+    # --solo-box-rung is a curriculum ladder edit; under --schedule trivial it fails LOUD.
+    import ml.train as train_mod
+
+    ran = {"train": False}
+
+    def guard(**kw):
+        ran["train"] = True
+        return []
+
+    monkeypatch.setattr(train_mod, "train", guard)
+    with pytest.raises(SystemExit):
+        train_mod.main(["--schedule", "trivial", "--solo-box-rung"])
+    assert ran["train"] is False
+
+
+def test_main_solo_box_rung_inserts_rung_into_schedule(monkeypatch):
+    import ml.train as train_mod
+    from ml.curriculum import CurriculumHistory
+
+    captured: dict = {}
+
+    def fake(**kw):
+        captured.update(kw)
+        return CurriculumHistory()
+
+    monkeypatch.setattr(train_mod, "train_curriculum", fake)
+    train_mod.main(["--schedule", "curriculum", "--solo-box-rung"])
+    assert "solo-box" in [s.name for s in captured["schedule"].stages]
+
+
+def test_main_without_solo_box_rung_keeps_default_ladder(monkeypatch):
+    import ml.train as train_mod
+    from ml.curriculum import CurriculumHistory
+
+    captured: dict = {}
+
+    def fake(**kw):
+        captured.update(kw)
+        return CurriculumHistory()
+
+    monkeypatch.setattr(train_mod, "train_curriculum", fake)
+    train_mod.main(["--schedule", "curriculum"])
+    assert "solo-box" not in [s.name for s in captured["schedule"].stages]

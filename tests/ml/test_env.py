@@ -550,3 +550,33 @@ def test_validity_conditional_terminal_budget_valid_credited():
     on_r, on_i, _ = _budget_terminal_reward(validity_conditional=True, park_pose=_VALID_POSE)
     assert off_i.valid is True and on_i.valid is True
     assert on_r == pytest.approx(off_r)
+
+
+def test_validity_conditional_terminal_multiobject_full_invalid_park_drops_credit():
+    # The headline #714 scenario via the Park-done branch: park BOTH objects
+    # (terminal_fraction 1.0) but OVERLAPPING, so the whole layout is invalid. The flag must
+    # withdraw the full +r_terminal credit even at full placement: off - on == r_terminal +
+    # r_unplaced (only the terminal term differs; the shared -w_col overlap penalty cancels).
+    def run(validity_conditional: bool):
+        w = RewardWeights(
+            r_unplaced_penalty=8.0, validity_conditional_terminal=validity_conditional
+        )
+        env = HangarFitEnv(
+            hangar=empty_hangar(),
+            fleet=_fuji(),
+            requested_ids=("fuji", "aviat_husky"),
+            weights=w,
+        )
+        env.reset()
+        env._active_pose = Pose(x_m=9.0, y_m=10.0, heading_deg=0.0)  # fuji at a valid pose
+        _, _, done0, _ = env.step(Park())
+        assert done0 is False
+        env._active_pose = Pose(x_m=9.0, y_m=10.0, heading_deg=0.0)  # husky stacked on fuji
+        _, reward, done, info = env.step(Park())
+        assert done is True and info.placed == 2 and info.total == 2  # frac 1.0
+        return reward, info, w
+
+    off_r, off_i, w = run(validity_conditional=False)
+    on_r, on_i, _ = run(validity_conditional=True)
+    assert off_i.valid is False and on_i.valid is False  # overlapping pile -> invalid
+    assert off_r - on_r == pytest.approx(w.r_terminal + w.r_unplaced_penalty)
