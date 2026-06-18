@@ -60,6 +60,24 @@ All notable changes to this project are documented here. Format follows [Keep a 
   `dense_slot_potential` shaping and so cannot move the optimum). Default 0 → byte-identical;
   pairs with the existing `--r-valid-park` for the positive pull toward valid commits.
 
+- **Learned backend (#714, #710, epic #607): validity-conditional terminal +
+  `solo-box` sub-curriculum rung — the multi-object collapse fix.** After the economics
+  rebalance let the policy **master the trivial (1-object) rung**, every ≥2-object rung still
+  collapsed, oscillating between place-nothing and *commit-everything-invalidly* (parking a
+  heap of overlapping objects). Root cause: the terminal credited `r_terminal·fraction_placed`
+  **regardless of validity** — invisible at N=1 (fraction is 0/1) but a free `+r_terminal`
+  for invalid piles at N≥2. Two default-neutral levers: (1) `--validity-conditional-terminal`
+  (new `RewardWeights.validity_conditional_terminal`) credits the **valid** placed fraction
+  instead — an invalid terminal layout scores effective-fraction 0, so an overlapping pile no
+  longer pays; it also closes the budget-exhaustion branch, which previously carried no
+  validity signal at all. Validity is the same whole-layout product checker
+  (`collisions.check` + Caddy egress) that drives the `valid_placed` promotion gate. (2)
+  `--solo-box-rung` (curriculum-only) inserts an opt-in `solo-box` rung (1 object, **whole
+  fleet**) after `trivial`, decoupling the count jump (1→2) from the sampling-pool jump
+  (single-fuji→whole-fleet) so single-object competency transfers. Both default off →
+  byte-identical (the default ladder is unchanged); `--solo-box-rung` fails loud under
+  `--schedule trivial`.
+
 - **Vectorized training envs (#708, epic #607).** `train_curriculum`/`ml.train` gain an
   `n_envs` knob (`--n-envs`, `--vec-backend {sync,subproc}`) that runs N cold-joint envs in
   parallel for throughput — the shapely geometry + encoder rasterization run across N

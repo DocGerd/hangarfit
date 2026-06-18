@@ -105,6 +105,13 @@ class RewardWeights:
     # identical. Non-zero charges abandonment so "drive to budget exhaustion" is no longer
     # free relative to committing a Park (the #710 Park/drive-out economics-rebalance lever).
     r_unplaced_penalty: float = 0.0
+    # When True, the terminal credits the VALID placed fraction instead of the raw
+    # fraction_placed: an invalid terminal layout scores effective-fraction 0 (so an
+    # overlapping pile no longer books +r_terminal). Default False -> byte-identical. Fixes
+    # the #714 commit-everything-invalidly attractor on multi-object rungs (the terminal was
+    # validity-blind, invisible at N=1 where fraction is 0/1). Validity = the same whole-layout
+    # product checker (collisions.check + Caddy egress) that drives the valid_placed gate.
+    validity_conditional_terminal: bool = False
 
 
 @dataclass(frozen=True, slots=True)

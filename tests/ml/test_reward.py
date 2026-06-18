@@ -133,6 +133,52 @@ def test_r_unplaced_penalty_widens_placed_advantage():
     assert gapp > gap0
 
 
+# ---------------------------------------------------------------------------
+# #714 — validity-conditional terminal (Lever A)
+# ---------------------------------------------------------------------------
+
+
+def test_validity_conditional_terminal_default_off_is_byte_identical():
+    # Default-neutral: flag off => ctx.terminal_valid is never consulted, so an invalid
+    # terminal pays exactly today's value (r_terminal*frac - r_unplaced*(1-frac)).
+    ctx_invalid = _ctx(terminal_fraction=1.0, terminal_valid=False)
+    ctx_none = _ctx(terminal_fraction=1.0, terminal_valid=None)
+    w = RewardWeights(r_unplaced_penalty=8.0)  # validity_conditional_terminal defaults False
+    assert step_reward(ctx_invalid, w) == step_reward(ctx_none, w)
+    assert step_reward(ctx_invalid, w) == pytest.approx(w.r_terminal)  # frac 1 -> +r_terminal
+
+
+def test_validity_conditional_terminal_on_invalid_zeros_placed_credit():
+    # Flag on + invalid terminal => effective fraction 0 => terminal = -r_unplaced*(1-0).
+    w = RewardWeights(r_unplaced_penalty=8.0, validity_conditional_terminal=True)
+    ctx = _ctx(terminal_fraction=1.0, terminal_valid=False)
+    assert step_reward(ctx, w) == pytest.approx(-w.r_unplaced_penalty)
+
+
+def test_validity_conditional_terminal_on_valid_pays_full():
+    # Flag on + valid terminal => effective fraction = terminal_fraction => +r_terminal at frac 1.
+    w = RewardWeights(r_unplaced_penalty=8.0, validity_conditional_terminal=True)
+    ctx = _ctx(terminal_fraction=1.0, terminal_valid=True)
+    assert step_reward(ctx, w) == pytest.approx(w.r_terminal)
+
+
+def test_validity_conditional_terminal_invalid_strictly_below_valid_same_fraction():
+    # The crux of the #714 fix: at the SAME placed fraction, an INVALID terminal must score
+    # strictly lower than a VALID one — removing the commit-everything-invalidly free credit.
+    w = RewardWeights(r_unplaced_penalty=8.0, validity_conditional_terminal=True)
+    valid = _ctx(terminal_fraction=0.5, terminal_valid=True)
+    invalid = _ctx(terminal_fraction=0.5, terminal_valid=False)
+    assert step_reward(invalid, w) < step_reward(valid, w)
+
+
+def test_validity_conditional_terminal_nonterminal_noop():
+    # terminal_fraction=None (a mid-episode step) => no terminal term regardless of flag.
+    ctx = _ctx(terminal_fraction=None, terminal_valid=None)
+    on = RewardWeights(r_unplaced_penalty=8.0, validity_conditional_terminal=True)
+    off = RewardWeights(r_unplaced_penalty=8.0, validity_conditional_terminal=False)
+    assert step_reward(ctx, on) == step_reward(ctx, off)
+
+
 def test_dense_slot_potential_on_lowers_potential_when_misfit_positive():
     """dense_slot_potential=True must STRICTLY lower the shaping potential vs False when the
     active object sits in a bad pose (active_misfit_m2 > 0), catching a gate-inversion the

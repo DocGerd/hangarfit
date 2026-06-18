@@ -249,6 +249,9 @@ class HangarFitEnv:
                 potential=new_phi,
                 terminal_fraction=terminal_fraction,
                 park_valid=park_valid,
+                # On the terminal Park, reuse the already-computed whole-layout product-checker
+                # bool (== _layout_valid()) for the #714 validity-conditional terminal.
+                terminal_valid=park_valid if done else None,
             )
             reward = step_reward(ctx, weights)
             self._prev_potential = new_phi
@@ -284,6 +287,11 @@ class HangarFitEnv:
         # unparked, so the fraction is over already-PARKED objects only.
         done, reason = self._check_budget()
         terminal_fraction = len(self._parked) / len(self.requested_ids) if done else None
+        # Validity of the already-PARKED set at a budget-exhaustion stop. This branch carried
+        # no validity signal, so the #714 validity-conditional terminal would have treated even
+        # a valid partial as invalid — wire it from the product checker (cache-warm: a movement
+        # primitive does not bump _parked_version). None when not terminal.
+        terminal_valid = self._layout_valid() if done else None
         ctx = RewardContext(
             overlap_m2=0.0,
             intrusion_m2=0.0,
@@ -296,6 +304,7 @@ class HangarFitEnv:
             prev_potential=self._prev_potential,
             potential=new_phi,
             terminal_fraction=terminal_fraction,
+            terminal_valid=terminal_valid,
         )
         reward = step_reward(ctx, weights)
         self._prev_potential = new_phi

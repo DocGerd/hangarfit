@@ -236,6 +236,18 @@ _LENIENT_CLEARANCE = (
     0.05  # below the herrenteich file value (0.10) so the clearance ramp truly tightens
 )
 
+# Opt-in #714 rung (wired via with_solo_box_rung / --solo-box-rung), NOT part of DEFAULT_LADDER.
+# max_objects=1 like trivial, but the WHOLE-fleet pool (fleet_ids omitted) instead of trivial's
+# single ("fuji",) — decouples the count jump (1->2) from the sampling-pool jump at the
+# trivial->pair-box boundary so single-object competency transfers to arbitrary fleet objects.
+_SOLO_BOX_STAGE = Stage(
+    name="solo-box",
+    difficulty=DifficultyConfig(max_objects=1, per_object_step_budget=60, total_step_budget=60),
+    hangar_path=_BOX_HANGAR,
+    fleet_path=_BOX_FLEET,
+    clearance_m=_LENIENT_CLEARANCE,
+)
+
 DEFAULT_LADDER: tuple[Stage, ...] = (
     Stage(
         name="trivial",
@@ -282,3 +294,20 @@ DEFAULT_LADDER: tuple[Stage, ...] = (
         clearance_m=None,  # inherit the herrenteich file value (0.10) — the real strict rung
     ),
 )
+
+
+def with_solo_box_rung(schedule: CurriculumSchedule) -> CurriculumSchedule:
+    """Return ``schedule`` with the opt-in ``solo-box`` rung inserted immediately after the
+    ``trivial`` rung — the #714 ``--solo-box-rung`` lever. solo-box keeps max_objects=1 but
+    draws from the whole fleet, decoupling the count jump (1->2) from the sampling-pool jump
+    (single-fuji -> whole-fleet) at the trivial->pair-box boundary so single-object competency
+    transfers. Only the ladder changes (the promotion policy is preserved). The default ladder
+    is left untouched, so default runs stay byte-identical (this is opt-in)."""
+    stages = schedule.stages
+    try:
+        after = next(i for i, s in enumerate(stages) if s.name == "trivial") + 1
+    except StopIteration:
+        raise ValueError(
+            "with_solo_box_rung: schedule has no 'trivial' rung to insert after"
+        ) from None
+    return replace(schedule, stages=stages[:after] + (_SOLO_BOX_STAGE,) + stages[after:])

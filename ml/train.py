@@ -35,6 +35,7 @@ from ml.curriculum import (
     stage_rng,
     validate_ladder,
     with_promotion_overrides,
+    with_solo_box_rung,
 )
 from ml.encoding import EncoderConfig, encode
 from ml.env import HangarFitEnv
@@ -585,6 +586,12 @@ def build_argparser() -> argparse.ArgumentParser:
         "pair with --load PATH to resume the same path",
     )
     p.add_argument(
+        "--solo-box-rung",
+        action="store_true",
+        help="curriculum: insert the opt-in #714 'solo-box' rung (1 object, whole fleet) after "
+        "trivial, so single-object competency transfers before the 2-object jump",
+    )
+    p.add_argument(
         "--r-valid-park",
         type=float,
         default=0.0,
@@ -596,6 +603,12 @@ def build_argparser() -> argparse.ArgumentParser:
         default=0.0,
         help="terminal penalty per UNPLACED fraction (charges abandonment so driving to "
         "budget exhaustion is no longer free vs committing a Park; #710 economics rebalance)",
+    )
+    p.add_argument(
+        "--validity-conditional-terminal",
+        action="store_true",
+        help="terminal credits the VALID placed fraction (invalid layout -> 0), so an "
+        "overlapping pile no longer books +r_terminal; #714 multi-object commit-invalidly fix",
     )
     p.add_argument(
         "--dense-slot-potential",
@@ -656,6 +669,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         r_valid_park=args.r_valid_park,
         dense_slot_potential=args.dense_slot_potential,
         r_unplaced_penalty=args.r_unplaced_penalty,
+        validity_conditional_terminal=args.validity_conditional_terminal,
     )
     # Only the supplied arch flags go into policy_kwargs; an all-None set yields None, so
     # the policy falls back to HangarFitPolicy's own defaults (default-neutral / byte-identical).
@@ -687,6 +701,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             parser.error("--promotion-metric/--promotion-threshold require --schedule curriculum")
         if args.load is not None or args.checkpoint_out is not None:
             parser.error("--load/--checkpoint-out require --schedule curriculum")
+        if args.solo_box_rung:
+            parser.error("--solo-box-rung requires --schedule curriculum")
         train(
             seed=args.seed,
             iterations=args.iterations,
@@ -710,6 +726,8 @@ def main(argv: Sequence[str] | None = None) -> None:
                 max_iters=args.max_iters_per_stage,
             ),
         )
+        if args.solo_box_rung:
+            sched = with_solo_box_rung(sched)
         history = train_curriculum(
             seed=args.seed,
             schedule=sched,

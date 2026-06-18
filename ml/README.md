@@ -137,28 +137,50 @@ per-step active-overlap gradient) and, being potential-based shaping, is **polic
 | `--epochs` / `--minibatch-size` | `PPOConfig` defaults | PPO update epochs / minibatch size. |
 | `--device {cpu,cuda}` | `cpu` | Opt-in GPU (non-deterministic fast path; cpu stays byte-identical). |
 | `--metrics-out PATH` | off | Per-iter per-rung JSONL incl. the `valid_placed` curve. |
+| `--validity-conditional-terminal` | off | Terminal credits the **valid** placed fraction (invalid layout → 0), so an overlapping pile no longer books `+r_terminal`. The #714 multi-object fix; also closes the budget-exhaustion branch. |
+| `--solo-box-rung` | off | Insert an opt-in `solo-box` rung (1 object, **whole fleet**) after `trivial` so single-object competency transfers before the 2-object jump (#714). Curriculum-only. |
 
-`--load`/`--checkpoint-out`/`--metrics-out`/`--promotion-*` are curriculum-only (fail loud
-under `--schedule trivial`). The resume checkpoint (`ml/checkpoint.py`) is distinct from
-`--save` (a bare `state_dict` for the ONNX/`ml.eval` consumer) and loads with
-`weights_only=True`.
+`--load`/`--checkpoint-out`/`--metrics-out`/`--promotion-*`/`--solo-box-rung` are
+curriculum-only (fail loud under `--schedule trivial`). The resume checkpoint
+(`ml/checkpoint.py`) is distinct from `--save` (a bare `state_dict` for the ONNX/`ml.eval`
+consumer) and loads with `weights_only=True`.
 
-### Box-rung mastery gate recipe
+### What the #710 levers achieved, and the #714 multi-object fix
+
+The #710 economics rebalance (`--r-valid-park 30 --r-unplaced-penalty 8 --dense-slot-potential`
++ entropy anneal + `--normalize-returns`) **mastered the trivial (1-object) rung** — the
+first competency promotion of the learned backend (valid_placed 0.018→0.936, fraction held,
+reward positive). But every **≥2-object** rung still collapsed, oscillating between
+place-nothing and *commit-everything-invalidly* (parking a heap of overlapping objects;
+reward spikes of −9k to −37k). Root cause: the terminal credited `fraction_placed`
+**regardless of validity** — invisible at N=1 (fraction is 0/1) but a free `+r_terminal` for
+invalid piles at N≥2. The #714 fix is two default-neutral levers: `--validity-conditional-terminal`
+(credit only the *valid* fraction) and `--solo-box-rung` (decouple the count jump from the
+sampling-pool jump). #712 (`seed_anchor` start-state graft) is **not** the binding lever here
+— it is an unwired stub, and the box rungs *do* reach valid joint poses briefly before
+abandoning them.
+
+### Box-rung mastery gate recipe (#714 re-gate)
 
 ```bash
-# GPU, box rungs only, HONEST valid_placed promotion, resumable, 2 seeds:
+# GPU, HONEST valid_placed promotion, resumable, the #714 levers active. Run 2 seeds.
 python -u -m ml.train --schedule curriculum --device cuda --n-envs 16 \
-  --rollout-len 512 --max-iters-per-stage 50 \
+  --rollout-len 512 --max-iters-per-stage 25 \
   --promotion-metric valid_placed --promotion-threshold 0.9 \
-  --r-valid-park 2.0 --r-unplaced-penalty 25.0 \
-  --metrics-out metrics-seed0.jsonl --checkpoint-out ck-seed0.pt --seed 0
+  --r-valid-park 30.0 --r-unplaced-penalty 8.0 --dense-slot-potential \
+  --entropy-start 0.05 --entropy-end 0.005 --entropy-anneal-iters 40 \
+  --normalize-returns --validity-conditional-terminal --solo-box-rung \
+  --metrics-out metrics-seed0-v3.jsonl --checkpoint-out ck-seed0-v3.pt --seed 0
 ```
 
-Watch **both** `fraction_placed` (recovering off ~0.476 = the perverse incentive is breaking)
-and `valid_placed` (the mastery axis). Guard against the opposite failure — `valid_rate`
-dropping while `fraction_placed` spikes is the commit-anything pathology (penalty too high).
-Flat `valid_placed` across both seeds is the empirical signal that reachability (the #712
-start-state graft) is the next lever.
+Read **`valid_placed`** (the honest mastery axis), **not** `valid_rate` (an empty layout is
+trivially valid → inflated). Expected: `solo-box` masters like `trivial`; `pair-box` then
+lifts off the place-nothing pole toward the **one-valid plateau (~0.5)** — that is the
+win condition for this increment. Reaching 0.9 (two *simultaneously* valid) may need a
+further lever (#712 start-state graft / a pose-curriculum). **Kill-criterion:** if by
+~iter 20 a rung still produces commit-everything spikes (reward < −3000 with
+`fraction_placed` > 0.5 and `valid_rate` < 0.1), the terminal fix did not bite — re-open
+toward the return-normalizer (run with `--normalize-returns` off) before more discovery work.
 
 ## Design
 See `docs/superpowers/specs/2026-06-12-learned-backend-cold-joint-rl-env-design.md`
