@@ -8,14 +8,16 @@ sub-project #4b; the reach-not-beat benchmark is #4c."""
 from __future__ import annotations
 
 import argparse
+import json
 from collections import deque
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from dataclasses import replace
 from functools import partial
 from pathlib import Path
 from typing import Literal
 
 import torch
+from torch import Tensor
 
 from hangarfit.loader import load_fleet, load_hangar
 from ml.action_space import decode
@@ -24,10 +26,13 @@ from ml.curriculum import (
     CurriculumSchedule,
     EpisodeStat,
     Stage,
+    format_iter_log,
+    history_metric_records,
     sample_request,
     should_promote,
     stage_rng,
     validate_ladder,
+    with_promotion_overrides,
 )
 from ml.encoding import EncoderConfig, encode
 from ml.env import HangarFitEnv
@@ -50,6 +55,15 @@ from ml.vector_env import VecStep, _EnvWorker
 _TRIVIAL_DIFFICULTY = DifficultyConfig(
     max_objects=1, per_object_step_budget=40, total_step_budget=40
 )
+
+
+def _to_device(batch: dict[str, Tensor], device: torch.device) -> dict[str, Tensor]:
+    """Move a batched-observation dict to the policy's device for the forward. A no-op for
+    a CPU device (returns the SAME dict — no copy), so the CUDA path is fully opt-in and the
+    default CPU rollout is byte-identical."""
+    if device.type == "cpu":
+        return batch
+    return {k: v.to(device) for k, v in batch.items()}
 
 
 def build_trivial_env(seed: int = 0, *, weights: RewardWeights | None = None) -> HangarFitEnv:
@@ -93,12 +107,13 @@ def collect_rollout(
     the env's fixed requested set (the 4a trivial path)."""
     buf = RolloutBuffer()
     bodies = _bodies(env)
+    device = next(policy.parameters()).device
     obs = env.reset()
     ep_reward, ep_stats = 0.0, []
     with torch.no_grad():
         while len(buf) < rollout_len:
             obs_t = encode(obs, env.hangar, bodies, encoder)
-            out = policy(to_batch([obs_t]))
+            out = policy(_to_device(to_batch([obs_t]), device))
             kind, mag = sample_action(out)
             logprob, _ = factored_logprob_entropy(out, kind, mag)
             tr = obs.active.body.effective_turn_radius_m()  # type: ignore[union-attr]
@@ -130,7 +145,7 @@ def collect_rollout(
         # bootstrap value for a non-done tail
         if not buf.done[-1]:
             tail = encode(obs, env.hangar, bodies, encoder)
-            buf.last_value = float(policy(to_batch([tail])).value)
+            buf.last_value = float(policy(_to_device(to_batch([tail]), device)).value)
     return buf, ep_stats
 
 
@@ -145,12 +160,13 @@ def collect_rollout_vec(
     (T, N) buffer + the per-completed-episode stats (with the per-env reward sum)."""
     n = vec_env.num_envs
     buf = VecRolloutBuffer(num_envs=n)
+    device = next(policy.parameters()).device
     obs = vec_env.reset()
     ep_reward = [0.0] * n
     ep_stats: list[EpisodeStat] = []
     with torch.no_grad():
         for _ in range(rollout_len):
-            out = policy(to_batch(obs))
+            out = policy(_to_device(to_batch(obs), device))
             kind, mag = sample_action(out)
             logprob, _ = factored_logprob_entropy(out, kind, mag)
             actions = [(int(kind[i]), int(mag[i])) for i in range(n)]
@@ -180,7 +196,7 @@ def collect_rollout_vec(
                     ep_reward[i] = 0.0
             obs = step.obs
         # per-env bootstrap value for non-done tails
-        tail = policy(to_batch(obs))
+        tail = policy(_to_device(to_batch(obs), device))
         buf.last_value = [float(tail.value[i]) for i in range(n)]
     return buf, ep_stats
 
@@ -218,6 +234,7 @@ def train(
     log: bool = False,
     save: str | None = None,
     save_onnx: str | None = None,
+    device: str = "cpu",
 ) -> list[float]:
     """Train on the trivial stage; return the per-iteration mean episode reward.
 
@@ -232,7 +249,7 @@ def train(
     cfg = ppo or PPOConfig()
     enc = encoder or EncoderConfig()
     env = build_trivial_env(seed, weights=weights)
-    policy = HangarFitPolicy(**(policy_kwargs or {}))
+    policy = HangarFitPolicy(**(policy_kwargs or {})).to(torch.device(device))
     optimizer = torch.optim.Adam(policy.parameters(), lr=cfg.lr)
     normalizer = ReturnNormalizer(eps=cfg.return_norm_eps) if cfg.normalize_returns else None
     history: list[float] = []
@@ -283,6 +300,7 @@ def train_curriculum(
     save_onnx: str | None = None,
     n_envs: int = 1,
     vec_backend: Literal["sync", "subproc"] = "subproc",
+    device: str = "cpu",
 ) -> CurriculumHistory:
     """Climb the ladder: one policy/optimizer across rungs (transfer); per rung, run
     PPO until the competency gate fires or the per-stage cap is hit, then advance.
@@ -301,7 +319,7 @@ def train_curriculum(
     # tensorizer overflow several rungs in.
     validate_ladder(sched.stages, encoder_max_objects=enc.max_objects)
     pol = sched.policy
-    policy = HangarFitPolicy(**(policy_kwargs or {}))
+    policy = HangarFitPolicy(**(policy_kwargs or {})).to(torch.device(device))
     optimizer = torch.optim.Adam(policy.parameters(), lr=cfg.lr)
     normalizer = ReturnNormalizer(eps=cfg.return_norm_eps) if cfg.normalize_returns else None
     history = CurriculumHistory()
@@ -341,15 +359,7 @@ def train_curriculum(
                 window.extend(ep_stats)
                 history.record(stage.name, it, ep_stats)
                 if log:
-                    mean_r = (
-                        sum(s.total_reward for s in ep_stats) / len(ep_stats)
-                        if ep_stats
-                        else float("nan")
-                    )
-                    print(
-                        f"[{stage.name}] iter {it:4d}  mean_ep_reward={mean_r:+.3f}  "
-                        f"n_eps={len(ep_stats)}"
-                    )
+                    print(format_iter_log(stage.name, it, ep_stats), flush=True)
                 if should_promote(list(window), pol):
                     history.note_promotion(stage.name, it, by="competency")
                     break
@@ -387,15 +397,7 @@ def train_curriculum(
                     window.extend(ep_stats)
                     history.record(stage.name, it, ep_stats)
                     if log:
-                        mean_r = (
-                            sum(s.total_reward for s in ep_stats) / len(ep_stats)
-                            if ep_stats
-                            else float("nan")
-                        )
-                        print(
-                            f"[{stage.name}] iter {it:4d}  mean_ep_reward={mean_r:+.3f}  "
-                            f"n_eps={len(ep_stats)}"
-                        )
+                        print(format_iter_log(stage.name, it, ep_stats), flush=True)
                     if should_promote(list(window), pol):
                         history.note_promotion(stage.name, it, by="competency")
                         break
@@ -423,6 +425,28 @@ def build_argparser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="curriculum: per-rung safety cap (default = schedule policy)",
+    )
+    p.add_argument(
+        "--promotion-metric",
+        choices=["fraction_placed", "valid_rate", "valid_placed"],
+        default=None,
+        help="curriculum: PromotionPolicy.metric override (default = schedule policy, "
+        "valid_placed); use valid_rate to advance easy rungs while valid_placed is still 0",
+    )
+    p.add_argument(
+        "--promotion-threshold",
+        type=float,
+        default=None,
+        help="curriculum: PromotionPolicy.threshold override in [0,1] "
+        "(default = schedule policy, 0.9); lower it so the easy rungs reveal the ladder",
+    )
+    p.add_argument(
+        "--metrics-out",
+        type=str,
+        default=None,
+        help="curriculum: write per-iter per-rung metrics JSONL "
+        "(stage/iter/n_eps/mean_ep_reward/fraction_placed/valid_rate/valid_placed) to this "
+        "path — the #710 valid_placed learning curves",
     )
     p.add_argument("--rollout-len", type=int, default=1024)
     p.add_argument("--lr", type=float, default=3e-4)
@@ -481,11 +505,21 @@ def build_argparser() -> argparse.ArgumentParser:
         default="subproc",
         help="vectorized env backend: sync (in-process, CI-safe) or subproc (parallel workers)",
     )
+    p.add_argument(
+        "--device",
+        choices=["cpu", "cuda"],
+        default="cpu",
+        help="compute device: cpu (default — deterministic / byte-identical) or cuda "
+        "(opt-in GPU fast path; ~5-6x on the PPO update, non-deterministic)",
+    )
     return p
 
 
-def main() -> None:
-    args = build_argparser().parse_args()
+def main(argv: Sequence[str] | None = None) -> None:
+    parser = build_argparser()
+    args = parser.parse_args(argv)
+    if args.device == "cuda" and not torch.cuda.is_available():
+        parser.error("--device cuda requested but torch.cuda.is_available() is False")
     weights = RewardWeights(
         r_valid_park=args.r_valid_park,
         dense_slot_potential=args.dense_slot_potential,
@@ -498,6 +532,13 @@ def main() -> None:
         normalize_returns=args.normalize_returns,
     )
     if args.schedule == "trivial":
+        # --metrics-out / --promotion-* are curriculum-only; the trivial path has no
+        # CurriculumHistory and no PromotionPolicy. Fail LOUD (not silent-ignore) so a
+        # misdirected sweep flag is caught before the run, not after.
+        if args.metrics_out is not None:
+            parser.error("--metrics-out requires --schedule curriculum")
+        if args.promotion_metric is not None or args.promotion_threshold is not None:
+            parser.error("--promotion-metric/--promotion-threshold require --schedule curriculum")
         train(
             seed=args.seed,
             iterations=args.iterations,
@@ -507,12 +548,20 @@ def main() -> None:
             log=True,
             save=args.save,
             save_onnx=args.save_onnx,
+            device=args.device,
         )
     else:
         sched = CurriculumSchedule.default()
-        if args.max_iters_per_stage is not None:
-            sched = replace(sched, policy=replace(sched.policy, max_iters=args.max_iters_per_stage))
-        train_curriculum(
+        sched = replace(
+            sched,
+            policy=with_promotion_overrides(
+                sched.policy,
+                metric=args.promotion_metric,
+                threshold=args.promotion_threshold,
+                max_iters=args.max_iters_per_stage,
+            ),
+        )
+        history = train_curriculum(
             seed=args.seed,
             schedule=sched,
             rollout_len=args.rollout_len,
@@ -523,7 +572,13 @@ def main() -> None:
             save_onnx=args.save_onnx,
             n_envs=args.n_envs,
             vec_backend=args.vec_backend,
+            device=args.device,
         )
+        if args.metrics_out is not None:
+            records = history_metric_records(history)
+            Path(args.metrics_out).write_text(
+                "".join(json.dumps(r) + "\n" for r in records), encoding="utf-8"
+            )
 
 
 if __name__ == "__main__":

@@ -6,6 +6,30 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Learned backend (#710, epic #607): opt-in CUDA training (`--device cuda`).**
+  `ml.train` / `train_curriculum` / `train` gain a `--device {cpu,cuda}` knob. `cpu`
+  (the default) is unchanged and **byte-identical** to prior runs — every device move is
+  gated behind `device.type != 'cpu'`, so the ADR-0027 / determinism contract holds for the
+  CPU path. `cuda` moves the policy + the PPO-update minibatch tensors to the GPU (GAE stays
+  on CPU, a per-step scalar loop); it is an **explicitly non-deterministic** fast path
+  (GPU RNG / kernels), validated loud if `torch.cuda.is_available()` is `False`. Measured
+  ~5.8x on the PPO update on an RTX 4090; the shapely-geometry rollout stays CPU-bound, so
+  the net per-iter gain is bounded by the update's share.
+
+- **Learned backend (#710, epic #607): per-rung training-metric dump + promotion-gate
+  CLI levers for the mastery study.** `ml.train --schedule curriculum` gains
+  `--metrics-out PATH` (writes one JSONL record per PPO iteration —
+  `stage`/`iter`/`n_eps`/`mean_ep_reward`/`fraction_placed`/`valid_rate`/`valid_placed`),
+  exposing the compound `valid_placed` learning curve the CLI previously discarded (it
+  logged only `mean_ep_reward`). Two new `PromotionPolicy` overrides — `--promotion-metric
+  {fraction_placed,valid_rate,valid_placed}` and `--promotion-threshold` — let a run
+  advance the easy rungs on `valid_rate` (or a lowered threshold) while `valid_placed` is
+  still pinned at 0. All three are default-neutral (omitting them is byte-identical to
+  prior runs); `--metrics-out`/`--promotion-*` are curriculum-only and fail loud under
+  `--schedule trivial`. The per-iter metric helpers (`episode_metrics`,
+  `history_metric_records`, `with_promotion_overrides`) are pure/torch-free in
+  `ml/curriculum.py`.
+
 - **Vectorized training envs (#708, epic #607).** `train_curriculum`/`ml.train` gain an
   `n_envs` knob (`--n-envs`, `--vec-backend {sync,subproc}`) that runs N cold-joint envs in
   parallel for throughput — the shapely geometry + encoder rasterization run across N

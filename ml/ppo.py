@@ -242,6 +242,15 @@ def ppo_update(
         advantages = advantages / std
     if not torch.isfinite(advantages).all():
         raise RuntimeError("advantages contain NaN/inf after normalization")
+    # Move the minibatch-loop tensors to the policy's device (CUDA opt-in). GAE + advantage
+    # math above stays on CPU: it is a per-step scalar loop (`float(...)` per step), so doing
+    # it on GPU would force a host sync every step. For a CPU policy every `.to()` is a no-op
+    # that returns the same tensor, so the default path is byte-identical (the determinism
+    # contract holds only for device='cpu'; CUDA is an explicitly non-deterministic fast path).
+    device = next(policy.parameters()).device
+    data = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in data.items()}
+    advantages = advantages.to(device)
+    returns = returns.to(device)
     # Number of FLAT transitions to shuffle/minibatch over. For a VecRolloutBuffer this is
     # T*N (advantages is length T*N), NOT len(buffer)==T — using len(buffer) would silently
     # train on only the first T of T*N rows and drop (N-1)/N of every rollout (#708). For the
@@ -254,7 +263,8 @@ def ppo_update(
         "loss": [],
     }
     for _ in range(config.epochs):
-        perm = torch.randperm(n)
+        # device=cpu reproduces torch.randperm(n) exactly (same default generator).
+        perm = torch.randperm(n, device=device)
         for start in range(0, n, config.minibatch_size):
             mb = perm[start : start + config.minibatch_size]
             mb_obs = {k: data[k][mb] for k in _OBS_KEYS}

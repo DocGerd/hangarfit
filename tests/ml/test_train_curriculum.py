@@ -250,6 +250,107 @@ def test_train_curriculum_subproc_runs():
     assert hist.promotions and hist.iterations  # spawned, pickled, trained
 
 
+# ---------------------------------------------------------------------------
+# #710: --metrics-out per-iter dump + --promotion-metric/--promotion-threshold CLI
+# ---------------------------------------------------------------------------
+
+
+def test_argparser_new_flags_default_none():
+    a = build_argparser().parse_args([])
+    assert a.promotion_metric is None
+    assert a.promotion_threshold is None
+    assert a.metrics_out is None
+
+
+def test_main_applies_promotion_overrides_to_schedule(monkeypatch):
+    # main() must thread --promotion-metric/--promotion-threshold/--max-iters-per-stage
+    # into the PromotionPolicy it passes to train_curriculum (stubbed so no real training).
+    import ml.train as train_mod
+    from ml.curriculum import CurriculumHistory
+
+    captured: dict = {}
+
+    def fake(*, schedule, **kw):
+        captured["schedule"] = schedule
+        return CurriculumHistory()
+
+    monkeypatch.setattr(train_mod, "train_curriculum", fake)
+    train_mod.main(
+        [
+            "--schedule",
+            "curriculum",
+            "--promotion-metric",
+            "valid_rate",
+            "--promotion-threshold",
+            "0.3",
+            "--max-iters-per-stage",
+            "7",
+        ]
+    )
+    pol = captured["schedule"].policy
+    assert pol.metric == "valid_rate"
+    assert pol.threshold == pytest.approx(0.3)
+    assert pol.max_iters == 7
+
+
+def test_main_no_override_flags_keeps_default_policy(monkeypatch):
+    # default-neutral: with no override flag, the schedule policy is the committed default.
+    import ml.train as train_mod
+    from ml.curriculum import CurriculumHistory, PromotionPolicy
+
+    captured: dict = {}
+
+    def fake(*, schedule, **kw):
+        captured["schedule"] = schedule
+        return CurriculumHistory()
+
+    monkeypatch.setattr(train_mod, "train_curriculum", fake)
+    train_mod.main(["--schedule", "curriculum"])
+    assert captured["schedule"].policy == PromotionPolicy()
+
+
+def test_main_writes_metrics_jsonl(monkeypatch, tmp_path):
+    import json
+
+    import ml.train as train_mod
+    from ml.curriculum import CurriculumHistory, EpisodeStat
+
+    hist = CurriculumHistory()
+    hist.record("pair-box", 0, [EpisodeStat(1.0, True, 5.0), EpisodeStat(0.0, False, -1.0)])
+    monkeypatch.setattr(train_mod, "train_curriculum", lambda **kw: hist)
+    out = tmp_path / "metrics.jsonl"
+    train_mod.main(["--schedule", "curriculum", "--metrics-out", str(out)])
+    lines = out.read_text().splitlines()
+    assert len(lines) == 1
+    rec = json.loads(lines[0])
+    assert rec["stage"] == "pair-box"
+    assert rec["iter"] == 0
+    assert rec["n_eps"] == 2
+    assert rec["fraction_placed"] == pytest.approx(0.5)
+    assert rec["valid_rate"] == pytest.approx(0.5)
+    assert rec["valid_placed"] == pytest.approx(0.5)
+    assert rec["mean_ep_reward"] == pytest.approx(2.0)
+
+
+def test_main_metrics_out_requires_curriculum_schedule(monkeypatch):
+    # --metrics-out is curriculum-only; with --schedule trivial it must fail LOUD and
+    # BEFORE any training runs (not silently ignore the flag).
+    import ml.train as train_mod
+
+    ran = {"train": False}
+
+    def guard(**kw):
+        ran["train"] = True
+        return []
+
+    monkeypatch.setattr(train_mod, "train", guard)
+    with pytest.raises(SystemExit):
+        train_mod.main(
+            ["--schedule", "trivial", "--metrics-out", "/tmp/should_not_be_written.jsonl"]
+        )
+    assert ran["train"] is False  # rejected before training
+
+
 def test_train_curriculum_n_envs_1_matches_legacy_byte_identical():
     """n_envs=1 must reproduce the legacy single-stream training history exactly."""
     from dataclasses import replace
@@ -264,3 +365,72 @@ def test_train_curriculum_n_envs_1_matches_legacy_byte_identical():
     assert any(eps for _, _, eps in legacy.iterations), "no episodes completed — vacuous equality"
     assert legacy.promotions == again.promotions
     assert legacy.iterations == again.iterations  # CurriculumHistory equality (per-iter records)
+
+
+# ---------------------------------------------------------------------------
+# CUDA opt-in (--device): default cpu must stay byte-identical; cuda is opt-in.
+# ---------------------------------------------------------------------------
+
+
+def _tiny_default_sched():
+    return replace(
+        CurriculumSchedule.default(),
+        policy=replace(CurriculumSchedule.default().policy, max_iters=1),
+    )
+
+
+def test_train_curriculum_device_cpu_is_byte_identical_to_default():
+    # device='cpu' (the default) must reproduce the no-device history exactly — the
+    # ADR-0027 / ml-rl-guard determinism contract holds for the CPU path.
+    sched = _tiny_default_sched()
+    base = train_curriculum(seed=0, schedule=sched, rollout_len=16)
+    dev = train_curriculum(seed=0, schedule=sched, rollout_len=16, device="cpu")
+    assert any(eps for _, _, eps in base.iterations), "no episodes completed — vacuous equality"
+    assert base.promotions == dev.promotions
+    assert base.iterations == dev.iterations
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a CUDA device")
+def test_train_curriculum_device_cuda_runs():
+    sched = _tiny_default_sched()
+    hist = train_curriculum(seed=0, schedule=sched, rollout_len=16, device="cuda")
+    assert hist.promotions and hist.iterations  # trained on GPU end-to-end
+
+
+def test_argparser_device_defaults_to_cpu():
+    assert build_argparser().parse_args([]).device == "cpu"
+    assert build_argparser().parse_args(["--device", "cuda"]).device == "cuda"
+
+
+def test_main_threads_device_to_train_curriculum(monkeypatch):
+    import ml.train as train_mod
+    from ml.curriculum import CurriculumHistory
+
+    captured: dict = {}
+
+    def fake(**kw):
+        captured.update(kw)
+        return CurriculumHistory()
+
+    monkeypatch.setattr(train_mod, "train_curriculum", fake)
+    train_mod.main(["--schedule", "curriculum", "--device", "cpu"])
+    assert captured["device"] == "cpu"
+
+
+def test_main_device_cuda_unavailable_errors(monkeypatch):
+    # requesting --device cuda when no GPU is present must fail loud, before training.
+    import ml.train as train_mod
+
+    ran = {"train_curriculum": False}
+
+    def guard(**kw):
+        ran["train_curriculum"] = True
+        from ml.curriculum import CurriculumHistory
+
+        return CurriculumHistory()
+
+    monkeypatch.setattr(train_mod.torch.cuda, "is_available", lambda: False)
+    monkeypatch.setattr(train_mod, "train_curriculum", guard)
+    with pytest.raises(SystemExit):
+        train_mod.main(["--schedule", "curriculum", "--device", "cuda"])
+    assert ran["train_curriculum"] is False

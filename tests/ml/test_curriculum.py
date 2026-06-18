@@ -11,10 +11,14 @@ from ml.curriculum import (
     EpisodeStat,
     PromotionPolicy,
     Stage,
+    episode_metrics,
+    format_iter_log,
+    history_metric_records,
     sample_request,
     should_promote,
     stage_rng,
     validate_ladder,
+    with_promotion_overrides,
 )
 from ml.encoding import EncoderConfig
 from ml.types import DifficultyConfig
@@ -217,3 +221,99 @@ def test_stage_rng_worker_index_zero_is_legacy_and_distinct():
     w1 = stage_rng(7, 2, worker_index=1)
     w0b = stage_rng(7, 2, worker_index=0)
     assert [w0b.random() for _ in range(5)] != [w1.random() for _ in range(5)]
+
+
+# --- #710 per-iter metrics + promotion-override plumbing (all pure / torch-free) ---
+
+
+def test_episode_metrics_computes_the_four_rates():
+    # one fully-placed+valid, one half-placed+invalid, one fully-placed+valid
+    stats = [
+        EpisodeStat(1.0, True, 10.0),
+        EpisodeStat(0.5, False, -2.0),
+        EpisodeStat(1.0, True, 8.0),
+    ]
+    m = episode_metrics(stats)
+    assert m["n_eps"] == 3
+    assert m["fraction_placed"] == pytest.approx((1.0 + 0.5 + 1.0) / 3)
+    assert m["valid_rate"] == pytest.approx(2 / 3)
+    # valid_placed credits fraction_placed only on the valid episodes: (1.0 + 0 + 1.0) / 3
+    assert m["valid_placed"] == pytest.approx((1.0 + 1.0) / 3)
+    assert m["mean_ep_reward"] == pytest.approx((10.0 - 2.0 + 8.0) / 3)
+
+
+def test_episode_metrics_empty_is_n0_with_none_rates():
+    # no episode finished this iteration -> 0 episodes, None (not 0.0) rates, so a short
+    # rollout is not mistaken for a genuine zero in the learning curve.
+    m = episode_metrics([])
+    assert m["n_eps"] == 0
+    assert m["mean_ep_reward"] is None
+    assert m["fraction_placed"] is None
+    assert m["valid_rate"] is None
+    assert m["valid_placed"] is None
+
+
+def test_episode_metrics_valid_placed_matches_should_promote_scoring():
+    # the per-iter valid_placed must use the SAME credit rule as the promotion gate
+    stats = [EpisodeStat(0.8, True, 0.0), EpisodeStat(0.9, False, 0.0), EpisodeStat(0.4, True, 0.0)]
+    expected = (0.8 + 0.0 + 0.4) / 3
+    assert episode_metrics(stats)["valid_placed"] == pytest.approx(expected)
+    # and the gate fires exactly when that mean meets threshold
+    assert should_promote(
+        stats, PromotionPolicy(metric="valid_placed", window=3, threshold=expected)
+    )
+    assert not should_promote(
+        stats, PromotionPolicy(metric="valid_placed", window=3, threshold=expected + 0.01)
+    )
+
+
+def test_history_metric_records_one_record_per_recorded_iteration():
+    h = CurriculumHistory()
+    h.record("pair-box", 0, [EpisodeStat(1.0, True, 5.0), EpisodeStat(0.0, False, -1.0)])
+    h.record("pair-box", 1, [])  # an iteration with no completed episode
+    recs = history_metric_records(h)
+    assert [r["stage"] for r in recs] == ["pair-box", "pair-box"]
+    assert [r["iter"] for r in recs] == [0, 1]
+    assert recs[0]["valid_placed"] == pytest.approx(0.5)  # (1.0 + 0) / 2
+    assert recs[0]["n_eps"] == 2
+    assert recs[1]["n_eps"] == 0 and recs[1]["valid_placed"] is None
+
+
+def test_history_metric_records_empty_history_is_empty_list():
+    assert history_metric_records(CurriculumHistory()) == []
+
+
+def test_with_promotion_overrides_all_none_is_default_neutral():
+    base = PromotionPolicy()
+    assert with_promotion_overrides(base) == base  # no override -> equal policy
+
+
+def test_format_iter_log_surfaces_all_four_metrics_live():
+    # the curriculum log line must carry valid_placed so a `python -u` long run is
+    # monitorable mid-flight (the CLI used to print only mean_ep_reward).
+    stats = [EpisodeStat(1.0, True, 4.0), EpisodeStat(0.0, False, -1.0)]
+    line = format_iter_log("pair-box", 7, stats)
+    assert "[pair-box]" in line
+    assert "7" in line
+    assert "valid_placed=0.500" in line
+    assert "valid_rate=0.500" in line
+    assert "fraction_placed=0.500" in line
+    assert "mean_ep_reward=+1.500" in line  # (4.0 - 1.0) / 2
+    assert "n_eps=2" in line
+
+
+def test_format_iter_log_empty_iteration_has_no_phantom_zero():
+    # no completed episode -> report n_eps=0, NOT valid_placed=0.000 (which would read as a
+    # genuine zero rather than "no data this iteration").
+    line = format_iter_log("trio-box", 3, [])
+    assert "n_eps=0" in line
+    assert "valid_placed" not in line
+
+
+def test_with_promotion_overrides_sets_only_given_fields():
+    base = PromotionPolicy(metric="valid_placed", window=20, threshold=0.9, max_iters=200)
+    got = with_promotion_overrides(base, metric="valid_rate", threshold=0.3, max_iters=120)
+    assert got.metric == "valid_rate"
+    assert got.threshold == pytest.approx(0.3)
+    assert got.max_iters == 120
+    assert got.window == 20  # untouched field preserved
