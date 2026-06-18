@@ -9,7 +9,7 @@ import pytest
 from hangarfit.models import GroundObject, Part, Placement
 from ml import geometry_oracle as go
 from ml.env import HangarFitEnv
-from ml.types import DifficultyConfig, Park, Primitive
+from ml.types import DifficultyConfig, Park, Pose, Primitive, RewardWeights
 from tests.ml.conftest import _fuji, empty_hangar
 
 
@@ -470,3 +470,83 @@ def test_r_unplaced_penalty_full_park_not_penalized_vs_abandon():
     assert p_placed == 2 and a_placed == 0  # Park-done (frac=1) vs budget-abandon (frac=0)
     assert parkR == pytest.approx(park0)  # full placement -> penalty term 0, unchanged by knob
     assert aban0 - abanR == pytest.approx(20.0)  # abandon -> charged the full unplaced fraction
+
+
+# ---------------------------------------------------------------------------
+# #714 — validity-conditional terminal wiring (Lever A)
+# ---------------------------------------------------------------------------
+# An in-hangar fuji pose verified valid in empty_hangar (probed: 22x25 box,
+# bay keep-out x in [9,18] y in [16,25]; (9,10,0) clears it).
+_VALID_POSE = (9.0, 10.0, 0.0)
+
+
+def _park_terminal_reward(*, validity_conditional: bool, pose):
+    """Single-object env: optionally override the active pose, then Park (terminal).
+    Returns (reward, info, weights). pose=None keeps the apron spawn (out of bounds)."""
+    w = RewardWeights(r_unplaced_penalty=8.0, validity_conditional_terminal=validity_conditional)
+    env = HangarFitEnv(hangar=empty_hangar(), fleet=_fuji(), requested_ids=("fuji",), weights=w)
+    env.reset()
+    if pose is not None:
+        env._active_pose = Pose(x_m=pose[0], y_m=pose[1], heading_deg=pose[2])
+    _, reward, done, info = env.step(Park())
+    assert done is True
+    return reward, info, w
+
+
+def test_validity_conditional_terminal_park_invalid_drops_placed_credit():
+    # Park on the apron (out of bounds) => invalid terminal. Flag ON drops the +r_terminal
+    # credit (eff fraction 0): off - on == frac*(r_terminal + r_unplaced) at frac 1.
+    off_r, off_i, w = _park_terminal_reward(validity_conditional=False, pose=None)
+    on_r, on_i, _ = _park_terminal_reward(validity_conditional=True, pose=None)
+    assert off_i.valid is False and on_i.valid is False
+    assert off_r - on_r == pytest.approx(w.r_terminal + w.r_unplaced_penalty)
+
+
+def test_validity_conditional_terminal_park_valid_unchanged():
+    # A VALID in-hangar park: the flag makes NO difference (terminal credited either way),
+    # confirming the Park branch passes terminal_valid=True (else flag-on would wrongly zero it).
+    off_r, off_i, _ = _park_terminal_reward(validity_conditional=False, pose=_VALID_POSE)
+    on_r, on_i, _ = _park_terminal_reward(validity_conditional=True, pose=_VALID_POSE)
+    assert off_i.valid is True and on_i.valid is True
+    assert on_r == pytest.approx(off_r)
+
+
+def _budget_terminal_reward(*, validity_conditional: bool, park_pose):
+    """2-object env: park obj1 (at park_pose or apron), then exhaust obj2's per-object
+    budget with a no-op pivot so the terminating step's only fraction credit is the
+    terminal term over the {obj1} parked set. Returns (reward, info, weights)."""
+    w = RewardWeights(r_unplaced_penalty=8.0, validity_conditional_terminal=validity_conditional)
+    env = HangarFitEnv(
+        hangar=empty_hangar(),
+        fleet=_fuji(),
+        requested_ids=("fuji", "aviat_husky"),
+        difficulty=DifficultyConfig(per_object_step_budget=1),
+        weights=w,
+    )
+    env.reset()
+    if park_pose is not None:
+        env._active_pose = Pose(x_m=park_pose[0], y_m=park_pose[1], heading_deg=park_pose[2])
+    _, _, done0, _ = env.step(Park())  # park obj1; advance to obj2
+    assert done0 is False
+    _, reward, done, info = env.step(Primitive(kind="L", magnitude=0.1, gear=1))  # budget-exhaust
+    assert done is True and "unplaceable" in info.reason
+    assert info.placed == 1 and info.total == 2  # terminal_fraction 0.5
+    return reward, info, w
+
+
+def test_validity_conditional_terminal_budget_invalid_drops_credit():
+    # Budget-exhaustion stop over an INVALID parked set (obj1 on apron): flag ON zeros the
+    # placed-fraction credit. off - on == 0.5*(r_terminal + r_unplaced).
+    off_r, _, w = _budget_terminal_reward(validity_conditional=False, park_pose=None)
+    on_r, _, _ = _budget_terminal_reward(validity_conditional=True, park_pose=None)
+    assert off_r - on_r == pytest.approx(0.5 * (w.r_terminal + w.r_unplaced_penalty))
+
+
+def test_validity_conditional_terminal_budget_valid_credited():
+    # THE budget-branch wiring guard: a budget stop over a VALID parked set must STILL be
+    # credited under the flag (the branch must pass terminal_valid=_layout_valid()=True, not
+    # leave it None). If the budget branch is unwired, this valid partial is wrongly zeroed.
+    off_r, off_i, _ = _budget_terminal_reward(validity_conditional=False, park_pose=_VALID_POSE)
+    on_r, on_i, _ = _budget_terminal_reward(validity_conditional=True, park_pose=_VALID_POSE)
+    assert off_i.valid is True and on_i.valid is True
+    assert on_r == pytest.approx(off_r)

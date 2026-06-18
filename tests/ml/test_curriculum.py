@@ -19,6 +19,7 @@ from ml.curriculum import (
     stage_rng,
     validate_ladder,
     with_promotion_overrides,
+    with_solo_box_rung,
 )
 from ml.encoding import EncoderConfig
 from ml.types import DifficultyConfig
@@ -317,3 +318,38 @@ def test_with_promotion_overrides_sets_only_given_fields():
     assert got.threshold == pytest.approx(0.3)
     assert got.max_iters == 120
     assert got.window == 20  # untouched field preserved
+
+
+# ---------------------------------------------------------------------------
+# #714 — solo-box sub-curriculum rung (Lever B), opt-in / flag-gated
+# ---------------------------------------------------------------------------
+
+
+def test_default_ladder_has_no_solo_box_rung():
+    # Byte-identity guard: solo-box is opt-in; the default ladder is unchanged.
+    assert all(s.name != "solo-box" for s in DEFAULT_LADDER)
+
+
+def test_with_solo_box_rung_inserts_after_trivial():
+    sched = with_solo_box_rung(CurriculumSchedule.default())
+    names = [s.name for s in sched.stages]
+    assert names[:3] == ["trivial", "solo-box", "pair-box"]
+
+
+def test_solo_box_rung_is_single_object_whole_fleet_pool():
+    sched = with_solo_box_rung(CurriculumSchedule.default())
+    solo = next(s for s in sched.stages if s.name == "solo-box")
+    assert solo.difficulty.max_objects == 1  # still one object...
+    assert solo.fleet_ids is None  # ...but the WHOLE-fleet pool (trivial pins fleet_ids=("fuji",))
+
+
+def test_with_solo_box_rung_preserves_policy_and_validates():
+    base = CurriculumSchedule.default()
+    sched = with_solo_box_rung(base)
+    assert sched.policy == base.policy  # only the ladder changes, not the promotion gate
+    validate_ladder(sched.stages, encoder_max_objects=EncoderConfig().max_objects)  # no raise
+
+
+def test_with_solo_box_rung_does_not_mutate_the_default_ladder():
+    with_solo_box_rung(CurriculumSchedule.default())
+    assert all(s.name != "solo-box" for s in DEFAULT_LADDER)  # default still pristine

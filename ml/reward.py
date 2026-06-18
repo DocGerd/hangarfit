@@ -25,6 +25,9 @@ class RewardContext:
     # None = not a Park step (bonus structurally absent);
     # False = Park step with invalid layout; True = Park step with valid layout.
     park_valid: bool | None = None
+    # Whole-layout validity at the TERMINAL step (the product checker), consumed only when
+    # RewardWeights.validity_conditional_terminal is on. None on non-terminal steps. (#714)
+    terminal_valid: bool | None = None
 
 
 def potential(
@@ -54,12 +57,17 @@ def step_reward(ctx: RewardContext, w: RewardWeights) -> float:
     # Terminal: reward the placed fraction MINUS a penalty on the unplaced fraction. The
     # penalty (r_unplaced_penalty, default 0 -> the second term vanishes) charges abandonment
     # so running an object to budget exhaustion is no longer free relative to committing a
-    # Park — the #710 Park/drive-out economics rebalance.
-    terminal = (
-        w.r_terminal * ctx.terminal_fraction - w.r_unplaced_penalty * (1.0 - ctx.terminal_fraction)
-        if ctx.terminal_fraction is not None
-        else 0.0
-    )
+    # Park — the #710 Park/drive-out economics rebalance. When validity_conditional_terminal is
+    # on, an INVALID terminal layout collapses the effective placed fraction to 0 (so the
+    # +r_terminal credit goes to abandonment instead) — the #714 fix for the multi-object
+    # commit-everything-invalidly attractor. Default off -> eff_fraction == terminal_fraction.
+    if ctx.terminal_fraction is None:
+        terminal = 0.0
+    else:
+        eff_fraction = ctx.terminal_fraction
+        if w.validity_conditional_terminal and not ctx.terminal_valid:
+            eff_fraction = 0.0
+        terminal = w.r_terminal * eff_fraction - w.r_unplaced_penalty * (1.0 - eff_fraction)
     shaping = w.gamma * ctx.potential - ctx.prev_potential
     valid_park = w.r_valid_park if ctx.park_valid else 0.0
     return hard + movement + soft + terminal + shaping + valid_park
