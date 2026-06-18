@@ -215,3 +215,31 @@ def test_collect_rollout_vec_fills_buffer_and_stats():
     assert len(buf.last_value) == 2
     # the trivial env completes on PARK, so some episodes finish -> stats with total_reward
     assert all(isinstance(s.total_reward, float) for s in stats)
+
+
+def test_train_curriculum_n_envs_runs():
+    from ml.curriculum import CurriculumSchedule
+    from ml.train import train_curriculum
+
+    sched = CurriculumSchedule.default()
+    # cap the run tiny: 1 iter per stage, 2 envs, sync backend (no subprocess in CI)
+    from dataclasses import replace
+
+    sched = replace(sched, policy=replace(sched.policy, max_iters=1))
+    hist = train_curriculum(seed=0, schedule=sched, rollout_len=16, n_envs=2, vec_backend="sync")
+    assert hist.promotions  # advanced through stages
+
+
+def test_train_curriculum_n_envs_1_matches_legacy_byte_identical():
+    """n_envs=1 must reproduce the legacy single-stream training history exactly."""
+    from dataclasses import replace
+
+    from ml.curriculum import CurriculumSchedule
+    from ml.train import train_curriculum
+
+    default_pol = CurriculumSchedule.default().policy
+    sched = replace(CurriculumSchedule.default(), policy=replace(default_pol, max_iters=1))
+    legacy = train_curriculum(seed=0, schedule=sched, rollout_len=16)  # default n_envs=1
+    again = train_curriculum(seed=0, schedule=sched, rollout_len=16, n_envs=1)
+    assert legacy.promotions == again.promotions
+    assert legacy.iterations == again.iterations  # CurriculumHistory equality (per-iter records)

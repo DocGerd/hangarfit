@@ -205,3 +205,15 @@ def test_should_promote_valid_placed_credits_only_valid_episodes():
     assert (
         should_promote([EpisodeStat(1.0, False, 0.0), EpisodeStat(1.0, False, 0.0)], pol) is False
     )
+
+
+def test_stage_rng_worker_index_zero_is_legacy_and_distinct():
+    from ml.curriculum import stage_rng
+
+    base = stage_rng(7, 2)  # legacy 2-arg call
+    w0 = stage_rng(7, 2, worker_index=0)  # must match legacy exactly
+    assert [base.random() for _ in range(5)] == [w0.random() for _ in range(5)]
+    # different workers => different streams
+    w1 = stage_rng(7, 2, worker_index=1)
+    w0b = stage_rng(7, 2, worker_index=0)
+    assert [w0b.random() for _ in range(5)] != [w1.random() for _ in range(5)]
