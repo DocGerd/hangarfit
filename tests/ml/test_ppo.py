@@ -461,6 +461,8 @@ def test_compute_gae_vec_matches_per_env_compute_gae():
     last_values = [0.1, -0.2, 0.3]
 
     adv_vec, ret_vec = compute_gae_vec(rewards, values, dones, last_values, gamma=0.99, lam=0.95)
+    assert adv_vec.shape == (T * N,)
+    assert ret_vec.shape == (T * N,)
     # Per-env reference, flattened row-major (t*N + env).
     for env in range(N):
         a, r = compute_gae(

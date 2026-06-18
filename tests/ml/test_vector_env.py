@@ -80,24 +80,32 @@ def _trivial_worker_fn():
 def test_sync_equals_subproc_byte_identical():
     """Workers are torch-free + deterministic, so Sync and Subproc must agree exactly
     on the same action stream (the ADR-aligned tier-1 determinism contract)."""
-    from ml.action_space import PARK_INDEX  # noqa: F401
+    from ml.action_space import PARK_INDEX
 
     actions = [(1, 0), (1, 0)]  # S-forward both envs (does not complete -> no auto-reset)
 
     sync = SyncVectorEnv([_trivial_worker_fn(), _trivial_worker_fn()])
     sa = sync.reset()
     ss = sync.step(actions)
-    sync.close()
 
     with SubprocVectorEnv([_trivial_worker_fn, _trivial_worker_fn]) as sub:
         ba = sub.reset()
         bs = sub.step(actions)
 
-    for a, b in zip(sa, ba, strict=True):
-        assert np.array_equal(a.raster, b.raster) and np.array_equal(a.tokens, b.tokens)
-    assert ss.rewards == bs.rewards and ss.dones == bs.dones
-    for a, b in zip(ss.obs, bs.obs, strict=True):
-        assert np.array_equal(a.raster, b.raster) and np.array_equal(a.tokens, b.tokens)
+        for a, b in zip(sa, ba, strict=True):
+            assert np.array_equal(a.raster, b.raster) and np.array_equal(a.tokens, b.tokens)
+        assert ss.rewards == bs.rewards and ss.dones == bs.dones
+        for a, b in zip(ss.obs, bs.obs, strict=True):
+            assert np.array_equal(a.raster, b.raster) and np.array_equal(a.tokens, b.tokens)
+
+        # PARK step: exercises the auto-reset path (trivial env completes on PARK)
+        ss2 = sync.step([(PARK_INDEX, 0), (PARK_INDEX, 0)])
+        bs2 = sub.step([(PARK_INDEX, 0), (PARK_INDEX, 0)])
+        assert ss2.dones == bs2.dones
+        for a, b in zip(ss2.obs, bs2.obs, strict=True):
+            assert np.array_equal(a.raster, b.raster) and np.array_equal(a.tokens, b.tokens)
+
+    sync.close()
 
 
 def _broken_worker_fn():
@@ -108,7 +116,7 @@ def test_subproc_worker_failure_is_loud():
     import pytest
 
     with (
-        pytest.raises(RuntimeError, match="worker failed"),
+        pytest.raises(RuntimeError, match=r"worker \d+ failed"),
         SubprocVectorEnv([_broken_worker_fn]) as sub,
     ):
         sub.reset()

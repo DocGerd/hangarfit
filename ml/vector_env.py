@@ -47,7 +47,10 @@ class _EnvWorker:
         self, kind_idx: int, mag_idx: int
     ) -> tuple[ObservationTensors, float, bool, StepInfo, EpisodeStat | None]:
         obs = self._env._observe()
-        assert obs.active is not None, "step on a terminal env (auto-reset failed?)"
+        if obs.active is None:
+            raise RuntimeError(
+                "_EnvWorker.step called on a terminal env (auto-reset failed or step after done)"
+            )
         tr = self._env._body(obs.active.object_id).effective_turn_radius_m()
         action = decode(kind_idx, mag_idx, turn_radius_m=tr)
         sem, reward, done, info = self._env.step(action)
@@ -130,6 +133,7 @@ def _worker_loop(remote: mp.connection.Connection, worker_fn: Callable[[], _EnvW
     exception is sent back as ('error', repr) so the parent raises rather than hangs."""
     try:
         worker = worker_fn()
+        remote.send(("ready", None))
         while True:
             cmd, payload = remote.recv()
             if cmd == "reset":
@@ -172,15 +176,31 @@ class SubprocVectorEnv:
             self._parents.append(parent)
             self._procs.append(proc)
         self._closed = False
+        for i, (parent, proc) in enumerate(zip(self._parents, self._procs, strict=True)):
+            if not parent.poll(timeout=30.0):
+                proc.terminate()
+                raise RuntimeError(
+                    f"SubprocVectorEnv worker {i} did not start within 30s "
+                    f"(likely a pickle/import failure in the child — "
+                    f"try vec_backend='sync' to see the traceback)"
+                )
+            # consume the ("ready", None) ack; raises if the child sent ("error", ...) instead
+            self._recv(parent, i)
 
     @property
     def num_envs(self) -> int:
         return self._n
 
-    def _recv(self, parent: mp.connection.Connection) -> object:
-        tag, payload = parent.recv()
+    def _recv(self, parent: mp.connection.Connection, worker_idx: int) -> object:
+        try:
+            tag, payload = parent.recv()
+        except (EOFError, ConnectionResetError) as e:
+            raise RuntimeError(
+                f"SubprocVectorEnv worker {worker_idx} pipe closed unexpectedly "
+                f"(worker crashed before replying — check stderr): {e}"
+            ) from e
         if tag == "error":
-            raise RuntimeError(f"SubprocVectorEnv worker failed: {payload}")
+            raise RuntimeError(f"SubprocVectorEnv worker {worker_idx} failed: {payload}")
         return payload
 
     def reset(self) -> list[ObservationTensors]:
@@ -188,14 +208,14 @@ class SubprocVectorEnv:
             p.send(("reset", None))
         # _recv returns the (untyped) pipe payload; for reset it is always an
         # ObservationTensors (the worker's encoded obs). Narrow it for mypy.
-        return [cast(ObservationTensors, self._recv(p)) for p in self._parents]
+        return [cast(ObservationTensors, self._recv(p, i)) for i, p in enumerate(self._parents)]
 
     def step(self, actions: Sequence[tuple[int, int]]) -> VecStep:
         if len(actions) != self._n:
             raise ValueError(f"expected {self._n} actions, got {len(actions)}")
         for p, (k, m) in zip(self._parents, actions, strict=True):
             p.send(("step", (int(k), int(m))))
-        results = [self._recv(p) for p in self._parents]
+        results = [self._recv(p, i) for i, p in enumerate(self._parents)]
         obs = [r[0] for r in results]  # type: ignore[index]
         return VecStep(
             obs,
@@ -212,13 +232,23 @@ class SubprocVectorEnv:
         for p in self._parents:
             try:
                 p.send(("close", None))
-                p.recv()
+                if p.poll(timeout=5.0):
+                    p.recv()
             except (EOFError, OSError):
                 pass
-        for proc in self._procs:
+        for i, proc in enumerate(self._procs):
             proc.join(timeout=5.0)
             if proc.is_alive():  # pragma: no cover
                 proc.terminate()
+            elif proc.exitcode not in (0, None):
+                import warnings
+
+                warnings.warn(
+                    f"SubprocVectorEnv worker {i} exited with code {proc.exitcode} — "
+                    f"training data from this worker may be incomplete.",
+                    RuntimeWarning,
+                    stacklevel=2,
+                )
 
     def __enter__(self) -> SubprocVectorEnv:
         return self

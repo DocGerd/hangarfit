@@ -213,6 +213,9 @@ def test_collect_rollout_vec_fills_buffer_and_stats():
     vec.close()
     assert len(buf) == 8 and buf.num_envs == 2
     assert len(buf.last_value) == 2
+    import math
+
+    assert all(math.isfinite(v) for v in buf.last_value)
     # the trivial env completes on PARK, so some episodes finish -> stats with total_reward
     assert all(isinstance(s.total_reward, float) for s in stats)
 
@@ -258,5 +261,6 @@ def test_train_curriculum_n_envs_1_matches_legacy_byte_identical():
     sched = replace(CurriculumSchedule.default(), policy=replace(default_pol, max_iters=1))
     legacy = train_curriculum(seed=0, schedule=sched, rollout_len=16)  # default n_envs=1
     again = train_curriculum(seed=0, schedule=sched, rollout_len=16, n_envs=1)
+    assert any(eps for _, _, eps in legacy.iterations), "no episodes completed — vacuous equality"
     assert legacy.promotions == again.promotions
     assert legacy.iterations == again.iterations  # CurriculumHistory equality (per-iter records)
