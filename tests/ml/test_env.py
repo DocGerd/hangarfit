@@ -580,3 +580,88 @@ def test_validity_conditional_terminal_multiobject_full_invalid_park_drops_credi
     on_r, on_i, _ = run(validity_conditional=True)
     assert off_i.valid is False and on_i.valid is False  # overlapping pile -> invalid
     assert off_r - on_r == pytest.approx(w.r_terminal + w.r_unplaced_penalty)
+
+
+# ---------------------------------------------------------------------------
+# #712 — seed-anchor start-state graft: env pre-parks the requested PREFIX at
+# committed-witness poses and drives only the remaining N-k objects.
+# ---------------------------------------------------------------------------
+_WITNESS_ANCHORS = (
+    Placement(plane_id="fuji", x_m=5.0, y_m=8.0, heading_deg=0.0, on_carts=False),
+    Placement(plane_id="aviat_husky", x_m=16.0, y_m=8.0, heading_deg=0.0, on_carts=False),
+)
+
+
+def _anchor_env(seed_anchor_k):
+    return HangarFitEnv(
+        hangar=empty_hangar(),
+        fleet=_fuji(),
+        requested_ids=("fuji", "aviat_husky"),
+        anchor_placements=_WITNESS_ANCHORS,
+        difficulty=DifficultyConfig(
+            max_objects=2,
+            seed_anchor_k=seed_anchor_k,
+            per_object_step_budget=60,
+            total_step_budget=60,
+        ),
+    )
+
+
+def test_seed_anchor_pre_parks_prefix_and_drives_the_rest():
+    env = _anchor_env(seed_anchor_k=1)
+    obs = env.reset(requested_ids=("fuji", "aviat_husky"))
+    # the prefix object (fuji) is pre-parked at its committed-witness pose...
+    assert [p.plane_id for p in env._parked] == ["fuji"]
+    assert env._parked[0] == _WITNESS_ANCHORS[0]
+    # ...and the remaining object (aviat_husky) is the one driven in this episode.
+    assert env._active_id == "aviat_husky"
+    assert env._queue == []  # husky was the only queued id; _spawn popped it
+    assert obs.active is not None and obs.active.object_id == "aviat_husky"
+    assert [pk.object_id for pk in obs.parked] == ["fuji"]
+
+
+def test_seed_anchor_subset_follows_request_order():
+    # The anchored subset is the request PREFIX, so a different request order anchors a
+    # different object -> "anchor the prefix" composes with the curriculum's seeded
+    # per-episode permutation into a seeded-random k-subset (#712 Q1).
+    env = _anchor_env(seed_anchor_k=1)
+    env.reset(requested_ids=("aviat_husky", "fuji"))
+    assert [p.plane_id for p in env._parked] == ["aviat_husky"]
+    assert env._active_id == "fuji"
+
+
+def test_seed_anchor_k_zero_reset_is_byte_identical_to_no_anchor():
+    # k=0 with anchors supplied must reproduce the no-anchor reset exactly (default-neutral:
+    # the #712 lever is inert until a rung sets seed_anchor_k>0).
+    anchored = _anchor_env(seed_anchor_k=0)
+    plain = HangarFitEnv(
+        hangar=empty_hangar(),
+        fleet=_fuji(),
+        requested_ids=("fuji", "aviat_husky"),
+        difficulty=DifficultyConfig(max_objects=2, per_object_step_budget=60, total_step_budget=60),
+    )
+    obs_a = anchored.reset(requested_ids=("fuji", "aviat_husky"))
+    obs_p = plain.reset(requested_ids=("fuji", "aviat_husky"))
+    assert anchored._parked == [] == plain._parked
+    assert anchored._queue == plain._queue
+    assert obs_a == obs_p
+
+
+def test_seed_anchor_terminal_fraction_counts_anchored_objects():
+    # Anchors live in _parked (counted in the denominator N), so parking the one driven
+    # object completes the set: placed==total==2 (#712 denominator semantics).
+    env = _anchor_env(seed_anchor_k=1)
+    env.reset(requested_ids=("fuji", "aviat_husky"))
+    for _ in range(20):
+        if env._active_pose is not None and env._active_pose.y_m >= 1.0:
+            break
+        env.step(Primitive(kind="S", magnitude=1.0, gear=1))
+    _, _, done, info = env.step(Park())
+    assert done is True
+    assert info.placed == 2 and info.total == 2
+
+
+def test_seed_anchor_rejects_k_not_less_than_requested():
+    # k must leave at least one object to drive; k>=N is a misconfigured rung -> loud error.
+    with pytest.raises(ValueError, match="seed_anchor_k"):
+        _anchor_env(seed_anchor_k=2)

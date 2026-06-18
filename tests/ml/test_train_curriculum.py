@@ -887,3 +887,81 @@ def test_main_without_solo_box_rung_keeps_default_ladder(monkeypatch):
     monkeypatch.setattr(train_mod, "train_curriculum", fake)
     train_mod.main(["--schedule", "curriculum"])
     assert "solo-box" not in [s.name for s in captured["schedule"].stages]
+
+
+# ---------------------------------------------------------------------------
+# #712 — --seed-anchor CLI wiring (the pair-anchored start-state graft).
+# ---------------------------------------------------------------------------
+
+
+def test_argparser_seed_anchor_defaults_false():
+    assert build_argparser().parse_args([]).seed_anchor is False
+
+
+def test_main_seed_anchor_requires_curriculum_schedule(monkeypatch):
+    # --seed-anchor is a curriculum ladder edit; under --schedule trivial it fails LOUD.
+    import ml.train as train_mod
+
+    ran = {"train": False}
+
+    def guard(**kw):
+        ran["train"] = True
+        return []
+
+    monkeypatch.setattr(train_mod, "train", guard)
+    with pytest.raises(SystemExit):
+        train_mod.main(["--schedule", "trivial", "--seed-anchor"])
+    assert ran["train"] is False
+
+
+def test_main_seed_anchor_inserts_rung_into_schedule(monkeypatch):
+    import ml.train as train_mod
+    from ml.curriculum import CurriculumHistory
+
+    captured: dict = {}
+
+    def fake(**kw):
+        captured.update(kw)
+        return CurriculumHistory()
+
+    monkeypatch.setattr(train_mod, "train_curriculum", fake)
+    train_mod.main(["--schedule", "curriculum", "--seed-anchor"])
+    assert "pair-anchored" in [s.name for s in captured["schedule"].stages]
+
+
+def test_main_without_seed_anchor_keeps_default_ladder(monkeypatch):
+    import ml.train as train_mod
+    from ml.curriculum import CurriculumHistory
+
+    captured: dict = {}
+
+    def fake(**kw):
+        captured.update(kw)
+        return CurriculumHistory()
+
+    monkeypatch.setattr(train_mod, "train_curriculum", fake)
+    train_mod.main(["--schedule", "curriculum"])
+    assert "pair-anchored" not in [s.name for s in captured["schedule"].stages]
+
+
+def test_train_curriculum_trains_an_anchored_rung_end_to_end():
+    # End-to-end smoke: train_curriculum runs an anchored rung without crashing — the witness
+    # pool feeds sample_request, the env pre-parks the k=1 prefix, and collect_rollout +
+    # ppo_update consume the partial-start episodes. Tiny budget for speed.
+    anchored = Stage(
+        name="pair-anchored-smoke",
+        difficulty=DifficultyConfig(
+            max_objects=2, seed_anchor_k=1, per_object_step_budget=30, total_step_budget=30
+        ),
+        hangar_path="data/hangar.yaml",
+        fleet_path="data/fleet.yaml",
+        anchor_layout_path="tests/fixtures/ml/witness_box.yaml",
+        clearance_m=0.05,
+    )
+    sched = CurriculumSchedule(
+        stages=(anchored,),
+        # threshold>1 => never promote by competency => the rung runs its single capped iter.
+        policy=PromotionPolicy(metric="fraction_placed", window=1, threshold=2.0, max_iters=1),
+    )
+    hist = train_curriculum(seed=0, schedule=sched, rollout_len=32)
+    assert any(name == "pair-anchored-smoke" for name, _, _ in hist.iterations)

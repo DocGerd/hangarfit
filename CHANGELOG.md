@@ -6,6 +6,25 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Learned backend (#712, epic #607): seed-anchor start-state curriculum graft
+  (`--seed-anchor`) — the 2-object joint-discovery scaffold.** The #714 re-gate confirmed a
+  genuine joint-discovery wall (`trivial` + `solo-box` master, but `pair-box` stalls at
+  `valid_placed ≈ 0.05`, and the `--normalize-returns`-off control is strictly worse, so the
+  residual is discovery, not the normalizer). `--seed-anchor` (curriculum-only) inserts an
+  opt-in `pair-anchored` rung before `pair-box` that **pre-parks a k-prefix of a committed
+  witness layout** (`tests/fixtures/ml/witness_box.yaml`) and drives only the remaining N−k
+  objects in, so 2-object discovery is scaffolded by a guaranteed-valid 1-object start.
+  Correctness rests on one property — a k-prefix of a valid layout is itself valid (removing
+  objects cannot create conflicts) — so the partial start needs **no runtime solver / search**
+  (the env stays solver-free). `DifficultyConfig.seed_anchor` (an unwired stub) is replaced by
+  `seed_anchor_k: int = 0`; `HangarFitEnv` gains an `anchor_placements` arg and pre-parks the
+  request **prefix** at reset, which composes with the curriculum's existing seeded
+  per-episode permutation into a **seeded-random k-subset** anchor (so the choice is
+  deterministic + Sync≡Subproc byte-identical). `Stage.anchor_layout_path` + `stage_builder`
+  load the witness (single source of truth for the rung's object set and poses). All
+  default-neutral: `seed_anchor_k=0` / `--seed-anchor` absent → CPU byte-identical to prior
+  runs; `--seed-anchor` fails loud under `--schedule trivial`.
+
 - **Learned backend (#710, epic #607): opt-in CUDA training (`--device cuda`).**
   `ml.train` / `train_curriculum` / `train` gain a `--device {cpu,cuda}` knob. `cpu`
   (the default) is unchanged and **byte-identical** to prior runs — every device move is

@@ -18,6 +18,7 @@ from ml.curriculum import (
     should_promote,
     stage_rng,
     validate_ladder,
+    with_pair_anchored_rung,
     with_promotion_overrides,
     with_solo_box_rung,
 )
@@ -364,3 +365,71 @@ def test_with_solo_box_rung_raises_without_trivial_rung():
     )
     with pytest.raises(ValueError, match="trivial"):
         with_solo_box_rung(no_trivial)
+
+
+# ---------------------------------------------------------------------------
+# #712 — seed-anchor start-state curriculum graft: DifficultyConfig.seed_anchor_k
+# ---------------------------------------------------------------------------
+
+
+def test_difficulty_config_seed_anchor_k_defaults_zero():
+    # #712: replaces the unwired seed_anchor:bool stub. 0 => no anchored objects
+    # => byte-identical to the pre-#712 env reset.
+    assert DifficultyConfig().seed_anchor_k == 0
+
+
+def test_difficulty_config_seed_anchor_k_is_settable():
+    assert DifficultyConfig(seed_anchor_k=1).seed_anchor_k == 1
+    assert DifficultyConfig(seed_anchor_k=2).seed_anchor_k == 2
+
+
+# ---------------------------------------------------------------------------
+# #712 — the opt-in 'pair-anchored' rung (--seed-anchor)
+# ---------------------------------------------------------------------------
+
+
+def test_default_ladder_has_no_pair_anchored_rung():
+    # Byte-identity guard: pair-anchored is opt-in; the default ladder is unchanged.
+    assert all(s.name != "pair-anchored" for s in DEFAULT_LADDER)
+
+
+def test_with_pair_anchored_rung_inserts_before_pair_box():
+    sched = with_pair_anchored_rung(CurriculumSchedule.default())
+    names = [s.name for s in sched.stages]
+    assert names[:3] == ["trivial", "pair-anchored", "pair-box"]
+
+
+def test_pair_anchored_rung_is_two_object_k1_with_a_witness():
+    sched = with_pair_anchored_rung(CurriculumSchedule.default())
+    rung = next(s for s in sched.stages if s.name == "pair-anchored")
+    assert rung.difficulty.max_objects == 2  # two objects in the set...
+    assert rung.difficulty.seed_anchor_k == 1  # ...one pre-parked, one driven in
+    assert rung.anchor_layout_path is not None  # the committed witness layout
+
+
+def test_with_pair_anchored_rung_preserves_policy_and_validates():
+    base = CurriculumSchedule.default()
+    sched = with_pair_anchored_rung(base)
+    assert sched.policy == base.policy  # only the ladder changes, not the promotion gate
+    validate_ladder(sched.stages, encoder_max_objects=EncoderConfig().max_objects)  # no raise
+
+
+def test_with_pair_anchored_rung_does_not_mutate_the_default_ladder():
+    with_pair_anchored_rung(CurriculumSchedule.default())
+    assert all(s.name != "pair-anchored" for s in DEFAULT_LADDER)  # default still pristine
+
+
+def test_with_pair_anchored_rung_raises_without_pair_box():
+    no_pair_box = CurriculumSchedule(
+        stages=tuple(s for s in DEFAULT_LADDER if s.name != "pair-box"),
+        policy=PromotionPolicy(),
+    )
+    with pytest.raises(ValueError, match="pair-box"):
+        with_pair_anchored_rung(no_pair_box)
+
+
+def test_seed_anchor_composes_with_solo_box_rung():
+    # The two opt-in levers stack: solo-box after trivial, pair-anchored before pair-box.
+    sched = with_pair_anchored_rung(with_solo_box_rung(CurriculumSchedule.default()))
+    names = [s.name for s in sched.stages]
+    assert names[:4] == ["trivial", "solo-box", "pair-anchored", "pair-box"]

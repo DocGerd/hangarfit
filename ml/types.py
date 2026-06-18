@@ -81,7 +81,12 @@ class DifficultyConfig:
     max_objects: int | None = None  # cap the requested set size (None = all)
     per_object_step_budget: int = 60  # primitives before an object is "unplaceable"
     total_step_budget: int = 600  # global per-episode primitive cap
-    seed_anchor: bool = False  # spawn near a known-valid anchor (curriculum, NOT BC)
+    # #712 seed-anchor start-state graft: pre-park the first ``seed_anchor_k`` requested
+    # objects at their committed-witness poses (a k-prefix of a valid witness layout is
+    # provably valid), drive the remaining N-k in, anneal k->0 across the curriculum. 0 =>
+    # no anchored objects => byte-identical to the empty-start env. The env reads the witness
+    # poses from its ``anchor_placements`` (threaded by stage_builder from the rung's witness).
+    seed_anchor_k: int = 0
 
 
 @dataclass(frozen=True, slots=True)

@@ -158,10 +158,9 @@ def sample_request(pool: Sequence[str], n: int, rng: random.Random) -> tuple[str
 
 @dataclass(frozen=True, slots=True)
 class Stage:
-    """One rung of the ladder. Holds fleet/hangar as repo-relative PATH STRINGS +
-    scalar overrides — no loading happens here (that is stage_builder.py's job),
-    so this module stays disk-free. DifficultyConfig.seed_anchor is left False;
-    anchored spawning is a later rung, out of 4b scope."""
+    """One rung of the ladder. Holds fleet/hangar (and, for a #712 seed-anchor rung, the
+    witness layout) as repo-relative PATH STRINGS + scalar overrides — no loading happens
+    here (that is stage_builder.py's job), so this module stays disk-free."""
 
     name: str
     difficulty: DifficultyConfig
@@ -172,6 +171,11 @@ class Stage:
     clearance_m: float | None = None  # override on the loaded hangar; None = file value
     wing_layer_clearance_m: float | None = None  # override; None = file value
     apron_depth_m: float = 8.0  # override; gives the env a spawn region (matches 4a)
+    # #712 seed-anchor rung: repo-relative path to a committed witness layout. When set, the
+    # rung's sampling pool IS the witness's objects (Q2) and the env pre-parks a
+    # ``difficulty.seed_anchor_k``-prefix of them at their witness poses. None (default) =>
+    # no anchoring (an empty-start rung) => byte-identical to the pre-#712 ladder.
+    anchor_layout_path: str | None = None
 
     def __post_init__(self) -> None:
         # Disk-free scalar invariants (the disk-needing max_objects <= len(pool) check
@@ -230,6 +234,10 @@ class CurriculumSchedule:
 
 _BOX_HANGAR = "data/hangar.yaml"
 _BOX_FLEET = "data/fleet.yaml"
+# Committed seed-anchor witness for the box rungs (#712). A valid 2-object box layout; the
+# pair-anchored rung pre-parks a k-prefix of it. A dev/CI-only fixture (all of ml/ is
+# dev/CI-only, never shipped), validated by tests/ml/test_stage_builder.py::test_witness_box_*.
+_WITNESS_BOX = "tests/fixtures/ml/witness_box.yaml"
 _NOTCH_HANGAR = "examples/herrenteich/hangar.yaml"
 _NOTCH_FLEET = "examples/herrenteich/fleet.yaml"
 _LENIENT_CLEARANCE = (
@@ -245,6 +253,23 @@ _SOLO_BOX_STAGE = Stage(
     difficulty=DifficultyConfig(max_objects=1, per_object_step_budget=60, total_step_budget=60),
     hangar_path=_BOX_HANGAR,
     fleet_path=_BOX_FLEET,
+    clearance_m=_LENIENT_CLEARANCE,
+)
+
+# Opt-in #712 rung (wired via with_pair_anchored_rung / --seed-anchor), NOT in DEFAULT_LADDER.
+# Two objects, but ONE is pre-parked at a committed-witness pose (seed_anchor_k=1) and the agent
+# only drives the other in — scaffolding 2-object joint discovery with a valid 1-object start
+# before the empty-start pair-box (k=0). The pool IS the witness's objects (anchor_layout_path
+# set => stage_builder pins it), so the per-episode seeded permutation makes k=1 a seeded-random
+# single-object anchor. Only one object is driven, so the budget matches solo-box's 60/60.
+_PAIR_ANCHORED_STAGE = Stage(
+    name="pair-anchored",
+    difficulty=DifficultyConfig(
+        max_objects=2, seed_anchor_k=1, per_object_step_budget=60, total_step_budget=60
+    ),
+    hangar_path=_BOX_HANGAR,
+    fleet_path=_BOX_FLEET,
+    anchor_layout_path=_WITNESS_BOX,
     clearance_m=_LENIENT_CLEARANCE,
 )
 
@@ -311,3 +336,20 @@ def with_solo_box_rung(schedule: CurriculumSchedule) -> CurriculumSchedule:
             "with_solo_box_rung: schedule has no 'trivial' rung to insert after"
         ) from None
     return replace(schedule, stages=stages[:after] + (_SOLO_BOX_STAGE,) + stages[after:])
+
+
+def with_pair_anchored_rung(schedule: CurriculumSchedule) -> CurriculumSchedule:
+    """Return ``schedule`` with the opt-in ``pair-anchored`` rung inserted immediately BEFORE
+    the ``pair-box`` rung — the #712 ``--seed-anchor`` lever. pair-anchored pre-parks 1 of its
+    2 objects at a committed-witness pose (k=1) and the agent drives the other in, so 2-object
+    joint discovery is scaffolded by a valid 1-object start before the empty-start pair-box
+    (k=0). Only the ladder changes (the promotion policy is preserved). The default ladder is
+    left untouched, so default runs stay byte-identical (this is opt-in)."""
+    stages = schedule.stages
+    try:
+        before = next(i for i, s in enumerate(stages) if s.name == "pair-box")
+    except StopIteration:
+        raise ValueError(
+            "with_pair_anchored_rung: schedule has no 'pair-box' rung to insert before"
+        ) from None
+    return replace(schedule, stages=stages[:before] + (_PAIR_ANCHORED_STAGE,) + stages[before:])
