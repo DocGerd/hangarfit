@@ -509,3 +509,54 @@ def test_vecrolloutbuffer_batch_shape_matches_flat():
         "reward",
         "done",
     }
+
+
+def test_ppo_update_minibatches_all_TN_vec_transitions(monkeypatch):
+    """ppo_update must shuffle/minibatch over all T*N vec transitions, not len(buffer)==T.
+    Regression for #708 C1: with n=len(buffer) the update silently trained on only the first
+    T of T*N rows, dropping (N-1)/N of every rollout."""
+    import numpy as np
+
+    from ml.encoding import ACTION_DIM, RASTER_CHANNELS, TOKEN_DIM, ObservationTensors
+    from ml.policy import HangarFitPolicy
+    from ml.ppo import PPOConfig, VecRolloutBuffer, ppo_update
+
+    def _obs():
+        return ObservationTensors(
+            raster=np.zeros((RASTER_CHANNELS, 8, 8), np.float32),
+            tokens=np.zeros((4, TOKEN_DIM), np.float32),
+            token_mask=np.ones(4, bool),
+            active_index=0,
+            legal_action_mask=np.ones(ACTION_DIM, bool),
+            meta={},
+        )
+
+    T, N = 3, 4
+    buf = VecRolloutBuffer(num_envs=N)
+    for _ in range(T):
+        buf.add_step(
+            [_obs() for _ in range(N)],
+            [0] * N,
+            [0] * N,
+            [0.0] * N,
+            [0.0] * N,
+            [0.1] * N,
+            [False] * N,
+        )
+    buf.last_value = [0.0] * N
+
+    captured: list[int] = []
+    real_randperm = torch.randperm
+
+    def _spy(k, *a, **kw):  # type: ignore[no-untyped-def]
+        captured.append(int(k))
+        return real_randperm(k, *a, **kw)
+
+    monkeypatch.setattr(torch, "randperm", _spy)
+
+    policy = HangarFitPolicy()
+    opt = torch.optim.SGD(policy.parameters(), lr=0.0)  # lr=0: weights frozen, coverage only
+    ppo_update(policy, opt, buf, PPOConfig(epochs=1, minibatch_size=64))
+
+    assert captured, "ppo_update did not call torch.randperm"
+    assert all(k == T * N for k in captured), f"shuffled {captured}, expected T*N={T * N}"

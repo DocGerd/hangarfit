@@ -242,7 +242,11 @@ def ppo_update(
         advantages = advantages / std
     if not torch.isfinite(advantages).all():
         raise RuntimeError("advantages contain NaN/inf after normalization")
-    n = len(buffer)
+    # Number of FLAT transitions to shuffle/minibatch over. For a VecRolloutBuffer this is
+    # T*N (advantages is length T*N), NOT len(buffer)==T — using len(buffer) would silently
+    # train on only the first T of T*N rows and drop (N-1)/N of every rollout (#708). For the
+    # single-stream RolloutBuffer advantages is length T == len(buffer), so this is unchanged.
+    n = advantages.shape[0]
     accum: dict[str, list[float]] = {
         "policy_loss": [],
         "value_loss": [],
