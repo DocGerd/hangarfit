@@ -165,8 +165,9 @@ master by competency (single-object whole-fleet transfer works), but `pair-box` 
 normalizer is load-bearing, not the blocker — the residual is genuine joint discovery). That
 result satisfied the documented trigger for **#712 (`--seed-anchor` start-state graft)**, now
 wired: pre-park a k-prefix of a committed witness layout (a k-prefix of a valid layout is
-provably valid, so no runtime solver), drive the remaining N−k in, anneal k→0. See the
-pair-anchored gate recipe below.
+provably valid, so no runtime solver) and drive the remaining N−k in. Step 1 ships a single
+k=1 rung (`pair-anchored`); later rungs can anneal k→0. See the pair-anchored gate recipe
+below.
 
 ### Box-rung mastery gate recipe (#714 re-gate)
 
@@ -206,11 +207,14 @@ python -u -m ml.train --schedule curriculum --device cuda --n-envs 16 \
   --metrics-out metrics-seed0-anchor.jsonl --checkpoint-out ck-seed0-anchor.pt --seed 0
 ```
 
-The `pair-anchored` rung pre-parks 1 object and drives 1, so its `valid_placed` **floor is
-~0.5** (sit still with the anchor → a valid 1-object layout). The **win condition** is the
-rung *lifting above 0.5* toward 0.9 — i.e. the agent learning to place object 2 *given* object
-1 — and ideally that competency transferring so the downstream empty-start `pair-box` lifts off
-its place-nothing pole too. **If pair-anchored cannot exceed its 0.5 floor**, a valid start
+The `pair-anchored` rung pre-parks 1 object and drives 1. An agent that **keeps the valid
+1-object partial** (parks nothing, or parks object 2 validly) scores `valid_placed ≥ ~0.5`
+(the anchor is a valid 1-object layout, counted in the denominator); committing object 2
+*invalidly* still scores 0 for that episode, so the rung average only settles at ~0.5 once the
+place-nothing behavior dominates. The **win condition** is the rung average *lifting above 0.5*
+toward 0.9 — i.e. the agent learning to place object 2 *validly given* object 1 — and ideally
+that competency transferring so the downstream empty-start `pair-box` lifts off its
+place-nothing pole too. **If pair-anchored cannot exceed its 0.5 floor**, a valid start
 alone is insufficient and the next lever is the full k=2→1→0 anneal (more scaffolding) or a
 pose-curriculum. Read `valid_placed`, not `valid_rate`. The witness is
 `tests/fixtures/ml/witness_box.yaml` (a committed valid 2-object box layout; every k-prefix is

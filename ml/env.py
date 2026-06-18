@@ -50,6 +50,13 @@ class HangarFitEnv:
         # valid witness layout is provably valid). Empty by default => the anchor mechanism is
         # inert (k stays 0) and reset is byte-identical to the empty-start env.
         self._anchor_by_id: dict[str, Placement] = {p.plane_id: p for p in anchor_placements}
+        if len(self._anchor_by_id) != len(anchor_placements):
+            ids = [p.plane_id for p in anchor_placements]
+            dupes = sorted({i for i in ids if ids.count(i) > 1})
+            raise ValueError(
+                f"anchor_placements has duplicate object ids {dupes} (each anchored id needs "
+                f"exactly one witness pose, else the anchor map desyncs from the pool)"
+            )
         self.difficulty = difficulty or DifficultyConfig()
         self.weights = weights or RewardWeights()
         self._reset_state()
@@ -65,10 +72,10 @@ class HangarFitEnv:
         # seeded-random k-subset" (#712 Q1). k=0 => _parked empty, _queue full => byte-identical.
         k = self.difficulty.seed_anchor_k
         if k:
-            if k >= len(requested):
+            if k < 0 or k >= len(requested):
                 raise ValueError(
-                    f"seed_anchor_k={k} must be < the requested set size {len(requested)} "
-                    f"(at least one object must be left to drive in)"
+                    f"seed_anchor_k={k} must satisfy 0 <= k < the requested set size "
+                    f"{len(requested)} (at least one object must be left to drive in)"
                 )
             missing = [i for i in requested[:k] if i not in self._anchor_by_id]
             if missing:

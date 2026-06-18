@@ -656,6 +656,9 @@ def test_seed_anchor_terminal_fraction_counts_anchored_objects():
         if env._active_pose is not None and env._active_pose.y_m >= 1.0:
             break
         env.step(Primitive(kind="S", magnitude=1.0, gear=1))
+    # Guard the premise: the driven object actually advanced inside before we Park (so this
+    # tests "drove in + parked", not an accidental park-from-the-apron if primitives rescale).
+    assert env._active_pose is not None and env._active_pose.y_m >= 1.0
     _, _, done, info = env.step(Park())
     assert done is True
     assert info.placed == 2 and info.total == 2
@@ -665,3 +668,41 @@ def test_seed_anchor_rejects_k_not_less_than_requested():
     # k must leave at least one object to drive; k>=N is a misconfigured rung -> loud error.
     with pytest.raises(ValueError, match="seed_anchor_k"):
         _anchor_env(seed_anchor_k=2)
+
+
+def test_seed_anchor_rejects_negative_k():
+    # A negative k must fail loud, NOT silently slice requested[:k] (anchor all-but-|k|).
+    with pytest.raises(ValueError, match="seed_anchor_k"):
+        _anchor_env(seed_anchor_k=-1)
+
+
+def test_seed_anchor_rejects_duplicate_witness_ids():
+    # Two placements with the same id would silently overwrite in _anchor_by_id, desyncing the
+    # anchor map from the pool -> loud error instead.
+    dupes = (
+        Placement(plane_id="fuji", x_m=5.0, y_m=8.0, heading_deg=0.0, on_carts=False),
+        Placement(plane_id="fuji", x_m=10.0, y_m=8.0, heading_deg=0.0, on_carts=False),
+    )
+    with pytest.raises(ValueError, match="duplicate"):
+        HangarFitEnv(
+            hangar=empty_hangar(),
+            fleet=_fuji(),
+            requested_ids=("fuji", "aviat_husky"),
+            anchor_placements=dupes,
+            difficulty=DifficultyConfig(max_objects=2, seed_anchor_k=1),
+        )
+
+
+def test_seed_anchor_rejects_requested_prefix_without_a_witness_pose():
+    # If the anchored prefix references an id with no witness pose, fail loud (covers the
+    # env.py "no witness pose for anchored ids" branch) rather than KeyError.
+    env = HangarFitEnv(
+        hangar=empty_hangar(),
+        fleet=_fuji(),
+        requested_ids=("fuji", "aviat_husky"),
+        anchor_placements=(_WITNESS_ANCHORS[0],),  # only fuji has a witness pose
+        difficulty=DifficultyConfig(max_objects=2, seed_anchor_k=1),
+    )
+    # Request husky FIRST: the k=1 prefix is now husky, which has no witness pose.
+    with pytest.raises(ValueError, match="no witness pose"):
+        env.reset(requested_ids=("aviat_husky", "fuji"))

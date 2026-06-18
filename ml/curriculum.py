@@ -203,6 +203,16 @@ def validate_ladder(ladder: Sequence[Stage], *, encoder_max_objects: int) -> Non
             raise ValueError(
                 f"stage {s.name!r}: max_objects {n} exceeds encoder capacity {encoder_max_objects}"
             )
+        # #712 seed-anchor: catch a misconfigured anchored rung here (the pre-flight gate)
+        # rather than lazily at the first env reset, deep inside the training loop.
+        k = s.difficulty.seed_anchor_k
+        if k < 0:
+            raise ValueError(f"stage {s.name!r}: seed_anchor_k must be >= 0, got {k}")
+        if k >= n:
+            raise ValueError(
+                f"stage {s.name!r}: seed_anchor_k {k} must be < max_objects {n} "
+                f"(at least one object must be left to drive in)"
+            )
 
 
 @dataclass(slots=True)

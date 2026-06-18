@@ -944,12 +944,9 @@ def test_main_without_seed_anchor_keeps_default_ladder(monkeypatch):
     assert "pair-anchored" not in [s.name for s in captured["schedule"].stages]
 
 
-def test_train_curriculum_trains_an_anchored_rung_end_to_end():
-    # End-to-end smoke: train_curriculum runs an anchored rung without crashing — the witness
-    # pool feeds sample_request, the env pre-parks the k=1 prefix, and collect_rollout +
-    # ppo_update consume the partial-start episodes. Tiny budget for speed.
+def _anchored_smoke_schedule(name: str = "pair-anchored-smoke"):
     anchored = Stage(
-        name="pair-anchored-smoke",
+        name=name,
         difficulty=DifficultyConfig(
             max_objects=2, seed_anchor_k=1, per_object_step_budget=30, total_step_budget=30
         ),
@@ -958,10 +955,43 @@ def test_train_curriculum_trains_an_anchored_rung_end_to_end():
         anchor_layout_path="tests/fixtures/ml/witness_box.yaml",
         clearance_m=0.05,
     )
-    sched = CurriculumSchedule(
+    return CurriculumSchedule(
         stages=(anchored,),
         # threshold>1 => never promote by competency => the rung runs its single capped iter.
         policy=PromotionPolicy(metric="fraction_placed", window=1, threshold=2.0, max_iters=1),
     )
-    hist = train_curriculum(seed=0, schedule=sched, rollout_len=32)
+
+
+def test_train_curriculum_trains_an_anchored_rung_end_to_end():
+    # End-to-end: train_curriculum runs an anchored rung — the witness pool feeds sample_request,
+    # the env pre-parks the k=1 prefix, and collect_rollout + ppo_update consume the partial-start
+    # episodes. Every completed episode must report fraction_placed >= 0.5 (the k=1 anchor is
+    # counted in the denominator), which only holds if the anchor was actually pre-parked —
+    # without it a place-nothing episode would be 0/2 = 0.0.
+    hist = train_curriculum(seed=0, schedule=_anchored_smoke_schedule(), rollout_len=32)
+    eps = [s for _, _, eps in hist.iterations for s in eps]
     assert any(name == "pair-anchored-smoke" for name, _, _ in hist.iterations)
+    assert eps, "the smoke must complete at least one episode"
+    assert all(s.fraction_placed >= 0.5 for s in eps)  # anchor counted -> floor 1/2
+
+
+def test_train_curriculum_anchored_rung_is_deterministic():
+    # Anchoring adds no RNG, so the same seed reproduces the anchored run bit-for-bit (the
+    # determinism contract, mirrored from test_train_curriculum_is_deterministic).
+    h1 = train_curriculum(seed=0, schedule=_anchored_smoke_schedule("pa-det"), rollout_len=32)
+    h2 = train_curriculum(seed=0, schedule=_anchored_smoke_schedule("pa-det"), rollout_len=32)
+    assert h1.iterations == h2.iterations
+
+
+@pytest.mark.parametrize("backend", ["sync", "subproc"])
+def test_train_curriculum_anchored_rung_runs_vectorized(backend):
+    # The anchored Stage (now carrying anchor_layout_path) must pickle across the spawn
+    # boundary and the witness must reload IN the worker — exercise both vec backends.
+    hist = train_curriculum(
+        seed=0,
+        schedule=_anchored_smoke_schedule(f"pa-vec-{backend}"),
+        rollout_len=32,
+        n_envs=2,
+        vec_backend=backend,
+    )
+    assert any(name == f"pa-vec-{backend}" for name, _, _ in hist.iterations)

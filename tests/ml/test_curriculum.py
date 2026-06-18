@@ -433,3 +433,30 @@ def test_seed_anchor_composes_with_solo_box_rung():
     sched = with_pair_anchored_rung(with_solo_box_rung(CurriculumSchedule.default()))
     names = [s.name for s in sched.stages]
     assert names[:4] == ["trivial", "solo-box", "pair-anchored", "pair-box"]
+
+
+def _anchored_test_stage(*, max_objects: int, seed_anchor_k: int) -> Stage:
+    return Stage(
+        name="bad",
+        difficulty=DifficultyConfig(max_objects=max_objects, seed_anchor_k=seed_anchor_k),
+        hangar_path="data/hangar.yaml",
+        fleet_path="data/fleet.yaml",
+    )
+
+
+def test_validate_ladder_rejects_negative_seed_anchor_k():
+    bad = (_anchored_test_stage(max_objects=2, seed_anchor_k=-1),)
+    with pytest.raises(ValueError, match="seed_anchor_k"):
+        validate_ladder(bad, encoder_max_objects=EncoderConfig().max_objects)
+
+
+def test_validate_ladder_rejects_seed_anchor_k_ge_max_objects():
+    # k must leave >=1 object to drive; a pre-flight catch (not a mid-training reset failure).
+    bad = (_anchored_test_stage(max_objects=2, seed_anchor_k=2),)
+    with pytest.raises(ValueError, match="seed_anchor_k"):
+        validate_ladder(bad, encoder_max_objects=EncoderConfig().max_objects)
+
+
+def test_validate_ladder_accepts_valid_seed_anchor_k():
+    ok = (_anchored_test_stage(max_objects=2, seed_anchor_k=1),)
+    validate_ladder(ok, encoder_max_objects=EncoderConfig().max_objects)  # no raise

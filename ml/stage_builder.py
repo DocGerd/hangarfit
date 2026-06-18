@@ -29,7 +29,12 @@ def witness_placements(stage: Stage) -> tuple[Placement, ...]:
     fleet = load_fleet(str(_ROOT / stage.fleet_path))
     hangar = load_hangar(str(_ROOT / stage.hangar_path), fleet=fleet)
     layout = load_layout(str(_ROOT / stage.anchor_layout_path), fleet=fleet, hangar=hangar)
-    return layout.placements + (layout.ground_object_placements or ())
+    # NOTE: anchor poses are taken from the witness VERBATIM (incl. ``on_carts``), then frozen
+    # into ``_parked``. The committed box witness is taildraggers (``on_carts=False``, matching
+    # both the loader default and ``env._on_carts``). A future witness anchoring an
+    # ``always_cart``/towed body must author ``on_carts: true`` so the anchored pose is scored
+    # identically to how the env flags that body when it is driven+parked.
+    return layout.placements + layout.ground_object_placements
 
 
 def effective_fleet_ids(stage: Stage) -> tuple[str, ...]:
@@ -75,6 +80,13 @@ def build_stage_env(stage: Stage, *, weights: RewardWeights | None = None) -> Ha
     if n > len(pool):
         raise ValueError(
             f"stage {stage.name!r}: max_objects {n} exceeds fleet pool size {len(pool)}"
+        )
+    if stage.anchor_layout_path is not None and n != len(pool):
+        # The anchored pool IS the witness set (Q2), so max_objects must equal the witness
+        # object count — else the rung silently drives a truncated subset of the witness.
+        raise ValueError(
+            f"stage {stage.name!r}: anchored rung max_objects {n} must equal its witness "
+            f"object count {len(pool)} (the pool is pinned to the witness set)"
         )
     return HangarFitEnv(
         hangar=hangar,

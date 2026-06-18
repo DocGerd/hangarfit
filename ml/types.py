@@ -83,9 +83,10 @@ class DifficultyConfig:
     total_step_budget: int = 600  # global per-episode primitive cap
     # #712 seed-anchor start-state graft: pre-park the first ``seed_anchor_k`` requested
     # objects at their committed-witness poses (a k-prefix of a valid witness layout is
-    # provably valid), drive the remaining N-k in, anneal k->0 across the curriculum. 0 =>
-    # no anchored objects => byte-identical to the empty-start env. The env reads the witness
-    # poses from its ``anchor_placements`` (threaded by stage_builder from the rung's witness).
+    # provably valid), drive the remaining N-k in. (Step 1 wires a single k=1 rung; later
+    # rungs can anneal k->0 across the curriculum.) 0 => no anchored objects => byte-identical
+    # to the empty-start env. The env reads the witness poses from its ``anchor_placements``
+    # (threaded by stage_builder from the rung's witness).
     seed_anchor_k: int = 0
 
 

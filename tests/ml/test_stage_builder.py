@@ -194,6 +194,21 @@ def test_build_stage_env_without_anchor_layout_has_empty_anchor_map():
     assert env._anchor_by_id == {}
 
 
+def test_build_stage_env_anchored_requires_max_objects_equals_witness():
+    # An anchored rung pins its pool to the witness set, so max_objects must equal the witness
+    # object count — else the rung silently trains a truncated objective. Fail loud.
+    s = Stage(
+        name="mismatch",
+        difficulty=DifficultyConfig(max_objects=1),  # the box witness has 2 objects
+        hangar_path="data/hangar.yaml",
+        fleet_path="data/fleet.yaml",
+        anchor_layout_path=_WITNESS_BOX,
+        clearance_m=0.05,
+    )
+    with pytest.raises(ValueError, match="witness"):
+        build_stage_env(s)
+
+
 def test_committed_pair_anchored_rung_builds_and_resets_from_a_valid_partial():
     # End-to-end on the REAL rung: the committed pair-anchored rung's witness path resolves
     # and its env starts from a valid 1-object partial. Catches drift between the rung's
@@ -205,3 +220,28 @@ def test_committed_pair_anchored_rung_builds_and_resets_from_a_valid_partial():
     env.reset(requested_ids=env.requested_ids)
     assert len(env._parked) == 1  # k=1 prefix pre-parked
     assert env._layout_valid()  # the partial start is collision-free
+
+
+def test_anchored_subset_varies_across_episodes_and_is_reproducible():
+    # The seeded-random k-subset claim, end-to-end: driving the env through the curriculum's
+    # seeded per-episode sampler, the ANCHORED object varies episode-to-episode (it is not
+    # pinned to one object) AND the sequence is reproducible for a fixed seed.
+    from ml.curriculum import sample_request, stage_rng
+
+    sched = with_pair_anchored_rung(CurriculumSchedule.default())
+    rung = next(s for s in sched.stages if s.name == "pair-anchored")
+    env = build_stage_env(rung)
+    pool = effective_fleet_ids(rung)
+    n = len(pool)  # anchored rung: max_objects == witness object count (enforced in build)
+
+    def anchored_object_sequence(seed: int) -> list[str]:
+        rng = stage_rng(seed, 0)
+        seq = []
+        for _ in range(12):
+            env.reset(requested_ids=sample_request(pool, n, rng))
+            seq.append(env._parked[0].plane_id)
+        return seq
+
+    seq = anchored_object_sequence(0)
+    assert len(set(seq)) > 1, "the anchored object should vary across episodes (random k-subset)"
+    assert seq == anchored_object_sequence(0), "the anchored sequence must be seed-reproducible"
