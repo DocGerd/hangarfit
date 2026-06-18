@@ -9,7 +9,8 @@ byte-identical reference / test oracle); SubprocVectorEnv runs N spawn workers."
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
+from typing import NamedTuple
 
 from ml.action_space import decode
 from ml.curriculum import EpisodeStat
@@ -59,3 +60,50 @@ class _EnvWorker:
             req = self._next_request() if self._next_request is not None else None
             sem = self._env.reset(requested_ids=req)
         return self._encode(sem), reward, done, info, ep
+
+
+class VecStep(NamedTuple):
+    obs: list[ObservationTensors]
+    rewards: list[float]
+    dones: list[bool]
+    infos: list[StepInfo]
+    ep_stats: list[EpisodeStat | None]
+
+
+class SyncVectorEnv:
+    """N _EnvWorkers stepped serially in-process. The byte-identical reference + the
+    test oracle for SubprocVectorEnv; needs no multiprocessing, so it runs in CI."""
+
+    def __init__(self, workers: Sequence[_EnvWorker]) -> None:
+        if not workers:
+            raise ValueError("SyncVectorEnv needs at least one worker")
+        self._workers = list(workers)
+
+    @property
+    def num_envs(self) -> int:
+        return len(self._workers)
+
+    def reset(self) -> list[ObservationTensors]:
+        return [w.reset() for w in self._workers]
+
+    def step(self, actions: Sequence[tuple[int, int]]) -> VecStep:
+        if len(actions) != self.num_envs:
+            raise ValueError(f"expected {self.num_envs} actions, got {len(actions)}")
+        obs, rewards, dones, infos, eps = [], [], [], [], []
+        for w, (k, m) in zip(self._workers, actions, strict=True):
+            o, r, d, info, ep = w.step(int(k), int(m))
+            obs.append(o)
+            rewards.append(r)
+            dones.append(d)
+            infos.append(info)
+            eps.append(ep)
+        return VecStep(obs, rewards, dones, infos, eps)
+
+    def close(self) -> None:
+        pass
+
+    def __enter__(self) -> SyncVectorEnv:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()

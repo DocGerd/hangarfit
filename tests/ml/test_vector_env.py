@@ -37,3 +37,27 @@ def test_envworker_step_matches_manual_step_encode():
     assert done is True
     assert ep is not None and 0.0 <= ep.fraction_placed <= 1.0
     assert obs1.active_index >= 0  # auto-reset gave a fresh live obs
+
+
+from ml.vector_env import SyncVectorEnv  # noqa: E402
+
+
+def _two_trivial_workers():
+    enc = EncoderConfig()
+    return [_EnvWorker(build_trivial_env(), enc, next_request=None) for _ in range(2)]
+
+
+def test_syncvectorenv_step_shapes_and_autoreset():
+    from ml.action_space import PARK_INDEX
+
+    vec = SyncVectorEnv(_two_trivial_workers())
+    assert vec.num_envs == 2
+    obs = vec.reset()
+    assert len(obs) == 2 and all(o.active_index >= 0 for o in obs)
+
+    step = vec.step([(PARK_INDEX, 0), (PARK_INDEX, 0)])
+    assert len(step.obs) == 2 and len(step.rewards) == 2
+    assert step.dones == [True, True]  # both trivial envs complete on PARK
+    assert all(e is not None for e in step.ep_stats)
+    assert all(o.active_index >= 0 for o in step.obs)  # auto-reset gave live obs
+    vec.close()
