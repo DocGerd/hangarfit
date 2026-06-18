@@ -4,6 +4,7 @@ update reusing the policy's masked two-head logits + value. Requires the [train]
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import torch
@@ -265,3 +266,84 @@ def ppo_update(
             accum["entropy"].append(entropy_bonus.item())
             accum["loss"].append(loss.item())
     return {k: sum(vs) / len(vs) for k, vs in accum.items()}
+
+
+def compute_gae_vec(
+    rewards: Tensor,  # (T, N)
+    values: Tensor,  # (T, N)
+    dones: Tensor,  # (T, N) bool
+    last_values: Sequence[float],  # length N
+    *,
+    gamma: float = 0.99,
+    lam: float = 0.95,
+) -> tuple[Tensor, Tensor]:
+    """Per-env GAE: run the single-stream ``compute_gae`` on each env column (each env's
+    ``done`` resets its own λ-recursion + bootstrap), then flatten row-major ``(t, env) ->
+    t*N + env`` to match ``VecRolloutBuffer.batch()``."""
+    t_len, n = rewards.shape
+    adv = torch.zeros(t_len, n)
+    ret = torch.zeros(t_len, n)
+    for env in range(n):
+        a, r = compute_gae(
+            rewards[:, env],
+            values[:, env],
+            dones[:, env],
+            float(last_values[env]),
+            gamma=gamma,
+            lam=lam,
+        )
+        adv[:, env] = a
+        ret[:, env] = r
+    return adv.reshape(-1), ret.reshape(-1)
+
+
+class VecRolloutBuffer:
+    """N-stream rollout buffer. Stores T per-step rows of width N; ``batch()`` flattens
+    row-major (t, env) into the SAME flat dict shape as RolloutBuffer.batch(), so
+    ppo_update is unchanged. ``last_value`` is the per-env bootstrap (length N)."""
+
+    def __init__(self, num_envs: int) -> None:
+        self.num_envs = num_envs
+        self.obs: list[list[ObservationTensors]] = []
+        self.kind_idx: list[list[int]] = []
+        self.mag_idx: list[list[int]] = []
+        self.logprob: list[list[float]] = []
+        self.value: list[list[float]] = []
+        self.reward: list[list[float]] = []
+        self.done: list[list[bool]] = []
+        self.last_value: list[float] = [0.0] * num_envs
+
+    def add_step(
+        self,
+        obs: list[ObservationTensors],
+        kind_idx: list[int],
+        mag_idx: list[int],
+        logprob: list[float],
+        value: list[float],
+        reward: list[float],
+        done: list[bool],
+    ) -> None:
+        self.obs.append(obs)
+        self.kind_idx.append(kind_idx)
+        self.mag_idx.append(mag_idx)
+        self.logprob.append(logprob)
+        self.value.append(value)
+        self.reward.append(reward)
+        self.done.append(done)
+
+    def __len__(self) -> int:
+        return len(self.reward)
+
+    def _flat(self, rows: list[list[float]]) -> list[float]:
+        return [x for row in rows for x in row]  # row-major (t, env)
+
+    def batch(self) -> dict[str, Tensor]:
+        flat_obs = [o for row in self.obs for o in row]
+        data = dict(to_batch(flat_obs))
+        data["kind_idx"] = torch.tensor([x for row in self.kind_idx for x in row], dtype=torch.long)
+        data["mag_idx"] = torch.tensor([x for row in self.mag_idx for x in row], dtype=torch.long)
+        data["old_logprob"] = torch.tensor(self._flat(self.logprob), dtype=torch.float32)
+        data["value"] = torch.tensor(self._flat(self.value), dtype=torch.float32)
+        data["reward"] = torch.tensor(self._flat(self.reward), dtype=torch.float32)
+        data["done"] = torch.tensor([x for row in self.done for x in row], dtype=torch.bool)
+        return data

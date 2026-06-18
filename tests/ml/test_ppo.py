@@ -441,3 +441,71 @@ def test_ppo_update_raises_when_normalize_returns_true_but_normalizer_none():
     cfg = PPOConfig(minibatch_size=16, normalize_returns=True)
     with pytest.raises(ValueError, match="normalizer"):
         ppo_update(policy, opt, buf, cfg, normalizer=None)
+
+
+# ---------------------------------------------------------------------------
+# Task 4 (708): VecRolloutBuffer + compute_gae_vec
+# ---------------------------------------------------------------------------
+
+
+def test_compute_gae_vec_matches_per_env_compute_gae():
+    import torch
+
+    from ml.ppo import compute_gae, compute_gae_vec
+
+    T, N = 4, 3
+    torch.manual_seed(0)
+    rewards = torch.randn(T, N)
+    values = torch.randn(T, N)
+    dones = torch.rand(T, N) > 0.7
+    last_values = [0.1, -0.2, 0.3]
+
+    adv_vec, ret_vec = compute_gae_vec(rewards, values, dones, last_values, gamma=0.99, lam=0.95)
+    # Per-env reference, flattened row-major (t*N + env).
+    for env in range(N):
+        a, r = compute_gae(
+            rewards[:, env], values[:, env], dones[:, env], last_values[env], gamma=0.99, lam=0.95
+        )
+        for t in range(T):
+            assert torch.allclose(adv_vec[t * N + env], a[t])
+            assert torch.allclose(ret_vec[t * N + env], r[t])
+
+
+def test_vecrolloutbuffer_batch_shape_matches_flat():
+
+    from ml.encoding import ACTION_DIM, RASTER_CHANNELS, TOKEN_DIM, ObservationTensors
+    from ml.ppo import VecRolloutBuffer
+
+    def _obs():
+        import numpy as np
+
+        return ObservationTensors(
+            raster=np.zeros((RASTER_CHANNELS, 8, 8), np.float32),
+            tokens=np.zeros((4, TOKEN_DIM), np.float32),
+            token_mask=np.ones(4, bool),
+            active_index=0,
+            legal_action_mask=np.ones(ACTION_DIM, bool),
+            meta={},
+        )
+
+    buf = VecRolloutBuffer(num_envs=2)
+    buf.add_step(
+        [_obs(), _obs()], [1, 2], [0, 1], [0.0, 0.0], [0.0, 0.0], [1.0, 2.0], [False, True]
+    )
+    buf.add_step(
+        [_obs(), _obs()], [3, 4], [2, 3], [0.0, 0.0], [0.0, 0.0], [3.0, 4.0], [True, False]
+    )
+    buf.last_value = [0.0, 0.0]
+    data = buf.batch()
+    assert data["reward"].shape == (4,)  # T*N
+    assert data["reward"].tolist() == [1.0, 2.0, 3.0, 4.0]  # row-major (t, env)
+    assert set(data) >= {
+        "raster",
+        "tokens",
+        "kind_idx",
+        "mag_idx",
+        "old_logprob",
+        "value",
+        "reward",
+        "done",
+    }
