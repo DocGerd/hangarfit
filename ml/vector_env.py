@@ -9,8 +9,9 @@ byte-identical reference / test oracle); SubprocVectorEnv runs N spawn workers."
 
 from __future__ import annotations
 
+import multiprocessing as mp
 from collections.abc import Callable, Sequence
-from typing import NamedTuple
+from typing import Any, NamedTuple
 
 from ml.action_space import decode
 from ml.curriculum import EpisodeStat
@@ -103,6 +104,121 @@ class SyncVectorEnv:
         pass
 
     def __enter__(self) -> SyncVectorEnv:
+        return self
+
+    def __exit__(self, *exc: object) -> None:
+        self.close()
+
+
+def _obs_to_picklable(obs: ObservationTensors) -> ObservationTensors:
+    """Replace MappingProxyType meta with a plain dict so pickle succeeds across Pipe."""
+    if not isinstance(obs.meta, dict):
+        return ObservationTensors(
+            raster=obs.raster,
+            tokens=obs.tokens,
+            token_mask=obs.token_mask,
+            active_index=obs.active_index,
+            legal_action_mask=obs.legal_action_mask,
+            meta=dict(obs.meta),
+            schema_version=obs.schema_version,
+        )
+    return obs
+
+
+def _worker_loop(remote: mp.connection.Connection, worker_fn: Callable[[], _EnvWorker]) -> None:
+    """Child process: build the env, then serve reset/step/close over the pipe. Any
+    exception is sent back as ('error', repr) so the parent raises rather than hangs."""
+    try:
+        worker = worker_fn()
+        while True:
+            cmd, payload = remote.recv()
+            if cmd == "reset":
+                remote.send(("ok", _obs_to_picklable(worker.reset())))
+            elif cmd == "step":
+                k, m = payload
+                result = worker.step(k, m)
+                # result: (ObservationTensors, float, bool, StepInfo, EpisodeStat|None)
+                remote.send(("ok", (_obs_to_picklable(result[0]),) + result[1:]))
+            elif cmd == "close":
+                remote.send(("ok", None))
+                remote.close()
+                return
+            else:  # pragma: no cover - defensive
+                remote.send(("error", f"unknown cmd {cmd!r}"))
+    except Exception as exc:  # surface loudly to the parent
+        try:
+            remote.send(("error", repr(exc)))
+        finally:
+            remote.close()
+
+
+class SubprocVectorEnv:
+    """N _EnvWorkers, each in its own spawn process. Parallelizes the per-env shapely
+    geometry + encoding. Workers are torch-free, so output is byte-identical to
+    SyncVectorEnv on the same action stream."""
+
+    def __init__(self, worker_fns: Sequence[Callable[[], _EnvWorker]]) -> None:
+        if not worker_fns:
+            raise ValueError("SubprocVectorEnv needs at least one worker_fn")
+        ctx = mp.get_context("spawn")
+        self._n = len(worker_fns)
+        self._parents: list[mp.connection.Connection] = []
+        self._procs: list[Any] = []  # SpawnProcess is not mp.Process in typeshed
+        for fn in worker_fns:
+            parent, child = ctx.Pipe()
+            proc = ctx.Process(target=_worker_loop, args=(child, fn), daemon=True)
+            proc.start()
+            child.close()  # parent keeps only its end
+            self._parents.append(parent)
+            self._procs.append(proc)
+        self._closed = False
+
+    @property
+    def num_envs(self) -> int:
+        return self._n
+
+    def _recv(self, parent: mp.connection.Connection) -> object:
+        tag, payload = parent.recv()
+        if tag == "error":
+            raise RuntimeError(f"SubprocVectorEnv worker failed: {payload}")
+        return payload
+
+    def reset(self) -> list[ObservationTensors]:
+        for p in self._parents:
+            p.send(("reset", None))
+        return [self._recv(p) for p in self._parents]
+
+    def step(self, actions: Sequence[tuple[int, int]]) -> VecStep:
+        if len(actions) != self._n:
+            raise ValueError(f"expected {self._n} actions, got {len(actions)}")
+        for p, (k, m) in zip(self._parents, actions, strict=True):
+            p.send(("step", (int(k), int(m))))
+        results = [self._recv(p) for p in self._parents]
+        obs = [r[0] for r in results]  # type: ignore[index]
+        return VecStep(
+            obs,
+            [r[1] for r in results],  # type: ignore[index]
+            [r[2] for r in results],  # type: ignore[index]
+            [r[3] for r in results],  # type: ignore[index]
+            [r[4] for r in results],  # type: ignore[index]
+        )
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        for p in self._parents:
+            try:
+                p.send(("close", None))
+                p.recv()
+            except (EOFError, OSError):
+                pass
+        for proc in self._procs:
+            proc.join(timeout=5.0)
+            if proc.is_alive():  # pragma: no cover
+                proc.terminate()
+
+    def __enter__(self) -> SubprocVectorEnv:
         return self
 
     def __exit__(self, *exc: object) -> None:

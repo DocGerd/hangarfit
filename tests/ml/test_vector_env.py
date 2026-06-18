@@ -61,3 +61,54 @@ def test_syncvectorenv_step_shapes_and_autoreset():
     assert all(e is not None for e in step.ep_stats)
     assert all(o.active_index >= 0 for o in step.obs)  # auto-reset gave live obs
     vec.close()
+
+
+import numpy as np  # noqa: E402
+
+from ml.vector_env import SubprocVectorEnv  # noqa: E402
+
+
+def _trivial_worker_fn():
+    # module-level (picklable) factory: builds the env IN the child process
+    from ml.encoding import EncoderConfig
+    from ml.train import build_trivial_env
+    from ml.vector_env import _EnvWorker
+
+    return _EnvWorker(build_trivial_env(), EncoderConfig(), next_request=None)
+
+
+def test_sync_equals_subproc_byte_identical():
+    """Workers are torch-free + deterministic, so Sync and Subproc must agree exactly
+    on the same action stream (the ADR-aligned tier-1 determinism contract)."""
+    from ml.action_space import PARK_INDEX  # noqa: F401
+
+    actions = [(1, 0), (1, 0)]  # S-forward both envs (does not complete -> no auto-reset)
+
+    sync = SyncVectorEnv([_trivial_worker_fn(), _trivial_worker_fn()])
+    sa = sync.reset()
+    ss = sync.step(actions)
+    sync.close()
+
+    with SubprocVectorEnv([_trivial_worker_fn, _trivial_worker_fn]) as sub:
+        ba = sub.reset()
+        bs = sub.step(actions)
+
+    for a, b in zip(sa, ba, strict=True):
+        assert np.array_equal(a.raster, b.raster) and np.array_equal(a.tokens, b.tokens)
+    assert ss.rewards == bs.rewards and ss.dones == bs.dones
+    for a, b in zip(ss.obs, bs.obs, strict=True):
+        assert np.array_equal(a.raster, b.raster)
+
+
+def _broken_worker_fn():
+    raise ValueError("boom in child")
+
+
+def test_subproc_worker_failure_is_loud():
+    import pytest
+
+    with (
+        pytest.raises(RuntimeError, match="worker failed"),
+        SubprocVectorEnv([_broken_worker_fn]) as sub,
+    ):
+        sub.reset()
