@@ -191,7 +191,7 @@ class RolloutBuffer:
 def ppo_update(
     policy: HangarFitPolicy,
     optimizer: torch.optim.Optimizer,
-    buffer: RolloutBuffer,
+    buffer: RolloutBuffer | VecRolloutBuffer,
     config: PPOConfig,
     *,
     normalizer: ReturnNormalizer | None = None,
@@ -212,14 +212,26 @@ def ppo_update(
                 "pass a ReturnNormalizer instance or set normalize_returns=False"
             )
         rewards = normalizer.normalize(rewards)
-    advantages, returns = compute_gae(
-        rewards,
-        data["value"],
-        data["done"],
-        buffer.last_value,
-        gamma=config.gamma,
-        lam=config.lam,
-    )
+    if isinstance(buffer, VecRolloutBuffer):
+        T = len(buffer)
+        N = buffer.num_envs
+        advantages, returns = compute_gae_vec(
+            rewards.reshape(T, N),
+            data["value"].reshape(T, N),
+            data["done"].reshape(T, N),
+            buffer.last_value,
+            gamma=config.gamma,
+            lam=config.lam,
+        )
+    else:
+        advantages, returns = compute_gae(
+            rewards,
+            data["value"],
+            data["done"],
+            buffer.last_value,
+            gamma=config.gamma,
+            lam=config.lam,
+        )
     # Degenerate (≈zero-variance) advantages make the usual /std normalization
     # numerically meaningless — a tiny std can blow up or NaN the ratios. Center only
     # in that case; normalize otherwise. Then assert finiteness so a bad batch fails

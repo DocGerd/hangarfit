@@ -35,6 +35,7 @@ from ml.ppo import (
     PPOConfig,
     ReturnNormalizer,
     RolloutBuffer,
+    VecRolloutBuffer,
     entropy_coef_at,
     factored_logprob_entropy,
     ppo_update,
@@ -42,6 +43,7 @@ from ml.ppo import (
 )
 from ml.stage_builder import build_stage_env, effective_fleet_ids
 from ml.types import DifficultyConfig, RewardWeights
+from ml.vector_env import VecStep
 
 _TRIVIAL_DIFFICULTY = DifficultyConfig(
     max_objects=1, per_object_step_budget=40, total_step_budget=40
@@ -127,6 +129,56 @@ def collect_rollout(
         if not buf.done[-1]:
             tail = encode(obs, env.hangar, bodies, encoder)
             buf.last_value = float(policy(to_batch([tail])).value)
+    return buf, ep_stats
+
+
+def collect_rollout_vec(
+    vec_env,  # SyncVectorEnv | SubprocVectorEnv (duck-typed: num_envs/reset/step)
+    policy: HangarFitPolicy,
+    encoder: EncoderConfig,
+    rollout_len: int,
+) -> tuple[VecRolloutBuffer, list[EpisodeStat]]:
+    """Drive `vec_env` for `rollout_len` steps (rollout_len * num_envs transitions),
+    batching the N observations through one policy forward per step. Returns the
+    (T, N) buffer + the per-completed-episode stats (with the per-env reward sum)."""
+    n = vec_env.num_envs
+    buf = VecRolloutBuffer(num_envs=n)
+    obs = vec_env.reset()
+    ep_reward = [0.0] * n
+    ep_stats: list[EpisodeStat] = []
+    with torch.no_grad():
+        for _ in range(rollout_len):
+            out = policy(to_batch(obs))
+            kind, mag = sample_action(out)
+            logprob, _ = factored_logprob_entropy(out, kind, mag)
+            actions = [(int(kind[i]), int(mag[i])) for i in range(n)]
+            step: VecStep = vec_env.step(actions)
+            buf.add_step(
+                obs,
+                kind_idx=[int(kind[i]) for i in range(n)],
+                mag_idx=[int(mag[i]) for i in range(n)],
+                logprob=[float(logprob[i]) for i in range(n)],
+                value=[float(out.value[i]) for i in range(n)],
+                reward=list(step.rewards),
+                done=list(step.dones),
+            )
+            for i in range(n):
+                ep_reward[i] += step.rewards[i]
+                if step.dones[i]:
+                    s = step.ep_stats[i]
+                    assert s is not None
+                    ep_stats.append(
+                        EpisodeStat(
+                            fraction_placed=s.fraction_placed,
+                            valid=s.valid,
+                            total_reward=ep_reward[i],
+                        )
+                    )
+                    ep_reward[i] = 0.0
+            obs = step.obs
+        # per-env bootstrap value for non-done tails
+        tail = policy(to_batch(obs))
+        buf.last_value = [float(tail.value[i]) for i in range(n)]
     return buf, ep_stats
 
 
