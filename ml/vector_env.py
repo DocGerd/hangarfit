@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import multiprocessing as mp
 from collections.abc import Callable, Sequence
-from typing import Any, NamedTuple
+from typing import Any, NamedTuple, cast
 
 from ml.action_space import decode
 from ml.curriculum import EpisodeStat
@@ -186,7 +186,9 @@ class SubprocVectorEnv:
     def reset(self) -> list[ObservationTensors]:
         for p in self._parents:
             p.send(("reset", None))
-        return [self._recv(p) for p in self._parents]
+        # _recv returns the (untyped) pipe payload; for reset it is always an
+        # ObservationTensors (the worker's encoded obs). Narrow it for mypy.
+        return [cast(ObservationTensors, self._recv(p)) for p in self._parents]
 
     def step(self, actions: Sequence[tuple[int, int]]) -> VecStep:
         if len(actions) != self._n:
