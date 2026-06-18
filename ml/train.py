@@ -23,6 +23,7 @@ from ml.curriculum import (
     CurriculumHistory,
     CurriculumSchedule,
     EpisodeStat,
+    Stage,
     sample_request,
     should_promote,
     stage_rng,
@@ -44,7 +45,7 @@ from ml.ppo import (
 )
 from ml.stage_builder import build_stage_env, effective_fleet_ids
 from ml.types import DifficultyConfig, RewardWeights
-from ml.vector_env import VecStep
+from ml.vector_env import VecStep, _EnvWorker
 
 _TRIVIAL_DIFFICULTY = DifficultyConfig(
     max_objects=1, per_object_step_budget=40, total_step_budget=40
@@ -182,6 +183,27 @@ def collect_rollout_vec(
         tail = policy(to_batch(obs))
         buf.last_value = [float(tail.value[i]) for i in range(n)]
     return buf, ep_stats
+
+
+def _build_stage_worker(
+    stage: Stage,
+    stage_index: int,
+    pool: tuple[str, ...],
+    n: int,
+    seed: int,
+    weights: RewardWeights | None,
+    encoder: EncoderConfig,
+    worker_index: int,
+) -> _EnvWorker:
+    """Picklable (module-level, used via ``functools.partial``) per-worker factory for the
+    vectorized training path. A CLOSURE is NOT picklable under ``spawn``, so this MUST stay a
+    module-level function. Rebuilds the stage env + this worker's seeded episode sampler IN
+    the child process; ``worker_index`` gives each worker a distinct ``stage_rng`` stream
+    (``worker_index=0`` is the legacy stream)."""
+    wenv = build_stage_env(stage, weights=weights)
+    wrng = stage_rng(seed, stage_index, worker_index=worker_index)
+    wnext = partial(sample_request, pool, n, wrng)
+    return _EnvWorker(wenv, encoder, wnext)
 
 
 def train(
@@ -334,29 +356,15 @@ def train_curriculum(
             else:
                 history.note_promotion(stage.name, pol.max_iters - 1, by="cap")
         else:
-            from ml.vector_env import SubprocVectorEnv, SyncVectorEnv, _EnvWorker
+            from ml.vector_env import SubprocVectorEnv, SyncVectorEnv
 
-            def _make_worker_fn(
-                wi: int,
-                _stage: object = stage,
-                _stage_index: int = stage_index,
-                _pool: tuple[str, ...] = pool,
-                _n: int = n,
-            ) -> Callable[[], _EnvWorker]:
-                # picklable for subproc: rebuild stage env + this worker's sampler in-child.
-                # Default-arg capture binds loop variables by value (avoids B023 late-binding).
-                def _fn() -> _EnvWorker:
-                    from ml.curriculum import Stage as _Stage
-
-                    assert isinstance(_stage, _Stage)
-                    wenv = build_stage_env(_stage, weights=weights)
-                    wrng = stage_rng(seed, _stage_index, worker_index=wi)
-                    wnext = partial(sample_request, _pool, _n, wrng)
-                    return _EnvWorker(wenv, enc, wnext)
-
-                return _fn
-
-            worker_fns = [_make_worker_fn(wi) for wi in range(n_envs)]
+            # functools.partial over the MODULE-LEVEL _build_stage_worker is picklable under
+            # spawn (a nested closure is not); each partial binds this stage's args + the
+            # worker index by value. worker_index gives each worker its own stage_rng stream.
+            worker_fns: list[Callable[[], _EnvWorker]] = [
+                partial(_build_stage_worker, stage, stage_index, pool, n, seed, weights, enc, wi)
+                for wi in range(n_envs)
+            ]
             vec_cm: SyncVectorEnv | SubprocVectorEnv
             if vec_backend == "subproc":
                 vec_cm = SubprocVectorEnv(worker_fns)

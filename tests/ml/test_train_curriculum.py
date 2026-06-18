@@ -230,6 +230,23 @@ def test_train_curriculum_n_envs_runs():
     assert hist.promotions  # advanced through stages
 
 
+def test_train_curriculum_subproc_runs():
+    """The subproc backend must actually run end-to-end — it spawns workers and PICKLES the
+    per-worker factories, which a nested closure would silently break (the sync test cannot
+    catch that). Guards the picklable module-level _build_stage_worker contract."""
+    from dataclasses import replace
+
+    from ml.curriculum import CurriculumSchedule
+    from ml.train import train_curriculum
+
+    sched = replace(
+        CurriculumSchedule.default(),
+        policy=replace(CurriculumSchedule.default().policy, max_iters=1),
+    )
+    hist = train_curriculum(seed=0, schedule=sched, rollout_len=8, n_envs=2, vec_backend="subproc")
+    assert hist.promotions and hist.iterations  # spawned, pickled, trained
+
+
 def test_train_curriculum_n_envs_1_matches_legacy_byte_identical():
     """n_envs=1 must reproduce the legacy single-stream training history exactly."""
     from dataclasses import replace
