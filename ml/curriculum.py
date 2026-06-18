@@ -62,14 +62,15 @@ def should_promote(window: Sequence[EpisodeStat], policy: PromotionPolicy) -> bo
 
 
 _STAGE_RNG_STRIDE = 100003  # a prime, so (seed, stage_index) pairs don't collide
+_WORKER_RNG_STRIDE = 1000003  # a prime distinct from _STAGE_RNG_STRIDE (per-worker offset)
 
 
-def stage_rng(seed: int, stage_index: int) -> random.Random:
-    """A per-stage RNG isolated from torch's global stream. Seeded purely from
-    integers (no str/bytes), so it is reproducible within a build regardless of
-    PYTHONHASHSEED. Keyed by the rung's ladder position so a rung's episode
-    sequence is independent of how many iterations earlier rungs took."""
-    return random.Random(seed * _STAGE_RNG_STRIDE + stage_index)
+def stage_rng(seed: int, stage_index: int, worker_index: int = 0) -> random.Random:
+    """A per-stage (and, for vectorized training, per-worker) RNG isolated from torch's
+    global stream. ``worker_index=0`` reproduces the legacy single-stream value exactly
+    (the +0 term), so the n_envs=1 path is byte-identical; worker_index>0 derives a
+    distinct, collision-free stream."""
+    return random.Random(seed * _STAGE_RNG_STRIDE + stage_index + worker_index * _WORKER_RNG_STRIDE)
 
 
 def sample_request(pool: Sequence[str], n: int, rng: random.Random) -> tuple[str, ...]:

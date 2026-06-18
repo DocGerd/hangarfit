@@ -4,6 +4,7 @@ update reusing the policy's masked two-head logits + value. Requires the [train]
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass
 
 import torch
@@ -190,7 +191,7 @@ class RolloutBuffer:
 def ppo_update(
     policy: HangarFitPolicy,
     optimizer: torch.optim.Optimizer,
-    buffer: RolloutBuffer,
+    buffer: RolloutBuffer | VecRolloutBuffer,
     config: PPOConfig,
     *,
     normalizer: ReturnNormalizer | None = None,
@@ -211,14 +212,26 @@ def ppo_update(
                 "pass a ReturnNormalizer instance or set normalize_returns=False"
             )
         rewards = normalizer.normalize(rewards)
-    advantages, returns = compute_gae(
-        rewards,
-        data["value"],
-        data["done"],
-        buffer.last_value,
-        gamma=config.gamma,
-        lam=config.lam,
-    )
+    if isinstance(buffer, VecRolloutBuffer):
+        T = len(buffer)
+        N = buffer.num_envs
+        advantages, returns = compute_gae_vec(
+            rewards.reshape(T, N),
+            data["value"].reshape(T, N),
+            data["done"].reshape(T, N),
+            buffer.last_value,
+            gamma=config.gamma,
+            lam=config.lam,
+        )
+    else:
+        advantages, returns = compute_gae(
+            rewards,
+            data["value"],
+            data["done"],
+            buffer.last_value,
+            gamma=config.gamma,
+            lam=config.lam,
+        )
     # Degenerate (≈zero-variance) advantages make the usual /std normalization
     # numerically meaningless — a tiny std can blow up or NaN the ratios. Center only
     # in that case; normalize otherwise. Then assert finiteness so a bad batch fails
@@ -229,7 +242,11 @@ def ppo_update(
         advantages = advantages / std
     if not torch.isfinite(advantages).all():
         raise RuntimeError("advantages contain NaN/inf after normalization")
-    n = len(buffer)
+    # Number of FLAT transitions to shuffle/minibatch over. For a VecRolloutBuffer this is
+    # T*N (advantages is length T*N), NOT len(buffer)==T — using len(buffer) would silently
+    # train on only the first T of T*N rows and drop (N-1)/N of every rollout (#708). For the
+    # single-stream RolloutBuffer advantages is length T == len(buffer), so this is unchanged.
+    n = advantages.shape[0]
     accum: dict[str, list[float]] = {
         "policy_loss": [],
         "value_loss": [],
@@ -265,3 +282,84 @@ def ppo_update(
             accum["entropy"].append(entropy_bonus.item())
             accum["loss"].append(loss.item())
     return {k: sum(vs) / len(vs) for k, vs in accum.items()}
+
+
+def compute_gae_vec(
+    rewards: Tensor,  # (T, N)
+    values: Tensor,  # (T, N)
+    dones: Tensor,  # (T, N) bool
+    last_values: Sequence[float],  # length N
+    *,
+    gamma: float = 0.99,
+    lam: float = 0.95,
+) -> tuple[Tensor, Tensor]:
+    """Per-env GAE: run the single-stream ``compute_gae`` on each env column (each env's
+    ``done`` resets its own λ-recursion + bootstrap), then flatten row-major ``(t, env) ->
+    t*N + env`` to match ``VecRolloutBuffer.batch()``."""
+    t_len, n = rewards.shape
+    adv = torch.zeros(t_len, n)
+    ret = torch.zeros(t_len, n)
+    for env in range(n):
+        a, r = compute_gae(
+            rewards[:, env],
+            values[:, env],
+            dones[:, env],
+            float(last_values[env]),
+            gamma=gamma,
+            lam=lam,
+        )
+        adv[:, env] = a
+        ret[:, env] = r
+    return adv.reshape(-1), ret.reshape(-1)
+
+
+class VecRolloutBuffer:
+    """N-stream rollout buffer. Stores T per-step rows of width N; ``batch()`` flattens
+    row-major (t, env) into the SAME flat dict shape as RolloutBuffer.batch(), so
+    ppo_update is unchanged. ``last_value`` is the per-env bootstrap (length N)."""
+
+    def __init__(self, num_envs: int) -> None:
+        self.num_envs = num_envs
+        self.obs: list[list[ObservationTensors]] = []
+        self.kind_idx: list[list[int]] = []
+        self.mag_idx: list[list[int]] = []
+        self.logprob: list[list[float]] = []
+        self.value: list[list[float]] = []
+        self.reward: list[list[float]] = []
+        self.done: list[list[bool]] = []
+        self.last_value: list[float] = [0.0] * num_envs
+
+    def add_step(
+        self,
+        obs: list[ObservationTensors],
+        kind_idx: list[int],
+        mag_idx: list[int],
+        logprob: list[float],
+        value: list[float],
+        reward: list[float],
+        done: list[bool],
+    ) -> None:
+        self.obs.append(obs)
+        self.kind_idx.append(kind_idx)
+        self.mag_idx.append(mag_idx)
+        self.logprob.append(logprob)
+        self.value.append(value)
+        self.reward.append(reward)
+        self.done.append(done)
+
+    def __len__(self) -> int:
+        return len(self.reward)
+
+    def _flat(self, rows: list[list[float]]) -> list[float]:
+        return [x for row in rows for x in row]  # row-major (t, env)
+
+    def batch(self) -> dict[str, Tensor]:
+        flat_obs = [o for row in self.obs for o in row]
+        data = dict(to_batch(flat_obs))
+        data["kind_idx"] = torch.tensor([x for row in self.kind_idx for x in row], dtype=torch.long)
+        data["mag_idx"] = torch.tensor([x for row in self.mag_idx for x in row], dtype=torch.long)
+        data["old_logprob"] = torch.tensor(self._flat(self.logprob), dtype=torch.float32)
+        data["value"] = torch.tensor(self._flat(self.value), dtype=torch.float32)
+        data["reward"] = torch.tensor(self._flat(self.reward), dtype=torch.float32)
+        data["done"] = torch.tensor([x for row in self.done for x in row], dtype=torch.bool)
+        return data

@@ -13,6 +13,7 @@ from collections.abc import Callable
 from dataclasses import replace
 from functools import partial
 from pathlib import Path
+from typing import Literal
 
 import torch
 
@@ -22,6 +23,7 @@ from ml.curriculum import (
     CurriculumHistory,
     CurriculumSchedule,
     EpisodeStat,
+    Stage,
     sample_request,
     should_promote,
     stage_rng,
@@ -35,6 +37,7 @@ from ml.ppo import (
     PPOConfig,
     ReturnNormalizer,
     RolloutBuffer,
+    VecRolloutBuffer,
     entropy_coef_at,
     factored_logprob_entropy,
     ppo_update,
@@ -42,6 +45,7 @@ from ml.ppo import (
 )
 from ml.stage_builder import build_stage_env, effective_fleet_ids
 from ml.types import DifficultyConfig, RewardWeights
+from ml.vector_env import VecStep, _EnvWorker
 
 _TRIVIAL_DIFFICULTY = DifficultyConfig(
     max_objects=1, per_object_step_budget=40, total_step_budget=40
@@ -130,6 +134,78 @@ def collect_rollout(
     return buf, ep_stats
 
 
+def collect_rollout_vec(
+    vec_env,  # SyncVectorEnv | SubprocVectorEnv (duck-typed: num_envs/reset/step)
+    policy: HangarFitPolicy,
+    encoder: EncoderConfig,
+    rollout_len: int,
+) -> tuple[VecRolloutBuffer, list[EpisodeStat]]:
+    """Drive `vec_env` for `rollout_len` steps (rollout_len * num_envs transitions),
+    batching the N observations through one policy forward per step. Returns the
+    (T, N) buffer + the per-completed-episode stats (with the per-env reward sum)."""
+    n = vec_env.num_envs
+    buf = VecRolloutBuffer(num_envs=n)
+    obs = vec_env.reset()
+    ep_reward = [0.0] * n
+    ep_stats: list[EpisodeStat] = []
+    with torch.no_grad():
+        for _ in range(rollout_len):
+            out = policy(to_batch(obs))
+            kind, mag = sample_action(out)
+            logprob, _ = factored_logprob_entropy(out, kind, mag)
+            actions = [(int(kind[i]), int(mag[i])) for i in range(n)]
+            step: VecStep = vec_env.step(actions)
+            buf.add_step(
+                obs,
+                kind_idx=[int(kind[i]) for i in range(n)],
+                mag_idx=[int(mag[i]) for i in range(n)],
+                logprob=[float(logprob[i]) for i in range(n)],
+                value=[float(out.value[i]) for i in range(n)],
+                reward=list(step.rewards),
+                done=list(step.dones),
+            )
+            for i in range(n):
+                ep_reward[i] += step.rewards[i]
+                if step.dones[i]:
+                    s = step.ep_stats[i]
+                    if s is None:
+                        raise RuntimeError(f"env {i} signalled done but ep_stats[{i}] is None")
+                    ep_stats.append(
+                        EpisodeStat(
+                            fraction_placed=s.fraction_placed,
+                            valid=s.valid,
+                            total_reward=ep_reward[i],
+                        )
+                    )
+                    ep_reward[i] = 0.0
+            obs = step.obs
+        # per-env bootstrap value for non-done tails
+        tail = policy(to_batch(obs))
+        buf.last_value = [float(tail.value[i]) for i in range(n)]
+    return buf, ep_stats
+
+
+def _build_stage_worker(
+    stage: Stage,
+    stage_index: int,
+    pool: tuple[str, ...],
+    n: int,
+    seed: int,
+    weights: RewardWeights | None,
+    encoder: EncoderConfig,
+    worker_index: int,
+) -> _EnvWorker:
+    """Picklable (module-level, used via ``functools.partial``) per-worker factory for the
+    vectorized training path. A CLOSURE is NOT picklable under ``spawn``, so this MUST stay a
+    module-level function. Rebuilds the stage env + this worker's seeded episode sampler IN
+    the child process; ``worker_index`` gives each worker a distinct ``stage_rng`` stream
+    (``worker_index=0`` is the legacy stream)."""
+    wenv = build_stage_env(stage, weights=weights)
+    wrng = stage_rng(seed, stage_index, worker_index=worker_index)
+    wnext = partial(sample_request, pool, n, wrng)
+    return _EnvWorker(wenv, encoder, wnext)
+
+
 def train(
     *,
     seed: int = 0,
@@ -205,6 +281,8 @@ def train_curriculum(
     log: bool = False,
     save: str | None = None,
     save_onnx: str | None = None,
+    n_envs: int = 1,
+    vec_backend: Literal["sync", "subproc"] = "subproc",
 ) -> CurriculumHistory:
     """Climb the ladder: one policy/optimizer across rungs (transfer); per rung, run
     PPO until the competency gate fires or the per-stage cap is hit, then advance.
@@ -241,40 +319,88 @@ def train_curriculum(
         # is not the flake8-bugbear B023 late-binding trap) and stays mypy-inferrable
         # where a default-arg lambda would not be.
         next_request = partial(sample_request, pool, n, rng)
-        for it in range(pol.max_iters):
-            # Per-rung entropy schedule: `it` resets to 0 each stage, so each rung
-            # re-warms from entropy_coef_start (the intended high→low warmup per rung).
-            it_cfg = replace(
-                cfg,
-                entropy_coef=entropy_coef_at(
-                    it,
-                    base=cfg.entropy_coef,
-                    start=cfg.entropy_coef_start,
-                    end=cfg.entropy_coef_end,
-                    anneal_iters=cfg.entropy_anneal_iters,
-                ),
-            )
-            buf, ep_stats = collect_rollout(
-                env, policy, enc, rollout_len, sample_request=next_request
-            )
-            ppo_update(policy, optimizer, buf, it_cfg, normalizer=normalizer)
-            window.extend(ep_stats)
-            history.record(stage.name, it, ep_stats)
-            if log:
-                mean_r = (
-                    sum(s.total_reward for s in ep_stats) / len(ep_stats)
-                    if ep_stats
-                    else float("nan")
+        # n_envs == 1: the legacy single-stream path is UNTOUCHED (byte-identical).
+        if n_envs == 1:
+            for it in range(pol.max_iters):
+                # Per-rung entropy schedule: `it` resets to 0 each stage, so each rung
+                # re-warms from entropy_coef_start (the intended high→low warmup per rung).
+                it_cfg = replace(
+                    cfg,
+                    entropy_coef=entropy_coef_at(
+                        it,
+                        base=cfg.entropy_coef,
+                        start=cfg.entropy_coef_start,
+                        end=cfg.entropy_coef_end,
+                        anneal_iters=cfg.entropy_anneal_iters,
+                    ),
                 )
-                print(
-                    f"[{stage.name}] iter {it:4d}  mean_ep_reward={mean_r:+.3f}  "
-                    f"n_eps={len(ep_stats)}"
+                buf, ep_stats = collect_rollout(
+                    env, policy, enc, rollout_len, sample_request=next_request
                 )
-            if should_promote(list(window), pol):
-                history.note_promotion(stage.name, it, by="competency")
-                break
+                ppo_update(policy, optimizer, buf, it_cfg, normalizer=normalizer)
+                window.extend(ep_stats)
+                history.record(stage.name, it, ep_stats)
+                if log:
+                    mean_r = (
+                        sum(s.total_reward for s in ep_stats) / len(ep_stats)
+                        if ep_stats
+                        else float("nan")
+                    )
+                    print(
+                        f"[{stage.name}] iter {it:4d}  mean_ep_reward={mean_r:+.3f}  "
+                        f"n_eps={len(ep_stats)}"
+                    )
+                if should_promote(list(window), pol):
+                    history.note_promotion(stage.name, it, by="competency")
+                    break
+            else:
+                history.note_promotion(stage.name, pol.max_iters - 1, by="cap")
         else:
-            history.note_promotion(stage.name, pol.max_iters - 1, by="cap")
+            from ml.vector_env import SubprocVectorEnv, SyncVectorEnv
+
+            # functools.partial over the MODULE-LEVEL _build_stage_worker is picklable under
+            # spawn (a nested closure is not); each partial binds this stage's args + the
+            # worker index by value. worker_index gives each worker its own stage_rng stream.
+            worker_fns: list[Callable[[], _EnvWorker]] = [
+                partial(_build_stage_worker, stage, stage_index, pool, n, seed, weights, enc, wi)
+                for wi in range(n_envs)
+            ]
+            vec_cm: SyncVectorEnv | SubprocVectorEnv
+            if vec_backend == "subproc":
+                vec_cm = SubprocVectorEnv(worker_fns)
+            else:
+                vec_cm = SyncVectorEnv([fn() for fn in worker_fns])
+            with vec_cm as vec:
+                for it in range(pol.max_iters):
+                    it_cfg = replace(
+                        cfg,
+                        entropy_coef=entropy_coef_at(
+                            it,
+                            base=cfg.entropy_coef,
+                            start=cfg.entropy_coef_start,
+                            end=cfg.entropy_coef_end,
+                            anneal_iters=cfg.entropy_anneal_iters,
+                        ),
+                    )
+                    buf_vec, ep_stats = collect_rollout_vec(vec, policy, enc, rollout_len)
+                    ppo_update(policy, optimizer, buf_vec, it_cfg, normalizer=normalizer)
+                    window.extend(ep_stats)
+                    history.record(stage.name, it, ep_stats)
+                    if log:
+                        mean_r = (
+                            sum(s.total_reward for s in ep_stats) / len(ep_stats)
+                            if ep_stats
+                            else float("nan")
+                        )
+                        print(
+                            f"[{stage.name}] iter {it:4d}  mean_ep_reward={mean_r:+.3f}  "
+                            f"n_eps={len(ep_stats)}"
+                        )
+                    if should_promote(list(window), pol):
+                        history.note_promotion(stage.name, it, by="competency")
+                        break
+                else:
+                    history.note_promotion(stage.name, pol.max_iters - 1, by="cap")
         if log:
             by = history.promotions[-1][2]
             print(f"[{stage.name}] promoted by {by}")
@@ -343,6 +469,18 @@ def build_argparser() -> argparse.ArgumentParser:
         action="store_true",
         help="std-only Welford return normalization before GAE",
     )
+    p.add_argument(
+        "--n-envs",
+        type=int,
+        default=1,
+        help="number of parallel envs (1 = legacy single-stream, byte-identical)",
+    )
+    p.add_argument(
+        "--vec-backend",
+        choices=["sync", "subproc"],
+        default="subproc",
+        help="vectorized env backend: sync (in-process, CI-safe) or subproc (parallel workers)",
+    )
     return p
 
 
@@ -383,6 +521,8 @@ def main() -> None:
             log=True,
             save=args.save,
             save_onnx=args.save_onnx,
+            n_envs=args.n_envs,
+            vec_backend=args.vec_backend,
         )
 
 

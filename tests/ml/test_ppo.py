@@ -441,3 +441,124 @@ def test_ppo_update_raises_when_normalize_returns_true_but_normalizer_none():
     cfg = PPOConfig(minibatch_size=16, normalize_returns=True)
     with pytest.raises(ValueError, match="normalizer"):
         ppo_update(policy, opt, buf, cfg, normalizer=None)
+
+
+# ---------------------------------------------------------------------------
+# Task 4 (708): VecRolloutBuffer + compute_gae_vec
+# ---------------------------------------------------------------------------
+
+
+def test_compute_gae_vec_matches_per_env_compute_gae():
+    import torch
+
+    from ml.ppo import compute_gae, compute_gae_vec
+
+    T, N = 4, 3
+    torch.manual_seed(0)
+    rewards = torch.randn(T, N)
+    values = torch.randn(T, N)
+    dones = torch.rand(T, N) > 0.7
+    last_values = [0.1, -0.2, 0.3]
+
+    adv_vec, ret_vec = compute_gae_vec(rewards, values, dones, last_values, gamma=0.99, lam=0.95)
+    assert adv_vec.shape == (T * N,)
+    assert ret_vec.shape == (T * N,)
+    # Per-env reference, flattened row-major (t*N + env).
+    for env in range(N):
+        a, r = compute_gae(
+            rewards[:, env], values[:, env], dones[:, env], last_values[env], gamma=0.99, lam=0.95
+        )
+        for t in range(T):
+            assert torch.allclose(adv_vec[t * N + env], a[t])
+            assert torch.allclose(ret_vec[t * N + env], r[t])
+
+
+def test_vecrolloutbuffer_batch_shape_matches_flat():
+
+    from ml.encoding import ACTION_DIM, RASTER_CHANNELS, TOKEN_DIM, ObservationTensors
+    from ml.ppo import VecRolloutBuffer
+
+    def _obs():
+        import numpy as np
+
+        return ObservationTensors(
+            raster=np.zeros((RASTER_CHANNELS, 8, 8), np.float32),
+            tokens=np.zeros((4, TOKEN_DIM), np.float32),
+            token_mask=np.ones(4, bool),
+            active_index=0,
+            legal_action_mask=np.ones(ACTION_DIM, bool),
+            meta={},
+        )
+
+    buf = VecRolloutBuffer(num_envs=2)
+    buf.add_step(
+        [_obs(), _obs()], [1, 2], [0, 1], [0.0, 0.0], [0.0, 0.0], [1.0, 2.0], [False, True]
+    )
+    buf.add_step(
+        [_obs(), _obs()], [3, 4], [2, 3], [0.0, 0.0], [0.0, 0.0], [3.0, 4.0], [True, False]
+    )
+    buf.last_value = [0.0, 0.0]
+    data = buf.batch()
+    assert data["reward"].shape == (4,)  # T*N
+    assert data["reward"].tolist() == [1.0, 2.0, 3.0, 4.0]  # row-major (t, env)
+    assert set(data) >= {
+        "raster",
+        "tokens",
+        "kind_idx",
+        "mag_idx",
+        "old_logprob",
+        "value",
+        "reward",
+        "done",
+    }
+
+
+def test_ppo_update_minibatches_all_TN_vec_transitions(monkeypatch):
+    """ppo_update must shuffle/minibatch over all T*N vec transitions, not len(buffer)==T.
+    Regression for #708 C1: with n=len(buffer) the update silently trained on only the first
+    T of T*N rows, dropping (N-1)/N of every rollout."""
+    import numpy as np
+
+    from ml.encoding import ACTION_DIM, RASTER_CHANNELS, TOKEN_DIM, ObservationTensors
+    from ml.policy import HangarFitPolicy
+    from ml.ppo import PPOConfig, VecRolloutBuffer, ppo_update
+
+    def _obs():
+        return ObservationTensors(
+            raster=np.zeros((RASTER_CHANNELS, 8, 8), np.float32),
+            tokens=np.zeros((4, TOKEN_DIM), np.float32),
+            token_mask=np.ones(4, bool),
+            active_index=0,
+            legal_action_mask=np.ones(ACTION_DIM, bool),
+            meta={},
+        )
+
+    T, N = 3, 4
+    buf = VecRolloutBuffer(num_envs=N)
+    for _ in range(T):
+        buf.add_step(
+            [_obs() for _ in range(N)],
+            [0] * N,
+            [0] * N,
+            [0.0] * N,
+            [0.0] * N,
+            [0.1] * N,
+            [False] * N,
+        )
+    buf.last_value = [0.0] * N
+
+    captured: list[int] = []
+    real_randperm = torch.randperm
+
+    def _spy(k, *a, **kw):  # type: ignore[no-untyped-def]
+        captured.append(int(k))
+        return real_randperm(k, *a, **kw)
+
+    monkeypatch.setattr(torch, "randperm", _spy)
+
+    policy = HangarFitPolicy()
+    opt = torch.optim.SGD(policy.parameters(), lr=0.0)  # lr=0: weights frozen, coverage only
+    ppo_update(policy, opt, buf, PPOConfig(epochs=1, minibatch_size=64))
+
+    assert captured, "ppo_update did not call torch.randperm"
+    assert all(k == T * N for k in captured), f"shuffled {captured}, expected T*N={T * N}"

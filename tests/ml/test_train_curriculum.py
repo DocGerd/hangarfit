@@ -195,3 +195,72 @@ def test_train_curriculum_weights_default_neutral():
     sched = _tiny_schedule(threshold=2.0)  # always caps
     h = train_curriculum(seed=0, schedule=sched, rollout_len=8)
     assert len(h.promotions) == 2
+
+
+def test_collect_rollout_vec_fills_buffer_and_stats():
+    import torch
+
+    from ml.encoding import EncoderConfig
+    from ml.policy import HangarFitPolicy
+    from ml.train import build_trivial_env, collect_rollout_vec
+    from ml.vector_env import SyncVectorEnv, _EnvWorker
+
+    torch.manual_seed(0)
+    enc = EncoderConfig()
+    vec = SyncVectorEnv([_EnvWorker(build_trivial_env(), enc, None) for _ in range(2)])
+    policy = HangarFitPolicy()
+    buf, stats = collect_rollout_vec(vec, policy, enc, rollout_len=8)
+    vec.close()
+    assert len(buf) == 8 and buf.num_envs == 2
+    assert len(buf.last_value) == 2
+    import math
+
+    assert all(math.isfinite(v) for v in buf.last_value)
+    # the trivial env completes on PARK, so some episodes finish -> stats with total_reward
+    assert all(isinstance(s.total_reward, float) for s in stats)
+
+
+def test_train_curriculum_n_envs_runs():
+    from ml.curriculum import CurriculumSchedule
+    from ml.train import train_curriculum
+
+    sched = CurriculumSchedule.default()
+    # cap the run tiny: 1 iter per stage, 2 envs, sync backend (no subprocess in CI)
+    from dataclasses import replace
+
+    sched = replace(sched, policy=replace(sched.policy, max_iters=1))
+    hist = train_curriculum(seed=0, schedule=sched, rollout_len=16, n_envs=2, vec_backend="sync")
+    assert hist.promotions  # advanced through stages
+
+
+def test_train_curriculum_subproc_runs():
+    """The subproc backend must actually run end-to-end — it spawns workers and PICKLES the
+    per-worker factories, which a nested closure would silently break (the sync test cannot
+    catch that). Guards the picklable module-level _build_stage_worker contract."""
+    from dataclasses import replace
+
+    from ml.curriculum import CurriculumSchedule
+    from ml.train import train_curriculum
+
+    sched = replace(
+        CurriculumSchedule.default(),
+        policy=replace(CurriculumSchedule.default().policy, max_iters=1),
+    )
+    hist = train_curriculum(seed=0, schedule=sched, rollout_len=8, n_envs=2, vec_backend="subproc")
+    assert hist.promotions and hist.iterations  # spawned, pickled, trained
+
+
+def test_train_curriculum_n_envs_1_matches_legacy_byte_identical():
+    """n_envs=1 must reproduce the legacy single-stream training history exactly."""
+    from dataclasses import replace
+
+    from ml.curriculum import CurriculumSchedule
+    from ml.train import train_curriculum
+
+    default_pol = CurriculumSchedule.default().policy
+    sched = replace(CurriculumSchedule.default(), policy=replace(default_pol, max_iters=1))
+    legacy = train_curriculum(seed=0, schedule=sched, rollout_len=16)  # default n_envs=1
+    again = train_curriculum(seed=0, schedule=sched, rollout_len=16, n_envs=1)
+    assert any(eps for _, _, eps in legacy.iterations), "no episodes completed — vacuous equality"
+    assert legacy.promotions == again.promotions
+    assert legacy.iterations == again.iterations  # CurriculumHistory equality (per-iter records)
