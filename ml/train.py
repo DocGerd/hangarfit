@@ -281,6 +281,12 @@ def train(
                 f"iter {it:4d}  {reward_str}  "
                 f"loss={metrics['loss']:+.3f}  entropy={metrics['entropy']:.3f}"
             )
+    # Move the (possibly CUDA) policy to CPU before persisting: --save writes a state_dict the
+    # CPU ml.eval / ONNX consumer loads, and export_onnx traces CPU dummy inputs against it (a
+    # CUDA-resident policy would device-mismatch). Training is finished here, so the in-place
+    # move is harmless; it is a no-op (byte-identical) for an already-CPU policy.
+    if save is not None or save_onnx is not None:
+        policy = policy.to("cpu")
     if save is not None:
         torch.save(policy.state_dict(), save)
     if save_onnx is not None:
@@ -475,6 +481,12 @@ def train_curriculum(
                 policy_kwargs=saved_policy_kwargs,
                 completed_stages=completed_stages,
             )
+    # Move the (possibly CUDA) policy to CPU before persisting: --save writes a state_dict the
+    # CPU ml.eval / ONNX consumer loads, and export_onnx traces CPU dummy inputs against it (a
+    # CUDA-resident policy would device-mismatch). Training is finished here, so the in-place
+    # move is harmless; it is a no-op (byte-identical) for an already-CPU policy.
+    if save is not None or save_onnx is not None:
+        policy = policy.to("cpu")
     if save is not None:
         torch.save(policy.state_dict(), save)
     if save_onnx is not None:

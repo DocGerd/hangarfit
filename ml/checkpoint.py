@@ -15,6 +15,7 @@ import os
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import torch
 
@@ -40,14 +41,17 @@ class TrainingCheckpoint:
     ``load_state_dict`` (a shape mismatch would otherwise raise); ``completed_stages`` are the
     rung names already fully trained, so a resumed run skips them."""
 
-    # policy_kwargs stays a bare dict deliberately: it is ``**``-splatted into HangarFitPolicy,
-    # whose params are heterogeneously typed (e.g. cnn_channels: tuple[int, ...]), so any value
-    # type narrower than Any fails the splat. policy_state/optimizer_state are torch state_dicts.
-    policy_kwargs: dict
-    policy_state: dict
-    optimizer_state: dict
+    # str-keyed dicts; values stay Any because policy_kwargs is ``**``-splatted into
+    # HangarFitPolicy (heterogeneous params, e.g. cnn_channels: tuple[int, ...]) and
+    # policy_state/optimizer_state are torch state_dicts — any narrower value type would
+    # break the splat / the state_dict round-trip.
+    policy_kwargs: dict[str, Any]
+    policy_state: dict[str, Any]
+    optimizer_state: dict[str, Any]
     normalizer_state: dict[str, float | int] | None
     completed_stages: list[str] = field(default_factory=list)
+    # Round-trip field; on any successfully loaded instance it is always == CHECKPOINT_VERSION
+    # (the loader is the enforcement point — a constructed mismatch is never returned by load).
     version: int = CHECKPOINT_VERSION
 
 
@@ -77,9 +81,18 @@ def save_checkpoint(
         "completed_stages": list(completed_stages),
     }
     target = str(path)
-    tmp = target + ".tmp"  # same directory -> os.replace is atomic (same filesystem)
-    torch.save(payload, tmp)
-    os.replace(tmp, target)
+    # tmp MUST stay in target's directory so os.replace is a same-filesystem atomic rename;
+    # the pid suffix avoids two concurrent writers clobbering each other's in-flight temp.
+    tmp = f"{target}.{os.getpid()}.tmp"
+    try:
+        torch.save(payload, tmp)
+        os.replace(tmp, target)
+    except BaseException:
+        # A failed write must not corrupt the existing checkpoint (os.replace never ran) nor
+        # leave stray temp litter that masks the real cause (disk full / permission).
+        if os.path.exists(tmp):
+            os.remove(tmp)
+        raise
 
 
 def load_checkpoint(path: str | Path) -> TrainingCheckpoint:
@@ -87,6 +100,11 @@ def load_checkpoint(path: str | Path) -> TrainingCheckpoint:
     ``weights_only=True`` (no arbitrary-code deserialization) onto CPU; the caller moves the
     reconstructed policy to its device. Raises ValueError on a version mismatch."""
     payload = torch.load(str(path), map_location="cpu", weights_only=True)
+    if not isinstance(payload, dict):
+        raise ValueError(
+            f"checkpoint {path!s} is not a resume checkpoint (got {type(payload).__name__}); "
+            f"did you pass a bare --save state_dict? Use the file written by --checkpoint-out"
+        )
     version = payload.get("version")
     if version != CHECKPOINT_VERSION:
         raise ValueError(

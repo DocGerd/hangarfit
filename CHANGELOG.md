@@ -12,7 +12,8 @@ All notable changes to this project are documented here. Format follows [Keep a 
   gated behind `device.type != 'cpu'`, so the ADR-0027 / determinism contract holds for the
   CPU path. `cuda` moves the policy + the PPO-update minibatch tensors to the GPU (GAE stays
   on CPU, a per-step scalar loop); it is an **explicitly non-deterministic** fast path
-  (GPU RNG / kernels), validated loud if `torch.cuda.is_available()` is `False`. Measured
+  (GPU RNG / kernels). The `ml.train` **CLI** rejects `--device cuda` loudly when
+  `torch.cuda.is_available()` is `False` (library callers own device selection). Measured
   ~5.8x on the PPO update on an RTX 4090; the shapely-geometry rollout stays CPU-bound, so
   the net per-iter gain is bounded by the update's share.
 
@@ -54,7 +55,7 @@ All notable changes to this project are documented here. Format follows [Keep a 
   r_unplaced_penalty·(1−frac)`), so running an object to budget exhaustion is no longer free
   relative to committing a Park. This targets the diagnosed cause of `valid_placed=0` (the
   agent learned to avoid committing a Park to dodge the one-shot `−w_col` collision cliff —
-  the `fraction_placed` 0.991→0.476 collapse), which the originally-planned "dense
+  the `fraction_placed` 0.991→0.476 collapse measured in the #697 baseline), which the originally-planned "dense
   collision-progress reward" could **not** fix (it duplicates the policy-invariant
   `dense_slot_potential` shaping and so cannot move the optimum). Default 0 → byte-identical;
   pairs with the existing `--r-valid-park` for the positive pull toward valid commits.

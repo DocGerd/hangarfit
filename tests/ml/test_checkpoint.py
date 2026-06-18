@@ -187,3 +187,50 @@ def test_save_checkpoint_writes_atomically_via_temp(tmp_path, monkeypatch):
     assert target.exists()
     assert list(tmp_path.glob("*.tmp")) == []  # temp atomically replaced + cleaned up
     load_checkpoint(target)  # the final file is valid
+
+
+def test_load_checkpoint_non_dict_payload_raises(tmp_path):
+    # A non-dict payload (e.g. a bare tensor/list, or a --save state_dict mix-up) must fail
+    # LOUD with a clear message, not an AttributeError on `.get()` (T2).
+    bad = tmp_path / "notdict.pt"
+    torch.save([1, 2, 3], str(bad))
+    with pytest.raises(ValueError, match="checkpoint|resume"):
+        load_checkpoint(bad)
+
+
+def test_save_checkpoint_failed_write_preserves_existing_and_cleans_temp(tmp_path, monkeypatch):
+    # The invariant the atomic write EXISTS for (T3/T7): a torch.save that fails mid-write must
+    # leave the pre-existing checkpoint intact AND leave no stray temp file behind.
+    import ml.checkpoint as ckpt_mod
+
+    policy = HangarFitPolicy()
+    opt = torch.optim.Adam(policy.parameters(), lr=1e-3)
+    target = tmp_path / "ck.pt"
+    save_checkpoint(
+        target,
+        policy=policy,
+        optimizer=opt,
+        normalizer=None,
+        policy_kwargs=None,
+        completed_stages=["orig"],
+    )
+
+    def boom(obj, path, *a, **k):
+        with open(path, "w") as f:
+            f.write("partial")  # a partial temp file is created...
+        raise RuntimeError("disk full mid-write")  # ...then the write fails
+
+    monkeypatch.setattr(ckpt_mod.torch, "save", boom)
+    with pytest.raises(RuntimeError, match="disk full"):
+        save_checkpoint(
+            target,
+            policy=policy,
+            optimizer=opt,
+            normalizer=None,
+            policy_kwargs=None,
+            completed_stages=["new"],
+        )
+    # os.replace never ran -> the pre-existing checkpoint is untouched...
+    assert load_checkpoint(target).completed_stages == ["orig"]
+    # ...and the failed write left no stray temp litter.
+    assert list(tmp_path.glob("*.tmp")) == []

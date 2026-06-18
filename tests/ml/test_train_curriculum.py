@@ -595,6 +595,66 @@ def test_train_curriculum_resume_warns_on_normalizer_config_mismatch(tmp_path, c
     assert "normaliz" in capsys.readouterr().err.lower()
 
 
+def test_train_curriculum_resume_inherits_checkpoint_optimizer_lr(tmp_path, monkeypatch):
+    # T6: resume restores the optimizer via load_state_dict, which carries the checkpoint's lr
+    # (train.py documents this deliberate inheritance). A refactor re-applying cfg.lr after the
+    # load would silently violate it — pin the contract with a distinct checkpoint lr.
+    import ml.train as train_mod
+    from ml.checkpoint import save_checkpoint
+    from ml.policy import HangarFitPolicy
+    from ml.ppo import PPOConfig
+
+    policy = HangarFitPolicy()
+    opt = torch.optim.Adam(policy.parameters(), lr=0.05)  # distinct from cfg.lr below
+    ckpt = tmp_path / "ck.pt"
+    save_checkpoint(
+        ckpt,
+        policy=policy,
+        optimizer=opt,
+        normalizer=None,
+        policy_kwargs=None,
+        completed_stages=["t0"],
+    )
+    seen: dict = {}
+    real = train_mod.ppo_update
+
+    def spy(pol, optim, *a, **k):
+        seen["lr"] = optim.param_groups[0]["lr"]
+        return real(pol, optim, *a, **k)
+
+    monkeypatch.setattr(train_mod, "ppo_update", spy)
+    sched = _tiny_schedule(threshold=2.0)
+    sched = replace(sched, policy=replace(sched.policy, max_iters=1))
+    train_curriculum(seed=0, schedule=sched, rollout_len=8, load=str(ckpt), ppo=PPOConfig(lr=3e-4))
+    assert seen["lr"] == pytest.approx(0.05)  # checkpoint optimizer lr wins, not cfg.lr 3e-4
+
+
+def test_train_curriculum_resume_same_path_load_and_checkpoint_out(tmp_path):
+    # T8: the headline usage — --load PATH and --checkpoint-out PATH the SAME file (read at
+    # start, atomically overwritten per rung). Must complete and extend completed_stages.
+    from ml.checkpoint import load_checkpoint, save_checkpoint
+    from ml.policy import HangarFitPolicy
+
+    policy = HangarFitPolicy()
+    opt = torch.optim.Adam(policy.parameters(), lr=3e-4)
+    ck = tmp_path / "ck.pt"
+    save_checkpoint(
+        ck,
+        policy=policy,
+        optimizer=opt,
+        normalizer=None,
+        policy_kwargs=None,
+        completed_stages=["t0"],
+    )
+    sched = _tiny_schedule(threshold=2.0)
+    sched = replace(sched, policy=replace(sched.policy, max_iters=1))
+    hist = train_curriculum(
+        seed=0, schedule=sched, rollout_len=8, load=str(ck), checkpoint_out=str(ck)
+    )
+    assert [p[0] for p in hist.promotions] == ["t1"]  # only the remaining rung ran
+    assert load_checkpoint(ck).completed_stages == ["t0", "t1"]  # same-path write extended it
+
+
 def test_argparser_load_and_checkpoint_out_default_none():
     a = build_argparser().parse_args([])
     assert a.load is None
@@ -702,6 +762,22 @@ def test_train_curriculum_device_cuda_runs():
     sched = _tiny_default_sched()
     hist = train_curriculum(seed=0, schedule=sched, rollout_len=16, device="cuda")
     assert hist.promotions and hist.iterations  # trained on GPU end-to-end
+
+
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a CUDA device")
+def test_train_curriculum_device_cuda_save_and_onnx_export_cpu(tmp_path):
+    # T1: after --device cuda training the policy is CUDA-resident; --save / --save-onnx must
+    # not crash (export traces CPU dummy inputs) and must write CPU-loadable artifacts (the
+    # eval/ONNX consumer expects CPU). Pre-fix, export_onnx raised a device-mismatch at run end.
+    sched = _tiny_default_sched()
+    save = tmp_path / "p.pt"
+    onnx = tmp_path / "p.onnx"
+    train_curriculum(
+        seed=0, schedule=sched, rollout_len=16, device="cuda", save=str(save), save_onnx=str(onnx)
+    )
+    assert onnx.exists()
+    state = torch.load(str(save), map_location="cpu", weights_only=True)
+    assert all(v.device.type == "cpu" for v in state.values())  # saved tensors are CPU
 
 
 def test_argparser_device_defaults_to_cpu():
