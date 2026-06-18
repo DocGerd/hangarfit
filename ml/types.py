@@ -101,6 +101,10 @@ class RewardWeights:
     gamma: float = 0.99  # shaping discount
     r_valid_park: float = 0.0  # bonus paid in Park ONLY when the layout is valid (basin escape)
     dense_slot_potential: bool = False  # add an in-hangar nearest-free-pocket shaping term
+    # terminal: penalty per UNPLACED fraction (1 - terminal_fraction). Default 0.0 -> byte-
+    # identical. Non-zero charges abandonment so "drive to budget exhaustion" is no longer
+    # free relative to committing a Park (the #710 Park/drive-out economics-rebalance lever).
+    r_unplaced_penalty: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)

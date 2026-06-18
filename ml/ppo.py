@@ -84,6 +84,27 @@ class ReturnNormalizer:
         std = max(var, 0.0) ** 0.5
         return rewards / (std + self.eps)
 
+    def state_dict(self) -> dict[str, float | int]:
+        """Plain-scalar state for the #710 resume checkpoint (no tensors, so it round-trips
+        through torch.save/load weights_only=True cleanly). Captures the Welford running stats
+        AND the eps/warmup config, so a reloaded normalizer scales the next batch identically."""
+        return {
+            "count": self._count,
+            "mean": self._mean,
+            "m2": self._m2,
+            "eps": self.eps,
+            "warmup": self.warmup,
+        }
+
+    def load_state_dict(self, state: dict[str, float | int]) -> None:
+        """Restore the exact running stats + config saved by ``state_dict`` (overwrites the
+        constructor's eps/warmup, so a resumed normalizer matches the saved one bit-for-bit)."""
+        self._count = int(state["count"])
+        self._mean = float(state["mean"])
+        self._m2 = float(state["m2"])
+        self.eps = float(state["eps"])
+        self.warmup = int(state["warmup"])
+
 
 def factored_logprob_entropy(
     out: PolicyOutput, kind_idx: Tensor, mag_idx: Tensor

@@ -368,6 +368,313 @@ def test_train_curriculum_n_envs_1_matches_legacy_byte_identical():
 
 
 # ---------------------------------------------------------------------------
+# #710 item 2: --d-model/--n-layers/--n-heads (policy arch) + --epochs/--minibatch-size
+# (PPOConfig) CLI flags. Default-neutral: omitting them reproduces today's behaviour.
+# ---------------------------------------------------------------------------
+
+
+def test_argparser_arch_and_ppo_flags_defaults():
+    from ml.ppo import PPOConfig
+
+    a = build_argparser().parse_args([])
+    # arch flags default None -> policy_kwargs stays None -> HangarFitPolicy own defaults
+    assert a.d_model is None
+    assert a.n_layers is None
+    assert a.n_heads is None
+    # epochs/minibatch default = the PPOConfig dataclass defaults (read, not hardcoded)
+    assert a.epochs == PPOConfig().epochs
+    assert a.minibatch_size == PPOConfig().minibatch_size
+
+
+def test_main_threads_arch_and_ppo_flags_to_curriculum(monkeypatch):
+    import ml.train as train_mod
+    from ml.curriculum import CurriculumHistory
+
+    captured: dict = {}
+
+    def fake(**kw):
+        captured.update(kw)
+        return CurriculumHistory()
+
+    monkeypatch.setattr(train_mod, "train_curriculum", fake)
+    train_mod.main(
+        [
+            "--schedule",
+            "curriculum",
+            "--d-model",
+            "64",
+            "--n-layers",
+            "1",
+            "--n-heads",
+            "2",
+            "--epochs",
+            "6",
+            "--minibatch-size",
+            "128",
+        ]
+    )
+    assert captured["policy_kwargs"] == {"d_model": 64, "n_layers": 1, "n_heads": 2}
+    assert captured["ppo"].epochs == 6
+    assert captured["ppo"].minibatch_size == 128
+
+
+def test_main_no_arch_flags_default_neutral(monkeypatch):
+    import ml.train as train_mod
+    from ml.curriculum import CurriculumHistory
+    from ml.ppo import PPOConfig
+
+    captured: dict = {}
+
+    def fake(**kw):
+        captured.update(kw)
+        return CurriculumHistory()
+
+    monkeypatch.setattr(train_mod, "train_curriculum", fake)
+    train_mod.main(["--schedule", "curriculum"])
+    # no arch flags -> policy_kwargs None (own defaults), PPO epochs/minibatch unchanged
+    assert captured["policy_kwargs"] is None
+    assert captured["ppo"].epochs == PPOConfig().epochs
+    assert captured["ppo"].minibatch_size == PPOConfig().minibatch_size
+
+
+def test_main_threads_partial_arch_flags_to_trivial_train(monkeypatch):
+    # The arch flags apply to the trivial path too, and a PARTIAL set yields a
+    # policy_kwargs holding only the supplied keys (the rest fall back to defaults).
+    import ml.train as train_mod
+
+    captured: dict = {}
+
+    def fake(**kw):
+        captured.update(kw)
+        return []
+
+    monkeypatch.setattr(train_mod, "train", fake)
+    train_mod.main(["--schedule", "trivial", "--d-model", "64"])
+    assert captured["policy_kwargs"] == {"d_model": 64}
+
+
+# ---------------------------------------------------------------------------
+# #710 item 1: --load checkpoint resume (policy + optimizer + normalizer +
+# curriculum position). Default-neutral: load=None/checkpoint_out=None = no IO.
+# ---------------------------------------------------------------------------
+
+
+def test_train_curriculum_writes_checkpoint_per_stage(tmp_path):
+    from ml.checkpoint import load_checkpoint
+
+    sched = _tiny_schedule(threshold=2.0)  # always caps; max_iters=1 below = fast
+    sched = replace(sched, policy=replace(sched.policy, max_iters=1))
+    ckpt = tmp_path / "ck.pt"
+    train_curriculum(seed=0, schedule=sched, rollout_len=8, checkpoint_out=str(ckpt))
+    assert ckpt.exists()
+    loaded = load_checkpoint(ckpt)
+    # both rungs trained -> both recorded as completed, in ladder order
+    assert loaded.completed_stages == ["t0", "t1"]
+
+
+def test_train_curriculum_resume_skips_completed_stages(tmp_path):
+    sched = _tiny_schedule(threshold=2.0)
+    sched = replace(sched, policy=replace(sched.policy, max_iters=1))
+    ckpt = tmp_path / "ck.pt"
+    train_curriculum(seed=0, schedule=sched, rollout_len=8, checkpoint_out=str(ckpt))
+    # Resume from a checkpoint whose completed set covers EVERY rung -> nothing to train.
+    resumed = train_curriculum(seed=0, schedule=sched, rollout_len=8, load=str(ckpt))
+    assert resumed.iterations == []
+    assert resumed.promotions == []
+
+
+def test_train_curriculum_resume_partial_runs_only_remaining(tmp_path):
+    from ml.checkpoint import save_checkpoint
+    from ml.policy import HangarFitPolicy
+    from ml.ppo import ReturnNormalizer
+
+    sched = _tiny_schedule(threshold=2.0)
+    sched = replace(sched, policy=replace(sched.policy, max_iters=1))
+    # Hand-build a checkpoint that marks ONLY the first rung complete.
+    policy = HangarFitPolicy()
+    opt = torch.optim.Adam(policy.parameters(), lr=3e-4)
+    ckpt = tmp_path / "ck.pt"
+    save_checkpoint(
+        ckpt,
+        policy=policy,
+        optimizer=opt,
+        normalizer=ReturnNormalizer(),
+        policy_kwargs=None,
+        completed_stages=["t0"],
+    )
+    resumed = train_curriculum(seed=0, schedule=sched, rollout_len=8, load=str(ckpt))
+    # only the SECOND rung ("t1") runs; "t0" is skipped.
+    assert [p[0] for p in resumed.promotions] == ["t1"]
+    assert {stage for stage, _, _ in resumed.iterations} == {"t1"}
+
+
+def test_train_curriculum_resume_arch_mismatch_raises(tmp_path):
+    from ml.checkpoint import save_checkpoint
+    from ml.policy import HangarFitPolicy
+
+    pk = {"d_model": 32, "n_layers": 1, "n_heads": 2}
+    policy = HangarFitPolicy(**pk)
+    opt = torch.optim.Adam(policy.parameters(), lr=3e-4)
+    ckpt = tmp_path / "ck.pt"
+    save_checkpoint(
+        ckpt, policy=policy, optimizer=opt, normalizer=None, policy_kwargs=pk, completed_stages=[]
+    )
+    sched = _tiny_schedule(threshold=2.0)
+    sched = replace(sched, policy=replace(sched.policy, max_iters=1))
+    # resume must REUSE the checkpoint's architecture; a conflicting one fails loud.
+    with pytest.raises(ValueError, match="arch|policy_kwargs"):
+        train_curriculum(
+            seed=0,
+            schedule=sched,
+            rollout_len=8,
+            load=str(ckpt),
+            policy_kwargs={"d_model": 64},
+        )
+
+
+def test_train_curriculum_default_no_checkpoint_byte_identical():
+    # load=None + checkpoint_out=None must reproduce the no-arg history exactly (no IO path).
+    sched = _tiny_default_sched()
+    base = train_curriculum(seed=0, schedule=sched, rollout_len=16)
+    same = train_curriculum(seed=0, schedule=sched, rollout_len=16, load=None, checkpoint_out=None)
+    assert any(eps for _, _, eps in base.iterations), "no episodes completed — vacuous equality"
+    assert base.iterations == same.iterations
+    assert base.promotions == same.promotions
+
+
+def test_train_curriculum_resume_warns_on_foreign_completed_stage(tmp_path, capsys):
+    # Resuming a checkpoint whose completed rungs are not in the current schedule (a different
+    # ladder) is tolerated but must WARN — else the wrong rungs are silently (not) skipped.
+    from ml.checkpoint import save_checkpoint
+    from ml.policy import HangarFitPolicy
+
+    policy = HangarFitPolicy()
+    opt = torch.optim.Adam(policy.parameters(), lr=3e-4)
+    ckpt = tmp_path / "ck.pt"
+    save_checkpoint(
+        ckpt,
+        policy=policy,
+        optimizer=opt,
+        normalizer=None,
+        policy_kwargs=None,
+        completed_stages=["ghost-rung"],
+    )
+    sched = _tiny_schedule(threshold=2.0)
+    sched = replace(sched, policy=replace(sched.policy, max_iters=1))
+    train_curriculum(seed=0, schedule=sched, rollout_len=8, load=str(ckpt))
+    assert "ghost-rung" in capsys.readouterr().err
+
+
+def test_train_curriculum_resume_warns_on_normalizer_config_mismatch(tmp_path, capsys):
+    # Checkpoint carries normalizer stats but the resume cfg has normalize_returns off -> the
+    # saved stats are dropped; that silent divergence must WARN (the multi-day-run footgun).
+    from ml.checkpoint import save_checkpoint
+    from ml.policy import HangarFitPolicy
+    from ml.ppo import PPOConfig, ReturnNormalizer
+
+    policy = HangarFitPolicy()
+    opt = torch.optim.Adam(policy.parameters(), lr=3e-4)
+    ckpt = tmp_path / "ck.pt"
+    save_checkpoint(
+        ckpt,
+        policy=policy,
+        optimizer=opt,
+        normalizer=ReturnNormalizer(),
+        policy_kwargs=None,
+        completed_stages=[],
+    )
+    sched = _tiny_schedule(threshold=2.0)
+    sched = replace(sched, policy=replace(sched.policy, max_iters=1))
+    train_curriculum(
+        seed=0,
+        schedule=sched,
+        rollout_len=8,
+        load=str(ckpt),
+        ppo=PPOConfig(normalize_returns=False),
+    )
+    assert "normaliz" in capsys.readouterr().err.lower()
+
+
+def test_argparser_load_and_checkpoint_out_default_none():
+    a = build_argparser().parse_args([])
+    assert a.load is None
+    assert a.checkpoint_out is None
+
+
+def test_main_threads_load_and_checkpoint_out_to_curriculum(monkeypatch):
+    import ml.train as train_mod
+    from ml.curriculum import CurriculumHistory
+
+    captured: dict = {}
+
+    def fake(**kw):
+        captured.update(kw)
+        return CurriculumHistory()
+
+    monkeypatch.setattr(train_mod, "train_curriculum", fake)
+    train_mod.main(
+        ["--schedule", "curriculum", "--load", "/tmp/x.pt", "--checkpoint-out", "/tmp/y.pt"]
+    )
+    assert captured["load"] == "/tmp/x.pt"
+    assert captured["checkpoint_out"] == "/tmp/y.pt"
+
+
+def test_main_load_requires_curriculum_schedule(monkeypatch):
+    # resume needs a curriculum position; --load under --schedule trivial fails LOUD, no training.
+    import ml.train as train_mod
+
+    ran = {"train": False}
+
+    def guard(**kw):
+        ran["train"] = True
+        return []
+
+    monkeypatch.setattr(train_mod, "train", guard)
+    with pytest.raises(SystemExit):
+        train_mod.main(["--schedule", "trivial", "--load", "/tmp/x.pt"])
+    assert ran["train"] is False
+
+
+def test_main_checkpoint_out_requires_curriculum_schedule(monkeypatch):
+    import ml.train as train_mod
+
+    ran = {"train": False}
+
+    def guard(**kw):
+        ran["train"] = True
+        return []
+
+    monkeypatch.setattr(train_mod, "train", guard)
+    with pytest.raises(SystemExit):
+        train_mod.main(["--schedule", "trivial", "--checkpoint-out", "/tmp/y.pt"])
+    assert ran["train"] is False
+
+
+# ---------------------------------------------------------------------------
+# #710 economics rebalance — --r-unplaced-penalty threads into RewardWeights.
+# ---------------------------------------------------------------------------
+
+
+def test_argparser_r_unplaced_penalty_defaults_zero():
+    assert build_argparser().parse_args([]).r_unplaced_penalty == 0.0
+
+
+def test_main_threads_r_unplaced_penalty_into_weights(monkeypatch):
+    import ml.train as train_mod
+    from ml.curriculum import CurriculumHistory
+
+    captured: dict = {}
+
+    def fake(**kw):
+        captured.update(kw)
+        return CurriculumHistory()
+
+    monkeypatch.setattr(train_mod, "train_curriculum", fake)
+    train_mod.main(["--schedule", "curriculum", "--r-unplaced-penalty", "12.5"])
+    assert captured["weights"].r_unplaced_penalty == 12.5
+
+
+# ---------------------------------------------------------------------------
 # CUDA opt-in (--device): default cpu must stay byte-identical; cuda is opt-in.
 # ---------------------------------------------------------------------------
 

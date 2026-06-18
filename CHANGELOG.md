@@ -30,6 +30,35 @@ All notable changes to this project are documented here. Format follows [Keep a 
   `history_metric_records`, `with_promotion_overrides`) are pure/torch-free in
   `ml/curriculum.py`.
 
+- **Learned backend (#710, epic #607): resume checkpoints (`--load` / `--checkpoint-out`).**
+  `ml.train --schedule curriculum` gains `--checkpoint-out PATH` (writes a rich resume
+  checkpoint after **each rung** — policy + Adam optimizer + return-normalizer state +
+  architecture + completed-rung position, via the new `ml/checkpoint.py`) and `--load PATH`
+  (restores all of it and **skips already-completed rungs**), so a long box-rung mastery run
+  survives a crash. Distinct from `--save` (still a bare `state_dict` for the ONNX/`ml.eval`
+  consumer); the resume checkpoint loads with `weights_only=True` (no arbitrary-code
+  deserialization). The checkpoint's architecture is authoritative — a conflicting
+  `policy_kwargs` raises. Both flags default off → the legacy path is byte-identical;
+  curriculum-only (fail loud under `--schedule trivial`).
+
+- **Learned backend (#710, epic #607): policy-architecture + PPO CLI knobs.** `ml.train`
+  gains `--d-model` / `--n-layers` / `--n-heads` (policy size; omitting them keeps
+  `HangarFitPolicy`'s own defaults) and `--epochs` / `--minibatch-size` (`PPOConfig`),
+  so the mastery run can scale net size / update epochs without code edits. Default-neutral:
+  omitting the arch flags yields `policy_kwargs=None` (own defaults) and the PPO flags
+  default to the `PPOConfig` dataclass values — byte-identical to prior runs.
+
+- **Learned backend (#710, epic #607): Park/drive-out economics rebalance
+  (`--r-unplaced-penalty`).** A new default-0 `RewardWeights.r_unplaced_penalty` adds a
+  terminal penalty per **unplaced** fraction (`terminal = r_terminal·frac −
+  r_unplaced_penalty·(1−frac)`), so running an object to budget exhaustion is no longer free
+  relative to committing a Park. This targets the diagnosed cause of `valid_placed=0` (the
+  agent learned to avoid committing a Park to dodge the one-shot `−w_col` collision cliff —
+  the `fraction_placed` 0.991→0.476 collapse), which the originally-planned "dense
+  collision-progress reward" could **not** fix (it duplicates the policy-invariant
+  `dense_slot_potential` shaping and so cannot move the optimum). Default 0 → byte-identical;
+  pairs with the existing `--r-valid-park` for the positive pull toward valid commits.
+
 - **Vectorized training envs (#708, epic #607).** `train_curriculum`/`ml.train` gain an
   `n_envs` knob (`--n-envs`, `--vec-backend {sync,subproc}`) that runs N cold-joint envs in
   parallel for throughput — the shapely geometry + encoder rasterization run across N

@@ -51,7 +51,15 @@ def step_reward(ctx: RewardContext, w: RewardWeights) -> float:
     )
     movement = -w.w_move * ctx.move_cost
     soft = w.w_gap * ctx.min_gap_m - w.w_seq * ctx.seq_deviation + w.w_region * ctx.region_match
-    terminal = w.r_terminal * ctx.terminal_fraction if ctx.terminal_fraction is not None else 0.0
+    # Terminal: reward the placed fraction MINUS a penalty on the unplaced fraction. The
+    # penalty (r_unplaced_penalty, default 0 -> the second term vanishes) charges abandonment
+    # so running an object to budget exhaustion is no longer free relative to committing a
+    # Park — the #710 Park/drive-out economics rebalance.
+    terminal = (
+        w.r_terminal * ctx.terminal_fraction - w.r_unplaced_penalty * (1.0 - ctx.terminal_fraction)
+        if ctx.terminal_fraction is not None
+        else 0.0
+    )
     shaping = w.gamma * ctx.potential - ctx.prev_potential
     valid_park = w.r_valid_park if ctx.park_valid else 0.0
     return hard + movement + soft + terminal + shaping + valid_park

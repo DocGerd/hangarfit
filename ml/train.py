@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import sys
 from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import replace
@@ -21,6 +22,7 @@ from torch import Tensor
 
 from hangarfit.loader import load_fleet, load_hangar
 from ml.action_space import decode
+from ml.checkpoint import load_checkpoint, save_checkpoint
 from ml.curriculum import (
     CurriculumHistory,
     CurriculumSchedule,
@@ -301,6 +303,8 @@ def train_curriculum(
     n_envs: int = 1,
     vec_backend: Literal["sync", "subproc"] = "subproc",
     device: str = "cpu",
+    load: str | None = None,
+    checkpoint_out: str | None = None,
 ) -> CurriculumHistory:
     """Climb the ladder: one policy/optimizer across rungs (transfer); per rung, run
     PPO until the competency gate fires or the per-stage cap is hit, then advance.
@@ -309,7 +313,12 @@ def train_curriculum(
     ``ppo.entropy_coef_start/end/anneal_iters``: per-rung entropy schedule; the iteration
     index resets to 0 at each new stage, so each rung re-warms from the high start.
     ``ppo.normalize_returns``: std-only Welford return normalizer (single run-level
-    normalizer shared across all rungs; identity until warmed up)."""
+    normalizer shared across all rungs; identity until warmed up).
+    ``load``: resume from a #710 checkpoint — restore the policy, Adam optimizer, return
+    normalizer, and curriculum position (already-completed rungs are skipped). The
+    checkpoint's architecture is authoritative; a conflicting ``policy_kwargs`` raises.
+    ``checkpoint_out``: write a resume checkpoint after EACH rung completes, so a long run
+    survives a crash. Both default None (no IO) -> the legacy path is byte-identical."""
     torch.manual_seed(seed)
     cfg = ppo or PPOConfig()
     enc = encoder or EncoderConfig()
@@ -319,11 +328,57 @@ def train_curriculum(
     # tensorizer overflow several rungs in.
     validate_ladder(sched.stages, encoder_max_objects=enc.max_objects)
     pol = sched.policy
-    policy = HangarFitPolicy(**(policy_kwargs or {})).to(torch.device(device))
-    optimizer = torch.optim.Adam(policy.parameters(), lr=cfg.lr)
-    normalizer = ReturnNormalizer(eps=cfg.return_norm_eps) if cfg.normalize_returns else None
+    dev = torch.device(device)
+    # Resume (#710): restore the policy + optimizer + normalizer + curriculum position from a
+    # checkpoint, else build them fresh. The default path (load is None) is unchanged and
+    # byte-identical. ``saved_policy_kwargs`` is the architecture the checkpoint records, so a
+    # per-rung ``checkpoint_out`` write stores the EXACT kwargs the weights were built with.
+    completed_stages: list[str] = []
+    if load is not None:
+        ckpt = load_checkpoint(load)
+        if policy_kwargs is not None and dict(policy_kwargs) != dict(ckpt.policy_kwargs):
+            raise ValueError(
+                f"train_curriculum: --load architecture (policy_kwargs) {ckpt.policy_kwargs} "
+                f"!= passed policy_kwargs {policy_kwargs}; resume must reuse the checkpoint's "
+                f"architecture (a shape mismatch would break load_state_dict)"
+            )
+        saved_policy_kwargs = dict(ckpt.policy_kwargs)
+        policy = HangarFitPolicy(**saved_policy_kwargs).to(dev)
+        policy.load_state_dict(ckpt.policy_state)
+        optimizer = torch.optim.Adam(policy.parameters(), lr=cfg.lr)
+        # load_state_dict overwrites param_groups (lr included), so resume INHERITS the
+        # checkpoint's optimizer hyperparameters — --lr is intentionally not re-applied here.
+        optimizer.load_state_dict(ckpt.optimizer_state)
+        normalizer = ReturnNormalizer(eps=cfg.return_norm_eps) if cfg.normalize_returns else None
+        if normalizer is not None and ckpt.normalizer_state is not None:
+            normalizer.load_state_dict(ckpt.normalizer_state)
+        completed_stages = list(ckpt.completed_stages)
+        # Resume sanity warnings (stderr; the resume path is never the byte-identical default).
+        foreign = [s for s in completed_stages if s not in {st.name for st in sched.stages}]
+        if foreign:
+            print(
+                f"warning: --load checkpoint marks rungs {foreign} complete, but they are not "
+                f"in the current schedule (resuming a different ladder?)",
+                file=sys.stderr,
+            )
+        if (ckpt.normalizer_state is not None) != cfg.normalize_returns:
+            print(
+                f"warning: --load checkpoint normalizer presence "
+                f"({ckpt.normalizer_state is not None}) disagrees with "
+                f"normalize_returns={cfg.normalize_returns}; the saved return-normalizer state "
+                f"is dropped / re-initialized mid-run",
+                file=sys.stderr,
+            )
+    else:
+        saved_policy_kwargs = dict(policy_kwargs or {})
+        policy = HangarFitPolicy(**saved_policy_kwargs).to(dev)
+        optimizer = torch.optim.Adam(policy.parameters(), lr=cfg.lr)
+        normalizer = ReturnNormalizer(eps=cfg.return_norm_eps) if cfg.normalize_returns else None
+    completed_set = set(completed_stages)
     history = CurriculumHistory()
     for stage_index, stage in enumerate(sched.stages):
+        if stage.name in completed_set:
+            continue  # already fully trained in a prior run (resume) — skip this rung
         env = build_stage_env(stage, weights=weights)
         pool = effective_fleet_ids(stage)
         n = stage.difficulty.max_objects if stage.difficulty.max_objects is not None else len(pool)
@@ -406,6 +461,20 @@ def train_curriculum(
         if log:
             by = history.promotions[-1][2]
             print(f"[{stage.name}] promoted by {by}")
+        # Mark this rung done and (if requested) checkpoint, so a crash resumes at the next
+        # rung with the policy/optimizer/normalizer this rung produced. No-op when
+        # checkpoint_out is None -> the default path stays byte-identical.
+        completed_stages.append(stage.name)
+        completed_set.add(stage.name)
+        if checkpoint_out is not None:
+            save_checkpoint(
+                checkpoint_out,
+                policy=policy,
+                optimizer=optimizer,
+                normalizer=normalizer,
+                policy_kwargs=saved_policy_kwargs,
+                completed_stages=completed_stages,
+            )
     if save is not None:
         torch.save(policy.state_dict(), save)
     if save_onnx is not None:
@@ -451,6 +520,36 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument("--rollout-len", type=int, default=1024)
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument(
+        "--d-model",
+        type=int,
+        default=None,
+        help="policy embedding dim (None = HangarFitPolicy default, 128)",
+    )
+    p.add_argument(
+        "--n-layers",
+        type=int,
+        default=None,
+        help="transformer encoder layers (None = HangarFitPolicy default, 2)",
+    )
+    p.add_argument(
+        "--n-heads",
+        type=int,
+        default=None,
+        help="attention heads (None = HangarFitPolicy default, 4)",
+    )
+    p.add_argument(
+        "--epochs",
+        type=int,
+        default=PPOConfig().epochs,
+        help="PPO epochs per update (default = PPOConfig.epochs)",
+    )
+    p.add_argument(
+        "--minibatch-size",
+        type=int,
+        default=PPOConfig().minibatch_size,
+        help="PPO minibatch size (default = PPOConfig.minibatch_size)",
+    )
+    p.add_argument(
         "--save", type=str, default=None, help="write the trained policy state_dict to this path"
     )
     p.add_argument(
@@ -460,10 +559,31 @@ def build_argparser() -> argparse.ArgumentParser:
         help="also export the trained policy forward to this ONNX path (inference)",
     )
     p.add_argument(
+        "--load",
+        type=str,
+        default=None,
+        help="curriculum: resume from a #710 checkpoint (policy + optimizer + normalizer + "
+        "completed rungs); reuses the checkpoint's architecture",
+    )
+    p.add_argument(
+        "--checkpoint-out",
+        type=str,
+        default=None,
+        help="curriculum: write a resume checkpoint after each rung (crash-survivable run); "
+        "pair with --load PATH to resume the same path",
+    )
+    p.add_argument(
         "--r-valid-park",
         type=float,
         default=0.0,
         help="bonus per Park action when the full layout is valid (basin-escape shaping)",
+    )
+    p.add_argument(
+        "--r-unplaced-penalty",
+        type=float,
+        default=0.0,
+        help="terminal penalty per UNPLACED fraction (charges abandonment so driving to "
+        "budget exhaustion is no longer free vs committing a Park; #710 economics rebalance)",
     )
     p.add_argument(
         "--dense-slot-potential",
@@ -523,9 +643,23 @@ def main(argv: Sequence[str] | None = None) -> None:
     weights = RewardWeights(
         r_valid_park=args.r_valid_park,
         dense_slot_potential=args.dense_slot_potential,
+        r_unplaced_penalty=args.r_unplaced_penalty,
     )
+    # Only the supplied arch flags go into policy_kwargs; an all-None set yields None, so
+    # the policy falls back to HangarFitPolicy's own defaults (default-neutral / byte-identical).
+    policy_kwargs = {
+        k: v
+        for k, v in (
+            ("d_model", args.d_model),
+            ("n_layers", args.n_layers),
+            ("n_heads", args.n_heads),
+        )
+        if v is not None
+    } or None
     ppo_cfg = PPOConfig(
         lr=args.lr,
+        epochs=args.epochs,
+        minibatch_size=args.minibatch_size,
         entropy_coef_start=args.entropy_start,
         entropy_coef_end=args.entropy_end,
         entropy_anneal_iters=args.entropy_anneal_iters,
@@ -539,11 +673,14 @@ def main(argv: Sequence[str] | None = None) -> None:
             parser.error("--metrics-out requires --schedule curriculum")
         if args.promotion_metric is not None or args.promotion_threshold is not None:
             parser.error("--promotion-metric/--promotion-threshold require --schedule curriculum")
+        if args.load is not None or args.checkpoint_out is not None:
+            parser.error("--load/--checkpoint-out require --schedule curriculum")
         train(
             seed=args.seed,
             iterations=args.iterations,
             rollout_len=args.rollout_len,
             ppo=ppo_cfg,
+            policy_kwargs=policy_kwargs,
             weights=weights,
             log=True,
             save=args.save,
@@ -566,6 +703,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             schedule=sched,
             rollout_len=args.rollout_len,
             ppo=ppo_cfg,
+            policy_kwargs=policy_kwargs,
             weights=weights,
             log=True,
             save=args.save,
@@ -573,6 +711,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             n_envs=args.n_envs,
             vec_backend=args.vec_backend,
             device=args.device,
+            load=args.load,
+            checkpoint_out=args.checkpoint_out,
         )
         if args.metrics_out is not None:
             records = history_metric_records(history)

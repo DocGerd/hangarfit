@@ -403,3 +403,34 @@ def test_fixed_obstacle_is_perceived_in_observation_and_encoding():
         i for i in range(tensors.tokens.shape[0]) if tensors.token_mask[i] and tensors.tokens[i, 4]
     ]
     assert fixed_rows, "no fixed_obstacle token row (row[4]) — keep-out is not perceived"
+
+
+def test_r_unplaced_penalty_lowers_terminal_reward_on_abandonment():
+    """End-to-end through HangarFitEnv: driving an object to budget exhaustion without ever
+    Parking it (abandonment, terminal_fraction=0) must cost exactly r_unplaced_penalty more
+    than the same trajectory with the penalty off — proving the #710 economics knob is wired
+    from RewardWeights through env.step's terminal branch (not just step_reward in isolation)."""
+    from ml.types import DifficultyConfig, Primitive, RewardWeights
+
+    diff = DifficultyConfig(max_objects=1, per_object_step_budget=2, total_step_budget=2)
+
+    def run(penalty: float) -> float:
+        env = HangarFitEnv(
+            hangar=empty_hangar(),
+            fleet=_fuji(),
+            requested_ids=("fuji",),
+            difficulty=diff,
+            weights=RewardWeights(r_unplaced_penalty=penalty),
+        )
+        env.reset()
+        total, done, info = 0.0, False, None
+        while not done:
+            _, r, done, info = env.step(Primitive(kind="S", magnitude=1.0, gear=1))
+            total += r
+        assert info is not None and info.placed == 0  # never parked -> pure abandonment
+        return total
+
+    base = run(0.0)
+    penalized = run(10.0)
+    # unplaced fraction = 1 - terminal_fraction = 1.0 -> penalty term = -10.0, terminal step only.
+    assert base - penalized == pytest.approx(10.0)
