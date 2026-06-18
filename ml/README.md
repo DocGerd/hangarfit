@@ -31,7 +31,7 @@ python -m ml.train --schedule curriculum --n-envs 4 --vec-backend sync
 ```
 
 - `--n-envs 1` (default) keeps the legacy single-stream path byte-identical.
-- `--vec-backend subproc` forks N torch-free worker processes for geometry + encoding;
+- `--vec-backend subproc` spawns N torch-free worker processes (`spawn` start method) for geometry + encoding;
   the main process holds the single batched policy forward + PPO update.
 - `--vec-backend sync` runs the same N workers in-process (no spawn overhead; useful
   in CI or when the stage geometry is cheap).
