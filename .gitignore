@@ -71,3 +71,15 @@ out*.png
 # be committed or shipped; the committed bundle is src/hangarfit/_viewer_assets/
 # viewer.js, built FROM viewer/src/*.ts.
 viewer/node_modules/
+
+# Learned-backend (ml/) gate-run scratch outputs (epic #607). The dev/CI-only
+# `ml.train` gate recipes (ml/README.md) write training artifacts to the repo root:
+# resume checkpoints, per-iter metrics JSONL, and run logs, plus the gate-driver PID
+# files and diagnosis-workflow scratch. All are reproducible generated outputs, never
+# shipped in the wheel and never meant to be committed. Root-anchored so a deliberately
+# tracked file deeper in the tree is unaffected.
+/ck-*.pt
+/metrics-*.jsonl
+/gate-*.log
+/.gate-*.pid
+/.workflow-*.js
