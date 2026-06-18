@@ -6,6 +6,15 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Vectorized training envs (#708, epic #607).** `train_curriculum`/`ml.train` gain an
+  `n_envs` knob (`--n-envs`, `--vec-backend {sync,subproc}`) that runs N cold-joint envs in
+  parallel for throughput — the shapely geometry + encoder rasterization run across N
+  torch-free worker processes (`ml/vector_env.py`: `SyncVectorEnv`/`SubprocVectorEnv`), while
+  the main process keeps the single batched policy forward + PPO (`VecRolloutBuffer` +
+  per-env GAE). `n_envs=1` keeps the legacy single-stream path byte-identical. Because the
+  workers are torch-free, `Sync(seed,N)` and `Subproc(seed,N)` are byte-identical.
+  Foundation for the #698 train-to-mastery run.
+
 - **Learned backend inference (#706, epic #607).** `solve --backend learned --weights PATH`
   now runs: a trained policy is exported to ONNX (`ml/export.py`, `train --save-onnx`) and
   run torch-free via onnxruntime (`ml/infer.py`), returning a `SolveResult` (valid layout +

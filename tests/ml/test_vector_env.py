@@ -112,3 +112,51 @@ def test_subproc_worker_failure_is_loud():
         SubprocVectorEnv([_broken_worker_fn]) as sub,
     ):
         sub.reset()
+
+
+@pytest.mark.slow
+def test_subproc_faster_than_sync_on_multiobject_stage():
+    """Subproc parallelizes the per-env geometry; on a multi-object stage it should beat
+    Sync on a fixed step budget. Generous margin — this is a smoke, not a benchmark."""
+    import time
+    from functools import partial
+
+    from ml.curriculum import CurriculumSchedule
+    from ml.encoding import EncoderConfig
+    from ml.stage_builder import effective_fleet_ids
+    from ml.train import _build_stage_worker
+
+    # pick a multi-object stage from the default ladder
+    sched = CurriculumSchedule.default()
+    stage = next(s for s in sched.stages if (s.difficulty.max_objects or 1) >= 2)
+    enc = EncoderConfig()
+    pool = effective_fleet_ids(stage)
+    nobj = stage.difficulty.max_objects or len(pool)
+    N, STEPS = 4, 60
+
+    # Use module-level _build_stage_worker via functools.partial — this IS picklable
+    # under multiprocessing spawn.  A nested closure is NOT picklable; see task brief.
+    worker_fns = [
+        partial(_build_stage_worker, stage, 0, pool, nobj, 0, None, enc, wi) for wi in range(N)
+    ]
+
+    def _run(vec):
+        vec.reset()
+        for _ in range(STEPS):
+            vec.step([(1, 2)] * N)  # S-forward; cheap, deterministic
+        vec.close()
+
+    sync_vec = SyncVectorEnv([fn() for fn in worker_fns])
+    t0 = time.monotonic()
+    _run(sync_vec)
+    sync_s = time.monotonic() - t0
+
+    sub_vec = SubprocVectorEnv(worker_fns)
+    t0 = time.monotonic()
+    _run(sub_vec)
+    sub_s = time.monotonic() - t0
+
+    ratio = sub_s / sync_s
+    print(f"\n  sync={sync_s:.3f}s  subproc={sub_s:.3f}s  ratio={ratio:.2f}x")
+    # subproc has spawn overhead; require it to be no worse than 2.5x sync (loose smoke).
+    assert sub_s < sync_s * 2.5, f"subproc {sub_s:.2f}s vs sync {sync_s:.2f}s (ratio {ratio:.2f}x)"

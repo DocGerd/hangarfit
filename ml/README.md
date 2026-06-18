@@ -18,6 +18,26 @@ environment + reward (`HangarFitEnv`), reusing `hangarfit`'s geometry oracle.
   side-by-side both-rates table against the recorded RR-MC baseline (needs the
   `[train]` extra / torch).
 
+### Vectorized training (#708)
+
+`train_curriculum` supports `n_envs > 1` via two backends:
+
+```bash
+# 8 parallel envs, subprocess workers (recommended for throughput):
+python -m ml.train --schedule curriculum --n-envs 8 --vec-backend subproc
+
+# 4 in-process envs (CI-safe, no spawn overhead):
+python -m ml.train --schedule curriculum --n-envs 4 --vec-backend sync
+```
+
+- `--n-envs 1` (default) keeps the legacy single-stream path byte-identical.
+- `--vec-backend subproc` forks N torch-free worker processes for geometry + encoding;
+  the main process holds the single batched policy forward + PPO update.
+- `--vec-backend sync` runs the same N workers in-process (no spawn overhead; useful
+  in CI or when the stage geometry is cheap).
+- `Sync(seed, N)` and `Subproc(seed, N)` are **byte-identical**: workers are torch-free,
+  so there is no cross-process torch nondeterminism.
+
 ### Inference (#5)
 
 Export a trained policy to ONNX and run it torch-free via the deterministic
