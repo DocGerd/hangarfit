@@ -166,7 +166,8 @@ def collect_rollout_vec(
                 ep_reward[i] += step.rewards[i]
                 if step.dones[i]:
                     s = step.ep_stats[i]
-                    assert s is not None
+                    if s is None:
+                        raise RuntimeError(f"env {i} signalled done but ep_stats[{i}] is None")
                     ep_stats.append(
                         EpisodeStat(
                             fraction_placed=s.fraction_placed,
