@@ -32,6 +32,7 @@ class HangarFitEnv:
         requested_ids: tuple[str, ...],
         ground_objects: Mapping[str, GroundObject] | None = None,
         fixed_placements: tuple[Placement, ...] = (),
+        anchor_placements: tuple[Placement, ...] = (),
         difficulty: DifficultyConfig | None = None,
         weights: RewardWeights | None = None,
     ) -> None:
@@ -44,14 +45,46 @@ class HangarFitEnv:
         # denominator stays the requested/driven set). Set here (scenario-level) rather
         # than in ``_reset_state`` so it survives ``reset()``.
         self._fixed: list[Placement] = list(fixed_placements)
+        # #712 seed-anchor witness poses, keyed by object id. At reset, the first
+        # ``difficulty.seed_anchor_k`` requested objects are pre-parked here (a k-prefix of a
+        # valid witness layout is provably valid). Empty by default => the anchor mechanism is
+        # inert (k stays 0) and reset is byte-identical to the empty-start env.
+        self._anchor_by_id: dict[str, Placement] = {p.plane_id: p for p in anchor_placements}
+        if len(self._anchor_by_id) != len(anchor_placements):
+            ids = [p.plane_id for p in anchor_placements]
+            dupes = sorted({i for i in ids if ids.count(i) > 1})
+            raise ValueError(
+                f"anchor_placements has duplicate object ids {dupes} (each anchored id needs "
+                f"exactly one witness pose, else the anchor map desyncs from the pool)"
+            )
         self.difficulty = difficulty or DifficultyConfig()
         self.weights = weights or RewardWeights()
         self._reset_state()
 
     def _reset_state(self) -> None:
         n = self.difficulty.max_objects
-        self._queue: list[str] = list(self.requested_ids if n is None else self.requested_ids[:n])
-        self._parked: list[Placement] = []
+        requested = list(self.requested_ids if n is None else self.requested_ids[:n])
+        # #712 seed-anchor: pre-park the first ``k`` requested objects at their committed-witness
+        # poses and drive only the remaining N-k. A k-prefix of a valid witness layout is provably
+        # valid (removing objects cannot create overlap/intrusion/egress conflicts), so the partial
+        # start is collision-free with NO runtime search. The per-episode request order is a fresh
+        # seeded permutation (curriculum sample_request), so "anchor the prefix" == "anchor a
+        # seeded-random k-subset" (#712 Q1). k=0 => _parked empty, _queue full => byte-identical.
+        k = self.difficulty.seed_anchor_k
+        if k:
+            if k < 0 or k >= len(requested):
+                raise ValueError(
+                    f"seed_anchor_k={k} must satisfy 0 <= k < the requested set size "
+                    f"{len(requested)} (at least one object must be left to drive in)"
+                )
+            missing = [i for i in requested[:k] if i not in self._anchor_by_id]
+            if missing:
+                raise ValueError(
+                    f"seed_anchor_k={k} but no witness pose for anchored ids {missing} "
+                    f"(known witness ids: {sorted(self._anchor_by_id)})"
+                )
+        self._parked: list[Placement] = [self._anchor_by_id[i] for i in requested[:k]]
+        self._queue: list[str] = requested[k:]
         self._parked_version = 0
         self._score_cache: tuple[int, go.LayoutScore] | None = None
         self._obstacles_cache: tuple[int, str, go.ObstaclesT] | None = None

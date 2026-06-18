@@ -34,6 +34,7 @@ from ml.curriculum import (
     should_promote,
     stage_rng,
     validate_ladder,
+    with_pair_anchored_rung,
     with_promotion_overrides,
     with_solo_box_rung,
 )
@@ -592,6 +593,13 @@ def build_argparser() -> argparse.ArgumentParser:
         "trivial, so single-object competency transfers before the 2-object jump",
     )
     p.add_argument(
+        "--seed-anchor",
+        action="store_true",
+        help="curriculum: insert the opt-in #712 'pair-anchored' rung before pair-box (1 object "
+        "pre-parked at a committed-witness pose, the other driven in), scaffolding 2-object "
+        "joint discovery before the empty-start pair-box",
+    )
+    p.add_argument(
         "--r-valid-park",
         type=float,
         default=0.0,
@@ -703,6 +711,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             parser.error("--load/--checkpoint-out require --schedule curriculum")
         if args.solo_box_rung:
             parser.error("--solo-box-rung requires --schedule curriculum")
+        if args.seed_anchor:
+            parser.error("--seed-anchor requires --schedule curriculum")
         train(
             seed=args.seed,
             iterations=args.iterations,
@@ -728,6 +738,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         )
         if args.solo_box_rung:
             sched = with_solo_box_rung(sched)
+        if args.seed_anchor:
+            sched = with_pair_anchored_rung(sched)
         history = train_curriculum(
             seed=args.seed,
             schedule=sched,

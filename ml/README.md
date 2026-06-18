@@ -139,9 +139,10 @@ per-step active-overlap gradient) and, being potential-based shaping, is **polic
 | `--metrics-out PATH` | off | Per-iter per-rung JSONL incl. the `valid_placed` curve. |
 | `--validity-conditional-terminal` | off | Terminal credits the **valid** placed fraction (invalid layout → 0), so an overlapping pile no longer books `+r_terminal`. The #714 multi-object fix; also closes the budget-exhaustion branch. |
 | `--solo-box-rung` | off | Insert an opt-in `solo-box` rung (1 object, **whole fleet**) after `trivial` so single-object competency transfers before the 2-object jump (#714). Curriculum-only. |
+| `--seed-anchor` | off | Insert an opt-in `pair-anchored` rung **before** `pair-box`: one of its 2 objects is pre-parked at a committed-witness pose (`seed_anchor_k=1`) and the agent only drives the other in — scaffolding 2-object joint discovery with a valid 1-object start (#712). Curriculum-only. |
 
-`--load`/`--checkpoint-out`/`--metrics-out`/`--promotion-*`/`--solo-box-rung` are
-curriculum-only (fail loud under `--schedule trivial`). The resume checkpoint
+`--load`/`--checkpoint-out`/`--metrics-out`/`--promotion-*`/`--solo-box-rung`/`--seed-anchor`
+are curriculum-only (fail loud under `--schedule trivial`). The resume checkpoint
 (`ml/checkpoint.py`) is distinct from `--save` (a bare `state_dict` for the ONNX/`ml.eval`
 consumer) and loads with `weights_only=True`.
 
@@ -156,9 +157,17 @@ reward spikes of −9k to −37k). Root cause: the terminal credited `fraction_p
 **regardless of validity** — invisible at N=1 (fraction is 0/1) but a free `+r_terminal` for
 invalid piles at N≥2. The #714 fix is two default-neutral levers: `--validity-conditional-terminal`
 (credit only the *valid* fraction) and `--solo-box-rung` (decouple the count jump from the
-sampling-pool jump). #712 (`seed_anchor` start-state graft) is **not** the binding lever here
-— it is an unwired stub, and the box rungs *do* reach valid joint poses briefly before
-abandoning them.
+sampling-pool jump).
+
+The #714 re-gate then **confirmed the 2-object joint-discovery wall**: `trivial` and `solo-box`
+master by competency (single-object whole-fleet transfer works), but `pair-box` stalls at
+`valid_placed ≈ 0.054` and the `--normalize-returns`-off control is strictly worse (so the
+normalizer is load-bearing, not the blocker — the residual is genuine joint discovery). That
+result satisfied the documented trigger for **#712 (`--seed-anchor` start-state graft)**, now
+wired: pre-park a k-prefix of a committed witness layout (a k-prefix of a valid layout is
+provably valid, so no runtime solver) and drive the remaining N−k in. Step 1 ships a single
+k=1 rung (`pair-anchored`); later rungs can anneal k→0. See the pair-anchored gate recipe
+below.
 
 ### Box-rung mastery gate recipe (#714 re-gate)
 
@@ -181,6 +190,35 @@ further lever (#712 start-state graft / a pose-curriculum). **Kill-criterion:** 
 ~iter 20 a rung still produces commit-everything spikes (reward < −3000 with
 `fraction_placed` > 0.5 and `valid_rate` < 0.1), the terminal fix did not bite — re-open
 toward the return-normalizer (run with `--normalize-returns` off) before more discovery work.
+
+### Pair-anchored gate recipe (#712 seed-anchor, step 1)
+
+The proof-first step of #712: insert the single `pair-anchored` (k=1) rung before `pair-box`
+and check whether a valid 1-object start lets the agent learn to place the **second** object.
+
+```bash
+# Same #714 economics as above, plus --seed-anchor (the pair-anchored rung before pair-box).
+python -u -m ml.train --schedule curriculum --device cuda --n-envs 16 \
+  --rollout-len 512 --max-iters-per-stage 25 \
+  --promotion-metric valid_placed --promotion-threshold 0.9 \
+  --r-valid-park 30.0 --r-unplaced-penalty 8.0 --dense-slot-potential \
+  --entropy-start 0.05 --entropy-end 0.005 --entropy-anneal-iters 40 \
+  --normalize-returns --validity-conditional-terminal --solo-box-rung --seed-anchor \
+  --metrics-out metrics-seed0-anchor.jsonl --checkpoint-out ck-seed0-anchor.pt --seed 0
+```
+
+The `pair-anchored` rung pre-parks 1 object and drives 1. An agent that **keeps the valid
+1-object partial** (parks nothing, or parks object 2 validly) scores `valid_placed ≥ ~0.5`
+(the anchor is a valid 1-object layout, counted in the denominator); committing object 2
+*invalidly* still scores 0 for that episode, so the rung average only settles at ~0.5 once the
+place-nothing behavior dominates. The **win condition** is the rung average *lifting above 0.5*
+toward 0.9 — i.e. the agent learning to place object 2 *validly given* object 1 — and ideally
+that competency transferring so the downstream empty-start `pair-box` lifts off its
+place-nothing pole too. **If pair-anchored cannot exceed its 0.5 floor**, a valid start
+alone is insufficient and the next lever is the full k=2→1→0 anneal (more scaffolding) or a
+pose-curriculum. Read `valid_placed`, not `valid_rate`. The witness is
+`tests/fixtures/ml/witness_box.yaml` (a committed valid 2-object box layout; every k-prefix is
+validated by `tests/ml/test_stage_builder.py::test_witness_box_*`).
 
 ## Design
 See `docs/superpowers/specs/2026-06-12-learned-backend-cold-joint-rl-env-design.md`
