@@ -84,6 +84,27 @@ class ReturnNormalizer:
         std = max(var, 0.0) ** 0.5
         return rewards / (std + self.eps)
 
+    def state_dict(self) -> dict[str, float | int]:
+        """Plain-scalar state for the #710 resume checkpoint (no tensors, so it round-trips
+        through torch.save/load weights_only=True cleanly). Captures the Welford running stats
+        AND the eps/warmup config, so a reloaded normalizer scales the next batch identically."""
+        return {
+            "count": self._count,
+            "mean": self._mean,
+            "m2": self._m2,
+            "eps": self.eps,
+            "warmup": self.warmup,
+        }
+
+    def load_state_dict(self, state: dict[str, float | int]) -> None:
+        """Restore the exact running stats + config saved by ``state_dict`` (overwrites the
+        constructor's eps/warmup, so a resumed normalizer matches the saved one bit-for-bit)."""
+        self._count = int(state["count"])
+        self._mean = float(state["mean"])
+        self._m2 = float(state["m2"])
+        self.eps = float(state["eps"])
+        self.warmup = int(state["warmup"])
+
 
 def factored_logprob_entropy(
     out: PolicyOutput, kind_idx: Tensor, mag_idx: Tensor
@@ -242,6 +263,15 @@ def ppo_update(
         advantages = advantages / std
     if not torch.isfinite(advantages).all():
         raise RuntimeError("advantages contain NaN/inf after normalization")
+    # Move the minibatch-loop tensors to the policy's device (CUDA opt-in). GAE + advantage
+    # math above stays on CPU: it is a per-step scalar loop (`float(...)` per step), so doing
+    # it on GPU would force a host sync every step. For a CPU policy every `.to()` is a no-op
+    # that returns the same tensor, so the default path is byte-identical (the determinism
+    # contract holds only for device='cpu'; CUDA is an explicitly non-deterministic fast path).
+    device = next(policy.parameters()).device
+    data = {k: (v.to(device) if torch.is_tensor(v) else v) for k, v in data.items()}
+    advantages = advantages.to(device)
+    returns = returns.to(device)
     # Number of FLAT transitions to shuffle/minibatch over. For a VecRolloutBuffer this is
     # T*N (advantages is length T*N), NOT len(buffer)==T — using len(buffer) would silently
     # train on only the first T of T*N rows and drop (N-1)/N of every rollout (#708). For the
@@ -254,7 +284,8 @@ def ppo_update(
         "loss": [],
     }
     for _ in range(config.epochs):
-        perm = torch.randperm(n)
+        # device=cpu reproduces torch.randperm(n) exactly (same default generator).
+        perm = torch.randperm(n, device=device)
         for start in range(0, n, config.minibatch_size):
             mb = perm[start : start + config.minibatch_size]
             mb_obs = {k: data[k][mb] for k in _OBS_KEYS}

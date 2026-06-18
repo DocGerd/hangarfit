@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import random
 from collections.abc import Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Literal
 
 from ml.types import DifficultyConfig
@@ -59,6 +59,82 @@ def should_promote(window: Sequence[EpisodeStat], policy: PromotionPolicy) -> bo
     else:  # fraction_placed
         score = sum(s.fraction_placed for s in recent) / len(recent)
     return score >= policy.threshold
+
+
+def with_promotion_overrides(
+    policy: PromotionPolicy,
+    *,
+    metric: Literal["fraction_placed", "valid_rate", "valid_placed"] | None = None,
+    threshold: float | None = None,
+    max_iters: int | None = None,
+) -> PromotionPolicy:
+    """Return ``policy`` with each non-None field overridden — the CLI plumbing for the
+    #710 promotion-gate study (``--promotion-metric`` / ``--promotion-threshold`` /
+    ``--max-iters-per-stage``). All-None returns an equal policy, so the CLI stays
+    default-neutral when no override flag is passed."""
+    if metric is not None:
+        policy = replace(policy, metric=metric)
+    if threshold is not None:
+        policy = replace(policy, threshold=threshold)
+    if max_iters is not None:
+        policy = replace(policy, max_iters=max_iters)
+    return policy
+
+
+def episode_metrics(ep_stats: Sequence[EpisodeStat]) -> dict[str, float | int | None]:
+    """Per-iteration scalar metrics over one PPO iteration's COMPLETED episodes. The three
+    rates mirror ``should_promote`` exactly: ``valid_placed`` credits ``fraction_placed``
+    only on episodes whose final layout is valid (the #710 compound mastery axis),
+    ``valid_rate`` is the validity fraction, ``fraction_placed`` ignores validity. An empty
+    iteration (no episode finished within the rollout) reports ``n_eps=0`` with ``None``
+    rates — NOT 0.0 — so a short rollout is never mistaken for a genuine zero in the curve
+    (mirrors train.py's NaN-when-empty ``mean_ep_reward`` convention)."""
+    n = len(ep_stats)
+    if n == 0:
+        return {
+            "n_eps": 0,
+            "mean_ep_reward": None,
+            "fraction_placed": None,
+            "valid_rate": None,
+            "valid_placed": None,
+        }
+    return {
+        "n_eps": n,
+        "mean_ep_reward": sum(s.total_reward for s in ep_stats) / n,
+        "fraction_placed": sum(s.fraction_placed for s in ep_stats) / n,
+        "valid_rate": sum(1.0 for s in ep_stats if s.valid) / n,
+        "valid_placed": sum(s.fraction_placed if s.valid else 0.0 for s in ep_stats) / n,
+    }
+
+
+def format_iter_log(stage_name: str, it: int, ep_stats: Sequence[EpisodeStat]) -> str:
+    """One-line per-iteration progress log carrying the full ``episode_metrics`` — in
+    particular ``valid_placed``, the #710 mastery axis — so a ``python -u`` curriculum run
+    is monitorable mid-flight (the CLI previously logged only ``mean_ep_reward``). An empty
+    iteration reports ``n_eps=0`` with no rates, so a no-episode rollout is not misread as a
+    genuine zero."""
+    m = episode_metrics(ep_stats)
+    if m["n_eps"] == 0:
+        return f"[{stage_name}] iter {it:4d}  n_eps=0 (no episode completed)"
+    return (
+        f"[{stage_name}] iter {it:4d}  "
+        f"mean_ep_reward={m['mean_ep_reward']:+.3f}  "
+        f"valid_placed={m['valid_placed']:.3f}  "
+        f"valid_rate={m['valid_rate']:.3f}  "
+        f"fraction_placed={m['fraction_placed']:.3f}  "
+        f"n_eps={m['n_eps']}"
+    )
+
+
+def history_metric_records(history: CurriculumHistory) -> list[dict[str, object]]:
+    """One JSONL-ready record per recorded training iteration: ``stage``, ``iter`` index,
+    and the ``episode_metrics`` over that iteration's completed episodes. Pure over the
+    history — the #710 per-rung ``valid_placed`` learning curve the CLI dumps via
+    ``--metrics-out``."""
+    return [
+        {"stage": stage, "iter": it, **episode_metrics(ep_stats)}
+        for stage, it, ep_stats in history.iterations
+    ]
 
 
 _STAGE_RNG_STRIDE = 100003  # a prime, so (seed, stage_index) pairs don't collide

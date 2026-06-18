@@ -403,3 +403,70 @@ def test_fixed_obstacle_is_perceived_in_observation_and_encoding():
         i for i in range(tensors.tokens.shape[0]) if tensors.token_mask[i] and tensors.tokens[i, 4]
     ]
     assert fixed_rows, "no fixed_obstacle token row (row[4]) — keep-out is not perceived"
+
+
+def test_r_unplaced_penalty_lowers_terminal_reward_on_abandonment():
+    """End-to-end through HangarFitEnv: driving an object to budget exhaustion without ever
+    Parking it (abandonment, terminal_fraction=0) must cost exactly r_unplaced_penalty more
+    than the same trajectory with the penalty off — proving the #710 economics knob is wired
+    from RewardWeights through env.step's terminal branch (not just step_reward in isolation)."""
+    from ml.types import DifficultyConfig, Primitive, RewardWeights
+
+    diff = DifficultyConfig(max_objects=1, per_object_step_budget=2, total_step_budget=2)
+
+    def run(penalty: float) -> float:
+        env = HangarFitEnv(
+            hangar=empty_hangar(),
+            fleet=_fuji(),
+            requested_ids=("fuji",),
+            difficulty=diff,
+            weights=RewardWeights(r_unplaced_penalty=penalty),
+        )
+        env.reset()
+        total, done, info = 0.0, False, None
+        while not done:
+            _, r, done, info = env.step(Primitive(kind="S", magnitude=1.0, gear=1))
+            total += r
+        assert info is not None and info.placed == 0  # never parked -> pure abandonment
+        return total
+
+    base = run(0.0)
+    penalized = run(10.0)
+    # unplaced fraction = 1 - terminal_fraction = 1.0 -> penalty term = -10.0, terminal step only.
+    assert base - penalized == pytest.approx(10.0)
+
+
+def test_r_unplaced_penalty_full_park_not_penalized_vs_abandon():
+    """T5: both terminal branches feed terminal_fraction into the penalty. A FULLY-placed
+    Park episode (frac=1, via the Park-done branch) is NOT penalized — identical reward
+    with/without the knob — while an abandonment episode (frac=0, via the budget branch) is
+    charged the full unplaced fraction. Guards against the penalty being wired into only one
+    of the two terminal branches."""
+    from ml.types import DifficultyConfig, Park, Primitive, RewardWeights
+
+    diff = DifficultyConfig(max_objects=2, per_object_step_budget=2, total_step_budget=4)
+
+    def run(penalty: float, mode: str) -> tuple[float, int]:
+        env = HangarFitEnv(
+            hangar=empty_hangar(),
+            fleet=_fuji(),
+            requested_ids=("fuji", "aviat_husky"),
+            difficulty=diff,
+            weights=RewardWeights(r_unplaced_penalty=penalty),
+        )
+        env.reset()
+        total, done, info = 0.0, False, None
+        while not done:
+            act = Park() if mode == "park" else Primitive(kind="S", magnitude=1.0, gear=1)
+            _, r, done, info = env.step(act)
+            total += r
+        assert info is not None
+        return total, info.placed
+
+    park0, p_placed = run(0.0, "park")
+    parkR, _ = run(20.0, "park")
+    aban0, a_placed = run(0.0, "abandon")
+    abanR, _ = run(20.0, "abandon")
+    assert p_placed == 2 and a_placed == 0  # Park-done (frac=1) vs budget-abandon (frac=0)
+    assert parkR == pytest.approx(park0)  # full placement -> penalty term 0, unchanged by knob
+    assert aban0 - abanR == pytest.approx(20.0)  # abandon -> charged the full unplaced fraction

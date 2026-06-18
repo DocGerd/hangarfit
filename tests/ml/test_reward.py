@@ -94,6 +94,45 @@ def test_potential_active_misfit_lowers_potential():
 # ---------------------------------------------------------------------------
 
 
+def test_r_unplaced_penalty_default_zero_is_byte_identical():
+    # The economics-rebalance knob defaults 0.0 -> terminal reward is unchanged.
+    ctx = _ctx(terminal_fraction=0.5)
+    assert step_reward(ctx, RewardWeights()) == step_reward(
+        ctx, RewardWeights(r_unplaced_penalty=0.0)
+    )
+
+
+def test_r_unplaced_penalty_charges_unplaced_fraction():
+    # terminal_fraction=0.5 -> unplaced fraction (1-0.5)=0.5 -> penalty = 10.0 * 0.5 = 5.0.
+    ctx = _ctx(terminal_fraction=0.5)
+    base = step_reward(ctx, RewardWeights(r_unplaced_penalty=0.0))
+    penalized = step_reward(ctx, RewardWeights(r_unplaced_penalty=10.0))
+    assert base - penalized == pytest.approx(5.0)
+
+
+def test_r_unplaced_penalty_not_charged_on_nonterminal_steps():
+    # A mid-episode move (terminal_fraction=None) must not pay the abandonment penalty.
+    ctx = _ctx(terminal_fraction=None)
+    assert step_reward(ctx, RewardWeights(r_unplaced_penalty=10.0)) == step_reward(
+        ctx, RewardWeights(r_unplaced_penalty=0.0)
+    )
+
+
+def test_r_unplaced_penalty_widens_placed_advantage():
+    # The point of the knob: penalizing abandonment makes placing MORE strictly better, so
+    # the full-vs-partial terminal gap is LARGER with the penalty than without (breaks the
+    # "drive to budget exhaustion is free" leak the design panel identified).
+    w0 = RewardWeights(r_unplaced_penalty=0.0)
+    wp = RewardWeights(r_unplaced_penalty=20.0)
+    gap0 = step_reward(_ctx(terminal_fraction=1.0), w0) - step_reward(
+        _ctx(terminal_fraction=0.5), w0
+    )
+    gapp = step_reward(_ctx(terminal_fraction=1.0), wp) - step_reward(
+        _ctx(terminal_fraction=0.5), wp
+    )
+    assert gapp > gap0
+
+
 def test_dense_slot_potential_on_lowers_potential_when_misfit_positive():
     """dense_slot_potential=True must STRICTLY lower the shaping potential vs False when the
     active object sits in a bad pose (active_misfit_m2 > 0), catching a gate-inversion the

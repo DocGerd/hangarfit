@@ -172,6 +172,20 @@ def test_ppo_update_runs_changes_params_finite():
     assert changed
 
 
+@pytest.mark.skipif(not torch.cuda.is_available(), reason="needs a CUDA device")
+def test_ppo_update_runs_on_cuda_policy():
+    # ppo_update must honour the policy's device: a CUDA policy + a CPU-built buffer ->
+    # the update moves the batch to the policy device, runs, and changes params finitely.
+    torch.manual_seed(0)
+    buf = _filled_buffer(HangarFitPolicy(d_model=32, n_layers=1, n_heads=2))  # CPU obs
+    policy = HangarFitPolicy(d_model=32, n_layers=1, n_heads=2).to("cuda")
+    before = [p.detach().clone() for p in policy.parameters()]
+    opt = torch.optim.Adam(policy.parameters(), lr=3e-4)
+    metrics = ppo_update(policy, opt, buf, PPOConfig(minibatch_size=16))
+    assert all(math.isfinite(v) for v in metrics.values())
+    assert any(not torch.equal(b, a) for b, a in zip(before, policy.parameters(), strict=True))
+
+
 def test_ppo_update_overfits_fixed_batch():
     torch.manual_seed(1)
     policy = HangarFitPolicy(d_model=32, n_layers=1, n_heads=2)

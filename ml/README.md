@@ -114,6 +114,52 @@ against the benchmark are deferred to the second half of #693. The knobs are
 wired, unit-tested, and default-neutral; the A/B here is a smoke-level
 demonstration that they move the easy-rung metric in the expected direction.
 
+## Mastery-run levers (#710)
+
+The #710 train-to-mastery work added run-enablement knobs and one reward fix. **Why a
+reward fix and not the originally-planned "dense collision-progress reward":** a code-level
+diagnosis found `valid_placed=0` is a **Park/drive-out economics** problem, not a
+sparse-reward one. The `−w_col` collision penalty is charged **only** at a Park, while a
+budget-exhaustion stop still pays `terminal_fraction` over already-parked objects with **no**
+penalty on the abandoned one — so "drive until the step budget runs out" dodges the cliff
+nearly free, which is the `fraction_placed` 0.991→0.476 collapse seen in the #697 baseline. A
+new dense overlap reward would **not** fix this: it duplicates the already-shipped
+`--dense-slot-potential` (its `active_misfit_m2` already enters Φ, so `γΦ(s′)−Φ(s)` *is* a
+per-step active-overlap gradient) and, being potential-based shaping, is **policy-invariant**
+(Ng–Harada–Russell) — it cannot move the optimum. So item 4 was **skipped** in favour of:
+
+| Flag | Default (neutral) | Effect |
+|---|---|---|
+| `--r-unplaced-penalty R` | `0.0` | Terminal penalty per **unplaced** fraction: `terminal = r_terminal·frac − R·(1−frac)`. Charges abandonment so a valid Park out-earns driving to budget exhaustion. Pair with `--r-valid-park` for the positive pull. |
+| `--checkpoint-out PATH` | off | Write a resume checkpoint after each rung (policy + optimizer + return-normalizer + architecture + completed rungs). |
+| `--load PATH` | off | Resume: restore the above and **skip completed rungs**. Reuses the checkpoint's architecture (a conflicting `--d-model`/etc. raises). |
+| `--d-model` / `--n-layers` / `--n-heads` | own defaults | Policy size (omitting keeps `HangarFitPolicy` defaults 128/2/4). |
+| `--epochs` / `--minibatch-size` | `PPOConfig` defaults | PPO update epochs / minibatch size. |
+| `--device {cpu,cuda}` | `cpu` | Opt-in GPU (non-deterministic fast path; cpu stays byte-identical). |
+| `--metrics-out PATH` | off | Per-iter per-rung JSONL incl. the `valid_placed` curve. |
+
+`--load`/`--checkpoint-out`/`--metrics-out`/`--promotion-*` are curriculum-only (fail loud
+under `--schedule trivial`). The resume checkpoint (`ml/checkpoint.py`) is distinct from
+`--save` (a bare `state_dict` for the ONNX/`ml.eval` consumer) and loads with
+`weights_only=True`.
+
+### Box-rung mastery gate recipe
+
+```bash
+# GPU, box rungs only, HONEST valid_placed promotion, resumable, 2 seeds:
+python -u -m ml.train --schedule curriculum --device cuda --n-envs 16 \
+  --rollout-len 512 --max-iters-per-stage 50 \
+  --promotion-metric valid_placed --promotion-threshold 0.9 \
+  --r-valid-park 2.0 --r-unplaced-penalty 25.0 \
+  --metrics-out metrics-seed0.jsonl --checkpoint-out ck-seed0.pt --seed 0
+```
+
+Watch **both** `fraction_placed` (recovering off ~0.476 = the perverse incentive is breaking)
+and `valid_placed` (the mastery axis). Guard against the opposite failure — `valid_rate`
+dropping while `fraction_placed` spikes is the commit-anything pathology (penalty too high).
+Flat `valid_placed` across both seeds is the empirical signal that reachability (the #712
+start-state graft) is the next lever.
+
 ## Design
 See `docs/superpowers/specs/2026-06-12-learned-backend-cold-joint-rl-env-design.md`
 and ADR-0027 (learned-path determinism scope).
