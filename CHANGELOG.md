@@ -10,7 +10,8 @@ All notable changes to this project are documented here. Format follows [Keep a 
   the empty-start place-nothing cliff.** A multi-agent diagnosis of the `--mixed-anchor` gate
   failure (seed-0: `pair-mixed` capped oscillating ~0.2, `pair-box` collapsed to
   `valid_placed 0.000`) root-caused it as *economics × discoverability*: from empty, do-nothing
-  is a bounded −8 loss while any exploratory mis-Park books the **unclipped** `−w_col·overlap`
+  is a small bounded loss (≈−8 observed on the failed seed-0 gate run) while any exploratory
+  mis-Park books the **unclipped** `−w_col·overlap`
   (−5000…−12000), so place-nothing is the genuine reward argmax. **L5** (reward, default-neutral):
   `--valid-park-grade-scale` grades the `r_valid_park` bonus by near-miss misfit
   (`r_valid_park·exp(−misfit/scale)`) into an uphill gradient toward the witness slot;

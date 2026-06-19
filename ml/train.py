@@ -703,7 +703,8 @@ def build_argparser() -> argparse.ArgumentParser:
         type=float,
         default=None,
         help="early-stop the PPO epoch loop once a full epoch's mean approx-KL exceeds this "
-        "(per-update trust region); None = run all epochs (byte-identical); #720 L4",
+        "(per-update trust region); None/omitted = off, run all epochs (byte-identical). Note "
+        "0.0 is NOT 'off' — it stops after the first epoch (mean-KL > 0 almost always); #720 L4",
     )
     p.add_argument(
         "--n-envs",

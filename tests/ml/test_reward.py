@@ -117,6 +117,20 @@ def test_graded_valid_park_not_paid_on_nonpark_step():
     assert step_reward(_ctx(park_valid=None), w) == pytest.approx(0.0)
 
 
+def test_graded_valid_park_overlap_never_outscores_clean_valid():
+    # Knife-edge guard at a REALISTIC collision weight (not the w_col=0 the isolation tests use):
+    # a graded near-miss overlapping Park (invalid) must never out-score a clean valid Park. A clean
+    # valid Park earns full r_valid_park with no collision penalty; any overlap both shrinks the
+    # graded bonus (exp(-misfit/scale) < 1) AND adds -w_col*overlap, so it is strictly worse for
+    # every positive overlap. Pins the invariant so a future w_col/scale tweak can't silently make
+    # an overlapping pile profitable (the open knife-edge the README/PR call out).
+    w = RewardWeights(r_valid_park=10.0, valid_park_grade_scale=4.0, w_col=100.0)
+    clean_valid = _ctx(overlap_m2=0.0, park_valid=True)
+    for overlap in (0.01, 0.1, 0.5, 2.0):
+        overlapping_invalid = _ctx(overlap_m2=overlap, park_valid=False)
+        assert step_reward(overlapping_invalid, w) < step_reward(clean_valid, w)
+
+
 # ---------------------------------------------------------------------------
 # #720 (L5) — one-time first-valid bonus: a discrete positive kick the FIRST time an
 # episode reaches a valid placement, so the breakthrough from the place-nothing pole pays

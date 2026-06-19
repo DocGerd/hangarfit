@@ -247,8 +247,9 @@ WIN: `pair-mixed` lifts and ideally promotes by competency, AND the downstream a
 
 The mixed-anchor gate failed seed-0 (`pair-mixed` capped oscillating ~0.2, `pair-box` collapsed
 to `valid_placed 0.000`). A multi-agent diagnosis root-caused the cliff as *economics ×
-discoverability*: from empty, do-nothing is a bounded −8 loss while any exploratory mis-Park books
-the **unclipped** `−w_col·overlap` (−5000…−12000), so place-nothing is the genuine reward argmax.
+discoverability*: from empty, do-nothing is a small bounded loss (≈−8 observed on the failed seed-0
+gate run) while any exploratory mis-Park books the **unclipped** `−w_col·overlap` (−5000…−12000),
+so place-nothing is the genuine reward argmax.
 The #720 levers shift that argmax (L5) and tame the resulting sawtooth (L4); all knobs are
 default-neutral (0/None ⇒ byte-identical), so they layer onto the recipe above.
 

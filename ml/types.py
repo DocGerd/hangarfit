@@ -121,7 +121,8 @@ class RewardWeights:
     # One-time bonus paid the FIRST time an episode reaches a valid placement (the env flips
     # RewardContext.first_valid_now on exactly that Park step). A discrete kick that makes the
     # breakthrough off the place-nothing pole pay a learnable return; paid once, not per Park.
-    # Default 0.0 -> the flag is never consulted -> byte-identical (#720 L5 economics lever).
+    # Default 0.0 -> the term is x0 (the env still computes first_valid_now, but it contributes
+    # nothing) -> byte-identical (#720 L5 economics lever).
     r_first_valid: float = 0.0
     dense_slot_potential: bool = False  # add an in-hangar nearest-free-pocket shaping term
     # terminal: penalty per UNPLACED fraction (1 - terminal_fraction). Default 0.0 -> byte-

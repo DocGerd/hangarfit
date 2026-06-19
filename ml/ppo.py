@@ -135,7 +135,9 @@ def value_loss_term(
     ``v_clip = old_value + clamp(new_value - old_value, ±clip_eps)``: the clamp caps how far one
     update can move the value toward the returns and the ``max`` keeps the loss a pessimistic bound
     — a trust region on the critic so the unclipped collision spike can't yank the value head each
-    batch (the #720 L4 stabilizer for the gate's value-driven sawtooth)."""
+    batch (the #720 L4 stabilizer for the gate's value-driven sawtooth). ``old_value`` is the
+    buffer's ROLLOUT-time (pre-update) critic prediction (``data['value']``), the clip anchor — not
+    a re-forward (matches the SB3/cleanrl convention)."""
     unclipped = (new_value - returns) ** 2
     if clip_eps is None:
         return unclipped.mean()
