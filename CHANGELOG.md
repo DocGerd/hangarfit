@@ -6,6 +6,11 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Mixed-start anchor curriculum rung (`--mixed-anchor`, #712 follow-up).** An opt-in
+  `pair-mixed` rung where each episode randomly starts anchored (k=1) or empty (k=0), keeping
+  empty-start episodes in the training mix to bridge the k=1→k=0 start-state cliff that
+  collapsed the empty-start `pair-box` to place-nothing. Default-off ⇒ byte-identical training.
+
 - **Learned backend (#712, epic #607): seed-anchor start-state curriculum graft
   (`--seed-anchor`) — the 2-object joint-discovery scaffold.** The #714 re-gate confirmed a
   genuine joint-discovery wall (`trivial` + `solo-box` master, but `pair-box` stalls at

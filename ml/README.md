@@ -140,8 +140,9 @@ per-step active-overlap gradient) and, being potential-based shaping, is **polic
 | `--validity-conditional-terminal` | off | Terminal credits the **valid** placed fraction (invalid layout → 0), so an overlapping pile no longer books `+r_terminal`. The #714 multi-object fix; also closes the budget-exhaustion branch. |
 | `--solo-box-rung` | off | Insert an opt-in `solo-box` rung (1 object, **whole fleet**) after `trivial` so single-object competency transfers before the 2-object jump (#714). Curriculum-only. |
 | `--seed-anchor` | off | Insert an opt-in `pair-anchored` rung **before** `pair-box`: one of its 2 objects is pre-parked at a committed-witness pose (`seed_anchor_k=1`) and the agent only drives the other in — scaffolding 2-object joint discovery with a valid 1-object start (#712). Curriculum-only. |
+| `--mixed-anchor` | off | Insert an opt-in `pair-mixed` rung **before** `pair-box`: each episode randomly starts anchored (k=1) or empty (k=0) with probability `anchor_prob=0.5`, drawn from the curriculum's seeded stream. Keeps empty-start episodes in the training mix so the policy does not collapse to the place-nothing pole on the empty-start `pair-box`. Apply WITH `--seed-anchor`. Curriculum-only. (#712 follow-up) |
 
-`--load`/`--checkpoint-out`/`--metrics-out`/`--promotion-*`/`--solo-box-rung`/`--seed-anchor`
+`--load`/`--checkpoint-out`/`--metrics-out`/`--promotion-*`/`--solo-box-rung`/`--seed-anchor`/`--mixed-anchor`
 are curriculum-only (fail loud under `--schedule trivial`). The resume checkpoint
 (`ml/checkpoint.py`) is distinct from `--save` (a bare `state_dict` for the ONNX/`ml.eval`
 consumer) and loads with `weights_only=True`.
@@ -219,6 +220,28 @@ alone is insufficient and the next lever is the full k=2→1→0 anneal (more sc
 pose-curriculum. Read `valid_placed`, not `valid_rate`. The witness is
 `tests/fixtures/ml/witness_box.yaml` (a committed valid 2-object box layout; every k-prefix is
 validated by `tests/ml/test_stage_builder.py::test_witness_box_*`).
+
+### Mixed-anchor gate recipe (#712 follow-up, step 2)
+
+The #712 cap-80 pre-check confirmed k=1 masters but the empty-start `pair-box` still collapses
+to place-nothing (the k=1→k=0 start-state cliff). The `pair-mixed` rung keeps empty-start
+episodes in the training mix so the policy bridges the cliff.
+
+```bash
+# Same #714 economics + --seed-anchor, plus --mixed-anchor (pair-mixed before pair-box).
+# cap 80 so each rung clears the 40-iter entropy warmup into exploitation.
+python -u -m ml.train --schedule curriculum --device cuda --n-envs 16 \
+  --rollout-len 512 --max-iters-per-stage 80 \
+  --promotion-metric valid_placed --promotion-threshold 0.9 \
+  --r-valid-park 30.0 --r-unplaced-penalty 8.0 --dense-slot-potential \
+  --entropy-start 0.05 --entropy-end 0.005 --entropy-anneal-iters 40 \
+  --normalize-returns --validity-conditional-terminal --solo-box-rung \
+  --seed-anchor --mixed-anchor \
+  --metrics-out metrics-seed0-mixed.jsonl --checkpoint-out ck-seed0-mixed.pt --seed 0
+```
+
+WIN: `pair-mixed` lifts and ideally promotes by competency, AND the downstream all-empty
+`pair-box` no longer collapses (lifts off 0.000). Read `valid_placed`, not `valid_rate`.
 
 ## Design
 See `docs/superpowers/specs/2026-06-12-learned-backend-cold-joint-rl-env-design.md`
