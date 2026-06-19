@@ -11,7 +11,8 @@ All notable changes to this project are documented here. Format follows [Keep a 
   the ladder once through `pair-mixed`, then `--load` and sweep only the `pair-box` rung across a
   grid of `--w-col`/`--valid-park-grade-scale` cells. Previously each resumed cell, after
   mastering/capping `pair-box`, ground on into `trio-box`/`trio-notch`/`trio-notch-strict`
-  (~3×80 wasted PPO iters per cell), with manual `Ctrl-C` the only workaround. `--stop-after-rung`
+  (≈3 extra `trio-*` rungs, each to the per-stage cap, of wasted PPO iters per cell), with
+  manual `Ctrl-C` the only workaround. `--stop-after-rung`
   (curriculum-only) drops every rung after the named one — `--stop-after-rung pair-mixed` for the
   upstream train, `--stop-after-rung pair-box` for each cell — so the sweep runs unattended. A
   pure `truncate_after_rung` schedule transform (`ml/curriculum.py`) mirroring the `with_*_rung`

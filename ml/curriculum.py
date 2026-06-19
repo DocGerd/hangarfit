@@ -480,7 +480,8 @@ def truncate_after_rung(schedule: CurriculumSchedule, rung_name: str) -> Curricu
     truncation that mirrors the ``with_*_rung`` grafts: only the ladder changes (the promotion
     policy is preserved), so a sweep can train just up to (and including) a chosen rung instead
     of grinding on through the rest of the ladder. Truncating at the LAST rung is a no-op on the
-    stages, so a run that names the final rung stays byte-identical to no truncation. Raises
+    stages, so a run that names the final rung stays byte-identical (in training output) to no
+    truncation. Raises
     ValueError (loud, not a leaked StopIteration) when ``rung_name`` is not in the schedule, so a
     typo'd rung fails before the run rather than silently disabling the cap. Apply AFTER the
     ``with_*_rung`` grafts so a name they introduce (e.g. ``pair-mixed``) is in scope."""
