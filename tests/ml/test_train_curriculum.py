@@ -8,7 +8,12 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from ml.curriculum import DEFAULT_LADDER, EpisodeStat, sample_request, stage_rng  # noqa: E402
+from ml.curriculum import (  # noqa: E402
+    DEFAULT_LADDER,
+    EpisodeStat,
+    plain_start,
+    stage_rng,
+)
 from ml.encoding import EncoderConfig  # noqa: E402
 from ml.policy import HangarFitPolicy  # noqa: E402
 from ml.stage_builder import build_stage_env, effective_fleet_ids  # noqa: E402
@@ -26,7 +31,7 @@ def test_collect_rollout_returns_episode_stats_with_resampling():
     pool = effective_fleet_ids(stage)
     rng = stage_rng(0, 1)
     buf, stats = collect_rollout(
-        env, policy, EncoderConfig(), 64, sample_request=lambda: sample_request(pool, 2, rng)
+        env, policy, EncoderConfig(), 64, sample_request=lambda: plain_start(pool, 2, rng)
     )
     assert stats, "at least one episode should complete in 64 steps"
     assert all(isinstance(s, EpisodeStat) for s in stats)

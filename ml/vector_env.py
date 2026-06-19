@@ -14,7 +14,7 @@ from collections.abc import Callable, Sequence
 from typing import Any, NamedTuple, cast
 
 from ml.action_space import decode
-from ml.curriculum import EpisodeStat
+from ml.curriculum import EpisodeStart, EpisodeStat
 from ml.encoding import EncoderConfig, ObservationTensors, encode
 from ml.env import HangarFitEnv
 from ml.types import Observation, StepInfo
@@ -29,7 +29,7 @@ class _EnvWorker:
         self,
         env: HangarFitEnv,
         encoder: EncoderConfig,
-        next_request: Callable[[], tuple[str, ...]] | None,
+        next_request: Callable[[], EpisodeStart] | None,
     ) -> None:
         self._env = env
         self._enc = encoder
@@ -40,8 +40,12 @@ class _EnvWorker:
         return encode(obs, self._env.hangar, self._bodies, self._enc)
 
     def reset(self) -> ObservationTensors:
-        req = self._next_request() if self._next_request is not None else None
-        return self._encode(self._env.reset(requested_ids=req))
+        start = self._next_request() if self._next_request is not None else None
+        obs = self._env.reset(
+            requested_ids=start.requested_ids if start else None,
+            seed_anchor_k=start.seed_anchor_k if start else None,
+        )
+        return self._encode(obs)
 
     def step(
         self, kind_idx: int, mag_idx: int
@@ -61,8 +65,11 @@ class _EnvWorker:
                 valid=info.valid,
                 total_reward=0.0,  # per-episode reward sum is tracked by the collector
             )
-            req = self._next_request() if self._next_request is not None else None
-            sem = self._env.reset(requested_ids=req)
+            start = self._next_request() if self._next_request is not None else None
+            sem = self._env.reset(
+                requested_ids=start.requested_ids if start else None,
+                seed_anchor_k=start.seed_anchor_k if start else None,
+            )
         return self._encode(sem), reward, done, info, ep
 
 
