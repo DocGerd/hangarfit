@@ -88,6 +88,11 @@ class DifficultyConfig:
     # to the empty-start env. The env reads the witness poses from its ``anchor_placements``
     # (threaded by stage_builder from the rung's witness).
     seed_anchor_k: int = 0
+    # #712 mixed-start rung: when set, each episode draws k = seed_anchor_k with this
+    # probability else 0 (drawn from the curriculum's seeded stream), keeping empty-start
+    # episodes in the training mix. None => fixed-k rung (use seed_anchor_k as-is) =>
+    # byte-identical to the pre-change env. anchor_prob is P(k = seed_anchor_k) per episode.
+    anchor_prob: float | None = None
 
 
 @dataclass(frozen=True, slots=True)

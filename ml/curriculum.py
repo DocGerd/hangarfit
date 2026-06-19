@@ -6,8 +6,9 @@ env builder lives in ml/stage_builder.py; the torch training loop in ml/train.py
 from __future__ import annotations
 
 import random
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
+from functools import partial
 from typing import Literal
 
 from ml.types import DifficultyConfig
@@ -157,6 +158,60 @@ def sample_request(pool: Sequence[str], n: int, rng: random.Random) -> tuple[str
 
 
 @dataclass(frozen=True, slots=True)
+class EpisodeStart:
+    """Per-episode start spec produced by the sampler, consumed by env.reset. ``seed_anchor_k``
+    None => the env uses ``difficulty.seed_anchor_k`` (plain rung); an int => per-episode
+    override (the #712 mixed-start rung's seeded k draw)."""
+
+    requested_ids: tuple[str, ...]
+    seed_anchor_k: int | None = None
+
+
+def plain_start(pool: Sequence[str], n: int, rng: random.Random) -> EpisodeStart:
+    """A non-anchored episode start: the requested ids only (k left to the env default).
+    The id draw is identical to ``sample_request`` (no extra rng draw), so a plain rung's
+    rng consumption is byte-identical to the pre-change ladder."""
+    return EpisodeStart(sample_request(pool, n, rng), None)
+
+
+def sample_mixed_start(
+    pool: Sequence[str],
+    n: int,
+    rng: random.Random,
+    *,
+    seed_anchor_k: int,
+    anchor_prob: float,
+) -> EpisodeStart:
+    """A mixed-start episode: draw the requested ids, THEN draw k = ``seed_anchor_k`` with
+    probability ``anchor_prob`` else 0, from the SAME rng (fixed draw order: ids then k), so
+    Sync and Subproc workers on the same stream stay byte-identical. ``anchor_prob`` is
+    P(k=seed_anchor_k) per episode."""
+    ids = sample_request(pool, n, rng)
+    k = seed_anchor_k if rng.random() < anchor_prob else 0
+    return EpisodeStart(ids, k)
+
+
+def make_episode_sampler(
+    stage: Stage, pool: Sequence[str], n: int, rng: random.Random
+) -> Callable[[], EpisodeStart]:
+    """Build this stage's per-episode start sampler. A mixed-start rung (anchor_prob set)
+    gets ``sample_mixed_start`` (seeded per-episode k draw); every other rung gets
+    ``plain_start`` (byte-identical id draw, k left to the env default). Both bind pool/n/rng
+    by value via partial (no late-binding closure trap)."""
+    ap = stage.difficulty.anchor_prob
+    if ap is not None:
+        return partial(
+            sample_mixed_start,
+            pool,
+            n,
+            rng,
+            seed_anchor_k=stage.difficulty.seed_anchor_k,
+            anchor_prob=ap,
+        )
+    return partial(plain_start, pool, n, rng)
+
+
+@dataclass(frozen=True, slots=True)
 class Stage:
     """One rung of the ladder. Holds fleet/hangar (and, for a #712 seed-anchor rung, the
     witness layout) as repo-relative PATH STRINGS + scalar overrides — no loading happens
@@ -213,6 +268,20 @@ def validate_ladder(ladder: Sequence[Stage], *, encoder_max_objects: int) -> Non
                 f"stage {s.name!r}: seed_anchor_k {k} must be < max_objects {n} "
                 f"(at least one object must be left to drive in)"
             )
+        ap = s.difficulty.anchor_prob
+        if ap is not None:
+            if not (0.0 <= ap <= 1.0):
+                raise ValueError(f"stage {s.name!r}: anchor_prob must be in [0, 1], got {ap}")
+            if s.anchor_layout_path is None:
+                raise ValueError(
+                    f"stage {s.name!r}: a mixed-start rung (anchor_prob set) needs an "
+                    f"anchor_layout_path (the witness the per-episode k draws from)"
+                )
+            if n < 2:
+                raise ValueError(
+                    f"stage {s.name!r}: a mixed-start rung (anchor_prob set) needs "
+                    f"max_objects >= 2 (room for both a k=1 and a k=0 draw), got {n}"
+                )
 
 
 @dataclass(slots=True)
@@ -331,6 +400,28 @@ DEFAULT_LADDER: tuple[Stage, ...] = (
 )
 
 
+# Opt-in #712 mixed-start rung (wired via with_mixed_anchor_rung / --mixed-anchor), NOT in
+# DEFAULT_LADDER. Two objects; each episode randomly starts anchored (k=1) or empty (k=0) with
+# probability anchor_prob, drawn from the curriculum's seeded stream — empty-start episodes stay
+# in the training mix so the policy does not collapse to place-nothing on the empty-start
+# pair-box. Reuses the pair-anchored witness (no new fixture). Budget matches pair-box's 2-object
+# drive (an empty-start episode drives both objects).
+_PAIR_MIXED_STAGE = Stage(
+    name="pair-mixed",
+    difficulty=DifficultyConfig(
+        max_objects=2,
+        seed_anchor_k=1,
+        anchor_prob=0.5,
+        per_object_step_budget=60,
+        total_step_budget=140,
+    ),
+    hangar_path=_BOX_HANGAR,
+    fleet_path=_BOX_FLEET,
+    anchor_layout_path=_WITNESS_BOX,
+    clearance_m=_LENIENT_CLEARANCE,
+)
+
+
 def with_solo_box_rung(schedule: CurriculumSchedule) -> CurriculumSchedule:
     """Return ``schedule`` with the opt-in ``solo-box`` rung inserted immediately after the
     ``trivial`` rung — the #714 ``--solo-box-rung`` lever. solo-box keeps max_objects=1 but
@@ -363,3 +454,21 @@ def with_pair_anchored_rung(schedule: CurriculumSchedule) -> CurriculumSchedule:
             "with_pair_anchored_rung: schedule has no 'pair-box' rung to insert before"
         ) from None
     return replace(schedule, stages=stages[:before] + (_PAIR_ANCHORED_STAGE,) + stages[before:])
+
+
+def with_mixed_anchor_rung(schedule: CurriculumSchedule) -> CurriculumSchedule:
+    """Return ``schedule`` with the opt-in ``pair-mixed`` rung inserted immediately BEFORE the
+    ``pair-box`` rung — the #712 ``--mixed-anchor`` lever. Each episode randomly starts anchored
+    (k=1) or empty (k=0) with probability ``anchor_prob`` (drawn from the seeded stream), so
+    empty-start episodes stay in the training mix and the policy does not collapse to the
+    place-nothing pole on the empty-start pair-box. Apply AFTER ``with_pair_anchored_rung`` so
+    pair-mixed lands between pair-anchored and pair-box. Only the ladder changes (policy
+    preserved); the default ladder is untouched, so default runs stay byte-identical."""
+    stages = schedule.stages
+    try:
+        before = next(i for i, s in enumerate(stages) if s.name == "pair-box")
+    except StopIteration:
+        raise ValueError(
+            "with_mixed_anchor_rung: schedule has no 'pair-box' rung to insert before"
+        ) from None
+    return replace(schedule, stages=stages[:before] + (_PAIR_MIXED_STAGE,) + stages[before:])

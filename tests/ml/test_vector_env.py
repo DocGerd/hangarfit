@@ -6,9 +6,35 @@ import pytest
 
 torch = pytest.importorskip("torch")  # the policy side needs torch; the vec envs do not
 
+from ml.curriculum import EpisodeStart  # noqa: E402
 from ml.encoding import EncoderConfig  # noqa: E402
 from ml.train import build_trivial_env  # noqa: E402
 from ml.vector_env import _EnvWorker  # noqa: E402
+
+# ---------------------------------------------------------------------------
+# #712: worker threads EpisodeStart.seed_anchor_k into env.reset
+# ---------------------------------------------------------------------------
+
+
+def _make_anchored_worker(sampler):
+    """Build an _EnvWorker over the pair-anchored stage env (2-object anchored box)."""
+    from ml.curriculum import _PAIR_ANCHORED_STAGE
+    from ml.stage_builder import build_stage_env
+
+    env = build_stage_env(_PAIR_ANCHORED_STAGE)
+    return _EnvWorker(env, EncoderConfig(), next_request=sampler)
+
+
+def test_worker_reset_passes_seed_anchor_k_from_episode_start():
+    worker = _make_anchored_worker(lambda: EpisodeStart(("fuji", "aviat_husky"), 0))
+    worker.reset()
+    assert worker._env._parked == []  # k=0 from the record -> nothing pre-parked
+
+
+def test_worker_reset_anchors_when_episode_start_k_is_one():
+    worker = _make_anchored_worker(lambda: EpisodeStart(("fuji", "aviat_husky"), 1))
+    worker.reset()
+    assert len(worker._env._parked) == 1  # k=1 from the record -> one pre-parked
 
 
 def test_envworker_step_matches_manual_step_encode():

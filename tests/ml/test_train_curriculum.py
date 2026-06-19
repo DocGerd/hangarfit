@@ -8,7 +8,12 @@ import pytest
 
 torch = pytest.importorskip("torch")
 
-from ml.curriculum import DEFAULT_LADDER, EpisodeStat, sample_request, stage_rng  # noqa: E402
+from ml.curriculum import (  # noqa: E402
+    DEFAULT_LADDER,
+    EpisodeStat,
+    plain_start,
+    stage_rng,
+)
 from ml.encoding import EncoderConfig  # noqa: E402
 from ml.policy import HangarFitPolicy  # noqa: E402
 from ml.stage_builder import build_stage_env, effective_fleet_ids  # noqa: E402
@@ -26,7 +31,7 @@ def test_collect_rollout_returns_episode_stats_with_resampling():
     pool = effective_fleet_ids(stage)
     rng = stage_rng(0, 1)
     buf, stats = collect_rollout(
-        env, policy, EncoderConfig(), 64, sample_request=lambda: sample_request(pool, 2, rng)
+        env, policy, EncoderConfig(), 64, sample_request=lambda: plain_start(pool, 2, rng)
     )
     assert stats, "at least one episode should complete in 64 steps"
     assert all(isinstance(s, EpisodeStat) for s in stats)
@@ -942,6 +947,39 @@ def test_main_without_seed_anchor_keeps_default_ladder(monkeypatch):
     monkeypatch.setattr(train_mod, "train_curriculum", fake)
     train_mod.main(["--schedule", "curriculum"])
     assert "pair-anchored" not in [s.name for s in captured["schedule"].stages]
+
+
+# ---------------------------------------------------------------------------
+# #712 — --mixed-anchor CLI wiring (the pair-mixed start-state rung, Task 6).
+# ---------------------------------------------------------------------------
+
+
+def test_mixed_anchor_flag_inserts_pair_mixed(monkeypatch):
+    # Reuse this module's helper that builds the schedule from argv as the seed-anchor
+    # test does; assert "pair-mixed" appears only when --mixed-anchor is passed.
+    import ml.train as train_mod
+    from ml.curriculum import CurriculumHistory
+
+    captured_off: dict = {}
+    captured_on: dict = {}
+
+    def fake_off(**kw):
+        captured_off.update(kw)
+        return CurriculumHistory()
+
+    def fake_on(**kw):
+        captured_on.update(kw)
+        return CurriculumHistory()
+
+    monkeypatch.setattr(train_mod, "train_curriculum", fake_off)
+    train_mod.main(["--schedule", "curriculum"])
+    assert "pair-mixed" not in [s.name for s in captured_off["schedule"].stages]
+
+    monkeypatch.setattr(train_mod, "train_curriculum", fake_on)
+    train_mod.main(["--schedule", "curriculum", "--seed-anchor", "--mixed-anchor"])
+    names = [s.name for s in captured_on["schedule"].stages]
+    assert "pair-mixed" in names
+    assert names.index("pair-anchored") < names.index("pair-mixed") < names.index("pair-box")
 
 
 def _anchored_smoke_schedule(name: str = "pair-anchored-smoke"):

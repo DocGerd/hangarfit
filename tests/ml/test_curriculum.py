@@ -2,22 +2,34 @@
 
 from __future__ import annotations
 
+import random
+
 import pytest
 
 from ml.curriculum import (
+    _BOX_FLEET,
+    _BOX_HANGAR,
+    _PAIR_MIXED_STAGE,
+    _SOLO_BOX_STAGE,
+    _WITNESS_BOX,
     DEFAULT_LADDER,
     CurriculumHistory,
     CurriculumSchedule,
+    EpisodeStart,
     EpisodeStat,
     PromotionPolicy,
     Stage,
     episode_metrics,
     format_iter_log,
     history_metric_records,
+    make_episode_sampler,
+    plain_start,
+    sample_mixed_start,
     sample_request,
     should_promote,
     stage_rng,
     validate_ladder,
+    with_mixed_anchor_rung,
     with_pair_anchored_rung,
     with_promotion_overrides,
     with_solo_box_rung,
@@ -460,3 +472,163 @@ def test_validate_ladder_rejects_seed_anchor_k_ge_max_objects():
 def test_validate_ladder_accepts_valid_seed_anchor_k():
     ok = (_anchored_test_stage(max_objects=2, seed_anchor_k=1),)
     validate_ladder(ok, encoder_max_objects=EncoderConfig().max_objects)  # no raise
+
+
+# ---------------------------------------------------------------------------
+# #718 — EpisodeStart record + plain/mixed episode samplers
+# ---------------------------------------------------------------------------
+
+
+def test_plain_start_wraps_sample_request_with_no_anchor():
+    rng = random.Random(0)
+    s = plain_start(("fuji", "aviat_husky"), 2, rng)
+    assert isinstance(s, EpisodeStart)
+    assert set(s.requested_ids) == {"fuji", "aviat_husky"}
+    assert s.seed_anchor_k is None
+
+
+def test_mixed_start_draws_k_deterministically():
+    pool = ("fuji", "aviat_husky")
+    a = [
+        sample_mixed_start(pool, 2, random.Random(7), seed_anchor_k=1, anchor_prob=0.5)
+        for _ in range(1)
+    ]
+    b = [
+        sample_mixed_start(pool, 2, random.Random(7), seed_anchor_k=1, anchor_prob=0.5)
+        for _ in range(1)
+    ]
+    assert a[0] == b[0]  # same seed -> identical (ids AND k)
+    assert a[0].seed_anchor_k in (0, 1)
+
+
+def test_mixed_start_k_is_zero_or_seed_anchor_k_by_prob():
+    pool = ("fuji", "aviat_husky")
+    rng = random.Random(0)
+    ks = [
+        sample_mixed_start(pool, 2, rng, seed_anchor_k=1, anchor_prob=p).seed_anchor_k
+        for p in (0.0,) * 50
+    ]
+    assert set(ks) == {0}  # prob 0 -> always empty start
+    rng = random.Random(0)
+    ks = [
+        sample_mixed_start(pool, 2, rng, seed_anchor_k=1, anchor_prob=p).seed_anchor_k
+        for p in (1.0,) * 50
+    ]
+    assert set(ks) == {1}  # prob 1 -> always anchored
+
+
+def test_mixed_start_mixture_fraction_near_anchor_prob():
+    pool = ("fuji", "aviat_husky")
+    rng = random.Random(123)
+    draws = [
+        sample_mixed_start(pool, 2, rng, seed_anchor_k=1, anchor_prob=0.5).seed_anchor_k
+        for _ in range(2000)
+    ]
+    frac_anchored = sum(1 for k in draws if k == 1) / len(draws)
+    assert 0.45 <= frac_anchored <= 0.55  # ~0.5 mixture
+
+
+# ---------------------------------------------------------------------------
+# #712 mixed-rung ladder validation: anchor_prob field + validate_ladder guards
+# ---------------------------------------------------------------------------
+
+
+def _mixed_stage(anchor_prob, anchor_path: str | None = _WITNESS_BOX):
+    return Stage(
+        name="pair-mixed",
+        difficulty=DifficultyConfig(max_objects=2, seed_anchor_k=1, anchor_prob=anchor_prob),
+        hangar_path=_BOX_HANGAR,
+        fleet_path=_BOX_FLEET,
+        anchor_layout_path=anchor_path,
+    )
+
+
+def test_validate_ladder_accepts_valid_mixed_rung():
+    validate_ladder([_mixed_stage(0.5)], encoder_max_objects=8)  # no raise
+
+
+@pytest.mark.parametrize("p", [-0.1, 1.1])
+def test_validate_ladder_rejects_anchor_prob_out_of_range(p):
+    with pytest.raises(ValueError, match="anchor_prob"):
+        validate_ladder([_mixed_stage(p)], encoder_max_objects=8)
+
+
+def test_validate_ladder_rejects_mixed_rung_without_witness():
+    with pytest.raises(ValueError, match="anchor_layout_path"):
+        validate_ladder([_mixed_stage(0.5, anchor_path=None)], encoder_max_objects=8)
+
+
+def test_validate_ladder_rejects_mixed_rung_with_one_object():
+    # A mixed rung needs room for both a k=1 and a k=0 draw (spec §4.4). seed_anchor_k=0
+    # keeps the pre-existing seed_anchor_k < max_objects guard satisfied so the new
+    # max_objects >= 2 guard is what fires.
+    one_object_mixed = Stage(
+        name="pair-mixed",
+        difficulty=DifficultyConfig(max_objects=1, seed_anchor_k=0, anchor_prob=0.5),
+        hangar_path=_BOX_HANGAR,
+        fleet_path=_BOX_FLEET,
+        anchor_layout_path=_WITNESS_BOX,
+    )
+    with pytest.raises(ValueError, match="max_objects >= 2"):
+        validate_ladder([one_object_mixed], encoder_max_objects=8)
+
+
+# ---------------------------------------------------------------------------
+# with_mixed_anchor_rung builder tests (#712)
+# ---------------------------------------------------------------------------
+
+
+def test_with_mixed_anchor_rung_inserts_before_pair_box():
+    sched = with_mixed_anchor_rung(CurriculumSchedule.default())
+    names = [s.name for s in sched.stages]
+    assert "pair-mixed" in names
+    assert names.index("pair-mixed") == names.index("pair-box") - 1
+
+
+def test_mixed_rung_sits_between_pair_anchored_and_pair_box():
+    sched = with_mixed_anchor_rung(with_pair_anchored_rung(CurriculumSchedule.default()))
+    names = [s.name for s in sched.stages]
+    assert names.index("pair-anchored") < names.index("pair-mixed") < names.index("pair-box")
+
+
+def test_mixed_rung_config_is_two_object_anchor_prob_half():
+    sched = with_mixed_anchor_rung(CurriculumSchedule.default())
+    rung = next(s for s in sched.stages if s.name == "pair-mixed")
+    assert rung.difficulty.max_objects == 2
+    assert rung.difficulty.seed_anchor_k == 1
+    assert rung.difficulty.anchor_prob == 0.5
+    assert rung.anchor_layout_path is not None  # reuses witness_box
+
+
+def test_default_ladder_untouched_by_mixed_builder():
+    before = tuple(s.name for s in DEFAULT_LADDER)
+    with_mixed_anchor_rung(CurriculumSchedule.default())
+    assert tuple(s.name for s in DEFAULT_LADDER) == before  # no mutation
+
+
+def test_with_mixed_anchor_rung_raises_without_pair_box():
+    sched = CurriculumSchedule(stages=(DEFAULT_LADDER[0],), policy=PromotionPolicy())
+    with pytest.raises(ValueError, match="pair-box"):
+        with_mixed_anchor_rung(sched)
+
+
+# ---------------------------------------------------------------------------
+# make_episode_sampler (#718 Task 6)
+# ---------------------------------------------------------------------------
+
+
+def test_make_episode_sampler_plain_for_non_mixed_stage():
+    # solo-box has anchor_prob None -> plain sampler -> seed_anchor_k None, byte-identical ids.
+    pool = ("fuji",)
+    rng1, rng2 = random.Random(3), random.Random(3)
+    s = make_episode_sampler(_SOLO_BOX_STAGE, pool, 1, rng1)()
+    assert s.seed_anchor_k is None
+    assert s.requested_ids == sample_request(pool, 1, rng2)  # same rng draw
+
+
+def test_make_episode_sampler_mixed_for_mixed_stage_varies_k():
+    pool = ("fuji", "aviat_husky")
+    rng = random.Random(5)
+    sampler = make_episode_sampler(_PAIR_MIXED_STAGE, pool, 2, rng)
+    ks = {sampler().seed_anchor_k for _ in range(200)}
+    assert ks == {0, 1}  # mixture draws both

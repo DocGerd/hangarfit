@@ -706,3 +706,46 @@ def test_seed_anchor_rejects_requested_prefix_without_a_witness_pose():
     # Request husky FIRST: the k=1 prefix is now husky, which has no witness pose.
     with pytest.raises(ValueError, match="no witness pose"):
         env.reset(requested_ids=("aviat_husky", "fuji"))
+
+
+# ---------------------------------------------------------------------------
+# #718 — per-episode seed_anchor_k override on reset
+# ---------------------------------------------------------------------------
+@pytest.fixture
+def anchored_pair_env():
+    """2-object env with anchor_placements for both ids and difficulty.seed_anchor_k=1."""
+    return HangarFitEnv(
+        hangar=empty_hangar(),
+        fleet=_fuji(),
+        requested_ids=("fuji", "aviat_husky"),
+        anchor_placements=_WITNESS_ANCHORS,
+        difficulty=DifficultyConfig(
+            max_objects=2,
+            seed_anchor_k=1,
+            per_object_step_budget=60,
+            total_step_budget=60,
+        ),
+    )
+
+
+def test_reset_seed_anchor_k_override_parks_nothing(anchored_pair_env):
+    # anchored_pair_env: difficulty.seed_anchor_k == 1, witness poses for both ids.
+    env = anchored_pair_env
+    env.reset(requested_ids=("fuji", "aviat_husky"), seed_anchor_k=0)
+    assert env._parked == []  # override 0 wins over difficulty's k=1
+    assert env._queue == ["aviat_husky"]
+
+
+def test_reset_seed_anchor_k_override_parks_prefix(anchored_pair_env):
+    env = anchored_pair_env
+    env.reset(requested_ids=("fuji", "aviat_husky"), seed_anchor_k=1)
+    assert len(env._parked) == 1  # first id pre-parked at its witness pose
+    # After reset(), _spawn() pops the sole queued id into _active_id, so _queue is empty.
+    assert env._active_id == "aviat_husky"
+    assert env._queue == []
+
+
+def test_reset_without_override_uses_difficulty_default(anchored_pair_env):
+    env = anchored_pair_env  # difficulty.seed_anchor_k == 1
+    env.reset(requested_ids=("fuji", "aviat_husky"))
+    assert len(env._parked) == 1  # regression: today's behavior unchanged
