@@ -359,7 +359,7 @@ All notable changes to this project are documented here. Format follows [Keep a 
   argparse **and** `PPOConfig` dataclass defaults (kept in sync). New paired `--no-reward-clip` /
   `--no-value-clip-eps` / `--no-target-kl` off-switches restore the disabled (`None`) behavior —
   the only way to reach it, since there is no in-band "off" value (`--reward-clip 0` zeroes all
-  rewards; `--target-kl 0` stops after one epoch) — for A/B controls such as the seed-1 clip-OFF
+  rewards; `--target-kl 0` stops after the first epoch) — for A/B controls such as the seed-1 clip-OFF
   run. This is a deliberate training-default **re-baseline**: an unflagged run is no longer
   byte-identical to a pre-#720 run, but reproducibility (same seed → same stream) is unchanged. The
   four 4c-ii basin-escape knobs (`--r-valid-park`, `--dense-slot-potential`, entropy, `--normalize-returns`)

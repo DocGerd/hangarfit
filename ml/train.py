@@ -700,7 +700,7 @@ def build_argparser() -> argparse.ArgumentParser:
     # FIRST so argparse's first-default-wins rule makes the bundle value the namespace default,
     # and last-on-the-CLI-wins lets a later --no-* (or explicit value) override. The off-switch is
     # the only way to reach the disabled (None) behavior — there is no in-band "off" value
-    # (--reward-clip 0 zeroes all rewards; --target-kl 0 stops after one epoch).
+    # (--reward-clip 0 zeroes all rewards; --target-kl 0 stops after the first epoch).
     p.add_argument(
         "--reward-clip",
         type=float,
@@ -735,7 +735,7 @@ def build_argparser() -> argparse.ArgumentParser:
         default=0.03,
         help="early-stop the PPO epoch loop once a full epoch's mean approx-KL exceeds this "
         "(per-update trust region); default 0.03 (#720/#728); --no-target-kl disables (run all "
-        "epochs). Note 0.0 is NOT 'off' — it stops after epoch 1 (mean-KL > 0 almost always)",
+        "epochs). Note 0.0 is NOT 'off' — it stops after the first epoch (mean-KL > 0)",
     )
     p.add_argument(
         "--no-target-kl",

@@ -259,7 +259,8 @@ The three **L4 trust-region** knobs **graduated to the default in #728** (`--rew
 carries them, so they are shown explicitly in the recipe below only for reproducibility. Pass
 `--no-reward-clip` / `--no-value-clip-eps` / `--no-target-kl` to disable any of them — that is the
 only way to reach the unclipped behavior (e.g. the seed-1 clip-OFF A/B control), since there is no
-in-band "off" value (`--reward-clip 0` zeroes all rewards; `--target-kl 0` stops after one epoch).
+in-band "off" value (`--reward-clip 0` zeroes all rewards; `--target-kl 0` stops after the first
+epoch).
 
 ```bash
 # Above mixed-anchor config, plus the #720 L5 economics + L4 PPO trust-region knobs.

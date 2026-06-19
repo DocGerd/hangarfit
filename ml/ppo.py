@@ -33,10 +33,11 @@ class PPOConfig:
     normalize_returns: bool = False  # std-only reward normalization before GAE
     return_norm_eps: float = 1e-8  # numerical floor on the running std
     # #720 (L4) PPO trust-region hardening, default-ON since #728 (the two-seed-validated #720
-    # bundle). Set any to None to disable (byte-identical to the pre-#720 update) — the CLI exposes
-    # --no-reward-clip / --no-value-clip-eps / --no-target-kl for that. The reward_clip value is
-    # tuned to the RewardWeights magnitudes (45 = r_valid_park 30 + r_first_valid 15 graded bonus,
-    # ~50 terminal credit), so a reward-scale change should revisit it.
+    # bundle). Set any to None to disable it — that knob's update-step path is then byte-identical
+    # to the pre-#720 loop, though an unflagged *run* is the deliberate #728 default re-baseline.
+    # The CLI exposes --no-reward-clip / --no-value-clip-eps / --no-target-kl for that. The
+    # reward_clip value is tuned to the RewardWeights magnitudes (45 = r_valid_park 30 +
+    # r_first_valid 15 graded bonus, ~50 terminal credit) — revisit on a reward-scale change.
     reward_clip: float | None = 50.0  # clamp RAW rewards to [-c, c] before normalize/GAE; tames
     # the unclipped -w_col collision spike (-12000 batches) that drove the gate sawtooth.
     value_clip_eps: float | None = 0.2  # PPO2 clipped value loss; caps per-update critic movement.
