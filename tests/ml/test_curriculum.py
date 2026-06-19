@@ -558,6 +558,21 @@ def test_validate_ladder_rejects_mixed_rung_without_witness():
         validate_ladder([_mixed_stage(0.5, anchor_path=None)], encoder_max_objects=8)
 
 
+def test_validate_ladder_rejects_mixed_rung_with_one_object():
+    # A mixed rung needs room for both a k=1 and a k=0 draw (spec §4.4). seed_anchor_k=0
+    # keeps the pre-existing seed_anchor_k < max_objects guard satisfied so the new
+    # max_objects >= 2 guard is what fires.
+    one_object_mixed = Stage(
+        name="pair-mixed",
+        difficulty=DifficultyConfig(max_objects=1, seed_anchor_k=0, anchor_prob=0.5),
+        hangar_path=_BOX_HANGAR,
+        fleet_path=_BOX_FLEET,
+        anchor_layout_path=_WITNESS_BOX,
+    )
+    with pytest.raises(ValueError, match="max_objects >= 2"):
+        validate_ladder([one_object_mixed], encoder_max_objects=8)
+
+
 # ---------------------------------------------------------------------------
 # with_mixed_anchor_rung builder tests (#712)
 # ---------------------------------------------------------------------------

@@ -277,6 +277,11 @@ def validate_ladder(ladder: Sequence[Stage], *, encoder_max_objects: int) -> Non
                     f"stage {s.name!r}: a mixed-start rung (anchor_prob set) needs an "
                     f"anchor_layout_path (the witness the per-episode k draws from)"
                 )
+            if n < 2:
+                raise ValueError(
+                    f"stage {s.name!r}: a mixed-start rung (anchor_prob set) needs "
+                    f"max_objects >= 2 (room for both a k=1 and a k=0 draw), got {n}"
+                )
 
 
 @dataclass(slots=True)
