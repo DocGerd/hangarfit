@@ -7,6 +7,9 @@ import random
 import pytest
 
 from ml.curriculum import (
+    _BOX_FLEET,
+    _BOX_HANGAR,
+    _WITNESS_BOX,
     DEFAULT_LADDER,
     CurriculumHistory,
     CurriculumSchedule,
@@ -519,3 +522,33 @@ def test_mixed_start_mixture_fraction_near_anchor_prob():
     ]
     frac_anchored = sum(1 for k in draws if k == 1) / len(draws)
     assert 0.45 <= frac_anchored <= 0.55  # ~0.5 mixture
+
+
+# ---------------------------------------------------------------------------
+# #712 mixed-rung ladder validation: anchor_prob field + validate_ladder guards
+# ---------------------------------------------------------------------------
+
+
+def _mixed_stage(anchor_prob, anchor_path=_WITNESS_BOX):
+    return Stage(
+        name="pair-mixed",
+        difficulty=DifficultyConfig(max_objects=2, seed_anchor_k=1, anchor_prob=anchor_prob),
+        hangar_path=_BOX_HANGAR,
+        fleet_path=_BOX_FLEET,
+        anchor_layout_path=anchor_path,
+    )
+
+
+def test_validate_ladder_accepts_valid_mixed_rung():
+    validate_ladder([_mixed_stage(0.5)], encoder_max_objects=8)  # no raise
+
+
+@pytest.mark.parametrize("p", [-0.1, 1.1])
+def test_validate_ladder_rejects_anchor_prob_out_of_range(p):
+    with pytest.raises(ValueError, match="anchor_prob"):
+        validate_ladder([_mixed_stage(p)], encoder_max_objects=8)
+
+
+def test_validate_ladder_rejects_mixed_rung_without_witness():
+    with pytest.raises(ValueError, match="anchor_layout_path"):
+        validate_ladder([_mixed_stage(0.5, anchor_path=None)], encoder_max_objects=8)

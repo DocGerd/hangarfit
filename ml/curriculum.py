@@ -247,6 +247,15 @@ def validate_ladder(ladder: Sequence[Stage], *, encoder_max_objects: int) -> Non
                 f"stage {s.name!r}: seed_anchor_k {k} must be < max_objects {n} "
                 f"(at least one object must be left to drive in)"
             )
+        ap = s.difficulty.anchor_prob
+        if ap is not None:
+            if not (0.0 <= ap <= 1.0):
+                raise ValueError(f"stage {s.name!r}: anchor_prob must be in [0, 1], got {ap}")
+            if s.anchor_layout_path is None:
+                raise ValueError(
+                    f"stage {s.name!r}: a mixed-start rung (anchor_prob set) needs an "
+                    f"anchor_layout_path (the witness the per-episode k draws from)"
+                )
 
 
 @dataclass(slots=True)
