@@ -29,6 +29,7 @@ from ml.curriculum import (
     should_promote,
     stage_rng,
     validate_ladder,
+    with_mixed_anchor_rung,
     with_pair_anchored_rung,
     with_promotion_overrides,
     with_solo_box_rung,
@@ -532,7 +533,7 @@ def test_mixed_start_mixture_fraction_near_anchor_prob():
 # ---------------------------------------------------------------------------
 
 
-def _mixed_stage(anchor_prob, anchor_path=_WITNESS_BOX):
+def _mixed_stage(anchor_prob, anchor_path: str | None = _WITNESS_BOX):
     return Stage(
         name="pair-mixed",
         difficulty=DifficultyConfig(max_objects=2, seed_anchor_k=1, anchor_prob=anchor_prob),
@@ -560,8 +561,6 @@ def test_validate_ladder_rejects_mixed_rung_without_witness():
 # ---------------------------------------------------------------------------
 # with_mixed_anchor_rung builder tests (#712)
 # ---------------------------------------------------------------------------
-
-from ml.curriculum import with_mixed_anchor_rung  # noqa: E402
 
 
 def test_with_mixed_anchor_rung_inserts_before_pair_box():
