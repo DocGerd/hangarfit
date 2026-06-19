@@ -6,6 +6,21 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Learned backend (#724, epic #607): #720 empty-start `pair-box` gate — two-seed PASS; L4
+  clipping confirmed load-bearing; recipe `reward_clip 10 → 50`.** The #720 L5+L4 gate was run as a
+  #722 checkpoint-resume sweep on GPU. The empty-start `pair-box` rung — `valid_placed=0.000` in
+  every prior gate — now **promotes by competency on both seeds** (seed 0 iter 27 `vp` 0.80, seed 1
+  iter 19 `vp` 0.85), placing both objects validly with no piling. A controlled A/B (seed 0, same
+  upstream checkpoint, same seed, byte-identical iter 0, only the three L4 flags differing) showed
+  **L4 trust-region clipping is load-bearing, not optional**: clip-off collapses to place-nothing
+  (the deep ≈−1400 collision-penalty gradient outlier drives PPO into the place-nothing absorbing
+  state), clip-on masters. The recipe's `--reward-clip` is corrected `10.0 → 50.0` — sized so the
+  per-step **graded** valid-park bonus (`r_valid_park 30 + r_first_valid 15 = 45`) below the clip
+  (so the L5 near-miss gradient survives) while the deep spikes are clamped — the episode-completing
+  step's `r_terminal` credit does saturate the ±50 clamp, by design. `10` would clip even the graded
+  bonus and flatten the L5 gradient; `50` is the validated value. `ml/README.md` recipe + WIN section updated with the confirmed result.
+  Docs-only — the L4 flags already shipped in #720.
+
 - **Learned backend (#722, epic #607): `--stop-after-rung NAME` truncates the curriculum
   ladder for sweep cells.** The #720 economics re-gate runs as a checkpoint-resume sweep — train
   the ladder once through `pair-mixed`, then `--load` and sweep only the `pair-box` rung across a
