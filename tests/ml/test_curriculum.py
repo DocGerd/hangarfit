@@ -9,6 +9,8 @@ import pytest
 from ml.curriculum import (
     _BOX_FLEET,
     _BOX_HANGAR,
+    _PAIR_MIXED_STAGE,
+    _SOLO_BOX_STAGE,
     _WITNESS_BOX,
     DEFAULT_LADDER,
     CurriculumHistory,
@@ -20,6 +22,7 @@ from ml.curriculum import (
     episode_metrics,
     format_iter_log,
     history_metric_records,
+    make_episode_sampler,
     plain_start,
     sample_mixed_start,
     sample_request,
@@ -593,3 +596,25 @@ def test_with_mixed_anchor_rung_raises_without_pair_box():
     sched = CurriculumSchedule(stages=(DEFAULT_LADDER[0],), policy=PromotionPolicy())
     with pytest.raises(ValueError, match="pair-box"):
         with_mixed_anchor_rung(sched)
+
+
+# ---------------------------------------------------------------------------
+# make_episode_sampler (#718 Task 6)
+# ---------------------------------------------------------------------------
+
+
+def test_make_episode_sampler_plain_for_non_mixed_stage():
+    # solo-box has anchor_prob None -> plain sampler -> seed_anchor_k None, byte-identical ids.
+    pool = ("fuji",)
+    rng1, rng2 = random.Random(3), random.Random(3)
+    s = make_episode_sampler(_SOLO_BOX_STAGE, pool, 1, rng1)()
+    assert s.seed_anchor_k is None
+    assert s.requested_ids == sample_request(pool, 1, rng2)  # same rng draw
+
+
+def test_make_episode_sampler_mixed_for_mixed_stage_varies_k():
+    pool = ("fuji", "aviat_husky")
+    rng = random.Random(5)
+    sampler = make_episode_sampler(_PAIR_MIXED_STAGE, pool, 2, rng)
+    ks = {sampler().seed_anchor_k for _ in range(200)}
+    assert ks == {0, 1}  # mixture draws both

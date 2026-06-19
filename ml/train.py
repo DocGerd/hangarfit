@@ -31,10 +31,11 @@ from ml.curriculum import (
     Stage,
     format_iter_log,
     history_metric_records,
-    plain_start,
+    make_episode_sampler,
     should_promote,
     stage_rng,
     validate_ladder,
+    with_mixed_anchor_rung,
     with_pair_anchored_rung,
     with_promotion_overrides,
     with_solo_box_rung,
@@ -228,7 +229,7 @@ def _build_stage_worker(
     (``worker_index=0`` is the legacy stream)."""
     wenv = build_stage_env(stage, weights=weights)
     wrng = stage_rng(seed, stage_index, worker_index=worker_index)
-    wnext = partial(plain_start, pool, n, wrng)
+    wnext = make_episode_sampler(stage, pool, n, wrng)
     return _EnvWorker(wenv, encoder, wnext)
 
 
@@ -405,7 +406,7 @@ def train_curriculum(
         # partial binds THIS stage's pool/n/rng by value (so the per-iteration closure
         # is not the flake8-bugbear B023 late-binding trap) and stays mypy-inferrable
         # where a default-arg lambda would not be.
-        next_request = partial(plain_start, pool, n, rng)
+        next_request = make_episode_sampler(stage, pool, n, rng)
         # n_envs == 1: the legacy single-stream path is UNTOUCHED (byte-identical).
         if n_envs == 1:
             for it in range(pol.max_iters):
@@ -606,6 +607,15 @@ def build_argparser() -> argparse.ArgumentParser:
         "joint discovery before the empty-start pair-box",
     )
     p.add_argument(
+        "--mixed-anchor",
+        action="store_true",
+        help="curriculum: insert the opt-in #712 'pair-mixed' rung before pair-box (each "
+        "episode randomly starts anchored k=1 or empty k=0 by a fixed probability), keeping "
+        "empty-start episodes in the training mix so the policy does not collapse to "
+        "place-nothing. Apply with --seed-anchor so pair-mixed lands between pair-anchored "
+        "and pair-box.",
+    )
+    p.add_argument(
         "--r-valid-park",
         type=float,
         default=0.0,
@@ -719,6 +729,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             parser.error("--solo-box-rung requires --schedule curriculum")
         if args.seed_anchor:
             parser.error("--seed-anchor requires --schedule curriculum")
+        if args.mixed_anchor:
+            parser.error("--mixed-anchor requires --schedule curriculum")
         train(
             seed=args.seed,
             iterations=args.iterations,
@@ -746,6 +758,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             sched = with_solo_box_rung(sched)
         if args.seed_anchor:
             sched = with_pair_anchored_rung(sched)
+        if args.mixed_anchor:
+            sched = with_mixed_anchor_rung(sched)
         history = train_curriculum(
             seed=args.seed,
             schedule=sched,

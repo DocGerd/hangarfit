@@ -949,6 +949,39 @@ def test_main_without_seed_anchor_keeps_default_ladder(monkeypatch):
     assert "pair-anchored" not in [s.name for s in captured["schedule"].stages]
 
 
+# ---------------------------------------------------------------------------
+# #712 — --mixed-anchor CLI wiring (the pair-mixed start-state rung, Task 6).
+# ---------------------------------------------------------------------------
+
+
+def test_mixed_anchor_flag_inserts_pair_mixed(monkeypatch):
+    # Reuse this module's helper that builds the schedule from argv as the seed-anchor
+    # test does; assert "pair-mixed" appears only when --mixed-anchor is passed.
+    import ml.train as train_mod
+    from ml.curriculum import CurriculumHistory
+
+    captured_off: dict = {}
+    captured_on: dict = {}
+
+    def fake_off(**kw):
+        captured_off.update(kw)
+        return CurriculumHistory()
+
+    def fake_on(**kw):
+        captured_on.update(kw)
+        return CurriculumHistory()
+
+    monkeypatch.setattr(train_mod, "train_curriculum", fake_off)
+    train_mod.main(["--schedule", "curriculum"])
+    assert "pair-mixed" not in [s.name for s in captured_off["schedule"].stages]
+
+    monkeypatch.setattr(train_mod, "train_curriculum", fake_on)
+    train_mod.main(["--schedule", "curriculum", "--seed-anchor", "--mixed-anchor"])
+    names = [s.name for s in captured_on["schedule"].stages]
+    assert "pair-mixed" in names
+    assert names.index("pair-anchored") < names.index("pair-mixed") < names.index("pair-box")
+
+
 def _anchored_smoke_schedule(name: str = "pair-anchored-smoke"):
     anchored = Stage(
         name=name,

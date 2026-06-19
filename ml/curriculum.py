@@ -6,8 +6,9 @@ env builder lives in ml/stage_builder.py; the torch training loop in ml/train.py
 from __future__ import annotations
 
 import random
-from collections.abc import Sequence
+from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
+from functools import partial
 from typing import Literal
 
 from ml.types import DifficultyConfig
@@ -188,6 +189,26 @@ def sample_mixed_start(
     ids = sample_request(pool, n, rng)
     k = seed_anchor_k if rng.random() < anchor_prob else 0
     return EpisodeStart(ids, k)
+
+
+def make_episode_sampler(
+    stage: Stage, pool: Sequence[str], n: int, rng: random.Random
+) -> Callable[[], EpisodeStart]:
+    """Build this stage's per-episode start sampler. A mixed-start rung (anchor_prob set)
+    gets ``sample_mixed_start`` (seeded per-episode k draw); every other rung gets
+    ``plain_start`` (byte-identical id draw, k left to the env default). Both bind pool/n/rng
+    by value via partial (no late-binding closure trap)."""
+    ap = stage.difficulty.anchor_prob
+    if ap is not None:
+        return partial(
+            sample_mixed_start,
+            pool,
+            n,
+            rng,
+            seed_anchor_k=stage.difficulty.seed_anchor_k,
+            anchor_prob=ap,
+        )
+    return partial(plain_start, pool, n, rng)
 
 
 @dataclass(frozen=True, slots=True)
