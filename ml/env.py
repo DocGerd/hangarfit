@@ -98,6 +98,9 @@ class HangarFitEnv:
         self._steps_this_object = 0
         self._steps_total = 0
         self._prev_potential = 0.0
+        # #720 one-shot: flipped True on the first Park that yields a valid layout, so the
+        # r_first_valid bonus is paid once per episode. Cleared here every reset.
+        self._first_valid_reached = False
 
     def _body(self, object_id: str) -> Aircraft | GroundObject:
         return self.fleet[object_id] if object_id in self.fleet else self.ground_objects[object_id]
@@ -271,6 +274,10 @@ class HangarFitEnv:
             egress = score.egress_blocked
             intrusion = go.intrusion_area_m2(body, pl, self.hangar, bay_closed=False)
             park_valid = score.collisions_valid and not score.egress_blocked
+            # First Park of the episode to reach a valid layout fires the one-time bonus.
+            first_valid_now = park_valid and not self._first_valid_reached
+            if first_valid_now:
+                self._first_valid_reached = True
             self._active_id = None
             self._active_pose = None
             done = not self._queue
@@ -294,6 +301,7 @@ class HangarFitEnv:
                 # On the terminal Park, reuse the already-computed whole-layout product-checker
                 # bool (== _layout_valid()) for the #714 validity-conditional terminal.
                 terminal_valid=park_valid if done else None,
+                first_valid_now=first_valid_now,
             )
             reward = step_reward(ctx, weights)
             self._prev_potential = new_phi

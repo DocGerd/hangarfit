@@ -32,6 +32,12 @@ class PPOConfig:
     entropy_anneal_iters: int = 0  # iters over which to anneal; 0 = no schedule
     normalize_returns: bool = False  # std-only reward normalization before GAE
     return_norm_eps: float = 1e-8  # numerical floor on the running std
+    # #720 (L4) PPO trust-region hardening — all None/off => byte-identical to the pre-#720 update.
+    reward_clip: float | None = None  # clamp RAW rewards to [-c, c] before normalize/GAE; tames
+    # the unclipped -w_col collision spike (-12000 batches) that drove the gate sawtooth.
+    value_clip_eps: float | None = None  # PPO2 clipped value loss; caps per-update critic movement.
+    target_kl: float | None = None  # early-stop the epoch loop once a full epoch's mean approx-KL
+    # exceeds this (a per-update trust region), so one catastrophic batch cannot over-rotate.
 
 
 def entropy_coef_at(
@@ -119,6 +125,25 @@ def factored_logprob_entropy(
     logprob = kind_dist.log_prob(kind_idx) + not_park * mag_dist.log_prob(mag_idx)
     entropy = kind_dist.entropy() + not_park * mag_dist.entropy()
     return logprob, entropy
+
+
+def value_loss_term(
+    new_value: Tensor, old_value: Tensor, returns: Tensor, clip_eps: float | None
+) -> Tensor:
+    """Per-minibatch critic loss. ``clip_eps`` None → plain ``((v - R)^2).mean()`` — byte-identical
+    to the pre-#720 update. Else the PPO2 clipped form ``max((v - R)^2, (v_clip - R)^2)`` where
+    ``v_clip = old_value + clamp(new_value - old_value, ±clip_eps)``: the clamp caps how far one
+    update can move the value toward the returns and the ``max`` keeps the loss a pessimistic bound
+    — a trust region on the critic so the unclipped collision spike can't yank the value head each
+    batch (the #720 L4 stabilizer for the gate's value-driven sawtooth). ``old_value`` is the
+    buffer's ROLLOUT-time (pre-update) critic prediction (``data['value']``), the clip anchor — not
+    a re-forward (matches the SB3/cleanrl convention)."""
+    unclipped = (new_value - returns) ** 2
+    if clip_eps is None:
+        return unclipped.mean()
+    v_clipped = old_value + torch.clamp(new_value - old_value, -clip_eps, clip_eps)
+    clipped = (v_clipped - returns) ** 2
+    return torch.max(unclipped, clipped).mean()
 
 
 def compute_gae(
@@ -226,6 +251,10 @@ def ppo_update(
     GAE. Existing callers that pass no ``normalizer`` are byte-identical (default None)."""
     data = buffer.batch()
     rewards = data["reward"]
+    # Clamp the RAW reward stream first (before the Welford normalizer + GAE) so a -w_col
+    # collision spike can't blow up the running std or the returns. None => unchanged (#720 L4).
+    if config.reward_clip is not None:
+        rewards = rewards.clamp(-config.reward_clip, config.reward_clip)
     if config.normalize_returns:
         if normalizer is None:
             raise ValueError(
@@ -282,10 +311,13 @@ def ppo_update(
         "value_loss": [],
         "entropy": [],
         "loss": [],
+        "approx_kl": [],
     }
+    epochs_run = 0
     for _ in range(config.epochs):
         # device=cpu reproduces torch.randperm(n) exactly (same default generator).
         perm = torch.randperm(n, device=device)
+        epoch_kls: list[float] = []
         for start in range(0, n, config.minibatch_size):
             mb = perm[start : start + config.minibatch_size]
             mb_obs = {k: data[k][mb] for k in _OBS_KEYS}
@@ -293,13 +325,16 @@ def ppo_update(
             logprob, entropy = factored_logprob_entropy(
                 out, data["kind_idx"][mb], data["mag_idx"][mb]
             )
-            ratio = torch.exp(logprob - data["old_logprob"][mb])
+            logratio = logprob - data["old_logprob"][mb]
+            ratio = torch.exp(logratio)
             adv = advantages[mb]
             policy_loss = -torch.min(
                 ratio * adv,
                 torch.clamp(ratio, 1.0 - config.clip_eps, 1.0 + config.clip_eps) * adv,
             ).mean()
-            value_loss = ((out.value - returns[mb]) ** 2).mean()
+            value_loss = value_loss_term(
+                out.value, data["value"][mb], returns[mb], config.value_clip_eps
+            )
             entropy_bonus = entropy.mean()
             loss = (
                 policy_loss + config.value_coef * value_loss - config.entropy_coef * entropy_bonus
@@ -308,11 +343,25 @@ def ppo_update(
             loss.backward()
             torch.nn.utils.clip_grad_norm_(policy.parameters(), config.max_grad_norm)
             optimizer.step()
+            # Schulman's non-negative approx-KL estimator (cleanrl): E[(r-1) - log r], read from
+            # the pre-step forward. Pure telemetry — no grad, no RNG draw — so when target_kl is
+            # None (no early stop) the update is byte-identical to the pre-#720 loop.
+            with torch.no_grad():
+                approx_kl = ((ratio - 1.0) - logratio).mean().item()
+            epoch_kls.append(approx_kl)
             accum["policy_loss"].append(policy_loss.item())
             accum["value_loss"].append(value_loss.item())
             accum["entropy"].append(entropy_bonus.item())
             accum["loss"].append(loss.item())
-    return {k: sum(vs) / len(vs) for k, vs in accum.items()}
+            accum["approx_kl"].append(approx_kl)
+        epochs_run += 1
+        # Early-stop once a full epoch's mean approx-KL leaves the trust region (the #720 L4
+        # backstop against a single catastrophic batch over-rotating the policy).
+        if config.target_kl is not None and sum(epoch_kls) / len(epoch_kls) > config.target_kl:
+            break
+    metrics = {k: sum(vs) / len(vs) for k, vs in accum.items()}
+    metrics["epochs_run"] = float(epochs_run)
+    return metrics
 
 
 def compute_gae_vec(

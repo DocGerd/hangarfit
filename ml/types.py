@@ -111,6 +111,19 @@ class RewardWeights:
     r_terminal: float = 50.0  # terminal: per fraction-placed
     gamma: float = 0.99  # shaping discount
     r_valid_park: float = 0.0  # bonus paid in Park ONLY when the layout is valid (basin escape)
+    # When > 0, the r_valid_park bonus is GRADED by a near-miss "misfit" (overlap + out-of-bounds
+    # intrusion) instead of paid all-or-nothing: r_valid_park * exp(-misfit / scale) on a Park
+    # step (withheld entirely on an egress-blocked Park — egress is a binary hard failure). This
+    # turns the flat valid-only plateau into an uphill gradient INTO the witness slot, so a Park
+    # that lands CLOSE to valid earns partial credit and the rare near-miss pays a learnable
+    # return. Default 0.0 -> the exact binary path -> byte-identical (#720 L5 economics lever).
+    valid_park_grade_scale: float = 0.0
+    # One-time bonus paid the FIRST time an episode reaches a valid placement (the env flips
+    # RewardContext.first_valid_now on exactly that Park step). A discrete kick that makes the
+    # breakthrough off the place-nothing pole pay a learnable return; paid once, not per Park.
+    # Default 0.0 -> the term is x0 (the env still computes first_valid_now, but it contributes
+    # nothing) -> byte-identical (#720 L5 economics lever).
+    r_first_valid: float = 0.0
     dense_slot_potential: bool = False  # add an in-hangar nearest-free-pocket shaping term
     # terminal: penalty per UNPLACED fraction (1 - terminal_fraction). Default 0.0 -> byte-
     # identical. Non-zero charges abandonment so "drive to budget exhaustion" is no longer

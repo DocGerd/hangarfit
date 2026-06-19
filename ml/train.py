@@ -629,6 +629,28 @@ def build_argparser() -> argparse.ArgumentParser:
         "budget exhaustion is no longer free vs committing a Park; #710 economics rebalance)",
     )
     p.add_argument(
+        "--w-col",
+        type=float,
+        default=RewardWeights().w_col,
+        help="collision-overlap penalty weight (default 100.0). Lower it to shrink the unbounded "
+        "-w_col spike that makes attempting a Park dominate place-nothing; #720 L5 economics",
+    )
+    p.add_argument(
+        "--valid-park-grade-scale",
+        type=float,
+        default=0.0,
+        help="when >0, GRADE the r_valid_park bonus by near-miss misfit "
+        "(r_valid_park*exp(-misfit/scale)) so a Park landing CLOSE to valid earns partial credit "
+        "— the uphill gradient into the witness slot; 0 = binary bonus (byte-identical); #720 L5",
+    )
+    p.add_argument(
+        "--r-first-valid",
+        type=float,
+        default=0.0,
+        help="one-time bonus the first time an episode reaches a valid placement (breakthrough "
+        "off the place-nothing pole); paid once per episode, 0 = off (byte-identical); #720 L5",
+    )
+    p.add_argument(
         "--validity-conditional-terminal",
         action="store_true",
         help="terminal credits the VALID placed fraction (invalid layout -> 0), so an "
@@ -663,6 +685,28 @@ def build_argparser() -> argparse.ArgumentParser:
         help="std-only Welford return normalization before GAE",
     )
     p.add_argument(
+        "--reward-clip",
+        type=float,
+        default=None,
+        help="clamp RAW rewards to [-c, c] before normalize/GAE (tames the -w_col collision "
+        "spike that drove the gate sawtooth); None = off (byte-identical); #720 L4",
+    )
+    p.add_argument(
+        "--value-clip-eps",
+        type=float,
+        default=None,
+        help="PPO2 clipped value loss epsilon — caps how far one update moves the critic; "
+        "None = plain MSE (byte-identical); #720 L4",
+    )
+    p.add_argument(
+        "--target-kl",
+        type=float,
+        default=None,
+        help="early-stop the PPO epoch loop once a full epoch's mean approx-KL exceeds this "
+        "(per-update trust region); None/omitted = off, run all epochs (byte-identical). Note "
+        "0.0 is NOT 'off' — it stops after the first epoch (mean-KL > 0 almost always); #720 L4",
+    )
+    p.add_argument(
         "--n-envs",
         type=int,
         default=1,
@@ -690,7 +734,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     if args.device == "cuda" and not torch.cuda.is_available():
         parser.error("--device cuda requested but torch.cuda.is_available() is False")
     weights = RewardWeights(
+        w_col=args.w_col,
         r_valid_park=args.r_valid_park,
+        valid_park_grade_scale=args.valid_park_grade_scale,
+        r_first_valid=args.r_first_valid,
         dense_slot_potential=args.dense_slot_potential,
         r_unplaced_penalty=args.r_unplaced_penalty,
         validity_conditional_terminal=args.validity_conditional_terminal,
@@ -714,6 +761,9 @@ def main(argv: Sequence[str] | None = None) -> None:
         entropy_coef_end=args.entropy_end,
         entropy_anneal_iters=args.entropy_anneal_iters,
         normalize_returns=args.normalize_returns,
+        reward_clip=args.reward_clip,
+        value_clip_eps=args.value_clip_eps,
+        target_kl=args.target_kl,
     )
     if args.schedule == "trivial":
         # --metrics-out / --promotion-* are curriculum-only; the trivial path has no
