@@ -15,9 +15,10 @@ All notable changes to this project are documented here. Format follows [Keep a 
   **L4 trust-region clipping is load-bearing, not optional**: clip-off collapses to place-nothing
   (the deep ≈−1400 collision-penalty gradient outlier drives PPO into the place-nothing absorbing
   state), clip-on masters. The recipe's `--reward-clip` is corrected `10.0 → 50.0` — sized so the
-  per-step valid-park bonus (`r_valid_park 30 + r_first_valid 15 = 45`) stays below the clip while
-  the deep spikes are clamped (`10` would clip the legit bonus and flatten the L5 gradient; `50` is
-  the validated value). `ml/README.md` recipe + WIN section updated with the confirmed result.
+  per-step **graded** valid-park bonus (`r_valid_park 30 + r_first_valid 15 = 45`) below the clip
+  (so the L5 near-miss gradient survives) while the deep spikes are clamped — the episode-completing
+  step's `r_terminal` credit does saturate the ±50 clamp, by design. `10` would clip even the graded
+  bonus and flatten the L5 gradient; `50` is the validated value. `ml/README.md` recipe + WIN section updated with the confirmed result.
   Docs-only — the L4 flags already shipped in #720.
 
 - **Learned backend (#722, epic #607): `--stop-after-rung NAME` truncates the curriculum

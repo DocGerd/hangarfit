@@ -280,19 +280,22 @@ holds).
 main-grid hypothesis that `--validity-conditional-terminal` + `--normalize-returns` would cover
 stability). A controlled A/B settled it: same upstream checkpoint, same `--seed 0`, byte-identical
 iter 0, the *only* difference the three L4 flags — clip **off** collapses to place-nothing (`vp`
-peaks 0.24 then decays to ~0 as `fraction_placed` 0.79→0.02), clip **on** masters. The deep
-`−w_col·overlap` collision spikes (≈−1400 here, the residue after L5 tamed the −5000…−12000 band)
-are a gradient outlier that drives PPO into the place-nothing absorbing state; clamping them in the
-update is what lets the policy stay in the *placing* regime long enough to learn 2-object joint
-placement. The full ladder needs all four ingredients — L5 graded economics (start off 0.000) +
+peaks 0.24 then decays to ~0 as `fraction_placed` 0.79→0.02), clip **on** masters. The residual
+deep-penalty episodes (`mean_ep_reward` ≈−1400 in the clip-off run, down from the −5000…−12000 band
+before L5) are a `−w_col·overlap` gradient outlier that drives PPO into the place-nothing absorbing
+state; clamping the per-step reward in the update is what lets the policy stay in the *placing*
+regime long enough to learn 2-object joint placement. The full ladder needs all four ingredients — L5 graded economics (start off 0.000) +
 `--seed-anchor`/`--mixed-anchor` (keep empty-start episodes in the training distribution) + **L4
 clipping** (don't flee to place-nothing) + `--validity-conditional-terminal` (place *validly*, not
 pile).
 
-**`--reward-clip 50` (not 10):** sized so the per-step valid-park bonus
-(`r_valid_park 30 + r_first_valid 15 = 45`) stays below the clip while the deep collision spikes are
-clamped to −50. `reward_clip 10` would clip the legit valid-park bonus (45 > 10), flattening the
-very L5 gradient the recipe creates; `50` is the validated value (two-seed mastery). The
+**`--reward-clip 50` (not 10):** `reward_clip` clamps the *total* per-step reward to ±50. `50` keeps
+the per-step **graded** valid-park bonus (`r_valid_park 30 + r_first_valid 15 = 45`) below the clip
+so the L5 near-miss gradient survives, while clamping the deep `−w_col·overlap` spikes to −50. (The
+episode-*completing* valid park step also books `r_terminal·fraction ≈ 50`, so that one step does
+saturate the clamp — the intent is preserving the graded near-miss gradient, not the terminal
+credit.) `reward_clip 10` would clip even the graded bonus (45 > 10), flattening the L5 gradient;
+`50` is the validated value (two-seed mastery). The
 no-upstream-regression check still holds (`trivial`/`solo-box`/`pair-anchored` all promote by
 competency at `w_col=20`). Read `valid_placed`, NOT `valid_rate` (an empty layout is vacuously
 "valid", so `valid_rate→1` under place-nothing is the *failure* signature).
