@@ -157,6 +157,40 @@ def sample_request(pool: Sequence[str], n: int, rng: random.Random) -> tuple[str
 
 
 @dataclass(frozen=True, slots=True)
+class EpisodeStart:
+    """Per-episode start spec produced by the sampler, consumed by env.reset. ``seed_anchor_k``
+    None => the env uses ``difficulty.seed_anchor_k`` (plain rung); an int => per-episode
+    override (the #712 mixed-start rung's seeded k draw)."""
+
+    requested_ids: tuple[str, ...]
+    seed_anchor_k: int | None = None
+
+
+def plain_start(pool: Sequence[str], n: int, rng: random.Random) -> EpisodeStart:
+    """A non-anchored episode start: the requested ids only (k left to the env default).
+    The id draw is identical to ``sample_request`` (no extra rng draw), so a plain rung's
+    rng consumption is byte-identical to the pre-change ladder."""
+    return EpisodeStart(sample_request(pool, n, rng), None)
+
+
+def sample_mixed_start(
+    pool: Sequence[str],
+    n: int,
+    rng: random.Random,
+    *,
+    seed_anchor_k: int,
+    anchor_prob: float,
+) -> EpisodeStart:
+    """A mixed-start episode: draw the requested ids, THEN draw k = ``seed_anchor_k`` with
+    probability ``anchor_prob`` else 0, from the SAME rng (fixed draw order: ids then k), so
+    Sync and Subproc workers on the same stream stay byte-identical. ``anchor_prob`` is
+    P(k=seed_anchor_k) per episode."""
+    ids = sample_request(pool, n, rng)
+    k = seed_anchor_k if rng.random() < anchor_prob else 0
+    return EpisodeStart(ids, k)
+
+
+@dataclass(frozen=True, slots=True)
 class Stage:
     """One rung of the ladder. Holds fleet/hangar (and, for a #712 seed-anchor rung, the
     witness layout) as repo-relative PATH STRINGS + scalar overrides — no loading happens

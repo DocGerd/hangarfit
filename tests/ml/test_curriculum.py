@@ -2,18 +2,23 @@
 
 from __future__ import annotations
 
+import random
+
 import pytest
 
 from ml.curriculum import (
     DEFAULT_LADDER,
     CurriculumHistory,
     CurriculumSchedule,
+    EpisodeStart,
     EpisodeStat,
     PromotionPolicy,
     Stage,
     episode_metrics,
     format_iter_log,
     history_metric_records,
+    plain_start,
+    sample_mixed_start,
     sample_request,
     should_promote,
     stage_rng,
@@ -460,3 +465,57 @@ def test_validate_ladder_rejects_seed_anchor_k_ge_max_objects():
 def test_validate_ladder_accepts_valid_seed_anchor_k():
     ok = (_anchored_test_stage(max_objects=2, seed_anchor_k=1),)
     validate_ladder(ok, encoder_max_objects=EncoderConfig().max_objects)  # no raise
+
+
+# ---------------------------------------------------------------------------
+# #718 — EpisodeStart record + plain/mixed episode samplers
+# ---------------------------------------------------------------------------
+
+
+def test_plain_start_wraps_sample_request_with_no_anchor():
+    rng = random.Random(0)
+    s = plain_start(("fuji", "aviat_husky"), 2, rng)
+    assert isinstance(s, EpisodeStart)
+    assert set(s.requested_ids) == {"fuji", "aviat_husky"}
+    assert s.seed_anchor_k is None
+
+
+def test_mixed_start_draws_k_deterministically():
+    pool = ("fuji", "aviat_husky")
+    a = [
+        sample_mixed_start(pool, 2, random.Random(7), seed_anchor_k=1, anchor_prob=0.5)
+        for _ in range(1)
+    ]
+    b = [
+        sample_mixed_start(pool, 2, random.Random(7), seed_anchor_k=1, anchor_prob=0.5)
+        for _ in range(1)
+    ]
+    assert a[0] == b[0]  # same seed -> identical (ids AND k)
+    assert a[0].seed_anchor_k in (0, 1)
+
+
+def test_mixed_start_k_is_zero_or_seed_anchor_k_by_prob():
+    pool = ("fuji", "aviat_husky")
+    rng = random.Random(0)
+    ks = [
+        sample_mixed_start(pool, 2, rng, seed_anchor_k=1, anchor_prob=p).seed_anchor_k
+        for p in (0.0,) * 50
+    ]
+    assert set(ks) == {0}  # prob 0 -> always empty start
+    rng = random.Random(0)
+    ks = [
+        sample_mixed_start(pool, 2, rng, seed_anchor_k=1, anchor_prob=p).seed_anchor_k
+        for p in (1.0,) * 50
+    ]
+    assert set(ks) == {1}  # prob 1 -> always anchored
+
+
+def test_mixed_start_mixture_fraction_near_anchor_prob():
+    pool = ("fuji", "aviat_husky")
+    rng = random.Random(123)
+    draws = [
+        sample_mixed_start(pool, 2, rng, seed_anchor_k=1, anchor_prob=0.5).seed_anchor_k
+        for _ in range(2000)
+    ]
+    frac_anchored = sum(1 for k in draws if k == 1) / len(draws)
+    assert 0.45 <= frac_anchored <= 0.55  # ~0.5 mixture
