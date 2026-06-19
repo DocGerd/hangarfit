@@ -982,6 +982,99 @@ def test_mixed_anchor_flag_inserts_pair_mixed(monkeypatch):
     assert names.index("pair-anchored") < names.index("pair-mixed") < names.index("pair-box")
 
 
+# ---------------------------------------------------------------------------
+# #722 — --stop-after-rung CLI wiring (truncate the ladder for sweep cells).
+# ---------------------------------------------------------------------------
+
+
+def test_argparser_stop_after_rung_defaults_none():
+    assert build_argparser().parse_args([]).stop_after_rung is None
+
+
+def test_main_stop_after_rung_requires_curriculum_schedule(monkeypatch):
+    # --stop-after-rung is a curriculum ladder edit; under --schedule trivial it fails LOUD.
+    import ml.train as train_mod
+
+    ran = {"train": False}
+
+    def guard(**kw):
+        ran["train"] = True
+        return []
+
+    monkeypatch.setattr(train_mod, "train", guard)
+    with pytest.raises(SystemExit):
+        train_mod.main(["--schedule", "trivial", "--stop-after-rung", "pair-box"])
+    assert ran["train"] is False
+
+
+def test_main_stop_after_rung_truncates_schedule(monkeypatch):
+    import ml.train as train_mod
+    from ml.curriculum import CurriculumHistory
+
+    captured: dict = {}
+
+    def fake(**kw):
+        captured.update(kw)
+        return CurriculumHistory()
+
+    monkeypatch.setattr(train_mod, "train_curriculum", fake)
+    train_mod.main(["--schedule", "curriculum", "--stop-after-rung", "pair-box"])
+    names = [s.name for s in captured["schedule"].stages]
+    assert names == ["trivial", "pair-box"]  # trio-* dropped
+
+
+def test_main_without_stop_after_rung_keeps_full_ladder(monkeypatch):
+    import ml.train as train_mod
+    from ml.curriculum import CurriculumHistory
+
+    captured: dict = {}
+
+    def fake(**kw):
+        captured.update(kw)
+        return CurriculumHistory()
+
+    monkeypatch.setattr(train_mod, "train_curriculum", fake)
+    train_mod.main(["--schedule", "curriculum"])
+    assert captured["schedule"].stages[-1].name == "trio-notch-strict"  # full ladder
+
+
+def test_main_stop_after_rung_composes_with_grafts(monkeypatch):
+    # The intended sweep shape: graft the opt-in rungs, then stop after pair-box.
+    import ml.train as train_mod
+    from ml.curriculum import CurriculumHistory
+
+    captured: dict = {}
+
+    def fake(**kw):
+        captured.update(kw)
+        return CurriculumHistory()
+
+    monkeypatch.setattr(train_mod, "train_curriculum", fake)
+    train_mod.main(
+        [
+            "--schedule",
+            "curriculum",
+            "--solo-box-rung",
+            "--seed-anchor",
+            "--mixed-anchor",
+            "--stop-after-rung",
+            "pair-box",
+        ]
+    )
+    names = [s.name for s in captured["schedule"].stages]
+    assert names == ["trivial", "solo-box", "pair-anchored", "pair-mixed", "pair-box"]
+
+
+def test_main_stop_after_rung_unknown_rung_errors(monkeypatch):
+    # A typo'd rung name fails LOUD (the truncate_after_rung ValueError surfaces) rather than
+    # silently disabling the cap and grinding the whole ladder.
+    import ml.train as train_mod
+
+    monkeypatch.setattr(train_mod, "train_curriculum", lambda **kw: None)
+    with pytest.raises(ValueError, match="no-such-rung"):
+        train_mod.main(["--schedule", "curriculum", "--stop-after-rung", "no-such-rung"])
+
+
 def _anchored_smoke_schedule(name: str = "pair-anchored-smoke"):
     anchored = Stage(
         name=name,

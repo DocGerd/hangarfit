@@ -28,6 +28,7 @@ from ml.curriculum import (
     sample_request,
     should_promote,
     stage_rng,
+    truncate_after_rung,
     validate_ladder,
     with_mixed_anchor_rung,
     with_pair_anchored_rung,
@@ -632,3 +633,66 @@ def test_make_episode_sampler_mixed_for_mixed_stage_varies_k():
     sampler = make_episode_sampler(_PAIR_MIXED_STAGE, pool, 2, rng)
     ks = {sampler().seed_anchor_k for _ in range(200)}
     assert ks == {0, 1}  # mixture draws both
+
+
+# ---------------------------------------------------------------------------
+# #722 — truncate_after_rung: stop the ladder after a named rung (sweep tooling)
+# ---------------------------------------------------------------------------
+
+
+def test_truncate_after_rung_drops_later_stages():
+    # Truncating the default ladder at 'pair-box' keeps trivial+pair-box and drops the
+    # trio-* rungs after it — the #722 lever that lets a resumed sweep cell stop cleanly.
+    sched = truncate_after_rung(CurriculumSchedule.default(), "pair-box")
+    names = [s.name for s in sched.stages]
+    assert names == ["trivial", "pair-box"]
+
+
+def test_truncate_after_rung_keeps_named_rung_last():
+    sched = truncate_after_rung(CurriculumSchedule.default(), "trio-notch")
+    names = [s.name for s in sched.stages]
+    assert names[-1] == "trio-notch"
+    assert "trio-notch-strict" not in names  # the rung after it is dropped
+
+
+def test_truncate_after_rung_at_last_rung_is_a_noop_on_stages():
+    base = CurriculumSchedule.default()
+    sched = truncate_after_rung(base, "trio-notch-strict")  # the last rung
+    assert [s.name for s in sched.stages] == [s.name for s in base.stages]
+
+
+def test_truncate_after_rung_preserves_policy_and_validates():
+    base = CurriculumSchedule.default()
+    sched = truncate_after_rung(base, "pair-box")
+    assert sched.policy == base.policy  # only the ladder changes, not the promotion gate
+    validate_ladder(sched.stages, encoder_max_objects=EncoderConfig().max_objects)  # no raise
+
+
+def test_truncate_after_rung_does_not_mutate_the_default_ladder():
+    truncate_after_rung(CurriculumSchedule.default(), "pair-box")
+    assert [s.name for s in DEFAULT_LADDER][-1] == "trio-notch-strict"  # default still full
+
+
+def test_truncate_after_rung_raises_on_unknown_rung():
+    with pytest.raises(ValueError, match="no-such-rung"):
+        truncate_after_rung(CurriculumSchedule.default(), "no-such-rung")
+
+
+def test_truncate_after_rung_composes_with_grafts():
+    # The intended #722 sweep shape: graft the opt-in rungs, then truncate at 'pair-box'
+    # so the resumed cell trains only up to (and including) pair-box.
+    sched = with_mixed_anchor_rung(
+        with_pair_anchored_rung(with_solo_box_rung(CurriculumSchedule.default()))
+    )
+    truncated = truncate_after_rung(sched, "pair-box")
+    names = [s.name for s in truncated.stages]
+    assert names == ["trivial", "solo-box", "pair-anchored", "pair-mixed", "pair-box"]
+
+
+def test_truncate_after_rung_at_pair_mixed_for_upstream_train():
+    # The upstream train stops after pair-mixed (before the empty-start pair-box).
+    sched = with_mixed_anchor_rung(
+        with_pair_anchored_rung(with_solo_box_rung(CurriculumSchedule.default()))
+    )
+    names = [s.name for s in truncate_after_rung(sched, "pair-mixed").stages]
+    assert names == ["trivial", "solo-box", "pair-anchored", "pair-mixed"]

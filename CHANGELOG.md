@@ -6,6 +6,19 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Learned backend (#722, epic #607): `--stop-after-rung NAME` truncates the curriculum
+  ladder for sweep cells.** The #720 economics re-gate runs as a checkpoint-resume sweep — train
+  the ladder once through `pair-mixed`, then `--load` and sweep only the `pair-box` rung across a
+  grid of `--w-col`/`--valid-park-grade-scale` cells. Previously each resumed cell, after
+  mastering/capping `pair-box`, ground on into `trio-box`/`trio-notch`/`trio-notch-strict`
+  (≈3 extra `trio-*` rungs, each to the per-stage cap, of wasted PPO iters per cell), with
+  manual `Ctrl-C` the only workaround. `--stop-after-rung`
+  (curriculum-only) drops every rung after the named one — `--stop-after-rung pair-mixed` for the
+  upstream train, `--stop-after-rung pair-box` for each cell — so the sweep runs unattended. A
+  pure `truncate_after_rung` schedule transform (`ml/curriculum.py`) mirroring the `with_*_rung`
+  grafts; the `train_curriculum` loop is untouched. A name (not a count) because resume *skips*
+  completed rungs, making a count ambiguous; a typo'd rung fails loud. Absent ⇒ byte-identical.
+
 - **Learned backend (#720, epic #607): graded-economics + PPO trust-region levers to break
   the empty-start place-nothing cliff.** A multi-agent diagnosis of the `--mixed-anchor` gate
   failure (seed-0: `pair-mixed` capped oscillating ~0.2, `pair-box` collapsed to
