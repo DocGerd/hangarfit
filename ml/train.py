@@ -695,27 +695,54 @@ def build_argparser() -> argparse.ArgumentParser:
         action="store_true",
         help="std-only Welford return normalization before GAE",
     )
+    # #720 L4 trust-region bundle, default-ON since #728 (the two-seed-validated config). Each
+    # value flag is paired with a --no-* off-switch sharing its dest; the value flag is defined
+    # FIRST so argparse's first-default-wins rule makes the bundle value the namespace default,
+    # and last-on-the-CLI-wins lets a later --no-* (or explicit value) override. The off-switch is
+    # the only way to reach the disabled (None) behavior — there is no in-band "off" value
+    # (--reward-clip 0 zeroes all rewards; --target-kl 0 stops after one epoch).
     p.add_argument(
         "--reward-clip",
         type=float,
-        default=None,
+        default=50.0,
         help="clamp RAW rewards to [-c, c] before normalize/GAE (tames the -w_col collision "
-        "spike that drove the gate sawtooth); None = off (byte-identical); #720 L4",
+        "spike that drove the gate sawtooth); default 50 (#720/#728); --no-reward-clip disables",
+    )
+    p.add_argument(
+        "--no-reward-clip",
+        action="store_const",
+        const=None,
+        dest="reward_clip",
+        help="disable L4 reward clipping (reward_clip=None) — for the clip-OFF A/B control",
     )
     p.add_argument(
         "--value-clip-eps",
         type=float,
-        default=None,
+        default=0.2,
         help="PPO2 clipped value loss epsilon — caps how far one update moves the critic; "
-        "None = plain MSE (byte-identical); #720 L4",
+        "default 0.2 (#720/#728); --no-value-clip-eps disables (plain MSE)",
+    )
+    p.add_argument(
+        "--no-value-clip-eps",
+        action="store_const",
+        const=None,
+        dest="value_clip_eps",
+        help="disable L4 clipped value loss (value_clip_eps=None, plain MSE)",
     )
     p.add_argument(
         "--target-kl",
         type=float,
-        default=None,
+        default=0.03,
         help="early-stop the PPO epoch loop once a full epoch's mean approx-KL exceeds this "
-        "(per-update trust region); None/omitted = off, run all epochs (byte-identical). Note "
-        "0.0 is NOT 'off' — it stops after the first epoch (mean-KL > 0 almost always); #720 L4",
+        "(per-update trust region); default 0.03 (#720/#728); --no-target-kl disables (run all "
+        "epochs). Note 0.0 is NOT 'off' — it stops after epoch 1 (mean-KL > 0 almost always)",
+    )
+    p.add_argument(
+        "--no-target-kl",
+        action="store_const",
+        const=None,
+        dest="target_kl",
+        help="disable L4 target-KL early-stop (target_kl=None) — run all PPO epochs",
     )
     p.add_argument(
         "--n-envs",

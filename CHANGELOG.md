@@ -44,10 +44,11 @@ All notable changes to this project are documented here. Format follows [Keep a 
   `--valid-park-grade-scale` grades the `r_valid_park` bonus by near-miss misfit
   (`r_valid_park·exp(−misfit/scale)`) into an uphill gradient toward the witness slot;
   `--r-first-valid` is a one-time breakthrough bonus on an episode's first valid placement;
-  `--w-col` exposes the collision weight. **L4** (PPO, default-neutral): `--reward-clip`,
+  `--w-col` exposes the collision weight. **L4** (PPO): `--reward-clip`,
   `--value-clip-eps` (PPO2 clipped value loss), and `--target-kl` (epoch early-stop) tame the
   unclipped collision spike that drove the gate's −5000…−12000 sawtooth; `ppo_update` now also
-  reports `approx_kl`/`epochs_run`. All knobs 0/None ⇒ byte-identical training. The refuted
+  reports `approx_kl`/`epochs_run`. As shipped in #720 all knobs were 0/None ⇒ byte-identical
+  training; the L4 trio later graduated to default-on (#728 — see Changed). The refuted
   continuous-k-anneal lever is **not** added (policy-invariant on the empty-start sub-MDP).
 
 - **Mixed-start anchor curriculum rung (`--mixed-anchor`, #712 follow-up).** An opt-in
@@ -350,6 +351,19 @@ All notable changes to this project are documented here. Format follows [Keep a 
   backend (epic #607).
 
 ### Changed
+
+- **Learned backend (#728, epic #607): the #720 L4 trust-region clipping bundle is now the
+  `ml.train` default.** `--reward-clip 50` / `--value-clip-eps 0.2` / `--target-kl 0.03` — the
+  values confirmed load-bearing by the two-seed #720/#722 `pair-box` gate (a controlled A/B showed
+  clip-off collapses to place-nothing, clip-on masters) — graduated from opt-in flags to the
+  argparse **and** `PPOConfig` dataclass defaults (kept in sync). New paired `--no-reward-clip` /
+  `--no-value-clip-eps` / `--no-target-kl` off-switches restore the disabled (`None`) behavior —
+  the only way to reach it, since there is no in-band "off" value (`--reward-clip 0` zeroes all
+  rewards; `--target-kl 0` stops after one epoch) — for A/B controls such as the seed-1 clip-OFF
+  run. This is a deliberate training-default **re-baseline**: an unflagged run is no longer
+  byte-identical to a pre-#720 run, but reproducibility (same seed → same stream) is unchanged. The
+  four 4c-ii basin-escape knobs (`--r-valid-park`, `--dense-slot-potential`, entropy, `--normalize-returns`)
+  remain default-neutral. `ml/README.md` recipe prose updated.
 
 - **Herrenteich dataset realism pass (#657/#658/#659).** Tightened the real
   Airfield Herrenteich dataset to how the club actually parks (user on-site facts):
