@@ -61,7 +61,7 @@ class HangarFitEnv:
         self.weights = weights or RewardWeights()
         self._reset_state()
 
-    def _reset_state(self) -> None:
+    def _reset_state(self, *, seed_anchor_k_override: int | None = None) -> None:
         n = self.difficulty.max_objects
         requested = list(self.requested_ids if n is None else self.requested_ids[:n])
         # #712 seed-anchor: pre-park the first ``k`` requested objects at their committed-witness
@@ -70,7 +70,11 @@ class HangarFitEnv:
         # start is collision-free with NO runtime search. The per-episode request order is a fresh
         # seeded permutation (curriculum sample_request), so "anchor the prefix" == "anchor a
         # seeded-random k-subset" (#712 Q1). k=0 => _parked empty, _queue full => byte-identical.
-        k = self.difficulty.seed_anchor_k
+        k = (
+            self.difficulty.seed_anchor_k
+            if seed_anchor_k_override is None
+            else seed_anchor_k_override
+        )
         if k:
             if k < 0 or k >= len(requested):
                 raise ValueError(
@@ -215,7 +219,12 @@ class HangarFitEnv:
             active_misfit_m2=misfit,
         )
 
-    def reset(self, requested_ids: tuple[str, ...] | None = None) -> Observation:
+    def reset(
+        self,
+        requested_ids: tuple[str, ...] | None = None,
+        *,
+        seed_anchor_k: int | None = None,
+    ) -> Observation:
         if requested_ids is not None:
             if not requested_ids:
                 raise ValueError("reset: requested_ids must be non-empty")
@@ -231,7 +240,7 @@ class HangarFitEnv:
             # gate). No-op for the curriculum, whose sample_request draws exactly N.
             n = self.difficulty.max_objects
             self.requested_ids = requested_ids if n is None else requested_ids[:n]
-        self._reset_state()
+        self._reset_state(seed_anchor_k_override=seed_anchor_k)
         self._spawn()
         self._prev_potential = self._potential()
         return self._observe()
