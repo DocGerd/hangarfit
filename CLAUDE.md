@@ -104,7 +104,7 @@ Use the best-fitted model for the task. The model class to pick is "as much reas
 
 Most coding goes direct in-session. Subagent dispatch is for review work and isolated heavy lifts.
 
-`ml/` is reviewable source, not scratch — run the formal `/pr-review` arc on `ml/` PRs like any `src/` change. Note CI's `mypy` only covers `src/hangarfit/`, so a Pyright complaint under `tests/ml/` is usually stale-LSP noise — `mypy`/CI is the source of truth. Run `mypy ml/` over the **whole package**, not a single file — a file-subset run can manufacture a false `unused type: ignore` (it can't see the cross-module union the ignore guards).
+`ml/` is reviewable source, not scratch — run the formal `/pr-review` arc on `ml/` PRs like any `src/` change. Note CI's `mypy` only covers `src/hangarfit/`, so a Pyright complaint under `tests/ml/` is usually stale-LSP noise — `mypy`/CI is the source of truth. Run `mypy ml/` over the **whole package**, not a single file — under `ml.*`'s `follow_imports = "skip"` a subset run resolves cross-module imports as `Any`, manufacturing a false `unused type: ignore`.
 
 **Review subagents must stay read-only in the shared checkout.** A review agent that runs `git switch` / `checkout` / `stash` in the shared working tree silently reverts it under any sibling agent (and under you). Point review agents at `origin/<branch>` refs instead — `gh pr diff N`, `git diff origin/develop...origin/feature/X`, and `git show origin/develop:<path>` for the pre-change state — and **never** switch branches in place. Isolate any subagent that *writes* in its own worktree.
 
