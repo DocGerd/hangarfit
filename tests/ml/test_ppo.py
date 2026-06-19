@@ -580,15 +580,16 @@ def test_ppo_update_minibatches_all_TN_vec_transitions(monkeypatch):
 
 # ---------------------------------------------------------------------------
 # #720 (L4) — PPO trust-region hardening: raw-reward clip, clipped value loss, target-KL
-# early-stop. All three default None -> byte-identical to the pre-#720 update. These tame the
-# unclipped -w_col collision spike that drove the gate's -5000..-12000 sawtooth.
+# early-stop. Default-ON since #728 (the validated #720 bundle 50/0.2/0.03); pass None to disable.
+# These tame the unclipped -w_col collision spike that drove the gate's -5000..-12000 sawtooth.
 # ---------------------------------------------------------------------------
 from ml.ppo import value_loss_term  # noqa: E402
 
 
-def test_ppo_config_l4_knobs_default_none():
+def test_ppo_config_l4_knobs_default_on():
+    # #728: the validated #720 L4 trust-region bundle is now the PPOConfig default.
     c = PPOConfig()
-    assert c.reward_clip is None and c.value_clip_eps is None and c.target_kl is None
+    assert c.reward_clip == 50.0 and c.value_clip_eps == 0.2 and c.target_kl == 0.03
 
 
 def test_value_loss_term_unclipped_is_plain_mse():

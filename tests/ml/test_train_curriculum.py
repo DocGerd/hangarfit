@@ -1130,7 +1130,8 @@ def test_train_curriculum_anchored_rung_runs_vectorized(backend):
 
 # ---------------------------------------------------------------------------
 # #720 (L5+L4) — graded-economics weights + PPO trust-region knobs thread through main().
-# All default to neutral so an unflagged run is byte-identical to the pre-#720 CLI.
+# The L5 economics knobs stay default-neutral; the three L4 trust-region knobs are default-ON
+# since #728 (graduated to the validated #720 bundle 50/0.2/0.03), with --no-* off-switches.
 # ---------------------------------------------------------------------------
 
 
@@ -1142,13 +1143,14 @@ def test_argparser_l5_l4_knobs_defaults():
     assert a.w_col == RewardWeights().w_col  # default 100.0, read from the dataclass not hardcoded
     assert a.valid_park_grade_scale == 0.0
     assert a.r_first_valid == 0.0
-    assert a.reward_clip is None
-    assert a.value_clip_eps is None
-    assert a.target_kl is None
-    # The PPOConfig dataclass agrees the L4 knobs are off by default.
-    assert PPOConfig().reward_clip is None
-    assert PPOConfig().value_clip_eps is None
-    assert PPOConfig().target_kl is None
+    # #728: the L4 trust-region knobs default to the validated #720 bundle.
+    assert a.reward_clip == 50.0
+    assert a.value_clip_eps == 0.2
+    assert a.target_kl == 0.03
+    # The PPOConfig dataclass agrees (argparse default == dataclass default).
+    assert PPOConfig().reward_clip == 50.0
+    assert PPOConfig().value_clip_eps == 0.2
+    assert PPOConfig().target_kl == 0.03
 
 
 def _capture_main(monkeypatch, argv: list[str]) -> dict:
@@ -1186,7 +1188,33 @@ def test_main_threads_l4_knobs_into_ppo(monkeypatch):
     assert ppo.target_kl == 0.03
 
 
-def test_main_no_l5_l4_flags_default_neutral(monkeypatch):
+def test_argparser_l4_off_switches_disable():
+    # #728: the three --no-* off-switches restore the disabled (None) behavior — the seed-1
+    # clip-OFF A/B control needs this, since there is no in-band "off" value.
+    a = build_argparser().parse_args(["--no-reward-clip", "--no-value-clip-eps", "--no-target-kl"])
+    assert a.reward_clip is None
+    assert a.value_clip_eps is None
+    assert a.target_kl is None
+
+
+def test_argparser_l4_off_switch_last_wins():
+    # An explicit value then --no-* disables (argparse last-wins on the shared dest).
+    a = build_argparser().parse_args(["--reward-clip", "30.0", "--no-reward-clip"])
+    assert a.reward_clip is None
+
+
+def test_main_threads_l4_off_switches_into_ppo(monkeypatch):
+    ppo = _capture_main(monkeypatch, ["--no-reward-clip", "--no-value-clip-eps", "--no-target-kl"])[
+        "ppo"
+    ]
+    assert ppo.reward_clip is None
+    assert ppo.value_clip_eps is None
+    assert ppo.target_kl is None
+
+
+def test_main_no_flags_l5_neutral_l4_default_on(monkeypatch):
+    # #728: an unflagged run keeps the L5 economics weights neutral but now carries the
+    # default-ON L4 trust-region bundle through to PPOConfig.
     from ml.types import RewardWeights
 
     captured = _capture_main(monkeypatch, [])
@@ -1195,6 +1223,6 @@ def test_main_no_l5_l4_flags_default_neutral(monkeypatch):
     assert w.valid_park_grade_scale == 0.0
     assert w.r_first_valid == 0.0
     ppo = captured["ppo"]
-    assert ppo.reward_clip is None
-    assert ppo.value_clip_eps is None
-    assert ppo.target_kl is None
+    assert ppo.reward_clip == 50.0
+    assert ppo.value_clip_eps == 0.2
+    assert ppo.target_kl == 0.03

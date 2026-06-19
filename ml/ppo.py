@@ -32,11 +32,16 @@ class PPOConfig:
     entropy_anneal_iters: int = 0  # iters over which to anneal; 0 = no schedule
     normalize_returns: bool = False  # std-only reward normalization before GAE
     return_norm_eps: float = 1e-8  # numerical floor on the running std
-    # #720 (L4) PPO trust-region hardening — all None/off => byte-identical to the pre-#720 update.
-    reward_clip: float | None = None  # clamp RAW rewards to [-c, c] before normalize/GAE; tames
+    # #720 (L4) PPO trust-region hardening, default-ON since #728 (the two-seed-validated #720
+    # bundle). Set any to None to disable it — that knob's update-step path is then byte-identical
+    # to the pre-#720 loop, though an unflagged *run* is the deliberate #728 default re-baseline.
+    # The CLI exposes --no-reward-clip / --no-value-clip-eps / --no-target-kl for that. The
+    # reward_clip value is tuned to the RewardWeights magnitudes (45 = r_valid_park 30 +
+    # r_first_valid 15 graded bonus, ~50 terminal credit) — revisit on a reward-scale change.
+    reward_clip: float | None = 50.0  # clamp RAW rewards to [-c, c] before normalize/GAE; tames
     # the unclipped -w_col collision spike (-12000 batches) that drove the gate sawtooth.
-    value_clip_eps: float | None = None  # PPO2 clipped value loss; caps per-update critic movement.
-    target_kl: float | None = None  # early-stop the epoch loop once a full epoch's mean approx-KL
+    value_clip_eps: float | None = 0.2  # PPO2 clipped value loss; caps per-update critic movement.
+    target_kl: float | None = 0.03  # early-stop the epoch loop once a full epoch's mean approx-KL
     # exceeds this (a per-update trust region), so one catastrophic batch cannot over-rotate.
 
 

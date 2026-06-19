@@ -251,8 +251,16 @@ to `valid_placed 0.000`). A multi-agent diagnosis root-caused the cliff as *econ
 discoverability*: from empty, do-nothing is a small bounded loss (≈−8 observed on the failed seed-0
 gate run) while any exploratory mis-Park books the **unclipped** `−w_col·overlap` (−5000…−12000),
 so place-nothing is the genuine reward argmax.
-The #720 levers shift that argmax (L5) and tame the resulting sawtooth (L4); all knobs are
-default-neutral (0/None ⇒ byte-identical), so they layer onto the recipe above.
+The #720 levers shift that argmax (L5) and tame the resulting sawtooth (L4). The **L5 economics**
+knobs (`--r-valid-park`, `--r-unplaced-penalty`, `--w-col`, `--valid-park-grade-scale`,
+`--r-first-valid`) stay default-neutral (0/None ⇒ byte-identical) and layer onto the recipe above.
+The three **L4 trust-region** knobs **graduated to the default in #728** (`--reward-clip 50`,
+`--value-clip-eps 0.2`, `--target-kl 0.03` — the two-seed-validated values): an unflagged run now
+carries them, so they are shown explicitly in the recipe below only for reproducibility. Pass
+`--no-reward-clip` / `--no-value-clip-eps` / `--no-target-kl` to disable any of them — that is the
+only way to reach the unclipped behavior (e.g. the seed-1 clip-OFF A/B control), since there is no
+in-band "off" value (`--reward-clip 0` zeroes all rewards; `--target-kl 0` stops after the first
+epoch).
 
 ```bash
 # Above mixed-anchor config, plus the #720 L5 economics + L4 PPO trust-region knobs.
