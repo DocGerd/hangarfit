@@ -749,3 +749,94 @@ def test_reset_without_override_uses_difficulty_default(anchored_pair_env):
     env = anchored_pair_env  # difficulty.seed_anchor_k == 1
     env.reset(requested_ids=("fuji", "aviat_husky"))
     assert len(env._parked) == 1  # regression: today's behavior unchanged
+
+
+# ---------------------------------------------------------------------------
+# #720 (L5) — one-time first-valid bonus: the env flips ctx.first_valid_now True on EXACTLY
+# the first Park that yields a valid layout, so r_first_valid is paid once per episode.
+# ---------------------------------------------------------------------------
+
+# Two side-by-side in-hangar poses inside the 22x25 hangar: each Park is valid and the pair
+# is non-overlapping (probed), asserted live below so a bad fixture fails loud, not silently.
+_FIRST_VALID_POSE_A = Pose(x_m=6.0, y_m=10.0, heading_deg=0.0)
+_FIRST_VALID_POSE_B = Pose(x_m=16.0, y_m=10.0, heading_deg=0.0)
+
+
+def _park_reward_at(env: HangarFitEnv, pose: Pose) -> tuple[float, bool]:
+    env._active_pose = pose  # override the apron spawn with the chosen in-hangar pose
+    _obs, reward, _done, info = env.step(Park())
+    return reward, info.valid
+
+
+def test_first_valid_bonus_paid_once_not_on_later_valid_parks():
+    # Park two objects validly; the bonus is added on the FIRST valid Park only.
+    def run(bonus: float) -> tuple[float, bool, float, bool]:
+        env = HangarFitEnv(
+            hangar=empty_hangar(),
+            fleet=_fuji(),
+            requested_ids=("fuji", "aviat_husky"),
+            weights=RewardWeights(r_first_valid=bonus),
+        )
+        env.reset()
+        r1, v1 = _park_reward_at(env, _FIRST_VALID_POSE_A)
+        r2, v2 = _park_reward_at(env, _FIRST_VALID_POSE_B)
+        return r1, v1, r2, v2
+
+    r1_0, v1_0, r2_0, v2_0 = run(0.0)
+    r1_b, v1_b, r2_b, v2_b = run(9.0)
+    assert v1_0 and v2_0 and v1_b and v2_b, "fixture poses must both Park validly"
+    assert r1_b - r1_0 == pytest.approx(9.0)  # first valid Park -> bonus
+    assert r2_b - r2_0 == pytest.approx(0.0)  # second valid Park -> no repeat
+
+
+def test_first_valid_bonus_tied_to_whole_layout_validity():
+    # park_valid is WHOLE-layout validity: an object committed invalidly (apron, y<0) poisons it
+    # for the rest of the episode, so no later Park yields a valid layout and the one-time bonus
+    # never fires. (It is therefore never spent prematurely on an invalid Park either.)
+    def run(bonus: float) -> tuple[float, bool, float, bool]:
+        env = HangarFitEnv(
+            hangar=empty_hangar(),
+            fleet=_fuji(),
+            requested_ids=("fuji", "aviat_husky"),
+            weights=RewardWeights(r_first_valid=bonus),
+        )
+        env.reset()
+        _obs, r_invalid, _done, info_invalid = env.step(Park())  # park object 1 on the apron
+        r_after, v_after = _park_reward_at(env, _FIRST_VALID_POSE_B)  # object 2 at a clean pose
+        return r_invalid, info_invalid.valid, r_after, v_after
+
+    r_inv_0, inv_valid_0, r_aft_0, v_aft_0 = run(0.0)
+    r_inv_b, inv_valid_b, r_aft_b, v_aft_b = run(9.0)
+    # Both Parks report an invalid whole layout (the apron object never leaves), so neither pays.
+    assert inv_valid_0 is False and v_aft_0 is False
+    assert inv_valid_b is False and v_aft_b is False
+    assert r_inv_b == pytest.approx(r_inv_0)  # invalid first Park -> no bonus
+    assert r_aft_b == pytest.approx(r_aft_0)  # layout still invalid -> bonus never fires
+
+
+def test_first_valid_bonus_resets_across_episodes():
+    # reset() must clear the one-shot, so the SAME env earns the bonus again on the first valid
+    # Park of the next episode (a leaked flag would silently starve every episode after the first).
+    env_0 = HangarFitEnv(
+        hangar=empty_hangar(),
+        fleet=_fuji(),
+        requested_ids=("fuji",),
+        weights=RewardWeights(r_first_valid=0.0),
+    )
+    env_b = HangarFitEnv(
+        hangar=empty_hangar(),
+        fleet=_fuji(),
+        requested_ids=("fuji",),
+        weights=RewardWeights(r_first_valid=9.0),
+    )
+
+    def first_valid_delta() -> float:
+        env_0.reset()
+        env_b.reset()
+        r0, v0 = _park_reward_at(env_0, _FIRST_VALID_POSE_A)
+        rb, vb = _park_reward_at(env_b, _FIRST_VALID_POSE_A)
+        assert v0 and vb
+        return rb - r0
+
+    assert first_valid_delta() == pytest.approx(9.0)  # episode 1
+    assert first_valid_delta() == pytest.approx(9.0)  # after reset -> flag cleared, paid again

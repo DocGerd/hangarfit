@@ -1033,3 +1033,75 @@ def test_train_curriculum_anchored_rung_runs_vectorized(backend):
         vec_backend=backend,
     )
     assert any(name == f"pa-vec-{backend}" for name, _, _ in hist.iterations)
+
+
+# ---------------------------------------------------------------------------
+# #720 (L5+L4) — graded-economics weights + PPO trust-region knobs thread through main().
+# All default to neutral so an unflagged run is byte-identical to the pre-#720 CLI.
+# ---------------------------------------------------------------------------
+
+
+def test_argparser_l5_l4_knobs_defaults():
+    from ml.ppo import PPOConfig
+    from ml.types import RewardWeights
+
+    a = build_argparser().parse_args([])
+    assert a.w_col == RewardWeights().w_col  # default 100.0, read from the dataclass not hardcoded
+    assert a.valid_park_grade_scale == 0.0
+    assert a.r_first_valid == 0.0
+    assert a.reward_clip is None
+    assert a.value_clip_eps is None
+    assert a.target_kl is None
+    # The PPOConfig dataclass agrees the L4 knobs are off by default.
+    assert PPOConfig().reward_clip is None
+    assert PPOConfig().value_clip_eps is None
+    assert PPOConfig().target_kl is None
+
+
+def _capture_main(monkeypatch, argv: list[str]) -> dict:
+    import ml.train as train_mod
+    from ml.curriculum import CurriculumHistory
+
+    captured: dict = {}
+
+    def fake(**kw):
+        captured.update(kw)
+        return CurriculumHistory()
+
+    monkeypatch.setattr(train_mod, "train_curriculum", fake)
+    train_mod.main(["--schedule", "curriculum", *argv])
+    return captured
+
+
+def test_main_threads_l5_knobs_into_weights(monkeypatch):
+    w = _capture_main(
+        monkeypatch,
+        ["--w-col", "20.0", "--valid-park-grade-scale", "4.0", "--r-first-valid", "15.0"],
+    )["weights"]
+    assert w.w_col == 20.0
+    assert w.valid_park_grade_scale == 4.0
+    assert w.r_first_valid == 15.0
+
+
+def test_main_threads_l4_knobs_into_ppo(monkeypatch):
+    ppo = _capture_main(
+        monkeypatch,
+        ["--reward-clip", "10.0", "--value-clip-eps", "0.2", "--target-kl", "0.03"],
+    )["ppo"]
+    assert ppo.reward_clip == 10.0
+    assert ppo.value_clip_eps == 0.2
+    assert ppo.target_kl == 0.03
+
+
+def test_main_no_l5_l4_flags_default_neutral(monkeypatch):
+    from ml.types import RewardWeights
+
+    captured = _capture_main(monkeypatch, [])
+    w = captured["weights"]
+    assert w.w_col == RewardWeights().w_col
+    assert w.valid_park_grade_scale == 0.0
+    assert w.r_first_valid == 0.0
+    ppo = captured["ppo"]
+    assert ppo.reward_clip is None
+    assert ppo.value_clip_eps is None
+    assert ppo.target_kl is None

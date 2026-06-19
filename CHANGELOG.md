@@ -6,6 +6,21 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Learned backend (#720, epic #607): graded-economics + PPO trust-region levers to break
+  the empty-start place-nothing cliff.** A multi-agent diagnosis of the `--mixed-anchor` gate
+  failure (seed-0: `pair-mixed` capped oscillating ~0.2, `pair-box` collapsed to
+  `valid_placed 0.000`) root-caused it as *economics × discoverability*: from empty, do-nothing
+  is a bounded −8 loss while any exploratory mis-Park books the **unclipped** `−w_col·overlap`
+  (−5000…−12000), so place-nothing is the genuine reward argmax. **L5** (reward, default-neutral):
+  `--valid-park-grade-scale` grades the `r_valid_park` bonus by near-miss misfit
+  (`r_valid_park·exp(−misfit/scale)`) into an uphill gradient toward the witness slot;
+  `--r-first-valid` is a one-time breakthrough bonus on an episode's first valid placement;
+  `--w-col` exposes the collision weight. **L4** (PPO, default-neutral): `--reward-clip`,
+  `--value-clip-eps` (PPO2 clipped value loss), and `--target-kl` (epoch early-stop) tame the
+  unclipped collision spike that drove the gate's −5000…−12000 sawtooth; `ppo_update` now also
+  reports `approx_kl`/`epochs_run`. All knobs 0/None ⇒ byte-identical training. The refuted
+  continuous-k-anneal lever is **not** added (policy-invariant on the empty-start sub-MDP).
+
 - **Mixed-start anchor curriculum rung (`--mixed-anchor`, #712 follow-up).** An opt-in
   `pair-mixed` rung where each episode randomly starts anchored (k=1) or empty (k=0), keeping
   empty-start episodes in the training mix to bridge the k=1→k=0 start-state cliff that

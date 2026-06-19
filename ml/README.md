@@ -243,6 +243,38 @@ python -u -m ml.train --schedule curriculum --device cuda --n-envs 16 \
 WIN: `pair-mixed` lifts and ideally promotes by competency, AND the downstream all-empty
 `pair-box` no longer collapses (lifts off 0.000). Read `valid_placed`, not `valid_rate`.
 
+### Graded-economics + PPO-clipping gate recipe (#720, L5+L4)
+
+The mixed-anchor gate failed seed-0 (`pair-mixed` capped oscillating ~0.2, `pair-box` collapsed
+to `valid_placed 0.000`). A multi-agent diagnosis root-caused the cliff as *economics ×
+discoverability*: from empty, do-nothing is a bounded −8 loss while any exploratory mis-Park books
+the **unclipped** `−w_col·overlap` (−5000…−12000), so place-nothing is the genuine reward argmax.
+The #720 levers shift that argmax (L5) and tame the resulting sawtooth (L4); all knobs are
+default-neutral (0/None ⇒ byte-identical), so they layer onto the recipe above.
+
+```bash
+# Above mixed-anchor config, plus the #720 L5 economics + L4 PPO trust-region knobs.
+python -u -m ml.train --schedule curriculum --device cuda --n-envs 16 \
+  --rollout-len 512 --max-iters-per-stage 80 \
+  --promotion-metric valid_placed --promotion-threshold 0.9 \
+  --r-valid-park 30.0 --r-unplaced-penalty 25.0 --dense-slot-potential \
+  --w-col 20.0 --valid-park-grade-scale 4.0 --r-first-valid 15.0 \
+  --reward-clip 10.0 --value-clip-eps 0.2 --target-kl 0.03 \
+  --entropy-start 0.05 --entropy-end 0.005 --entropy-anneal-iters 40 \
+  --normalize-returns --validity-conditional-terminal --solo-box-rung \
+  --seed-anchor --mixed-anchor \
+  --metrics-out metrics-seed0-l5l4.jsonl --checkpoint-out ck-seed0-l5l4.pt --seed 0
+```
+
+WIN: `pair-box` `valid_placed` lifts decisively **off 0.000** (trending ≥0.1 within 80 iters,
+climbing — read `valid_placed` NOT `valid_rate`), the −5000…−12000 sawtooth is gone (L4 did its
+job), and `trivial`/`solo-box`/`pair-anchored` still promote-by-competency (no upstream regression
+from the lower `w_col`). The `--w-col`/`--valid-park-grade-scale`/`--r-first-valid` magnitudes
+above are a **starting point** — the open knife-edge is graded credit vs `w_col` at the near-miss
+overlap (the grade must beat the collision penalty into the slot without making piling profitable),
+so expect a short sweep. If `pair-box` stays pinned with the sawtooth gone, that isolates the
+failure to pure discoverability → escalate to a pose-scaffold rung (L6a). Run a second seed.
+
 ## Design
 See `docs/superpowers/specs/2026-06-12-learned-backend-cold-joint-rl-env-design.md`
 and ADR-0027 (learned-path determinism scope).

@@ -576,3 +576,98 @@ def test_ppo_update_minibatches_all_TN_vec_transitions(monkeypatch):
 
     assert captured, "ppo_update did not call torch.randperm"
     assert all(k == T * N for k in captured), f"shuffled {captured}, expected T*N={T * N}"
+
+
+# ---------------------------------------------------------------------------
+# #720 (L4) — PPO trust-region hardening: raw-reward clip, clipped value loss, target-KL
+# early-stop. All three default None -> byte-identical to the pre-#720 update. These tame the
+# unclipped -w_col collision spike that drove the gate's -5000..-12000 sawtooth.
+# ---------------------------------------------------------------------------
+from ml.ppo import value_loss_term  # noqa: E402
+
+
+def test_ppo_config_l4_knobs_default_none():
+    c = PPOConfig()
+    assert c.reward_clip is None and c.value_clip_eps is None and c.target_kl is None
+
+
+def test_value_loss_term_unclipped_is_plain_mse():
+    nv = torch.tensor([1.0, 2.0, 3.0])
+    ov = torch.tensor([0.0, 0.0, 0.0])
+    ret = torch.tensor([0.5, 0.5, 0.5])
+    assert torch.allclose(value_loss_term(nv, ov, ret, None), ((nv - ret) ** 2).mean())
+
+
+def test_value_loss_term_clip_bounds_value_movement():
+    # new value moved 3.0 from old 0.0; eps=0.5 clamps v_clip to 0.5 -> (0.5-3)^2 = 6.25, and the
+    # PPO2 max() picks it over the unclipped 0.0 -> the critic cannot chase returns past the eps.
+    nv = torch.tensor([3.0])
+    ov = torch.tensor([0.0])
+    ret = torch.tensor([3.0])
+    assert value_loss_term(nv, ov, ret, 0.5) == pytest.approx(6.25)
+    assert value_loss_term(nv, ov, ret, None) == pytest.approx(0.0)
+
+
+def test_value_loss_term_clip_noop_within_eps():
+    # value moved only 0.1 < eps 0.5 -> v_clip == new value -> identical to the unclipped MSE.
+    nv = torch.tensor([0.1])
+    ov = torch.tensor([0.0])
+    ret = torch.tensor([1.0])
+    assert value_loss_term(nv, ov, ret, 0.5) == pytest.approx(value_loss_term(nv, ov, ret, None))
+
+
+def _spy_gae(monkeypatch):
+    import ml.ppo as ppo
+
+    seen: dict[str, object] = {}
+    real = ppo.compute_gae
+
+    def spy(rewards, *a, **k):
+        seen["rewards"] = rewards.clone()
+        return real(rewards, *a, **k)
+
+    monkeypatch.setattr(ppo, "compute_gae", spy)
+    return seen
+
+
+def test_ppo_update_reward_clip_clamps_rewards_into_gae(monkeypatch):
+    seen = _spy_gae(monkeypatch)
+    torch.manual_seed(0)
+    policy = HangarFitPolicy(d_model=32, n_layers=1, n_heads=2)
+    buf = _filled_buffer(policy)
+    buf.reward[0] = 100.0  # a -w_col-style spike
+    buf.reward[1] = -100.0
+    opt = torch.optim.Adam(policy.parameters(), lr=3e-4)
+    ppo_update(policy, opt, buf, PPOConfig(minibatch_size=16, reward_clip=5.0))
+    r = seen["rewards"]
+    assert float(r.max()) <= 5.0 and float(r.min()) >= -5.0
+    assert float(r[0]) == pytest.approx(5.0) and float(r[1]) == pytest.approx(-5.0)
+
+
+def test_ppo_update_reward_clip_none_leaves_rewards_raw(monkeypatch):
+    seen = _spy_gae(monkeypatch)
+    torch.manual_seed(0)
+    policy = HangarFitPolicy(d_model=32, n_layers=1, n_heads=2)
+    buf = _filled_buffer(policy)
+    buf.reward[0] = 100.0
+    raw = buf.batch()["reward"].clone()
+    opt = torch.optim.Adam(policy.parameters(), lr=3e-4)
+    ppo_update(policy, opt, buf, PPOConfig(minibatch_size=16, reward_clip=None))
+    assert torch.equal(seen["rewards"], raw)
+
+
+def test_ppo_update_target_kl_early_stops_epochs():
+    def epochs_run(target_kl: float | None) -> float:
+        torch.manual_seed(0)
+        policy = HangarFitPolicy(d_model=32, n_layers=1, n_heads=2)
+        opt = torch.optim.Adam(policy.parameters(), lr=1e-2)  # big LR -> KL grows fast
+        m = ppo_update(
+            policy,
+            opt,
+            _filled_buffer(policy),
+            PPOConfig(minibatch_size=16, epochs=4, target_kl=target_kl),
+        )
+        return m["epochs_run"]
+
+    assert epochs_run(None) == 4  # no early stop -> all epochs run
+    assert epochs_run(0.0) == 1  # any positive KL after epoch 1 trips the stop

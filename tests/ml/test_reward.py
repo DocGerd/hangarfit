@@ -69,6 +69,87 @@ def test_r_valid_park_cannot_make_an_overlapping_park_profitable():
 
 
 # ---------------------------------------------------------------------------
+# #720 (L5) — graded valid_park: partial credit for a NEAR-valid Park so there is
+# an uphill gradient INTO the witness slot instead of a flat plateau-then-spike.
+# ---------------------------------------------------------------------------
+
+
+def test_valid_park_grade_scale_default_zero_is_byte_identical():
+    # The graded knob defaults 0.0 -> the existing binary r_valid_park path, byte-identical
+    # across every park_valid state (None = not a Park step, True = valid, False = invalid).
+    for pv in (None, True, False):
+        ctx = _ctx(overlap_m2=0.03, park_valid=pv)
+        assert step_reward(ctx, RewardWeights(r_valid_park=5.0)) == step_reward(
+            ctx, RewardWeights(r_valid_park=5.0, valid_park_grade_scale=0.0)
+        )
+
+
+def test_graded_valid_park_full_credit_at_zero_misfit():
+    # A clean valid Park (overlap 0, in bounds, egress clear) pays the FULL r_valid_park even
+    # graded — exp(-0/scale) == 1 — so a valid Park is never worse off than under the binary form.
+    w = RewardWeights(r_valid_park=10.0, valid_park_grade_scale=4.0, w_col=0.0)
+    ctx = _ctx(overlap_m2=0.0, park_valid=True)
+    assert step_reward(ctx, w) == pytest.approx(10.0)
+
+
+def test_graded_valid_park_decreasing_in_overlap():
+    # The whole point: with the grade on, a SMALLER near-miss overlap earns MORE valid-park
+    # credit than a larger one (an uphill gradient toward the valid pose). w_col=0 isolates the
+    # graded term from the collision penalty so the comparison is purely the bonus.
+    w = RewardWeights(r_valid_park=10.0, valid_park_grade_scale=4.0, w_col=0.0)
+    near = _ctx(overlap_m2=0.5, park_valid=False)
+    far = _ctx(overlap_m2=3.0, park_valid=False)
+    nonpark = _ctx(overlap_m2=0.5, park_valid=None)
+    assert step_reward(near, w) > step_reward(far, w) > step_reward(nonpark, w)
+
+
+def test_graded_valid_park_withheld_when_egress_blocked():
+    # Egress is a BINARY hard failure with no "near" — a collision-clean but egress-blocked Park
+    # must earn NO graded credit despite zero overlap, else it looks as good as a valid Park.
+    w = RewardWeights(r_valid_park=10.0, valid_park_grade_scale=4.0, w_col=0.0, w_egress=0.0)
+    blocked = _ctx(overlap_m2=0.0, park_valid=False, egress_blocked=True)
+    assert step_reward(blocked, w) == pytest.approx(0.0)
+
+
+def test_graded_valid_park_not_paid_on_nonpark_step():
+    # park_valid None (a movement primitive, not a Park) earns 0 regardless of the grade scale.
+    w = RewardWeights(r_valid_park=10.0, valid_park_grade_scale=4.0, w_col=0.0)
+    assert step_reward(_ctx(park_valid=None), w) == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# #720 (L5) — one-time first-valid bonus: a discrete positive kick the FIRST time an
+# episode reaches a valid placement, so the breakthrough from the place-nothing pole pays
+# a learnable return. The env flips ctx.first_valid_now True on exactly that one Park step.
+# ---------------------------------------------------------------------------
+
+
+def test_r_first_valid_default_zero_is_byte_identical():
+    # The bonus knob defaults 0.0 -> the first_valid_now flag is never consulted, byte-identical.
+    for fv in (False, True):
+        ctx = _ctx(park_valid=True, first_valid_now=fv)
+        assert step_reward(ctx, RewardWeights(r_valid_park=3.0)) == step_reward(
+            ctx, RewardWeights(r_valid_park=3.0, r_first_valid=0.0)
+        )
+
+
+def test_r_first_valid_paid_when_flag_set():
+    # On the flagged step the bonus is added on top of every other term.
+    w = RewardWeights(r_first_valid=7.0)
+    on = _ctx(park_valid=True, first_valid_now=True)
+    off = _ctx(park_valid=True, first_valid_now=False)
+    assert step_reward(on, w) - step_reward(off, w) == pytest.approx(7.0)
+
+
+def test_r_first_valid_not_paid_when_flag_unset():
+    # Default flag False (every step the env does not mark) earns no bonus.
+    w = RewardWeights(r_first_valid=7.0)
+    assert step_reward(_ctx(park_valid=True), w) == step_reward(
+        _ctx(park_valid=True), RewardWeights(r_first_valid=0.0)
+    )
+
+
+# ---------------------------------------------------------------------------
 # Task 3 — dense_slot_potential / active_misfit_m2 in potential() (Step 10)
 # ---------------------------------------------------------------------------
 
