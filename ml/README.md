@@ -261,21 +261,41 @@ python -u -m ml.train --schedule curriculum --device cuda --n-envs 16 \
   --promotion-metric valid_placed --promotion-threshold 0.9 \
   --r-valid-park 30.0 --r-unplaced-penalty 25.0 --dense-slot-potential \
   --w-col 20.0 --valid-park-grade-scale 4.0 --r-first-valid 15.0 \
-  --reward-clip 10.0 --value-clip-eps 0.2 --target-kl 0.03 \
+  --reward-clip 50.0 --value-clip-eps 0.2 --target-kl 0.03 \
   --entropy-start 0.05 --entropy-end 0.005 --entropy-anneal-iters 40 \
   --normalize-returns --validity-conditional-terminal --solo-box-rung \
   --seed-anchor --mixed-anchor \
   --metrics-out metrics-seed0-l5l4.jsonl --checkpoint-out ck-seed0-l5l4.pt --seed 0
 ```
 
-WIN: `pair-box` `valid_placed` lifts decisively **off 0.000** (trending ≥0.1 within 80 iters,
-climbing — read `valid_placed` NOT `valid_rate`), the −5000…−12000 sawtooth is gone (L4 did its
-job), and `trivial`/`solo-box`/`pair-anchored` still promote-by-competency (no upstream regression
-from the lower `w_col`). The `--w-col`/`--valid-park-grade-scale`/`--r-first-valid` magnitudes
-above are a **starting point** — the open knife-edge is graded credit vs `w_col` at the near-miss
-overlap (the grade must beat the collision penalty into the slot without making piling profitable),
-so expect a short sweep. If `pair-box` stays pinned with the sawtooth gone, that isolates the
-failure to pure discoverability → escalate to a pose-scaffold rung (L6a). Run a second seed.
+**GATE RESULT (#722 checkpoint-resume sweep, 2026-06-19): two-seed PASS — the empty-start
+`pair-box` cliff is broken.** Run as a sweep with the #722 `--stop-after-rung` tooling (train the
+ladder once through `pair-mixed`, then `--load` and sweep only the empty-start `pair-box` rung).
+The empty-start `pair-box` — `valid_placed=0.000` in every prior gate — now **promotes by
+competency** on both seeds (seed 0 at iter 27, `vp` 0.80; seed 1 at iter 19, `vp` 0.85), placing
+*both* objects validly with `valid_rate` rising (no piling — `--validity-conditional-terminal`
+holds).
+
+**L4 trust-region clipping is load-bearing, not optional.** The sweep tested dropping it (the
+main-grid hypothesis that `--validity-conditional-terminal` + `--normalize-returns` would cover
+stability). A controlled A/B settled it: same upstream checkpoint, same `--seed 0`, byte-identical
+iter 0, the *only* difference the three L4 flags — clip **off** collapses to place-nothing (`vp`
+peaks 0.24 then decays to ~0 as `fraction_placed` 0.79→0.02), clip **on** masters. The deep
+`−w_col·overlap` collision spikes (≈−1400 here, the residue after L5 tamed the −5000…−12000 band)
+are a gradient outlier that drives PPO into the place-nothing absorbing state; clamping them in the
+update is what lets the policy stay in the *placing* regime long enough to learn 2-object joint
+placement. The full ladder needs all four ingredients — L5 graded economics (start off 0.000) +
+`--seed-anchor`/`--mixed-anchor` (keep empty-start episodes in the training distribution) + **L4
+clipping** (don't flee to place-nothing) + `--validity-conditional-terminal` (place *validly*, not
+pile).
+
+**`--reward-clip 50` (not 10):** sized so the per-step valid-park bonus
+(`r_valid_park 30 + r_first_valid 15 = 45`) stays below the clip while the deep collision spikes are
+clamped to −50. `reward_clip 10` would clip the legit valid-park bonus (45 > 10), flattening the
+very L5 gradient the recipe creates; `50` is the validated value (two-seed mastery). The
+no-upstream-regression check still holds (`trivial`/`solo-box`/`pair-anchored` all promote by
+competency at `w_col=20`). Read `valid_placed`, NOT `valid_rate` (an empty layout is vacuously
+"valid", so `valid_rate→1` under place-nothing is the *failure* signature).
 
 ## Design
 See `docs/superpowers/specs/2026-06-12-learned-backend-cold-joint-rl-env-design.md`
