@@ -374,6 +374,28 @@ DEFAULT_LADDER: tuple[Stage, ...] = (
 )
 
 
+# Opt-in #712 mixed-start rung (wired via with_mixed_anchor_rung / --mixed-anchor), NOT in
+# DEFAULT_LADDER. Two objects; each episode randomly starts anchored (k=1) or empty (k=0) with
+# probability anchor_prob, drawn from the curriculum's seeded stream — empty-start episodes stay
+# in the training mix so the policy does not collapse to place-nothing on the empty-start
+# pair-box. Reuses the pair-anchored witness (no new fixture). Budget matches pair-box's 2-object
+# drive (an empty-start episode drives both objects).
+_PAIR_MIXED_STAGE = Stage(
+    name="pair-mixed",
+    difficulty=DifficultyConfig(
+        max_objects=2,
+        seed_anchor_k=1,
+        anchor_prob=0.5,
+        per_object_step_budget=60,
+        total_step_budget=140,
+    ),
+    hangar_path=_BOX_HANGAR,
+    fleet_path=_BOX_FLEET,
+    anchor_layout_path=_WITNESS_BOX,
+    clearance_m=_LENIENT_CLEARANCE,
+)
+
+
 def with_solo_box_rung(schedule: CurriculumSchedule) -> CurriculumSchedule:
     """Return ``schedule`` with the opt-in ``solo-box`` rung inserted immediately after the
     ``trivial`` rung — the #714 ``--solo-box-rung`` lever. solo-box keeps max_objects=1 but
@@ -406,3 +428,21 @@ def with_pair_anchored_rung(schedule: CurriculumSchedule) -> CurriculumSchedule:
             "with_pair_anchored_rung: schedule has no 'pair-box' rung to insert before"
         ) from None
     return replace(schedule, stages=stages[:before] + (_PAIR_ANCHORED_STAGE,) + stages[before:])
+
+
+def with_mixed_anchor_rung(schedule: CurriculumSchedule) -> CurriculumSchedule:
+    """Return ``schedule`` with the opt-in ``pair-mixed`` rung inserted immediately BEFORE the
+    ``pair-box`` rung — the #712 ``--mixed-anchor`` lever. Each episode randomly starts anchored
+    (k=1) or empty (k=0) with probability ``anchor_prob`` (drawn from the seeded stream), so
+    empty-start episodes stay in the training mix and the policy does not collapse to the
+    place-nothing pole on the empty-start pair-box. Apply AFTER ``with_pair_anchored_rung`` so
+    pair-mixed lands between pair-anchored and pair-box. Only the ladder changes (policy
+    preserved); the default ladder is untouched, so default runs stay byte-identical."""
+    stages = schedule.stages
+    try:
+        before = next(i for i, s in enumerate(stages) if s.name == "pair-box")
+    except StopIteration:
+        raise ValueError(
+            "with_mixed_anchor_rung: schedule has no 'pair-box' rung to insert before"
+        ) from None
+    return replace(schedule, stages=stages[:before] + (_PAIR_MIXED_STAGE,) + stages[before:])

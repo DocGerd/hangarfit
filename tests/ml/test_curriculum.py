@@ -552,3 +552,44 @@ def test_validate_ladder_rejects_anchor_prob_out_of_range(p):
 def test_validate_ladder_rejects_mixed_rung_without_witness():
     with pytest.raises(ValueError, match="anchor_layout_path"):
         validate_ladder([_mixed_stage(0.5, anchor_path=None)], encoder_max_objects=8)
+
+
+# ---------------------------------------------------------------------------
+# with_mixed_anchor_rung builder tests (#712)
+# ---------------------------------------------------------------------------
+
+from ml.curriculum import with_mixed_anchor_rung  # noqa: E402
+
+
+def test_with_mixed_anchor_rung_inserts_before_pair_box():
+    sched = with_mixed_anchor_rung(CurriculumSchedule.default())
+    names = [s.name for s in sched.stages]
+    assert "pair-mixed" in names
+    assert names.index("pair-mixed") == names.index("pair-box") - 1
+
+
+def test_mixed_rung_sits_between_pair_anchored_and_pair_box():
+    sched = with_mixed_anchor_rung(with_pair_anchored_rung(CurriculumSchedule.default()))
+    names = [s.name for s in sched.stages]
+    assert names.index("pair-anchored") < names.index("pair-mixed") < names.index("pair-box")
+
+
+def test_mixed_rung_config_is_two_object_anchor_prob_half():
+    sched = with_mixed_anchor_rung(CurriculumSchedule.default())
+    rung = next(s for s in sched.stages if s.name == "pair-mixed")
+    assert rung.difficulty.max_objects == 2
+    assert rung.difficulty.seed_anchor_k == 1
+    assert rung.difficulty.anchor_prob == 0.5
+    assert rung.anchor_layout_path is not None  # reuses witness_box
+
+
+def test_default_ladder_untouched_by_mixed_builder():
+    before = tuple(s.name for s in DEFAULT_LADDER)
+    with_mixed_anchor_rung(CurriculumSchedule.default())
+    assert tuple(s.name for s in DEFAULT_LADDER) == before  # no mutation
+
+
+def test_with_mixed_anchor_rung_raises_without_pair_box():
+    sched = CurriculumSchedule(stages=(DEFAULT_LADDER[0],), policy=PromotionPolicy())
+    with pytest.raises(ValueError, match="pair-box"):
+        with_mixed_anchor_rung(sched)
