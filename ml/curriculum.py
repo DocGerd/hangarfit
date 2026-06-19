@@ -472,3 +472,24 @@ def with_mixed_anchor_rung(schedule: CurriculumSchedule) -> CurriculumSchedule:
             "with_mixed_anchor_rung: schedule has no 'pair-box' rung to insert before"
         ) from None
     return replace(schedule, stages=stages[:before] + (_PAIR_MIXED_STAGE,) + stages[before:])
+
+
+def truncate_after_rung(schedule: CurriculumSchedule, rung_name: str) -> CurriculumSchedule:
+    """Return ``schedule`` with every rung AFTER ``rung_name`` dropped (the named rung is kept
+    as the last stage) — the #722 ``--stop-after-rung`` lever. A pure ``stages[:idx+1]``
+    truncation that mirrors the ``with_*_rung`` grafts: only the ladder changes (the promotion
+    policy is preserved), so a sweep can train just up to (and including) a chosen rung instead
+    of grinding on through the rest of the ladder. Truncating at the LAST rung is a no-op on the
+    stages, so a run that names the final rung stays byte-identical to no truncation. Raises
+    ValueError (loud, not a leaked StopIteration) when ``rung_name`` is not in the schedule, so a
+    typo'd rung fails before the run rather than silently disabling the cap. Apply AFTER the
+    ``with_*_rung`` grafts so a name they introduce (e.g. ``pair-mixed``) is in scope."""
+    stages = schedule.stages
+    try:
+        idx = next(i for i, s in enumerate(stages) if s.name == rung_name)
+    except StopIteration:
+        raise ValueError(
+            f"truncate_after_rung: schedule has no rung named {rung_name!r} "
+            f"(have {[s.name for s in stages]})"
+        ) from None
+    return replace(schedule, stages=stages[: idx + 1])

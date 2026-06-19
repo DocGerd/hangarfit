@@ -34,6 +34,7 @@ from ml.curriculum import (
     make_episode_sampler,
     should_promote,
     stage_rng,
+    truncate_after_rung,
     validate_ladder,
     with_mixed_anchor_rung,
     with_pair_anchored_rung,
@@ -616,6 +617,16 @@ def build_argparser() -> argparse.ArgumentParser:
         "and pair-box.",
     )
     p.add_argument(
+        "--stop-after-rung",
+        type=str,
+        default=None,
+        help="curriculum: truncate the ladder after this rung (the named rung is the last "
+        "trained), dropping every rung after it. Default = run the whole ladder "
+        "(byte-identical). The #722 sweep lever: stop after pair-box so a resumed cell does "
+        "not grind on into trio-*. Applied after the --solo-box-rung/--seed-anchor/"
+        "--mixed-anchor grafts, so a name they introduce (pair-mixed) is valid.",
+    )
+    p.add_argument(
         "--r-valid-park",
         type=float,
         default=0.0,
@@ -781,6 +792,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             parser.error("--seed-anchor requires --schedule curriculum")
         if args.mixed_anchor:
             parser.error("--mixed-anchor requires --schedule curriculum")
+        if args.stop_after_rung is not None:
+            parser.error("--stop-after-rung requires --schedule curriculum")
         train(
             seed=args.seed,
             iterations=args.iterations,
@@ -810,6 +823,9 @@ def main(argv: Sequence[str] | None = None) -> None:
             sched = with_pair_anchored_rung(sched)
         if args.mixed_anchor:
             sched = with_mixed_anchor_rung(sched)
+        # Truncate LAST, after the grafts, so a name they introduce (pair-mixed) is in scope.
+        if args.stop_after_rung is not None:
+            sched = truncate_after_rung(sched, args.stop_after_rung)
         history = train_curriculum(
             seed=args.seed,
             schedule=sched,
