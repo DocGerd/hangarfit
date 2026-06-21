@@ -187,9 +187,12 @@ def swept_intrusion_m2(
             for op, (op_xmin, op_ymin, op_xmax, op_ymax) in zip(
                 obstacles.world_parts, obstacles.world_part_aabbs, strict=True
             ):
-                # Touching-inclusive (clearance 0): a STRICT AABB gap means the polygons
-                # are disjoint -> 0 intersection area, so skipping is byte-identical. A
-                # touching/overlapping AABB falls through to the exact predicate.
+                # This loop measures raw overlap AREA (clearance-independent), unlike
+                # _motion_clear's clearance-INflated filter (towplanner `> clearance`) --
+                # so the gap threshold is 0.0, not clearance. A STRICT AABB gap (> 0) means
+                # the polygons are disjoint -> 0 intersection area, so skipping is
+                # byte-identical; a touching/overlapping AABB (gap <= 0) falls through to
+                # the exact predicate.
                 if (
                     wp_xmin - op_xmax > 0.0
                     or op_xmin - wp_xmax > 0.0

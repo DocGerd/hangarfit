@@ -6,7 +6,7 @@ Two contracts are guarded here:
   active-misfit loops and the encoder's rasterizer) goes through ``cached_parts_world``,
   so inside an active scope a *repeated* ``(body, pose)`` rebuilds zero shapely parts
   (cache hit). A worker step with ``pose_cache=True`` therefore does strictly fewer raw
-  ``aircraft_parts_world`` builds than ``pose_cache=False`` (today's passthrough).
+  ``aircraft_parts_world`` builds than ``pose_cache=False`` (the un-cached baseline).
 * **Byte-identity (ADR-0003)** — turning the cache on never changes a number: the worker
   reward stream + encoded observations and the single-env ``collect_rollout`` buffer are
   bit-identical with the cache on vs off. Verified via the established ml/ pattern (fixed
@@ -54,7 +54,7 @@ def _count_raw_builds(monkeypatch) -> dict[str, int]:
 
 
 # ---------------------------------------------------------------------------
-# Routing: each ml/ consumer goes through cached_parts_world (RED today — raw)
+# Routing: each ml/ consumer goes through cached_parts_world.
 # A repeated identical call inside a scope must rebuild ZERO parts.
 # ---------------------------------------------------------------------------
 
@@ -127,7 +127,7 @@ def test_envworker_step_with_pose_cache_builds_fewer_parts(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
-# Byte-identity: pose_cache on vs off (RED today — kwarg does not exist)
+# Byte-identity: pose_cache on vs off produces bit-identical rewards + encoded obs
 # ---------------------------------------------------------------------------
 
 

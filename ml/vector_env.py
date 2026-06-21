@@ -39,11 +39,13 @@ class _EnvWorker:
         self._enc = encoder
         self._next_request = next_request
         self._bodies = {**env.fleet, **env.ground_objects}
-        # #733: memoize aircraft_parts_world across this worker's step+encode (one fixed
-        # fleet, so the pose key is never stale). Default-on; the cache is a byte-identical
-        # passthrough, so pose_cache=False reproduces the un-cached run bit-for-bit (the
-        # determinism reference for the byte-identity test). The scope is opened per method
-        # call, so it is per-env even when SyncVectorEnv steps workers in one process.
+        # #733: route this worker's step+encode geometry through cached_parts_world
+        # (pose-memoized inside the scope; delegates to aircraft_parts_world on a miss).
+        # One fixed fleet, so the pose key is never stale. Default-on; the cache is a
+        # byte-identical passthrough, so pose_cache=False reproduces the un-cached run
+        # bit-for-bit (the determinism reference for the byte-identity test). The scope is
+        # opened per method call, so it is per-env even when SyncVectorEnv steps workers in
+        # one process.
         self._pose_cache = pose_cache
 
     def _scope(self) -> contextlib.AbstractContextManager[None]:
