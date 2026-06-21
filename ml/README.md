@@ -142,12 +142,21 @@ per-step active-overlap gradient) and, being potential-based shaping, is **polic
 | `--seed-anchor` | off | Insert an opt-in `pair-anchored` rung **before** `pair-box`: one of its 2 objects is pre-parked at a committed-witness pose (`seed_anchor_k=1`) and the agent only drives the other in — scaffolding 2-object joint discovery with a valid 1-object start (#712). Curriculum-only. |
 | `--mixed-anchor` | off | Insert an opt-in `pair-mixed` rung **before** `pair-box`: each episode randomly starts anchored (k=1) or empty (k=0) with probability `anchor_prob=0.5`, drawn from the curriculum's seeded stream. Keeps empty-start episodes in the training mix so the policy does not collapse to the place-nothing pole on the empty-start `pair-box`. Pair with `--seed-anchor` so `pair-mixed` lands between `pair-anchored` and `pair-box` (not required — `--mixed-anchor` alone inserts it directly before `pair-box`). Curriculum-only. (#712 follow-up) |
 | `--stop-after-rung NAME` | off | Truncate the ladder after `NAME` (that rung is the last trained; every rung after it is dropped). Applied **after** the graft flags above, so a name they introduce (`pair-mixed`) is valid. The #722 sweep lever: `--stop-after-rung pair-box` lets a resumed cell stop cleanly instead of grinding on into `trio-*`. Unknown rung → loud `ValueError`. Curriculum-only; absent ⇒ byte-identical. |
-| `--auto-budget` (+ `--auto-budget-max-iters N`, default 1000) | off | Slope-aware per-rung budget (#734): replace the fixed `--max-iters-per-stage` cap with a closed loop — a Theil–Sen slope over the windowed-mean promotion-metric series (default `valid_placed`) **extends** the rung while it climbs and **stops early** on a plateau (or the ceiling `N`). Fixes the trio-box "truncated while still climbing" waste. Distinct from the manual `--stop-after-rung`. Curriculum-only; absent ⇒ the fixed cap, byte-identical. |
+| `--promotion-metric` / `--promotion-threshold` / `--promotion-window` | schedule policy (`valid_placed` / `0.9` / `3`) | Competency-gate overrides. A rung promotes when the mean of the last `--promotion-window` **iterations'** honest per-rollout `--promotion-metric` (the same `valid_placed` the `--metrics-out` JSONL and `ml.gate` report) clears `--promotion-threshold`. `--promotion-window` counts **iterations**, not episodes — the #742 fix: the gate previously thresholded only the last ~20 *episodes* of the latest rollout (a `deque(maxlen=window)` tail), a noisy estimator that false-promoted `by competency` on a lucky autocorrelated streak while the honest per-iteration mean was well below threshold. Curriculum-only. |
+| `--auto-budget` (+ `--auto-budget-max-iters N` ⌀1000, `--auto-budget-min-iters N` ⌀30, `--auto-budget-min-level L` ⌀0.05) | off | Slope-aware per-rung budget (#734): replace the fixed `--max-iters-per-stage` cap with a closed loop — a Theil–Sen slope over the **honest per-iteration** promotion-metric series (the same `valid_placed` the gate reads, #742) **extends** the rung while it climbs and **stops early** on a plateau (or the ceiling `N`). The `--auto-budget-min-level` **floor-guard** (#743) refuses to plateau-stop while the recent level is below `L` — a flat-at-floor *warmup* is not convergence, and slope alone cannot tell the two apart (both ~0); `0` disables it. Raise `--auto-budget-min-iters` for a hard rung with a long pre-climb. Distinct from the manual `--stop-after-rung`. Curriculum-only; absent ⇒ the fixed cap, byte-identical. |
 
 `--load`/`--checkpoint-out`/`--metrics-out`/`--promotion-*`/`--solo-box-rung`/`--seed-anchor`/`--mixed-anchor`/`--stop-after-rung`/`--auto-budget`
 are curriculum-only (fail loud under `--schedule trivial`). The resume checkpoint
 (`ml/checkpoint.py`) is distinct from `--save` (a bare `state_dict` for the ONNX/`ml.eval`
 consumer) and loads with `weights_only=True`.
+
+**Honest competency gate (#742/#743).** The trainer's `promoted by competency` and the
+`--auto-budget` slope are now fit on **one** per-iteration series — each rung iteration
+contributes its full-rollout `valid_placed` mean, the exact signal `ml.gate` re-reads from the
+JSONL — instead of a per-episode `deque` tail. The trainer's verdict is therefore as trustworthy
+as `ml.gate`'s (still re-grade with `python -m ml.gate` as a torch-free cross-check, but the two
+no longer disagree by construction). The companion `--auto-budget` floor-guard stops a hard rung
+from being truncated during its flat pre-climb warmup.
 
 ### What the #710 levers achieved, and the #714 multi-object fix
 

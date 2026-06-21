@@ -460,6 +460,28 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Fixed
 
+- **Learned backend (#742/#743, epic #607): the curriculum competency gate and
+  `--auto-budget` now read the honest per-iteration metric, not a noisy 20-episode tail.**
+  The promotion gate (`should_promote`) and the #734 auto-budget slope-fit both watched a
+  per-episode `deque(maxlen=window)`; after `window.extend(ep_stats)` that retained only the
+  **last ~20 episodes of the latest rollout** (out of ~250), a far noisier estimator than the
+  per-iteration `valid_placed` the `--metrics-out` JSONL and `ml.gate` report. Two symptoms:
+  **(#742)** a rung false-promoted `by competency` on a lucky autocorrelated 20-episode streak
+  while its honest per-iteration mean was well below threshold (observed on `trio-box`: trainer
+  said mastered at iter 136, `ml.gate` reported peak `valid_placed` 0.709 / `never` competent,
+  still climbing); **(#743)** `--auto-budget` plateau-stopped a hard rung **during its flat
+  pre-climb warmup** (`trio-box` stopped at iter 29, `valid_placed` ~0.04 — the climb only
+  started ~iter 50). The fix unifies both decisions onto a single per-iteration honest series
+  (`window_score` over the whole rollout, skipping no-episode iterations), so `PromotionPolicy.window`
+  now counts **iterations** (default 3, was 20 episodes) and `should_promote` thresholds their
+  mean — the trainer's verdict is now as trustworthy as `ml.gate`'s. A new `BudgetController`
+  **floor-guard** (`min_level`, default 0.05) refuses to read a flat-at-floor warmup as a
+  converged plateau (slope alone cannot tell floor-flat from ceiling-flat). New default-neutral
+  CLI levers: `--promotion-window`, `--auto-budget-min-iters`, `--auto-budget-min-level`.
+  **Deliberate re-baseline:** the gate now advances rungs at different iterations than the
+  buggy per-episode tail did (run-twice determinism and `--auto-budget`-off byte-identity are
+  preserved). Dev/CI-only (`ml/`); no shipped-wheel surface.
+
 - **Learned backend (#732, epic #607): PBRS now forces Φ(terminal) = 0 — removes a
   spurious −Φ(terminal) return bias.** The potential-based reward shaping added
   `γ·Φ(s′) − Φ(s)` every step but computed the terminal step's `Φ(s′)` from the live
