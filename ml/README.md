@@ -308,6 +308,58 @@ no-upstream-regression check still holds (`trivial`/`solo-box`/`pair-anchored` a
 competency at `w_col=20`). Read `valid_placed`, NOT `valid_rate` (an empty layout is vacuously
 "valid", so `valid_rate→1` under place-nothing is the *failure* signature).
 
+### Trio-box gate recipe (#730 — does the four-lever ladder generalize past N=2?)
+
+The two-seed `pair-box` PASS above broke the *2-object* cliff. The open question is whether the
+same four-lever ladder clears the **3-object** `trio-box` rung (`max_objects=3`, already in
+`DEFAULT_LADDER`) — historically every ≥2-object rung collapsed, and `trio-box` is the first
+untested one past the fix. This is a **checkpoint-resume sweep**: take a checkpoint whose
+`completed_stages` already include `pair-box` (the `--checkpoint-out` from the pair-box gate above),
+then train **only** `trio-box` with `--stop-after-rung trio-box`. The L4 clip knobs are now the
+default (#728) but are kept explicit below for reproducibility.
+
+```bash
+# Per seed (run twice, --seed 0 and --seed 1, with the matching pair-box checkpoint).
+# --load resumes; the loop SKIPS trivial…pair-box (already in completed_stages) and trains trio-box.
+python -u -m ml.train --schedule curriculum --device cuda --n-envs 16 \
+  --rollout-len 512 --max-iters-per-stage 80 \
+  --promotion-metric valid_placed --promotion-threshold 0.9 \
+  --r-valid-park 30.0 --r-unplaced-penalty 25.0 --dense-slot-potential \
+  --w-col 20.0 --valid-park-grade-scale 4.0 --r-first-valid 15.0 \
+  --reward-clip 50.0 --value-clip-eps 0.2 --target-kl 0.03 \
+  --entropy-start 0.05 --entropy-end 0.005 --entropy-anneal-iters 40 \
+  --normalize-returns --validity-conditional-terminal --solo-box-rung \
+  --seed-anchor --mixed-anchor --stop-after-rung trio-box \
+  --load ck-seed0-l5l4.pt \
+  --metrics-out metrics-seed0-trio.jsonl --checkpoint-out ck-seed0-trio.pt --seed 0
+```
+
+**Resume gotchas (the single most likely way to corrupt the gate):**
+- **Re-pass `--solo-box-rung --seed-anchor --mixed-anchor` on every resumed cell.** The checkpoint
+  stores completed rung *names*, not the schedule shape — omit a graft and the rebuilt ladder no
+  longer matches, so the skip-completed logic silently re-trains or reshapes rungs.
+- **Do not `pip install .[train]`** if you have a local CUDA torch — it clobbers your `~/.local`
+  build. Run `ml.train` from the repo root (the top-level `ml/` package is not on the editable
+  install's path).
+- Gate scratch (`metrics-*.jsonl`, `ck-*.pt`) is gitignored (#717) — don't commit run artifacts.
+
+**Read the result with the gate harness** (torch-free, `ml/gate.py`) instead of eyeballing the
+JSONL — it headlines `valid_placed` (never `valid_rate`) and flags the piling basin:
+
+```bash
+python -m ml.gate metrics-seed0-trio.jsonl --rung trio-box   # exit 0=mastered, 1=not, 2=no-data
+python -m ml.gate metrics-seed1-trio.jsonl --rung trio-box
+```
+
+Outcomes: **`mastered`** (`valid_placed ≥ 0.9` — the WIN) · **`piling`** (placed much but validly
+little: committing objects invalidly, *not* a win — distrust any apparent progress) · **`place-nothing`**
+(fled to do-nothing: a *clean* collapse that routes to an L6a pose-scaffold rung) · **`in-progress`**
+(placing validly and climbing, just under threshold — give it more iters).
+
+**WIN = `trio-box` mastered on BOTH seeds.** A clean two-seed `place-nothing` is a valid negative
+(the four-lever ladder does *not* generalize to N=3 → pose-scaffold). A `piling` verdict means the
+ladder is unstable at N=3 and needs the economics re-tuned before re-gating.
+
 ## Design
 See `docs/superpowers/specs/2026-06-12-learned-backend-cold-joint-rl-env-design.md`
 and ADR-0027 (learned-path determinism scope).
