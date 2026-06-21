@@ -97,3 +97,19 @@ posting the coverage numbers on every PR. Two reasons (#589):
 So: **read the patch number** (it still shows new-code coverage), but a green/grey
 codecov status is not a quality claim and a low number does not block. The §3/§4
 guidance above keeps that number honest.
+
+## 6. The `from module import name` monkeypatch rebinding trap
+
+A test that patches a *source* module's attribute cannot intercept a consumer that
+imported the name **by value** (`from hangarfit.geometry import aircraft_parts_world`) —
+the consumer holds its own binding. A byte-identity / routing test that monkeypatches
+`hangarfit.geometry.aircraft_parts_world` to count builds then sees ZERO calls from such
+a consumer, so a counter-based assertion can pass *vacuously* (e.g. `0 == 0`).
+
+This bites this repo because byte-identity / routing tests are a recurring pattern
+(ADR-0003, `ml-rl-guard`). Fix: patch the deepest shared function the consumer actually
+reaches at call time — e.g. `aircraft_parts_world`, which `cached_parts_world` resolves
+through *its own* module-global at call time, so patching
+`hangarfit.geometry.aircraft_parts_world` *is* seen (unlike a `from`-imported consumer) —
+AND assert the warm-up did real work (`assert builds > 0`) so a vacuous pass fails loud.
+(#733: the `ml/` pose-cache routing tests in `tests/ml/test_pose_cache.py`.)
