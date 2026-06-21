@@ -696,3 +696,18 @@ def test_truncate_after_rung_at_pair_mixed_for_upstream_train():
     )
     names = [s.name for s in truncate_after_rung(sched, "pair-mixed").stages]
     assert names == ["trivial", "solo-box", "pair-anchored", "pair-mixed"]
+
+
+def test_truncate_after_rung_at_trio_box_is_the_gate_sweep_shape():
+    # #730: the trio-box gate-sweep cell resumes the grafted ladder and stops AFTER
+    # trio-box — dropping trio-notch/-strict so a resumed cell does not grind on past the
+    # rung under test. This is the exact ladder shape the GPU sweep launch produces.
+    sched = with_mixed_anchor_rung(
+        with_pair_anchored_rung(with_solo_box_rung(CurriculumSchedule.default()))
+    )
+    truncated = truncate_after_rung(sched, "trio-box")
+    names = [s.name for s in truncated.stages]
+    assert names == ["trivial", "solo-box", "pair-anchored", "pair-mixed", "pair-box", "trio-box"]
+    trio = truncated.stages[-1]
+    assert trio.name == "trio-box"
+    assert trio.difficulty.max_objects == 3  # the ≥2-object rung the four-lever ladder must clear

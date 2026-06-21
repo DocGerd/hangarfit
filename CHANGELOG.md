@@ -6,6 +6,18 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Learned backend (#730, epic #607): trio-box training-gate harness + launch recipe.**
+  No-GPU prep for the #698 train-to-mastery frontier — does the #720/#728 four-lever ladder
+  generalize past the 2-object `pair-box` to the 3-object `trio-box` rung (the historical
+  ≥2-object wall)? Adds `ml/gate.py` (`python -m ml.gate METRICS.jsonl --rung trio-box`), a
+  **torch-free** reader for the `--metrics-out` JSONL that emits a per-rung verdict headlining
+  `valid_placed` (never `valid_rate` — vacuously 1.0 under place-nothing) with a **piling
+  watchdog** (`fraction_placed` high while `valid_placed` low = committing objects invalidly).
+  Verdicts: `mastered` / `piling` / `place-nothing` / `in-progress` / `no-data`, with exit
+  codes (0/1/2) for unattended sweeps. `ml/README.md` gains the two-seed `--stop-after-rung
+  trio-box` checkpoint-resume launch recipe + resume gotchas; a curriculum smoke test guards the
+  exact truncated sweep-shape ladder. Does not run the sweep itself (needs the GPU).
+
 - **Learned backend (#724, epic #607): #720 empty-start `pair-box` gate — two-seed PASS; L4
   clipping confirmed load-bearing; recipe `reward_clip 10 → 50`.** The #720 L5+L4 gate was run as a
   #722 checkpoint-resume sweep on GPU. The empty-start `pair-box` rung — `valid_placed=0.000` in
