@@ -134,10 +134,13 @@ def test_partial_budget_stop_includes_terminal_fraction_reward():
     _, reward_no_term, done_b, _ = env_b.step(pivot)
     assert done_b is False
 
-    # The only reward difference between the two identical steps is the terminal
-    # term r_terminal * 0.5 — present in A, absent in B. It must be measurably added.
+    # The terminal term r_terminal * 0.5 is present in A, absent in B. #732 re-baseline:
+    # the terminal step now also forces Φ(s′)=0, so A drops the γ·Φ(s′) shaping term that
+    # the identical NON-terminal step B retains. The reward difference is therefore the
+    # terminal term MINUS that retained γ·Φ_B (B set _prev_potential = its new Φ(s′)).
     w = env_a.weights
-    assert reward_term - reward_no_term == w.r_terminal * 0.5
+    phi_b = env_b._prev_potential  # the Φ(s′) B kept; A forced its Φ(s′) to 0 (#732)
+    assert reward_term - reward_no_term == pytest.approx(w.r_terminal * 0.5 - w.gamma * phi_b)
 
 
 # ---------------------------------------------------------------------------

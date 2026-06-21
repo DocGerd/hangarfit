@@ -284,7 +284,12 @@ class HangarFitEnv:
             terminal_fraction = len(self._parked) / len(self.requested_ids) if done else None
             if not done:
                 self._spawn()
-            new_phi = self._potential()
+            # #732: PBRS requires Φ(terminal)=0 so the undiscounted return carries no
+            # spurious −Φ(terminal) bias; on the terminal Park the shaping reduces to
+            # −Φ(prev). Φ is ~0 on a clean valid completion but nonzero on the non-clean
+            # terminals (an object still unplaced, or residual overlap), so this is
+            # load-bearing for the invalid/piled completions the curriculum distinguishes.
+            new_phi = 0.0 if done else self._potential()
             ctx = RewardContext(
                 overlap_m2=overlap,
                 intrusion_m2=intrusion,
@@ -329,13 +334,16 @@ class HangarFitEnv:
         )
         self._active_pose = end
         self._prev_gear = primitive.gear
-        new_phi = self._potential()
 
         # Termination: per-object budget exhausted (unplaceable) or global budget hit.
         # Compute it BEFORE the reward so a budget-driven stop still earns the
         # "best partial" terminal fraction (spec §4.5) — the active object stays
         # unparked, so the fraction is over already-PARKED objects only.
         done, reason = self._check_budget()
+        # #732: PBRS requires Φ(terminal)=0 — on a terminal (budget-exhaustion) step the
+        # shaping reduces to −Φ(prev), no spurious −Φ(terminal) return bias. Φ(prev) is
+        # genuinely nonzero here (an object remains unplaced), so this is load-bearing.
+        new_phi = 0.0 if done else self._potential()
         terminal_fraction = len(self._parked) / len(self.requested_ids) if done else None
         # Validity of the already-PARKED set at a budget-exhaustion stop. This branch carried
         # no validity signal, so the #714 validity-conditional terminal would have treated even

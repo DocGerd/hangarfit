@@ -445,6 +445,19 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Fixed
 
+- **Learned backend (#732, epic #607): PBRS now forces Φ(terminal) = 0 — removes a
+  spurious −Φ(terminal) return bias.** The potential-based reward shaping added
+  `γ·Φ(s′) − Φ(s)` every step but computed the terminal step's `Φ(s′)` from the live
+  potential instead of forcing 0, so the undiscounted episode return picked up a
+  constant `−Φ(terminal)` term — provably policy-invariant (Ng–Harada–Russell) only when
+  `Φ(terminal) = 0`. `Φ` is ~0 on a *clean valid* completion but **nonzero** on exactly
+  the non-clean terminals the curriculum must distinguish (budget-exhaustion stops with an
+  object still unplaced; invalid/piled completions with residual overlap and/or an object
+  still unplaced). `HangarFitEnv`
+  now sets `Φ(s′) = 0` on both terminal paths (the terminal Park and the budget-exhaustion
+  movement), so the terminal shaping reduces to `−Φ(prev)`. **Deliberate re-baseline:** this
+  changes reward values on non-clean terminal episodes (clean completions are unaffected).
+
 - **Learned backend env validity now matches `collisions.check` (#694).** The
   `HangarFitEnv` oracle no longer over-enforces the inert placeholder maintenance
   bay (the bay is only active when an aircraft is explicitly placed there; the
