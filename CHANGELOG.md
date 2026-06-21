@@ -12,10 +12,11 @@ All notable changes to this project are documented here. Format follows [Keep a 
   and it lets a stuck sub-threshold rung grind to the cap with no upward signal. `--auto-budget`
   replaces the fixed cap with a closed loop: a pure `BudgetController` (in `ml/curriculum.py`,
   mirroring `should_promote`'s purity) fits a robust **Theil–Sen slope** over the per-iteration
-  windowed-mean `valid_placed` series and **extends** the rung while competency hasn't fired
-  and the slope is positive, **stopping early** once the slope is non-positive for
-  `plateau_patience` consecutive windows (or the hard ceiling is reached). Mis-fire guards: a
-  `min_iters` floor, hysteresis, and the `--auto-budget-max-iters` ceiling (default 1000). Wired
+  windowed-mean promotion-metric series (default `valid_placed`) and **extends** the rung while
+  competency hasn't fired and the slope is positive, **stopping early** once the slope is
+  non-positive for `plateau_patience` consecutive windows (or the hard ceiling is reached).
+  Mis-fire guards: a `min_iters` floor, the `plateau_patience` consecutive-window debounce, and
+  the `--auto-budget-max-iters` ceiling (default 1000). Wired
   into both the single-env and vectorized per-rung loops; **default off** → the fixed-`max_iters`
   path reproduces today's runs byte-for-byte (4c-ii default-neutrality). Distinct from the
   manual `--stop-after-rung` (#723). Dev/CI-only (`ml/`); no shipped-wheel surface.

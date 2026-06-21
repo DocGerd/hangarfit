@@ -343,8 +343,9 @@ def train_curriculum(
     PPO until the competency gate fires or the per-stage cap is hit, then advance.
 
     ``auto_budget`` (#734): when given, each rung runs up to the controller's hard ceiling
-    and stops early once ``valid_placed`` plateaus (slope-aware), instead of the fixed
-    ``pol.max_iters`` cap. Default None reproduces the fixed-cap path byte-identically.
+    and stops early once the promotion metric (default ``valid_placed``) plateaus
+    (slope-aware), instead of the fixed ``pol.max_iters`` cap. Default None reproduces the
+    fixed-cap path byte-identically.
 
     ``weights``: optional reward weights forwarded to every stage env (defaults to neutral).
     ``ppo.entropy_coef_start/end/anneal_iters``: per-rung entropy schedule; the iteration
@@ -556,9 +557,10 @@ def build_argparser() -> argparse.ArgumentParser:
     p.add_argument(
         "--auto-budget",
         action="store_true",
-        help="curriculum: slope-aware per-rung budget (#734) — keep training while "
-        "valid_placed climbs, stop early on plateau, up to --auto-budget-max-iters. Replaces "
-        "the fixed --max-iters-per-stage cap; default off (fixed cap, byte-identical).",
+        help="curriculum: slope-aware per-rung budget (#734) — keep training while the "
+        "promotion metric (default valid_placed) climbs, stop early on plateau, up to "
+        "--auto-budget-max-iters. Replaces the fixed --max-iters-per-stage cap; default off "
+        "(fixed cap, byte-identical).",
     )
     p.add_argument(
         "--auto-budget-max-iters",
@@ -906,7 +908,10 @@ def main(argv: Sequence[str] | None = None) -> None:
         if args.stop_after_rung is not None:
             sched = truncate_after_rung(sched, args.stop_after_rung)
         # #734: build the slope-aware controller only when --auto-budget is set; None keeps
-        # the fixed per-rung cap (byte-identical default).
+        # the fixed per-rung cap (byte-identical default). Fail LOUD on a ceiling without the
+        # switch rather than silently dropping a typed numeric flag.
+        if args.auto_budget_max_iters is not None and not args.auto_budget:
+            parser.error("--auto-budget-max-iters requires --auto-budget")
         budget = None
         if args.auto_budget:
             budget = (

@@ -63,6 +63,12 @@ def test_window_score_empty_is_zero():
     assert window_score([], "valid_placed") == 0.0
 
 
+def test_window_score_valid_rate_and_fraction_placed():
+    w = [_ep(1.0, True), _ep(0.5, False), _ep(0.5, True), _ep(0.0, False)]
+    assert window_score(w, "valid_rate") == pytest.approx(0.5)  # 2 of 4 valid
+    assert window_score(w, "fraction_placed") == pytest.approx(0.5)  # mean(1, .5, .5, 0)
+
+
 # ---------------------------------------------------------------------------
 # BudgetController.should_stop
 # ---------------------------------------------------------------------------
@@ -111,6 +117,14 @@ def test_plateau_patience_requires_consecutive_flat_windows():
     c = _ctrl(min_iters=6, slope_window=4, plateau_patience=2)
     history = [0.0, 1.0, 2.0, 3.0, 4.0, 4.0, 4.0, 4.0]  # last window flat, prior climbing
     assert c.should_stop(history) is False
+
+
+def test_should_stop_boundary_just_enough_points():
+    # min_iters=2, slope_window=4, plateau_patience=2 => both trailing windows form at n>=5.
+    # Locks the negative-slice-safety guard at exactly the boundary.
+    c = _ctrl(min_iters=2, slope_window=4, plateau_patience=2)
+    assert c.should_stop([0.5] * 4) is False  # one short of forming both windows
+    assert c.should_stop([0.5] * 5) is True  # exactly enough; flat => plateau
 
 
 def test_invalid_config_rejected():

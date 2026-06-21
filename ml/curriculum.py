@@ -46,26 +46,13 @@ class PromotionPolicy:
             raise ValueError(f"PromotionPolicy.max_iters must be >= 1, got {self.max_iters}")
 
 
-def should_promote(window: Sequence[EpisodeStat], policy: PromotionPolicy) -> bool:
-    """Pure gate: True when the last ``policy.window`` episodes meet the threshold."""
-    if len(window) < policy.window:
-        return False
-    recent = list(window)[-policy.window :]
-    if policy.metric == "valid_rate":
-        score = sum(1.0 for s in recent if s.valid) / len(recent)
-    elif policy.metric == "valid_placed":
-        # compound: credit fraction_placed only when the final layout is valid, so a rung
-        # advances only when the agent places (most of) the set AND collision-free.
-        score = sum(s.fraction_placed if s.valid else 0.0 for s in recent) / len(recent)
-    else:  # fraction_placed
-        score = sum(s.fraction_placed for s in recent) / len(recent)
-    return score >= policy.threshold
-
-
 def window_score(window: Sequence[EpisodeStat], metric: str) -> float:
-    """Mean of the promotion ``metric`` over ``window`` (0.0 if empty). Computes the exact
-    score ``should_promote`` thresholds against, so the auto-budget controller (#734) tracks
-    the same trajectory the competency gate watches."""
+    """Mean of the promotion ``metric`` over ``window`` (0.0 if empty). The single source of
+    the competency score: ``should_promote`` thresholds against it and the auto-budget
+    controller (#734) fits its slope over it, so the gate and the budget watch the SAME
+    trajectory. ``valid_placed`` (the default) credits ``fraction_placed`` only when the
+    final layout is valid; ``valid_rate`` is the validity fraction; ``fraction_placed``
+    ignores validity."""
     if not window:
         return 0.0
     if metric == "valid_rate":
@@ -73,6 +60,14 @@ def window_score(window: Sequence[EpisodeStat], metric: str) -> float:
     if metric == "valid_placed":
         return sum(s.fraction_placed if s.valid else 0.0 for s in window) / len(window)
     return sum(s.fraction_placed for s in window) / len(window)  # fraction_placed
+
+
+def should_promote(window: Sequence[EpisodeStat], policy: PromotionPolicy) -> bool:
+    """Pure gate: True when the last ``policy.window`` episodes meet the threshold."""
+    if len(window) < policy.window:
+        return False
+    recent = list(window)[-policy.window :]
+    return window_score(recent, policy.metric) >= policy.threshold
 
 
 def theil_sen_slope(values: Sequence[float]) -> float:
