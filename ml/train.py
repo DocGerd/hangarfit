@@ -26,6 +26,7 @@ from hangarfit.loader import load_fleet, load_hangar
 from ml.action_space import decode
 from ml.checkpoint import load_checkpoint, save_checkpoint
 from ml.curriculum import (
+    BudgetController,
     CurriculumHistory,
     CurriculumSchedule,
     EpisodeStart,
@@ -38,6 +39,7 @@ from ml.curriculum import (
     stage_rng,
     truncate_after_rung,
     validate_ladder,
+    window_score,
     with_mixed_anchor_rung,
     with_pair_anchored_rung,
     with_promotion_overrides,
@@ -335,9 +337,14 @@ def train_curriculum(
     device: str = "cpu",
     load: str | None = None,
     checkpoint_out: str | None = None,
+    auto_budget: BudgetController | None = None,
 ) -> CurriculumHistory:
     """Climb the ladder: one policy/optimizer across rungs (transfer); per rung, run
     PPO until the competency gate fires or the per-stage cap is hit, then advance.
+
+    ``auto_budget`` (#734): when given, each rung runs up to the controller's hard ceiling
+    and stops early once ``valid_placed`` plateaus (slope-aware), instead of the fixed
+    ``pol.max_iters`` cap. Default None reproduces the fixed-cap path byte-identically.
 
     ``weights``: optional reward weights forwarded to every stage env (defaults to neutral).
     ``ppo.entropy_coef_start/end/anneal_iters``: per-rung entropy schedule; the iteration
@@ -422,9 +429,14 @@ def train_curriculum(
         # is not the flake8-bugbear B023 late-binding trap) and stays mypy-inferrable
         # where a default-arg lambda would not be.
         next_request = make_episode_sampler(stage, pool, n, rng)
-        # n_envs == 1: the legacy single-stream path is UNTOUCHED (byte-identical).
+        # #734 auto-budget: with a controller, each rung runs up to its hard ceiling and
+        # stops early on a valid_placed plateau; without one, the fixed pol.max_iters cap.
+        # auto_budget is None (default) => same bound + no controller calls => byte-identical.
+        ceiling = auto_budget.max_iters if auto_budget is not None else pol.max_iters
+        metric_history: list[float] = []
+        # n_envs == 1: the single-stream path (byte-identical when auto_budget is None).
         if n_envs == 1:
-            for it in range(pol.max_iters):
+            for it in range(ceiling):
                 # Per-rung entropy schedule: `it` resets to 0 each stage, so each rung
                 # re-warms from entropy_coef_start (the intended high→low warmup per rung).
                 it_cfg = replace(
@@ -448,8 +460,13 @@ def train_curriculum(
                 if should_promote(list(window), pol):
                     history.note_promotion(stage.name, it, by="competency")
                     break
+                if auto_budget is not None:
+                    metric_history.append(window_score(list(window), pol.metric))
+                    if auto_budget.should_stop(metric_history):
+                        history.note_promotion(stage.name, it, by="budget-plateau")
+                        break
             else:
-                history.note_promotion(stage.name, pol.max_iters - 1, by="cap")
+                history.note_promotion(stage.name, ceiling - 1, by="cap")
         else:
             from ml.vector_env import SubprocVectorEnv, SyncVectorEnv
 
@@ -466,7 +483,7 @@ def train_curriculum(
             else:
                 vec_cm = SyncVectorEnv([fn() for fn in worker_fns])
             with vec_cm as vec:
-                for it in range(pol.max_iters):
+                for it in range(ceiling):
                     it_cfg = replace(
                         cfg,
                         entropy_coef=entropy_coef_at(
@@ -486,8 +503,13 @@ def train_curriculum(
                     if should_promote(list(window), pol):
                         history.note_promotion(stage.name, it, by="competency")
                         break
+                    if auto_budget is not None:
+                        metric_history.append(window_score(list(window), pol.metric))
+                        if auto_budget.should_stop(metric_history):
+                            history.note_promotion(stage.name, it, by="budget-plateau")
+                            break
                 else:
-                    history.note_promotion(stage.name, pol.max_iters - 1, by="cap")
+                    history.note_promotion(stage.name, ceiling - 1, by="cap")
         if log:
             by = history.promotions[-1][2]
             print(f"[{stage.name}] promoted by {by}")
@@ -530,6 +552,20 @@ def build_argparser() -> argparse.ArgumentParser:
         type=int,
         default=None,
         help="curriculum: per-rung safety cap (default = schedule policy)",
+    )
+    p.add_argument(
+        "--auto-budget",
+        action="store_true",
+        help="curriculum: slope-aware per-rung budget (#734) — keep training while "
+        "valid_placed climbs, stop early on plateau, up to --auto-budget-max-iters. Replaces "
+        "the fixed --max-iters-per-stage cap; default off (fixed cap, byte-identical).",
+    )
+    p.add_argument(
+        "--auto-budget-max-iters",
+        type=int,
+        default=None,
+        help="curriculum: hard ceiling for --auto-budget (default = BudgetController default, "
+        "1000). Ignored without --auto-budget.",
     )
     p.add_argument(
         "--promotion-metric",
@@ -835,6 +871,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             parser.error("--mixed-anchor requires --schedule curriculum")
         if args.stop_after_rung is not None:
             parser.error("--stop-after-rung requires --schedule curriculum")
+        if args.auto_budget or args.auto_budget_max_iters is not None:
+            parser.error("--auto-budget/--auto-budget-max-iters require --schedule curriculum")
         train(
             seed=args.seed,
             iterations=args.iterations,
@@ -867,6 +905,15 @@ def main(argv: Sequence[str] | None = None) -> None:
         # Truncate LAST, after the grafts, so a name they introduce (pair-mixed) is in scope.
         if args.stop_after_rung is not None:
             sched = truncate_after_rung(sched, args.stop_after_rung)
+        # #734: build the slope-aware controller only when --auto-budget is set; None keeps
+        # the fixed per-rung cap (byte-identical default).
+        budget = None
+        if args.auto_budget:
+            budget = (
+                BudgetController(max_iters=args.auto_budget_max_iters)
+                if args.auto_budget_max_iters is not None
+                else BudgetController()
+            )
         history = train_curriculum(
             seed=args.seed,
             schedule=sched,
@@ -882,6 +929,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             device=args.device,
             load=args.load,
             checkpoint_out=args.checkpoint_out,
+            auto_budget=budget,
         )
         if args.metrics_out is not None:
             records = history_metric_records(history)
