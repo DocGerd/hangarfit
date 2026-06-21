@@ -6,6 +6,21 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Learned backend (#734, epic #607): slope-aware `--auto-budget` per curriculum rung.**
+  A fixed `--max-iters-per-stage` cap is wrong in both directions — it truncated the trio-box
+  (N=3) run while `valid_placed` was *still climbing* (peak 0.65, under-trained not collapsed),
+  and it lets a stuck sub-threshold rung grind to the cap with no upward signal. `--auto-budget`
+  replaces the fixed cap with a closed loop: a pure `BudgetController` (in `ml/curriculum.py`,
+  mirroring `should_promote`'s purity) fits a robust **Theil–Sen slope** over the per-iteration
+  windowed-mean promotion-metric series (default `valid_placed`) and **extends** the rung while
+  competency hasn't fired and the slope is positive, **stopping early** once the slope is
+  non-positive for `plateau_patience` consecutive windows (or the hard ceiling is reached).
+  Mis-fire guards: a `min_iters` floor, the `plateau_patience` consecutive-window debounce, and
+  the `--auto-budget-max-iters` ceiling (default 1000). Wired
+  into both the single-env and vectorized per-rung loops; **default off** → the fixed-`max_iters`
+  path reproduces today's runs byte-for-byte (4c-ii default-neutrality). Distinct from the
+  manual `--stop-after-rung` (#723). Dev/CI-only (`ml/`); no shipped-wheel surface.
+
 - **Learned backend (#733, epic #607): activate `pose_cache_scope` + `cached_parts_world`
   in the `ml/` RL rollout — top throughput lever, closes the #453/#704 gap.** Per-iteration
   training is ~94% CPU/shapely-bound and ~61% of the rollout is `aircraft_parts_world`

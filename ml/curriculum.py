@@ -46,20 +46,88 @@ class PromotionPolicy:
             raise ValueError(f"PromotionPolicy.max_iters must be >= 1, got {self.max_iters}")
 
 
+def window_score(window: Sequence[EpisodeStat], metric: str) -> float:
+    """Mean of the promotion ``metric`` over ``window`` (0.0 if empty). The single source of
+    the competency score: ``should_promote`` thresholds against it and the auto-budget
+    controller (#734) fits its slope over it, so the gate and the budget watch the SAME
+    trajectory. ``valid_placed`` (the default) credits ``fraction_placed`` only when the
+    final layout is valid; ``valid_rate`` is the validity fraction; ``fraction_placed``
+    ignores validity."""
+    if not window:
+        return 0.0
+    if metric == "valid_rate":
+        return sum(1.0 for s in window if s.valid) / len(window)
+    if metric == "valid_placed":
+        return sum(s.fraction_placed if s.valid else 0.0 for s in window) / len(window)
+    return sum(s.fraction_placed for s in window) / len(window)  # fraction_placed
+
+
 def should_promote(window: Sequence[EpisodeStat], policy: PromotionPolicy) -> bool:
     """Pure gate: True when the last ``policy.window`` episodes meet the threshold."""
     if len(window) < policy.window:
         return False
     recent = list(window)[-policy.window :]
-    if policy.metric == "valid_rate":
-        score = sum(1.0 for s in recent if s.valid) / len(recent)
-    elif policy.metric == "valid_placed":
-        # compound: credit fraction_placed only when the final layout is valid, so a rung
-        # advances only when the agent places (most of) the set AND collision-free.
-        score = sum(s.fraction_placed if s.valid else 0.0 for s in recent) / len(recent)
-    else:  # fraction_placed
-        score = sum(s.fraction_placed for s in recent) / len(recent)
-    return score >= policy.threshold
+    return window_score(recent, policy.metric) >= policy.threshold
+
+
+def theil_sen_slope(values: Sequence[float]) -> float:
+    """Robust trend slope: the median of all pairwise slopes over (index, value). Returns
+    0.0 for fewer than two points. Resists a single outlier iteration that an OLS fit would
+    chase — the windowed-mean metric series is noisy, and a spike must not read as 'climbing'."""
+    n = len(values)
+    if n < 2:
+        return 0.0
+    slopes = sorted((values[j] - values[i]) / (j - i) for i in range(n) for j in range(i + 1, n))
+    m = len(slopes)
+    mid = m // 2
+    return slopes[mid] if m % 2 else 0.5 * (slopes[mid - 1] + slopes[mid])
+
+
+@dataclass(frozen=True, slots=True)
+class BudgetController:
+    """Slope-aware early-stop for a curriculum rung (#734). PURE — a function of the
+    per-iteration windowed-metric series + config (mirrors ``should_promote``'s purity).
+
+    ``should_stop`` is True once the rung has PLATEAUED: the trend over each of the last
+    ``plateau_patience`` trailing ``slope_window``-sized windows is non-positive
+    (slope <= ``eps``). The caller separately enforces the competency gate
+    (``should_promote``) and the hard ceiling (the loop bound ``max_iters``). Wired into
+    train.py behind ``--auto-budget`` (default off), so the fixed-``max_iters`` path stays
+    byte-identical (4c-ii default-neutrality)."""
+
+    min_iters: int = 30  # no stop decision before this many iterations
+    slope_window: int = 15  # trailing points each slope is fit over
+    plateau_patience: int = 4  # consecutive non-positive-slope windows => plateau
+    max_iters: int = 1000  # hard ceiling (the loop bound when auto-budget is on)
+    eps: float = 1e-4  # slope <= eps counts as flat/non-positive
+
+    def __post_init__(self) -> None:
+        if self.min_iters < 1:
+            raise ValueError(f"BudgetController.min_iters must be >= 1, got {self.min_iters}")
+        if self.slope_window < 2:
+            raise ValueError(f"BudgetController.slope_window must be >= 2, got {self.slope_window}")
+        if self.plateau_patience < 1:
+            raise ValueError(
+                f"BudgetController.plateau_patience must be >= 1, got {self.plateau_patience}"
+            )
+        if self.max_iters < 1:
+            raise ValueError(f"BudgetController.max_iters must be >= 1, got {self.max_iters}")
+
+    def should_stop(self, history: Sequence[float]) -> bool:
+        """True iff the rung has plateaued: every one of the last ``plateau_patience``
+        trailing ``slope_window``-sized windows has slope <= ``eps``. False until there are
+        enough points (>= ``min_iters``, and enough to form the trailing windows)."""
+        n = len(history)
+        if n < self.min_iters:
+            return False
+        if n < self.slope_window + self.plateau_patience - 1:
+            return False
+        for k in range(self.plateau_patience):
+            end = n - k
+            window = history[end - self.slope_window : end]
+            if theil_sen_slope(window) > self.eps:
+                return False
+        return True
 
 
 def with_promotion_overrides(
