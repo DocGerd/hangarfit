@@ -6,6 +6,25 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Learned backend (#733, epic #607): activate `pose_cache_scope` + `cached_parts_world`
+  in the `ml/` RL rollout — top throughput lever, closes the #453/#704 gap.** Per-iteration
+  training is ~94% CPU/shapely-bound and ~61% of the rollout is `aircraft_parts_world`
+  Polygon construction; the env was rebuilding the **same** `(body, pose)` shapely parts
+  repeatedly across the collision check, the reward oracle and the encoder rasterizer. The
+  `ml/` geometry consumers (`geometry_oracle` intrusion / swept-intrusion / active-misfit and
+  the `encoding` rasterizer) now call the pose-memoized `cached_parts_world`, and the
+  vectorized `_EnvWorker.step`/`reset` + the single-env `collect_rollout` open a per-step
+  `pose_cache_scope` spanning the env step **and** the encode, so each pose is built once
+  across all consumers. The scope is opened **per env method call** (one fixed-fleet env), so
+  the `(plane_id, x, y, heading)` key is never stale even when `SyncVectorEnv` steps workers
+  in one process. **Byte-identical** (ADR-0003): `cached_parts_world` is an inert passthrough
+  outside a scope and returns the same `WorldPart`s the pure function builds inside one, so
+  the new `pose_cache=False` toggle (on `_EnvWorker` / `collect_rollout`, default-on)
+  reproduces the un-cached run bit-for-bit — verified via the established fixed-action
+  reward-stream + encoded-observation diff, not checkpoint hashes. Folds in an additive,
+  byte-identical AABB-disjointness pre-filter on the swept-intrusion leak loop (reusing the
+  obstacles' precomputed `world_part_aabbs`). Dev/CI-only (`ml/`); no shipped-wheel surface.
+
 - **Learned backend (#730, epic #607): trio-box training-gate harness + launch recipe.**
   No-GPU prep for the #698 train-to-mastery frontier — does the #720/#728 four-lever ladder
   generalize past the 2-object `pair-box` to the 3-object `trio-box` rung (the historical

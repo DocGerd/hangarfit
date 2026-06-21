@@ -8,6 +8,7 @@ sub-project #4b; the reach-not-beat benchmark is #4c."""
 from __future__ import annotations
 
 import argparse
+import contextlib
 import json
 import sys
 from collections import deque
@@ -20,6 +21,7 @@ from typing import Literal
 import torch
 from torch import Tensor
 
+from hangarfit.geometry import pose_cache_scope
 from hangarfit.loader import load_fleet, load_hangar
 from ml.action_space import decode
 from ml.checkpoint import load_checkpoint, save_checkpoint
@@ -107,26 +109,37 @@ def collect_rollout(
     rollout_len: int,
     *,
     sample_request: Callable[[], EpisodeStart] | None = None,
+    pose_cache: bool = True,
 ) -> tuple[RolloutBuffer, list[EpisodeStat]]:
     """Drive the env single-stream for `rollout_len` steps; return the buffer and the
     per-completed-episode stats (competency + reward sum). On each episode boundary,
     `sample_request()` (when given) returns an EpisodeStart that picks the next episode's
     object subset and optional seed_anchor_k; None keeps the env's fixed requested set
-    (the 4a trivial path)."""
+    (the 4a trivial path).
+
+    `pose_cache` (#733, default-on) opens a per-step `pose_cache_scope` spanning the
+    encode + env.step so the shapely parts are built once across the encoder and the
+    reward oracle. The cache is a byte-identical passthrough, so `pose_cache=False`
+    reproduces the un-cached rollout bit-for-bit."""
     buf = RolloutBuffer()
     bodies = _bodies(env)
     device = next(policy.parameters()).device
     obs = env.reset()
     ep_reward, ep_stats = 0.0, []
+
+    def _scope() -> contextlib.AbstractContextManager[None]:
+        return pose_cache_scope() if pose_cache else contextlib.nullcontext()
+
     with torch.no_grad():
         while len(buf) < rollout_len:
-            obs_t = encode(obs, env.hangar, bodies, encoder)
-            out = policy(_to_device(to_batch([obs_t]), device))
-            kind, mag = sample_action(out)
-            logprob, _ = factored_logprob_entropy(out, kind, mag)
-            tr = obs.active.body.effective_turn_radius_m()  # type: ignore[union-attr]
-            primitive = decode(int(kind), int(mag), turn_radius_m=tr)
-            nxt, reward, done, info = env.step(primitive)
+            with _scope():
+                obs_t = encode(obs, env.hangar, bodies, encoder)
+                out = policy(_to_device(to_batch([obs_t]), device))
+                kind, mag = sample_action(out)
+                logprob, _ = factored_logprob_entropy(out, kind, mag)
+                tr = obs.active.body.effective_turn_radius_m()  # type: ignore[union-attr]
+                primitive = decode(int(kind), int(mag), turn_radius_m=tr)
+                nxt, reward, done, info = env.step(primitive)
             buf.add(
                 obs_t,
                 kind_idx=int(kind),
@@ -156,8 +169,9 @@ def collect_rollout(
                 obs = nxt
         # bootstrap value for a non-done tail
         if not buf.done[-1]:
-            tail = encode(obs, env.hangar, bodies, encoder)
-            buf.last_value = float(policy(_to_device(to_batch([tail]), device)).value)
+            with _scope():
+                tail = encode(obs, env.hangar, bodies, encoder)
+                buf.last_value = float(policy(_to_device(to_batch([tail]), device)).value)
     return buf, ep_stats
 
 

@@ -13,7 +13,7 @@ from typing import Literal
 import numpy as np
 import shapely
 
-from hangarfit.geometry import aircraft_parts_world
+from hangarfit.geometry import cached_parts_world
 from hangarfit.models import Aircraft, GroundObject, Hangar, Placement
 from hangarfit.towplanner import SegmentKind
 from ml import geometry_oracle as go
@@ -153,7 +153,7 @@ def _parked_occupancy(
     wing_polys: list[shapely.Geometry] = []
     for po in obs.parked:
         body = _require_body(bodies, po.object_id)
-        for wp in aircraft_parts_world(body, po.placement):
+        for wp in cached_parts_world(body, po.placement):
             if wp.z_bottom_m < config.z_split_m:
                 low_polys.append(wp.polygon)
             if wp.z_top_m > config.z_split_m:
@@ -175,7 +175,7 @@ def _active_occupancy(obs: Observation, config: EncoderConfig) -> np.ndarray:
         heading_deg=a.pose.heading_deg,
         on_carts=a.on_carts,
     )
-    polys = [wp.polygon for wp in aircraft_parts_world(a.body, placement)]
+    polys = [wp.polygon for wp in cached_parts_world(a.body, placement)]
     if not polys:
         raise ValueError(
             f"_active_occupancy: no parts for active object {a.object_id!r} at its pose"
@@ -192,7 +192,7 @@ def _body_dims(body: Aircraft | GroundObject, config: EncoderConfig) -> tuple[fl
     """(length, width) of the body footprint in its own frame, normalized by pos_ref_m.
     At heading 0 the determinant-−1 transform maps fore-aft to world-y and lateral to
     world-x, so y-extent is length and x-extent is width."""
-    parts = aircraft_parts_world(
+    parts = cached_parts_world(
         body,
         Placement(plane_id=body.id, x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False),
     )

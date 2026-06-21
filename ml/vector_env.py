@@ -9,10 +9,12 @@ byte-identical reference / test oracle); SubprocVectorEnv runs N spawn workers."
 
 from __future__ import annotations
 
+import contextlib
 import multiprocessing as mp
 from collections.abc import Callable, Sequence
 from typing import Any, NamedTuple, cast
 
+from hangarfit.geometry import pose_cache_scope
 from ml.action_space import decode
 from ml.curriculum import EpisodeStart, EpisodeStat
 from ml.encoding import EncoderConfig, ObservationTensors, encode
@@ -30,47 +32,61 @@ class _EnvWorker:
         env: HangarFitEnv,
         encoder: EncoderConfig,
         next_request: Callable[[], EpisodeStart] | None,
+        *,
+        pose_cache: bool = True,
     ) -> None:
         self._env = env
         self._enc = encoder
         self._next_request = next_request
         self._bodies = {**env.fleet, **env.ground_objects}
+        # #733: memoize aircraft_parts_world across this worker's step+encode (one fixed
+        # fleet, so the pose key is never stale). Default-on; the cache is a byte-identical
+        # passthrough, so pose_cache=False reproduces the un-cached run bit-for-bit (the
+        # determinism reference for the byte-identity test). The scope is opened per method
+        # call, so it is per-env even when SyncVectorEnv steps workers in one process.
+        self._pose_cache = pose_cache
+
+    def _scope(self) -> contextlib.AbstractContextManager[None]:
+        return pose_cache_scope() if self._pose_cache else contextlib.nullcontext()
 
     def _encode(self, obs: Observation) -> ObservationTensors:
         return encode(obs, self._env.hangar, self._bodies, self._enc)
 
     def reset(self) -> ObservationTensors:
-        start = self._next_request() if self._next_request is not None else None
-        obs = self._env.reset(
-            requested_ids=start.requested_ids if start else None,
-            seed_anchor_k=start.seed_anchor_k if start else None,
-        )
-        return self._encode(obs)
+        with self._scope():
+            start = self._next_request() if self._next_request is not None else None
+            obs = self._env.reset(
+                requested_ids=start.requested_ids if start else None,
+                seed_anchor_k=start.seed_anchor_k if start else None,
+            )
+            return self._encode(obs)
 
     def step(
         self, kind_idx: int, mag_idx: int
     ) -> tuple[ObservationTensors, float, bool, StepInfo, EpisodeStat | None]:
-        obs = self._env._observe()
-        if obs.active is None:
-            raise RuntimeError(
-                "_EnvWorker.step called on a terminal env (auto-reset failed or step after done)"
-            )
-        tr = self._env._body(obs.active.object_id).effective_turn_radius_m()
-        action = decode(kind_idx, mag_idx, turn_radius_m=tr)
-        sem, reward, done, info = self._env.step(action)
-        ep: EpisodeStat | None = None
-        if done:
-            ep = EpisodeStat(
-                fraction_placed=info.placed / info.total,
-                valid=info.valid,
-                total_reward=0.0,  # per-episode reward sum is tracked by the collector
-            )
-            start = self._next_request() if self._next_request is not None else None
-            sem = self._env.reset(
-                requested_ids=start.requested_ids if start else None,
-                seed_anchor_k=start.seed_anchor_k if start else None,
-            )
-        return self._encode(sem), reward, done, info, ep
+        with self._scope():
+            obs = self._env._observe()
+            if obs.active is None:
+                raise RuntimeError(
+                    "_EnvWorker.step called on a terminal env (auto-reset failed or step "
+                    "after done)"
+                )
+            tr = self._env._body(obs.active.object_id).effective_turn_radius_m()
+            action = decode(kind_idx, mag_idx, turn_radius_m=tr)
+            sem, reward, done, info = self._env.step(action)
+            ep: EpisodeStat | None = None
+            if done:
+                ep = EpisodeStat(
+                    fraction_placed=info.placed / info.total,
+                    valid=info.valid,
+                    total_reward=0.0,  # per-episode reward sum is tracked by the collector
+                )
+                start = self._next_request() if self._next_request is not None else None
+                sem = self._env.reset(
+                    requested_ids=start.requested_ids if start else None,
+                    seed_anchor_k=start.seed_anchor_k if start else None,
+                )
+            return self._encode(sem), reward, done, info, ep
 
 
 class VecStep(NamedTuple):

@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from shapely.geometry import box
 
 from hangarfit.collisions import check
-from hangarfit.geometry import aircraft_parts_world
+from hangarfit.geometry import cached_parts_world
 from hangarfit.models import Aircraft, GroundObject, Hangar, Layout, Placement
 from hangarfit.towplanner import (
     CUSP_PENALTY as _CUSP_PENALTY,
@@ -22,6 +22,7 @@ from hangarfit.towplanner import (
     DubinsArc,
     Pose,
     Segment,
+    _aabb,
     _build_obstacles,
     _motion_clear,
     _Obstacles,
@@ -88,7 +89,7 @@ def intrusion_area_m2(
             hangar.length_m,
         )
     total = 0.0
-    for wp in aircraft_parts_world(body, placement):
+    for wp in cached_parts_world(body, placement):
         poly = wp.polygon
         total += poly.difference(floor).area  # outside the floor (walls/notch)
         if bay_poly is not None:
@@ -176,9 +177,26 @@ def swept_intrusion_m2(
             on_carts=False,
         )
         # Overlap against parked obstacle parts + out-of-floor (front apron excluded).
+        # ``cached_parts_world`` reuses the mover parts ``_motion_clear`` just built for
+        # this same pose inside an active pose_cache_scope (#733). The obstacle AABBs are
+        # precomputed (static across poses), so an AABB-disjointness pre-filter skips the
+        # exact shapely intersects for pairs that cannot overlap.
         leak = 0.0
-        for wp in aircraft_parts_world(body, pl):
-            for op in obstacles.world_parts:
+        for wp in cached_parts_world(body, pl):
+            wp_xmin, wp_ymin, wp_xmax, wp_ymax = _aabb(wp.polygon)
+            for op, (op_xmin, op_ymin, op_xmax, op_ymax) in zip(
+                obstacles.world_parts, obstacles.world_part_aabbs, strict=True
+            ):
+                # Touching-inclusive (clearance 0): a STRICT AABB gap means the polygons
+                # are disjoint -> 0 intersection area, so skipping is byte-identical. A
+                # touching/overlapping AABB falls through to the exact predicate.
+                if (
+                    wp_xmin - op_xmax > 0.0
+                    or op_xmin - wp_xmax > 0.0
+                    or wp_ymin - op_ymax > 0.0
+                    or op_ymin - wp_ymax > 0.0
+                ):
+                    continue
                 if wp.polygon.intersects(op.polygon):
                     leak += wp.polygon.intersection(op.polygon).area
         worst = max(worst, leak)
@@ -275,16 +293,16 @@ def active_misfit_m2(
         for p in parked_layout.placements
         for b in [parked_layout.fleet.get(p.plane_id)]
         if b is not None
-        for wp in aircraft_parts_world(b, p)
+        for wp in cached_parts_world(b, p)
     ] + [
         wp
         for gp in parked_layout.ground_object_placements
         for b in [parked_layout.ground_objects.get(gp.plane_id)]
         if b is not None
-        for wp in aircraft_parts_world(b, gp)
+        for wp in cached_parts_world(b, gp)
     ]
     total = 0.0
-    for wp in aircraft_parts_world(body, pl):
+    for wp in cached_parts_world(body, pl):
         poly = wp.polygon
         total += poly.difference(floor).intersection(upper).area  # in-hangar wall/notch intrusion
         for op in obstacle_parts:
