@@ -479,8 +479,10 @@ All notable changes to this project are documented here. Format follows [Keep a 
   converged plateau (slope alone cannot tell floor-flat from ceiling-flat). New default-neutral
   CLI levers: `--promotion-window`, `--auto-budget-min-iters`, `--auto-budget-min-level`.
   **Deliberate re-baseline:** the gate now advances rungs at different iterations than the
-  buggy per-episode tail did (run-twice determinism and `--auto-budget`-off byte-identity are
-  preserved). Dev/CI-only (`ml/`); no shipped-wheel surface.
+  buggy per-episode tail did, so trained policies differ from pre-#742 runs. Run-twice
+  determinism is preserved, and the `--auto-budget` flag stays default-neutral (toggling it off
+  adds no controller call) — the re-baseline lives in the gate itself, not the auto-budget
+  machinery. Dev/CI-only (`ml/`); no shipped-wheel surface.
 
 - **Learned backend (#732, epic #607): PBRS now forces Φ(terminal) = 0 — removes a
   spurious −Φ(terminal) return bias.** The potential-based reward shaping added

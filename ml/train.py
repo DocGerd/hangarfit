@@ -454,8 +454,8 @@ def train_curriculum(
         # `pol.window` completed episodes (the #742 fix). should_promote thresholds its windowed
         # mean and the #734 auto-budget controller fits its slope on the SAME series, so the gate
         # and the budget watch one honest trajectory. A rung the transferred policy already
-        # masters can still promote on its first competent iteration — the curriculum advances as
-        # soon as competent, it does not "serve time" per rung.
+        # masters can promote as soon as `pol.window` consecutive iterations are competent (3 by
+        # default) — the curriculum advances on sustained competency, it does not "serve time".
         promo_history: list[float] = []
         # partial binds THIS stage's pool/n/rng by value (so the per-iteration closure
         # is not the flake8-bugbear B023 late-binding trap) and stays mypy-inferrable
@@ -465,7 +465,8 @@ def train_curriculum(
         # stops early on a valid_placed plateau; without one, the fixed pol.max_iters cap.
         # auto_budget is None (default) => same loop bound + no controller calls.
         ceiling = auto_budget.max_iters if auto_budget is not None else pol.max_iters
-        # n_envs == 1: the single-stream path (byte-identical when auto_budget is None).
+        # n_envs == 1: the legacy single-stream path — byte-identical to the pre-#708 loop (the
+        # #708 contract); it shares the #742 per-iteration gate with the vectorized path below.
         if n_envs == 1:
             for it in range(ceiling):
                 # Per-rung entropy schedule: `it` resets to 0 each stage, so each rung
@@ -957,18 +958,18 @@ def main(argv: Sequence[str] | None = None) -> None:
         # the fixed per-rung cap (byte-identical default). Each per-knob override (max-iters /
         # min-iters / min-level) is inert without the switch, so fail LOUD rather than silently
         # dropping a typed numeric flag. Unsupplied knobs fall back to the BudgetController default.
-        budget_overrides = {
-            k: v
-            for k, v in (
-                ("max_iters", args.auto_budget_max_iters),
-                ("min_iters", args.auto_budget_min_iters),
-                ("min_level", args.auto_budget_min_level),
-            )
-            if v is not None
-        }
-        if budget_overrides and not args.auto_budget:
-            flags = ", ".join("--auto-budget-" + k.replace("_", "-") for k in budget_overrides)
-            parser.error(f"{flags} require --auto-budget")
+        # (field, user-facing flag, value) — the flag string is explicit, not derived from the
+        # field name, so a future knob whose flag diverges from its dataclass field can't desync.
+        budget_specs = (
+            ("max_iters", "--auto-budget-max-iters", args.auto_budget_max_iters),
+            ("min_iters", "--auto-budget-min-iters", args.auto_budget_min_iters),
+            ("min_level", "--auto-budget-min-level", args.auto_budget_min_level),
+        )
+        budget_overrides = {field: v for field, _flag, v in budget_specs if v is not None}
+        supplied_flags = [flag for _field, flag, v in budget_specs if v is not None]
+        if supplied_flags and not args.auto_budget:
+            verb = "requires" if len(supplied_flags) == 1 else "require"
+            parser.error(f"{', '.join(supplied_flags)} {verb} --auto-budget")
         budget = BudgetController(**budget_overrides) if args.auto_budget else None
         history = train_curriculum(
             seed=args.seed,
