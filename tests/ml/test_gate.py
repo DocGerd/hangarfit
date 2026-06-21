@@ -149,3 +149,18 @@ def test_main_defaults_rung_to_trio_box(tmp_path, capsys):
     path = _write(tmp_path, [_rec("trio-box", 0, vp=0.95, fp=0.97)])
     assert main([str(path)]) == 0
     assert "trio-box" in capsys.readouterr().out
+
+
+def test_gate_verdict_skips_rows_with_partial_metrics():
+    # A post-hoc run on an arbitrary metrics file may carry a row with valid_placed
+    # present but fraction_placed missing/None (asymmetric to the emitter contract). The
+    # harness must skip such a row, not crash with an opaque None-comparison TypeError.
+    records = [
+        {"stage": "trio-box", "iter": 0, "valid_placed": 0.5, "fraction_placed": None},
+        {"stage": "trio-box", "iter": 1, "valid_placed": 0.6},  # fraction_placed key absent
+        _rec("trio-box", 2, vp=0.92, fp=0.95),
+    ]
+    v = gate_verdict(records, "trio-box", threshold=0.9)
+    assert v.outcome == "mastered"
+    assert v.n_iters == 1  # only the well-formed row counts
+    assert v.peak_valid_placed == 0.92

@@ -6,7 +6,8 @@ PURE: stdlib only (``json`` / ``dataclasses``), **no torch** — so it runs unde
 ``python -m ml.gate METRICS.jsonl --rung trio-box``.
 
 Reads ``valid_placed`` (the #710 compound mastery axis: ``fraction_placed`` credited
-only on collision-free episodes), NOT ``valid_rate`` — an empty layout is vacuously
+only on **valid** episodes — the #694 product checker, ``collisions.check`` *plus* Caddy
+egress, not merely collision-free), NOT ``valid_rate`` — an empty layout is vacuously
 "valid", so ``valid_rate -> 1`` under place-nothing is the *failure* signature, not a
 win. The piling watchdog flags the other failure mode: ``valid_placed`` low while
 ``fraction_placed`` high = the policy commits objects *invalidly* (piling), distinct
@@ -54,18 +55,30 @@ def gate_verdict(
     ``piling`` if any piling iter occurred, ``place-nothing`` if it never placed much
     (peak ``fraction_placed < piling_fraction``: fled to do-nothing), else ``in-progress``
     (placing validly and climbing, just below ``threshold``)."""
-    rows = [r for r in records if r.get("stage") == rung and r.get("valid_placed") is not None]
-    # JSON values are typed `object`; the emitter (history_metric_records) guarantees iter:int
-    # and the rates:float, and the filter above drops the n_eps==0 rows where the rates are None
-    # (fraction_placed is None iff valid_placed is None), so the casts are sound.
-    curve: list[tuple[int, float, float]] = [
-        (
-            cast("int", r["iter"]),
-            cast("float", r["valid_placed"]),
-            cast("float", r["fraction_placed"]),
-        )
-        for r in rows
+    rows = [
+        r
+        for r in records
+        if r.get("stage") == rung
+        and r.get("iter") is not None
+        and r.get("valid_placed") is not None
+        and r.get("fraction_placed") is not None
     ]
+    # JSON values are typed `object`; the filter above guarantees the three keys are present
+    # and numeric (the emitter writes the rates as None together for n_eps==0 iterations, and
+    # a hand-rolled file with a partial row is skipped here rather than crashing on a None
+    # comparison), so the casts are sound. Sort by iter so `final_*` is the last *iteration*,
+    # not merely the last line of a possibly out-of-order or concatenated file.
+    curve: list[tuple[int, float, float]] = sorted(
+        (
+            (
+                cast("int", r["iter"]),
+                cast("float", r["valid_placed"]),
+                cast("float", r["fraction_placed"]),
+            )
+            for r in rows
+        ),
+        key=lambda ivf: ivf[0],
+    )
 
     if not curve:
         return GateVerdict(
@@ -122,8 +135,8 @@ _OUTCOME_GLOSS = {
 
 
 def render_verdict(v: GateVerdict) -> str:
-    """A human-readable multi-line verdict. Headlines ``valid_placed`` (the mastery axis),
-    never ``valid_rate`` (vacuously 1.0 under place-nothing — the documented trap)."""
+    """A human-readable multi-line verdict, headlining ``valid_placed`` (see the module
+    docstring for why never ``valid_rate``)."""
     if v.outcome == "no-data":
         return f"[{v.rung}] NO-DATA — {_OUTCOME_GLOSS['no-data']}"
     comp = f"iter {v.competency_iter}" if v.competency_iter is not None else "never"

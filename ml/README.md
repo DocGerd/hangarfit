@@ -313,7 +313,7 @@ competency at `w_col=20`). Read `valid_placed`, NOT `valid_rate` (an empty layou
 The two-seed `pair-box` PASS above broke the *2-object* cliff. The open question is whether the
 same four-lever ladder clears the **3-object** `trio-box` rung (`max_objects=3`, already in
 `DEFAULT_LADDER`) — historically every ≥2-object rung collapsed, and `trio-box` is the first
-untested one past the fix. This is a **checkpoint-resume sweep**: take a checkpoint whose
+≥2-object rung after the validated `pair-box`. This is a **checkpoint-resume sweep**: take a checkpoint whose
 `completed_stages` already include `pair-box` (the `--checkpoint-out` from the pair-box gate above),
 then train **only** `trio-box` with `--stop-after-rung trio-box`. The L4 clip knobs are now the
 default (#728) but are kept explicit below for reproducibility.
