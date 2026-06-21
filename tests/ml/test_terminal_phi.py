@@ -26,7 +26,7 @@ def test_terminal_phi_zeroed_on_budget_exhaustion():
     )
     env.reset()
     phi_prev = env._prev_potential
-    assert phi_prev != 0.0  # active object pending → Φ ≠ 0 (non-vacuous)
+    assert abs(phi_prev) > 1e-9  # active object pending → Φ ≠ 0 (non-vacuous)
 
     _obs, _r, done, info = env.step(Primitive(kind="S", magnitude=1.0, gear=1))
 
@@ -48,7 +48,7 @@ def test_terminal_phi_zeroed_on_invalid_completion():
     env.reset()
     env.step(Park())  # park object 1 at the door spawn → not done, spawn object 2
     phi_prev = env._prev_potential
-    assert phi_prev != 0.0  # object 2 still active → Φ ≠ 0
+    assert abs(phi_prev) > 1e-9  # object 2 still active → Φ ≠ 0
 
     _obs, _r, done, info = env.step(Park())  # park object 2 onto object 1 → done, invalid
 
@@ -56,16 +56,19 @@ def test_terminal_phi_zeroed_on_invalid_completion():
     assert info.terms["shaping"] == pytest.approx(-phi_prev)
 
 
-def test_clean_valid_completion_shaping_unchanged():
-    """A clean valid completion already has Φ(terminal) ≈ 0, so forcing it to 0 leaves the
-    terminal shaping ≈ −Φ(prev) just as before (the fix is a no-op on the clean path)."""
-    diff = DifficultyConfig(max_objects=1, per_object_step_budget=20, total_step_budget=40)
+def test_clean_valid_completion_phi_zero_is_a_noop():
+    """On a genuinely VALID in-hangar completion Φ(terminal) = 0 *naturally* (no active
+    object, nothing unplaced, no overlap), so forcing it to 0 is a true no-op: the terminal
+    shaping is −Φ(prev) exactly as it would be without the fix. Contrast the two non-clean
+    terminals above, where Φ(terminal) was nonzero pre-fix."""
+    diff = DifficultyConfig(max_objects=1, per_object_step_budget=40, total_step_budget=80)
     env = HangarFitEnv(
         hangar=empty_hangar(), fleet=_fuji(), requested_ids=("fuji",), difficulty=diff
     )
     env.reset()
+    for _ in range(10):  # drive the object in past the door (y >= 0) so the parked layout is valid
+        env.step(Primitive(kind="S", magnitude=1.0, gear=1))
     phi_prev = env._prev_potential
     _obs, _r, done, info = env.step(Park())
-    assert done
-    # Φ(terminal)=0 either way on a clean completion, so the identity holds exactly.
+    assert done and info.valid  # the point: a genuinely clean, valid completion
     assert info.terms["shaping"] == pytest.approx(-phi_prev)

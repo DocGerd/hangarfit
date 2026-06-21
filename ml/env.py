@@ -286,7 +286,8 @@ class HangarFitEnv:
                 self._spawn()
             # #732: PBRS requires Φ(terminal)=0 so the undiscounted return carries no
             # spurious −Φ(terminal) bias; on the terminal Park the shaping reduces to
-            # −Φ(prev). Φ happens to be ~0 only on a clean valid completion, so this is
+            # −Φ(prev). Φ is ~0 on a clean valid completion but nonzero on the non-clean
+            # terminals (an object still unplaced, or residual overlap), so this is
             # load-bearing for the invalid/piled completions the curriculum distinguishes.
             new_phi = 0.0 if done else self._potential()
             ctx = RewardContext(

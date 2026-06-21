@@ -452,7 +452,8 @@ All notable changes to this project are documented here. Format follows [Keep a 
   constant `−Φ(terminal)` term — provably policy-invariant (Ng–Harada–Russell) only when
   `Φ(terminal) = 0`. `Φ` is ~0 on a *clean valid* completion but **nonzero** on exactly
   the non-clean terminals the curriculum must distinguish (budget-exhaustion stops with an
-  object still unplaced; invalid/piled completions with residual overlap). `HangarFitEnv`
+  object still unplaced; invalid/piled completions with residual overlap and/or an object
+  still unplaced). `HangarFitEnv`
   now sets `Φ(s′) = 0` on both terminal paths (the terminal Park and the budget-exhaustion
   movement), so the terminal shaping reduces to `−Φ(prev)`. **Deliberate re-baseline:** this
   changes reward values on non-clean terminal episodes (clean completions are unaffected).
