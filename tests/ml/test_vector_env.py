@@ -501,3 +501,36 @@ def test_subproc_faster_than_sync_on_multiobject_stage():
     print(f"\n  sync={sync_s:.3f}s  subproc={sub_s:.3f}s  ratio={ratio:.2f}x")
     # subproc has spawn overhead; require it to be no worse than 2.5x sync (loose smoke).
     assert sub_s < sync_s * 2.5, f"subproc {sub_s:.2f}s vs sync {sync_s:.2f}s (ratio {ratio:.2f}x)"
+
+
+# ---------------------------------------------------------------------------
+# #752: the worker ships only the DYNAMIC raster channels (uint8); the parent
+# re-prepends a cached static block. Both backends emit the identical trimmed
+# form (so Sync still equals Subproc), and trimmed + static == full encode().
+# ---------------------------------------------------------------------------
+
+
+def test_envworker_encodes_trimmed_dynamic_uint8_raster():
+    """The worker raster is the 3 dynamic channels as uint8 — 4x smaller on the wire and
+    free of the redundant-every-step static channels (#752)."""
+    from ml.encoding import DYNAMIC_CHANNELS
+
+    w = _EnvWorker(build_trivial_env(), EncoderConfig(), next_request=None)
+    obs = w.reset()
+    assert obs.raster.shape[0] == DYNAMIC_CHANNELS and obs.raster.dtype == np.uint8
+
+
+def test_envworker_trimmed_plus_static_reassembles_to_full_encode():
+    """Byte-identity: the worker's trimmed raster + the env's cached static block
+    reassembles to the full encode() raster bit-for-bit, so the policy input is unchanged."""
+    from ml.encoding import encode, reassemble_raster, static_block
+
+    enc = EncoderConfig()
+    env = build_trivial_env()
+    w = _EnvWorker(env, enc, next_request=None)
+    trimmed = w.reset()
+    obs = env._observe()  # post-reset state the worker just encoded
+    bodies = {**env.fleet, **env.ground_objects}
+    full = encode(obs, env.hangar, bodies, enc)
+    reassembled = reassemble_raster(static_block(env.hangar, enc), trimmed.raster)
+    assert np.array_equal(reassembled, full.raster)

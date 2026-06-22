@@ -6,6 +6,42 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Learned backend (#753, epic #607 Wave 2 / #759): episode-scoped pose cache — widen
+  #733 from per-step to per-episode (byte-identical).** #733's `cached_parts_world` memo was
+  opened in a fresh `pose_cache_scope()` per `_EnvWorker.step`/`reset`, so it was thrown away
+  every timestep and every frozen parked / identity-pose body was re-transformed from scratch
+  each step. The worker now holds **one pose dict across the whole episode** (`pose_cache_scope`
+  gained an optional `cache` arg so a caller-owned dict persists across scopes), cleared at each
+  episode boundary (reset + the in-step auto-reset) to bound memory. Each worker owns its own
+  dict, so `SyncVectorEnv` (N workers, one process, one ContextVar) never cross-leaks and the
+  ContextVar set/reset stays per-call LIFO-safe. The genuine win is the encoder's repeated
+  identity-pose `_body_dims` / `_parked_occupancy` rebuilds (the heaviest parked consumers are
+  already env-cached, so the active mover + swept arc still miss — that is #735/#754). **Byte-
+  identical** (ADR-0003): `cached_parts_world` is referentially transparent (exact-float pose
+  key, frozen-slots `WorldPart`, read-only consumers), so widening changes only *when* a pose is
+  rebuilt, never its bytes — pinned by the #733 cache-on/off reward+obs stream test and the
+  solver/towplanner determinism canaries (the `cache=None` default keeps `solve`/`plan_fill`
+  byte-identical). A new test proves the identity body-dims pose is rebuilt **once per episode**,
+  not once per step. Dev/CI-only (`ml/`); no shipped-wheel surface.
+
+- **Learned backend (#752, epic #607 Wave 2 / #759): shrink the rollout IPC payload —
+  uint8 raster + drop the re-shipped static channels (byte-identical).** Every vectorized
+  training step pickles each worker's 7×192×96 float32 raster over a Pipe, but two-thirds of
+  that traffic is waste: the raster is binary occupancy shipped at 4 bytes/cell, and 4 of the 7
+  channels (`oob`/`bay`/`apron`/`door`) depend only on `(hangar, config)` yet were recomputed
+  *and* re-shipped byte-identically by every worker every step. The encoder now splits into a
+  **static block** (`encoding.static_block(hangar, config)` — the 4 hangar-fixed channels) and
+  `encode_dynamic` (the 3 observation-dependent channels as **uint8** 0/1); the worker ships only
+  the dynamic block, and the parent re-prepends the rung's cached static block in `to_batch`
+  (`encoding.reassemble_raster`), rehydrating the full 7-channel float32 raster. This cuts the
+  per-step worker→parent payload ~57% **and** deletes the 3 static `shapely.contains_xy` calls
+  from every worker step (computed once per rung instead). **Byte-identical** (ADR-0003): the
+  dynamic block is binary, so float32(0/1)→uint8→float32 is lossless and `reassemble_raster`
+  reproduces `encode()`'s raster bit-for-bit (`test_reassemble_raster_equals_full_encode_bitwise`);
+  `to_batch` keys on the uint8 dtype, so every non-vectorized caller (full float32 obs) passes
+  straight through, and Sync still equals Subproc byte-for-byte. Dev/CI-only (`ml/`); no
+  shipped-wheel surface.
+
 - **Learned backend (#751, epic #607 Wave 1 / #758): opt-in `--vec-start-method`
   {spawn,forkserver,fork} to cut per-worker training RAM.** RAM — not cores or GPU — is the
   ceiling for both `--n-envs auto` (#747) and the concurrent sweep runner (#749): `spawn`

@@ -18,10 +18,10 @@ from collections.abc import Callable, Iterator, Sequence
 from multiprocessing.connection import wait
 from typing import Any, NamedTuple, cast
 
-from hangarfit.geometry import pose_cache_scope
+from hangarfit.geometry import WorldPart, pose_cache_scope
 from ml.action_space import decode
 from ml.curriculum import EpisodeStart, EpisodeStat
-from ml.encoding import EncoderConfig, ObservationTensors, encode
+from ml.encoding import EncoderConfig, ObservationTensors, encode_dynamic
 from ml.env import HangarFitEnv
 from ml.types import Observation, StepInfo
 
@@ -43,22 +43,35 @@ class _EnvWorker:
         self._enc = encoder
         self._next_request = next_request
         self._bodies = {**env.fleet, **env.ground_objects}
-        # #733: route this worker's step+encode geometry through cached_parts_world
+        # #733/#753: route this worker's step+encode geometry through cached_parts_world
         # (pose-memoized inside the scope; delegates to aircraft_parts_world on a miss).
         # One fixed fleet, so the pose key is never stale. Default-on; the cache is a
         # byte-identical passthrough, so pose_cache=False reproduces the un-cached run
-        # bit-for-bit (the determinism reference for the byte-identity test). The scope is
-        # opened per method call, so it is per-env even when SyncVectorEnv steps workers in
-        # one process.
+        # bit-for-bit (the determinism reference for the byte-identity test).
+        #
+        # #753: the memo is held in THIS worker's own dict across the whole EPISODE (passed
+        # explicitly to pose_cache_scope), not a fresh dict per call — so frozen parked/
+        # identity poses (parked occupancy, body-dims) rebuilt one step are cache hits the
+        # next. The dict is per-worker, so SyncVectorEnv's N workers over one ContextVar never
+        # cross-leak; the ContextVar set/reset stays per-call (LIFO-safe). It is cleared at
+        # each episode boundary (reset + the in-step auto-reset) so a swept episode's many
+        # distinct poses don't accumulate across episodes.
         self._pose_cache = pose_cache
+        self._pose_dict: dict[tuple[str, float, float, float], list[WorldPart]] = {}
 
     def _scope(self) -> contextlib.AbstractContextManager[None]:
-        return pose_cache_scope() if self._pose_cache else contextlib.nullcontext()
+        return pose_cache_scope(self._pose_dict) if self._pose_cache else contextlib.nullcontext()
 
     def _encode(self, obs: Observation) -> ObservationTensors:
-        return encode(obs, self._env.hangar, self._bodies, self._enc)
+        # #752: ship only the DYNAMIC raster channels (uint8); the parent re-prepends a
+        # cached static block (encoding.static_block) and rehydrates to float32 in to_batch.
+        # Both Sync and Subproc workers emit this identical trimmed form, so Sync still
+        # equals Subproc byte-for-byte; the static channels are neither re-encoded nor
+        # re-shipped every step.
+        return encode_dynamic(obs, self._env.hangar, self._bodies, self._enc)
 
     def reset(self) -> ObservationTensors:
+        self._pose_dict.clear()  # #753: new episode starts from an empty cache (bound memory)
         with self._scope():
             start = self._next_request() if self._next_request is not None else None
             obs = self._env.reset(
@@ -87,6 +100,9 @@ class _EnvWorker:
                     valid=info.valid,
                     total_reward=0.0,  # per-episode reward sum is tracked by the collector
                 )
+                # #753: episode boundary — clear the cache before the fresh episode's poses
+                # repopulate it, so distinct episodes' poses never accumulate (bound memory).
+                self._pose_dict.clear()
                 start = self._next_request() if self._next_request is not None else None
                 sem = self._env.reset(
                     requested_ids=start.requested_ids if start else None,
