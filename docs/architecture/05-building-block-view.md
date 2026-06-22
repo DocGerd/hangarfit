@@ -46,7 +46,6 @@ flowchart TD
     collisions --> models
     collisions --> sat
 
-    learned --> collisions
     learned --> models
 
     visualize --> geometry
@@ -358,11 +357,13 @@ The sibling entry point to `solver.solve` for the opt-in learned backend
 (`--backend learned`, epic #607 / #706). `solve_learned(scenario, weights_path, …)`
 returns the same `SolveResult` shape, so every downstream consumer (render /
 `view` / `--write-yaml`) stays backend-agnostic. It is a **thin seam**: it
-validates the weights path, then lazy-imports `ml.infer.solve_learned_impl` (so
-the wheel never drags in `ml` / `onnxruntime` at import time) and delegates. A
+validates the weights path, then lazy-imports `ml.infer.solve_learned_impl` and
+delegates (so the wheel never drags in `ml` / `onnxruntime` at import time). A
 missing weights file, a missing `[learned-infer]` extra, or an absent `ml/`
 package raises `LearnedBackendUnavailableError` with an actionable message rather
-than an import traceback. **Determinism:** the learned proposer is *not* under
+than an import traceback. Inference is **torch-free** — `ml.infer` needs only
+`onnxruntime` (the lightweight `[learned-infer]` extra, distinct from the heavier
+torch `[train]` stack used to *produce* the weights). **Determinism:** the learned proposer is *not* under
 the ADR-0003 byte-identical contract — `collisions.check` (plus `towplanner`)
 remains the sole arbiter of validity and routability ([ADR-0027](../adr/0027-learned-backend-determinism-scope.md)).
 Only this seam ships in the wheel; the inference implementation (`ml.infer`) and
