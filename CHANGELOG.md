@@ -25,6 +25,17 @@ All notable changes to this project are documented here. Format follows [Keep a 
   (`test_compute_gae_vec_byte_identical_to_per_env_loop`). Dev/CI-only (`ml/` + `bench/`); no
   shipped-wheel surface. The torch-CI hook stays scoped out of v1 (CI installs only `[dev]`, no torch).
 
+- **Learned backend (#748, epic #607 Wave 1 / #758): out-of-order (as-completed) vec-env
+  fan-in.** `SubprocVectorEnv` collected each step's N worker replies with a strict in-order
+  blocking recv (`worker 0`, then `1`, …), so the single slowest shapely worker stalled the
+  whole batch every step (head-of-line blocking) — worsening as `--n-envs` and per-rung
+  shapely-cost variance grow. It now drains workers **as they complete**
+  (`multiprocessing.connection.wait`) and **re-indexes by worker** before batching, so the
+  per-index payloads and the policy input are unchanged — only the pipe read order differs.
+  **Byte-identical, no flag** (pinned by `test_sync_equals_subproc_byte_identical` + a new
+  reversed-completion-order test proving index alignment is preserved). Recovers the
+  worst-case-worker stall; the win grows with `n_envs`. Dev/CI-only (`ml/`); no shipped-wheel surface.
+
 - **Learned backend (#747, epic #607 Wave 1 / #758): cap worker BLAS/OMP threads +
   `--n-envs auto` to fill idle cores.** A measured `--n-envs 16` run pinned only ~5.5 of
   32 cores, and the spawn workers ran *unconstrained* BLAS/OMP/MKL threading, so naively
