@@ -134,6 +134,63 @@ def test_sync_equals_subproc_byte_identical():
     sync.close()
 
 
+# ---------------------------------------------------------------------------
+# #748: out-of-order (as-completed) fan-in — drain workers as they finish, but
+# re-index by worker so batch assembly is byte-identical to a strict in-order recv.
+# ---------------------------------------------------------------------------
+
+
+def test_subproc_step_reindexes_out_of_order_completions(monkeypatch):
+    """The fan-in drains workers as they complete (multiprocessing.connection.wait), so the
+    READ order is non-deterministic. Forcing wait() to surface them in REVERSE order must
+    NOT scramble the batch: each worker's payload still lands at its own index, matching the
+    in-order Sync reference. A re-sort bug (append-in-arrival-order) would fail this."""
+    import ml.vector_env as ve
+
+    real_wait = ve.wait
+
+    def reversed_wait(conns, *args, **kwargs):
+        return list(reversed(real_wait(conns, *args, **kwargs)))
+
+    monkeypatch.setattr(ve, "wait", reversed_wait)
+
+    # Distinct per-worker actions -> distinct rewards/obs, so a mis-indexing is observable.
+    actions = [(1, 1), (1, 2), (1, 3)]
+    sync = SyncVectorEnv([_trivial_worker_fn() for _ in range(3)])
+    sync.reset()
+    ss = sync.step(actions)
+    sync.close()
+    assert len(set(ss.rewards)) > 1, "actions must yield distinct per-worker rewards (non-vacuous)"
+
+    with SubprocVectorEnv([_trivial_worker_fn, _trivial_worker_fn, _trivial_worker_fn]) as sub:
+        sub.reset()
+        bs = sub.step(actions)
+
+    assert bs.rewards == ss.rewards  # index alignment preserved despite reversed completion
+    assert bs.dones == ss.dones
+    for a, b in zip(ss.obs, bs.obs, strict=True):
+        assert np.array_equal(a.raster, b.raster)
+        assert np.array_equal(a.tokens, b.tokens)
+
+
+def test_subproc_reset_reindexes_out_of_order_completions(monkeypatch):
+    """reset() shares the as-completed drain; its encoded obs must also stay index-aligned
+    under reversed completion order."""
+    import ml.vector_env as ve
+
+    real_wait = ve.wait
+    monkeypatch.setattr(ve, "wait", lambda c, *a, **k: list(reversed(real_wait(c, *a, **k))))
+
+    sync = SyncVectorEnv([_trivial_worker_fn() for _ in range(3)])
+    sref = sync.reset()
+    sync.close()
+    with SubprocVectorEnv([_trivial_worker_fn, _trivial_worker_fn, _trivial_worker_fn]) as sub:
+        sb = sub.reset()
+    for a, b in zip(sref, sb, strict=True):
+        assert np.array_equal(a.raster, b.raster)
+        assert b.active_index == a.active_index
+
+
 def _broken_worker_fn():
     raise ValueError("boom in child")
 

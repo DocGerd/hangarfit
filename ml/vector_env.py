@@ -12,6 +12,7 @@ from __future__ import annotations
 import contextlib
 import multiprocessing as mp
 from collections.abc import Callable, Sequence
+from multiprocessing.connection import wait
 from typing import Any, NamedTuple, cast
 
 from hangarfit.geometry import pose_cache_scope
@@ -228,19 +229,40 @@ class SubprocVectorEnv:
             raise RuntimeError(f"SubprocVectorEnv worker {worker_idx} failed: {payload}")
         return payload
 
+    def _recv_all(self) -> list[object]:
+        """Drain all N workers' replies AS THEY COMPLETE (``multiprocessing.connection.wait``),
+        returning the payloads in WORKER-INDEX order. The read order is non-deterministic
+        (fastest worker first), which removes the slowest-worker head-of-line stall of a
+        strict in-order recv (#748); re-indexing by worker keeps the per-index payloads and
+        the downstream batch assembly — and thus the policy input — byte-identical (only the
+        read order changes, pinned by ``test_sync_equals_subproc_byte_identical``). Each
+        worker sends exactly one reply per command, so one recv drains a ready connection."""
+        results: list[object] = [None] * self._n
+        index_of = {p: i for i, p in enumerate(self._parents)}
+        pending = list(self._parents)
+        while pending:
+            # wait() is typed to also accept sockets/fds, so it returns a wider union; we
+            # only ever pass our own Connections, so each ready object is one of them.
+            for ready in wait(pending):
+                conn = cast("mp.connection.Connection", ready)
+                i = index_of[conn]
+                results[i] = self._recv(conn, i)
+                pending.remove(conn)
+        return results
+
     def reset(self) -> list[ObservationTensors]:
         for p in self._parents:
             p.send(("reset", None))
-        # _recv returns the (untyped) pipe payload; for reset it is always an
+        # _recv_all returns payloads in worker-index order; for reset each is an
         # ObservationTensors (the worker's encoded obs). Narrow it for mypy.
-        return [cast(ObservationTensors, self._recv(p, i)) for i, p in enumerate(self._parents)]
+        return [cast(ObservationTensors, r) for r in self._recv_all()]
 
     def step(self, actions: Sequence[tuple[int, int]]) -> VecStep:
         if len(actions) != self._n:
             raise ValueError(f"expected {self._n} actions, got {len(actions)}")
         for p, (k, m) in zip(self._parents, actions, strict=True):
             p.send(("step", (int(k), int(m))))
-        results = [self._recv(p, i) for i, p in enumerate(self._parents)]
+        results = self._recv_all()
         obs = [r[0] for r in results]  # type: ignore[index]
         return VecStep(
             obs,

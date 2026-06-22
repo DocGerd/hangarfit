@@ -6,6 +6,17 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Learned backend (#748, epic #607 Wave 1 / #758): out-of-order (as-completed) vec-env
+  fan-in.** `SubprocVectorEnv` collected each step's N worker replies with a strict in-order
+  blocking recv (`worker 0`, then `1`, …), so the single slowest shapely worker stalled the
+  whole batch every step (head-of-line blocking) — worsening as `--n-envs` and per-rung
+  shapely-cost variance grow. It now drains workers **as they complete**
+  (`multiprocessing.connection.wait`) and **re-indexes by worker** before batching, so the
+  per-index payloads and the policy input are unchanged — only the pipe read order differs.
+  **Byte-identical, no flag** (pinned by `test_sync_equals_subproc_byte_identical` + a new
+  reversed-completion-order test proving index alignment is preserved). Recovers the
+  worst-case-worker stall; the win grows with `n_envs`. Dev/CI-only (`ml/`); no shipped-wheel surface.
+
 - **Learned backend (#734, epic #607): slope-aware `--auto-budget` per curriculum rung.**
   A fixed `--max-iters-per-stage` cap is wrong in both directions — it truncated the trio-box
   (N=3) run while `valid_placed` was *still climbing* (peak 0.65, under-trained not collapsed),
