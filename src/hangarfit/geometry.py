@@ -47,6 +47,14 @@ class WorldPart:
     z_top_m: float
     plane_id: str
     kind: PartKind
+    # True only for a scalar oriented-rectangle part (``Part.local_vertices is
+    # None``): such a part's ``polygon`` is a convex 4-corner rectangle, the one
+    # shape the opt-in SAT box oracle (#754 Lever B, :mod:`hangarfit._sat`) is
+    # validated against. A tapered/strut polygon part leaves this ``False`` so the
+    # collision oracle keeps using shapely for any pair touching it. Defaults
+    # ``False`` so any hand-built WorldPart is SAT-ineligible (shapely) unless a
+    # builder explicitly proves the rectangle.
+    is_oriented_rect: bool = False
 
 
 def oriented_rect(
@@ -254,6 +262,11 @@ def aircraft_parts_world(
                 z_top_m=part.z_top_m,
                 plane_id=placement.plane_id,
                 kind=part.kind,
+                # A scalar part (no polygon ring) is an oriented rectangle, and the
+                # det(-1) world transform is an isometry, so its world polygon is a
+                # convex 4-corner rectangle — SAT-eligible (#754). A polygon ring is
+                # not, so it stays shapely-only.
+                is_oriented_rect=ring is None,
             )
         )
     return world_parts

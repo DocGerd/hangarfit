@@ -289,7 +289,7 @@ def _run_restart(
     candidate: _SpreadCandidate | None = None
 
     initial_layout = _build_layout(scenario, placements)
-    current_score = _score(initial_layout)
+    current_score = _score(initial_layout, search.sat_collisions)
     if current_score < best_partial_score:
         best_partial_score = current_score
         best_partial_layout = initial_layout
@@ -1494,7 +1494,7 @@ def _nose_out(
         # consistency, duplicate placements) — build directly. A ValueError here
         # would be a structural bug, so let it propagate rather than silently skip.
         trial_layout = _build_layout(scenario, trial)
-        if _score(trial_layout) != (0, 0.0):
+        if _score(trial_layout, search.sat_collisions) != (0, 0.0):
             continue
         placements[pid] = flipped
         flips += 1
@@ -1594,7 +1594,7 @@ def _spread(
                 # to skip-and-continue because the spread output is independently validated
                 # by the `_score == (0, 0.0)` gate and the whole pass is bounded.
                 continue
-            if _score(trial_layout) != (0, 0.0):
+            if _score(trial_layout, search.sat_collisions) != (0, 0.0):
                 continue  # must STAY valid
             e = _energy(trial, gap_cache=gap_cache, moved=target)
             disp = (
@@ -1616,7 +1616,7 @@ def _spread(
     return placements
 
 
-def _score(layout: Layout) -> tuple[int, float]:
+def _score(layout: Layout, sat_collisions: bool = False) -> tuple[int, float]:
     """Hierarchical scoring (spec §4.4): ``(conflict_count, total_penetration_m2)``.
 
     Lower wins. Tuples compare lexicographically: a lower conflict count
@@ -1625,8 +1625,13 @@ def _score(layout: Layout) -> tuple[int, float]:
 
     Uses the module-level :func:`check_layout` import (no per-call import
     indirection inside the descent loop).
-    """
-    result = check_layout(layout)
+
+    ``sat_collisions`` (from ``SearchConfig.sat_collisions``, default off) opts the
+    hot scorer into the #754 SAT box oracle for rectangle pairs. It NEVER changes
+    the conflict count (0 verdict flips vs GEOS) — so the ``(0, 0.0)`` validity
+    gate is SAT-invariant — only the ``total_penetration_m2`` tiebreak shifts at
+    float noise; shapely stays the validity authority (#694)."""
+    result = check_layout(layout, sat_collisions=sat_collisions)
     return (len(result.conflicts), result.total_penetration_m2)
 
 
@@ -1928,7 +1933,7 @@ def _descent_step(
     # Build current Layout from placements (uses Layout invariants — free check).
     current_layout = _build_layout(scenario, placements)
 
-    current_result = check_layout(current_layout)
+    current_result = check_layout(current_layout, sat_collisions=search.sat_collisions)
 
     # Build conflicting-plane set (excluding pinned). `sorted()` later
     # ensures `rng.choice` sees a deterministic ordering — set iteration
@@ -1979,7 +1984,7 @@ def _descent_step(
         except ValueError:
             # Layout invariant violated (cart rule, etc.) — skip this candidate
             continue
-        s = _score(trial_layout)
+        s = _score(trial_layout, search.sat_collisions)
         disp = (
             (cand.x_m - placements[target].x_m) ** 2 + (cand.y_m - placements[target].y_m) ** 2
         ) ** 0.5
