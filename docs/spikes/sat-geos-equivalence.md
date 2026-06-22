@@ -22,7 +22,7 @@
 
 Float numpy SAT reproduces the GEOS oriented-rectangle collision surface **to
 float-noise (~5e-15)** — small enough that it **never observably flips a verdict
-on random or realistic geometry** (0 flips across a 200 000-pair random corpus).
+on random or realistic geometry** (0 flips across the committed 20 000-pair random corpus; a 200 000-pair ad-hoc run, not committed, likewise showed 0).
 It is therefore safe to ship Lever B **as an opt-in** `--sat-collisions` backend
 for the box-curriculum rungs.
 
@@ -37,7 +37,7 @@ validity/determinism authority**:
    take this branch.
 2. **`clearance == 0.05` (`distance < clearance`) — the live box-rung branch —
    is GO on real geometry, with one documented caveat.** **0** verdict flips on
-   the 20 000- *and* 200 000-pair random corpora. A flip is only producible by a
+   the committed 20 000-pair random corpus (a 200 000-pair ad-hoc run, not committed, likewise showed 0). A flip is only producible by a
    **surgically constructed** pair whose *true* separation lands within ~5e-16 m
    of exactly `0.05 m` (3 633 flips / 105 000 such adversarial pairs). The flip
    band is ~1 part in 1e14 of the clearance — random/real geometry never hits
@@ -132,7 +132,7 @@ world direction and sweeps the gap through `nextafter`-scale neighbours of
 | (a) overlap-verdict mismatch, **clearance 0.05** | **0** |
 | (b) max abs distance delta | `3.55e-15 m` |
 | (b) max distance ULP delta (separated pairs, d > 1e-9) | `2241` (≈ `5e-19` relative) |
-| (b) **clearance-0.05 boundary flips (random corpus)** | **0** (also 0 at 200 000 pairs) |
+| (b) **clearance-0.05 boundary flips (random corpus)** | **0** on the committed 20 000-pair corpus (a 200 000-pair ad-hoc run also showed 0) |
 | (c) overlapping pairs measured | 7 279 |
 | (c) max abs area delta | `5.33e-15 m²` |
 | (c) max relative area delta | `3.14e-10` |
@@ -153,7 +153,7 @@ bit-identity on the `clearance == 0` branch**, but **the box rungs run at
 
 The live box-rung branch. Distance agrees to **float noise** (`≤ 3.55e-15 m`
 absolute; ≤ 2241 ULP on genuinely separated pairs). On the random corpus —
-even at 200 000 pairs — there are **zero** `< 0.05` verdict flips.
+even on a 200 000-pair ad-hoc run (the committed corpus is 20 000) — there are **zero** `< 0.05` verdict flips.
 
 The honest caveat: the surgical probe **proves a flip is possible**. When the
 true separation is constructed to within a ULP of exactly `0.05 m`, GEOS rounds

@@ -52,6 +52,7 @@ import math
 from dataclasses import dataclass
 
 import numpy as np
+import pytest
 from shapely.geometry import Polygon
 
 from hangarfit.geometry import (
@@ -556,7 +557,16 @@ def _corpus_stats(n: int = 6000) -> EquivStats:
     return measure_equivalence(pairs)
 
 
-def test_clearance_zero_mismatches_are_only_the_exact_touch_boundary() -> None:
+@pytest.fixture(scope="module")
+def corpus_stats() -> EquivStats:
+    """The 6000-pair equivalence stats, computed ONCE per module — the four
+    clearance/distance/area tests below share it instead of rebuilding it 4x."""
+    return _corpus_stats()
+
+
+def test_clearance_zero_mismatches_are_only_the_exact_touch_boundary(
+    corpus_stats: EquivStats,
+) -> None:
     """The c=0 ``intersects and not touches`` verdict diverges ONLY at exact touch.
 
     This is the documented NO-GO-for-c=0 finding (see the write-up): float SAT
@@ -568,7 +578,7 @@ def test_clearance_zero_mismatches_are_only_the_exact_touch_boundary() -> None:
     Note this branch is NOT what the box rungs use — they run at clearance 0.05
     (``test_clearance_005_verdict_matches_geos``), which is bit-safe.
     """
-    stats = _corpus_stats()
+    stats = corpus_stats
     # There ARE mismatches here — that is the finding, not a failure.
     assert stats.max_c0_mismatch_distance <= _C0_TOUCH_BOUNDARY_FLOOR_M, (
         f"a c=0 verdict mismatch occurred at distance "
@@ -578,14 +588,14 @@ def test_clearance_zero_mismatches_are_only_the_exact_touch_boundary() -> None:
     )
 
 
-def test_clearance_005_verdict_matches_geos() -> None:
+def test_clearance_005_verdict_matches_geos(corpus_stats: EquivStats) -> None:
     """SAT (distance < 0.05) == GEOS polygon_overlap at clearance 0.05 — no flips.
 
     This is the load-bearing assertion for Lever B: the box rungs evaluate
     ``distance < clearance`` at clearance 0.05, so any boundary flip here is a
     hard NO-GO for the whole lever.
     """
-    stats = _corpus_stats()
+    stats = corpus_stats
     assert stats.boundary_flips_c005 == 0, (
         f"{stats.boundary_flips_c005}/{stats.n_pairs} pairs FLIPPED the "
         f"`distance < {CLEARANCE_M}` clearance boundary vs GEOS. "
@@ -597,18 +607,18 @@ def test_clearance_005_verdict_matches_geos() -> None:
     )
 
 
-def test_min_separation_distance_matches_geos() -> None:
+def test_min_separation_distance_matches_geos(corpus_stats: EquivStats) -> None:
     """SAT/GJK closest distance == shapely ``Polygon.distance`` within float noise."""
-    stats = _corpus_stats()
+    stats = corpus_stats
     assert stats.max_abs_dist_delta <= _MAX_DIST_DELTA, (
         f"max abs distance delta {stats.max_abs_dist_delta:.3e} exceeded "
         f"{_MAX_DIST_DELTA:.3e}; worst pair {stats.worst_dist_example}"
     )
 
 
-def test_intersection_area_matches_geos() -> None:
+def test_intersection_area_matches_geos(corpus_stats: EquivStats) -> None:
     """Sutherland–Hodgman clip area == GEOS ``intersection().area`` within noise."""
-    stats = _corpus_stats()
+    stats = corpus_stats
     assert stats.n_overlapping > 0, "corpus produced no overlapping pairs — bug"
     assert stats.max_abs_area_delta <= _MAX_AREA_DELTA, (
         f"max abs area delta {stats.max_abs_area_delta:.3e} exceeded "
@@ -693,6 +703,7 @@ def _surgical_boundary_flip_census(n_per_heading: int = 1500) -> tuple[int, int,
     return checked, flips, max_delta
 
 
+@pytest.mark.slow
 def test_surgical_clearance_boundary_flips_are_ulp_scale_only() -> None:
     """DOCUMENTED finding: SAT vs GEOS CAN flip ``< 0.05`` at the exact ULP boundary.
 
@@ -705,8 +716,9 @@ def test_surgical_clearance_boundary_flips_are_ulp_scale_only() -> None:
 
     It is acceptable for an *opt-in* Lever B ONLY because (1) the flip band is
     ~5e-16 m wide — a true separation must coincide with 0.05 m to ~1 part in
-    1e14, which random/real geometry never hits (the 200k-pair random corpus
-    shows zero flips), and (2) at that separation GEOS's own verdict is
+    1e14, which random/real geometry never hits (the committed 20k-pair random
+    corpus — and a 200k-pair ad-hoc run — show zero flips), and (2) at that
+    separation GEOS's own verdict is
     float-arbitrary. CPU shapely remains the determinism + validity authority
     regardless (#694), so Lever B is ``--sat-collisions`` opt-in, not a silent
     swap. This test PINS that the flip is confined to the ULP boundary and that
