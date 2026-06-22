@@ -7,6 +7,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
+import numpy as np
 import torch
 from torch import Tensor
 
@@ -424,6 +425,11 @@ class VecRolloutBuffer:
         self.reward: list[list[float]] = []
         self.done: list[list[bool]] = []
         self.last_value: list[float] = [0.0] * num_envs
+        # #752: the rung's cached static raster block (oob/bay/apron/door). The vec workers
+        # ship only the dynamic channels (uint8), so batch() re-prepends this to rehydrate
+        # the full 7ch float32 raster. collect_rollout_vec sets it; None means the obs are
+        # full (the non-vectorized path) and need no reassembly.
+        self.static_block: np.ndarray | None = None
 
     def add_step(
         self,
@@ -451,7 +457,7 @@ class VecRolloutBuffer:
 
     def batch(self) -> dict[str, Tensor]:
         flat_obs = [o for row in self.obs for o in row]
-        data = dict(to_batch(flat_obs))
+        data = dict(to_batch(flat_obs, static_block=self.static_block))
         data["kind_idx"] = torch.tensor([x for row in self.kind_idx for x in row], dtype=torch.long)
         data["mag_idx"] = torch.tensor([x for row in self.mag_idx for x in row], dtype=torch.long)
         data["old_logprob"] = torch.tensor(self._flat(self.logprob), dtype=torch.float32)

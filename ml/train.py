@@ -18,6 +18,7 @@ from functools import partial
 from pathlib import Path
 from typing import Literal
 
+import numpy as np
 import torch
 from torch import Tensor
 
@@ -46,7 +47,7 @@ from ml.curriculum import (
     with_promotion_overrides,
     with_solo_box_rung,
 )
-from ml.encoding import EncoderConfig, encode
+from ml.encoding import EncoderConfig, encode, static_block
 from ml.env import HangarFitEnv
 from ml.export import export_onnx
 from ml.policy import HangarFitPolicy, to_batch
@@ -183,19 +184,29 @@ def collect_rollout_vec(
     policy: HangarFitPolicy,
     encoder: EncoderConfig,
     rollout_len: int,
+    *,
+    static_block: np.ndarray,
 ) -> tuple[VecRolloutBuffer, list[EpisodeStat]]:
     """Drive `vec_env` for `rollout_len` steps (rollout_len * num_envs transitions),
     batching the N observations through one policy forward per step. Returns the
-    (T, N) buffer + the per-completed-episode stats (with the per-env reward sum)."""
+    (T, N) buffer + the per-completed-episode stats (with the per-env reward sum).
+
+    `static_block` (#752) is the rung's cached (STATIC_CHANNELS, H, W) raster block
+    (`encoding.static_block(hangar, encoder)`). The vec workers ship only the dynamic
+    channels (uint8); this block is re-prepended in `to_batch` (and stored on the buffer for
+    the PPO minibatch reassembly) to rehydrate the full 7ch float32 raster byte-identically.
+    It is the SAME for every step of a rung (one hangar+config), so the caller computes it
+    once per rung."""
     n = vec_env.num_envs
     buf = VecRolloutBuffer(num_envs=n)
+    buf.static_block = static_block
     device = next(policy.parameters()).device
     obs = vec_env.reset()
     ep_reward = [0.0] * n
     ep_stats: list[EpisodeStat] = []
     with torch.no_grad():
         for _ in range(rollout_len):
-            out = policy(_to_device(to_batch(obs), device))
+            out = policy(_to_device(to_batch(obs, static_block=static_block), device))
             kind, mag = sample_action(out)
             logprob, _ = factored_logprob_entropy(out, kind, mag)
             actions = [(int(kind[i]), int(mag[i])) for i in range(n)]
@@ -225,7 +236,7 @@ def collect_rollout_vec(
                     ep_reward[i] = 0.0
             obs = step.obs
         # per-env bootstrap value for non-done tails
-        tail = policy(_to_device(to_batch(obs), device))
+        tail = policy(_to_device(to_batch(obs, static_block=static_block), device))
         buf.last_value = [float(tail.value[i]) for i in range(n)]
     return buf, ep_stats
 
@@ -511,6 +522,10 @@ def train_curriculum(
                 vec_cm = SubprocVectorEnv(worker_fns, start_method=vec_start_method)
             else:
                 vec_cm = SyncVectorEnv([fn() for fn in worker_fns])
+            # #752: the static raster block (oob/bay/apron/door) depends only on this rung's
+            # (hangar, config), so compute it ONCE here; the vec workers ship only the dynamic
+            # channels (uint8) and collect_rollout_vec re-prepends this block in to_batch.
+            rung_static_block = static_block(env.hangar, enc)
             with vec_cm as vec:
                 for it in range(ceiling):
                     it_cfg = replace(
@@ -523,7 +538,9 @@ def train_curriculum(
                             anneal_iters=cfg.entropy_anneal_iters,
                         ),
                     )
-                    buf_vec, ep_stats = collect_rollout_vec(vec, policy, enc, rollout_len)
+                    buf_vec, ep_stats = collect_rollout_vec(
+                        vec, policy, enc, rollout_len, static_block=rung_static_block
+                    )
                     ppo_update(policy, optimizer, buf_vec, it_cfg, normalizer=normalizer)
                     history.record(stage.name, it, ep_stats)
                     if log:

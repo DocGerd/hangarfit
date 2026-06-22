@@ -14,7 +14,13 @@ from torch import Tensor, nn
 
 from ml import action_space
 from ml.action_space import MAGNITUDE_DIM
-from ml.encoding import ACTION_DIM, RASTER_CHANNELS, TOKEN_DIM, ObservationTensors
+from ml.encoding import (
+    ACTION_DIM,
+    RASTER_CHANNELS,
+    TOKEN_DIM,
+    ObservationTensors,
+    reassemble_raster,
+)
 from ml.types import Park, Primitive
 
 
@@ -39,11 +45,31 @@ class PolicyOutput:
         assert self.kind_gear_logits.shape[0] == self.value.shape[0]
 
 
-def to_batch(obs: Sequence[ObservationTensors]) -> dict[str, Tensor]:
+def to_batch(
+    obs: Sequence[ObservationTensors], *, static_block: np.ndarray | None = None
+) -> dict[str, Tensor]:
     """Stack a list of ObservationTensors into batched torch tensors. The only
-    torch seam on the input side (ml/encoding.py stays numpy)."""
+    torch seam on the input side (ml/encoding.py stays numpy).
+
+    #752: vectorized-rollout obs carry ONLY the DYNAMIC raster channels, as uint8 — the
+    worker drops the static block (oob/bay/apron/door) from the wire. The dtype is the
+    discriminator: when the rasters are uint8 we re-prepend the rung's cached ``static_block``
+    (shape ``(STATIC_CHANNELS, H, W)``) and widen to float32 via :func:`reassemble_raster`,
+    reproducing the full :func:`encode` raster bit-for-bit. Full float32 obs — every
+    non-vectorized caller — pass straight through, so ``static_block`` is required ONLY for
+    trimmed obs (and is harmlessly ignored otherwise)."""
+    if obs[0].raster.dtype == np.uint8:
+        if static_block is None:
+            raise ValueError(
+                "to_batch got uint8 (dynamic-only) rasters but no static_block to re-prepend "
+                "— the vectorized rollout must pass the rung's cached static block "
+                "(encoding.static_block / reassemble_raster, #752)."
+            )
+        raster = np.stack([reassemble_raster(static_block, o.raster) for o in obs])
+    else:
+        raster = np.stack([o.raster for o in obs])
     return {
-        "raster": torch.from_numpy(np.stack([o.raster for o in obs])),
+        "raster": torch.from_numpy(raster),
         "tokens": torch.from_numpy(np.stack([o.tokens for o in obs])),
         "token_mask": torch.from_numpy(np.stack([o.token_mask for o in obs])),
         "active_index": torch.tensor([o.active_index for o in obs], dtype=torch.long),

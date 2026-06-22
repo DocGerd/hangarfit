@@ -6,6 +6,24 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Learned backend (#752, epic #607 Wave 2 / #759): shrink the rollout IPC payload —
+  uint8 raster + drop the re-shipped static channels (byte-identical).** Every vectorized
+  training step pickles each worker's 7×192×96 float32 raster over a Pipe, but two-thirds of
+  that traffic is waste: the raster is binary occupancy shipped at 4 bytes/cell, and 4 of the 7
+  channels (`oob`/`bay`/`apron`/`door`) depend only on `(hangar, config)` yet were recomputed
+  *and* re-shipped byte-identically by every worker every step. The encoder now splits into a
+  **static block** (`encoding.static_block(hangar, config)` — the 4 hangar-fixed channels) and
+  `encode_dynamic` (the 3 observation-dependent channels as **uint8** 0/1); the worker ships only
+  the dynamic block, and the parent re-prepends the rung's cached static block in `to_batch`
+  (`encoding.reassemble_raster`), rehydrating the full 7-channel float32 raster. This cuts the
+  per-step worker→parent payload ~57% **and** deletes the 3 static `shapely.contains_xy` calls
+  from every worker step (computed once per rung instead). **Byte-identical** (ADR-0003): the
+  dynamic block is binary, so float32(0/1)→uint8→float32 is lossless and `reassemble_raster`
+  reproduces `encode()`'s raster bit-for-bit (`test_reassemble_raster_equals_full_encode_bitwise`);
+  `to_batch` keys on the uint8 dtype, so every non-vectorized caller (full float32 obs) passes
+  straight through, and Sync still equals Subproc byte-for-byte. Dev/CI-only (`ml/`); no
+  shipped-wheel surface.
+
 - **Learned backend (#751, epic #607 Wave 1 / #758): opt-in `--vec-start-method`
   {spawn,forkserver,fork} to cut per-worker training RAM.** RAM — not cores or GPU — is the
   ceiling for both `--n-envs auto` (#747) and the concurrent sweep runner (#749): `spawn`

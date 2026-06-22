@@ -37,6 +37,13 @@ ACTION_DIM = len(_CANONICAL_ACTIONS) + 1  # + PARK
 PARK_INDEX = ACTION_DIM - 1
 TOKEN_DIM = 24
 RASTER_CHANNELS = 7
+# #752: the 7 raster channels split into a STATIC block (depends only on hangar+config)
+# and a DYNAMIC block (depends on the observation). The vectorized rollout ships only the
+# dynamic block (as uint8) from each worker and re-prepends a cached static block parent-
+# side, so the redundant-every-step static channels are neither re-encoded nor re-shipped.
+STATIC_CHANNELS = 4  # oob, bay, apron, door
+DYNAMIC_CHANNELS = 3  # parked-low, parked-wing, active
+assert STATIC_CHANNELS + DYNAMIC_CHANNELS == RASTER_CHANNELS
 
 
 @dataclass(frozen=True, slots=True)
@@ -337,21 +344,40 @@ def _legal_action_mask(obs: Observation) -> np.ndarray:
 _DEFAULT_CONFIG = EncoderConfig()
 
 
-def encode(
-    obs: Observation,
-    hangar: Hangar,
-    bodies: Mapping[str, Aircraft | GroundObject],
-    config: EncoderConfig = _DEFAULT_CONFIG,
-) -> ObservationTensors:
-    """Tensorize a semantic Observation. Pure + deterministic (no RNG).
+def static_block(hangar: Hangar, config: EncoderConfig = _DEFAULT_CONFIG) -> np.ndarray:
+    """The (STATIC_CHANNELS, H, W) float32 raster block that depends ONLY on
+    (hangar, config) — oob/bay/apron/door. It is identical for every step of a rung, so
+    the vectorized rollout computes it ONCE per rung and re-prepends it (:func:`reassemble_raster`)
+    instead of re-encoding + re-shipping it from every worker every step (#752). Returns a
+    fresh array per call (no module cache → no stale-hangar trap); the caller owns caching it
+    for a rung and MUST treat the result read-only."""
+    return _static_channels(hangar, config)
 
-    ``bodies`` is fleet ∪ ground_objects (Observation.parked carries only
-    id+Placement, so the encoder looks each body up for its polygons and features).
-    ``meta`` is a read-only mapping of floats for debugging / un-normalization."""
-    static = _static_channels(hangar, config)  # (4, H, W)
+
+def _dynamic_channels(
+    obs: Observation, bodies: Mapping[str, Aircraft | GroundObject], config: EncoderConfig
+) -> np.ndarray:
+    """(DYNAMIC_CHANNELS, H, W) float32: [parked-low, parked-wing, active]. The part of the
+    raster that depends on the observation; the only block the worker path needs to ship."""
     low, wing = _parked_occupancy(obs, bodies, config)
     active_occ = _active_occupancy(obs, config)
-    raster = np.concatenate([static, np.stack([low, wing, active_occ])], axis=0).astype(np.float32)
+    return np.stack([low, wing, active_occ]).astype(np.float32)
+
+
+def reassemble_raster(static: np.ndarray, dynamic: np.ndarray) -> np.ndarray:
+    """Re-prepend a cached static block onto a (uint8) dynamic block → the full
+    (RASTER_CHANNELS, H, W) float32 raster, **bit-for-bit equal to** :func:`encode`'s raster.
+    The dynamic block is binary (0/1), so the uint8→float32 widening is lossless — only the
+    transport encoding changed, never a value. This is the byte-identity seam of #752."""
+    return np.concatenate([static, dynamic.astype(np.float32)], axis=0).astype(np.float32)
+
+
+def _encode_common(
+    obs: Observation, bodies: Mapping[str, Aircraft | GroundObject], config: EncoderConfig
+) -> tuple[np.ndarray, np.ndarray, int, np.ndarray, Mapping[str, float]]:
+    """The non-raster fields shared by :func:`encode` and :func:`encode_dynamic` — tokens,
+    token mask, active index, legal-action mask, and meta. Identical code path, so the two
+    encoders agree bit-for-bit on everything but the raster."""
     tokens, token_mask, active_index = _tokens(obs, bodies, config)
     legal = _legal_action_mask(obs)
     meta: dict[str, float] = {
@@ -363,12 +389,62 @@ def encode(
         "steps_this_object": float(obs.steps_this_object),
         "steps_total": float(obs.steps_total),
     }
+    return tokens, token_mask, active_index, legal, MappingProxyType(meta)
+
+
+def encode(
+    obs: Observation,
+    hangar: Hangar,
+    bodies: Mapping[str, Aircraft | GroundObject],
+    config: EncoderConfig = _DEFAULT_CONFIG,
+) -> ObservationTensors:
+    """Tensorize a semantic Observation. Pure + deterministic (no RNG).
+
+    ``bodies`` is fleet ∪ ground_objects (Observation.parked carries only
+    id+Placement, so the encoder looks each body up for its polygons and features).
+    ``meta`` is a read-only mapping of floats for debugging / un-normalization.
+
+    The (RASTER_CHANNELS, H, W) float32 raster is the full static∥dynamic concatenation;
+    this is the reference all non-vectorized callers use. The vectorized rollout instead
+    pairs :func:`encode_dynamic` + :func:`reassemble_raster`, which reproduce this raster
+    bit-for-bit (#752)."""
+    raster = np.concatenate(
+        [static_block(hangar, config), _dynamic_channels(obs, bodies, config)], axis=0
+    ).astype(np.float32)
+    tokens, token_mask, active_index, legal, meta = _encode_common(obs, bodies, config)
     return ObservationTensors(
         raster=raster,
         tokens=tokens,
         token_mask=token_mask,
         active_index=active_index,
         legal_action_mask=legal,
-        meta=MappingProxyType(meta),
+        meta=meta,
+        schema_version=SCHEMA_VERSION,
+    )
+
+
+def encode_dynamic(
+    obs: Observation,
+    hangar: Hangar,  # noqa: ARG001 — kept for signature parity with encode(); static is skipped
+    bodies: Mapping[str, Aircraft | GroundObject],
+    config: EncoderConfig = _DEFAULT_CONFIG,
+) -> ObservationTensors:
+    """Like :func:`encode` but the raster is ONLY the DYNAMIC_CHANNELS, as **uint8** 0/1.
+
+    The static block (oob/bay/apron/door) depends only on (hangar, config), so the
+    vectorized worker skips it entirely — neither encoding its 3 ``shapely.contains_xy``
+    channels nor shipping them — and the parent re-prepends a cached :func:`static_block`
+    via :func:`reassemble_raster` (#752). All non-raster fields are bit-identical to
+    :func:`encode`. ``hangar`` is unused (the static block is the caller's job) but kept in
+    the signature so the worker can swap ``encode``↔``encode_dynamic`` with one call shape."""
+    dynamic = _dynamic_channels(obs, bodies, config).astype(np.uint8)
+    tokens, token_mask, active_index, legal, meta = _encode_common(obs, bodies, config)
+    return ObservationTensors(
+        raster=dynamic,
+        tokens=tokens,
+        token_mask=token_mask,
+        active_index=active_index,
+        legal_action_mask=legal,
+        meta=meta,
         schema_version=SCHEMA_VERSION,
     )

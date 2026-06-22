@@ -21,7 +21,7 @@ from typing import Any, NamedTuple, cast
 from hangarfit.geometry import pose_cache_scope
 from ml.action_space import decode
 from ml.curriculum import EpisodeStart, EpisodeStat
-from ml.encoding import EncoderConfig, ObservationTensors, encode
+from ml.encoding import EncoderConfig, ObservationTensors, encode_dynamic
 from ml.env import HangarFitEnv
 from ml.types import Observation, StepInfo
 
@@ -56,7 +56,12 @@ class _EnvWorker:
         return pose_cache_scope() if self._pose_cache else contextlib.nullcontext()
 
     def _encode(self, obs: Observation) -> ObservationTensors:
-        return encode(obs, self._env.hangar, self._bodies, self._enc)
+        # #752: ship only the DYNAMIC raster channels (uint8); the parent re-prepends a
+        # cached static block (encoding.static_block) and rehydrates to float32 in to_batch.
+        # Both Sync and Subproc workers emit this identical trimmed form, so Sync still
+        # equals Subproc byte-for-byte; the static channels are neither re-encoded nor
+        # re-shipped every step.
+        return encode_dynamic(obs, self._env.hangar, self._bodies, self._enc)
 
     def reset(self) -> ObservationTensors:
         with self._scope():

@@ -721,3 +721,54 @@ def test_ppo_update_target_kl_early_stops_epochs():
 
     assert epochs_run(None) == 4  # no early stop -> all epochs run
     assert epochs_run(0.0) == 1  # any positive KL after epoch 1 trips the stop
+
+
+# ---------------------------------------------------------------------------
+# #752: VecRolloutBuffer holds TRIMMED (uint8/3ch) worker obs; batch() rehydrates
+# them to the full 7ch float32 batch using a cached static_block.
+# ---------------------------------------------------------------------------
+
+
+def test_vec_buffer_batch_reassembles_trimmed_obs_with_static_block():
+    """A buffer of trimmed worker obs + its cached static_block rehydrates in batch() to the
+    full 7ch float32 raster, bit-matching encode() of the same observation (#752)."""
+    from ml.encoding import EncoderConfig, encode, static_block
+    from ml.ppo import VecRolloutBuffer
+    from ml.train import build_trivial_env
+    from ml.vector_env import _EnvWorker
+
+    enc = EncoderConfig()
+    env = build_trivial_env()
+    dyn = _EnvWorker(env, enc, None).reset()  # trimmed (uint8/3ch)
+    obs = env._observe()
+    buf = VecRolloutBuffer(num_envs=1)
+    buf.static_block = static_block(env.hangar, enc)
+    buf.add_step([dyn], [1], [0], [0.0], [0.0], [1.0], [False])
+    buf.last_value = [0.0]
+    data = buf.batch()
+    assert data["raster"].shape == (1, 7, 192, 96) and data["raster"].dtype == torch.float32
+    full = encode(obs, env.hangar, {**env.fleet, **env.ground_objects}, enc)
+    assert torch.equal(data["raster"][0], torch.from_numpy(full.raster))
+
+
+def test_vec_buffer_batch_raises_for_trimmed_obs_without_static_block():
+    """Trimmed obs with no cached static block is a wiring error, not a silent wrong path:
+    batch() must surface the to_batch failure rather than feed a 3-channel raster."""
+    from ml.encoding import EncoderConfig
+    from ml.ppo import VecRolloutBuffer
+    from ml.train import build_trivial_env
+    from ml.vector_env import _EnvWorker
+
+    buf = VecRolloutBuffer(num_envs=1)
+    buf.add_step(
+        [_EnvWorker(build_trivial_env(), EncoderConfig(), None).reset()],
+        [1],
+        [0],
+        [0.0],
+        [0.0],
+        [1.0],
+        [False],
+    )
+    buf.last_value = [0.0]
+    with pytest.raises((ValueError, RuntimeError)):
+        buf.batch()

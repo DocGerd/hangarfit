@@ -382,3 +382,76 @@ def test_tokens_ground_object_type_and_flags():
     assert tokens[0, 17] == 0.0 and tokens[1, 17] == 1.0
     # wing (8..10) and movement (11..13) one-hots are all-zero for ground objects
     assert tokens[0, 8:14].sum() == 0.0 and tokens[1, 8:14].sum() == 0.0
+
+
+# ---------------------------------------------------------------------------
+# #752: static/dynamic raster split + uint8 dynamic block, for the IPC trim.
+# The full encode() stays the 7-channel float32 reference (above); the worker
+# path ships only the 3 dynamic channels as uint8 and the parent re-prepends a
+# cached static block. The contract: reassemble(static_block, encode_dynamic) is
+# bit-for-bit equal to encode(). (Local imports keep these RED scoped to the new
+# symbols until they exist.)
+# ---------------------------------------------------------------------------
+
+
+def test_static_block_equals_full_static_channels_bitwise():
+    """static_block(hangar, config) is the (4,H,W) float32 block encode() prepends —
+    bit-for-bit equal to the first STATIC_CHANNELS channels of the full raster."""
+    from ml.encoding import STATIC_CHANNELS, static_block
+
+    c = EncoderConfig()
+    fleet = _fuji()
+    h = empty_hangar()
+    sb = static_block(h, c)
+    assert sb.shape == (STATIC_CHANNELS, 192, 96) and sb.dtype == np.float32
+    full = encode(_two_body_obs(fleet), h, fleet, c).raster
+    assert np.array_equal(sb, full[:STATIC_CHANNELS])
+
+
+def test_encode_dynamic_raster_is_binary_uint8():
+    """encode_dynamic ships ONLY the dynamic channels (low/wing/active) as uint8 0/1 —
+    4x smaller on the wire, and provably binary so float32(0/1)->uint8 is lossless."""
+    from ml.encoding import DYNAMIC_CHANNELS, encode_dynamic
+
+    c = EncoderConfig()
+    fleet = _fuji()
+    h = empty_hangar()
+    dyn = encode_dynamic(_two_body_obs(fleet), h, fleet, c).raster
+    assert dyn.shape == (DYNAMIC_CHANNELS, 192, 96) and dyn.dtype == np.uint8
+    assert set(np.unique(dyn)).issubset({0, 1})
+
+
+def test_encode_dynamic_nonraster_fields_match_full_encode():
+    """encode_dynamic differs from encode ONLY in the raster; tokens/mask/active_index/
+    legal/meta are produced by the same code, so they are bit-identical."""
+    from ml.encoding import encode_dynamic
+
+    c = EncoderConfig()
+    fleet = _fuji()
+    h = empty_hangar()
+    obs = _two_body_obs(fleet)
+    full = encode(obs, h, fleet, c)
+    dyn = encode_dynamic(obs, h, fleet, c)
+    assert np.array_equal(dyn.tokens, full.tokens)
+    assert np.array_equal(dyn.token_mask, full.token_mask)
+    assert np.array_equal(dyn.legal_action_mask, full.legal_action_mask)
+    assert dyn.active_index == full.active_index
+    assert dyn.meta == full.meta
+    assert dyn.schema_version == full.schema_version
+
+
+def test_reassemble_raster_equals_full_encode_bitwise():
+    """The byte-identity heart of #752: re-prepending the cached static_block onto the
+    uint8 dynamic block reproduces encode()'s (7,H,W) float32 raster bit-for-bit."""
+    from ml.encoding import RASTER_CHANNELS, encode_dynamic, reassemble_raster, static_block
+
+    c = EncoderConfig()
+    fleet = _fuji()
+    h = empty_hangar()
+    obs = _two_body_obs(fleet)
+    full = encode(obs, h, fleet, c).raster
+    dyn = encode_dynamic(obs, h, fleet, c).raster
+    reassembled = reassemble_raster(static_block(h, c), dyn)
+    assert reassembled.shape == (RASTER_CHANNELS, 192, 96) and reassembled.dtype == np.float32
+    assert np.array_equal(reassembled, full)
+    assert reassembled.tobytes() == full.tobytes()

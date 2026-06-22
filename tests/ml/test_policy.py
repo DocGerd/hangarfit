@@ -143,3 +143,69 @@ def test_act_on_terminal_observation_raises():
     assert obs_t.active_index < 0  # precondition: this really is a terminal obs
     with pytest.raises(ValueError, match="terminal"):
         m.act(obs_t, turn_radius_m=8.0)
+
+
+# ---------------------------------------------------------------------------
+# #752: to_batch discriminator — a trimmed (uint8/3ch) worker obs is rehydrated
+# with a cached static block; a full (float32/7ch) obs passes straight through.
+# ---------------------------------------------------------------------------
+
+
+def _obs_full_and_dynamic():
+    """The SAME observation, encoded both ways: encode (full 7ch f32) + encode_dynamic
+    (3ch uint8). Returns (full, dynamic, hangar, config)."""
+    from ml.encoding import encode_dynamic
+
+    fleet = _fuji()
+    pl = Placement(plane_id="fuji", x_m=11.0, y_m=12.0, heading_deg=0.0, on_carts=False)
+    active = ActiveObject(
+        object_id="aviat_husky",
+        body=fleet["aviat_husky"],
+        pose=Pose(x_m=11.0, y_m=-4.0, heading_deg=0.0),
+        on_carts=False,
+    )
+    obs = Observation(
+        active=active,
+        parked=(ParkedObject(object_id="fuji", placement=pl),),
+        unplaced_ids=("cessna_150",),
+        steps_this_object=0,
+        steps_total=0,
+    )
+    h, c = empty_hangar(), EncoderConfig()
+    return encode(obs, h, fleet, c), encode_dynamic(obs, h, fleet, c), h, c
+
+
+def test_to_batch_reassembles_trimmed_with_static_block():
+    """A trimmed (3ch uint8) worker obs + the cached static block rehydrates to the SAME
+    batched raster as the full (7ch f32) obs — bit-for-bit (the #752 byte-identity seam)."""
+    from ml.encoding import static_block
+
+    full, dyn, h, c = _obs_full_and_dynamic()
+    sb = static_block(h, c)
+    full_batch = to_batch([full, full])
+    trimmed_batch = to_batch([dyn, dyn], static_block=sb)
+    assert trimmed_batch["raster"].shape == (2, 7, 192, 96)
+    assert trimmed_batch["raster"].dtype == torch.float32
+    assert torch.equal(trimmed_batch["raster"], full_batch["raster"])
+    # the discriminator only touches the raster; the rest is unchanged
+    assert torch.equal(trimmed_batch["tokens"], full_batch["tokens"])
+    assert torch.equal(trimmed_batch["legal_action_mask"], full_batch["legal_action_mask"])
+    assert torch.equal(trimmed_batch["active_index"], full_batch["active_index"])
+
+
+def test_to_batch_trimmed_without_static_block_raises():
+    """A trimmed obs with no static block is a programming error, not a silent wrong path:
+    to_batch must raise rather than hand the policy a 3-channel raster."""
+    _full, dyn, _h, _c = _obs_full_and_dynamic()
+    with pytest.raises((ValueError, RuntimeError)):
+        to_batch([dyn])  # uint8/3ch but no static_block supplied
+
+
+def test_to_batch_full_obs_ignores_static_block():
+    """The discriminator keys on the uint8 dtype, so a full float32 obs passes straight
+    through even if a static_block is supplied — full obs never need reassembly."""
+    from ml.encoding import static_block
+
+    full, _dyn, h, c = _obs_full_and_dynamic()
+    sb = static_block(h, c)
+    assert torch.equal(to_batch([full], static_block=sb)["raster"], to_batch([full])["raster"])
