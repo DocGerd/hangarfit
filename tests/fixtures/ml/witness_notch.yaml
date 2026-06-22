@@ -9,10 +9,10 @@
 # itself valid, so any anchored subset is a guaranteed-valid partial start with NO
 # runtime solver / search call.
 #
-# The three poses are lifted VERBATIM (own-gear taildraggers, on_carts defaulting
-# False — matching env._on_carts and the box-witness path) from the committed
-# 8-object real-hangar witness examples/herrenteich/layout.yaml, which passes
-# `hangarfit check` (exit 0). Removing the other five objects cannot create a
+# The three poses are lifted VERBATIM (on_carts omitted => defaults False, matching
+# env._on_carts — none of the three is always_cart — and the box-witness path) from
+# the committed real-hangar witness examples/herrenteich/layout.yaml, which passes
+# `hangarfit check` (exit 0). Removing the layout's other objects cannot create a
 # conflict, so this trio is valid; the PRODUCT checker (collisions.check + Caddy
 # egress) confirms it at the rung's 0.05 m clearance — and at the strict 0.10 m
 # herrenteich file clearance for margin — in tests/ml/test_stage_builder.py
