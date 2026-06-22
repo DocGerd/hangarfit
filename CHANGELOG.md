@@ -6,6 +6,25 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Learned backend (#750, epic #607, throughput Wave 1): a transitions/sec training-loop canary
+  + a vectorized width-N GAE scan.** Two dev/CI-only changes so the rest of the throughput work is
+  measured, not eyeballed. (1) `python -m bench.train_throughput` is the `ml/` twin of
+  `bench.profile_pipeline`: it runs a small, fixed, deterministic CPU training loop (`SyncVectorEnv`)
+  and reports **transitions/sec** + **iters/sec** with the per-phase rollout-vs-update split as a
+  table or `--json`, **bound on a fixed step COUNT** (`iterations × rollout_len × n_envs`, mirroring
+  the #381 `max_restarts` binding) so only machine speed varies run-to-run. It confirms the Wave 1
+  premise — ~85% of per-iteration wall-clock is the shapely-bound rollout. No `--gate`: a throughput
+  ceiling is jitter-prone on shared runners, so it reports, never enforces. (2) `compute_gae_vec`
+  (`ml/ppo.py`) is rewritten from a `for env in range(N)` wrapper around the scalar reverse-scan into
+  a single width-N reverse scan, removing the last O(T·N) pure-Python loop so GAE stops scaling with
+  `n_envs`. **Byte-identical** (ADR-0003): the scalar loop boxes every term via `float()` → a float64
+  accumulator, so the vector scan runs its `delta`/`last_gae` accumulator in float64 (`.double()`) and
+  casts back to float32 only at each `adv[t]` write — a naive float32 scan diverges by ~2.4e-6 (a
+  determinism break that fails the `n_envs=1` / Sync≡Subproc byte-identity oracle). Verified by
+  `torch.equal` against the per-env `compute_gae` over mid-rollout / all-done / no-done patterns
+  (`test_compute_gae_vec_byte_identical_to_per_env_loop`). Dev/CI-only (`ml/` + `bench/`); no
+  shipped-wheel surface. The torch-CI hook stays scoped out of v1 (CI installs only `[dev]`, no torch).
+
 - **Learned backend (#749, epic #607, throughput Wave 1): concurrent multi-seed sweep runner
   `python -m ml.sweep`.** The mastery deliverable is the two/three-seed gate (the `ml/README`
   trio-box recipe), run **serially** today — one launch per seed, babysat by hand. One on-policy

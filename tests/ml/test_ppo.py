@@ -487,6 +487,55 @@ def test_compute_gae_vec_matches_per_env_compute_gae():
             assert torch.allclose(ret_vec[t * N + env], r[t])
 
 
+def test_compute_gae_vec_byte_identical_to_per_env_loop():
+    """#750: the width-N reverse scan must stay BYTE-identical to the per-env scalar loop.
+
+    The pre-#750 ``compute_gae_vec`` ran the float64-intermediate scalar ``compute_gae`` on
+    each env column. The vectorized rewrite folds those N columns into one reverse scan; it
+    is only byte-identical if the delta / last_gae accumulator runs in float64 (``.double()``)
+    and casts to float32 ONLY at the ``adv[t]`` write — a naive float32 tensor scan diverges
+    by ~2.4e-6, which is a determinism break (Sync≡Subproc + n_envs=1 byte-identity).
+
+    We assert EXACT equality (``torch.equal`` on the float32 result, not ``allclose``) over
+    random rewards/values/last_values across several done patterns: mid-rollout dones, an
+    all-done column, and a no-done (bootstrap-tail) column — the three regimes
+    ``test_compute_gae_done_zeroes_bootstrap_and_resets`` pins for the scalar path.
+    """
+    import torch
+
+    from ml.ppo import compute_gae, compute_gae_vec
+
+    torch.manual_seed(12345)
+    T, N = 9, 5
+    rewards = torch.randn(T, N)
+    values = torch.randn(T, N)
+    last_values = torch.randn(N).tolist()
+
+    # Hand-construct contrasting done patterns per env column.
+    dones = torch.zeros(T, N, dtype=torch.bool)
+    dones[3, 0] = True  # env 0: a single mid-rollout terminal
+    dones[2, 1] = dones[6, 1] = True  # env 1: two mid-rollout terminals
+    dones[:, 2] = True  # env 2: every step is a terminal (all-done)
+    # env 3: no dones at all (bootstrap-tail uses last_values[3])
+    dones[T - 1, 4] = True  # env 4: terminal exactly on the final step (zeros the tail bootstrap)
+
+    adv_vec, ret_vec = compute_gae_vec(rewards, values, dones, last_values, gamma=0.99, lam=0.95)
+
+    # Reference: the per-env scalar loop, flattened row-major (t, env) -> t*N + env.
+    ref_adv = torch.zeros(T, N)
+    ref_ret = torch.zeros(T, N)
+    for env in range(N):
+        a, r = compute_gae(
+            rewards[:, env], values[:, env], dones[:, env], last_values[env], gamma=0.99, lam=0.95
+        )
+        ref_adv[:, env] = a
+        ref_ret[:, env] = r
+
+    assert torch.equal(adv_vec, ref_adv.reshape(-1)), "advantages diverged from per-env loop"
+    assert torch.equal(ret_vec, ref_ret.reshape(-1)), "returns diverged from per-env loop"
+    assert adv_vec.dtype == torch.float32 and ret_vec.dtype == torch.float32
+
+
 def test_vecrolloutbuffer_batch_shape_matches_flat():
 
     from ml.encoding import ACTION_DIM, RASTER_CHANNELS, TOKEN_DIM, ObservationTensors
