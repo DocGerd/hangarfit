@@ -93,7 +93,7 @@ deps: `gh api -X POST repos/DocGerd/hangarfit/issues/<n>/dependencies/blocked_by
 - Every change is tracked by a GitHub issue. No code without an issue.
 - Issues are organized into milestones (one milestone = one releasable cut).
 - PR bodies link to issues with `Closes #N` / `Fixes #N` (the body, not the title — only body syntax auto-closes).
-- Each user-facing change carries its own `CHANGELOG.md [Unreleased]` entry; `/release-prep` only *promotes* that block (never authors it), so any missing entries must be backfilled at cut time.
+- Each user-facing change carries its own `CHANGELOG.md [Unreleased]` entry; `/release-prep` only *promotes* that block (never authors it), so any missing entries must be backfilled at cut time. Write a **milestone** number bare (`milestone 34`), **not** `#34`, in CHANGELOG/PR prose — `release.yml` renders the CHANGELOG block verbatim into the GitHub Release notes (#486), where a bare `#N` auto-links to **PR/issue N**, not the milestone (issue refs like `#614` are correct and intended).
 
 ---
 
