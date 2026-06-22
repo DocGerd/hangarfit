@@ -121,7 +121,7 @@ hangarfit solve scenario.yaml --budget 5
 hangarfit solve scenario.yaml --render out.png --render-paths
 ```
 
-A scenario YAML carries `fleet:` / `hangar:` refs plus a `fleet_in:` list (which planes are present), an optional `maintenance:` block (which plane is in the back bay), and an optional `constraints:` mapping (per-plane pins, `force_on_carts` locks, or a soft `priority` weight). See `tests/fixtures/solve_*.yaml` for ready-to-read examples of the pin and `force_on_carts` kinds.
+A scenario YAML carries `fleet:` / `hangar:` refs plus a `fleet_in:` list (which planes are present), an optional `maintenance:` block (which plane is in the back bay), an optional `ground_objects:` list (fixed obstacles plus solver-placed cars and trailers), an optional `constraints:` mapping (per-plane pins, `force_on_carts` locks, or a soft `priority` weight), and an optional soft `door_order:` list (a preferred door-proximity order among the placed bodies). See `tests/fixtures/solve_*.yaml` for the pin and `force_on_carts` kinds, `tests/fixtures/scenario_region_demo*.yaml` for `ground_objects`, and `tests/fixtures/scenario_door_order.yaml` for `door_order`.
 
 ### Exit codes (`solve`)
 
@@ -129,7 +129,7 @@ A scenario YAML carries `fleet:` / `hangar:` refs plus a `fleet_in:` list (which
 |---|---|
 | 0 | Found at least one valid layout (`status` = `found` or `found_partial`) |
 | 1 | No valid layout found (`status` = `exhausted_budget` or `trivially_infeasible`); with `--strict-k`, also fires for `found_partial` |
-| 2 | Could not solve (file not found, bad YAML, invariant violation, IO error during render/write, or `--render-paths` without `--render`) |
+| 2 | Could not solve (file not found, bad YAML, invariant violation, IO error during render/write, `--render-paths` without `--render`, or an unavailable backend such as `--backend learned`) |
 | 3 | `--render-paths` only: valid layout(s) found but the v1 tow planner could not route **any** of them. The layouts still render (without path overlays); each blocked layout gets a stderr warning naming the plane. Distinct from code 1 (no layout at all). |
 
 `--render-paths` overlays each plane's tow path on the `--render` PNG(s) (one colour per plane). It tow-plans every returned layout; a layout the planner cannot route is rendered without paths. If **at least one** candidate is routable the exit code is 0 (un-routable ones still warn); code 3 fires only when none are routable. Under default settings, if a spread layout is fully un-routable `solve()` first re-solves once with spread disabled and prefers that tighter, routable arrangement (surfaced on stderr and in `--json` via `spread_fallback_applied`), choosing a towable layout before code 3 is returned ([ADR-0016](docs/adr/0016-spread-towability-fallback.md)).

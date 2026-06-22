@@ -1,0 +1,17 @@
+# Committed seed-anchor witness for the #712 box rung (pair-anchored).
+#
+# A VALID 2-object layout on the synthetic box hangar (data/hangar.yaml). The seed-anchor
+# curriculum graft (#712) pre-parks a k-prefix of this layout at reset and drives the rest
+# in, annealing k->0. Correctness rests on one property: a k-prefix of a valid layout is
+# itself valid, so any anchored subset is a guaranteed-valid partial start with NO runtime
+# solver / search call.
+#
+# No `fleet:` / `hangar:` fields on purpose: the env + stage_builder load this with
+# fleet=/hangar= OVERRIDES (the rung's box fleet + box hangar at clearance 0.05), and the
+# loader rejects a file that sets those AND takes overrides. Poses were found offline and are
+# validated by the PRODUCT checker (collisions.check + Caddy egress) at the rung's 0.05 m
+# clearance — and at the strict 0.3 m clearance for margin — by tests/ml/test_stage_builder.py
+# (test_witness_box_*). Do not hand-edit the poses without re-running those tests.
+placements:
+  - {plane: fuji, x_m: 5.5, y_m: 8.0, heading_deg: 0.0}
+  - {plane: aviat_husky, x_m: 16.5, y_m: 8.0, heading_deg: 0.0}

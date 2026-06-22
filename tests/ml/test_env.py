@@ -1,0 +1,845 @@
+"""Tests for the cold-joint RL environment (epic #607 sub-project #1, #672)."""
+
+from __future__ import annotations
+
+import random
+
+import pytest
+
+from hangarfit.models import GroundObject, Part, Placement
+from ml import geometry_oracle as go
+from ml.env import HangarFitEnv
+from ml.types import DifficultyConfig, Park, Pose, Primitive, RewardWeights
+from tests.ml.conftest import _fuji, empty_hangar
+
+
+def test_ml_package_importable():
+    import ml
+
+    assert ml.__doc__ is not None
+
+
+def _env(**kw):
+    fleet = _fuji()
+    # Request fuji (always_own_gear) so the Park-time Layout validates cleanly
+    # (an always_cart glider as the first fleet key could trip cart-pool validation).
+    return HangarFitEnv(hangar=empty_hangar(), fleet=fleet, requested_ids=("fuji",), **kw)
+
+
+# ---------------------------------------------------------------------------
+# Task 10 — HangarFitEnv.reset
+# ---------------------------------------------------------------------------
+def test_reset_spawns_first_object_on_the_apron():
+    env = _env()
+    obs = env.reset()
+    assert obs.active is not None
+    assert obs.active.pose.y_m < 0.0  # spawned on the apron (y<0)
+    assert obs.parked == ()
+    assert len(obs.unplaced_ids) == 0  # the active one is not "unplaced"
+
+
+# ---------------------------------------------------------------------------
+# Task 11 — _potential
+# ---------------------------------------------------------------------------
+def test_potential_reflects_slot_distance_and_unplaced():
+    env = _env()
+    env.reset()
+    phi0 = env._potential()
+    # Φ is the NEGATIVE of (overlap + slot-distance + unplaced); after reset the
+    # active object sits on the apron (y<0) with one unplaced, so Φ is strictly
+    # negative — distinguishing the real Φ from the temporary 0.0 stub.
+    assert phi0 < 0.0
+
+
+# ---------------------------------------------------------------------------
+# Task 12 — step (transition + reward + termination)
+# ---------------------------------------------------------------------------
+def test_step_primitive_moves_active_and_returns_reward():
+    env = _env()
+    env.reset()
+    obs, reward, done, info = env.step(Primitive(kind="S", magnitude=1.0, gear=1))
+    assert isinstance(reward, float)
+    assert done is False
+    assert obs.active is not None and obs.active.pose.y_m > -env.hangar.apron_depth_m
+    assert "hard_overlap" in info.terms and isinstance(info.terms["hard_overlap"], float)
+
+
+def test_park_advances_to_next_object_or_finishes():
+    env = _env()  # single requested object
+    env.reset()
+    # Drive in until y>=1 then park.
+    for _ in range(20):
+        if env._active_pose is not None and env._active_pose.y_m >= 1.0:
+            break
+        env.step(Primitive(kind="S", magnitude=1.0, gear=1))
+    obs, reward, done, info = env.step(Park())
+    assert done is True  # the only object was parked
+    assert info.placed == info.total == 1
+
+
+# ---------------------------------------------------------------------------
+# Task 13 — curriculum max_objects + per-object partial-stop termination
+# ---------------------------------------------------------------------------
+def test_max_objects_caps_the_requested_set():
+    fleet = _fuji()
+    env = HangarFitEnv(
+        hangar=empty_hangar(),
+        fleet=fleet,
+        requested_ids=tuple(fleet),
+        difficulty=DifficultyConfig(max_objects=1),
+    )
+    env.reset()
+    assert len(env._queue) + 1 == 1  # exactly one object in play
+
+
+def test_per_object_budget_terminates_with_partial():
+    env = _env(difficulty=DifficultyConfig(per_object_step_budget=2))
+    env.reset()
+    env.step(Primitive(kind="L", magnitude=0.1, gear=1))
+    obs, reward, done, info = env.step(Primitive(kind="L", magnitude=0.1, gear=1))
+    assert done is True and "unplaceable" in info.reason
+
+
+def _two_object_env(**kw):
+    """A 2-object env: park ``fuji`` (own-gear), then drive ``aviat_husky``
+    (own-gear) so a partial-stop has one object already placed (fraction > 0)."""
+    fleet = _fuji()
+    return HangarFitEnv(
+        hangar=empty_hangar(), fleet=fleet, requested_ids=("fuji", "aviat_husky"), **kw
+    )
+
+
+def test_partial_budget_stop_includes_terminal_fraction_reward():
+    # Regression for the final-review #1 gap: a budget-driven (non-Park) stop must
+    # still earn r_terminal * (placed/total). Park object 1, then exhaust the
+    # per-object budget on object 2 with a pivot (L pivot = no pose change, so the
+    # only reward difference vs a non-terminating identical step is the terminal
+    # term). per_object_step_budget=1 makes the FIRST step on object 2 terminate.
+    pivot = Primitive(kind="L", magnitude=0.1, gear=1)
+
+    # Env A — budget=1: object 2's first step terminates with one parked (frac=0.5).
+    env_a = _two_object_env(difficulty=DifficultyConfig(per_object_step_budget=1))
+    env_a.reset()
+    _, _, done0, _ = env_a.step(Park())  # park fuji on the apron; advance to husky
+    assert done0 is False  # one object left to place, so the episode continues
+    _, reward_term, done_a, info_a = env_a.step(pivot)
+    assert done_a is True and "unplaceable" in info_a.reason
+    assert info_a.placed == 1 and info_a.total == 2
+    assert info_a.terms["terminal_fraction"] == 0.5
+
+    # Env B — budget high: the identical step on object 2 does NOT terminate.
+    env_b = _two_object_env(difficulty=DifficultyConfig(per_object_step_budget=50))
+    env_b.reset()
+    env_b.step(Park())  # park fuji identically; advance to husky at the same pose
+    _, reward_no_term, done_b, _ = env_b.step(pivot)
+    assert done_b is False
+
+    # The terminal term r_terminal * 0.5 is present in A, absent in B. #732 re-baseline:
+    # the terminal step now also forces Φ(s′)=0, so A drops the γ·Φ(s′) shaping term that
+    # the identical NON-terminal step B retains. The reward difference is therefore the
+    # terminal term MINUS that retained γ·Φ_B (B set _prev_potential = its new Φ(s′)).
+    w = env_a.weights
+    phi_b = env_b._prev_potential  # the Φ(s′) B kept; A forced its Φ(s′) to 0 (#732)
+    assert reward_term - reward_no_term == pytest.approx(w.r_terminal * 0.5 - w.gamma * phi_b)
+
+
+# ---------------------------------------------------------------------------
+# Task 14 — integration: random-policy rollout + RNG-free reward determinism
+# ---------------------------------------------------------------------------
+def _rollout(env: HangarFitEnv, actions: list) -> float:
+    env.reset()
+    total = 0.0
+    for a in actions:
+        _, r, done, _ = env.step(a)
+        total += r
+        if done:
+            break
+    return total
+
+
+def test_random_rollout_completes_and_is_bounded():
+    env = _env(difficulty=DifficultyConfig(per_object_step_budget=10, total_step_budget=40))
+    rng = random.Random(0)
+    fan = list(go.legal_primitives(env._body(env.requested_ids[0]), on_carts=False)) + [Park()]
+    actions = [rng.choice(fan) for _ in range(40)]
+    total = _rollout(env, actions)
+    assert isinstance(total, float)
+
+
+def test_reward_is_rng_free_for_a_fixed_action_sequence():
+    actions: list = [Primitive(kind="S", magnitude=1.0, gear=1)] * 5 + [Park()]
+    a = _rollout(_env(), actions)
+    b = _rollout(_env(), actions)
+    assert a == b  # byte-identical reward for identical actions (ADR-0027 env tier)
+
+
+# ---------------------------------------------------------------------------
+# Final-review #3 — _on_carts is correct for ground objects (towed vs steerable)
+# ---------------------------------------------------------------------------
+def test_on_carts_for_ground_objects_towed_vs_steerable():
+    # Regression: a GroundObject has no movement_mode/on_carts; the old getattr
+    # path wrongly resolved every mover to on_carts=False (own-gear, no strafe).
+    from hangarfit.loader import load_ground_objects
+
+    gos = load_ground_objects("examples/herrenteich/fleet.yaml")
+    env = HangarFitEnv(
+        hangar=empty_hangar(),
+        fleet=_fuji(),
+        requested_ids=("glider_trailer_1",),  # a towed (free-swivel) mover
+        ground_objects=gos,
+    )
+    # A towed trailer is free-swivel cart-like → strafe-eligible.
+    assert env._on_carts("glider_trailer_1") is True
+    # A steerable car has a positive turning circle → own-gear fan, NOT cart-like.
+    assert env._on_carts("vw_caddy") is False
+    # A fixed obstacle never moves → never cart-like.
+    assert env._on_carts("maul_fuel_trailer") is False
+
+    # And the legal-primitive fan for a towed mover includes the strafe T (#647).
+    towed = env._body("glider_trailer_1")
+    kinds = {p.kind for p in go.legal_primitives(towed, on_carts=env._on_carts("glider_trailer_1"))}
+    assert "T" in kinds
+
+
+def test_on_carts_for_aircraft_unchanged():
+    env = _env()
+    # fuji is always_own_gear → not cart-like (the aircraft path is untouched).
+    assert env._on_carts("fuji") is False
+
+
+# ---------------------------------------------------------------------------
+# Task 7 (#607 SP#4b) — reset(requested_ids=…) override
+# ---------------------------------------------------------------------------
+# Reuses the existing _two_object_env(**kw) helper above (fuji + aviat_husky on the
+# empty hangar) so we don't shadow it; the reset override is difficulty-agnostic.
+def test_reset_none_is_equivalent_to_passing_the_same_ids():
+    env = _two_object_env(
+        difficulty=DifficultyConfig(max_objects=2, per_object_step_budget=40, total_step_budget=80)
+    )
+    obs_default = env.reset()
+    obs_explicit = env.reset(requested_ids=("fuji", "aviat_husky"))
+    assert obs_default == obs_explicit  # Observation is a frozen dataclass
+
+
+def test_reset_override_changes_the_requested_set():
+    env = _two_object_env()
+    env.reset(requested_ids=("aviat_husky",))
+    assert env.requested_ids == ("aviat_husky",)
+
+
+def test_reset_rejects_unknown_id():
+    env = _two_object_env()
+    with pytest.raises(ValueError):
+        env.reset(requested_ids=("nope",))
+
+
+def test_parked_version_zero_then_bumps_on_park_then_resets():
+    env = _two_object_env(
+        difficulty=DifficultyConfig(max_objects=2, per_object_step_budget=40, total_step_budget=80)
+    )
+    env.reset()
+    assert env._parked_version == 0
+    env.step(Park())  # park object 1 -> version bumps (validity irrelevant)
+    assert env._parked_version == 1
+    env.reset()
+    assert env._parked_version == 0
+
+
+def test_reset_rejects_empty_requested_ids():
+    env = _two_object_env()
+    with pytest.raises(ValueError):
+        env.reset(requested_ids=())
+
+
+def test_reset_truncates_requested_ids_beyond_max_objects():
+    # max_objects caps the set: requesting more ids than the cap truncates so the episode
+    # size (StepInfo.total / fraction_placed) matches what the env actually drives.
+    env = _two_object_env(
+        difficulty=DifficultyConfig(max_objects=1, per_object_step_budget=40, total_step_budget=40)
+    )
+    env.reset(requested_ids=("fuji", "aviat_husky"))
+    assert env.requested_ids == ("fuji",)  # truncated to max_objects=1
+
+
+def test_parked_out_of_bounds_layout_is_invalid():
+    # Park the lone object immediately, while it is still on the apron (y < 0): no overlap
+    # (single object) but out of hangar bounds. The tightened valid predicate must report
+    # invalid (the old overlap-only predicate wrongly said valid=True). #607 SP#4b review.
+    env = _env()
+    env.reset()
+    _, _, done, info = env.step(Park())
+    assert done is True and info.placed == 1
+    assert info.valid is False  # parked on the apron / out of bounds
+
+
+def test_env_layout_valid_delegates_to_product_checker():
+    # At reset, no objects are parked yet (_layout() is effectively empty of aircraft).
+    # The Layout is structurally valid (no overlaps, no out-of-bounds placements).
+    # The expected value is True for a clean empty state (not a tautology — it asserts
+    # the predicate returns a concrete expected result on a known-good state).
+    env = HangarFitEnv(hangar=empty_hangar(), fleet=_fuji(), requested_ids=("fuji",))
+    env.reset()
+    assert env._layout_valid() is True
+
+
+# ---------------------------------------------------------------------------
+# Task 2 (#607 SP#4c-ii / #693) — fixed-obstacle pre-placement
+# ---------------------------------------------------------------------------
+def _fuel_trailer() -> GroundObject:
+    # Minimal fixed obstacle; mirrors the catalog maul_fuel_trailer shape closely
+    # enough. GroundObject carries a `parts` tuple of kind="ground" Parts (no
+    # length_m/width_m/height_m fields) — Part positional args after kind are
+    # length/width/offset_x/offset_y/angle/z_bottom/z_top (verified vs
+    # tests/test_scene.py:541). A fixed_obstacle carries no motion_mode/hard_door_mover.
+    return GroundObject(
+        id="fuel",
+        name="Fuel trailer",
+        parts=(Part("ground", 2.0, 1.5, 0.0, 0.0, 0.0, 0.0, 1.2),),
+        object_class="fixed_obstacle",
+    )
+
+
+def test_fixed_obstacle_in_layout_not_parked_and_fraction_uncorrupted():
+    fleet = _fuji()
+    fuel = _fuel_trailer()
+    fixed = (Placement(plane_id="fuel", x_m=2.0, y_m=10.0, heading_deg=0.0, on_carts=False),)
+    env = HangarFitEnv(
+        hangar=empty_hangar(),
+        fleet=fleet,
+        requested_ids=("fuji",),
+        ground_objects={"fuel": fuel},
+        fixed_placements=fixed,
+    )
+    env.reset()
+    # The fixed obstacle is present in the scene from step 0...
+    layout = env._layout()
+    assert "fuel" in {gp.plane_id for gp in layout.ground_object_placements}
+    # ...but it is NOT counted as a parked (driven-in) object.
+    assert env._fixed == list(fixed)
+    assert all(p.plane_id != "fuel" for p in env._parked)
+    # terminal_fraction denominator is the requested (driven) set only -> 1 here, not 2.
+    # Drive fuji nowhere and Park it: fraction = 1/1 even with the fixed obstacle present.
+    _obs, _r, done, info = env.step(Park())
+    assert done and info.total == 1 and info.placed == 1
+
+
+def test_placed_body_overlapping_fixed_obstacle_is_invalid():
+    fleet = _fuji()
+    fuel = _fuel_trailer()
+    # Place the fuel obstacle exactly where we will park the fuji -> guaranteed overlap.
+    fixed = (Placement(plane_id="fuel", x_m=9.0, y_m=10.0, heading_deg=0.0, on_carts=False),)
+    env = HangarFitEnv(
+        hangar=empty_hangar(),
+        fleet=fleet,
+        requested_ids=("fuji",),
+        ground_objects={"fuel": fuel},
+        fixed_placements=fixed,
+    )
+    env.reset()
+    env._active_pose = type(env._active_pose)(x_m=9.0, y_m=10.0, heading_deg=0.0)
+    env.step(Park())
+    assert env._layout_valid() is False  # fuji parts overlap the fixed fuel obstacle
+
+
+# ---------------------------------------------------------------------------
+# #704 — _parked_score() episode cache
+# ---------------------------------------------------------------------------
+def test_parked_score_cache_equals_fresh_each_step():
+    env = _two_object_env(
+        difficulty=DifficultyConfig(max_objects=2, per_object_step_budget=40, total_step_budget=80)
+    )
+    env.reset()
+    fwd = Primitive(kind="S", magnitude=1.0, gear=1)
+    actions = [fwd, fwd, fwd, Park(), fwd, fwd]  # drive+park obj1, then drive obj2
+    for a in actions:
+        _, _, done, _ = env.step(a)
+        if done:
+            break
+        # After a non-terminal step the cache must equal a fresh score of the parked set.
+        assert env._parked_score() == go.score_layout(env._layout())
+
+
+def test_parked_score_empty_set_is_trivial():
+    env = _env()
+    env.reset()
+    s = env._parked_score()  # nothing parked yet
+    assert s == go.LayoutScore(0.0, True, False)
+
+
+def test_parked_obstacles_cache_is_stable_per_version_and_active():
+    env = _two_object_env(
+        difficulty=DifficultyConfig(max_objects=2, per_object_step_budget=40, total_step_budget=80)
+    )
+    env.reset()
+    env.step(Park())  # park obj1; active is now obj2
+    aid = env._active_id
+    assert aid is not None
+    o1 = env._parked_obstacles(aid)
+    o2 = env._parked_obstacles(aid)
+    assert o1 is o2  # same (version, active_id) -> cached object reused
+
+
+def test_fixed_obstacle_is_perceived_in_observation_and_encoding():
+    # The policy must PERCEIVE the keep-out it is penalized for hitting: the fixed obstacle
+    # belongs in obs.parked (the observed frozen set) and surfaces in the encoded tokens
+    # (its fixed_obstacle type column, row[4]==1) — NOT just in the reward-side _layout().
+    from ml.encoding import EncoderConfig, encode
+
+    fuel = _fuel_trailer()
+    fixed = (Placement(plane_id="fuel", x_m=2.0, y_m=10.0, heading_deg=0.0, on_carts=False),)
+    env = HangarFitEnv(
+        hangar=empty_hangar(),
+        fleet=_fuji(),
+        requested_ids=("fuji",),
+        ground_objects={"fuel": fuel},
+        fixed_placements=fixed,
+    )
+    obs = env.reset()
+    # (a) The fixed obstacle is in the observed frozen set from step 0...
+    assert "fuel" in {po.object_id for po in obs.parked}
+    # ...and it is NOT counted as parked/driven (the LIST, not obs.parked).
+    assert all(p.plane_id != "fuel" for p in env._parked)
+    # (b) The encoded observation surfaces it: a token row with the fixed_obstacle type
+    # column (row[4]) set. (Bodies = fleet ∪ ground_objects so the encoder resolves it.)
+    tensors = encode(obs, env.hangar, {**env.fleet, **env.ground_objects}, EncoderConfig())
+    fixed_rows = [
+        i for i in range(tensors.tokens.shape[0]) if tensors.token_mask[i] and tensors.tokens[i, 4]
+    ]
+    assert fixed_rows, "no fixed_obstacle token row (row[4]) — keep-out is not perceived"
+
+
+def test_r_unplaced_penalty_lowers_terminal_reward_on_abandonment():
+    """End-to-end through HangarFitEnv: driving an object to budget exhaustion without ever
+    Parking it (abandonment, terminal_fraction=0) must cost exactly r_unplaced_penalty more
+    than the same trajectory with the penalty off — proving the #710 economics knob is wired
+    from RewardWeights through env.step's terminal branch (not just step_reward in isolation)."""
+    from ml.types import DifficultyConfig, Primitive, RewardWeights
+
+    diff = DifficultyConfig(max_objects=1, per_object_step_budget=2, total_step_budget=2)
+
+    def run(penalty: float) -> float:
+        env = HangarFitEnv(
+            hangar=empty_hangar(),
+            fleet=_fuji(),
+            requested_ids=("fuji",),
+            difficulty=diff,
+            weights=RewardWeights(r_unplaced_penalty=penalty),
+        )
+        env.reset()
+        total, done, info = 0.0, False, None
+        while not done:
+            _, r, done, info = env.step(Primitive(kind="S", magnitude=1.0, gear=1))
+            total += r
+        assert info is not None and info.placed == 0  # never parked -> pure abandonment
+        return total
+
+    base = run(0.0)
+    penalized = run(10.0)
+    # unplaced fraction = 1 - terminal_fraction = 1.0 -> penalty term = -10.0, terminal step only.
+    assert base - penalized == pytest.approx(10.0)
+
+
+def test_r_unplaced_penalty_full_park_not_penalized_vs_abandon():
+    """T5: both terminal branches feed terminal_fraction into the penalty. A FULLY-placed
+    Park episode (frac=1, via the Park-done branch) is NOT penalized — identical reward
+    with/without the knob — while an abandonment episode (frac=0, via the budget branch) is
+    charged the full unplaced fraction. Guards against the penalty being wired into only one
+    of the two terminal branches."""
+    from ml.types import DifficultyConfig, Park, Primitive, RewardWeights
+
+    diff = DifficultyConfig(max_objects=2, per_object_step_budget=2, total_step_budget=4)
+
+    def run(penalty: float, mode: str) -> tuple[float, int]:
+        env = HangarFitEnv(
+            hangar=empty_hangar(),
+            fleet=_fuji(),
+            requested_ids=("fuji", "aviat_husky"),
+            difficulty=diff,
+            weights=RewardWeights(r_unplaced_penalty=penalty),
+        )
+        env.reset()
+        total, done, info = 0.0, False, None
+        while not done:
+            act = Park() if mode == "park" else Primitive(kind="S", magnitude=1.0, gear=1)
+            _, r, done, info = env.step(act)
+            total += r
+        assert info is not None
+        return total, info.placed
+
+    park0, p_placed = run(0.0, "park")
+    parkR, _ = run(20.0, "park")
+    aban0, a_placed = run(0.0, "abandon")
+    abanR, _ = run(20.0, "abandon")
+    assert p_placed == 2 and a_placed == 0  # Park-done (frac=1) vs budget-abandon (frac=0)
+    assert parkR == pytest.approx(park0)  # full placement -> penalty term 0, unchanged by knob
+    assert aban0 - abanR == pytest.approx(20.0)  # abandon -> charged the full unplaced fraction
+
+
+# ---------------------------------------------------------------------------
+# #714 — validity-conditional terminal wiring (Lever A)
+# ---------------------------------------------------------------------------
+# An in-hangar fuji pose verified valid in empty_hangar (probed: 22x25 box,
+# bay keep-out x in [9,18] y in [16,25]; (9,10,0) clears it).
+_VALID_POSE = (9.0, 10.0, 0.0)
+
+
+def _park_terminal_reward(*, validity_conditional: bool, pose):
+    """Single-object env: optionally override the active pose, then Park (terminal).
+    Returns (reward, info, weights). pose=None keeps the apron spawn (out of bounds)."""
+    w = RewardWeights(r_unplaced_penalty=8.0, validity_conditional_terminal=validity_conditional)
+    env = HangarFitEnv(hangar=empty_hangar(), fleet=_fuji(), requested_ids=("fuji",), weights=w)
+    env.reset()
+    if pose is not None:
+        env._active_pose = Pose(x_m=pose[0], y_m=pose[1], heading_deg=pose[2])
+    _, reward, done, info = env.step(Park())
+    assert done is True
+    return reward, info, w
+
+
+def test_validity_conditional_terminal_park_invalid_drops_placed_credit():
+    # Park on the apron (out of bounds) => invalid terminal. Flag ON drops the +r_terminal
+    # credit (eff fraction 0): off - on == frac*(r_terminal + r_unplaced) at frac 1.
+    off_r, off_i, w = _park_terminal_reward(validity_conditional=False, pose=None)
+    on_r, on_i, _ = _park_terminal_reward(validity_conditional=True, pose=None)
+    assert off_i.valid is False and on_i.valid is False
+    assert off_r - on_r == pytest.approx(w.r_terminal + w.r_unplaced_penalty)
+
+
+def test_validity_conditional_terminal_park_valid_unchanged():
+    # A VALID in-hangar park: the flag makes NO difference (terminal credited either way),
+    # confirming the Park branch passes terminal_valid=True (else flag-on would wrongly zero it).
+    off_r, off_i, _ = _park_terminal_reward(validity_conditional=False, pose=_VALID_POSE)
+    on_r, on_i, _ = _park_terminal_reward(validity_conditional=True, pose=_VALID_POSE)
+    assert off_i.valid is True and on_i.valid is True
+    assert on_r == pytest.approx(off_r)
+
+
+def _budget_terminal_reward(*, validity_conditional: bool, park_pose):
+    """2-object env: park obj1 (at park_pose or apron), then exhaust obj2's per-object
+    budget with a no-op pivot so the terminating step's only fraction credit is the
+    terminal term over the {obj1} parked set. Returns (reward, info, weights)."""
+    w = RewardWeights(r_unplaced_penalty=8.0, validity_conditional_terminal=validity_conditional)
+    env = HangarFitEnv(
+        hangar=empty_hangar(),
+        fleet=_fuji(),
+        requested_ids=("fuji", "aviat_husky"),
+        difficulty=DifficultyConfig(per_object_step_budget=1),
+        weights=w,
+    )
+    env.reset()
+    if park_pose is not None:
+        env._active_pose = Pose(x_m=park_pose[0], y_m=park_pose[1], heading_deg=park_pose[2])
+    _, _, done0, _ = env.step(Park())  # park obj1; advance to obj2
+    assert done0 is False
+    _, reward, done, info = env.step(Primitive(kind="L", magnitude=0.1, gear=1))  # budget-exhaust
+    assert done is True and "unplaceable" in info.reason
+    assert info.placed == 1 and info.total == 2  # terminal_fraction 0.5
+    return reward, info, w
+
+
+def test_validity_conditional_terminal_budget_invalid_drops_credit():
+    # Budget-exhaustion stop over an INVALID parked set (obj1 on apron): flag ON zeros the
+    # placed-fraction credit. off - on == 0.5*(r_terminal + r_unplaced).
+    off_r, _, w = _budget_terminal_reward(validity_conditional=False, park_pose=None)
+    on_r, _, _ = _budget_terminal_reward(validity_conditional=True, park_pose=None)
+    assert off_r - on_r == pytest.approx(0.5 * (w.r_terminal + w.r_unplaced_penalty))
+
+
+def test_validity_conditional_terminal_budget_valid_credited():
+    # THE budget-branch wiring guard: a budget stop over a VALID parked set must STILL be
+    # credited under the flag (the branch must pass terminal_valid=_layout_valid()=True, not
+    # leave it None). If the budget branch is unwired, this valid partial is wrongly zeroed.
+    off_r, off_i, _ = _budget_terminal_reward(validity_conditional=False, park_pose=_VALID_POSE)
+    on_r, on_i, _ = _budget_terminal_reward(validity_conditional=True, park_pose=_VALID_POSE)
+    assert off_i.valid is True and on_i.valid is True
+    assert on_r == pytest.approx(off_r)
+
+
+def test_validity_conditional_terminal_multiobject_full_invalid_park_drops_credit():
+    # The headline #714 scenario via the Park-done branch: park BOTH objects
+    # (terminal_fraction 1.0) but OVERLAPPING, so the whole layout is invalid. The flag must
+    # withdraw the full +r_terminal credit even at full placement: off - on == r_terminal +
+    # r_unplaced (only the terminal term differs; the shared -w_col overlap penalty cancels).
+    def run(validity_conditional: bool):
+        w = RewardWeights(
+            r_unplaced_penalty=8.0, validity_conditional_terminal=validity_conditional
+        )
+        env = HangarFitEnv(
+            hangar=empty_hangar(),
+            fleet=_fuji(),
+            requested_ids=("fuji", "aviat_husky"),
+            weights=w,
+        )
+        env.reset()
+        env._active_pose = Pose(x_m=9.0, y_m=10.0, heading_deg=0.0)  # fuji at a valid pose
+        _, _, done0, _ = env.step(Park())
+        assert done0 is False
+        env._active_pose = Pose(x_m=9.0, y_m=10.0, heading_deg=0.0)  # husky stacked on fuji
+        _, reward, done, info = env.step(Park())
+        assert done is True and info.placed == 2 and info.total == 2  # frac 1.0
+        return reward, info, w
+
+    off_r, off_i, w = run(validity_conditional=False)
+    on_r, on_i, _ = run(validity_conditional=True)
+    assert off_i.valid is False and on_i.valid is False  # overlapping pile -> invalid
+    assert off_r - on_r == pytest.approx(w.r_terminal + w.r_unplaced_penalty)
+
+
+# ---------------------------------------------------------------------------
+# #712 — seed-anchor start-state graft: env pre-parks the requested PREFIX at
+# committed-witness poses and drives only the remaining N-k objects.
+# ---------------------------------------------------------------------------
+_WITNESS_ANCHORS = (
+    Placement(plane_id="fuji", x_m=5.0, y_m=8.0, heading_deg=0.0, on_carts=False),
+    Placement(plane_id="aviat_husky", x_m=16.0, y_m=8.0, heading_deg=0.0, on_carts=False),
+)
+
+
+def _anchor_env(seed_anchor_k):
+    return HangarFitEnv(
+        hangar=empty_hangar(),
+        fleet=_fuji(),
+        requested_ids=("fuji", "aviat_husky"),
+        anchor_placements=_WITNESS_ANCHORS,
+        difficulty=DifficultyConfig(
+            max_objects=2,
+            seed_anchor_k=seed_anchor_k,
+            per_object_step_budget=60,
+            total_step_budget=60,
+        ),
+    )
+
+
+def test_seed_anchor_pre_parks_prefix_and_drives_the_rest():
+    env = _anchor_env(seed_anchor_k=1)
+    obs = env.reset(requested_ids=("fuji", "aviat_husky"))
+    # the prefix object (fuji) is pre-parked at its committed-witness pose...
+    assert [p.plane_id for p in env._parked] == ["fuji"]
+    assert env._parked[0] == _WITNESS_ANCHORS[0]
+    # ...and the remaining object (aviat_husky) is the one driven in this episode.
+    assert env._active_id == "aviat_husky"
+    assert env._queue == []  # husky was the only queued id; _spawn popped it
+    assert obs.active is not None and obs.active.object_id == "aviat_husky"
+    assert [pk.object_id for pk in obs.parked] == ["fuji"]
+
+
+def test_seed_anchor_subset_follows_request_order():
+    # The anchored subset is the request PREFIX, so a different request order anchors a
+    # different object -> "anchor the prefix" composes with the curriculum's seeded
+    # per-episode permutation into a seeded-random k-subset (#712 Q1).
+    env = _anchor_env(seed_anchor_k=1)
+    env.reset(requested_ids=("aviat_husky", "fuji"))
+    assert [p.plane_id for p in env._parked] == ["aviat_husky"]
+    assert env._active_id == "fuji"
+
+
+def test_seed_anchor_k_zero_reset_is_byte_identical_to_no_anchor():
+    # k=0 with anchors supplied must reproduce the no-anchor reset exactly (default-neutral:
+    # the #712 lever is inert until a rung sets seed_anchor_k>0).
+    anchored = _anchor_env(seed_anchor_k=0)
+    plain = HangarFitEnv(
+        hangar=empty_hangar(),
+        fleet=_fuji(),
+        requested_ids=("fuji", "aviat_husky"),
+        difficulty=DifficultyConfig(max_objects=2, per_object_step_budget=60, total_step_budget=60),
+    )
+    obs_a = anchored.reset(requested_ids=("fuji", "aviat_husky"))
+    obs_p = plain.reset(requested_ids=("fuji", "aviat_husky"))
+    assert anchored._parked == [] == plain._parked
+    assert anchored._queue == plain._queue
+    assert obs_a == obs_p
+
+
+def test_seed_anchor_terminal_fraction_counts_anchored_objects():
+    # Anchors live in _parked (counted in the denominator N), so parking the one driven
+    # object completes the set: placed==total==2 (#712 denominator semantics).
+    env = _anchor_env(seed_anchor_k=1)
+    env.reset(requested_ids=("fuji", "aviat_husky"))
+    for _ in range(20):
+        if env._active_pose is not None and env._active_pose.y_m >= 1.0:
+            break
+        env.step(Primitive(kind="S", magnitude=1.0, gear=1))
+    # Guard the premise: the driven object actually advanced inside before we Park (so this
+    # tests "drove in + parked", not an accidental park-from-the-apron if primitives rescale).
+    assert env._active_pose is not None and env._active_pose.y_m >= 1.0
+    _, _, done, info = env.step(Park())
+    assert done is True
+    assert info.placed == 2 and info.total == 2
+
+
+def test_seed_anchor_rejects_k_not_less_than_requested():
+    # k must leave at least one object to drive; k>=N is a misconfigured rung -> loud error.
+    with pytest.raises(ValueError, match="seed_anchor_k"):
+        _anchor_env(seed_anchor_k=2)
+
+
+def test_seed_anchor_rejects_negative_k():
+    # A negative k must fail loud, NOT silently slice requested[:k] (anchor all-but-|k|).
+    with pytest.raises(ValueError, match="seed_anchor_k"):
+        _anchor_env(seed_anchor_k=-1)
+
+
+def test_seed_anchor_rejects_duplicate_witness_ids():
+    # Two placements with the same id would silently overwrite in _anchor_by_id, desyncing the
+    # anchor map from the pool -> loud error instead.
+    dupes = (
+        Placement(plane_id="fuji", x_m=5.0, y_m=8.0, heading_deg=0.0, on_carts=False),
+        Placement(plane_id="fuji", x_m=10.0, y_m=8.0, heading_deg=0.0, on_carts=False),
+    )
+    with pytest.raises(ValueError, match="duplicate"):
+        HangarFitEnv(
+            hangar=empty_hangar(),
+            fleet=_fuji(),
+            requested_ids=("fuji", "aviat_husky"),
+            anchor_placements=dupes,
+            difficulty=DifficultyConfig(max_objects=2, seed_anchor_k=1),
+        )
+
+
+def test_seed_anchor_rejects_requested_prefix_without_a_witness_pose():
+    # If the anchored prefix references an id with no witness pose, fail loud (covers the
+    # env.py "no witness pose for anchored ids" branch) rather than KeyError.
+    env = HangarFitEnv(
+        hangar=empty_hangar(),
+        fleet=_fuji(),
+        requested_ids=("fuji", "aviat_husky"),
+        anchor_placements=(_WITNESS_ANCHORS[0],),  # only fuji has a witness pose
+        difficulty=DifficultyConfig(max_objects=2, seed_anchor_k=1),
+    )
+    # Request husky FIRST: the k=1 prefix is now husky, which has no witness pose.
+    with pytest.raises(ValueError, match="no witness pose"):
+        env.reset(requested_ids=("aviat_husky", "fuji"))
+
+
+# ---------------------------------------------------------------------------
+# #718 — per-episode seed_anchor_k override on reset
+# ---------------------------------------------------------------------------
+@pytest.fixture
+def anchored_pair_env():
+    """2-object env with anchor_placements for both ids and difficulty.seed_anchor_k=1."""
+    return HangarFitEnv(
+        hangar=empty_hangar(),
+        fleet=_fuji(),
+        requested_ids=("fuji", "aviat_husky"),
+        anchor_placements=_WITNESS_ANCHORS,
+        difficulty=DifficultyConfig(
+            max_objects=2,
+            seed_anchor_k=1,
+            per_object_step_budget=60,
+            total_step_budget=60,
+        ),
+    )
+
+
+def test_reset_seed_anchor_k_override_parks_nothing(anchored_pair_env):
+    # anchored_pair_env: difficulty.seed_anchor_k == 1, witness poses for both ids.
+    env = anchored_pair_env
+    env.reset(requested_ids=("fuji", "aviat_husky"), seed_anchor_k=0)
+    assert env._parked == []  # override 0 wins over difficulty's k=1
+    assert env._queue == ["aviat_husky"]
+
+
+def test_reset_seed_anchor_k_override_parks_prefix(anchored_pair_env):
+    env = anchored_pair_env
+    env.reset(requested_ids=("fuji", "aviat_husky"), seed_anchor_k=1)
+    assert len(env._parked) == 1  # first id pre-parked at its witness pose
+    # After reset(), _spawn() pops the sole queued id into _active_id, so _queue is empty.
+    assert env._active_id == "aviat_husky"
+    assert env._queue == []
+
+
+def test_reset_without_override_uses_difficulty_default(anchored_pair_env):
+    env = anchored_pair_env  # difficulty.seed_anchor_k == 1
+    env.reset(requested_ids=("fuji", "aviat_husky"))
+    assert len(env._parked) == 1  # regression: today's behavior unchanged
+
+
+# ---------------------------------------------------------------------------
+# #720 (L5) — one-time first-valid bonus: the env flips ctx.first_valid_now True on EXACTLY
+# the first Park that yields a valid layout, so r_first_valid is paid once per episode.
+# ---------------------------------------------------------------------------
+
+# Two side-by-side in-hangar poses inside the 22x25 hangar: each Park is valid and the pair
+# is non-overlapping (probed), asserted live below so a bad fixture fails loud, not silently.
+_FIRST_VALID_POSE_A = Pose(x_m=6.0, y_m=10.0, heading_deg=0.0)
+_FIRST_VALID_POSE_B = Pose(x_m=16.0, y_m=10.0, heading_deg=0.0)
+
+
+def _park_reward_at(env: HangarFitEnv, pose: Pose) -> tuple[float, bool]:
+    env._active_pose = pose  # override the apron spawn with the chosen in-hangar pose
+    _obs, reward, _done, info = env.step(Park())
+    return reward, info.valid
+
+
+def test_first_valid_bonus_paid_once_not_on_later_valid_parks():
+    # Park two objects validly; the bonus is added on the FIRST valid Park only.
+    def run(bonus: float) -> tuple[float, bool, float, bool]:
+        env = HangarFitEnv(
+            hangar=empty_hangar(),
+            fleet=_fuji(),
+            requested_ids=("fuji", "aviat_husky"),
+            weights=RewardWeights(r_first_valid=bonus),
+        )
+        env.reset()
+        r1, v1 = _park_reward_at(env, _FIRST_VALID_POSE_A)
+        r2, v2 = _park_reward_at(env, _FIRST_VALID_POSE_B)
+        return r1, v1, r2, v2
+
+    r1_0, v1_0, r2_0, v2_0 = run(0.0)
+    r1_b, v1_b, r2_b, v2_b = run(9.0)
+    assert v1_0 and v2_0 and v1_b and v2_b, "fixture poses must both Park validly"
+    assert r1_b - r1_0 == pytest.approx(9.0)  # first valid Park -> bonus
+    assert r2_b - r2_0 == pytest.approx(0.0)  # second valid Park -> no repeat
+
+
+def test_first_valid_bonus_tied_to_whole_layout_validity():
+    # park_valid is WHOLE-layout validity: an object committed invalidly (apron, y<0) poisons it
+    # for the rest of the episode, so no later Park yields a valid layout and the one-time bonus
+    # never fires. (It is therefore never spent prematurely on an invalid Park either.)
+    def run(bonus: float) -> tuple[float, bool, float, bool]:
+        env = HangarFitEnv(
+            hangar=empty_hangar(),
+            fleet=_fuji(),
+            requested_ids=("fuji", "aviat_husky"),
+            weights=RewardWeights(r_first_valid=bonus),
+        )
+        env.reset()
+        _obs, r_invalid, _done, info_invalid = env.step(Park())  # park object 1 on the apron
+        r_after, v_after = _park_reward_at(env, _FIRST_VALID_POSE_B)  # object 2 at a clean pose
+        return r_invalid, info_invalid.valid, r_after, v_after
+
+    r_inv_0, inv_valid_0, r_aft_0, v_aft_0 = run(0.0)
+    r_inv_b, inv_valid_b, r_aft_b, v_aft_b = run(9.0)
+    # Both Parks report an invalid whole layout (the apron object never leaves), so neither pays.
+    assert inv_valid_0 is False and v_aft_0 is False
+    assert inv_valid_b is False and v_aft_b is False
+    assert r_inv_b == pytest.approx(r_inv_0)  # invalid first Park -> no bonus
+    assert r_aft_b == pytest.approx(r_aft_0)  # layout still invalid -> bonus never fires
+
+
+def test_first_valid_bonus_resets_across_episodes():
+    # reset() must clear the one-shot, so the SAME env earns the bonus again on the first valid
+    # Park of the next episode (a leaked flag would silently starve every episode after the first).
+    env_0 = HangarFitEnv(
+        hangar=empty_hangar(),
+        fleet=_fuji(),
+        requested_ids=("fuji",),
+        weights=RewardWeights(r_first_valid=0.0),
+    )
+    env_b = HangarFitEnv(
+        hangar=empty_hangar(),
+        fleet=_fuji(),
+        requested_ids=("fuji",),
+        weights=RewardWeights(r_first_valid=9.0),
+    )
+
+    def first_valid_delta() -> float:
+        env_0.reset()
+        env_b.reset()
+        r0, v0 = _park_reward_at(env_0, _FIRST_VALID_POSE_A)
+        rb, vb = _park_reward_at(env_b, _FIRST_VALID_POSE_A)
+        assert v0 and vb
+        return rb - r0
+
+    assert first_valid_delta() == pytest.approx(9.0)  # episode 1
+    assert first_valid_delta() == pytest.approx(9.0)  # after reset -> flag cleared, paid again

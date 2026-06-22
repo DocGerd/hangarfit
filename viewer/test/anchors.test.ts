@@ -51,14 +51,29 @@ function makeScene(aff: Affine, b: BoxData, wheel: [number, number]): SceneV2 {
       structural_notches: [],
     },
     planes: [{ id: 'p', color: '#ffffff', boxes: [b], wheels: [wheel], on_carts: false }],
+    ground_objects: [],
     conflicts: [],
     final_poses: { p: aff },
     anchors: { p: [corners] },
     gear_anchors: { p: [applyAffine(aff, wheel[0], wheel[1])] },
+    go_anchors: {},
+    egress_lanes: {},
     timeline: { segments: [], total_s: 0 },
     placeholder: false,
     readouts: null,
   };
+}
+
+// Attach a ground object whose go_anchors are the TRUE oracle for `aff`, so a
+// faithful viewer compare yields maxErr 0 — the #606 sibling of the plane oracle.
+function withGroundObject(s: SceneV2, aff: Affine, b: BoxData): SceneV2 {
+  const corners = partCornersLocal(b).map(([u, v]) => applyAffine(aff, u, v));
+  s.ground_objects = [{
+    id: 'go', object_class: 'placed_routed_mover', color: '#8A8F98',
+    hard_door_mover: false, boxes: [b], final_pose: aff,
+  }];
+  s.go_anchors = { go: [corners] };
+  return s;
 }
 
 const AFF: Affine = [Math.sin(0.3), Math.cos(0.3), 4, Math.cos(0.3), -Math.sin(0.3), 9];
@@ -109,4 +124,32 @@ test('polygon anchor vertex-count mismatch → structural banner', () => {
   const s = makeScene(AFF, box({ vertices: HEX }), [0, 1]);
   s.anchors.p[0] = s.anchors.p[0].slice(0, 3); // 3 oracle corners vs 6 real vertices
   assert.match(checkAnchors(s).structural, /vertex count mismatch/);
+});
+
+// ── #606: ground-object anchor self-check (box corners; no gear) ─────────────
+
+test('ground object: faithful go_anchors oracle → no structural error, maxErr ~0', () => {
+  const r = checkAnchors(withGroundObject(makeScene(AFF, box(), [0, 1]), AFF, box({ cx: 1 })));
+  assert.equal(r.structural, '');
+  assert.ok(r.maxErr < 1e-9);
+});
+
+test('ground object: a corrupted corner pushes maxErr above tolerance', () => {
+  const s = withGroundObject(makeScene(AFF, box(), [0, 1]), AFF, box());
+  s.go_anchors.go[0][0][0] += 0.01;
+  const r = checkAnchors(s);
+  assert.equal(r.structural, '');
+  assert.ok(r.maxErr >= 0.01 - 1e-9);
+});
+
+test('ground object: missing go_anchors → structural banner', () => {
+  const s = withGroundObject(makeScene(AFF, box(), [0, 1]), AFF, box());
+  s.go_anchors = {}; // oracle absent for the placed GO
+  assert.match(checkAnchors(s).structural, /missing affine\/anchors for go/);
+});
+
+test('ground object: go anchor/box count mismatch → structural banner', () => {
+  const s = withGroundObject(makeScene(AFF, box(), [0, 1]), AFF, box());
+  s.go_anchors.go = []; // 0 oracle boxes vs 1 real box
+  assert.match(checkAnchors(s).structural, /anchor\/box count mismatch for go/);
 });

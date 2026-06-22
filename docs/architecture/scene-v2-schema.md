@@ -7,6 +7,10 @@
 > renders as an extruded prism. The transform contract is unchanged. See the
 > `planes[]` section and [ADR-0017](../adr/0017-3d-viewer-architecture.md)'s v2
 > amendment.
+>
+> **v2 also gains `ground_objects` + `go_anchors` (#606)** — placed fixed
+> obstacles and movers, additive and inert-when-empty (`[]`/`{}`), so an
+> aircraft-only scene is byte-identical apart from those two empty collections.
 
 The JSON contract between the Python core and the 3D viewer (see
 [ADR-0017](../adr/0017-3d-viewer-architecture.md)). Produced by
@@ -36,11 +40,14 @@ metres.
 | `coordinate_note` | string | Human reminder of the convention above. |
 | `hangar` | object | Hangar shell — see below. |
 | `planes` | array | One entry per placed plane (sorted by id) — static box geometry. |
+| `ground_objects` | array | One entry per placed ground object (sorted by id) — fixed obstacles + placed movers (#606). `[]` when none. See below. |
 | `timeline` | object | The whole-fill tow animation — see below. |
 | `final_poses` | object | `plane_id → affine`: each plane at its parked slot. |
 | `conflicts` | array of string | Plane ids to tint red (flattened from a `CheckResult`); `[]` if none / not checked. |
 | `anchors` | object | `plane_id → [box → [corner → [x, y]]]`: oracle world corners at the final placement, for the viewer's load-time self-check. A scalar box has 4 corners; a polygon box has N (one per `vertices` entry). |
 | `gear_anchors` | object | `plane_id → [wheel → [x, y]]`: oracle world wheel positions at the final placement — each canonical plane-local wheel pushed through `geometry.local_to_world` (the same determinant-−1 map `anchors` applies via `aircraft_parts_world`), so the viewer self-check also covers the gear render and a sign-flip regression fails both at once. |
+| `go_anchors` | object | `ground_object_id → [box → [corner → [x, y]]]`: oracle world corners for each placed ground object (#606), the ground-object sibling of `anchors` for the same load-time self-check. `{}` when none. |
+| `egress_lanes` | object | `mover_id → [[x, y], …]`: sampled world points of each hard-door mover's drive-out corridor (#652), drawn as the "keep clear" egress-lane decal (2D + 3D). Always present; `{}` when there is no hard-door egress lane (no hard-door mover, or its egress is blocked / undrawable). Draw-only geometry — NOT anchored / not part of the det-−1 self-check. |
 | `placeholder` | bool | `true` iff any placed aircraft is on unmeasured (`measured: false`) data — drives the "PLACEHOLDER DATA" honesty banner on the 2D PNG and the 3D viewer (#401, #79). |
 | `readouts` | object \| null | Actionable quality numbers for a **valid** layout: `{ "min_gap_m", "min_wing_over_tail_clearance_m" }` (either may be `null` — single plane / no overhang). `null` when the layout is invalid — validity is taken from the supplied `CheckResult`, or collision-checked by `build_scene` itself when none was supplied, so readouts never imply an unverified validity. |
 
@@ -146,6 +153,40 @@ belly clears the wheel) inside the same affine Group as the boxes — so the gea
 inherits the plane-local→world transform and animates along the tow path — plus a
 pallet deck under each wheel when `on_carts`. Render *sizes* (wheel radius, pallet extent) are viewer-layer
 constants mirroring `visualize.py`, never data: the schema carries only positions.
+
+## `ground_objects[]`
+
+```jsonc
+{
+  "id": "vw_caddy",
+  "object_class": "placed_routed_mover", // | "fixed_obstacle"
+  "color": "#8A8F98",                    // brand fill by class (mover slate /
+                                         //   obstacle graphite), resolved in scene.py
+  "hard_door_mover": true,               // the Caddy egress flag (highlight cue)
+  "boxes": [ /* same box shape as planes[] — a kind:"ground" scalar box */ ],
+  "final_pose": [s, c, x, c, -s, y]      // plane-local → world affine at the placed pose
+}
+```
+
+The non-aircraft floor bodies (#606, [ADR-0025](../adr/0025-ground-object-taxonomy.md)):
+a **fixed obstacle** (a placed keep-out, e.g. the Maul fuel trailer) and the
+**placed/routed movers** (the VW Caddy + glider trailers). Each is the 3D analogue
+of the 2D PNG render (`visualize.py`, #649): the obstacle reads as a keep-out, the movers
+as placed bodies, visually distinct from aircraft. Box geometry is the *same*
+`boxes` shape as `planes[]` (a `kind:"ground"` part is a scalar box), so the viewer
+renders both through one shared box path. A ground object has no `wheels`/`on_carts`
+and no per-id colour — `color` is brand-resolved per **class** in Python (the plane
+colour-map idiom, #419), so the viewer reads it and hard-codes nothing.
+
+`final_pose` is the placement (resting) affine. A **fixed obstacle** is static (no
+`timeline` segment); a **placed-routed mover** animates along its drive path via a
+`timeline` segment (#651) and rests here. The Caddy hard-door egress lane is the
+drive-out corridor that mover must keep clear, surfaced from the egress oracle
+(`towplanner.egress_first_conflict` / `egress_corridors`) into the `egress_lanes`
+top-level key (#652). The `ground_objects` list is always present and empty when a
+layout has no ground objects (the `structural_notches` inert-when-empty discipline).
+Each body's world corners are oracled in `go_anchors` for the same load-time det-−1
+self-check as `anchors`; the egress lane is draw-only and not anchored.
 
 ## `timeline`
 

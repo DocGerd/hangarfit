@@ -37,7 +37,7 @@ if TYPE_CHECKING:
     # Annotation-only: avoids importing the solver/towplanner stack at module
     # load for `hangarfit check` callers (the solver import is already deferred
     # into cmd_solve for the same reason).
-    from hangarfit.towplanner import MovesPlan
+    from hangarfit.towplanner import DubinsArc, MovesPlan
 
 _JSON_SCHEMA = "hangarfit.check/v1"
 _SOLVE_JSON_SCHEMA = "hangarfit.solve/v1"
@@ -353,6 +353,45 @@ def build_parser() -> argparse.ArgumentParser:
             "hard fills; a global per-fill cap bounds the worst case (#336)."
         ),
     )
+    solve.add_argument(
+        "--sat-collisions",
+        action="store_true",
+        dest="sat_collisions",
+        help=(
+            "(#754 Lever B, opt-in) Accelerate the solver's collision narrow-phase "
+            "with a numpy SAT box oracle for rectangle x rectangle part pairs, "
+            "bypassing shapely/GEOS on the dominant pair test. Default off keeps the "
+            "solve byte-identical (ADR-0003). When on, the search is "
+            "self-byte-identical but NOT equal to the off run (SAT reproduces the "
+            "GEOS verdict to ~5e-15 with 0 conflict-count flips, so validity is "
+            "unchanged; the penetration tiebreak shifts at float noise). Shapely "
+            "stays the validity authority (#694); most useful on box-rung-style "
+            "all-rectangle fleets."
+        ),
+    )
+    solve.add_argument(
+        "--backend",
+        choices=("rrmc", "learned"),
+        default="rrmc",
+        dest="backend",
+        help=(
+            "Solver backend. 'rrmc' (default) is the shipped deterministic "
+            "random-restart min-conflicts solver (ADR-0003). 'learned' selects the "
+            "opt-in neural backend (epic #607); it requires --weights PATH and the "
+            "[learned-infer] extra, else it exits cleanly with a message. The "
+            "deterministic path is unchanged (ADR-0027)."
+        ),
+    )
+    solve.add_argument(
+        "--weights",
+        type=str,
+        default=None,
+        dest="weights",
+        help=(
+            "Path to the learned backend's ONNX weights (only with --backend learned). "
+            "No default weights ship yet; omitting it with --backend learned exits cleanly."
+        ),
+    )
 
     view = sub.add_parser(
         "view",
@@ -546,7 +585,12 @@ def cmd_check(args: argparse.Namespace) -> int:
 
     if args.render is not None:
         try:
-            visualize.render_layout(layout, args.render, check_result=result)
+            visualize.render_layout(
+                layout,
+                args.render,
+                check_result=result,
+                egress_paths=_egress_paths_for_render(layout),
+            )
         except OSError as e:
             print(f"error: render failed: {e}", file=sys.stderr)
             return 2
@@ -659,6 +703,7 @@ def cmd_solve(args: argparse.Namespace) -> int:
     # ``from hangarfit import visualize`` at module top (cli.py:20) already
     # eagerly imports matplotlib and pins the Agg backend, so both `check`
     # and `solve` callers pay that cost regardless.
+    from hangarfit.learned import LearnedBackendUnavailableError, solve_learned
     from hangarfit.loader import load_scenario
     from hangarfit.models import SearchConfig
     from hangarfit.solver import _parallel_eligible, solve
@@ -698,64 +743,83 @@ def cmd_solve(args: argparse.Namespace) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 2
 
-    # Tow-plan only when the user asked to render paths (#193). Otherwise
-    # plan_paths=False: the library bundle (SolveResult.plans) is available to
-    # callers, but the CLI would just pay the per-plane Hybrid-A* search cost
-    # for output it never draws.
-    try:
-        search_cfg = SearchConfig(
-            spread=args.spread,
-            nose_out=args.nose_out,
-            back_bias_weight=_BACK_FILL_DEFAULT_WEIGHT if args.back_fill else 0.0,
-            max_restarts=args.max_restarts,
-            spread_stall_restarts=args.spread_stall_restarts,
+    # Backend dispatch (#607 / ADR-0027). The default deterministic RR-MC path is
+    # unchanged and byte-identical; `--backend learned` routes to the opt-in learned
+    # proposer (#706), which returns the same SolveResult shape. A missing --weights /
+    # [learned-infer] extra surfaces a clean exit-2 error rather than a traceback.
+    if args.backend == "learned":
+        try:
+            result = solve_learned(
+                scenario,
+                weights_path=args.weights,
+                budget_s=args.budget,
+                alternatives=args.alternatives,
+                seed=args.seed,
+                plan_paths=args.render_paths,
+            )
+        except LearnedBackendUnavailableError as e:
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+    else:
+        # Tow-plan only when the user asked to render paths (#193). Otherwise
+        # plan_paths=False: the library bundle (SolveResult.plans) is available to
+        # callers, but the CLI would just pay the per-plane Hybrid-A* search cost
+        # for output it never draws.
+        try:
+            search_cfg = SearchConfig(
+                spread=args.spread,
+                nose_out=args.nose_out,
+                back_bias_weight=_BACK_FILL_DEFAULT_WEIGHT if args.back_fill else 0.0,
+                max_restarts=args.max_restarts,
+                spread_stall_restarts=args.spread_stall_restarts,
+                sat_collisions=args.sat_collisions,
+            )
+        except ValueError as e:
+            # A bad restart-budget knob (e.g. --max-restarts 0 or --spread-stall-restarts
+            # 0; both must be >= 1 when set) surfaces as a clean exit-2 input error rather
+            # than an uncaught traceback — same contract as a LoaderError on malformed input.
+            print(f"error: {e}", file=sys.stderr)
+            return 2
+        # Never silently ignore --workers (#544): if parallel restarts aren't
+        # byte-identical-eligible for this config (no --max-restarts, or --no-spread),
+        # solve() transparently runs serial — say so on stderr so the user isn't
+        # left believing they got the speedup.
+        cpu_cores = os.cpu_count() or 1
+        if args.workers > 1 and not _parallel_eligible(search_cfg, args.workers):
+            print(
+                f"note: --workers {args.workers} ignored (runs serial) — parallel "
+                "restarts need --max-restarts and the spread post-pass (drop "
+                "--no-spread); see --workers help",
+                file=sys.stderr,
+            )
+        elif args.workers == 1 and cpu_cores > 1 and _parallel_eligible(search_cfg, 2):
+            # This config IS parallel-eligible (--max-restarts + spread) but the
+            # restarts run serial on a multi-core box, leaving cores idle. Probe
+            # eligibility with a worker count of 2 (the predicate requires workers > 1;
+            # the user's actual --workers is 1). Suggest the flag rather than silently
+            # waste the cores — zero behaviour change, stderr only so --json /
+            # --write-yaml stay machine-readable (#628).
+            # Cap the SUGGESTED count: the #544 speedup is sub-linear (~4.5x at 8
+            # workers), so don't over-promise cores-2 on a big box — it's an example.
+            _suggest = min(8, max(1, cpu_cores - 2))
+            print(
+                f"hint: this is a multi-restart spread solve running serial on a "
+                f"{cpu_cores}-core box — add --workers N (e.g. --workers {_suggest}) to fan "
+                f"the {args.max_restarts} restarts across processes "
+                "(byte-identical to serial; #544).",
+                file=sys.stderr,
+            )
+        result = solve(
+            scenario,
+            budget_s=args.budget,
+            alternatives=args.alternatives,
+            seed=args.seed,
+            search=search_cfg,
+            plan_paths=args.render_paths,
+            tow_heuristic=args.tow_heuristic,
+            tow_max_expansions=args.tow_max_expansions,
+            workers=args.workers,
         )
-    except ValueError as e:
-        # A bad restart-budget knob (e.g. --max-restarts 0 or --spread-stall-restarts
-        # 0; both must be >= 1 when set) surfaces as a clean exit-2 input error rather
-        # than an uncaught traceback — same contract as a LoaderError on malformed input.
-        print(f"error: {e}", file=sys.stderr)
-        return 2
-    # Never silently ignore --workers (#544): if parallel restarts aren't
-    # byte-identical-eligible for this config (no --max-restarts, or --no-spread),
-    # solve() transparently runs serial — say so on stderr so the user isn't
-    # left believing they got the speedup.
-    cpu_cores = os.cpu_count() or 1
-    if args.workers > 1 and not _parallel_eligible(search_cfg, args.workers):
-        print(
-            f"note: --workers {args.workers} ignored (runs serial) — parallel "
-            "restarts need --max-restarts and the spread post-pass (drop "
-            "--no-spread); see --workers help",
-            file=sys.stderr,
-        )
-    elif args.workers == 1 and cpu_cores > 1 and _parallel_eligible(search_cfg, 2):
-        # This config IS parallel-eligible (--max-restarts + spread) but the
-        # restarts run serial on a multi-core box, leaving cores idle. Probe
-        # eligibility with a worker count of 2 (the predicate requires workers > 1;
-        # the user's actual --workers is 1). Suggest the flag rather than silently
-        # waste the cores — zero behaviour change, stderr only so --json /
-        # --write-yaml stay machine-readable (#628).
-        # Cap the SUGGESTED count: the #544 speedup is sub-linear (~4.5x at 8
-        # workers), so don't over-promise cores-2 on a big box — it's an example.
-        _suggest = min(8, max(1, cpu_cores - 2))
-        print(
-            f"hint: this is a multi-restart spread solve running serial on a "
-            f"{cpu_cores}-core box — add --workers N (e.g. --workers {_suggest}) to fan "
-            f"the {args.max_restarts} restarts across processes "
-            "(byte-identical to serial; #544).",
-            file=sys.stderr,
-        )
-    result = solve(
-        scenario,
-        budget_s=args.budget,
-        alternatives=args.alternatives,
-        seed=args.seed,
-        search=search_cfg,
-        plan_paths=args.render_paths,
-        tow_heuristic=args.tow_heuristic,
-        tow_max_expansions=args.tow_max_expansions,
-        workers=args.workers,
-    )
 
     # Spread-vs-towability fallback (#280 → #402 / F5; ADR-0016). The re-solve
     # that swaps in a tighter, tow-routable no-spread arrangement when the spread
@@ -835,6 +899,38 @@ def _expand_pattern(pattern: str, i: int) -> str:
     return pattern.replace("{i}", str(i))
 
 
+def _egress_paths_for_render(
+    layout: Layout, *, max_expansions: int | None = None
+) -> dict[str, DubinsArc]:
+    """Hard-door egress corridors to DRAW (#652): the drive-out lane the rescue
+    vehicle must keep clear, surfaced from the egress oracle. ``{}`` (no routing
+    cost) when the layout has no hard-door movers.
+
+    A hard-door mover that is PRESENT but yields no corridor (egress blocked, or
+    not found within ``max_expansions``) is surfaced as a stderr note — without it
+    the absent lane would be silently indistinguishable from "nothing to keep
+    clear" on ``check`` / ``view``, which run no egress *gate* (only ``solve`` does,
+    exit 3). A trapped Caddy must never look like a clean scene (#652 review; the
+    #612/#627 surface-unroutable-movers idiom). On ``solve`` the returned layout
+    already passed the gate, so a routable caddy draws and this never fires."""
+    from hangarfit.towplanner import egress_corridors
+
+    corridors = egress_corridors(layout, max_expansions=max_expansions)
+    undrawn = sorted(
+        gp.plane_id
+        for gp in layout.ground_object_placements
+        if layout.ground_objects[gp.plane_id].hard_door_mover and gp.plane_id not in corridors
+    )
+    for mover_id in undrawn:
+        print(
+            f"note: hard-door mover {mover_id!r} has no drawable egress corridor "
+            f"(it may be trapped; run 'hangarfit solve' for the authoritative egress "
+            f"verdict).",
+            file=sys.stderr,
+        )
+    return corridors
+
+
 def _write_renders(
     layouts: tuple[Layout, ...],
     pattern: str,
@@ -854,7 +950,12 @@ def _write_renders(
     """
     for i, layout in enumerate(layouts, start=1):
         moves_plan = plans[i - 1] if plans is not None else None
-        visualize.render_layout(layout, _expand_pattern(pattern, i), moves_plan=moves_plan)
+        visualize.render_layout(
+            layout,
+            _expand_pattern(pattern, i),
+            moves_plan=moves_plan,
+            egress_paths=_egress_paths_for_render(layout),
+        )
 
 
 def _warn_unroutable(result: SolveResult) -> None:
@@ -893,7 +994,15 @@ def _warn_unroutable_movers(result: SolveResult) -> None:
     deduped, advisory mover-id list the solver collected — empty when every mover
     routed, there are no movers, or tow-planning was not attempted.
     """
-    for mover in result.diagnostics.unroutable_movers:
+    _warn_unroutable_mover_ids(result.diagnostics.unroutable_movers)
+
+
+def _warn_unroutable_mover_ids(mover_ids: Iterable[str]) -> None:
+    """Emit one stderr warning per un-routable ground-object mover id. Shared by
+    the solve path (:func:`_warn_unroutable_movers`, via ``diagnostics``) and the
+    layout-mode ``view`` path (which collects the ids from ``plan_fill``'s
+    ``unroutable_movers`` out-param directly, having no ``SolverDiagnostics``)."""
+    for mover in mover_ids:
         print(
             f"warning: ground-object mover {mover!r} could not be routed; "
             "rendered as a static (un-towed) body",
@@ -1228,13 +1337,21 @@ def cmd_view(args: argparse.Namespace) -> int:
                     # plan that is actually built (no NoFeasiblePlanError) reaches
                     # the warn call, so a discarded/failed plan never warns.
                     apron_drops: list[ApronShallowDrop] = []
+                    # #634: surface un-routable MOVERS too. An un-tow-routable
+                    # aircraft makes plan_fill raise (handled below); a None-path
+                    # mover does NOT raise — it keeps a best-effort static body — so
+                    # without the out-param it would be a silent skip here, unlike
+                    # `solve --render-paths` which warns via diagnostics (#612).
+                    unroutable_movers: list[str] = []
                     moves_plan = plan_fill(
                         layout,
                         max_expansions=args.tow_max_expansions,
                         max_total_expansions=view_total_cap,
                         apron_dropped_out=apron_drops,
+                        unroutable_movers=unroutable_movers,
                     )
                     _warn_apron_shallow_drops(apron_drops)
+                    _warn_unroutable_mover_ids(unroutable_movers)
                 except NoFeasiblePlanError as e:
                     print(
                         f"note: layout not tow-routable (plane {e.plane_id!r} could not be "
@@ -1245,7 +1362,19 @@ def cmd_view(args: argparse.Namespace) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 2
 
-    scene = scene_mod.build_scene(layout, moves_plan=moves_plan, check_result=check_result)
+    # Hard-door egress lane(s) (#652). Bound the PER-MOVER corridor search by the
+    # same expansion value the view uses to cap the fill (here a per-mover budget,
+    # not the fill's global cap) so a blocked-egress caddy degrades fast — a clear
+    # egress routes in a handful of expansions. No hard-door movers ⇒ costs nothing.
+    egress_cap = (
+        args.tow_max_expansions
+        if args.tow_max_expansions is not None
+        else _VIEW_TOW_MAX_TOTAL_EXPANSIONS
+    )
+    egress_paths = _egress_paths_for_render(layout, max_expansions=egress_cap)
+    scene = scene_mod.build_scene(
+        layout, moves_plan=moves_plan, check_result=check_result, egress_paths=egress_paths
+    )
     try:
         viewer.render_viewer(scene, args.output)
     except OSError as e:

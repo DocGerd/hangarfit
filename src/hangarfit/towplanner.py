@@ -52,10 +52,18 @@ from hangarfit.models import (
     Placement,
 )
 
-SegmentKind = Literal["L", "S", "R"]
+# Steering/translation kinds. ``L``/``S``/``R`` are the Reeds–Shepp steerings
+# (left arc, straight, right arc). ``T`` is the cart-only **lateral translate**
+# (strafe): a slide PERPENDICULAR to the heading, heading unchanged (#599,
+# ADR-0010 amendment). ``T`` is emitted only at ``turn_radius_m == 0`` — it lets
+# a broadside-parked plane (e.g. an 18 m glider too wide to enter a narrower door
+# nose-in) slide in side-on instead of pivoting in place. It never appears in a
+# Reeds–Shepp/Dubins word (those stay ``L``/``S``/``R``).
+SegmentKind = Literal["L", "S", "R", "T"]
 _VALID_SEGMENT_KINDS = frozenset(typing.get_args(SegmentKind))
 
 # A Dubins "word": the ordered kinds of its three legs (e.g. ("L", "S", "R")).
+# Always L/S/R — the lateral ``T`` is a cart primitive, never a closed-form word.
 _DubinsWord = tuple[SegmentKind, SegmentKind, SegmentKind]
 
 
@@ -150,6 +158,16 @@ class DubinsArc:
                 # Reverse negates the translation step (drive −cos/−sin).
                 x += gear * step * math.cos(theta)
                 y += gear * step * math.sin(theta)
+            elif seg.kind == "T":
+                # Lateral slide (cart strafe, #599 / ADR-0010): translate
+                # PERPENDICULAR to the heading; heading is unchanged. The +1
+                # strafe direction is the math-left of the heading (θ + 90°) =
+                # (−sin θ, cos θ); gear −1 strafes right. At heading 90° (θ = 0)
+                # a +1 strafe moves +y — i.e. straight in through the door. Only
+                # ever emitted for carts (r == 0), but the integration is
+                # radius-independent (a pure translation).
+                x += gear * step * -math.sin(theta)
+                y += gear * step * math.cos(theta)
             else:  # "L"/"R": arc of radius r; r == 0 => cart pivot in place
                 sign = 1.0 if seg.kind == "L" else -1.0
                 if r == 0.0:
@@ -194,7 +212,9 @@ class DubinsArc:
         trans_len = 0.0  # true translation distance (excludes pivots)
         sweep_deg = 0.0  # total heading sweep
         for s in self.segments:
-            if s.kind == "S":
+            if s.kind == "S" or s.kind == "T":
+                # "S" along heading, "T" perpendicular (#599) — both are pure
+                # translations of `length_m` metres, so both add to trans_len.
                 trans_len += s.length_m
             elif self.turn_radius_m > 0.0:  # real arc: length_m is arc length
                 trans_len += s.length_m
@@ -454,8 +474,11 @@ def plan_dubins(start: Pose, end: Pose, *, turn_radius_m: float) -> DubinsArc:
 # ---------------------------------------------------------------------------
 
 
-def _plan_cart(start: Pose, end: Pose, *, allow_reverse: bool) -> DubinsArc:
-    """Cart path (``turn_radius_m == 0``): pivot-in-place, or pivot-straight-pivot.
+def _plan_cart(
+    start: Pose, end: Pose, *, allow_reverse: bool, lateral_ok: bool = False
+) -> DubinsArc:
+    """Zero-radius path (``turn_radius_m == 0``): pivot-in-place, pivot-straight-pivot,
+    or — for a plane on a dolly — a lateral slide.
 
     With ``allow_reverse`` (Reeds–Shepp), the straight leg may be driven in
     reverse — pivot to the *reverse* bearing, back straight, pivot to the final
@@ -464,6 +487,14 @@ def _plan_cart(start: Pose, end: Pose, *, allow_reverse: bool) -> DubinsArc:
     0-cusp drives, so forward wins only on an exact tie). Without it (Dubins)
     only the forward option is considered, preserving the exact forward-only
     behaviour ``plan_dubins`` shipped.
+
+    ``lateral_ok`` (#599 / ADR-0010) adds a third candidate — *pivot to the final
+    heading, then straight (along) + strafe (perpendicular)* — so a plane on a
+    dolly/cart slides straight into a broadside slot. It is emitted ONLY for a
+    cart-borne mover (``mover_on_carts``); a free-swivel / pivot-in-place plane is
+    ``r == 0`` too but cannot strafe, so it keeps ``lateral_ok=False`` (pivots +
+    straights only). The candidate only wins when strictly cheaper (broadside
+    geometry), so the forward/reverse selection is unchanged otherwise.
     """
     dx = end.x_m - start.x_m
     dy = end.y_m - start.y_m
@@ -498,32 +529,49 @@ def _plan_cart(start: Pose, end: Pose, *, allow_reverse: bool) -> DubinsArc:
             segs.append(Segment(k3, abs(math.radians(seg3_deg))))
         return tuple(segs)
 
+    def _pivot_then_slide() -> tuple[Segment, ...]:
+        # Lateral cart connector (#599 / ADR-0010): pivot in place to the FINAL
+        # heading, then reach the goal point with a straight (along heading) +
+        # a lateral strafe (perpendicular). Lets a broadside-parked plane slide
+        # straight in instead of pivoting twice. Reaches (end.x, end.y,
+        # end.heading) exactly (the roundtrip-grid test is the proof).
+        segs: list[Segment] = []
+        pivot_deg = (end.heading_deg - start.heading_deg + 180.0) % 360.0 - 180.0
+        if abs(pivot_deg) > 1e-9:
+            pk: SegmentKind = "R" if pivot_deg >= 0.0 else "L"
+            segs.append(Segment(pk, abs(math.radians(pivot_deg))))
+        # Decompose the displacement in the FINAL heading frame: component along
+        # the heading is a straight, perpendicular is a strafe.
+        theta_e = compass_to_math_rad(end.heading_deg)
+        s_along = dx * math.cos(theta_e) + dy * math.sin(theta_e)
+        s_perp = dx * -math.sin(theta_e) + dy * math.cos(theta_e)
+        if abs(s_along) > 1e-9:
+            segs.append(Segment("S", abs(s_along), gear=1 if s_along >= 0.0 else -1))
+        if abs(s_perp) > 1e-9:
+            segs.append(Segment("T", abs(s_perp), gear=1 if s_perp >= 0.0 else -1))
+        # dist > 1e-9 here (the pure-pivot case returned earlier), so at least
+        # one of s_along/s_perp is non-zero and `segs` is non-empty.
+        return tuple(segs)
+
     forward = _pivot_straight_pivot(reverse=False)
     if not allow_reverse:
+        # Dubins (forward-only) mode: preserve the exact legacy path — no
+        # reverse, no lateral (plan_dubins shipped pivot-straight-pivot only).
         return DubinsArc(start, end, 0.0, forward)
     reverse = _pivot_straight_pivot(reverse=True)
-    # Weighted cost: pivots are cheap angular moves; the straight leg's metres
-    # carry the reverse factor when backing. Strict < keeps forward on an exact
-    # tie (determinism, ADR-0003) — and forward is the earlier-listed option.
-    best = min(
-        (forward, reverse),
-        key=lambda segs: math.fsum(_cart_seg_weight(s) for s in segs),
-    )
-    # Tie-break must prefer forward on EXACT equality; min() returns the first
-    # argument on a tie, and `forward` is first, so this is already correct.
+    # The lateral slide is only available to a cart-borne mover (#599); a
+    # pivot-in-place plane (free-swivel tailwheel) cannot strafe, so it is offered
+    # forward/reverse only.
+    candidates = (forward, reverse) + ((_pivot_then_slide(),) if lateral_ok else ())
+    # Rank by the #480 fewest-moves cost (cusp-aware _segments_cost). For the
+    # forward-vs-reverse pair this is monotonic in total pivot magnitude (equal
+    # straight metres, both 0-cusp single drives), so their selection is UNCHANGED
+    # from the prior pivot-magnitude (length) ranking; the lateral candidate only
+    # wins when strictly cheaper (broadside geometry), where it removes the double
+    # pivot. min() keeps the first listed on an exact tie — forward, then reverse,
+    # then lateral — for determinism (ADR-0003).
+    best = min(candidates, key=lambda segs: _segments_cost(segs, 0.0))
     return DubinsArc(start, end, 0.0, best)
-
-
-def _cart_seg_weight(seg: Segment) -> float:
-    """Unweighted cost of one cart segment for the forward-vs-reverse choice: a
-    pivot's radians (cheap, gear-agnostic) or a straight's metres. Reverse is no
-    longer taxed per-metre (#480) — both the forward and reverse
-    pivot-straight-pivot candidates are single drives (0 cusps under the
-    translating-legs-only rule), so :func:`_plan_cart`'s ``min`` reduces to a
-    pure length comparison with forward kept on an exact tie (forward first)."""
-    if seg.kind != "S":
-        return seg.length_m  # pivot: length_m is radians
-    return seg.length_m
 
 
 # ---------------------------------------------------------------------------
@@ -871,7 +919,9 @@ def _rs_word_reaches(word: _RSWord, x: float, y: float, phi: float) -> bool:
     )
 
 
-def plan_reeds_shepp(start: Pose, end: Pose, *, turn_radius_m: float) -> DubinsArc:
+def plan_reeds_shepp(
+    start: Pose, end: Pose, *, turn_radius_m: float, lateral: bool = False
+) -> DubinsArc:
     """Closed-form fewest-moves Reeds–Shepp path from ``start`` to ``end`` (ADR-0010).
 
     Reeds–Shepp extends Dubins with reverse arcs and straights, so a plane can
@@ -880,8 +930,10 @@ def plan_reeds_shepp(start: Pose, end: Pose, *, turn_radius_m: float) -> DubinsA
     length plus a fixed per-cusp (direction-change) penalty, so reverse is not
     taxed per-metre and forward is preferred only as the tie-break. Still
     closed-form and RNG-free, so the ADR-0003 byte-identical-plan contract holds.
-    ``turn_radius_m == 0`` is the cart case and delegates to :func:`_plan_cart`
-    with reverse enabled (a carted plane may back straight out of a slot).
+    ``turn_radius_m == 0`` is the zero-radius case and delegates to
+    :func:`_plan_cart` with reverse enabled (it may back straight out of a slot);
+    ``lateral`` (#599) is forwarded so a cart-borne mover may also slide in
+    sideways (a free-swivel pivot-in-place plane passes ``lateral=False``).
 
     Works in the standard math frame: positions pass through unchanged; headings
     convert via :func:`compass_to_math_rad`. The integrated endpoint
@@ -892,7 +944,7 @@ def plan_reeds_shepp(start: Pose, end: Pose, *, turn_radius_m: float) -> DubinsA
         raise ValueError(f"turn_radius_m must be finite and >= 0, got {turn_radius_m}")
 
     if turn_radius_m == 0.0:
-        return _plan_cart(start, end, allow_reverse=True)
+        return _plan_cart(start, end, allow_reverse=True, lateral_ok=lateral)
 
     r = turn_radius_m
     # Express the goal in the start frame, scaled to unit turn radius. The math
@@ -990,6 +1042,16 @@ _REVERSE_CONE_HEADINGS: tuple[float, ...] = (150.0, 165.0, 180.0, 195.0, 210.0)
 # ±30° span plus margin (so headings in [135, 225] qualify).
 _REAR_CONE_HALF_ANGLE_DEG = 45.0
 
+# Broadside entry cone (#599): emitted iff the TARGET parked heading is broadside
+# — within this half-angle of 90° or 270° (side-on to the entry axis). Motivating
+# case: a plane too wide to enter nose-in (an 18 m span vs the 13.46 m Herrenteich
+# door) that must slide in side-on via the cart lateral primitive (ADR-0010). The
+# cone is `_BROADSIDE_CONE_OFFSETS` around BOTH the target heading and
+# target + 180° (either side-on approach). Gated like the rear cone, so nose-in
+# targets keep the forward cone only and their grid stays byte-identical.
+_BROADSIDE_CONE_OFFSETS: tuple[float, ...] = (-30.0, -15.0, 0.0, 15.0, 30.0)
+_BROADSIDE_GATE_HALF_ANGLE_DEG = 45.0
+
 
 def entry_poses(target: Placement, hangar: Hangar) -> tuple[Pose, ...]:
     """All entry / apron start poses for a plane heading to ``target`` (#262, #412).
@@ -1073,7 +1135,21 @@ def entry_poses(target: Placement, hangar: Hangar) -> tuple[Pose, ...]:
     # can then be backed in (cheap under the cusp cost, ADR-0010 #480 amendment)
     # instead of pirouetting inside; a nose-in slot keeps the forward cone only.
     nose_out = abs(_wrap180(target.heading_deg - 180.0)) <= _REAR_CONE_HALF_ANGLE_DEG
+    broadside = (
+        abs(_wrap180(target.heading_deg - 90.0)) <= _BROADSIDE_GATE_HALF_ANGLE_DEG
+        or abs(_wrap180(target.heading_deg - 270.0)) <= _BROADSIDE_GATE_HALF_ANGLE_DEG
+    )
     headings: tuple[float, ...] = _CONE_HEADINGS + (_REVERSE_CONE_HEADINGS if nose_out else ())
+    if broadside:
+        # Side-on seeds around the target heading and its reverse, so the search
+        # may slide the plane in from either side; the cart lateral primitive
+        # (#599) then carries it straight in. Duplicate (x, y, heading) triples
+        # are dropped by the `seen` set below.
+        headings = (
+            headings
+            + tuple((target.heading_deg + off) % 360.0 for off in _BROADSIDE_CONE_OFFSETS)
+            + tuple((target.heading_deg + 180.0 + off) % 360.0 for off in _BROADSIDE_CONE_OFFSETS)
+        )
 
     seen: set[tuple[float, float, float]] = set()
     poses: list[Pose] = []
@@ -1259,11 +1335,17 @@ def path_first_conflict(
     path here) build ``placed`` from the full target fleet + ground objects,
     satisfying this.
     """
+    # #643: the tow-MOTION oracle clears the mover against parked bodies at the
+    # (tighter) MOTION clearance, not the parked spacing — a spotter threads the
+    # wingtips far closer in motion than the parked margin. ``motion_hangar()``
+    # IS the parked hangar when no motion clearance is set, so a layout without
+    # the motion fields is byte-identical (ADR-0003).
+    motion_hangar = placed.hangar.motion_hangar()
     for pose in arc.sample(step_m=step_m, step_deg=step_deg):
         moving = Placement(mover.id, pose.x_m, pose.y_m, pose.heading_deg, on_carts=mover_on_carts)
         # Mover hangar bounds: front-gap-exempt (a plane being towed in
         # straddles the door at y < 0). Side/back walls still bite.
-        bounds_conflict = _mover_motion_bounds_conflict(mover, moving, placed.hangar)
+        bounds_conflict = _mover_motion_bounds_conflict(mover, moving, motion_hangar)
         if bounds_conflict is not None:
             return bounds_conflict
         # Rebuilding the Layout per sample re-runs Layout.__post_init__ (cart
@@ -1274,7 +1356,7 @@ def path_first_conflict(
         if isinstance(mover, Aircraft):
             sample_layout = Layout(
                 fleet=placed.fleet,
-                hangar=placed.hangar,
+                hangar=motion_hangar,
                 placements=(*placed.placements, moving),
                 maintenance_plane=placed.maintenance_plane,
                 ground_objects=placed.ground_objects,
@@ -1283,7 +1365,7 @@ def path_first_conflict(
         else:  # GroundObject mover -> belongs in ground_object_placements
             sample_layout = Layout(
                 fleet=placed.fleet,
-                hangar=placed.hangar,
+                hangar=motion_hangar,
                 placements=placed.placements,
                 maintenance_plane=placed.maintenance_plane,
                 ground_objects=placed.ground_objects,
@@ -1307,6 +1389,7 @@ def egress_first_conflict(
     *,
     heuristic: Literal["euclidean", "grid"] = "grid",
     max_expansions: int | None = None,
+    egress_path_out: list[DubinsArc] | None = None,
 ) -> Conflict | None:
     """First conflict blocking ``mover_id``'s drive-OUT through the door, else None.
 
@@ -1317,7 +1400,17 @@ def egress_first_conflict(
     ``placed`` (:func:`path_first_conflict` re-injects it per sample — same
     contract as :func:`plan_fill`'s mover routing, #602). Honors the fuel-trailer
     keep-out and every other parked body. Closed-form, RNG-free. Returns a
-    ``caddy_egress`` :class:`~hangarfit.models.Conflict` when blocked."""
+    ``caddy_egress`` :class:`~hangarfit.models.Conflict` when blocked.
+
+    ``egress_path_out`` is an optional diagnostics-only **out-param** (#652,
+    mirroring :func:`plan_path`'s ``stats`` / :func:`plan_fill`'s
+    ``apron_dropped_out``): when supplied and egress is feasible, the winning
+    door-cone -> slot :class:`DubinsArc` (which, reversed, IS the drive-out
+    corridor) is appended so a caller can DRAW the egress lane (the viewer/PNG
+    decal). It is left untouched when egress is blocked (no corridor exists). Pure
+    out-param: ``None`` (the default, which the solver passes) keeps the call
+    byte-identical — the ``plan_path`` call and the verdict are unchanged
+    (ADR-0003)."""
     mover = target.ground_objects[mover_id]
     slot = next((gp for gp in target.ground_object_placements if gp.plane_id == mover_id), None)
     if slot is None:
@@ -1343,7 +1436,7 @@ def egress_first_conflict(
     # trapped). Fixed _MAX_EXPANSIONS, RNG-free => deterministic (ADR-0003).
     budget = _MAX_EXPANSIONS if max_expansions is None else max_expansions
     try:
-        plan_path(
+        arc = plan_path(
             mover,
             cone[0],
             Pose.from_placement(slot),
@@ -1354,6 +1447,8 @@ def egress_first_conflict(
             heuristic=heuristic,
             max_expansions=budget,
         )
+        if egress_path_out is not None:
+            egress_path_out.append(arc)
         return None
     except NoFeasiblePlanError as exc:
         return Conflict.single(
@@ -1364,6 +1459,39 @@ def egress_first_conflict(
                 f"(no clear egress corridor): {exc.conflict.detail}"
             ),
         )
+
+
+def egress_corridors(
+    layout: Layout,
+    *,
+    heuristic: Literal["euclidean", "grid"] = "grid",
+    max_expansions: int | None = None,
+) -> dict[str, DubinsArc]:
+    """The drive-out corridor :class:`DubinsArc` per hard-door mover that HAS a
+    clear egress (#652). Blocked movers are omitted (no corridor to draw); a
+    non-hard-door mover has no required egress lane and is skipped. For drawing the
+    egress lane in the 2D PNG / 3D viewer — the caller passes the result to
+    :func:`hangarfit.scene.build_scene` / :func:`hangarfit.visualize.render_layout`.
+
+    Deterministic (id-sorted iteration, RNG-free closed-form routing). This re-runs
+    the egress check purely for the corridor geometry; the solve verdict already
+    ran its own gate (:func:`egress_first_conflict` in the solver), so this is a
+    visualization-only second pass."""
+    corridors: dict[str, DubinsArc] = {}
+    for gp in sorted(layout.ground_object_placements, key=lambda p: p.plane_id):
+        if not layout.ground_objects[gp.plane_id].hard_door_mover:
+            continue
+        arc_out: list[DubinsArc] = []
+        egress_first_conflict(
+            layout,
+            gp.plane_id,
+            heuristic=heuristic,
+            max_expansions=max_expansions,
+            egress_path_out=arc_out,
+        )
+        if arc_out:
+            corridors[gp.plane_id] = arc_out[0]
+    return corridors
 
 
 # ---------------------------------------------------------------------------
@@ -1394,6 +1522,7 @@ def plan_fill(
     heuristic: Literal["euclidean", "grid"] = "grid",
     max_expansions: int | None = None,
     max_total_expansions: int | None = None,
+    max_backtracks: int | None = None,
     apron_dropped_out: list[ApronShallowDrop] | None = None,
     unroutable_movers: list[str] | None = None,
 ) -> MovesPlan:
@@ -1452,13 +1581,19 @@ def plan_fill(
     is stuck (spike Risk #1) and the plan bails with :class:`NoFeasiblePlanError`
     naming the deepest unplaceable plane.
 
-    No retry *budget* is needed: an already-placed plane is only ever an added
-    obstacle, so a plane infeasible against the current obstacles can never
-    become feasible later — the scan therefore makes monotonic progress (one
-    plane committed per iteration) and cannot spin. Deterministic (ADR-0003):
-    the order, the Hybrid-A* primitive fan, the cone grid, and the next-feasible
-    scan are all RNG-free, so a given ``target`` always yields the same
-    :class:`MovesPlan`.
+    Since #667 the scan is a deterministic greedy-first **backtracking** DFS over
+    placement order (``_place_rest``): the first feasible candidate at each level is
+    recursed first, so when the greedy back-first order already routes, the search
+    returns that identical path untouched (byte-identical, ADR-0003); it backtracks
+    the order only where a greedy commit deadlocks a later body — cases the old
+    monotonic loop bailed on. The search is bounded by both ``max_total_expansions``
+    (above) and ``max_backtracks`` (``None`` ⇒ the module ``_MAX_FILL_BACKTRACKS``),
+    a separate deterministic ceiling on dead-end backtracks so a generous per-plane
+    budget can't fund a runaway order search on an un-routable fill. Deterministic
+    (ADR-0003): the order, the Hybrid-A* primitive fan, the cone grid, and the
+    candidate scan are all RNG-free, so a given ``target`` always yields the same
+    :class:`MovesPlan`. (A truly cyclic lock — no order routes — still bails; the
+    move-aside that resolves those is tracked on #667.)
     """
     # #626: memoize body world-parts for the WHOLE fill. The static obstacle field
     # is rebuilt by every plan_path's _build_obstacles, and the greedy scan re-routes
@@ -1473,6 +1608,7 @@ def plan_fill(
             heuristic=heuristic,
             max_expansions=max_expansions,
             max_total_expansions=max_total_expansions,
+            max_backtracks=max_backtracks,
             apron_dropped_out=apron_dropped_out,
             unroutable_movers=unroutable_movers,
         )
@@ -1484,16 +1620,25 @@ def _plan_fill(
     heuristic: Literal["euclidean", "grid"] = "grid",
     max_expansions: int | None = None,
     max_total_expansions: int | None = None,
+    max_backtracks: int | None = None,
     apron_dropped_out: list[ApronShallowDrop] | None = None,
     unroutable_movers: list[str] | None = None,
 ) -> MovesPlan:
     """Body of :func:`plan_fill`, run inside an active ``pose_cache_scope`` (#626)."""
     budget = _MAX_EXPANSIONS if max_expansions is None else max_expansions
     total_budget = _MAX_FILL_EXPANSIONS if max_total_expansions is None else max_total_expansions
+    bt_cap = _MAX_FILL_BACKTRACKS if max_backtracks is None else max_backtracks
     total_used = 0
-    ordered = list(back_first_order(target.placements))
+    backtracks_used = 0
     fleet = target.fleet
     hangar = target.hangar
+    # #667 Stage 0: HAND-POSITIONED bodies (dolly-borne gliders) are parked by
+    # hand, not tow-routed. They seed `placed` (so routed bodies treat them as
+    # obstacles) and get a path-less at-rest move emitted first. With no
+    # hand-placed body the partition is the whole fleet → `ordered` is unchanged
+    # and `placed`/`moves` start empty, so the plan stays byte-identical.
+    hand_placed_slots = back_first_order(tuple(p for p in target.placements if p.hand_placed))
+    ordered = list(back_first_order(tuple(p for p in target.placements if not p.hand_placed)))
 
     # Fixed obstacles (e.g. the fuel trailer) are static keep-outs for BOTH
     # aircraft routes and mover routes. Empty when no ground objects => inert.
@@ -1503,39 +1648,49 @@ def _plan_fill(
         if target.ground_objects[gp.plane_id].object_class == "fixed_obstacle"
     )
 
-    placed: list[Placement] = []
-    moves: list[Move] = []
+    placed: list[Placement] = list(hand_placed_slots)
+    moves: list[Move] = [Move(p.plane_id, Pose.from_placement(p), None) for p in hand_placed_slots]
 
-    while ordered:
-        chosen: int | None = None
-        chosen_arc: DubinsArc | None = None
-        chosen_apron_fallback = False
-        # The deepest unplaced plane is scanned first, so its conflict (if it
-        # is rejected) is the one reported when the whole scan finds nothing.
-        deepest_conflict: Conflict | None = None
-        # `placed` does not change within a scan pass, so the obstacle layout is
-        # constant across candidates. Only the already-committed planes are
-        # obstacles; plan_path adds the candidate mover per sample via its
-        # internal path_first_conflict check.
+    # #667 Stage 1 (order search): place the to-route bodies by a deterministic
+    # BACKTRACKING DFS over order, greedy-first. The first feasible candidate at
+    # each level is recursed first, so when the greedy back-first order already
+    # works the search returns that identical path untouched (byte-identical,
+    # ADR-0003); backtracking only happens where the old monotonic loop would have
+    # bailed — a greedy commit that deadlocks a later body. The global expansion
+    # budget bounds the search (expansions on dead branches are NOT refunded), so
+    # it terminates and then raises the structured bail. deepest_conflict captures
+    # the first (deepest plane's) routing conflict for that bail message.
+    deepest_conflict: Conflict | None = None
+
+    def _place_rest(
+        placed_list: list[Placement], rest: list[Placement]
+    ) -> list[tuple[Placement, DubinsArc, bool]] | None:
+        """Return the chosen (slot, arc, apron_fallback) sequence that places every
+        body in ``rest`` against ``placed_list``, greedy-first with backtracking, or
+        ``None`` if no order does. Raises on global-budget or backtrack-cap exhaustion."""
+        nonlocal total_used, deepest_conflict, backtracks_used
+        if not rest:
+            return []
+        # `placed_list` is constant across candidates at this level; plan_path adds
+        # the candidate mover per sample via its internal path_first_conflict check.
         placed_layout = Layout(
             fleet=fleet,
             hangar=hangar,
-            placements=tuple(placed),
+            placements=tuple(placed_list),
             maintenance_plane=target.maintenance_plane,
             ground_objects=target.ground_objects,
             ground_object_placements=fixed_obstacle_placements,
         )
-        for idx, slot in enumerate(ordered):
+        for idx, slot in enumerate(rest):
             remaining = total_budget - total_used
             if remaining <= 0:
                 # Global fill-expansion budget exhausted (#336): bail in bounded
-                # time rather than paying per-plane budget × scan-retries on an
-                # un-routable fill. Name the deepest still-unplaced plane.
+                # time. Name the deepest still-unplaced plane at this level.
                 raise NoFeasiblePlanError(
-                    ordered[0].plane_id,
+                    rest[0].plane_id,
                     Conflict.single(
                         kind="no_feasible_path",
-                        plane=ordered[0].plane_id,
+                        plane=rest[0].plane_id,
                         detail=f"global fill expansion budget ({total_budget}) exhausted",
                     ),
                 )
@@ -1544,11 +1699,10 @@ def _plan_fill(
             try:
                 # The full door cone drives the multi-start search (#262). Compute
                 # it once and pass it as `entries=`; the positional `entry` arg is
-                # ignored by plan_path whenever `entries` is set, so reuse cone[0]
-                # for it rather than recomputing entry_pose() (which plan_path would
-                # never read here). Each call is capped at the smaller of the
-                # per-plane budget and the global remainder, and its expansions are
-                # charged to the global total whether it succeeds or fails (#336).
+                # ignored by plan_path whenever `entries` is set. Each call is capped
+                # at the smaller of the per-plane budget and the global remainder,
+                # and its expansions are charged to the global total whether it
+                # succeeds or fails (#336).
                 cone = entry_poses(slot, hangar)
                 arc = plan_path(
                     plane,
@@ -1563,8 +1717,8 @@ def _plan_fill(
                     stats=stats,
                 )
             except NoFeasiblePlanError as exc:
-                # This plane cannot be routed against the current obstacles; try
-                # the next candidate. Remember its conflict for the bail message.
+                # Cannot route this body against the current obstacles; try the next
+                # candidate. Remember its conflict for the bail message.
                 exp = stats.get("expansions", 0)
                 total_used += exp if isinstance(exp, int) else 0
                 if deepest_conflict is None:
@@ -1572,30 +1726,52 @@ def _plan_fill(
                 continue
             exp = stats.get("expansions", 0)
             total_used += exp if isinstance(exp, int) else 0
-            chosen, chosen_arc = idx, arc
-            # Only the COMMITTED candidate's fallback matters: the rejected
-            # candidates of the scan are not in the plan, so their stats are
-            # irrelevant to what the user sees (#503).
-            chosen_apron_fallback = stats.get("apron_fallback") is True
-            break
-        if chosen is None:
-            # Every remaining plane conflicts: greedy back-first is stuck. The
-            # deepest plane (ordered[0], scanned first) is the one we most
-            # wanted to place, and deepest_conflict is its own conflict.
-            assert deepest_conflict is not None  # ordered non-empty => scan ran
-            raise NoFeasiblePlanError(ordered[0].plane_id, deepest_conflict)
-        slot = ordered.pop(chosen)
-        assert chosen_arc is not None
-        moves.append(Move(slot.plane_id, Pose.from_placement(slot), chosen_arc))
+            apron_fb = stats.get("apron_fallback") is True
+            sub = _place_rest(placed_list + [slot], rest[:idx] + rest[idx + 1 :])
+            if sub is not None:
+                return [(slot, arc, apron_fb), *sub]
+            # Routed here, but the rest dead-ends downstream → backtrack to the next
+            # candidate (the old monotonic loop could not). Bound the total dead-end
+            # backtracks so a generous per-plane budget can't fund a runaway order
+            # search on an un-routable fill (#667); 0 ⇒ no backtracking allowed.
+            backtracks_used += 1
+            if backtracks_used > bt_cap:
+                # Surface the real per-body routing conflict (the actionable reason a
+                # body could not be seated) and name THAT body — not the already-placed
+                # deepest plane (#668 review). Synthesize a cap conflict only if nothing
+                # ever failed to route (a pure ordering lock with all routes feasible).
+                bail = deepest_conflict or Conflict.single(
+                    kind="no_feasible_path",
+                    plane=rest[0].plane_id,
+                    detail=f"order-search backtracking cap ({bt_cap}) exceeded",
+                )
+                raise NoFeasiblePlanError(bail.planes[0], bail)
+        return None
+
+    result = _place_rest(placed, ordered)
+    if result is None:
+        # No placement order seats every body (a true lock — needs the Stage 1
+        # move-aside, still to come) or every candidate conflicts. Name the
+        # deepest body and carry its conflict (matches the old monotonic bail).
+        bail = deepest_conflict or Conflict.single(
+            kind="no_feasible_path",
+            plane=ordered[0].plane_id,
+            detail="no feasible tow order (every placement order deadlocks)",
+        )
+        # Name the conflict's own body so the named plane and the carried conflict
+        # always agree (#668 review): on a real routing failure that's the stuck
+        # body; on a pure ordering lock it's the deepest (the synthesized fallback).
+        raise NoFeasiblePlanError(bail.planes[0], bail)
+
+    for slot, arc, apron_fb in result:
+        moves.append(Move(slot.plane_id, Pose.from_placement(slot), arc))
         placed.append(slot)
         # #503: record (plan-inert) the planes that towed via the y=0 door-line
         # fallback DESPITE an apron being set — their footprint is too deep for the
-        # apron, so every apron start pose was filtered and they show no slide-in.
-        # Populated in committed-move order (the deterministic move order, ADR-0003)
-        # only when the caller passed `apron_dropped_out`; the suggested min depth
-        # is the per-plane FOOTPRINT extent, NOT the fleet-wide `auto` over-margin
-        # (derive_apron_depth). Never read back into the plan.
-        if chosen_apron_fallback and apron_dropped_out is not None:
+        # apron. Committed-move order (deterministic, ADR-0003), only when the
+        # caller passed `apron_dropped_out`; the depth is the per-plane FOOTPRINT
+        # extent, not the fleet-wide `auto` over-margin. Never read back.
+        if apron_fb and apron_dropped_out is not None:
             apron_dropped_out.append(
                 ApronShallowDrop(
                     plane_id=slot.plane_id,
@@ -1718,6 +1894,16 @@ _MAX_FILL_EXPANSIONS = 16000  # GLOBAL expansion budget across one whole fill (#
 # budget VALUE (not the count) with the profiling harness if a real apron site
 # needs it; bound a hard apron fill per-run with ``--tow-max-expansions``.
 # Overridable via the ``max_total_expansions`` param on ``plan_fill()``.
+
+_MAX_FILL_BACKTRACKS = 2000  # GLOBAL cap on order-search dead-end backtracks (#667).
+# The Stage-1 order search (`_place_rest`) backtracks the placement ORDER when a
+# greedy commit deadlocks a later body. The expansion budget above is the primary
+# bound, but a generous PER-PLANE budget (needed to route tight-feasible planes)
+# also funds deep order-backtracking on an UN-routable fill — so this is a separate,
+# deterministic secondary ceiling on the number of dead-end backtracks, independent
+# of the per-plane budget. Inert for the greedy-success path (0 backtracks ⇒
+# byte-identical, ADR-0003) and far above any legitimate small reorder; it only
+# bounds a pathological/un-routable order search. Overridable via ``max_backtracks``.
 # Sampling resolution for the FAST in-search `_motion_clear` validity checks
 # (edges + the analytic-shot screen). Coarser than the exact oracle's default
 # (0.05 m / 1°) to keep the search tractable: the worst case is a plane that can
@@ -1731,7 +1917,7 @@ _SEARCH_STEP_M = 0.25
 _SEARCH_STEP_DEG = 5.0
 
 
-def _primitives(turn_radius_m: float) -> tuple[Segment, ...]:
+def _primitives(turn_radius_m: float, *, lateral: bool = False) -> tuple[Segment, ...]:
     """The fixed motion-primitive fan, in deterministic order (ADR-0010 v2).
 
     Own-gear (``r > 0``): **six primitives** in fixed order ``Lf, Sf, Rf, Lr,
@@ -1742,24 +1928,36 @@ def _primitives(turn_radius_m: float) -> tuple[Segment, ...]:
     (ADR-0003).
 
     Own-gear (``r > 0``): each arc/straight is ``step`` metres, chosen so a turn
-    changes heading by ~one heading cell. Cart (``r == 0``): a reverse PIVOT
-    rotates heading the same way as the forward pivot of the *opposite* steering
-    (``pose_at`` holds position fixed and flips the heading delta for a reverse
-    leg), so ``Lr``/``Rr`` are exact duplicates of ``Rf``/``Lf`` and would only
-    ever lose the ``best_g`` race to their cheaper forward twin — pure dead work
-    (an extra ``_motion_clear`` sweep per expansion that can never win). They are
-    therefore omitted: the cart fan is the four useful moves ``Lf, Sf, Rf, Sr``
-    (forward pivots + straight, plus the genuinely-new **reverse straight** that
-    backs the cart up). Fixed order ⇒ deterministic expansion (ADR-0003).
+    changes heading by ~one heading cell. Zero-radius (``r == 0``): a reverse
+    PIVOT rotates heading the same way as the forward pivot of the *opposite*
+    steering (``pose_at`` holds position fixed and flips the heading delta for a
+    reverse leg), so ``Lr``/``Rr`` are exact duplicates of ``Rf``/``Lf`` and
+    would only ever lose the ``best_g`` race to their cheaper forward twin — pure
+    dead work. They are therefore omitted: the zero-radius fan is ``Lf, Sf, Rf,
+    Sr`` (in-place pivots + straight, plus the genuinely-new **reverse straight**
+    that backs up).
+
+    ``lateral`` (#599 / ADR-0010) appends the two **strafe** primitives ``Tf,
+    Tr`` (a slide perpendicular to the heading, either side) to the zero-radius
+    fan — emitted ONLY for a plane on a dolly/cart (``mover_on_carts``). A
+    free-swivel / pivot-in-place plane (a castering tailwheel taildragger) is
+    ``r == 0`` too but is towed on its wheels, which roll fore/aft only — it
+    **cannot strafe** — so it gets ``lateral=False`` and the pivot+straight fan.
+    The strafes are listed LAST so an existing pivot/straight path still wins a
+    cost tie (minimal byte-identity churn). Fixed order ⇒ deterministic
+    expansion (ADR-0003).
     """
     if turn_radius_m == 0.0:
         dtheta = math.radians(_GRID_DEG)
-        return (
+        base = (
             Segment("L", dtheta),
             Segment("S", _GRID_XY_M),
             Segment("R", dtheta),
             Segment("S", _GRID_XY_M, gear=-1),
         )
+        if not lateral:
+            return base  # pivot-in-place only (free-swivel): no strafe.
+        return base + (Segment("T", _GRID_XY_M), Segment("T", _GRID_XY_M, gear=-1))
     step = max(_GRID_XY_M, turn_radius_m * math.radians(_GRID_DEG))
     return (
         Segment("L", step),
@@ -1792,7 +1990,8 @@ def _seg_cost(seg: Segment, turn_radius_m: float) -> float:
     an additive :data:`CUSP_PENALTY` per cusp, in the expansion loop (which knows
     the parent's travel direction); a single segment has no cusp. Forward
     preference survives as the fixed primitive-order tie-break."""
-    if seg.kind == "S":
+    if seg.kind == "S" or seg.kind == "T":
+        # "S" along heading, "T" lateral (#599): both pure translations, metres.
         return seg.length_m
     if turn_radius_m > 0.0:
         return seg.length_m + _TURN_PENALTY * (seg.length_m / turn_radius_m)
@@ -2296,6 +2495,14 @@ def plan_path(
     # Static obstacle set, computed once: placed planes don't move while this one
     # is routed. Drives the fast per-pose `_motion_clear` used during search.
     obstacles = _build_obstacles(placed, mover_id=mover.id)
+    # #643: the fast in-search ``_motion_clear`` screen clears the mover against
+    # parked bodies at the (tighter) MOTION clearance, matching the exact
+    # ``path_first_conflict`` oracle (which converts internally). The grid
+    # heuristic and obstacle footprints are clearance-free (bounds/geometry
+    # only), so they stay on the parked ``hangar``. ``motion_hangar()`` is the
+    # parked hangar itself when no motion clearance is set ⇒ byte-identical
+    # (ADR-0003).
+    motion_hangar = hangar.motion_hangar()
 
     # A* heuristic seam (#332). ``euclidean`` (default) is the byte-identical
     # straight-line lower bound the planner has always used. ``grid`` swaps in
@@ -2373,12 +2580,12 @@ def plan_path(
     # keeps the pre-#480 routing speed (returns at the first clean shot).
     best_seed: tuple[float, DubinsArc] | None = None
     for start_pose in start_poses:
-        seed_arc = plan_reeds_shepp(start_pose, goal, turn_radius_m=r)
+        seed_arc = plan_reeds_shepp(start_pose, goal, turn_radius_m=r, lateral=mover_on_carts)
         seed_cost = _segments_cost(seed_arc.segments, r)
         if best_seed is not None and seed_cost >= best_seed[0]:
             continue  # can't beat the best clean seed — skip the costly checks
         if not all(
-            _motion_clear(mover, p, obstacles, hangar)
+            _motion_clear(mover, p, obstacles, motion_hangar)
             for p in seed_arc.sample(step_m=_SEARCH_STEP_M, step_deg=_SEARCH_STEP_DEG)
         ):
             continue
@@ -2435,9 +2642,9 @@ def plan_path(
         # path is exact-oracle-clean no matter what the fast checker accepted
         # during search. The `and` short-circuits left-to-right, so the cheap
         # `_motion_clear` screen always runs before the costly oracle.
-        final_arc = plan_reeds_shepp(node.pose, goal, turn_radius_m=r)
+        final_arc = plan_reeds_shepp(node.pose, goal, turn_radius_m=r, lateral=mover_on_carts)
         if all(
-            _motion_clear(mover, p, obstacles, hangar)
+            _motion_clear(mover, p, obstacles, motion_hangar)
             for p in final_arc.sample(step_m=_SEARCH_STEP_M, step_deg=_SEARCH_STEP_DEG)
         ):
             segs = tuple(_reconstruct_segments(node)) + final_arc.segments
@@ -2482,11 +2689,11 @@ def plan_path(
 
         # Primitive expansion (fixed order L, S, R for determinism). An edge is
         # valid iff every sampled pose is clear per the fast checker.
-        for seg in _primitives(r):
+        for seg in _primitives(r, lateral=mover_on_carts):
             child_pose = _step_pose(node.pose, seg, r)
             edge = DubinsArc(node.pose, child_pose, r, (seg,))
             if not all(
-                _motion_clear(mover, p, obstacles, hangar)
+                _motion_clear(mover, p, obstacles, motion_hangar)
                 for p in edge.sample(step_m=_SEARCH_STEP_M, step_deg=_SEARCH_STEP_DEG)
             ):
                 continue

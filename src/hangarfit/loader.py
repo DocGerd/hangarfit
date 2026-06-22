@@ -356,6 +356,8 @@ _ALLOWED_HANGAR_KEYS = frozenset(
         "structural_notches",
         "clearance_m",
         "wing_layer_clearance_m",
+        "motion_clearance_m",
+        "motion_wing_layer_clearance_m",
         "max_carts",
         "apron_depth_m",
     }
@@ -442,6 +444,20 @@ def load_hangar(path: Path | str, *, fleet: Mapping[str, Aircraft] | None = None
             clearance_m=_to_float(raw.get("clearance_m", 0.3), "clearance_m"),
             wing_layer_clearance_m=_to_float(
                 raw.get("wing_layer_clearance_m", 0.2), "wing_layer_clearance_m"
+            ),
+            # #643: optional tighter tow-motion clearances. Absent ⇒ None ⇒ the
+            # motion clearance is the parked clearance (byte-identical plan).
+            motion_clearance_m=(
+                None
+                if raw.get("motion_clearance_m") is None
+                else _to_float(raw["motion_clearance_m"], "motion_clearance_m")
+            ),
+            motion_wing_layer_clearance_m=(
+                None
+                if raw.get("motion_wing_layer_clearance_m") is None
+                else _to_float(
+                    raw["motion_wing_layer_clearance_m"], "motion_wing_layer_clearance_m"
+                )
             ),
             max_carts=_to_int(raw.get("max_carts", 1), "max_carts"),
             apron_depth_m=_resolve_apron_depth(raw.get("apron_depth_m", 0.0), fleet),
@@ -643,7 +659,7 @@ def load_layout(
 # the too-strict direction. Per-plane ``constraints`` entries carry their own
 # allowlist (:data:`_ALLOWED_CONSTRAINT_KEYS`).
 _ALLOWED_SCENARIO_KEYS = frozenset(
-    {"fleet_in", "fleet", "hangar", "maintenance", "constraints", "ground_objects"}
+    {"fleet_in", "fleet", "hangar", "maintenance", "constraints", "ground_objects", "door_order"}
 )
 
 
@@ -899,6 +915,14 @@ def load_scenario(
                 except (ValueError, LoaderError) as e:
                     raise LoaderError(f"{path}: ground_objects[{i}] ({gid}): {e}") from e
 
+    # Door order (#614): an optional top-level list of body ids. Absent ⇒ None
+    # (inert, byte-identical). Cross-reference validation (placeable ids, no
+    # duplicates) is the Scenario's job — its ValueError is wrapped below.
+    door_order_raw = raw.get("door_order")
+    if door_order_raw is not None and not isinstance(door_order_raw, list):
+        raise LoaderError(f"{path}: 'door_order' must be a list")
+    door_order = None if door_order_raw is None else tuple(str(x) for x in door_order_raw)
+
     try:
         return Scenario(
             fleet=fleet,
@@ -910,6 +934,7 @@ def load_scenario(
             ground_object_defs=ground_objects,
             fixed_obstacle_placements=tuple(fixed_obstacle_placements),
             region_preferences=region_preferences,
+            door_order=door_order,
         )
     except ValueError as e:
         raise LoaderError(f"{path}: {e}") from e

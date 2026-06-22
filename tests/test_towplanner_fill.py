@@ -155,6 +155,28 @@ def test_plan_fill_is_deterministic() -> None:
     assert plan_fill(target) == plan_fill(target)
 
 
+def test_plan_fill_skips_hand_placed_body_and_keeps_it_as_obstacle() -> None:
+    """#667 Stage 0: a hand-positioned (dolly) body is pre-placed — NOT tow-routed
+    (carried at rest with ``path is None``) while the rest route around it as an
+    obstacle. Models the Herrenteich gliders, which go in by hand, not towed."""
+    h = _hangar(width_m=20.0, length_m=30.0)
+    fleet = {"A": _box_plane("A"), "G": _box_plane("G")}
+    target = _layout(
+        fleet,
+        h,
+        _slot("A", x=8.0, y=8.0),  # towed in
+        Placement("G", x_m=12.0, y_m=22.0, heading_deg=0.0, on_carts=False, hand_placed=True),
+    )
+    plan = plan_fill(target)
+    moves = {m.plane_id: m for m in plan.moves}
+    assert set(moves) == {"A", "G"}  # both present in the plan
+    assert moves["G"].path is None  # hand-placed: present at rest, NOT routed
+    assert moves["A"].path is not None  # towed in normally
+    assert moves["G"].target_slot == Pose.from_placement(
+        next(p for p in target.placements if p.plane_id == "G")
+    )
+
+
 # ── plan_fill LOOP-logic tests ──────────────────────────────────────────────
 # These pin the back-first scan / swap / bail mechanics in isolation by faking
 # ``plan_path`` — the per-candidate call ``plan_fill`` actually makes. (Earlier
@@ -194,6 +216,60 @@ def test_plan_fill_swaps_past_a_conflicting_plane(monkeypatch: pytest.MonkeyPatc
     monkeypatch.setattr(tp, "plan_path", fake_plan_path)
     plan = plan_fill(target)
     assert [m.plane_id for m in plan.moves] == ["A", "B"]
+
+
+def test_plan_fill_backtracks_order_when_greedy_commit_deadlocks(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#667 Stage 1 (order search): greedy back-first commits the deepest routable
+    plane, but that commit can deadlock a later plane. The planner must BACKTRACK
+    the order and find a feasible one ([B, A]) rather than bail.
+
+    Unlike the swap test, here the deepest plane A IS routable first, so the
+    per-step skip happily commits it — and only then does B deadlock. Only placing
+    B before A works, which the monotonic loop cannot reach without backtracking."""
+    h = _hangar(width_m=20.0, length_m=30.0)
+    fleet = {"A": _box_plane("A"), "B": _box_plane("B")}
+    target = _layout(fleet, h, _slot("A", 12.0, 22.0), _slot("B", 8.0, 8.0))  # A deep, B shallow
+
+    def fake_plan_path(mover, entry, goal, *, hangar, placed, mover_on_carts, **kw):  # noqa: ANN001, ANN202
+        placed_ids = {p.plane_id for p in placed.placements}
+        # A is always routable; B only while A is not yet placed. Greedy commits A
+        # first (deeper, scanned first, feasible) → B deadlocks. Only [B, A] works.
+        if mover.id == "B" and "A" in placed_ids:
+            raise _forced_infeasible("B")
+        return _fake_arc(mover, entry, goal)
+
+    monkeypatch.setattr(tp, "plan_path", fake_plan_path)
+    plan = plan_fill(target)
+    assert [m.plane_id for m in plan.moves] == ["B", "A"]
+
+
+def test_plan_fill_backtrack_cap_bounds_the_order_search(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#667: the order search is bounded by ``max_backtracks`` so an un-routable
+    fill bails predictably regardless of the per-plane expansion budget. With zero
+    backtracks allowed the deadlock case (which needs one reorder) bails instead of
+    finding [B, A]; the generous default still finds it."""
+    h = _hangar(width_m=20.0, length_m=30.0)
+    fleet = {"A": _box_plane("A"), "B": _box_plane("B")}
+    target = _layout(fleet, h, _slot("A", 12.0, 22.0), _slot("B", 8.0, 8.0))
+
+    def fake_plan_path(mover, entry, goal, *, hangar, placed, mover_on_carts, **kw):  # noqa: ANN001, ANN202
+        placed_ids = {p.plane_id for p in placed.placements}
+        if mover.id == "B" and "A" in placed_ids:
+            raise _forced_infeasible("B")
+        return _fake_arc(mover, entry, goal)
+
+    monkeypatch.setattr(tp, "plan_path", fake_plan_path)
+    assert [m.plane_id for m in plan_fill(target).moves] == ["B", "A"]  # default reorders
+    with pytest.raises(NoFeasiblePlanError) as ei:
+        plan_fill(target, max_backtracks=0)  # no backtracking allowed → bails
+    # The bail must name the actually-stuck body (B — unroutable once A is placed),
+    # not the already-placed deepest plane, and preserve a real conflict (#668 review).
+    assert ei.value.plane_id == "B"
+    assert ei.value.conflict is not None and ei.value.conflict.planes[0] == "B"
 
 
 def test_plan_fill_bails_with_structured_error_when_unplannable(

@@ -48,6 +48,9 @@ which plane is iterated first.
 
 from __future__ import annotations
 
+import numpy as np
+
+from . import _sat
 from .geometry import (
     WorldPart,
     aircraft_parts_world,
@@ -59,8 +62,32 @@ from .geometry import (
 from .models import CheckResult, Conflict, GroundObject, Hangar, Layout
 
 
-def check(layout: Layout) -> CheckResult:
-    """Run all geometric checks and return a :class:`CheckResult`."""
+def _sat_corners(part: WorldPart, sat_collisions: bool) -> np.ndarray | None:
+    """The ``(4, 2)`` world corners of ``part`` when it is SAT-eligible, else ``None``.
+
+    Returns ``None`` unless ``sat_collisions`` is on AND the part is a scalar
+    oriented rectangle (:attr:`~hangarfit.geometry.WorldPart.is_oriented_rect`).
+    A ``None`` makes the caller fall back to the shapely predicate — so with the
+    flag off (the default) every pair is ``None`` and the checker is byte-identical
+    (#754 'flag-OFF byte-identical'). The corners are read straight off the
+    already-world polygon (no transform here — ADR-0002 lives in
+    :func:`hangarfit.geometry.local_to_world`)."""
+    if not sat_collisions or not part.is_oriented_rect:
+        return None
+    return np.asarray(part.polygon.exterior.coords[:-1], dtype=float)
+
+
+def check(layout: Layout, *, sat_collisions: bool = False) -> CheckResult:
+    """Run all geometric checks and return a :class:`CheckResult`.
+
+    ``sat_collisions`` (default off) opts into the #754 Lever B numpy SAT box
+    oracle (:mod:`hangarfit._sat`) for the pairwise + ground-obstacle narrow
+    phase, but ONLY for rectangle×rectangle part pairs; any pair touching a
+    tapered/strut polygon part keeps using shapely. The flag is an opt-in
+    accelerator, NOT bit-for-bit identical to the shapely verdict surface
+    (~5e-15 float noise, 0 verdict flips on the #735 corpus), so CPU shapely
+    stays the determinism + validity authority (#694). With the flag off the
+    result is byte-identical to the pre-#754 checker."""
     aircraft_parts: dict[str, list[WorldPart]] = {
         p.plane_id: cached_parts_world(layout.fleet[p.plane_id], p) for p in layout.placements
     }
@@ -94,9 +121,13 @@ def check(layout: Layout) -> CheckResult:
     conflicts: list[Conflict] = []
     conflicts.extend(_hangar_bounds_conflicts(bounded_bodies, layout.hangar))
     conflicts.extend(_bay_intrusion_conflicts(aircraft_parts, layout))
-    pairwise, total_penetration_m2 = _pairwise_conflicts(placed_bodies, layout.hangar)
+    pairwise, total_penetration_m2 = _pairwise_conflicts(
+        placed_bodies, layout.hangar, sat_collisions
+    )
     conflicts.extend(pairwise)
-    conflicts.extend(_ground_obstacle_conflicts(placed_bodies, obstacle_parts, layout.hangar))
+    conflicts.extend(
+        _ground_obstacle_conflicts(placed_bodies, obstacle_parts, layout.hangar, sat_collisions)
+    )
     return CheckResult(
         conflicts=tuple(conflicts),
         total_penetration_m2=total_penetration_m2,
@@ -107,6 +138,7 @@ def _ground_obstacle_conflicts(
     placed_bodies: dict[str, list[WorldPart]],
     obstacle_parts: dict[str, list[WorldPart]],
     hangar: Hangar,
+    sat_collisions: bool = False,
 ) -> list[Conflict]:
     """A fixed obstacle's footprint is a keep-out: any aircraft/mover part that
     conflicts with it (plan-view overlap within clearance AND z-gap rule, via
@@ -114,13 +146,26 @@ def _ground_obstacle_conflicts(
     naming the offending body and the obstacle (#601 / ADR-0025).
 
     Deterministic iteration: obstacles in dict-insertion order (manifest order),
-    bodies in placement order. Empty ``obstacle_parts`` → ``[]`` (byte-identity)."""
+    bodies in placement order. Empty ``obstacle_parts`` → ``[]`` (byte-identity).
+
+    Like :func:`_pairwise_conflicts`, ``sat_collisions`` routes rectangle×rectangle
+    obstacle/body pairs through the SAT box oracle; flag-off ⇒ all-shapely,
+    byte-identical (#754)."""
     out: list[Conflict] = []
+    # Precompute SAT corners once per part (None for polygon parts / flag-off).
+    obs_corners: dict[str, list[np.ndarray | None]] = {
+        oid: [_sat_corners(p, sat_collisions) for p in parts]
+        for oid, parts in obstacle_parts.items()
+    }
+    body_corners: dict[str, list[np.ndarray | None]] = {
+        bid: [_sat_corners(p, sat_collisions) for p in parts]
+        for bid, parts in placed_bodies.items()
+    }
     for obstacle_id, obs_wparts in obstacle_parts.items():
         for body_id, body_wparts in placed_bodies.items():
-            for op in obs_wparts:
-                for bp in body_wparts:
-                    if _parts_conflict(op, bp, hangar):
+            for op, oc in zip(obs_wparts, obs_corners[obstacle_id], strict=True):
+                for bp, bc in zip(body_wparts, body_corners[body_id], strict=True):
+                    if _parts_conflict(op, bp, hangar, oc, bc):
                         out.append(
                             Conflict.single(
                                 kind="ground_obstacle",
@@ -378,7 +423,7 @@ def _aabbs_separated_beyond_clearance(
 
 
 def _pairwise_conflicts(
-    world_parts: dict[str, list[WorldPart]], hangar: Hangar
+    world_parts: dict[str, list[WorldPart]], hangar: Hangar, sat_collisions: bool = False
 ) -> tuple[list[Conflict], float]:
     """For every pair of parts from *different* aircraft, emit a conflict
     per :func:`_parts_conflict` (the uniform two-clause rule, plus the
@@ -439,17 +484,28 @@ def _pairwise_conflicts(
     aabbs: dict[str, list[tuple[float, float, float, float]]] = {
         pid: [_part_aabb(p) for p in parts] for pid, parts in world_parts.items()
     }
+    # #754 Lever B: when --sat-collisions is on, precompute each rectangle part's
+    # world corners ONCE (None for polygon parts / flag-off), so the inner loop
+    # routes rectangle×rectangle pairs through SAT instead of GEOS. Flag-off ⇒ all
+    # None ⇒ the loop is byte-identical to the shapely path (ADR-0003 #694).
+    sat_corners: dict[str, list[np.ndarray | None]] = {
+        pid: [_sat_corners(p, sat_collisions) for p in parts] for pid, parts in world_parts.items()
+    }
     for i in range(len(ids)):
         for j in range(i + 1, len(ids)):
             a_id, b_id = ids[i], ids[j]
             a_boxes, b_boxes = aabbs[a_id], aabbs[b_id]
-            for pa, box_a in zip(world_parts[a_id], a_boxes, strict=True):
-                for pb, box_b in zip(world_parts[b_id], b_boxes, strict=True):
+            a_corners, b_corners = sat_corners[a_id], sat_corners[b_id]
+            for pa, box_a, ca in zip(world_parts[a_id], a_boxes, a_corners, strict=True):
+                for pb, box_b, cb in zip(world_parts[b_id], b_boxes, b_corners, strict=True):
                     if _aabbs_separated_beyond_clearance(box_a, box_b, clearance):
                         continue  # provably no conflict — skip the exact predicate
-                    if _parts_conflict(pa, pb, hangar):
+                    if _parts_conflict(pa, pb, hangar, ca, cb):
                         out.append(_build_pairwise_conflict(pa, pb, a_id, b_id, hangar))
-                        total_penetration_m2 += polygon_overlap_area(pa.polygon, pb.polygon)
+                        if ca is not None and cb is not None:
+                            total_penetration_m2 += _sat.sat_polygon_overlap_area(ca, cb)
+                        else:
+                            total_penetration_m2 += polygon_overlap_area(pa.polygon, pb.polygon)
     return out, total_penetration_m2
 
 
@@ -472,13 +528,26 @@ def _is_wing_over_cockpit(pa: WorldPart, pb: WorldPart) -> bool:
     return kinds == {"wing", "fuselage_front"}
 
 
-def _parts_conflict(pa: WorldPart, pb: WorldPart, hangar: Hangar) -> bool:
+def _parts_conflict(
+    pa: WorldPart,
+    pb: WorldPart,
+    hangar: Hangar,
+    corners_a: np.ndarray | None = None,
+    corners_b: np.ndarray | None = None,
+) -> bool:
     """Return True iff the two parts conflict.
 
     Plan-view: ``polygon_overlap`` with ``hangar.clearance_m`` (which
     splits semantics at zero — see :func:`hangarfit.geometry.polygon_overlap`).
     Every conflict requires plan-view overlap; the pairs differ only in the
     **height clause**.
+
+    **Opt-in SAT (#754).** When BOTH ``corners_a`` and ``corners_b`` are supplied
+    (set by the caller only under ``--sat-collisions`` and only for rectangle×
+    rectangle pairs), the plan-view test routes through the numpy SAT box oracle
+    (:func:`hangarfit._sat.sat_polygon_overlap`) instead of GEOS; the height
+    clause below is unchanged. With either ``None`` (the default, or any pair
+    touching a polygon part) the shapely predicate decides — byte-identical.
 
     **The cockpit exception (ADR-0012, D1).** A ``wing`` within plan-view
     clearance of another plane's ``fuselage_front`` (cockpit) is a HARD
@@ -497,7 +566,11 @@ def _parts_conflict(pa: WorldPart, pb: WorldPart, hangar: Hangar) -> bool:
     overlap, matching the polygon side's "touches isn't a conflict at zero
     clearance" rule).
     """
-    if not polygon_overlap(pa.polygon, pb.polygon, clearance=hangar.clearance_m):
+    if corners_a is not None and corners_b is not None:
+        overlap = _sat.sat_polygon_overlap(corners_a, corners_b, clearance=hangar.clearance_m)
+    else:
+        overlap = polygon_overlap(pa.polygon, pb.polygon, clearance=hangar.clearance_m)
+    if not overlap:
         return False
     if _is_wing_over_cockpit(pa, pb):
         # z ignored: plan-view overlap alone is the conflict (D1).

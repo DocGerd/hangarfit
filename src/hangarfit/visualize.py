@@ -54,7 +54,7 @@ if TYPE_CHECKING:
     # (moves_plan.moves / move.path.sample()), so importing MovesPlan eagerly
     # would add a needless module dependency. towplanner does not import
     # visualize, so this is safe under TYPE_CHECKING either way.
-    from .towplanner import MovesPlan
+    from .towplanner import DubinsArc, MovesPlan
 
 # ── DocGerdSoft brand palette (Horizon-blue expression) ─────────────────────
 # All brand tokens are DEFINED ONCE in :mod:`hangarfit.brand` and re-exported
@@ -141,6 +141,7 @@ def render_layout(
     *,
     check_result: CheckResult | None = None,
     moves_plan: MovesPlan | None = None,
+    egress_paths: dict[str, DubinsArc] | None = None,
     title: str | None = None,
     dpi: int = 100,
 ) -> None:
@@ -183,10 +184,13 @@ def render_layout(
     try:
         _draw_hangar(ax, layout)
         _draw_aircraft(ax, layout)
+        _draw_movers(ax, layout)
         if not (check_result is None or check_result.valid):
             _draw_conflict_overlay(ax, layout, check_result)
         if moves_plan is not None:
-            _draw_tow_paths(ax, moves_plan)
+            _draw_tow_paths(ax, moves_plan, layout)
+        if egress_paths:
+            _draw_egress_lanes(ax, egress_paths)
         _finalize_axes(ax, layout, title)
         if metrics.has_placeholder_data(layout):
             _draw_placeholder_banner(fig)
@@ -211,7 +215,13 @@ def _validate_check_result_planes(layout: Layout, check_result: CheckResult) -> 
     caller passed a result from a *different* layout, and silently
     rendering a clean PNG for an invalid result is the precise kind of
     "looks OK so the bug ships" failure this tool exists to prevent."""
-    placed = {p.plane_id for p in layout.placements}
+    # Ground objects (#606) participate in collision/egress conflicts (ADR-0025/
+    # 0026), so a CheckResult may legitimately name a mover/obstacle id — include
+    # them in the known set so a real ground-object conflict isn't mistaken for a
+    # cross-layout mismatch.
+    placed = {p.plane_id for p in layout.placements} | {
+        gp.plane_id for gp in layout.ground_object_placements
+    }
     conflicting = {pid for c in check_result.conflicts for pid in c.planes}
     unknown = conflicting - placed
     if unknown:
@@ -253,6 +263,7 @@ def _draw_hangar(ax: Any, layout: Layout) -> None:
     # Keep-out overlays first (zorder=0) so walls and aircraft layer on top.
     _draw_maintenance_bay(ax, layout)
     _draw_structural_notches(ax, layout)
+    _draw_fixed_obstacles(ax, layout)
 
     # Back, left, right walls — solid.
     ax.plot(
@@ -344,6 +355,71 @@ def _draw_structural_notches(ax: Any, layout: Layout) -> None:
             zorder=0,
         )
         ax.add_patch(patch)
+
+
+# Mover bodies (#606) read in a neutral slate fill, deliberately OUTSIDE the
+# per-plane PLANES aircraft palette, so a glance separates "aircraft" from
+# "trailer / vehicle".
+_MOVER_FILL = "#8A8F98"
+
+
+def _draw_fixed_obstacles(ax: Any, layout: Layout) -> None:
+    """Overlay each *fixed-obstacle* ground object (#606, e.g. the Maul fuel
+    trailer) as a keep-out — like a structural notch but a distinct hatch, so it
+    reads as "an object on the floor", not "missing floor". No-op when there are
+    no fixed obstacles (mirrors :func:`_draw_structural_notches`, so an
+    aircraft-only layout renders byte-identically)."""
+    for gp in layout.ground_object_placements:
+        obj = layout.ground_objects[gp.plane_id]
+        if obj.object_class != "fixed_obstacle":
+            continue
+        for wp in aircraft_parts_world(obj, gp):
+            ax.add_patch(
+                MplPolygon(
+                    list(wp.polygon.exterior.coords),
+                    closed=True,
+                    facecolor="none",
+                    edgecolor=_HANGAR_EDGE,
+                    hatch="oo",  # a distinct hatch from the structural notch's
+                    lw=1.5,
+                    zorder=0,
+                )
+            )
+        ax.text(
+            gp.x_m,
+            gp.y_m,
+            gp.plane_id,
+            ha="center",
+            va="center",
+            fontsize=6,
+            color=_HANGAR_EDGE,
+            zorder=1,
+        )
+
+
+def _draw_movers(ax: Any, layout: Layout) -> None:
+    """Draw each *placed/routed mover* ground object (#606, the VW Caddy + glider
+    trailers) as a solid body in the neutral mover fill — visually distinct from
+    the per-plane aircraft hues — with an id label. No-op when there are no movers
+    (so an aircraft-only layout renders byte-identically)."""
+    for gp in layout.ground_object_placements:
+        obj = layout.ground_objects[gp.plane_id]
+        if obj.object_class != "placed_routed_mover":
+            continue
+        for wp in aircraft_parts_world(obj, gp):
+            _draw_part(ax, wp, _MOVER_FILL)
+        # Label above the near-opaque mover body (z=2) and any tow-path overlay,
+        # so it stays legible where a mover sits under an aircraft wing.
+        ax.text(
+            gp.x_m,
+            gp.y_m,
+            gp.plane_id,
+            ha="center",
+            va="center",
+            fontsize=6,
+            color=_INK_EDGE,
+            zorder=5,
+        )
 
 
 def _draw_aircraft(ax: Any, layout: Layout) -> None:
@@ -469,14 +545,13 @@ def _draw_part(ax: Any, part: WorldPart, color: str) -> None:
             zorder=4,
         )
     elif part.kind == "ground":
-        # Ground-object footprint (#601): solid keep-out, drawn opaque like a
-        # fuselage body at the fuselage z-level (above wings).
-        # NOTE: currently UNREACHABLE — render_layout/scene iterate only
-        # layout.placements (aircraft), never ground_object_placements, so no
-        # ground WorldPart reaches _draw_part yet. This branch is a forward hook
-        # for #606 (ground-object rendering) AND satisfies the closed-PartKind
-        # exhaustiveness contract (the else-raise below must stay reachable for
-        # any future unknown kind).
+        # Ground-object footprint (#601): a placed/routed mover body (car /
+        # trailer), drawn near-opaque like a fuselage body at the fuselage
+        # z-level (above wings). Reached via :func:`_draw_movers` (#606); fixed
+        # obstacles take the hatched-keep-out path in :func:`_draw_fixed_obstacles`
+        # instead, so only ``placed_routed_mover`` parts arrive here. Keeping the
+        # branch also satisfies the closed-``PartKind`` exhaustiveness contract
+        # (the else-raise below stays reachable for any future unknown kind).
         patch = MplPolygon(
             coords,
             closed=True,
@@ -642,42 +717,78 @@ def _draw_conflict_overlay(ax: Any, layout: Layout, check_result: CheckResult) -
             ax.add_patch(patch)
 
 
-def _draw_tow_paths(ax: Any, moves_plan: MovesPlan) -> None:
-    """Overlay each plane's tow path as a polyline, one colour per plane (#192).
+def _draw_tow_paths(ax: Any, moves_plan: MovesPlan, layout: Layout | None = None) -> None:
+    """Overlay each body's tow/drive path as a polyline (#192, movers #651).
 
     Companion to :func:`_draw_conflict_overlay` at the same z-tier (5), so the
     paths read on top of the aircraft parts (zorder 1-4) — spike Q7. Each path
     is the sampled :class:`~hangarfit.towplanner.DubinsArc` polyline from the
-    door-cone entry pose to the target slot. Colours are assigned by *sorted*
-    ``plane_id`` so a given plan always renders the same plane in the same
-    colour regardless of move order (the ADR-0003 determinism spirit). The
-    in-memory ``MovesPlan`` shape is rich enough that a per-move PNG sequence
-    or animation can be added later without changing it (spike Q7).
+    door-cone entry pose to the target slot.
+
+    Aircraft get one palette colour each, assigned by *sorted* ``plane_id`` so a
+    given plan always renders the same plane in the same colour regardless of
+    move order (the ADR-0003 determinism spirit). A placed-routed ground-object
+    **mover** (#651) is drawn in the neutral mover body colour (``_MOVER_FILL``),
+    matching its :func:`_draw_movers` body so its drive path reads as a ground
+    vehicle, not an aircraft. Movers are identified via ``layout.ground_objects``;
+    when ``layout`` is ``None`` (the pre-#651 call) every path is treated as an
+    aircraft, byte-identical to before.
 
     Each polyline carries its ``plane_id`` as a matplotlib ``label``. No
     legend is rendered today (``_finalize_axes`` draws none), so the label is
     currently inert — it is a deliberate forward hook for a future legend, and
     a path is already disambiguated by terminating at its annotated slot.
     """
-    # Deferred moves (path=None) — a #601 ground-object mover whose route search
-    # is deferred to #602 — have no polyline to draw; skip them.
+    # Deferred moves (path=None) — an un-routable placed-routed mover (#197/#602)
+    # — have no polyline to draw; skip them.
     routed_moves = [move for move in moves_plan.moves if move.path is not None]
-    plane_ids = sorted({move.plane_id for move in routed_moves})
+    # All ground-object ids (obstacles + movers). Only placed-routed movers ever
+    # carry a routed path, so in practice this flags the movers among the moves;
+    # naming it for what the set literally holds avoids a future-maintainer trap.
+    ground_object_ids = set(layout.ground_objects) if layout is not None else set()
+    # Palette colours are assigned over aircraft ids only, so a ground object never
+    # shifts the deterministic aircraft colour mapping.
+    aircraft_ids = sorted({m.plane_id for m in routed_moves if m.plane_id not in ground_object_ids})
     colour_for = {
-        pid: _TOW_PATH_COLORS[i % len(_TOW_PATH_COLORS)] for i, pid in enumerate(plane_ids)
+        pid: _TOW_PATH_COLORS[i % len(_TOW_PATH_COLORS)] for i, pid in enumerate(aircraft_ids)
     }
     for move in routed_moves:
         assert move.path is not None  # filtered above; narrows for the type-checker
         poses = list(move.path.sample())
         xs = [p.x_m for p in poses]
         ys = [p.y_m for p in poses]
+        is_mover = move.plane_id in ground_object_ids
         ax.plot(
             xs,
             ys,
-            color=colour_for[move.plane_id],
+            color=_MOVER_FILL if is_mover else colour_for[move.plane_id],
             lw=_TOW_PATH_LINEWIDTH,
             zorder=5,
             label=move.plane_id,
+        )
+
+
+def _draw_egress_lanes(ax: Any, egress_paths: dict[str, DubinsArc]) -> None:
+    """Overlay each hard-door mover's drive-out corridor as a translucent amber
+    'keep clear' polyline (#652, ``brand.EGRESS_LANE_COLOR``). The egress lane is
+    the corridor the rescue vehicle (the VW Caddy) MUST keep clear to leave; a
+    dashed wide amber line reads as a safety keep-clear zone, distinct from the
+    solid tow-path overlay (a route) and the conflict hatch (a violation). Drawn
+    just below the tow paths (zorder 4.5 < 5) so a route stays legible on top.
+    Sorted by mover id for deterministic output (ADR-0003); empty ⇒ no-op."""
+    for mover_id in sorted(egress_paths):
+        poses = list(egress_paths[mover_id].sample())
+        xs = [p.x_m for p in poses]
+        ys = [p.y_m for p in poses]
+        ax.plot(
+            xs,
+            ys,
+            color=brand.EGRESS_LANE_COLOR,
+            lw=brand.EGRESS_LANE_LINEWIDTH,
+            alpha=brand.EGRESS_LANE_ALPHA,
+            zorder=4.5,
+            linestyle=(0, (6, 3)),  # dashed = "keep clear"
+            label=f"egress:{mover_id}",
         )
 
 

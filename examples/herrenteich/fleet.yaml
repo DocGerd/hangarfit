@@ -3,13 +3,30 @@
 # catalog's numbers, #595/#594).
 aircraft:
   - ../../data/catalog/scheibe_falke.yaml
-  - ../../data/catalog/stemme_s10.yaml
-  - ../../data/catalog/aviat_husky.yaml
+  # The Stemme is hand-positioned on a dolly in the hangar, so it pivots in
+  # place — its catalog 10 m turn_radius_m is a TAXI figure, irrelevant to
+  # in-hangar maneuvering (a 10 m arc can't thread a deep slot in a 15 m-wide
+  # hangar). Model it cart-borne for tow planning via a per-fleet operational
+  # override (#595); flight specs stay in the catalog. See #644 / #643.
+  - { ref: ../../data/catalog/stemme_s10.yaml, movement_mode: always_cart }
+  # Free-swivel-gear aircraft are hand-maneuvered in the hangar: a castering
+  # tailwheel (Husky, Cessna 140) or nosewheel (CTSL, FK9 Mk II) lets the crew
+  # PIVOT them in place to thread a slot, rather than needing the catalog taxi
+  # turn radius. Modelled tow_pivotable (#599 / ADR-0010; effective turn radius
+  # → 0, pivot-in-place but no sideways strafe — that stays cart-only). Per-fleet
+  # operational override (#595); flight specs stay in the catalog.
+  - { ref: ../../data/catalog/aviat_husky.yaml, tow_pivotable: true }
   - ../../data/catalog/wild_thing.yaml
   - ../../data/catalog/zlin_savage.yaml
-  - ../../data/catalog/cessna_140.yaml
-  - ../../data/catalog/ctsl.yaml
-  - ../../data/catalog/fk9_mkii.yaml
+  - { ref: ../../data/catalog/cessna_140.yaml, tow_pivotable: true }
+  - { ref: ../../data/catalog/ctsl.yaml, tow_pivotable: true }
+  - { ref: ../../data/catalog/fk9_mkii.yaml, tow_pivotable: true }
+  # The Fuji FA-200-180 is currently a PERMANENT occupant (to be replaced by a C150
+  # in future). The only low-winger here; never carted (declared always_own_gear).
+  # Its envelope is now published spec, cross-checked (#657 — span/length/wing-area/
+  # height); the undercarriage track/wheelbase and tailplane span remain estimates
+  # (measured: false), pending a real survey.
+  - ../../data/catalog/fuji.yaml
 
 # Non-aircraft ground objects usually on the floor with the fleet (#605/#601).
 # Referenced from the central catalog, same as aircraft. The fuel trailer is a

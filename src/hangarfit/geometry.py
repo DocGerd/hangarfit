@@ -47,6 +47,14 @@ class WorldPart:
     z_top_m: float
     plane_id: str
     kind: PartKind
+    # True only for a scalar oriented-rectangle part (``Part.local_vertices is
+    # None``): such a part's ``polygon`` is a convex 4-corner rectangle, the one
+    # shape the opt-in SAT box oracle (#754 Lever B, :mod:`hangarfit._sat`) is
+    # validated against. A tapered/strut polygon part leaves this ``False`` so the
+    # collision oracle keeps using shapely for any pair touching it. Defaults
+    # ``False`` so any hand-built WorldPart is SAT-ineligible (shapely) unless a
+    # builder explicitly proves the rectangle.
+    is_oriented_rect: bool = False
 
 
 def oriented_rect(
@@ -254,6 +262,11 @@ def aircraft_parts_world(
                 z_top_m=part.z_top_m,
                 plane_id=placement.plane_id,
                 kind=part.kind,
+                # A scalar part (no polygon ring) is an oriented rectangle, and the
+                # det(-1) world transform is an isometry, so its world polygon is a
+                # convex 4-corner rectangle — SAT-eligible (#754). A polygon ring is
+                # not, so it stays shapely-only.
+                is_oriented_rect=ring is None,
             )
         )
     return world_parts
@@ -292,15 +305,27 @@ _pose_cache: ContextVar[dict[_PoseKey, list[WorldPart]] | None] = ContextVar(
 
 
 @contextmanager
-def pose_cache_scope() -> Iterator[None]:
-    """Activate a fresh per-solve ``aircraft_parts_world`` cache for the block.
+def pose_cache_scope(
+    cache: dict[_PoseKey, list[WorldPart]] | None = None,
+) -> Iterator[None]:
+    """Activate an ``aircraft_parts_world`` cache for the block.
 
     Inside the ``with`` block, :func:`cached_parts_world` memoizes by pose;
     outside it (the default) :func:`cached_parts_world` is a pure passthrough.
-    The cache is reset on exit, so nested or sequential scopes never share
-    state — which is what keeps a double-run solve byte-identical (ADR-0003).
+
+    With ``cache=None`` (the #453 per-solve default) a *fresh* dict is used and
+    discarded on exit, so nested or sequential scopes never share state — which
+    is what keeps a double-run solve byte-identical (ADR-0003). When ``cache`` is
+    supplied, that dict is reused as the memo, so it can persist *across* scopes —
+    e.g. an episode-scoped worker cache held across timesteps (#753). The memo is
+    referentially transparent either way, so the result is byte-identical; only
+    *when* a pose is (re)built changes, never its bytes. A caller that owns
+    ``cache`` is responsible for clearing it at the right boundary (per episode)
+    to bound memory. The ContextVar token is still set/reset per-call, so even in
+    SyncVectorEnv (N workers, one process, one ContextVar) the set/reset stays
+    LIFO-safe — each worker passes its own dict.
     """
-    token = _pose_cache.set({})
+    token = _pose_cache.set({} if cache is None else cache)
     try:
         yield
     finally:

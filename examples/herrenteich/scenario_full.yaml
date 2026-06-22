@@ -1,0 +1,25 @@
+# Airfield Herrenteich — solver INPUT for the fishbone 'both trailers inside' set
+# (#657/#659). Sibling of layout_full.yaml (the committed witness): same body set
+# (7 aircraft + 4 ground objects, Scheibe parks outside). The RR-MC->tow baseline runs
+# on this input; layout_full.yaml is the existence witness.
+fleet: fleet.yaml
+hangar: hangar.yaml
+fleet_in:
+  - fk9_mkii
+  - aviat_husky
+  - zlin_savage
+  - wild_thing
+  - stemme_s10
+  - cessna_140
+  - ctsl
+ground_objects:
+  - object: maul_fuel_trailer   # FIXED keep-out (surveyed pose from layout_full.yaml)
+    x_m: 1.35
+    y_m: 2.35
+    heading_deg: 180.0
+  - object: vw_caddy            # hard-door rescue mover (solver places + routes, clear egress)
+    region_preference: { side: left, weight: 1.0 }
+  - object: glider_trailer_1    # Duo Discus trailer mover (right wall)
+    region_preference: { side: right, weight: 1.5 }
+  - object: glider_trailer_2    # single-seat trailer mover (deeper)
+    region_preference: { side: right, weight: 1.5 }

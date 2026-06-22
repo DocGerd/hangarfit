@@ -8,7 +8,7 @@ This file is the durable **operational** context for the project: how we work, w
 
 `hangarfit` is an **on-demand exception tool** for a flying club: when the standard hangar parking layout breaks (delayed return, surprise maintenance, etc.), it helps find *a* valid alternative arrangement. The tool checks whether a hand-authored candidate layout is physically valid and renders a top-down PNG so a human can eyeball it; the solver searches for one when no candidate is in hand.
 
-**Status:** Phase 1 (substrate), Phase 2a (static layout solver, `hangarfit solve`), Phase 2b–2c (solver realism + spread/diversity polish), Phase 3a (tow-path planning, `hangarfit solve --render-paths`), Phase 3b (Reeds–Shepp reverse-capable tow motion), and Phase 4 (interactive 3D viewer, `hangarfit view`) have all shipped. Live milestone status lives in auto-memory and GitHub milestones, not here.
+**Status:** Phase 1 (substrate), Phase 2a (static layout solver, `hangarfit solve`), Phase 2b–2c (solver realism + spread/diversity polish), Phase 3a (tow-path planning, `hangarfit solve --render-paths`), Phase 3b (Reeds–Shepp reverse-capable tow motion), and Phase 4 (interactive 3D viewer, `hangarfit view`) have all shipped. An opt-in **learned backend** (epic #607) has its inference **seam** shipped — the `--backend learned` / `--weights` CLI flags route through the wheel-shipped `hangarfit.learned` module (verifier-gated, same `SolveResult` shape, #706). The ONNX inference *implementation* (`ml.infer`) and the RL *training* both live in the dev/CI-only `ml/` package (a top-level package outside `src/`, so `packages.find` never ships it in the wheel), so a bare install reports the backend unavailable until `ml/` + the `[learned-infer]` extra + trained weights are present; reaching valid *dense* layouts (train-to-mastery) is still in active development. Live milestone status lives in auto-memory and GitHub milestones, not here.
 
 ---
 
@@ -18,7 +18,7 @@ This file is the durable **operational** context for the project: how we work, w
 |---|---|
 | What `hangarfit` is and the quality goals it optimizes for | [§1 Introduction & Goals](docs/architecture/01-introduction-and-goals.md) |
 | What is in / out of scope, the external actors, exit-code semantics pointer | [§3 Context & Scope](docs/architecture/03-context-and-scope.md) |
-| Module map (`cli`, `loader`, `models`, `geometry`, `collisions`, `solver`, `towplanner`, `visualize`, `scene`, `viewer`, `metrics`, `brand`) and per-module responsibilities | [§5 Building Block View](docs/architecture/05-building-block-view.md) |
+| Module map (`cli`, `loader`, `models`, `geometry`, `collisions`, `_sat`, `solver`, `learned`, `towplanner`, `visualize`, `scene`, `viewer`, `metrics`, `brand`) and per-module responsibilities | [§5 Building Block View](docs/architecture/05-building-block-view.md) |
 | Runtime flow of `check` and `solve` invocations | [§6 Runtime View](docs/architecture/06-runtime-view.md) |
 | **The parts model** (collision rule, why parts not bbox, `struts:` block, the fuselage front/aft split, the **empennage** `tail`+`vertical_stabilizer` surfaces — a wingtip may overhang a low-winger's *low tailplane* but not its *cockpit*, and not its *fin* which rises into the wing layer) | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#the-parts-model) + [ADR-0001](docs/adr/0001-aircraft-parts-model.md) + [ADR-0012](docs/adr/0012-fuselage-front-aft-split.md) + [ADR-0023](docs/adr/0023-empennage-tail-surfaces.md) |
 | **The coordinate convention + the determinant-−1 transform trap** | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#the-coordinate-convention) + [ADR-0002](docs/adr/0002-determinant-minus-one-transform.md) |
@@ -34,6 +34,7 @@ This file is the durable **operational** context for the project: how we work, w
 | **The staging apron** (`hangar.apron_depth_m` / `--apron-depth N\|auto`, slide-in from outside the door, reverse nose-out seeds, depth-0 byte-identical) | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#the-door-is-a-visual-marker-only) + [ADR-0021](docs/adr/0021-tow-planner-staging-apron.md). `collisions.check` is apron-inert (forbids `y<0`); the apron is a planner-level motion concept |
 | **The 3D viewer** (`hangarfit view`, interactive offline HTML, whole-fill tow timeline, the `scene/v2` JSON seam, Python-owned transform) | [§5 Building Block View](docs/architecture/05-building-block-view.md) (`scene`, `viewer`) + [ADR-0017](docs/adr/0017-3d-viewer-architecture.md) + the schema reference [docs/architecture/scene-v2-schema.md](docs/architecture/scene-v2-schema.md) |
 | **Ground objects** (fixed obstacles + placed/routed movers — cars & trailers; the Caddy hard-door egress gate; the soft right/left-region preference; movers are solver-placed since #604) | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md) + [ADR-0025](docs/adr/0025-ground-object-taxonomy.md) (taxonomy) + [ADR-0026](docs/adr/0026-caddy-hard-door-egress.md) (Caddy egress) + [ADR-0008](docs/adr/0008-inter-plane-spread-soft-preference.md) (region soft-term amendment) + [ADR-0010](docs/adr/0010-reeds-shepp-motion-model.md) (mover motion) |
+| **The learned-backend RL workspace** (`ml/`, a top-level package *outside* `src/hangarfit/`; #607 — cold-joint env/reward, observation tensorizer, policy net, PPO, curriculum, eval/benchmark) | [`ml/README.md`](ml/README.md) + [ADR-0027](docs/adr/0027-learned-backend-determinism-scope.md) (Proposed) + the design spec `docs/superpowers/specs/2026-06-12-learned-backend-cold-joint-rl-env-design.md` |
 | Why the project targets a single Python (3.12), not a range | [ADR-0009](docs/adr/0009-single-supported-python-version.md) |
 | All architecture decisions, including superseded ones | [`docs/adr/`](docs/adr/) |
 
@@ -57,7 +58,7 @@ If you find yourself about to write a domain assertion in this file, **don't** �
 
 `required_linear_history` must **never** be enabled — it blocks GitFlow's release flow, which merges each `release/*` into both `main` and `develop`. Feature PRs land as merge commits too (squash/rebase merging is disabled repo-wide as a release-safety guardrail). The strategy is recorded in [ADR-0014](docs/adr/0014-merge-commit-only-history-strategy.md), superseding the never-adopted [ADR-0011](docs/adr/0011-linear-history-strategy-under-gitflow.md).
 
-**Releasing** (two skills, in order). `/release-prep version=X.Y.Z` promotes the CHANGELOG `[Unreleased]` block + runs a doc audit, landing via a PR that **must merge first**; then `/release-cut version=X.Y.Z` bumps `pyproject.toml` and opens the release→`main` + back-merge→`develop` PRs (its Check E refuses unless develop already carries the `[X.Y.Z]` heading). After the release PR merges, tag the **main merge commit** with an **annotated** `git tag -a vX.Y.Z` — **not** `git tag -s`: releases are signed by `release.yml`'s **Sigstore keyless cosign on the artifacts** (CI OIDC, no stored key), not a GPG-signed tag. `release.yml` then **auto-populates the Release notes from the tagged commit's `## [X.Y.Z]` CHANGELOG block** (#486) — only run `gh release edit vX.Y.Z --notes-file` if the workflow logged the CHANGELOG-mismatch fallback warning. Pushing the tag isn't a merge, so Claude may do it on the user's go-ahead — `gh pr merge` stays the user's alone.
+**Releasing** (two skills, in order). `/release-prep version=X.Y.Z` promotes the CHANGELOG `[Unreleased]` block + runs a doc audit, landing via a PR that **must merge first**; then `/release-cut version=X.Y.Z` bumps `pyproject.toml` and opens the release→`main` + back-merge→`develop` PRs (its Check E refuses unless develop already carries the `[X.Y.Z]` heading). **The release→`main` PR opens `BEHIND`** (main's `required_status_checks.strict=true` + the prior release **merge commits** live only on `main`, never back-merged to `develop`), so an armed auto-merge can't self-heal it — run `gh api -X PUT repos/DocGerd/hangarfit/pulls/<n>/update-branch` once (merges `main` in, normally conflict-free) to make it mergeable. `/release-cut`'s `gh pr create --milestone` also needs the milestone **title**, not the number (number → `not found`). After the release PR merges, tag the **main merge commit** with an **annotated** `git tag -a vX.Y.Z` — **not** `git tag -s`: releases are signed by `release.yml`'s **Sigstore keyless cosign on the artifacts** (CI OIDC, no stored key), not a GPG-signed tag. `release.yml` then **auto-populates the Release notes from the tagged commit's `## [X.Y.Z]` CHANGELOG block** (#486) — only run `gh release edit vX.Y.Z --notes-file` if the workflow logged the CHANGELOG-mismatch fallback warning. Pushing the tag isn't a merge, so Claude may do it on the user's go-ahead — `gh pr merge` stays the user's alone.
 
 ### Per-PR process
 
@@ -75,16 +76,32 @@ every PR on `develop`, never on the parent feature branch**: CI (`on:
 pull_request: branches:[develop,main]`) and GitHub `Closes #N` linkage only fire
 for develop/main-base PRs, so a feature-branch-based PR silently gets **no CI run
 and no issue link**. Accept the cumulative diff until parents merge, and document
-the merge order. (Mis-based already? `gh api -X PATCH repos/DocGerd/hangarfit/pulls/<n> -f base=develop`,
+the merge order. **Cascading CHANGELOG conflicts:** stacked PRs each insert a
+`[Unreleased]` entry at the top of the same `### Added` block, so **every sibling
+re-conflicts on `CHANGELOG.md` each time one merges** — re-sync the rest (`git
+merge origin/develop`, NOT rebase — no force-push; keep ALL entries) after each
+lands. GitHub mergeability **lags a push**: a transient `CONFLICTING`/`DIRTY`
+banner right after a merge/push clears on recompute — `mergeable=MERGEABLE` (and
+`git merge-base --is-ancestor origin/develop <branch>`) is authoritative;
+`mergeStateStatus=BLOCKED` just means required CI is still pending, not a conflict.
+(Mis-based already? `gh api -X PATCH repos/DocGerd/hangarfit/pulls/<n> -f base=develop`,
 then close+reopen the PR to trigger CI.) Wire the stack's order as native issue
 deps: `gh api -X POST repos/DocGerd/hangarfit/issues/<n>/dependencies/blocked_by -F issue_id=<numeric id>`.
+
+**Scratch-gitignore is per-branch.** A `.gitignore` rule added on one branch does NOT
+protect a sibling cut from `develop` before it merged — a `git add -A` there sweeps the
+still-untracked scratch (`train-*.log` / `ck-*.pt` / `metrics-*.jsonl`) into the commit and
+pollutes `develop` (a tracked file is never re-ignored; the fix is a `git rm --cached` PR,
+e.g. #786). Prefer **explicit `git add <paths>`** when reproducible gate scratch sits in the
+tree, or merge `develop` in / land the ignore first. Spot a leak with `git ls-files | grep -E
+'train-|ck-|metrics-'` — `git check-ignore` returns 0 for already-tracked files, so it won't.
 
 ### Issues
 
 - Every change is tracked by a GitHub issue. No code without an issue.
 - Issues are organized into milestones (one milestone = one releasable cut).
 - PR bodies link to issues with `Closes #N` / `Fixes #N` (the body, not the title — only body syntax auto-closes).
-- Each user-facing change carries its own `CHANGELOG.md [Unreleased]` entry; `/release-prep` only *promotes* that block (never authors it), so any missing entries must be backfilled at cut time.
+- Each user-facing change carries its own `CHANGELOG.md [Unreleased]` entry; `/release-prep` only *promotes* that block (never authors it), so any missing entries must be backfilled at cut time. Write a **milestone** number bare (`milestone 34`), **not** `#34`, in CHANGELOG/PR prose — `release.yml` renders the CHANGELOG block verbatim into the GitHub Release notes (#486), where a bare `#N` auto-links to **PR/issue N**, not the milestone (issue refs like `#614` are correct and intended).
 
 ---
 
@@ -98,9 +115,12 @@ Use the best-fitted model for the task. The model class to pick is "as much reas
 - **`pr-review-toolkit:type-design-analyzer`** — when `models.py` changes.
 - **`geometry-invariant-guard`** — for any PR touching `src/hangarfit/geometry.py` or `src/hangarfit/collisions.py`; guards the coordinate-transform sign-flip trap (see [ADR-0002](docs/adr/0002-determinant-minus-one-transform.md)).
 - **`determinism-guard`** — for any PR touching `src/hangarfit/solver.py` or `src/hangarfit/towplanner.py` (including the #544 `--workers` parallel-restart fan-out and `tests/test_solver_parallel.py`); guards the byte-identical-plan determinism contract (same scenario + seed → bit-identical output, `max_restarts`-scoped per the #267 amendment; and parallel-restart ≡ serial in the `_parallel_eligible` regime per the #544 amendment), runs the solver twice on a fixed seed and diffs (see [ADR-0003](docs/adr/0003-rr-mc-solver-algorithm.md)).
+- **`ml-rl-guard`** — for any PR touching the `ml/` RL workspace (`ml/*.py`) or `tests/ml/`; guards the four RL invariants the solver-scoped `determinism-guard` does not cover — training reproducibility/seeding, the 4c-ii **knob default-neutrality** contract, validity = the product checker (`collisions.check` + Caddy egress) not the env oracle (#694), and the numeric silent-failure + intrinsic-horizon-GAE guards. Runs `ruff`/`mypy ml/` + the targeted `tests/ml/` regression tests (see [`ml/README.md`](ml/README.md) + [ADR-0027](docs/adr/0027-learned-backend-determinism-scope.md)).
 - **`feature-dev:code-architect`** — only for genuinely novel design decisions, not routine implementation.
 
 Most coding goes direct in-session. Subagent dispatch is for review work and isolated heavy lifts.
+
+`ml/` is reviewable source, not scratch — run the formal `/pr-review` arc on `ml/` PRs like any `src/` change. Note CI's `mypy` only covers `src/hangarfit/`, so a Pyright complaint under `tests/ml/` is usually stale-LSP noise — `mypy`/CI is the source of truth. Run `mypy ml/` over the **whole package**, not a single file — under `ml.*`'s `follow_imports = "skip"` a subset run resolves cross-module imports as `Any`, manufacturing a false `unused type: ignore`.
 
 **Review subagents must stay read-only in the shared checkout.** A review agent that runs `git switch` / `checkout` / `stash` in the shared working tree silently reverts it under any sibling agent (and under you). Point review agents at `origin/<branch>` refs instead — `gh pr diff N`, `git diff origin/develop...origin/feature/X`, and `git show origin/develop:<path>` for the pre-change state — and **never** switch branches in place. Isolate any subagent that *writes* in its own worktree.
 
@@ -108,7 +128,7 @@ Most coding goes direct in-session. Subagent dispatch is for review work and iso
 
 ## Project-local Claude Code config
 
-The `.claude/` directory holds team-shared Claude Code settings (currently: a PreToolUse guard that blocks hand-edits to the hash-pinned `requirements-*.txt` lockfiles, a PostToolUse hook that runs ruff + pytest after edits under `src/hangarfit/` or `tests/`, a second PostToolUse hook that reminds you to rebuild `viewer.js` after `viewer/src/*.ts` edits (#568), plus a Stop-event hook that runs mypy once when a turn finishes; and the `pyright-lsp` + `typescript-lsp` editor plugins under `enabledPlugins`). See [.claude/README.md](.claude/README.md) for what's there and how to disable per-contributor via a gitignored `.claude/settings.local.json`.
+The `.claude/` directory holds team-shared Claude Code settings (currently: a PreToolUse guard that blocks hand-edits to the hash-pinned `requirements-*.txt` lockfiles, a PostToolUse hook that runs ruff + pytest after edits under `src/hangarfit/` or `tests/` (and ruff + the scoped `pytest tests/ml/` after `ml/*.py` edits), a second PostToolUse hook that reminds you to rebuild `viewer.js` after `viewer/src/*.ts` edits (#568), plus a Stop-event hook that runs mypy — over `src/hangarfit/`, and `ml/` too when torch is importable — once when a turn finishes; and the `pyright-lsp` + `typescript-lsp` editor plugins under `enabledPlugins`). See [.claude/README.md](.claude/README.md) for what's there and how to disable per-contributor via a gitignored `.claude/settings.local.json`.
 
 ---
 
@@ -291,6 +311,26 @@ VIEWER_OUTFILE=/tmp/viewer-scratch.js npm --prefix viewer/ run build
 # it — the CI skew-guard ties all three, bump in lockstep). viewer/src uses explicit `.ts`
 # imports (tsconfig allowImportingTsExtensions) so `node --test` resolves them under Node
 # 24 type-stripping; esbuild inlines internal modules, so .ts stays bundle-neutral.
+
+# Learned-backend RL workspace (ml/, #607 — DEV/CI-ONLY, never shipped in the wheel).
+# ml/ is a TOP-LEVEL package, so the editable install (packages.find where=["src"])
+# does NOT put it on sys.path — run from the repo root (cwd=root or PYTHONPATH=$PWD).
+# torch is the OPTIONAL `[train]` extra; torch-free modules (benchmark) vs torch-needing
+# (train/eval/policy/ppo, gated by importorskip in tests). Entry points + the 4c-ii
+# training-knob table + A/B command live in ml/README.md.
+# CI installs only the [dev] extra (no torch), so its ml/ coverage is the torch-free
+# subset — the torch modules importorskip-skip there; full torch-CI is a future #607 rung.
+pip install -e ".[train]"      # adds torch for training/eval (CPU is fine)
+pytest tests/ml/               # the ml/ test tree (collected by default; testpaths=["tests"])
+python -m ml.train --save P    # train + export state_dict (needs [train])
+
+# #706 learned-backend inference (epic #607 sub-project #5). Export a trained policy to
+# ONNX, then run it torch-free behind the verifier. Export needs [train] (torch + onnx);
+# inference needs the [learned-infer] extra (onnxruntime). With trivial-schedule (under-
+# trained) weights the verifier rejects the proposal → a no-layout result, NOT an error;
+# reaching valid dense layouts is the train-to-mastery work (#698/#7).
+python -m ml.train --schedule trivial --save /tmp/p.pt --save-onnx /tmp/p.onnx   # [train]
+hangarfit solve tests/fixtures/scenario_minimal.yaml --backend learned --weights /tmp/p.onnx
 
 # GitFlow loops
 git switch develop && git pull

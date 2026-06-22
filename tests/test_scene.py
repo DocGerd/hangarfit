@@ -523,3 +523,269 @@ def test_build_scene_v2_byte_deterministic_with_polygon():
     a = json.dumps(scene.build_scene(poly_lay))
     b = json.dumps(scene.build_scene(poly_lay))
     assert a == b
+
+
+# ── #606: ground objects in scene/v2 (fixed obstacles + placed movers) ────────
+#
+# Stage A puts non-aircraft bodies on the floor: a fixed obstacle (the Maul fuel
+# trailer) reads as a keep-out; placed/routed movers (the VW Caddy + 2 glider
+# trailers) read as placed bodies. PR2 emits them as static placed bodies in the
+# scene/v2 dict (the 3D analogue of the 2D #649 render), always-emitted and
+# inert-when-empty (the structural_notches discipline). Mover *animation* and the
+# Caddy egress lane are deferred follow-ups — the egress oracle exports no corridor
+# geometry, so there is nothing to serialize here yet.
+import dataclasses  # noqa: E402
+
+from hangarfit.models import GroundObject  # noqa: E402
+
+_FIXED_OBSTACLE = GroundObject(
+    id="fuel_trailer",
+    name="Maul fuel trailer",
+    parts=(Part("ground", 2.0, 1.5, 0.0, 0.0, 0.0, 0.0, 1.2),),
+    object_class="fixed_obstacle",
+)
+_TOWED_MOVER = GroundObject(
+    id="glider_trailer",
+    name="Glider trailer",
+    parts=(Part("ground", 6.0, 2.0, 0.0, 0.0, 0.0, 0.0, 2.0),),
+    object_class="placed_routed_mover",
+    motion_mode="towed",
+)
+_HARD_DOOR_MOVER = GroundObject(
+    id="vw_caddy",
+    name="VW Caddy",
+    parts=(Part("ground", 4.5, 1.8, 0.3, 0.0, 12.0, 0.0, 1.8),),  # nonzero offset+angle
+    object_class="placed_routed_mover",
+    motion_mode="steerable",
+    turn_radius_m=5.0,
+    hard_door_mover=True,
+)
+
+
+def _layout_with_ground_objects():
+    """The default layout, plus one fixed obstacle and two movers (one a
+    hard-door Caddy) with distinct in-hangar poses — the synthetic GO fixture for
+    the scene/v2 ground-object emit, mirroring the notch test's dataclasses.replace
+    idiom (no new YAML fixture)."""
+    lay = load_layout(LAYOUT)
+    gos = {go.id: go for go in (_FIXED_OBSTACLE, _TOWED_MOVER, _HARD_DOOR_MOVER)}
+    placements = (
+        Placement("fuel_trailer", x_m=11.0, y_m=1.5, heading_deg=0.0, on_carts=False),
+        Placement("glider_trailer", x_m=2.0, y_m=18.0, heading_deg=0.0, on_carts=False),
+        Placement("vw_caddy", x_m=18.0, y_m=4.0, heading_deg=90.0, on_carts=False),
+    )
+    return dataclasses.replace(lay, ground_objects=gos, ground_object_placements=placements)
+
+
+def test_build_scene_ground_objects_always_emitted_and_inert():
+    """A GO-free layout emits an empty ground_objects list and go_anchors map —
+    the always-emitted, inert-when-empty contract (the structural_notches rule)."""
+    sc = scene.build_scene(load_layout(LAYOUT))
+    assert sc["ground_objects"] == []
+    assert sc["go_anchors"] == {}
+
+
+def test_ground_object_blocks_shape_and_sorting():
+    lay = _layout_with_ground_objects()
+    sc = scene.build_scene(lay)
+    blocks = sc["ground_objects"]
+    assert [b["id"] for b in blocks] == ["fuel_trailer", "glider_trailer", "vw_caddy"]  # sorted
+    fields = set(blocks[0])
+    assert fields == {"id", "object_class", "color", "hard_door_mover", "boxes", "final_pose"}
+    obst = next(b for b in blocks if b["id"] == "fuel_trailer")
+    mover = next(b for b in blocks if b["id"] == "vw_caddy")
+    assert obst["object_class"] == "fixed_obstacle"
+    assert obst["hard_door_mover"] is False
+    assert mover["object_class"] == "placed_routed_mover"
+    assert mover["hard_door_mover"] is True
+    # Distinct per-class fill (brand-resolved Python-side, like the plane colours):
+    # the fixed obstacle and the mover never share a hue.
+    assert obst["color"] != mover["color"]
+    # The final pose is the placement affine (no timeline for static GOs).
+    placement = next(p for p in lay.ground_object_placements if p.plane_id == "vw_caddy")
+    assert mover["final_pose"] == scene._affine(placement)
+    # A ground part is a scalar box (no polygon ring) carrying its z-band.
+    box = mover["boxes"][0]
+    assert box["kind"] == "ground"
+    assert box["vertices"] is None
+    assert box["z_band"] == [0.0, 1.8]
+
+
+def test_go_anchors_are_world_box_corners():
+    """go_anchors are the world box corners from the production
+    aircraft_parts_world oracle (it accepts a GroundObject), the det-−1 backstop
+    for the mover/obstacle render — the GO sibling of test_anchors_are_world_box_corners."""
+    lay = _layout_with_ground_objects()
+    sc = scene.build_scene(lay)
+    for gp in lay.ground_object_placements:
+        go = lay.ground_objects[gp.plane_id]
+        want = [
+            [[x, y] for x, y in list(wp.polygon.exterior.coords)[:-1]]
+            for wp in aircraft_parts_world(go, gp)
+        ]
+        assert sc["go_anchors"][gp.plane_id] == want
+
+
+def test_go_anchors_through_final_pose_reproduce_oracle():
+    # The emitted plane-local box corners, pushed through the GO's final affine,
+    # equal the world anchor oracle vertex-for-vertex (the det-−1 surface).
+    lay = _layout_with_ground_objects()
+    sc = scene.build_scene(lay)
+    from hangarfit.geometry import oriented_rect
+
+    for block in sc["ground_objects"]:
+        affine = block["final_pose"]
+        anchors = sc["go_anchors"][block["id"]]
+        for box, box_anchor in zip(block["boxes"], anchors, strict=True):
+            local = list(
+                oriented_rect(
+                    box["cx"], box["cy"], box["length_m"], box["width_m"], box["angle_deg"]
+                ).exterior.coords
+            )[:-1]
+            for (u, v), (ox, oy) in zip(local, box_anchor, strict=True):
+                ax, ay = _apply(affine, u, v)
+                assert math.isclose(ax, ox, abs_tol=1e-9) and math.isclose(ay, oy, abs_tol=1e-9)
+
+
+def test_build_scene_ground_objects_byte_deterministic():
+    lay = _layout_with_ground_objects()
+    a = json.dumps(scene.build_scene(lay))
+    b = json.dumps(scene.build_scene(lay))
+    assert a == b
+
+
+def test_scene_contract_ts_ground_object_keys_match():
+    """GroundObjectData mirror parity — the animated scene has no GOs, so pin the
+    block key set against a synthetic GO-bearing layout (the StructuralNotchData
+    precedent)."""
+    block = scene.build_scene(_layout_with_ground_objects())["ground_objects"][0]
+    assert _ts_interface_fields("scene-contract.ts", "GroundObjectData") == set(block)
+
+
+# ── #651: placed-routed movers animate in the 3D timeline ─────────────────────
+#
+# The static GO bodies already emit (#653); #651 adds their MOTION. A routed
+# mover (its Move carries a DubinsArc) gets a timeline segment so the viewer
+# drives it in along its path, AFTER every aircraft is parked; a deferred
+# (path=None) mover stays at its static final_pose, like the fixed obstacle.
+
+
+def _routed_arc():
+    """A real DubinsArc to reuse as a mover route. The synthetic GO layout does
+    not route (a trailer near the door blocks an aircraft), so we borrow a routed
+    aircraft's arc — `_timeline` only needs a path with a length and samples."""
+    arc = plan_fill(load_layout(LAYOUT)).moves[0].path
+    assert arc is not None
+    return arc
+
+
+def _plan_with_movers(lay, *, glider_path, caddy_path):
+    """The base-layout aircraft fill plus two mover Moves appended (aircraft
+    first, then movers — the order plan_fill itself emits)."""
+    from hangarfit.towplanner import Move, MovesPlan, Pose
+
+    base = plan_fill(load_layout(LAYOUT))
+    g = next(p for p in lay.ground_object_placements if p.plane_id == "glider_trailer")
+    c = next(p for p in lay.ground_object_placements if p.plane_id == "vw_caddy")
+    movers = (
+        Move("glider_trailer", Pose.from_placement(g), glider_path),
+        Move("vw_caddy", Pose.from_placement(c), caddy_path),
+    )
+    return MovesPlan(target_layout=lay, moves=base.moves + movers)
+
+
+def test_timeline_animates_only_routed_movers():
+    """#651: a routed mover (real path) gets a timeline segment so it animates; a
+    deferred (path=None) mover does not — it stays at its static final_pose."""
+    lay = _layout_with_ground_objects()
+    plan = _plan_with_movers(lay, glider_path=_routed_arc(), caddy_path=None)
+    tl, _ = scene._timeline(lay, plan)
+    seg_ids = {s["plane_id"] for s in tl["segments"]}
+    assert "glider_trailer" in seg_ids  # routed mover animates
+    assert "vw_caddy" not in seg_ids  # deferred mover stays static
+
+
+def test_timeline_mover_segments_follow_aircraft_and_stay_sequential():
+    """#651: movers drive in after every aircraft is parked, and the whole
+    timeline stays end-to-end continuous (no gaps/overlaps)."""
+    lay = _layout_with_ground_objects()
+    plan = _plan_with_movers(lay, glider_path=_routed_arc(), caddy_path=_routed_arc())
+    tl, _ = scene._timeline(lay, plan)
+    aircraft = {p.plane_id for p in lay.placements}
+    seg_ids = {s["plane_id"] for s in tl["segments"]}
+    mover_segs = [s for s in tl["segments"] if s["plane_id"] not in aircraft]
+    aircraft_segs = [s for s in tl["segments"] if s["plane_id"] in aircraft]
+    assert mover_segs and aircraft_segs
+    assert "fuel_trailer" not in seg_ids  # the fixed obstacle never animates (no Move)
+    last_aircraft_end = max(s["end_s"] for s in aircraft_segs)
+    assert all(s["start_s"] >= last_aircraft_end - 1e-9 for s in mover_segs)
+    for prev, nxt in zip(tl["segments"], tl["segments"][1:], strict=False):
+        assert math.isclose(nxt["start_s"], prev["end_s"])
+    assert math.isclose(tl["total_s"], tl["segments"][-1]["end_s"])
+
+
+def test_timeline_finals_excludes_movers():
+    """#651: a mover's resting pose lives on its ground-object block (final_pose),
+    NOT in the aircraft-only `finals` map. Guards against `record_final` being
+    flipped on for movers — which the viewer would silently ignore (it reads
+    go.final_pose), leaving the contract quietly violated."""
+    lay = _layout_with_ground_objects()
+    plan = _plan_with_movers(lay, glider_path=_routed_arc(), caddy_path=_routed_arc())
+    _, finals = scene._timeline(lay, plan)
+    assert set(finals) == {p.plane_id for p in lay.placements}
+    assert "glider_trailer" not in finals and "vw_caddy" not in finals
+
+
+def test_timeline_mover_order_is_id_sorted_not_placement_order():
+    """#651: mover segments follow `_ground_object_blocks`' id-sort, independent of
+    the placement-tuple order (ADR-0003). Reverse the GO placement order so the sort
+    is load-bearing — a regression to insertion order would flip the result."""
+    lay = _layout_with_ground_objects()
+    lay = dataclasses.replace(
+        lay, ground_object_placements=tuple(reversed(lay.ground_object_placements))
+    )
+    plan = _plan_with_movers(lay, glider_path=_routed_arc(), caddy_path=_routed_arc())
+    tl, _ = scene._timeline(lay, plan)
+    aircraft = {p.plane_id for p in lay.placements}
+    mover_seg_ids = [s["plane_id"] for s in tl["segments"] if s["plane_id"] not in aircraft]
+    assert mover_seg_ids == ["glider_trailer", "vw_caddy"]  # id-sorted, not placement order
+
+
+def test_timeline_mover_animation_byte_deterministic():
+    """#651: animating movers keeps build_scene byte-identical run-to-run (ADR-0003)."""
+    lay = _layout_with_ground_objects()
+    plan = _plan_with_movers(lay, glider_path=_routed_arc(), caddy_path=_routed_arc())
+    a = json.dumps(scene.build_scene(lay, moves_plan=plan))
+    b = json.dumps(scene.build_scene(lay, moves_plan=plan))
+    assert a == b
+
+
+# ── #652: egress lane (hard-door mover drive-out corridor) ────────────────────
+
+
+def test_build_scene_egress_lanes_always_emitted_and_inert():
+    """#652: egress_lanes is always emitted, empty when no corridors are supplied
+    (the structural_notches / go_anchors inert-when-empty discipline)."""
+    sc = scene.build_scene(load_layout(LAYOUT))
+    assert sc["egress_lanes"] == {}
+
+
+def test_build_scene_egress_lanes_carries_sampled_points():
+    """#652: a supplied egress corridor is emitted as sampled [x, y] world points,
+    keeping its start/end."""
+    arc = _routed_arc()
+    sc = scene.build_scene(load_layout(LAYOUT), egress_paths={"caddy": arc})
+    lane = sc["egress_lanes"]["caddy"]
+    assert isinstance(lane, list) and len(lane) >= 2
+    assert all(len(pt) == 2 for pt in lane)
+    poses = list(arc.sample())
+    assert lane[0] == [poses[0].x_m, poses[0].y_m]
+    assert lane[-1] == [poses[-1].x_m, poses[-1].y_m]
+
+
+def test_build_scene_egress_lanes_byte_deterministic():
+    """#652: egress-lane emit is byte-identical run-to-run (ADR-0003)."""
+    arc = _routed_arc()
+    a = json.dumps(scene.build_scene(load_layout(LAYOUT), egress_paths={"caddy": arc}))
+    b = json.dumps(scene.build_scene(load_layout(LAYOUT), egress_paths={"caddy": arc}))
+    assert a == b

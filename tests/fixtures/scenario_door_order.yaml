@@ -1,0 +1,6 @@
+# #614 door-priority demo scenario: a desired door-proximity order declared at
+# the scenario top level. ctsl should park nearest the door, then aviat_husky.
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
+fleet_in: [aviat_husky, ctsl]
+door_order: [ctsl, aviat_husky]

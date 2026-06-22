@@ -10,6 +10,705 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Fixed
 
+## [0.16.0] — 2026-06-22
+
+### Added
+
+- **Solver (#614, epic #600 / milestone 34): SOFT door-priority tie-breaker
+  (`Scenario.door_order`).** The deferred soft half of #603's HARD Caddy egress gate: a scenario
+  may declare a desired door-proximity order (a top-level `door_order:` list of placeable body ids;
+  the first should park nearest the door). Among the already-collision-valid candidate basins the
+  solver collects, a new **lexicographically-subordinate** selection term ranks layouts by a
+  Kendall-tau inversion count over the placed `door_order` bodies (door distance = the `y_m`
+  reference coordinate, the same idiom as the `_back_bias` soft term; absent bodies, e.g.
+  a maintenance plane treated as away, are skipped). It sits **above** the ADR-0008 spread terms (a
+  declared order wins over maximal spread) but strictly **below every hard rule** — consumed only
+  after the collision gate passes, and it stays subordinate to the ADR-0026 egress gate (which
+  independently rejects un-routable layouts downstream), so it can never make an invalid layout
+  selectable nor reorder a hard rejection. **Determinism (ADR-0003):** unset (`door_order` absent,
+  the default) ⇒ a constant `0.0` deviation prefix on the selection key ⇒ byte-identical solver,
+  verified by the 6-plane canaries and an unset-is-zero unit. Closes #614, the last open child of
+  epic #600 / milestone 34 (Ground objects + Herrenteich calibration).
+
+- **Solver (#754, epic #607 Wave 3 / #760): Lever B — opt-in `solve --sat-collisions` numpy
+  SAT box oracle for the collision narrow-phase.** The pairwise + ground-obstacle narrow-phase
+  (~61% of each box-rung iteration is shapely `Polygon` work, #381) now has an opt-in second path:
+  for **rectangle × rectangle** part pairs, `collisions.check(..., sat_collisions=True)` routes the
+  plan-view verdict and the `total_penetration_m2` area through pure-numpy SAT / GJK-distance /
+  Sutherland–Hodgman kernels (`hangarfit._sat`, productionized from the #735-validated spike)
+  instead of GEOS. A part-kind guard (`WorldPart.is_oriented_rect`, set only on the scalar
+  oriented-rectangle build path) falls back to shapely the instant any tapered/strut **polygon**
+  part appears — so the SAT path only ever runs where the #735 corpus validated it. Plumbed
+  `cli → SearchConfig.sat_collisions → solver._score → collisions.check`, accelerating the
+  descent's hot scorer. **Determinism (ADR-0003):** the flag defaults **off**, and off is
+  byte-identical to the pre-#754 checker. **On is self-byte-identical** (numpy SAT is referentially
+  transparent) but **NOT equal to the off run** — SAT reproduces the GEOS verdict surface to
+  ~5e-15 with **0 conflict-count flips** on a 200k clearance-weighted corpus, so layout *validity*
+  is unchanged, but the float-noise `total_penetration_m2` can shift the spread/tiebreak trajectory.
+  CPU shapely therefore stays the **validity + determinism authority** (#694): the `(0, 0.0)`
+  validity gate is SAT-invariant (count never flips), so the returned layout is always
+  shapely-valid; SAT only makes the inner search cheaper. Most useful on box-rung-style
+  all-rectangle fleets. Validated by a check-level bit-diff harness vs GEOS across all-rect /
+  mixed / tapered-fallback fixtures, a monkeypatch test proving the GEOS seam is genuinely bypassed
+  (not a silent fallback), and a `solve --sat-collisions` self-determinism + shapely-validity gate.
+
+- **Learned backend (#755, epic #607 Wave 4 / #761): opt-in `--pipeline-update` — overlap the
+  CPU rollout with the GPU PPO update (one-iteration-stale pipeline).** In the vectorized
+  curriculum path, while `ppo_update` runs on the live policy the workers collect the NEXT rollout
+  under a frozen `deepcopy` snapshot of the **pre-update** policy (exactly one iteration stale),
+  recovering the GPU/worker idle time during the otherwise strictly-sequential rollout↔update
+  phases. The rollout runs on a single background thread; the live policy and the snapshot share no
+  mutable state (separate module objects; the env is touched only by the rollout thread, serialized
+  across iterations by `future.result()`). The next rollout is launched only when another iteration
+  will consume it (never on the stop/final iteration), so no speculative rollout is wasted and there
+  is nothing to drain. **Default off = byte-identical** sequential training (the existing loop is
+  left untouched in the `else` branch). **On is NON-deterministic by design** — the one-iteration
+  staleness AND the background rollout sharing the global torch RNG with the update's minibatch
+  shuffle (a safe, mutex-guarded race) perturb the learning curve — so it is re-gated on a two-seed
+  `ml.gate` valid_placed delta, NOT a byte-diff (that re-gate is a follow-up long-run). No effect
+  with `--schedule trivial` or `--n-envs 1`. Dev/CI-only (`ml/`); no shipped-wheel surface.
+
+- **Learned backend (#754, epic #607 Wave 3 / #760): Lever A — whole-leg swept-envelope AABB
+  early-out for the rollout's swept-clearance oracle (byte-identical).** `swept_intrusion_m2`
+  (`ml/geometry_oracle.py`) sampled a tow leg at 0.05 m / 1° and ran the per-pose `_motion_clear`
+  + overlap measurement on every sample — and #733's pose cache mostly misses for the swept mover
+  (its pose changes each sample). Lever A proves a whole clear leg in ONE test: the result is 0.0
+  iff no sampled pose's mover parts overlap a parked obstacle part (walls/notch/bay only gate
+  `_motion_clear`, never contribute leak), and every pose's footprint lies within the body's
+  footprint radius `R` of that pose's `(x, y)` — `R` is heading-independent because the
+  determinant-−1 transform preserves Euclidean norm — so the bbox of the swept `(x, y)` inflated
+  by `R` is a conservative superset of every pose's footprint. If that envelope AABB is strictly
+  separated from every precomputed obstacle-part AABB, the leg short-circuits to 0.0 with **zero
+  per-pose Polygon builds**. **Byte-identical** (ADR-0003): a conservative lower-bound filter (the
+  same logic as the per-pose AABB prefilter + `collisions._aabbs_separated_beyond_clearance`) that
+  fires only when the full loop's result is exactly 0.0 — it can never mask a real intrusion,
+  verified by an 80-leg adversarial fuzz asserting equality to the exact unfiltered reference plus
+  a zero-per-pose-build proof. (Lever B — the opt-in `--sat-collisions` numpy-SAT box oracle — is a
+  follow-up.) Dev/CI-only (`ml/`); no shipped-wheel surface.
+
+- **Learned backend (#753, epic #607 Wave 2 / #759): episode-scoped pose cache — widen
+  #733 from per-step to per-episode (byte-identical).** #733's `cached_parts_world` memo was
+  opened in a fresh `pose_cache_scope()` per `_EnvWorker.step`/`reset`, so it was thrown away
+  every timestep and every frozen parked / identity-pose body was re-transformed from scratch
+  each step. The worker now holds **one pose dict across the whole episode** (`pose_cache_scope`
+  gained an optional `cache` arg so a caller-owned dict persists across scopes), cleared at each
+  episode boundary (reset + the in-step auto-reset) to bound memory. Each worker owns its own
+  dict, so `SyncVectorEnv` (N workers, one process, one ContextVar) never cross-leaks and the
+  ContextVar set/reset stays per-call LIFO-safe. The genuine win is the encoder's repeated
+  identity-pose `_body_dims` / `_parked_occupancy` rebuilds (the heaviest parked consumers are
+  already env-cached, so the active mover + swept arc still miss — that is #735/#754). **Byte-
+  identical** (ADR-0003): `cached_parts_world` is referentially transparent (exact-float pose
+  key, frozen-slots `WorldPart`, read-only consumers), so widening changes only *when* a pose is
+  rebuilt, never its bytes — pinned by the #733 cache-on/off reward+obs stream test and the
+  solver/towplanner determinism canaries (the `cache=None` default keeps `solve`/`plan_fill`
+  byte-identical). A new test proves the identity body-dims pose is rebuilt **once per episode**,
+  not once per step. Dev/CI-only (`ml/`); no shipped-wheel surface.
+
+- **Learned backend (#752, epic #607 Wave 2 / #759): shrink the rollout IPC payload —
+  uint8 raster + drop the re-shipped static channels (byte-identical).** Every vectorized
+  training step pickles each worker's 7×192×96 float32 raster over a Pipe, but two-thirds of
+  that traffic is waste: the raster is binary occupancy shipped at 4 bytes/cell, and 4 of the 7
+  channels (`oob`/`bay`/`apron`/`door`) depend only on `(hangar, config)` yet were recomputed
+  *and* re-shipped byte-identically by every worker every step. The encoder now splits into a
+  **static block** (`encoding.static_block(hangar, config)` — the 4 hangar-fixed channels) and
+  `encode_dynamic` (the 3 observation-dependent channels as **uint8** 0/1); the worker ships only
+  the dynamic block, and the parent re-prepends the rung's cached static block in `to_batch`
+  (`encoding.reassemble_raster`), rehydrating the full 7-channel float32 raster. This cuts the
+  per-step worker→parent payload ~57% **and** deletes the 3 static `shapely.contains_xy` calls
+  from every worker step (computed once per rung instead). **Byte-identical** (ADR-0003): the
+  dynamic block is binary, so float32(0/1)→uint8→float32 is lossless and `reassemble_raster`
+  reproduces `encode()`'s raster bit-for-bit (`test_reassemble_raster_equals_full_encode_bitwise`);
+  `to_batch` keys on the uint8 dtype, so every non-vectorized caller (full float32 obs) passes
+  straight through, and Sync still equals Subproc byte-for-byte. Dev/CI-only (`ml/`); no
+  shipped-wheel surface.
+
+- **Learned backend (#751, epic #607 Wave 1 / #758): opt-in `--vec-start-method`
+  {spawn,forkserver,fork} to cut per-worker training RAM.** RAM — not cores or GPU — is the
+  ceiling for both `--n-envs auto` (#747) and the concurrent sweep runner (#749): `spawn`
+  re-imports torch + shapely *privately* in every worker (~327 MiB PSS/worker measured). Since
+  the workers are torch-free in their *ops*, `--vec-start-method forkserver` forks them from a
+  shared server that preloads those modules once, so all workers share the pages copy-on-write —
+  **measured ~327 → ~71 MiB PSS/worker (~4.6×; CPU-only, Linux/Py3.12, N=4)**, which raises the achievable `--n-envs`/sweep
+  concurrency. **Default stays `spawn`** (the byte-identity reference); `forkserver` is verified
+  **byte-identical** to it (the worker's `stage_rng` is `worker_index`-keyed, so the start method
+  can't perturb the trajectory — pinned by `test_subproc_forkserver_byte_identical_to_sync` +
+  `test_sync_equals_subproc_byte_identical`). `fork` is an explicit escape hatch that warns loudly
+  (copying a torch-loaded / CUDA-holding parent can deadlock — `forkserver` is the safe path).
+  Dev/CI-only (`ml/`); no shipped-wheel surface.
+
+- **Learned backend (#750, epic #607, throughput Wave 1): a transitions/sec training-loop canary
+  + a vectorized width-N GAE scan.** Two dev/CI-only changes so the rest of the throughput work is
+  measured, not eyeballed. (1) `python -m bench.train_throughput` is the `ml/` twin of
+  `bench.profile_pipeline`: it runs a small, fixed, deterministic CPU training loop (`SyncVectorEnv`)
+  and reports **transitions/sec** + **iters/sec** with the per-phase rollout-vs-update split as a
+  table or `--json`, **bound on a fixed step COUNT** (`iterations × rollout_len × n_envs`, mirroring
+  the #381 `max_restarts` binding) so only machine speed varies run-to-run. It confirms the Wave 1
+  premise — ~85% of per-iteration wall-clock is the shapely-bound rollout. No `--gate`: a throughput
+  ceiling is jitter-prone on shared runners, so it reports, never enforces. (2) `compute_gae_vec`
+  (`ml/ppo.py`) is rewritten from a `for env in range(N)` wrapper around the scalar reverse-scan into
+  a single width-N reverse scan, removing the last O(T·N) pure-Python loop so GAE stops scaling with
+  `n_envs`. **Byte-identical** (ADR-0003): the scalar loop boxes every term via `float()` → a float64
+  accumulator, so the vector scan runs its `delta`/`last_gae` accumulator in float64 (`.double()`) and
+  casts back to float32 only at each `adv[t]` write — a naive float32 scan diverges by ~2.4e-6 (a
+  determinism break that fails the `n_envs=1` / Sync≡Subproc byte-identity oracle). Verified by
+  `torch.equal` against the per-env `compute_gae` over mid-rollout / all-done / no-done patterns
+  (`test_compute_gae_vec_byte_identical_to_per_env_loop`). Dev/CI-only (`ml/` + `bench/`); no
+  shipped-wheel surface. The torch-CI hook stays scoped out of v1 (CI installs only `[dev]`, no torch).
+
+- **Learned backend (#749, epic #607, throughput Wave 1): concurrent multi-seed sweep runner
+  `python -m ml.sweep`.** The mastery deliverable is the two/three-seed gate (the `ml/README`
+  trio-box recipe), run **serially** today — one launch per seed, babysat by hand. One on-policy
+  run is throughput-capped by its synchronous step-dependency, so the box sits idle (~26 cores,
+  ~10% GPU). `ml/sweep.py` is a **torch-free** orchestrator that spawns K **unmodified**
+  `python -m ml.train` subprocesses (one per `--seed`), each with a distinct `--seed` +
+  per-cell `--metrics-out`/`--checkpoint-out`/`--save` path, runs them **concurrently** up to
+  `--max-concurrency` (default **2**, documented **RAM-bound** — ~10 GB/run → K=3 risks OOM on a
+  31 GB box, *not* core-bound), and aggregates child exit codes into a single pass/fail verdict
+  in deterministic seed order. **Loud by contract** (the #749 risk): any non-zero child — or a
+  child that *crashes* — makes the runner exit non-zero, surfaced as a failed cell with its
+  error text rather than silently corrupting a 2-seed verdict. Pure orchestration, **no
+  training-loop edits** — each child is byte-identical to running it alone, so co-locating cells
+  on one GPU adds nothing beyond `--device cuda`. The job-spawning seam is injectable for fast
+  deterministic unit tests (no real multi-minute training spawned). Per-cell metrics roll up via
+  the existing torch-free `python -m ml.gate`. Expected **~2× sweep wall-clock** (not Kx —
+  aligned rollout bursts oversubscribe). Dev/CI-only (`ml/`); no shipped-wheel surface.
+
+- **Learned backend (#748, epic #607 Wave 1 / #758): out-of-order (as-completed) vec-env
+  fan-in.** `SubprocVectorEnv` collected each step's N worker replies with a strict in-order
+  blocking recv (`worker 0`, then `1`, …), so the single slowest shapely worker stalled the
+  whole batch every step (head-of-line blocking) — worsening as `--n-envs` and per-rung
+  shapely-cost variance grow. It now drains workers **as they complete**
+  (`multiprocessing.connection.wait`) and **re-indexes by worker** before batching, so the
+  per-index payloads and the policy input are unchanged — only the pipe read order differs.
+  **Byte-identical, no flag** (pinned by `test_sync_equals_subproc_byte_identical` + a new
+  reversed-completion-order test proving index alignment is preserved). Recovers the
+  worst-case-worker stall; the win grows with `n_envs`. Dev/CI-only (`ml/`); no shipped-wheel surface.
+
+- **Learned backend (#747, epic #607 Wave 1 / #758): cap worker BLAS/OMP threads +
+  `--n-envs auto` to fill idle cores.** A measured `--n-envs 16` run pinned only ~5.5 of
+  32 cores, and the spawn workers ran *unconstrained* BLAS/OMP/MKL threading, so naively
+  raising `--n-envs` toward the core count would **oversubscribe** the box. Two paired,
+  byte-identical changes: (1) each `ml/vector_env.py` spawn worker now caps itself to a
+  single thread (`OMP/OPENBLAS/MKL/NUMEXPR_NUM_THREADS=1` + `torch.set_num_threads(1)`) at
+  worker-loop entry — one core per worker. The cap is set in the **parent** before
+  `spawn` so each child inherits it at interpreter startup (OpenBLAS/MKL fix their pool
+  size at numpy-import time and ignore a late env write — measured cpu/wall ≈ 31 vs 1).
+  (2) `--n-envs auto` sizes the worker pool to
+  `max(1, min(schedulable_cores − reserved, (MemAvailable − headroom) // per_worker))`,
+  using `os.sched_getaffinity` (cgroup/`taskset`-aware, unlike `cpu_count` which
+  overcounts on WSL2/containers) and `/proc/meminfo` `MemAvailable`. The default stays `1`, so
+  `--n-envs 1` remains the byte-identity floor; `auto`/raised values are opt-in per run.
+  The thread cap is byte-identical (anchored on the **torch-free-worker** invariant —
+  workers run no policy ops, so a 1-thread cap can't perturb numpy/shapely reduction
+  order), proven by `test_sync_equals_subproc_byte_identical` + a fixed-action
+  reward-stream diff. `--n-envs > 1` (or `auto`) on `--schedule trivial` now fails loud
+  (the trivial path is single-env). Dev/CI-only (`ml/`); no shipped-wheel surface.
+
+- **Learned backend (#734, epic #607): slope-aware `--auto-budget` per curriculum rung.**
+  A fixed `--max-iters-per-stage` cap is wrong in both directions — it truncated the trio-box
+  (N=3) run while `valid_placed` was *still climbing* (peak 0.65, under-trained not collapsed),
+  and it lets a stuck sub-threshold rung grind to the cap with no upward signal. `--auto-budget`
+  replaces the fixed cap with a closed loop: a pure `BudgetController` (in `ml/curriculum.py`,
+  mirroring `should_promote`'s purity) fits a robust **Theil–Sen slope** over the per-iteration
+  windowed-mean promotion-metric series (default `valid_placed`) and **extends** the rung while
+  competency hasn't fired and the slope is positive, **stopping early** once the slope is
+  non-positive for `plateau_patience` consecutive windows (or the hard ceiling is reached).
+  Mis-fire guards: a `min_iters` floor, the `plateau_patience` consecutive-window debounce, and
+  the `--auto-budget-max-iters` ceiling (default 1000). Wired
+  into both the single-env and vectorized per-rung loops; **default off** → the fixed-`max_iters`
+  path reproduces today's runs byte-for-byte (4c-ii default-neutrality). Distinct from the
+  manual `--stop-after-rung` (#723). Dev/CI-only (`ml/`); no shipped-wheel surface.
+
+- **Learned backend (#733, epic #607): activate `pose_cache_scope` + `cached_parts_world`
+  in the `ml/` RL rollout — top throughput lever, closes the #453/#704 gap.** Per-iteration
+  training is ~94% CPU/shapely-bound and ~61% of the rollout is `aircraft_parts_world`
+  Polygon construction; the env was rebuilding the **same** `(body, pose)` shapely parts
+  repeatedly across the collision check, the reward oracle and the encoder rasterizer. The
+  `ml/` geometry consumers (`geometry_oracle` intrusion / swept-intrusion / active-misfit and
+  the `encoding` rasterizer) now call the pose-memoized `cached_parts_world`, and the
+  vectorized `_EnvWorker.step`/`reset` + the single-env `collect_rollout` open a per-step
+  `pose_cache_scope` spanning the env step **and** the encode, so each pose is built once
+  across all consumers. The scope is opened **per env method call** (one fixed-fleet env), so
+  the `(plane_id, x, y, heading)` key is never stale even when `SyncVectorEnv` steps workers
+  in one process. **Byte-identical** (ADR-0003): `cached_parts_world` is an inert passthrough
+  outside a scope and returns the same `WorldPart`s the pure function builds inside one, so
+  the new `pose_cache=False` toggle (on `_EnvWorker` / `collect_rollout`, default-on)
+  reproduces the un-cached run bit-for-bit — verified via the established fixed-action
+  reward-stream + encoded-observation diff, not checkpoint hashes. Folds in an additive,
+  byte-identical AABB-disjointness pre-filter on the swept-intrusion leak loop (reusing the
+  obstacles' precomputed `world_part_aabbs`). Dev/CI-only (`ml/`); no shipped-wheel surface.
+
+- **Learned backend (#730, epic #607): trio-box training-gate harness + launch recipe.**
+  No-GPU prep for the #698 train-to-mastery frontier — does the #720/#728 four-lever ladder
+  generalize past the 2-object `pair-box` to the 3-object `trio-box` rung (the historical
+  ≥2-object wall)? Adds `ml/gate.py` (`python -m ml.gate METRICS.jsonl --rung trio-box`), a
+  **torch-free** reader for the `--metrics-out` JSONL that emits a per-rung verdict headlining
+  `valid_placed` (never `valid_rate` — vacuously 1.0 under place-nothing) with a **piling
+  watchdog** (`fraction_placed` high while `valid_placed` low = committing objects invalidly).
+  Verdicts: `mastered` / `piling` / `place-nothing` / `in-progress` / `no-data`, with exit
+  codes (0/1/2) for unattended sweeps. `ml/README.md` gains the two-seed `--stop-after-rung
+  trio-box` checkpoint-resume launch recipe + resume gotchas; a curriculum smoke test guards the
+  exact truncated sweep-shape ladder. Does not run the sweep itself (needs the GPU).
+
+- **Learned backend (#724, epic #607): #720 empty-start `pair-box` gate — two-seed PASS; L4
+  clipping confirmed load-bearing; recipe `reward_clip 10 → 50`.** The #720 L5+L4 gate was run as a
+  #722 checkpoint-resume sweep on GPU. The empty-start `pair-box` rung — `valid_placed=0.000` in
+  every prior gate — now **promotes by competency on both seeds** (seed 0 iter 27 `vp` 0.80, seed 1
+  iter 19 `vp` 0.85), placing both objects validly with no piling. A controlled A/B (seed 0, same
+  upstream checkpoint, same seed, byte-identical iter 0, only the three L4 flags differing) showed
+  **L4 trust-region clipping is load-bearing, not optional**: clip-off collapses to place-nothing
+  (the deep ≈−1400 collision-penalty gradient outlier drives PPO into the place-nothing absorbing
+  state), clip-on masters. The recipe's `--reward-clip` is corrected `10.0 → 50.0` — sized so the
+  per-step **graded** valid-park bonus (`r_valid_park 30 + r_first_valid 15 = 45`) below the clip
+  (so the L5 near-miss gradient survives) while the deep spikes are clamped — the episode-completing
+  step's `r_terminal` credit does saturate the ±50 clamp, by design. `10` would clip even the graded
+  bonus and flatten the L5 gradient; `50` is the validated value. `ml/README.md` recipe + WIN section updated with the confirmed result.
+  Docs-only — the L4 flags already shipped in #720.
+
+- **Learned backend (#722, epic #607): `--stop-after-rung NAME` truncates the curriculum
+  ladder for sweep cells.** The #720 economics re-gate runs as a checkpoint-resume sweep — train
+  the ladder once through `pair-mixed`, then `--load` and sweep only the `pair-box` rung across a
+  grid of `--w-col`/`--valid-park-grade-scale` cells. Previously each resumed cell, after
+  mastering/capping `pair-box`, ground on into `trio-box`/`trio-notch`/`trio-notch-strict`
+  (≈3 extra `trio-*` rungs, each to the per-stage cap, of wasted PPO iters per cell), with
+  manual `Ctrl-C` the only workaround. `--stop-after-rung`
+  (curriculum-only) drops every rung after the named one — `--stop-after-rung pair-mixed` for the
+  upstream train, `--stop-after-rung pair-box` for each cell — so the sweep runs unattended. A
+  pure `truncate_after_rung` schedule transform (`ml/curriculum.py`) mirroring the `with_*_rung`
+  grafts; the `train_curriculum` loop is untouched. A name (not a count) because resume *skips*
+  completed rungs, making a count ambiguous; a typo'd rung fails loud. Absent ⇒ byte-identical.
+
+- **Learned backend (#720, epic #607): graded-economics + PPO trust-region levers to break
+  the empty-start place-nothing cliff.** A multi-agent diagnosis of the `--mixed-anchor` gate
+  failure (seed-0: `pair-mixed` capped oscillating ~0.2, `pair-box` collapsed to
+  `valid_placed 0.000`) root-caused it as *economics × discoverability*: from empty, do-nothing
+  is a small bounded loss (≈−8 observed on the failed seed-0 gate run) while any exploratory
+  mis-Park books the **unclipped** `−w_col·overlap`
+  (−5000…−12000), so place-nothing is the genuine reward argmax. **L5** (reward, default-neutral):
+  `--valid-park-grade-scale` grades the `r_valid_park` bonus by near-miss misfit
+  (`r_valid_park·exp(−misfit/scale)`) into an uphill gradient toward the witness slot;
+  `--r-first-valid` is a one-time breakthrough bonus on an episode's first valid placement;
+  `--w-col` exposes the collision weight. **L4** (PPO): `--reward-clip`,
+  `--value-clip-eps` (PPO2 clipped value loss), and `--target-kl` (epoch early-stop) tame the
+  unclipped collision spike that drove the gate's −5000…−12000 sawtooth; `ppo_update` now also
+  reports `approx_kl`/`epochs_run`. As shipped in #720 all knobs were 0/None ⇒ byte-identical
+  training; the L4 trio later graduated to default-on (#728 — see Changed). The refuted
+  continuous-k-anneal lever is **not** added (policy-invariant on the empty-start sub-MDP).
+
+- **Mixed-start anchor curriculum rung (`--mixed-anchor`, #712 follow-up).** An opt-in
+  `pair-mixed` rung where each episode randomly starts anchored (k=1) or empty (k=0), keeping
+  empty-start episodes in the training mix to bridge the k=1→k=0 start-state cliff that
+  collapsed the empty-start `pair-box` to place-nothing. Default-off ⇒ byte-identical training.
+
+- **Learned backend (#712, epic #607): seed-anchor start-state curriculum graft
+  (`--seed-anchor`) — the 2-object joint-discovery scaffold.** The #714 re-gate confirmed a
+  genuine joint-discovery wall (`trivial` + `solo-box` master, but `pair-box` stalls at
+  `valid_placed ≈ 0.05`, and the `--normalize-returns`-off control is strictly worse, so the
+  residual is discovery, not the normalizer). `--seed-anchor` (curriculum-only) inserts an
+  opt-in `pair-anchored` rung before `pair-box` that **pre-parks a k-prefix of a committed
+  witness layout** (`tests/fixtures/ml/witness_box.yaml`) and drives only the remaining N−k
+  objects in, so 2-object discovery is scaffolded by a guaranteed-valid 1-object start.
+  Correctness rests on one property — a k-prefix of a valid layout is itself valid (removing
+  objects cannot create conflicts) — so the partial start needs **no runtime solver / search**
+  (the env stays solver-free). `DifficultyConfig.seed_anchor` (an unwired stub) is replaced by
+  `seed_anchor_k: int = 0`; `HangarFitEnv` gains an `anchor_placements` arg and pre-parks the
+  request **prefix** at reset, which composes with the curriculum's existing seeded
+  per-episode permutation into a **seeded-random k-subset** anchor (so the choice is
+  deterministic + Sync≡Subproc byte-identical). `Stage.anchor_layout_path` + `stage_builder`
+  load the witness (single source of truth for the rung's object set and poses). All
+  default-neutral: `seed_anchor_k=0` / `--seed-anchor` absent → CPU byte-identical to prior
+  runs; `--seed-anchor` fails loud under `--schedule trivial`.
+
+- **Learned backend (#710, epic #607): opt-in CUDA training (`--device cuda`).**
+  `ml.train` / `train_curriculum` / `train` gain a `--device {cpu,cuda}` knob. `cpu`
+  (the default) is unchanged and **byte-identical** to prior runs — every device move is
+  gated behind `device.type != 'cpu'`, so the ADR-0027 / determinism contract holds for the
+  CPU path. `cuda` moves the policy + the PPO-update minibatch tensors to the GPU (GAE stays
+  on CPU, a per-step scalar loop); it is an **explicitly non-deterministic** fast path
+  (GPU RNG / kernels). The `ml.train` **CLI** rejects `--device cuda` loudly when
+  `torch.cuda.is_available()` is `False` (library callers own device selection). Measured
+  ~5.8x on the PPO update on an RTX 4090; the shapely-geometry rollout stays CPU-bound, so
+  the net per-iter gain is bounded by the update's share.
+
+- **Learned backend (#710, epic #607): per-rung training-metric dump + promotion-gate
+  CLI levers for the mastery study.** `ml.train --schedule curriculum` gains
+  `--metrics-out PATH` (writes one JSONL record per PPO iteration —
+  `stage`/`iter`/`n_eps`/`mean_ep_reward`/`fraction_placed`/`valid_rate`/`valid_placed`),
+  exposing the compound `valid_placed` learning curve the CLI previously discarded (it
+  logged only `mean_ep_reward`). Two new `PromotionPolicy` overrides — `--promotion-metric
+  {fraction_placed,valid_rate,valid_placed}` and `--promotion-threshold` — let a run
+  advance the easy rungs on `valid_rate` (or a lowered threshold) while `valid_placed` is
+  still pinned at 0. All three are default-neutral (omitting them is byte-identical to
+  prior runs); `--metrics-out`/`--promotion-*` are curriculum-only and fail loud under
+  `--schedule trivial`. The per-iter metric helpers (`episode_metrics`,
+  `history_metric_records`, `with_promotion_overrides`) are pure/torch-free in
+  `ml/curriculum.py`.
+
+- **Learned backend (#710, epic #607): resume checkpoints (`--load` / `--checkpoint-out`).**
+  `ml.train --schedule curriculum` gains `--checkpoint-out PATH` (writes a rich resume
+  checkpoint after **each rung** — policy + Adam optimizer + return-normalizer state +
+  architecture + completed-rung position, via the new `ml/checkpoint.py`) and `--load PATH`
+  (restores all of it and **skips already-completed rungs**), so a long box-rung mastery run
+  survives a crash. Distinct from `--save` (still a bare `state_dict` for the ONNX/`ml.eval`
+  consumer); the resume checkpoint loads with `weights_only=True` (no arbitrary-code
+  deserialization). The checkpoint's architecture is authoritative — a conflicting
+  `policy_kwargs` raises. Both flags default off → the legacy path is byte-identical;
+  curriculum-only (fail loud under `--schedule trivial`).
+
+- **Learned backend (#710, epic #607): policy-architecture + PPO CLI knobs.** `ml.train`
+  gains `--d-model` / `--n-layers` / `--n-heads` (policy size; omitting them keeps
+  `HangarFitPolicy`'s own defaults) and `--epochs` / `--minibatch-size` (`PPOConfig`),
+  so the mastery run can scale net size / update epochs without code edits. Default-neutral:
+  omitting the arch flags yields `policy_kwargs=None` (own defaults) and the PPO flags
+  default to the `PPOConfig` dataclass values — byte-identical to prior runs.
+
+- **Learned backend (#710, epic #607): Park/drive-out economics rebalance
+  (`--r-unplaced-penalty`).** A new default-0 `RewardWeights.r_unplaced_penalty` adds a
+  terminal penalty per **unplaced** fraction (`terminal = r_terminal·frac −
+  r_unplaced_penalty·(1−frac)`), so running an object to budget exhaustion is no longer free
+  relative to committing a Park. This targets the diagnosed cause of `valid_placed=0` (the
+  agent learned to avoid committing a Park to dodge the one-shot `−w_col` collision cliff —
+  the `fraction_placed` 0.991→0.476 collapse measured in the #697 baseline), which the originally-planned "dense
+  collision-progress reward" could **not** fix (it duplicates the policy-invariant
+  `dense_slot_potential` shaping and so cannot move the optimum). Default 0 → byte-identical;
+  pairs with the existing `--r-valid-park` for the positive pull toward valid commits.
+
+- **Learned backend (#714, #710, epic #607): validity-conditional terminal +
+  `solo-box` sub-curriculum rung — the multi-object collapse fix.** After the economics
+  rebalance let the policy **master the trivial (1-object) rung**, every ≥2-object rung still
+  collapsed, oscillating between place-nothing and *commit-everything-invalidly* (parking a
+  heap of overlapping objects). Root cause: the terminal credited `r_terminal·fraction_placed`
+  **regardless of validity** — invisible at N=1 (fraction is 0/1) but a free `+r_terminal`
+  for invalid piles at N≥2. Two default-neutral levers: (1) `--validity-conditional-terminal`
+  (new `RewardWeights.validity_conditional_terminal`) credits the **valid** placed fraction
+  instead — an invalid terminal layout scores effective-fraction 0, so an overlapping pile no
+  longer pays; it also closes the budget-exhaustion branch, which previously carried no
+  validity signal at all. Validity is the same whole-layout product checker
+  (`collisions.check` + Caddy egress) that drives the `valid_placed` promotion gate. (2)
+  `--solo-box-rung` (curriculum-only) inserts an opt-in `solo-box` rung (1 object, **whole
+  fleet**) after `trivial`, decoupling the count jump (1→2) from the sampling-pool jump
+  (single-fuji→whole-fleet) so single-object competency transfers. Both default off →
+  byte-identical (the default ladder is unchanged); `--solo-box-rung` fails loud under
+  `--schedule trivial`.
+
+- **Vectorized training envs (#708, epic #607).** `train_curriculum`/`ml.train` gain an
+  `n_envs` knob (`--n-envs`, `--vec-backend {sync,subproc}`) that runs N cold-joint envs in
+  parallel for throughput — the shapely geometry + encoder rasterization run across N
+  torch-free worker processes (`ml/vector_env.py`: `SyncVectorEnv`/`SubprocVectorEnv`), while
+  the main process keeps the single batched policy forward + PPO (`VecRolloutBuffer` +
+  per-env GAE). `n_envs=1` keeps the legacy single-stream path byte-identical. Because the
+  workers are torch-free, `Sync(seed,N)` and `Subproc(seed,N)` are byte-identical.
+  Foundation for the #698 train-to-mastery run.
+
+- **Learned backend inference (#706, epic #607).** `solve --backend learned --weights PATH`
+  now runs: a trained policy is exported to ONNX (`ml/export.py`, `train --save-onnx`) and
+  run torch-free via onnxruntime (`ml/infer.py`), returning a `SolveResult` (valid layout +
+  the policy's own drive-in tow plan) behind the deterministic verifier. New optional
+  `[learned-infer]` extra (onnxruntime); the `[train]` extra also gains `onnx>=1.16`
+  (required by `ml/export.py` to serialize the ONNX proto). The verifier
+  (`collisions.check` + Caddy egress) remains the sole arbiter of validity (ADR-0027); an
+  invalid proposal returns a no-layout result. Wheel distribution, CI, and signed weights
+  are tracked in #6.
+
+- **Learned backend (#607, 4c-ii): cold-joint RL env fixed-obstacle support and
+  four default-neutral basin-escape knobs.** Fixed-obstacle pre-placements
+  (immovable keep-outs from `Scenario.fixed_obstacle_placements`) are now honoured
+  by `HangarFitEnv` — they are rendered into the occupancy raster and block the
+  agent from parking on top of them, unblocking the eval benchmark's policy column
+  on the Herrenteich anchors. Four optional training knobs are added, all
+  default-neutral (byte-identical to prior runs when not set): `--r-valid-park`
+  (bonus per Park action when the full layout passes `layout_valid`),
+  `--dense-slot-potential` (in-hangar nearest-free-pocket shaping),
+  `--entropy-start/--entropy-end/--entropy-anneal-iters` (per-rung entropy
+  coefficient anneal), and `--normalize-returns` (std-only Welford return
+  normalization before GAE). Training defaults are unchanged.
+
+- **Cold-joint RL curriculum schedule (#607 sub-project #4b).** `python -m ml.train
+  --schedule curriculum` now climbs a competency-gated difficulty ladder (object
+  count → hangar shape → clearance) instead of training a single fixed stage; the
+  fixed trivial stage remains reachable via `--schedule trivial`. New pure
+  `ml/curriculum.py` (Stage ladder, promotion gate, seeded object sampling) and
+  torch-free `ml/stage_builder.py`; `HangarFitEnv.reset()` gains an optional
+  `requested_ids` override (default unchanged).
+
+- **Cold-joint RL reach-not-beat eval benchmark (`ml/benchmark.py` + `ml/eval.py`, #607
+  sub-project #4c-i).** A frozen curated set of real Herrenteich scenarios, each anchor
+  paired with a committed witness layout the deterministic checker accepts (the
+  reachability proof). `python -m ml.eval --checkpoint P` rolls a trained policy out
+  deterministically and prints a side-by-side both-rates table against the RR-MC→tow
+  baseline (recorded offline at a pre-registered budget into
+  `tests/fixtures/ml/bench_baseline.json`). Success gate = valid + routable-by-construction
+  (the product `collisions.check` + Caddy egress). `python -m ml.train --save P` exports a
+  checkpoint. Dev/CI-only (the `[train]` extra); the Herrenteich anchors' policy column and
+  env fixed-obstacle support land in 4c-ii (#693), and the env-oracle inert-bay
+  over-strictness is tracked as #694.
+
+- **Cold-joint RL environment + reward (`ml/`, #607/#672).** Added the dev/CI-only
+  top-level `ml/` package with `HangarFitEnv` — a gym-style environment where an agent
+  drives objects in from the apron and parks them one at a time, scored by a
+  graded-lexicographic reward (collision/out-of-bounds/egress hard terms, movement
+  cost, soft spread/sequence/region, terminal fraction-placed) plus policy-invariant
+  potential-based shaping. Reuses the deterministic geometry oracle (`collisions.check`,
+  the parts-model transform, the ADR-0010 motion primitives incl. the #647 strafe,
+  the Caddy egress oracle) — **not** the RR-MC/Hybrid-A* search. No neural net, no
+  training, no new runtime dependency; `ml/` is excluded from the wheel like `bench/`
+  and `viewer/`. Sub-project #1 of the learned backend (ADR-0027).
+
+- **`solve --backend {rrmc,learned}` seam + learned-backend determinism scope (ADR-0027, #607/#670).**
+  Added the opt-in backend switch on `hangarfit solve`. The default `rrmc` is the
+  unchanged deterministic random-restart solver (byte-identical — `determinism-guard`
+  intact). `--backend learned` selects the planned neural backend (epic #607); it is
+  **not yet implemented**, so it exits cleanly (code 2) with a pointer to #607 rather
+  than a traceback, and the new `hangarfit.learned.solve_learned()` library entry
+  returns the same `SolveResult` shape (stubbed to raise `LearnedBackendUnavailableError`).
+  New **ADR-0027** amends ADR-0003's *scope*: the verifier (`collisions.check` +
+  `towplanner`) stays strictly byte-identical and `determinism-guard`-gated, while the
+  learned *proposer* gets a weaker, documented contract (within-build bit-identical;
+  cross-machine validity-only) and is outside `determinism-guard`. No ML dependencies
+  are added.
+
+- **Real Airfield Herrenteich 'today' layout + clearance recalibration (#664).**
+  Added `examples/herrenteich/layout_today.yaml`: the club's actual in-hangar set
+  as described on 2026-06-15 — all **nine** aircraft (incl. the Scheibe Falke) +
+  the **one** Duo Discus glider trailer (the spare is stored elsewhere) + the fixed
+  fuel trailer + the rescue Caddy with a clear drive-out egress. Validating this
+  real set against the model was the existence-proof test: an offline checker-driven
+  search finds **no valid arrangement of it at the previous `clearance_m 0.20`** (its
+  best still leaves conflicts) but seats it cleanly **at 0.10 m**, and the club
+  confirms real wingtip-to-part gaps vary a lot
+  and on dense days are very tight. So the Herrenteich `hangar.yaml` horizontal
+  parked clearance is **recalibrated 0.20 → 0.10 m** (vertical wing-layer clearance
+  unchanged at 0.15 m — it was not the binding constraint). Lowering the clearance
+  only relaxes the constraint, so `layout.yaml`, `layout_full.yaml`, and
+  `scenario_demo.yaml` stay valid; the synthetic `data/hangar.yaml` is untouched.
+  `layout_full.yaml` is reframed as the alternative "both glider trailers inside"
+  scenario (which forces one aircraft out). The collision **model** is unchanged —
+  the gap was data calibration, and reliably packing this dense a 12-body set
+  remains beyond the deterministic search (#607).
+
+- **Caddy hard-door egress lane in 2D + 3D (#652).** The egress oracle
+  (`towplanner.egress_first_conflict`) now optionally *surfaces* the winning
+  drive-out corridor it used to compute and discard (new `egress_path_out`
+  out-param + an `egress_corridors` helper that collects one per hard-door mover).
+  `solve --render-paths` / `check --render` draw it as a dashed amber "keep-clear"
+  decal on the 2D PNG, and `view` draws it as a dashed amber floor line in the 3D
+  viewer (new `BRAND.egressLane` token + a `scene/v2` `egress_lanes` key, always
+  emitted, empty when there is no hard-door egress lane). A blocked or absent
+  egress is inert (`{}`) and byte-identical (ADR-0003) — the out-param defaults to
+  `None`, so the solver's egress gate stays the authoritative exit-3 verdict. This
+  completes the ground-object visualization arc opened by #606.
+
+- **Placed-routed movers animate along their drive path (#651).** Building on the
+  static ground-object render (#606), a placed/routed mover (the VW Caddy + glider
+  trailers) now animates in the 3D viewer's whole-fill timeline — driving in along
+  its routed path *after* every aircraft is parked — and its 2D `--render-paths`
+  route is drawn in the neutral mover body colour (matching the `_draw_movers` body)
+  so it reads as a ground vehicle, not an aircraft. A deferred (un-routable,
+  `path=None`) mover stays at its static resting pose, like a fixed obstacle. The
+  viewer reuses the same hidden→sample→parked state machine as aircraft (new pure,
+  node-tested `framePoses`). Inert / byte-identical for aircraft-only layouts
+  (ADR-0003). The Caddy hard-door egress lane (#652) is the remaining half of #606.
+
+- **Ground objects render in the 2D PNG (#606).** `hangarfit check --render` /
+  `solve --render-paths` now draw the floor's ground objects: the fixed obstacle
+  (the Maul fuel trailer) as a hatched keep-out (distinct from the structural-notch
+  hatch — an object, not absent floor), and the placed/routed movers (VW Caddy + the
+  two glider trailers) as solid bodies in a neutral mover fill, deliberately outside
+  the per-plane aircraft palette so a glance separates aircraft from trailer/vehicle.
+  Each is labelled. Inert for aircraft-only layouts (byte-identical). The conflict
+  validator now also knows about ground-object ids, so a real mover/obstacle conflict
+  is not mistaken for a cross-layout mismatch. (scene/v2 + 3D-viewer rendering and the
+  Caddy egress-lane decal are the follow-up half of #606.)
+
+- **Lateral cart-strafe + free-swivel pivot tow motion (#599, ADR-0010).** The cart
+  motion model gains a lateral *strafe* primitive (`Segment(kind="T")`) — a slide
+  perpendicular to heading — so a broadside-parked cart-borne plane (e.g. the 18 m
+  Scheibe, which can't pivot in a 15 m hangar) routes in through the door as a clean
+  side-on slide, and `entry_poses` emits a broadside entry cone for broadside targets.
+  Strafe is **cart-only** and gated on `mover_on_carts`; free-swivel-gear aircraft
+  (`tow_pivotable`) pivot in place but don't strafe. The Herrenteich free-swivel
+  aircraft (Aviat Husky, Cessna 140, Flight Design CTSL, FK9 Mk II) are modelled
+  `tow_pivotable` so they pivot into their slots rather than using the catalog taxi
+  turn radius. **Determinism:** RNG-free (ADR-0003 holds); cross-version byte-identity
+  is intentionally re-baselined only for cart plans the more-capable motion now routes
+  more cheaply (no existing fixture changed; the strafes are appended last so an
+  existing pivot/straight path still wins a cost tie).
+
+- **Separate tow-MOTION clearance, distinct from the parked clearance (#643).**
+  A hangar may declare optional `motion_clearance_m` / `motion_wing_layer_clearance_m`
+  — the margin the tow planner clears a *moving* mover against parked bodies, which
+  reality threads far tighter than the parked spacing (a spotter watches the wingtips).
+  `collisions.check` keeps the parked `clearance_m` for static validity; only the tow
+  planner's per-pose checks (`path_first_conflict` and the in-search `_motion_clear`)
+  use the tighter motion margin. Absent (the default) ⇒ the motion clearance IS the
+  parked clearance, so plans are **byte-identical** (ADR-0003). This corrects an
+  over-strict abstraction — applying the parked margin during motion — that made
+  otherwise-routable dense layouts falsely un-routable.
+
+- **Ground objects in the scene/v2 seam + 3D viewer (#606).** The interactive 3D
+  viewer (`hangarfit view`) now renders the Stage-A ground objects — the fixed
+  obstacle (Maul fuel trailer) as a warm-graphite keep-out volume and the placed
+  movers (VW Caddy + glider trailers) as slate bodies, each visually distinct from
+  the colour-coded aircraft, with a legend that names every class (and flags the
+  hard-door egress Caddy). The `hangarfit.scene/v2` dict gains two always-emitted,
+  inert-when-empty keys — `ground_objects` (placed bodies, each with its static
+  `final_pose` affine) and `go_anchors` (their world corners for the viewer's
+  load-time determinant-−1 self-check). This is the 3D companion of the 2D-PNG
+  ground-object render (#649, the 2D first half of #606); same input ⇒ byte-identical scene
+  (ADR-0003), and an aircraft-only layout differs only by the two empty
+  collections. Mover *animation* and the Caddy egress lane are deferred follow-ups
+  (the egress oracle exports no corridor geometry to draw).
+
+- **Observation tensorizer (`ml/encoding.py`, #607).** Added a numpy-only,
+  deterministic `encode(Observation, hangar, bodies, config) → ObservationTensors`
+  that turns the cold-joint env's semantic `Observation` into fixed-shape tensors:
+  a 7-channel world-frame raster (4 static keep-out channels: oob/bay/apron/door;
+  3 dynamic occupancy channels: parked low/wing z-split + active footprint), a
+  `(16, 24)` padded set-token table with status/type/dims/wing/movement/pose
+  columns, and a `(9,)` legal-action mask. Schema versioned as `SCHEMA_VERSION=1`
+  and documented in `docs/architecture/ml-observation-schema.md`. `meta` is a
+  read-only `MappingProxyType` of floats for debugging / un-normalization. Dev-only
+  (`ml/` is not in the wheel); no new runtime dependency. Sub-project #2 of the
+  learned backend (epic #607).
+
+- **Cold-joint policy network (`ml/policy.py` + `ml/action_space.py`, #607/#680).**
+  Added the policy + value `torch` `nn.Module`: a CNN over the observation raster +
+  masked self-attention over the object tokens → the active-object embedding → a
+  legal-mask-gated `(kind,gear)` head + a `K=5` magnitude-bin head + a value head
+  (movement-mode illegality hard-masked to −inf; collision stays a soft reward term).
+  `ml/action_space.py` is the pure (no-torch) action contract: the factored-discrete
+  bins + `decode(…, *, turn_radius_m) → Primitive | Park` in the units the env expects
+  (radians for cart pivots, metres otherwise), reusing `encoding`'s canonical action
+  order. Contributor-only — the new `[train]` (`torch`) extra; the network tests
+  `importorskip` torch. No PPO loop / curriculum / rollouts yet. Sub-project #3 of the
+  learned backend (epic #607).
+
+- **Cold-joint PPO training core (`ml/ppo.py` + `ml/train.py`, #607/#684).** Added a
+  roll-your-own (cleanrl-style) PPO that drives `HangarFitEnv` + `HangarFitPolicy`
+  directly: `ml/ppo.py` (`RolloutBuffer`, GAE-λ `compute_gae`, clipped-surrogate
+  `ppo_update`, the PARK-gated factored log-prob/entropy) and `ml/train.py` —
+  `python -m ml.train` — which trains the policy on the fixed trivial curriculum stage
+  (one object driven in from the apron and parked in a loose hangar) and logs a reward
+  curve. Seedable / within-build deterministic (ADR-0027). Contributor-only (the
+  `[train]` torch extra; the PPO tests `importorskip` torch). The curriculum schedule
+  (#4b) and the reach-not-beat eval (#4c) are separate. Sub-project #4a of the learned
+  backend (epic #607).
+
+### Changed
+
+- **Learned backend (#728, epic #607): the #720 L4 trust-region clipping bundle is now the
+  `ml.train` default.** `--reward-clip 50` / `--value-clip-eps 0.2` / `--target-kl 0.03` — the
+  values confirmed load-bearing by the two-seed #720/#722 `pair-box` gate (a controlled A/B showed
+  clip-off collapses to place-nothing, clip-on masters) — graduated from opt-in flags to the
+  argparse **and** `PPOConfig` dataclass defaults (kept in sync). New paired `--no-reward-clip` /
+  `--no-value-clip-eps` / `--no-target-kl` off-switches restore the disabled (`None`) behavior —
+  the only way to reach it, since there is no in-band "off" value (`--reward-clip 0` zeroes all
+  rewards; `--target-kl 0` stops after the first epoch) — for A/B controls such as the seed-1 clip-OFF
+  run. This is a deliberate training-default **re-baseline**: an unflagged run is no longer
+  byte-identical to a pre-#720 run, but reproducibility (same seed → same stream) is unchanged. The
+  four 4c-ii basin-escape knobs (`--r-valid-park`, `--dense-slot-potential`, entropy, `--normalize-returns`)
+  remain default-neutral. `ml/README.md` recipe prose updated.
+
+- **Herrenteich dataset realism pass (#657/#658/#659).** Tightened the real
+  Airfield Herrenteich dataset to how the club actually parks (user on-site facts):
+  - The **VW Caddy** is now modelled **multi-part** (#658) — a van body box
+    (0→1.84 m) plus a small ~1.0×0.8 m roof-gear rack (1.84→2.04 m) — instead of one
+    full-height prism. The club's Caddy carries roof-stowed gear (+0.20 m over stock);
+    as a single 2.04 m box that blocked the wing layer across its whole footprint, but
+    split, a wing whose underside sits at ~2.0 m may overhang the low van body
+    (+0.16 m gap, clears) and only has to clear the localized rack — a realistic van
+    model (low body + small roof load), not a full-height wall. (It governs any dense
+    packing that nests a wing over the Caddy; inert in the shipped fishbone layout.)
+  - **Two distinct glider trailers** (#657): `glider_trailer_1` → a 10.5 m Duo Discus
+    (two-seat) closed trailer; `glider_trailer_2` → a 9.0×1.75×1.45 m single-seat
+    15 m-class trailer (owner-measured Cobra) — previously both a generic 9.0×2.1×2.3.
+  - The **Fuji FA-200-180** joins the Herrenteich `fleet.yaml` as a permanent ninth
+    occupant (the only low-winger; a placeholder for a future C150; `always_own_gear`).
+    Its envelope is published spec, cross-checked across sources (span 9.42 m, length
+    7.98 m, wing area 14.0 m², fin to 2.59 m — correcting a transposed 2.02 m height);
+    the undercarriage + tailplane spans stay estimates (`measured: false`).
+  - `examples/herrenteich/layout_full.yaml` is re-authored as the **realistic
+    in-hangar set** (#659), packed **fishbone** (continuous, mixed aircraft headings
+    instead of an orthogonal nest — far more space-efficient and how a club really
+    parks). With the rescue Caddy required to keep a clear drive-out egress
+    (#603/#652), the fuel trailer hard against the left wall by the door, and both
+    glider trailers inside, the hangar is one aircraft over capacity (confirmed by an
+    exhaustive orthogonal-and-fishbone search), so the layout parks **seven of the
+    eight aircraft + all four ground objects** (the motor-glider Scheibe Falke parks
+    outside; the Caddy near the door with a clear egress, the Duo trailer on the right
+    wall). Valid at the calibrated clearances and the Caddy's egress is now clear (was
+    the documented egress-blocked finding). `layout.yaml` (all eight aircraft, no
+    ground clutter) is unchanged — the "all eight fit" promise still lives there.
+
+- **Herrenteich tow-motion clearance calibrated (#605/#643).** `examples/herrenteich/hangar.yaml`
+  now sets `motion_clearance_m: 0.05` / `motion_wing_layer_clearance_m: 0.05` — the
+  hand-cleared margin while a mover is in motion, distinct from the 0.20/0.15 *parked*
+  spacing (the #646 mechanism). A `measured: false` modelling assumption like the parked
+  values. With this plus the strafe (#599) and the dolly/free-swivel pivot data (#644),
+  the broadside Scheibe and small dense subsets tow-route where the parked margin
+  rejected them; the *full* dense all-8 remains gated on the greedy planner's routing
+  search at scale (not the motion model — see #642).
+
+- **Herrenteich Stemme modelled as dolly-pivotable for tow planning (#644).** The
+  `examples/herrenteich/` fleet manifest now overrides the Stemme S10 to
+  `movement_mode: always_cart` — it is hand-positioned on a dolly in the hangar,
+  so it pivots in place rather than using its 10 m *taxi* turn radius (a per-fleet
+  operational override, #595; flight specs stay in the catalog). Part of correcting
+  the tow-motion abstraction (#643).
+
+### Fixed
+
+- **Learned backend (#742/#743, epic #607): the curriculum competency gate and
+  `--auto-budget` now read the honest per-iteration metric, not a noisy 20-episode tail.**
+  The promotion gate (`should_promote`) and the #734 auto-budget slope-fit both watched a
+  per-episode `deque(maxlen=window)`; after `window.extend(ep_stats)` that retained only the
+  **last ~20 episodes of the latest rollout** (out of ~250), a far noisier estimator than the
+  per-iteration `valid_placed` the `--metrics-out` JSONL and `ml.gate` report. Two symptoms:
+  **(#742)** a rung false-promoted `by competency` on a lucky autocorrelated 20-episode streak
+  while its honest per-iteration mean was well below threshold (observed on `trio-box`: trainer
+  said mastered at iter 136, `ml.gate` reported peak `valid_placed` 0.709 / `never` competent,
+  still climbing); **(#743)** `--auto-budget` plateau-stopped a hard rung **during its flat
+  pre-climb warmup** (`trio-box` stopped at iter 29, `valid_placed` ~0.04 — the climb only
+  started ~iter 50). The fix unifies both decisions onto a single per-iteration honest series
+  (`window_score` over the whole rollout, skipping no-episode iterations), so `PromotionPolicy.window`
+  now counts **iterations** (default 3, was 20 episodes) and `should_promote` thresholds their
+  mean — the trainer's verdict is now as trustworthy as `ml.gate`'s. A new `BudgetController`
+  **floor-guard** (`min_level`, default 0.05) refuses to read a flat-at-floor warmup as a
+  converged plateau (slope alone cannot tell floor-flat from ceiling-flat). New default-neutral
+  CLI levers: `--promotion-window`, `--auto-budget-min-iters`, `--auto-budget-min-level`.
+  **Deliberate re-baseline:** the gate now advances rungs at different iterations than the
+  buggy per-episode tail did, so trained policies differ from pre-#742 runs. Run-twice
+  determinism is preserved, and the `--auto-budget` flag stays default-neutral (toggling it off
+  adds no controller call) — the re-baseline lives in the gate itself, not the auto-budget
+  machinery. Dev/CI-only (`ml/`); no shipped-wheel surface.
+
+- **Learned backend (#732, epic #607): PBRS now forces Φ(terminal) = 0 — removes a
+  spurious −Φ(terminal) return bias.** The potential-based reward shaping added
+  `γ·Φ(s′) − Φ(s)` every step but computed the terminal step's `Φ(s′)` from the live
+  potential instead of forcing 0, so the undiscounted episode return picked up a
+  constant `−Φ(terminal)` term — provably policy-invariant (Ng–Harada–Russell) only when
+  `Φ(terminal) = 0`. `Φ` is ~0 on a *clean valid* completion but **nonzero** on exactly
+  the non-clean terminals the curriculum must distinguish (budget-exhaustion stops with an
+  object still unplaced; invalid/piled completions with residual overlap and/or an object
+  still unplaced). `HangarFitEnv`
+  now sets `Φ(s′) = 0` on both terminal paths (the terminal Park and the budget-exhaustion
+  movement), so the terminal shaping reduces to `−Φ(prev)`. **Deliberate re-baseline:** this
+  changes reward values on non-clean terminal episodes (clean completions are unaffected).
+
+- **Learned backend env validity now matches `collisions.check` (#694).** The
+  `HangarFitEnv` oracle no longer over-enforces the inert placeholder maintenance
+  bay (the bay is only active when an aircraft is explicitly placed there; the
+  `layout_valid` helper that the benchmark already uses is now the single shared
+  validity gate for both the env reward and `ml/eval`).
+
+- **`view` surfaces un-routable ground-object movers (#634).** Layout-mode
+  `hangarfit view` already named an un-tow-routable *aircraft* (the static-degrade
+  note), but a None-path *mover* — which `plan_fill` keeps as a best-effort static
+  body rather than raising — rendered silently, unlike `solve --render-paths`
+  (#612). `view` now threads `plan_fill`'s `unroutable_movers` out-param and warns
+  one line per mover on stderr (the shared `_warn_unroutable_mover_ids` helper),
+  closing the last `view`/`solve` surfacing parity gap. Plan-inert (byte-identical).
+
 ## [0.15.0] — 2026-06-12
 
 ### Added
@@ -792,7 +1491,8 @@ First Phase 1 cut — substrate for arranging the flying club fleet in a stack-s
 - Apache-2.0 license, public-audience README, CI matrix (Python 3.11 + 3.12), branch protection on develop + main (#13, #14, #15, #16).
 - Strut-aware golden tests + all-9-planes fixture using larger test-only hangar to accommodate strut-bracing geometry on placeholder dimensions (#5).
 
-[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/DocGerd/hangarfit/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/DocGerd/hangarfit/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/DocGerd/hangarfit/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/DocGerd/hangarfit/compare/v0.12.0...v0.13.0

@@ -109,6 +109,14 @@ TOW_PATH_COLORS: tuple[str, ...] = (
 )
 TOW_PATH_LINEWIDTH: float = 1.6
 
+# Egress lane (#652) — a hard-door mover's required drive-out corridor, drawn as a
+# translucent "keep clear" decal in 2D + 3D. Uses the brand WARNING amber so it
+# reads as a safety keep-clear zone, deliberately distinct from the tow-path
+# palette (a route, not a keep-out) and the conflict red (a violation).
+EGRESS_LANE_COLOR: str = WARNING  # #D6A23E — 2D corridor decal
+EGRESS_LANE_ALPHA: float = 0.45
+EGRESS_LANE_LINEWIDTH: float = 2.4
+
 # 2D alphas / darkens (the matplotlib render's translucency budget).
 FUSELAGE_ALPHA: float = 0.9  # near-opaque: two overlapping fuselages = conflict.
 FUSELAGE_FRONT_DARKEN: float = 0.62  # cockpit tint = ×0.62 per RGB channel (sRGB).
@@ -195,6 +203,22 @@ FILL_INTENSITY: float = 0.3
 WHEEL_COLOR_3D: str = WHEEL_COLOR  # 0x566573
 CART_DECK_COLOR_3D: str = CART_DECK_COLOR  # 0xaab7b8
 
+# Ground objects (#606) — dark-surface fills for placed non-aircraft bodies.
+# Resolved Python-side in scene.py and emitted per ground-object block (the plane
+# colour-map idiom), so the viewer reads ``go.color`` and hard-codes nothing
+# (#419) — these are NOT viewer_brand_tokens() keys. The mover slate matches the
+# 2D mover fill ``#8A8F98`` (visualize.py ``_MOVER_FILL``, #649) for cross-surface
+# parity. The fixed obstacle has NO 2D fill counterpart — 2D draws it as a hatched
+# keep-out outline (no fill) — so GROUND_OBSTACLE_3D is a 3D-only graphite volume,
+# chosen to stay distinct from the cool slate mover, the violet bay, and the
+# blue-grey translucent walls so the three classes never blur together.
+MOVER_3D: str = "#8A8F98"  # slate — matches the 2D _MOVER_FILL (#649)
+GROUND_OBSTACLE_3D: str = "#73685E"  # warm graphite keep-out volume (3D-only)
+
+# Egress lane (#652, viewer.js) — same WARNING amber as the 2D corridor decal, a
+# floor line the viewer reads from BRAND.egressLane (no hard-coded literal, #419).
+EGRESS_LANE_3D: str = EGRESS_LANE_COLOR  # #D6A23E — matches the 2D egress decal
+
 # Conflict (viewer.js) — same STATUS ink as 2D; the label cue supplies the
 # non-colour redundancy 3D can't hatch.
 CONFLICT_3D: str = STATUS["conflict"]  # 0xc8442c
@@ -249,6 +273,8 @@ def viewer_brand_tokens() -> dict[str, object]:
         # gear / cart
         "wheel": WHEEL_COLOR_3D,
         "cartDeck": CART_DECK_COLOR_3D,
+        # egress lane (#652)
+        "egressLane": EGRESS_LANE_3D,
         # conflict + labels
         "conflict": CONFLICT_3D,
         "labelText": LABEL_TEXT,

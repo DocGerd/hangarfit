@@ -1,0 +1,261 @@
+"""Torch-free onnxruntime inference for the learned backend (sub-project #5, #607)."""
+
+from __future__ import annotations
+
+import pytest
+
+ort = pytest.importorskip("onnxruntime")
+torch = pytest.importorskip("torch")  # OrtPolicy is torch-free, but we export with torch here
+
+import numpy as np  # noqa: E402
+
+from ml.encoding import EncoderConfig, encode  # noqa: E402
+from ml.export import ONNX_OUTPUT_NAMES, export_onnx  # noqa: E402
+from ml.infer import OrtPolicy  # noqa: E402
+from ml.policy import HangarFitPolicy  # noqa: E402
+from ml.train import build_trivial_env  # noqa: E402
+
+
+def test_ortpolicy_matches_torch_act(tmp_path):
+    torch.manual_seed(0)
+    policy = HangarFitPolicy()
+    policy.eval()
+    env = build_trivial_env()
+    obs = env.reset()
+    obs_t = encode(obs, env.hangar, {**env.fleet, **env.ground_objects}, EncoderConfig())
+    tr = obs.active.body.effective_turn_radius_m()
+
+    onnx_path = tmp_path / "p.onnx"
+    export_onnx(policy, onnx_path, example=obs_t)
+    ort_pol = OrtPolicy(onnx_path)
+
+    # OrtPolicy runs the ONNX graph (standard attention path). `policy.act` uses the fused
+    # fast path by default, which on an UNTRAINED near-tie policy can flip the argmax. Compute
+    # the torch reference on the same standard path so the comparison is apples-to-apples (a
+    # trained policy's decisive logits make this moot). Discovered in Task 1.
+    prev_fastpath = torch.backends.mha.get_fastpath_enabled()
+    torch.backends.mha.set_fastpath_enabled(False)
+    try:
+        (_k, _m), _lp, torch_action = policy.act(obs_t, turn_radius_m=tr, deterministic=True)
+    finally:
+        torch.backends.mha.set_fastpath_enabled(prev_fastpath)
+    ort_action = ort_pol.act(obs_t, turn_radius_m=tr)
+    assert type(ort_action) is type(torch_action)
+    assert ort_action == torch_action
+
+
+import math  # noqa: E402
+
+from hangarfit.loader import load_scenario  # noqa: E402
+from hangarfit.towplanner import DubinsArc, Segment  # noqa: E402
+from ml.geometry_oracle import apply_primitive  # noqa: E402
+from ml.types import Primitive  # noqa: E402
+
+
+def test_primitive_sequence_dubinsarc_endpoint_parity():
+    """A multi-segment DubinsArc built from a primitive sequence integrates to the same
+    pose as chaining apply_primitive — the guarantee build_moves_plan relies on."""
+    from hangarfit.towplanner import Pose
+
+    start = Pose(x_m=5.0, y_m=-4.0, heading_deg=0.0)
+    prims = [
+        Primitive(kind="S", magnitude=2.0, gear=1),
+        Primitive(kind="L", magnitude=3.0, gear=1),
+        Primitive(kind="S", magnitude=1.0, gear=1),
+    ]
+    tr = 4.0
+    pose = start
+    for p in prims:
+        pose, _ = apply_primitive(pose, p, turn_radius_m=tr)
+    arc = DubinsArc(
+        start=start,
+        end=pose,
+        turn_radius_m=tr,
+        segments=tuple(Segment(kind=p.kind, length_m=p.magnitude, gear=p.gear) for p in prims),
+    )
+    integrated = arc.pose_at(arc.length_m)
+    assert math.isclose(integrated.x_m, pose.x_m, abs_tol=1e-6)
+    assert math.isclose(integrated.y_m, pose.y_m, abs_tol=1e-6)
+    assert math.isclose(integrated.heading_deg, pose.heading_deg, abs_tol=1e-6)
+
+
+def test_env_from_scenario_queues_placeables(tmp_path):
+    import pathlib
+
+    from ml.infer import env_from_scenario
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    scenario = load_scenario(str(root / "tests/fixtures/scenario_minimal.yaml"))
+    env = env_from_scenario(scenario)
+    obs = env.reset()
+    assert obs.active is not None
+    assert set(env.requested_ids) == set(scenario.placeable_ids)
+    assert env.hangar.apron_depth_m == 8.0
+
+
+def test_rollout_builds_moves_plan(tmp_path):
+    import pathlib
+
+    from ml.infer import OrtPolicy, build_moves_plan, env_from_scenario, rollout
+
+    torch.manual_seed(0)
+    policy = HangarFitPolicy()
+    policy.eval()
+    onnx_path = tmp_path / "p.onnx"
+    export_onnx(policy, onnx_path)
+    ort_pol = OrtPolicy(onnx_path)
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    scenario = load_scenario(str(root / "tests/fixtures/scenario_minimal.yaml"))
+    env = env_from_scenario(scenario)
+    layout, driven, info = rollout(env, ort_pol)
+    plan = build_moves_plan(layout, driven, env)
+    # Every parked object has a Move; every Move targets a real slot pose.
+    assert len(plan.moves) == len(driven)
+    assert all(m.target_slot is not None for m in plan.moves)
+
+
+def test_build_moves_plan_maps_primitives_to_dubins_arc():
+    """Direct coverage of the core Primitive->Segment->DubinsArc mapping (the rollout
+    integration test parks 0 objects under an untrained policy, so it cannot exercise this
+    path). Handcraft driven objects and assert the arc mirrors the primitives 1:1, plus the
+    zero-primitive -> Move(path=None) best-effort edge case."""
+    from hangarfit.towplanner import Pose
+    from ml.infer import _DrivenObject, build_moves_plan
+
+    env = build_trivial_env()
+    env.reset()
+    layout = env._layout()
+    start = Pose(x_m=11.0, y_m=-4.0, heading_deg=0.0)
+    end = Pose(x_m=11.0, y_m=6.0, heading_deg=0.0)
+    prims = [Primitive(kind="S", magnitude=2.0, gear=1), Primitive(kind="L", magnitude=1.0, gear=1)]
+    driven = [
+        _DrivenObject(object_id="fuji", start_pose=start, end_pose=end, primitives=list(prims)),
+        _DrivenObject(object_id="fuji", start_pose=start, end_pose=end, primitives=[]),
+    ]
+    plan = build_moves_plan(layout, driven, env)
+    assert len(plan.moves) == 2
+
+    # Object with primitives -> a DubinsArc whose segments mirror them 1:1.
+    arc = plan.moves[0].path
+    assert arc is not None
+    assert [(s.kind, s.length_m, s.gear) for s in arc.segments] == [
+        (p.kind, p.magnitude, p.gear) for p in prims
+    ]
+    assert arc.start == start
+    assert arc.end == end
+    assert arc.turn_radius_m == env._body("fuji").effective_turn_radius_m()
+    assert plan.moves[0].target_slot == end
+
+    # Zero-primitive object (parked at spawn) -> best-effort Move(path=None).
+    assert plan.moves[1].path is None
+    assert plan.moves[1].target_slot == end
+
+
+def test_learned_within_build_bit_identity(tmp_path):
+    """ADR-0027 tier-1: same weights + seed + pinned CPU EP -> bit-identical learned output
+    within a single build. Cross-machine validity-only equivalence is a separate (deferred)
+    canary.
+
+    Two assertions:
+    1. SolveResult equality — the spec's stated canary (status/layouts/plans). NOTE: under an
+       UNTRAINED policy this is vacuous (both runs park nothing -> empty layouts/plans -> equal
+       trivially), so it cannot stand alone — assertion 2 is the meaningful check.
+    2. Byte-identical ONNX forward — the real tier-1 bit-identity: the source of any
+       nondeterminism is the onnxruntime forward, so drive ONE fixed observation through two
+       FRESH single-threaded CPU-EP sessions (same weights) and assert the raw logits are
+       BYTE-identical (np.array_equal, not approximate), and the decoded action matches. This
+       is non-vacuous regardless of whether any object parks. (The earlier rollout-trajectory
+       form was vacuous: ``rollout`` records only PARKED objects, so an untrained policy that
+       parks nothing yields ``[] == []``.)"""
+    import pathlib
+
+    from ml.infer import OrtPolicy, env_from_scenario, solve_learned_impl
+
+    torch.manual_seed(0)
+    policy = HangarFitPolicy()
+    policy.eval()
+    onnx_path = tmp_path / "p.onnx"
+    export_onnx(policy, onnx_path)
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    scenario = load_scenario(str(root / "tests/fixtures/scenario_minimal.yaml"))
+
+    # --- Assertion 1: SolveResult equality ---
+    kw = dict(weights_path=onnx_path, budget_s=30.0, alternatives=1, seed=0, plan_paths=True)
+    r1 = solve_learned_impl(scenario, **kw)
+    r2 = solve_learned_impl(scenario, **kw)
+
+    assert r1.status == r2.status
+    assert r1.layouts == r2.layouts  # Layout is a frozen dataclass: structural equality
+    assert r1.plans == r2.plans
+
+    # --- Assertion 2: byte-identical ONNX forward (the real tier-1 bit-identity check) ---
+    # Build one fixed observation and run it through two FRESH single-threaded CPU-EP
+    # sessions (same weights). The raw logits must be BYTE-identical — this exercises the
+    # actual source of nondeterminism (the onnxruntime forward) and is non-vacuous even
+    # though the untrained policy parks nothing.
+    env = env_from_scenario(scenario)
+    obs = env.reset()
+    assert obs.active is not None
+    obs_t = encode(obs, env.hangar, {**env.fleet, **env.ground_objects}, EncoderConfig())
+    feed = {
+        "raster": obs_t.raster[None].astype(np.float32),
+        "tokens": obs_t.tokens[None].astype(np.float32),
+        "token_mask": obs_t.token_mask[None].astype(np.bool_),
+        "active_index": np.asarray([obs_t.active_index], dtype=np.int64),
+        "legal_action_mask": obs_t.legal_action_mask[None].astype(np.bool_),
+    }
+
+    def _fresh_session_logits():  # type: ignore[no-untyped-def]
+        opts = ort.SessionOptions()
+        opts.intra_op_num_threads = 1
+        opts.inter_op_num_threads = 1
+        sess = ort.InferenceSession(
+            str(onnx_path), sess_options=opts, providers=["CPUExecutionProvider"]
+        )
+        return sess.run(list(ONNX_OUTPUT_NAMES), feed)
+
+    kind1, mag1 = _fresh_session_logits()
+    kind2, mag2 = _fresh_session_logits()
+    assert np.array_equal(kind1, kind2), (
+        "ONNX kind-head logits differ across builds (ADR-0027 tier-1)"
+    )
+    assert np.array_equal(mag1, mag2), "ONNX mag-head logits differ across builds (ADR-0027 tier-1)"
+
+    # The public OrtPolicy.act (argmax + decode) is likewise identical across two fresh sessions.
+    tr = obs.active.body.effective_turn_radius_m()
+    act1 = OrtPolicy(onnx_path).act(obs_t, turn_radius_m=tr)
+    act2 = OrtPolicy(onnx_path).act(obs_t, turn_radius_m=tr)
+    assert act1 == act2
+
+
+def test_solve_learned_impl_returns_well_formed_result(tmp_path):
+    import pathlib
+
+    from ml.infer import solve_learned_impl
+
+    torch.manual_seed(0)
+    policy = HangarFitPolicy()
+    policy.eval()
+    onnx_path = tmp_path / "p.onnx"
+    export_onnx(policy, onnx_path)
+
+    root = pathlib.Path(__file__).resolve().parents[2]
+    scenario = load_scenario(str(root / "tests/fixtures/scenario_minimal.yaml"))
+    result = solve_learned_impl(
+        scenario, weights_path=onnx_path, budget_s=30.0, alternatives=1, seed=0, plan_paths=True
+    )
+    # SolveResult.__post_init__ enforces status/layouts/plans coherence; construction
+    # succeeding is the structural assertion. An untrained policy almost always fails to
+    # park the whole set validly, so expect a no-layout status here.
+    assert result.status in ("found", "exhausted_budget")
+    assert len(result.plans) == len(result.layouts)
+    from ml.geometry_oracle import layout_valid
+
+    if result.status == "found":
+        assert layout_valid(result.layouts[0])
+        assert len(result.plans) == 1
+    else:
+        assert result.layouts == ()
+        assert result.plans == ()

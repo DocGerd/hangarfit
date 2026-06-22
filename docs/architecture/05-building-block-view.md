@@ -20,6 +20,8 @@ flowchart TD
     viewer["viewer.py<br/>self-contained 3D HTML<br/>inlined scene + vendored Three.js"]
     metrics["metrics.py<br/>read-only render annotations<br/>placeholder / gap / clearance / validity"]
     brand["brand.py<br/>single source of brand tokens<br/>CVD-safe palette / opacity / fonts"]
+    sat["_sat.py<br/>opt-in numpy SAT box oracle<br/>collision narrow-phase accelerator"]
+    learned["learned.py<br/>opt-in learned-backend seam<br/>delegates to dev-only ml.infer"]
 
     cli --> loader
     cli --> collisions
@@ -28,6 +30,7 @@ flowchart TD
     cli --> scene
     cli --> viewer
     cli --> models
+    cli --> learned
 
     loader --> models
 
@@ -41,6 +44,9 @@ flowchart TD
 
     collisions --> geometry
     collisions --> models
+    collisions --> sat
+
+    learned --> models
 
     visualize --> geometry
     visualize --> models
@@ -224,6 +230,21 @@ Returns a `CheckResult` with the list of `Conflict`s plus the
 landed, as a smooth secondary score that breaks plateaus in the
 integer `len(conflicts)` metric).
 
+### `_sat.py` — opt-in SAT collision accelerator
+
+A pure-numpy second narrow-phase for the dominant pairwise overlap test, opt-in
+behind `solve --sat-collisions` (#754, Lever B). For **oriented-rectangle ×
+oriented-rectangle** part pairs it reproduces the GEOS verdict surface of
+`geometry.polygon_overlap` / `polygon_overlap_area` to float noise (~5e-15, zero
+verdict flips on the #735 corpus), skipping shapely on the box-curriculum rungs
+where that work dominates (~61% of an iteration, #381). It **never transforms
+coordinates** — it consumes the already-world corner arrays the determinant −1
+transform produced (ADR-0002), so no sign-flip can hide here. `collisions.py`
+keeps a part-kind guard that falls back to shapely the instant any tapered/strut
+**polygon** part appears, and CPU shapely stays the determinism + validity
+authority (#694); the flag defaults off and off is byte-identical to the
+pre-#754 checker.
+
 ### `solver.py` — RR-MC layout search
 
 `solve(scenario, budget_s, alternatives, seed)` is the public entry.
@@ -329,6 +350,24 @@ loop (min-conflicts descent, spread post-pass once a layout reaches
 `(0, 0.0)`, basin pool) → collect-then-select maximin-gap + diversity
 selection → one of four `SolveStatus` outcomes. Sources:
 `src/hangarfit/solver.py`, ADR-0003, ADR-0004, ADR-0008.*
+
+### `learned.py` — opt-in learned-backend seam
+
+The sibling entry point to `solver.solve` for the opt-in learned backend
+(`--backend learned`, epic #607 / #706). `solve_learned(scenario, weights_path, …)`
+returns the same `SolveResult` shape, so every downstream consumer (render /
+`view` / `--write-yaml`) stays backend-agnostic. It is a **thin seam**: it
+validates the weights path, then lazy-imports `ml.infer.solve_learned_impl` and
+delegates (so the wheel never drags in `ml` / `onnxruntime` at import time). A
+missing weights file, a missing `[learned-infer]` extra, or an absent `ml/`
+package raises `LearnedBackendUnavailableError` with an actionable message rather
+than an import traceback. Inference is **torch-free** — `ml.infer` needs only
+`onnxruntime` (the lightweight `[learned-infer]` extra, distinct from the heavier
+torch `[train]` stack used to *produce* the weights). **Determinism:** the learned proposer is *not* under
+the ADR-0003 byte-identical contract — `collisions.check` (plus `towplanner`)
+remains the sole arbiter of validity and routability ([ADR-0027](../adr/0027-learned-backend-determinism-scope.md)).
+Only this seam ships in the wheel; the inference implementation (`ml.infer`) and
+the RL training stack live in `ml/`, present in source checkouts only.
 
 ### `towplanner.py` — tow-path planning
 

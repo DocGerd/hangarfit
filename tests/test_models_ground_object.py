@@ -60,6 +60,26 @@ def test_ground_partkind_is_valid() -> None:
     assert _rect_part(kind="ground").kind == "ground"
 
 
+def test_layout_rejects_hand_placed_ground_object() -> None:
+    """`hand_placed` (#667) is an aircraft-only marker — meaningless on a ground
+    object (those are routed/fixed by their object_class). Layout must reject it
+    rather than silently ignore it (the planner only filters aircraft placements)."""
+    obj = GroundObject(id="fuel", name="Fuel", parts=(_rect_part(),), object_class="fixed_obstacle")
+    with pytest.raises(ValueError, match="hand_placed"):
+        Layout(
+            fleet={},
+            hangar=_hangar(),
+            placements=(),
+            maintenance_plane=None,
+            ground_objects={"fuel": obj},
+            ground_object_placements=(
+                Placement(
+                    "fuel", x_m=5.0, y_m=5.0, heading_deg=0.0, on_carts=False, hand_placed=True
+                ),
+            ),
+        )
+
+
 def test_mover_can_be_hard_door_mover() -> None:
     m = GroundObject(
         id="caddy",

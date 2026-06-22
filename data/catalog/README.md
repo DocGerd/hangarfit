@@ -2,10 +2,12 @@ Catalog of per-object aircraft definitions (#595) — the single source of stati
 aircraft data, referenced by both the demo `data/fleet.yaml` manifest and
 `examples/herrenteich/fleet.yaml`.
 
-DIMENSIONS ARE A MIX. The eight Airfield Herrenteich occupants (cessna_140,
+DIMENSIONS ARE A MIX. The eight usual Airfield Herrenteich occupants (cessna_140,
 ctsl, wild_thing, aviat_husky, scheibe_falke, fk9_mkii, stemme_s10, zlin_savage)
-carry published-spec / TCDS-sourced numbers — see "Real-spec provenance" below.
-`fuji` and `cessna_150` (not based at Herrenteich) remain eyeballed placeholders.
+plus the `fuji` FA-200-180 (a permanent ninth occupant, #657) carry published-spec
+/ TCDS-sourced numbers — see "Real-spec provenance" below (the Fuji's undercarriage
+track/wheelbase + tailplane span remain estimates). Only `cessna_150` (not based at
+Herrenteich) remains an eyeballed placeholder.
 Every entry keeps `measured: false` because none are on-site tape/laser
 measurements; treat the sourced figures as authoritative over the placeholders.
 
@@ -127,16 +129,21 @@ The real Airfield Herrenteich ground objects are now authored in this catalog
 
 | id | `type:` | envelope L×W×H (m) | basis (`measured: false`) |
 |---|---|---|---|
-| `vw_caddy` | `car` | 4.88 × 1.79 × 1.84 | VW Caddy Maxi (long-wheelbase) manufacturer data |
-| `glider_trailer_1` | `trailer` | 9.0 × 2.1 × 2.3 | typical closed glider trailer (Cobra/Spindelberger class) |
-| `glider_trailer_2` | `trailer` | 9.0 × 2.1 × 2.3 | second instance, same envelope |
+| `vw_caddy` | `car` | 4.88 × 1.79 × 2.04 | VW Caddy Maxi (long-wheelbase) manufacturer L/W; height = 1.84 m stock roofline + ~0.20 m roof-stowed gear (on-site, PK). **Multi-part** (#658): a body box (0→1.84 m) + a small ~1.0×0.8 m roof-rack box (1.84→2.04 m), so a high wing may overhang the van and only has to clear the localized rack |
+| `glider_trailer_1` | `trailer` | 10.5 × 2.0 × 2.0 | Duo Discus (two-seat) closed trailer — the longer one (#657); fuselage ~8.7 m + nose/towbar overhang |
+| `glider_trailer_2` | `trailer` | 9.0 × 1.75 × 1.45 | single-seat 15 m-class closed trailer (owner-measured Cobra, #657) |
 | `maul_fuel_trailer` | `fixed_obstacle` | 4.5 × 2.0 × 1.9 | Maul road-trailer envelope (estimated) |
 
 All carry `measured: false` (published/typical specs, not an on-site survey).
-They are parked together with the eight aircraft in
-`examples/herrenteich/layout_full.yaml` — the #605 full-set calibration
-reference. Tow-routing of the movers (#602), the hard Caddy nearest-door egress
-gate (#603), and rendering of ground objects (#606) are deferred.
+Mover tow-routing (#602), the hard Caddy clear-egress gate (#603/#652), and
+ground-object rendering in the 2D PNG + 3D viewer (#606) have all shipped. The
+realistic `examples/herrenteich/layout_full.yaml` (#657/#659) parks the fuel
+trailer hard against the left wall by the door (straight-in, last), the Caddy near
+the door with a clear drive-out egress, and the Duo trailer along the right wall —
+all four GOs are inside. Fitting them plus a Caddy rescue path needs FISHBONE
+(angled) aircraft parking, and even then the hangar is one aircraft over capacity,
+so it holds SEVEN of the eight aircraft (the Scheibe Falke parks outside). All four
+GOs remain available in the herrenteich `fleet.yaml` manifest.
 
 ## Real-spec provenance (Airfield Herrenteich occupants, #536/#594)
 
@@ -145,8 +152,8 @@ Airfield Herrenteich — real fleet (the aircraft usually hangared here).
 Kept separate from the synthetic data/fleet.yaml (the project's stable
 demo/test fixture). Roster per the operator (2026-06-04): Cessna 140,
 Flight Design CTSL, Wild Thing, Aviat Husky, Scheibe SF-25E, FK9 Mk II,
-Stemme S10 (hangared WINGS-FOLDED), Zlin Savage. (Fuji and the Cessna 150
-are not based here.)
+Stemme S10 (hangared WINGS-FOLDED), Zlin Savage, plus the Fuji FA-200-180 as a
+permanent ninth occupant (#657). (Only the Cessna 150 is not based here.)
 
 DIMENSIONS — provenance refresh 2026-06-08 (#536). The primary envelope
 (span / length / height) was looked up from published manufacturer /

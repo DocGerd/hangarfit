@@ -15,7 +15,7 @@ from __future__ import annotations
 import math
 import typing
 from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from types import MappingProxyType
 from typing import TYPE_CHECKING, Literal, cast
 
@@ -671,6 +671,14 @@ class Hangar:
     max_carts: int = 1
     apron_depth_m: float = 0.0
     structural_notches: tuple[StructuralNotch, ...] = ()
+    # #643: a SEPARATE, tighter clearance applied only during tow MOTION — a
+    # mover threading PAST a parked body is hand-cleared far closer than the
+    # parked spacing (a spotter watches the wingtips), so the parked
+    # ``clearance_m`` over-constrains the maneuver. ``None`` (the default) ⇒ the
+    # motion clearance IS the parked clearance, so a hangar without these fields
+    # plans byte-identically to today (ADR-0003). Consumed via ``motion_hangar``.
+    motion_clearance_m: float | None = None
+    motion_wing_layer_clearance_m: float | None = None
     # Derived L-shaped floor outline (outer rectangle minus the notches),
     # computed once in __post_init__ and cached here. ``None`` when there are
     # no notches (the common case) so the checker stays on its rectangle path.
@@ -694,6 +702,18 @@ class Hangar:
             raise ValueError(f"Hangar.max_carts must be non-negative, got {self.max_carts}")
         if self.apron_depth_m < 0:
             raise ValueError(f"Hangar.apron_depth_m must be non-negative, got {self.apron_depth_m}")
+        if self.motion_clearance_m is not None and self.motion_clearance_m < 0:
+            raise ValueError(
+                f"Hangar.motion_clearance_m must be non-negative, got {self.motion_clearance_m}"
+            )
+        if (
+            self.motion_wing_layer_clearance_m is not None
+            and self.motion_wing_layer_clearance_m < 0
+        ):
+            raise ValueError(
+                f"Hangar.motion_wing_layer_clearance_m must be non-negative, "
+                f"got {self.motion_wing_layer_clearance_m}"
+            )
         door_left = self.door.center_x_m - self.door.width_m / 2
         door_right = self.door.center_x_m + self.door.width_m / 2
         if door_left < 0 or door_right > self.width_m:
@@ -756,6 +776,33 @@ class Hangar:
         ``covers`` (ADR-0018)."""
         return self._floor_polygon
 
+    def motion_hangar(self) -> Hangar:
+        """The hangar as seen by the tow-MOTION collision checks (#643).
+
+        Returns ``self`` when no motion clearance is set, so the plan is
+        byte-identical to a hangar without these fields (ADR-0003). Otherwise
+        returns a plain parked-style hangar whose ``clearance_m`` /
+        ``wing_layer_clearance_m`` ARE the (tighter) motion values — so the
+        per-sampled-pose ``collisions.check`` the tow planner runs applies the
+        motion margin, while the static parked check keeps the original
+        spacing. The motion fields are folded into the clearances and cleared on
+        the returned hangar (it is itself a parked-style hangar)."""
+        if self.motion_clearance_m is None and self.motion_wing_layer_clearance_m is None:
+            return self
+        return replace(
+            self,
+            clearance_m=(
+                self.clearance_m if self.motion_clearance_m is None else self.motion_clearance_m
+            ),
+            wing_layer_clearance_m=(
+                self.wing_layer_clearance_m
+                if self.motion_wing_layer_clearance_m is None
+                else self.motion_wing_layer_clearance_m
+            ),
+            motion_clearance_m=None,
+            motion_wing_layer_clearance_m=None,
+        )
+
 
 @dataclass(frozen=True, slots=True)
 class Placement:
@@ -766,6 +813,11 @@ class Placement:
     y_m: float
     heading_deg: float
     on_carts: bool
+    # #667 Stage 0: a HAND-POSITIONED body (e.g. a dolly-borne glider) is parked
+    # by hand, not tow-routed. The fill planner treats it as a pre-placed
+    # obstacle and emits a path-less (at-rest) move for it. Default False keeps
+    # every existing placement byte-identical.
+    hand_placed: bool = False
 
     def __post_init__(self) -> None:
         if not self.plane_id:
@@ -950,6 +1002,16 @@ class Layout:
                 raise ValueError(
                     f"ground_object_placement references unknown id {gp.plane_id!r} "
                     f"(ground_objects has: {sorted(self.ground_objects)})"
+                )
+            # #667: hand_placed is an aircraft-only marker (a dolly-borne body the
+            # tow planner pre-seeds as an obstacle). A ground object is routed/fixed
+            # by its object_class, and the planner only filters AIRCRAFT placements,
+            # so hand_placed here would be silently ignored — reject it instead.
+            if gp.hand_placed:
+                raise ValueError(
+                    f"ground_object_placement {gp.plane_id!r} sets hand_placed=True, "
+                    f"which is an aircraft-only marker (ground objects are positioned "
+                    f"by their object_class, not hand-placed)"
                 )
             if gp.plane_id in seen_ground:
                 raise ValueError(f"Duplicate ground_object_placement for id {gp.plane_id!r}")
@@ -1139,6 +1201,7 @@ class Scenario:
       constraints (the occupant is treated as away — those constraints would be
       incoherent and would be silently ignored by the solver)
     - region_preferences.keys() ⊆ placeable bodies (fleet_in ∪ placed_routed_mover ids)
+    - door_order (if set) ⊆ placeable bodies and has no duplicate ids (#614)
     - fixed_obstacle_placements entries reference distinct fixed_obstacle ground
       objects (in ground_object_defs)
     - fleet and constraints are wrapped in MappingProxyType (same pattern as Layout)
@@ -1169,6 +1232,12 @@ class Scenario:
     region_preferences: Mapping[str, RegionPreference] = field(
         default_factory=lambda: MappingProxyType({})
     )
+    # #614 SOFT door-priority: a desired door-proximity order (the first id should
+    # park nearest the door). A lexicographically-subordinate selection term,
+    # consumed only after every hard rule passes (see ``solver._door_order_deviation``;
+    # it sits below ADR-0026's HARD egress gate). ``None`` ⇒ inert / byte-identical
+    # solver (ADR-0003). A tuple (immutable already), so no MappingProxyType wrap.
+    door_order: tuple[str, ...] | None = None
 
     # The mapping fields wrapped in MappingProxyType for immutability. This is
     # the single source of truth for both the construction-time wrap (in
@@ -1325,6 +1394,20 @@ class Scenario:
                     f"placeable body (aircraft or placed_routed_mover); "
                     f"placeable ids: {sorted(placeable)}"
                 )
+
+        # Door order (#614): every id must reference a placeable body (mirrors
+        # region_preferences) and no id may repeat (a body can't hold two
+        # door-proximity ranks). None ⇒ no constraint (inert, byte-identical).
+        if self.door_order is not None:
+            if len(set(self.door_order)) != len(self.door_order):
+                raise ValueError(f"Scenario.door_order has duplicate entries: {self.door_order}")
+            for did in self.door_order:
+                if did not in placeable:
+                    raise ValueError(
+                        f"Scenario.door_order references {did!r} which is not a "
+                        f"placeable body (aircraft or placed_routed_mover); "
+                        f"placeable ids: {sorted(placeable)}"
+                    )
         seen_fixed: set[str] = set()
         for p in self.fixed_obstacle_placements:
             if p.plane_id not in self.ground_object_defs:
@@ -1836,6 +1919,20 @@ class SearchConfig:
     :attr:`PlaneConstraint.nose_out`. A plain ``bool`` (not ``bool | None``):
     ``None`` stays reserved as the disable sentinel for
     ``max_restarts``/``spread_stall_restarts`` (see ``max_restarts``)."""
+
+    sat_collisions: bool = False
+    """(#754 Lever B) When True, the solver's hot scorer (``solver._score`` →
+    ``collisions.check``) opts into the numpy SAT box oracle for rectangle×rectangle
+    part pairs — bypassing GEOS on the dominant pair test. Default False keeps every
+    solve byte-identical (ADR-0003). When True the search is **self-byte-identical**
+    (SAT is referentially transparent) but NOT equal to the ``False`` run: SAT
+    reproduces the GEOS verdict to ~5e-15 (0 conflict-count flips on the #735
+    corpus), so layout *validity* is unchanged, but ``total_penetration_m2`` differs
+    at float noise, which can shift the spread/tiebreak trajectory. CPU shapely
+    therefore stays the determinism + validity authority (#694) — the final
+    validity gate is unaffected; only the inner search is accelerated. A plain
+    ``bool`` (not ``bool | None``): ``None`` stays the disable sentinel for
+    ``max_restarts`` / ``spread_stall_restarts`` (see ``max_restarts``)."""
 
     def __post_init__(self) -> None:
         if self.candidates_per_iter < 1:

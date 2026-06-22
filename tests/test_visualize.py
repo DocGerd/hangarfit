@@ -67,6 +67,62 @@ def _assert_valid_png(path: Path) -> None:
         assert width > 0 and height > 0, f"invalid image size {img.size}"
 
 
+_HERRENTEICH = REPO_ROOT / "examples" / "herrenteich"
+
+
+class TestGroundObjectRendering:
+    """#606: fixed-obstacle keep-outs + mover bodies render in the 2D PNG."""
+
+    def test_renders_layout_with_ground_objects(self, tmp_path: Path) -> None:
+        """The Herrenteich full set (8 aircraft + fixed fuel trailer + VW Caddy +
+        2 glider trailers) renders to a valid PNG."""
+        layout = load_layout(_HERRENTEICH / "layout_full.yaml")
+        assert layout.ground_object_placements, "fixture must carry ground objects"
+        classes = {
+            layout.ground_objects[gp.plane_id].object_class
+            for gp in layout.ground_object_placements
+        }
+        assert classes == {"fixed_obstacle", "placed_routed_mover"}  # both classes exercised
+        out = tmp_path / "full.png"
+        render_layout(layout, out)
+        _assert_valid_png(out)
+
+    def test_aircraft_only_layout_renders(self, tmp_path: Path) -> None:
+        """A layout with no ground objects renders fine — the new draw helpers are
+        no-ops (inert-when-empty)."""
+        layout = load_layout(_HERRENTEICH / "layout.yaml")
+        assert not layout.ground_object_placements
+        out = tmp_path / "ac_only.png"
+        render_layout(layout, out)
+        _assert_valid_png(out)
+
+    def test_validator_accepts_a_ground_object_conflict(self) -> None:
+        """A CheckResult whose conflict names a ground-object id must NOT be
+        rejected as a cross-layout mismatch (the #606 validator widening)."""
+        from hangarfit.models import CheckResult, Conflict
+        from hangarfit.visualize import _validate_check_result_planes
+
+        layout = load_layout(_HERRENTEICH / "layout_full.yaml")
+        mover_id = next(gp.plane_id for gp in layout.ground_object_placements)
+        result = CheckResult(
+            conflicts=(Conflict.single(kind="ground_obstacle", plane=mover_id, detail="x"),)
+        )
+        _validate_check_result_planes(layout, result)  # must not raise
+
+    def test_validator_still_rejects_a_truly_unknown_id(self) -> None:
+        """The cross-layout guard still fires for an id in neither aircraft nor
+        ground objects."""
+        from hangarfit.models import CheckResult, Conflict
+        from hangarfit.visualize import _validate_check_result_planes
+
+        layout = load_layout(_HERRENTEICH / "layout_full.yaml")
+        result = CheckResult(
+            conflicts=(Conflict.single(kind="x", plane="not_a_real_body", detail="x"),)
+        )
+        with pytest.raises(ValueError, match="not placed in this layout"):
+            _validate_check_result_planes(layout, result)
+
+
 class TestRenderLayout:
     def test_produces_valid_png_for_valid_layout(self, tmp_path: Path) -> None:
         layout = _load("valid_two_separated")
@@ -592,6 +648,80 @@ class TestDrawTowPaths:
         _draw_tow_paths(ax, plan)
         colours = [c.kwargs["color"] for c in ax.plot.call_args_list]
         assert colours[0] == colours[1]
+
+    def test_mover_path_uses_mover_fill_colour(self) -> None:
+        """#651: a placed-routed mover's 2D path is drawn in the mover body colour
+        (_MOVER_FILL), so it reads as a ground vehicle; aircraft keep the palette."""
+        from hangarfit.models import GroundObject, Part
+        from hangarfit.visualize import _MOVER_FILL, _draw_tow_paths
+
+        layout = MagicMock()
+        layout.ground_objects = {
+            "trailer": GroundObject(
+                id="trailer",
+                name="Glider trailer",
+                parts=(Part("ground", 6.0, 2.0, 0.0, 0.0, 0.0, 0.0, 2.0),),
+                object_class="placed_routed_mover",
+                motion_mode="towed",
+            )
+        }
+        plan = self._plan(
+            self._vertical_move("a", 0.0, 0.0, 5.0),  # aircraft
+            self._vertical_move("trailer", 2.0, 0.0, 4.0),  # mover
+        )
+        ax = MagicMock()
+        _draw_tow_paths(ax, plan, layout)
+        by_label = {c.kwargs["label"]: c.kwargs["color"] for c in ax.plot.call_args_list}
+        assert by_label["trailer"] == _MOVER_FILL
+        assert by_label["a"] != _MOVER_FILL  # aircraft keeps a distinct palette colour
+
+    def test_mover_does_not_shift_aircraft_palette(self) -> None:
+        """#651: adding a mover must not change any aircraft's path colour — the
+        palette is assigned over aircraft ids only, so the mapping is stable
+        whether or not a mover is present (defends the determinism comment)."""
+        from hangarfit.models import GroundObject, Part
+        from hangarfit.visualize import _draw_tow_paths
+
+        aircraft = (
+            self._vertical_move("a", 0.0, 0.0, 5.0),
+            self._vertical_move("b", 2.0, 0.0, 4.0),
+        )
+        ax0 = MagicMock()
+        _draw_tow_paths(ax0, self._plan(*aircraft))  # baseline: no mover, no layout
+        base = {c.kwargs["label"]: c.kwargs["color"] for c in ax0.plot.call_args_list}
+
+        layout = MagicMock()
+        layout.ground_objects = {
+            "trailer": GroundObject(
+                id="trailer",
+                name="Glider trailer",
+                parts=(Part("ground", 6.0, 2.0, 0.0, 0.0, 0.0, 0.0, 2.0),),
+                object_class="placed_routed_mover",
+                motion_mode="towed",
+            )
+        }
+        ax1 = MagicMock()
+        _draw_tow_paths(
+            ax1, self._plan(*aircraft, self._vertical_move("trailer", 1.0, 0.0, 3.0)), layout
+        )
+        with_mover = {c.kwargs["label"]: c.kwargs["color"] for c in ax1.plot.call_args_list}
+        assert with_mover["a"] == base["a"]
+        assert with_mover["b"] == base["b"]
+
+    def test_without_layout_all_paths_use_aircraft_palette(self) -> None:
+        """Backward-compat: with no layout (the pre-#651 call), every path is treated
+        as an aircraft and drawn from the palette — never the mover fill."""
+        from hangarfit.visualize import _MOVER_FILL, _draw_tow_paths
+
+        plan = self._plan(
+            self._vertical_move("a", 0.0, 0.0, 5.0),
+            self._vertical_move("b", 2.0, 0.0, 4.0),
+        )
+        ax = MagicMock()
+        _draw_tow_paths(ax, plan)  # no layout arg
+        colours = [c.kwargs["color"] for c in ax.plot.call_args_list]
+        assert _MOVER_FILL not in colours
+        assert len(set(colours)) == 2
 
     def test_colour_assignment_is_order_independent(self) -> None:
         # Sorting plane ids before assigning colours makes the mapping
@@ -1259,3 +1389,52 @@ class TestHonestyAnnotations:
         kwargs = fig.text.call_args.kwargs
         assert kwargs["color"] == brand.PLACEHOLDER_BANNER_TEXT_2D
         assert kwargs["bbox"]["facecolor"] == brand.PLACEHOLDER_BANNER_BG_2D
+
+
+class TestDrawEgressLanes:
+    """`_draw_egress_lanes` overlays each hard-door mover's drive-out corridor as a
+    translucent amber 'keep clear' polyline (#652)."""
+
+    @staticmethod
+    def _arc(x0: float, y0: float, length: float):
+        from hangarfit.towplanner import DubinsArc, Pose, Segment
+
+        start = Pose(x_m=x0, y_m=y0, heading_deg=0.0)
+        end = Pose(x_m=x0, y_m=y0 + length, heading_deg=0.0)
+        return DubinsArc(start=start, end=end, turn_radius_m=1.0, segments=(Segment("S", length),))
+
+    def test_empty_is_noop(self) -> None:
+        from hangarfit.visualize import _draw_egress_lanes
+
+        ax = MagicMock()
+        _draw_egress_lanes(ax, {})
+        ax.plot.assert_not_called()
+
+    def test_draws_corridor_in_egress_colour(self) -> None:
+        from hangarfit import brand
+        from hangarfit.visualize import _draw_egress_lanes
+
+        ax = MagicMock()
+        _draw_egress_lanes(ax, {"caddy": self._arc(5.0, 0.0, 6.0)})
+        assert ax.plot.call_count == 1
+        kw = ax.plot.call_args.kwargs
+        assert kw["color"] == brand.EGRESS_LANE_COLOR
+        # The "keep clear, below the route" visual encoding (dashed amber, drawn
+        # under the solid tow paths at zorder 5) — the load-bearing semantics.
+        assert kw["linestyle"] == (0, (6, 3))  # dashed
+        assert kw["alpha"] == brand.EGRESS_LANE_ALPHA
+        assert kw["lw"] == brand.EGRESS_LANE_LINEWIDTH
+        assert kw["zorder"] == 4.5  # below the tow-path overlay (5)
+        xs, ys = ax.plot.call_args.args[0], ax.plot.call_args.args[1]
+        assert (xs[0], ys[0]) == pytest.approx((5.0, 0.0))
+        assert (xs[-1], ys[-1]) == pytest.approx((5.0, 6.0))
+
+    def test_multiple_corridors_sorted_by_id(self) -> None:
+        from hangarfit.visualize import _draw_egress_lanes
+
+        ax = MagicMock()
+        _draw_egress_lanes(
+            ax, {"zeta": self._arc(1.0, 0.0, 2.0), "alpha": self._arc(2.0, 0.0, 2.0)}
+        )
+        labels = [c.kwargs["label"] for c in ax.plot.call_args_list]
+        assert labels == ["egress:alpha", "egress:zeta"]  # id-sorted, deterministic

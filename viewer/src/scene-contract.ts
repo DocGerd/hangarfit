@@ -40,6 +40,20 @@ export interface PlaneData {
   on_carts: boolean;
 }
 
+// A placed non-aircraft body (#606): a fixed obstacle (keep-out) or a
+// placed/routed mover. Same `boxes` shape as a plane, but no wheels/carts; the
+// per-class fill is brand-resolved Python-side (`color`), and `final_pose` is the
+// placement (resting) affine — a fixed obstacle stays there, a placed-routed
+// mover animates to it along its drive path via the timeline (#651).
+export interface GroundObjectData {
+  id: string;
+  object_class: string; // 'fixed_obstacle' | 'placed_routed_mover'
+  color: string; // '#RRGGBB' — brand fill by class, resolved in scene.py
+  hard_door_mover: boolean; // the Caddy egress flag (highlight cue)
+  boxes: BoxData[];
+  final_pose: Affine; // plane-local → world affine at the placed pose
+}
+
 export interface DoorData {
   center_x_m: number;
   width_m: number;
@@ -93,6 +107,8 @@ export interface SceneV2 {
   coordinate_note: string; // human reminder of the coordinate convention
   hangar: HangarData;
   planes: PlaneData[];
+  /** Placed ground objects (#606): fixed obstacles + movers. Empty when none. */
+  ground_objects: GroundObjectData[];
   conflicts: string[];
   /** Final parked pose per plane id. */
   final_poses: Record<string, Affine>;
@@ -100,6 +116,11 @@ export interface SceneV2 {
   anchors: Record<string, number[][][]>;
   /** Oracle world wheel positions per plane: [wheel][x|y]. */
   gear_anchors: Record<string, number[][]>;
+  /** Oracle world box corners per ground object: [box][corner][x|y]. Empty when none. */
+  go_anchors: Record<string, number[][][]>;
+  /** Hard-door mover drive-out corridors (#652): sampled [x, y] world points per
+   * mover id, for the egress-lane decal. Empty when no hard-door egress lane. */
+  egress_lanes: Record<string, [number, number][]>;
   timeline: TimelineData;
   placeholder: boolean; // always emitted (true iff any placed aircraft is unmeasured)
   readouts: Readouts | null; // always emitted; null when the layout is invalid
