@@ -1,8 +1,8 @@
 """Opt-in numpy SAT box oracle (#754 Lever B) — an accelerator, NOT the authority.
 
 A second, **opt-in** narrow-phase for the dominant pairwise collision test on the
-box-curriculum rungs, where every part is an oriented rectangle and ~430k shapely
-``Polygon`` pair-tests dominate (#381). These pure-numpy convex-polygon kernels
+box-curriculum rungs, where every part is an oriented rectangle and the pairwise
+shapely ``Polygon`` work dominates (#381). These pure-numpy convex-polygon kernels
 reproduce the GEOS verdict surface of :func:`hangarfit.geometry.polygon_overlap` /
 :func:`~hangarfit.geometry.polygon_overlap_area` to float noise:
 
@@ -40,9 +40,10 @@ import numpy as np
 def _edge_axes(corners: np.ndarray) -> np.ndarray:
     """Outward edge normals (normalised) for a convex polygon ring.
 
-    For SAT we need the edge-normal directions; a box has 4 edges but only 2
-    distinct normals — returning all 4 is harmless (duplicate axes don't change
-    the min/max test).
+    Direction only — the sign is irrelevant to the min/max projection test, so
+    these run on the raw (possibly CW) corners before any ``_ensure_ccw``. For SAT
+    a box has 4 edges but only 2 distinct normal directions; returning all 4 is
+    harmless (duplicate axes don't change the min/max test).
     """
     rolled = np.roll(corners, -1, axis=0)
     edges = rolled - corners
@@ -126,7 +127,13 @@ def _line_intersect(p1: np.ndarray, p2: np.ndarray, p3: np.ndarray, p4: np.ndarr
     x4, y4 = p4
     denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4)
     if denom == 0.0:
-        return p1  # parallel — degenerate; the caller's geometry makes this rare
+        # Parallel/collinear lines. Provably DEAD under the rectangle-only guard:
+        # Sutherland–Hodgman only calls this when a subject edge crosses a clipper
+        # half-plane (the in/out state flips), which cannot happen on a parallel
+        # edge pair — so this returns a harmless placeholder for an unreachable
+        # case rather than handling a real degeneracy. If the SAT eligibility ever
+        # widened beyond convex rectangles, revisit this.
+        return p1
     t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom
     return np.array([x1 + t * (x2 - x1), y1 + t * (y2 - y1)], dtype=np.float64)
 

@@ -338,8 +338,10 @@ def test_solve_with_sat_is_self_deterministic_and_shapely_valid():
 
     assert run_a.status == "found"
     assert _placement_signature(run_a) == _placement_signature(run_b)
-    # Authority gate: the returned layout is valid under the default shapely checker.
-    assert check(run_a.layouts[0]).valid
+    # Authority gate: EVERY returned layout is valid under the default shapely
+    # checker — SAT only accelerated the search, it never decides validity (#694).
+    assert run_a.layouts
+    assert all(check(layout).valid for layout in run_a.layouts)
 
 
 def test_sat_polygon_overlap_rejects_negative_clearance():
