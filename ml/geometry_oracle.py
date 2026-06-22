@@ -8,6 +8,7 @@ or Hybrid-A* search. All functions are pure and RNG-free.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 from shapely.geometry import box
@@ -138,6 +139,25 @@ def build_obstacles(parked_layout: Layout, mover_id: str) -> ObstaclesT:
     return _build_obstacles(parked_layout, mover_id=mover_id)
 
 
+def _footprint_radius(body: Aircraft | GroundObject) -> float:
+    """Max distance from the placement origin to any of ``body``'s part vertices.
+
+    Heading-independent: the plane-local → world transform (:func:`local_to_world`) has
+    determinant −1 (a rotation composed with a reflection), which preserves Euclidean norm,
+    so a vertex at local ``(u, v)`` is always ``sqrt(u²+v²)`` from the pose's ``(x, y)`` at
+    ANY heading. So this radius bounds the body's footprint at every pose — the basis for
+    Lever A's conservative whole-leg envelope (#754). Built via ``cached_parts_world`` at the
+    identity placement (one build, memoized within a pose-cache scope)."""
+    parts = cached_parts_world(
+        body, Placement(plane_id=body.id, x_m=0.0, y_m=0.0, heading_deg=0.0, on_carts=False)
+    )
+    r2 = 0.0
+    for wp in parts:
+        for x, y in wp.polygon.exterior.coords:
+            r2 = max(r2, x * x + y * y)  # at identity placement the vertex IS its offset
+    return math.sqrt(r2)
+
+
 def swept_intrusion_m2(
     body: Aircraft | GroundObject,
     swept: tuple[Pose, ...],
@@ -165,6 +185,35 @@ def swept_intrusion_m2(
         obstacles if obstacles is not None else _build_obstacles(parked_layout, mover_id=active_id)
     )
     hangar = parked_layout.hangar
+
+    # Lever A (#754): whole-leg swept-envelope early-out. The leak below only ever accumulates
+    # overlap AREA against parked obstacle parts (walls/notch/bay gate _motion_clear but never
+    # contribute leak), so the result is 0.0 iff no sampled pose's footprint overlaps any
+    # obstacle part. Every sampled pose's footprint lies within the body's footprint radius R
+    # of that pose's (x, y), so the bbox of the swept (x, y) inflated by R is a conservative
+    # SUPERSET of every pose's footprint. If that envelope AABB is strictly separated (gap > 0)
+    # from every precomputed obstacle-part AABB, no pose can overlap any part → the per-pose
+    # loop would return 0.0 → short-circuit with ZERO per-pose Polygon builds. This is a
+    # byte-identical conservative lower-bound filter (same logic as the per-pose AABB prefilter
+    # below and collisions._aabbs_separated_beyond_clearance), so it only ever fires when the
+    # full loop's result is exactly 0.0 — it can never mask a real intrusion.
+    if not obstacles.world_parts:
+        return 0.0  # no parked parts → no leak possible (the empty loop also returns 0.0)
+    if swept:
+        r = _footprint_radius(body)
+        env_xmin = min(p.x_m for p in swept) - r
+        env_xmax = max(p.x_m for p in swept) + r
+        env_ymin = min(p.y_m for p in swept) - r
+        env_ymax = max(p.y_m for p in swept) + r
+        if all(
+            env_xmin - op_xmax > 0.0
+            or op_xmin - env_xmax > 0.0
+            or env_ymin - op_ymax > 0.0
+            or op_ymin - env_ymax > 0.0
+            for op_xmin, op_ymin, op_xmax, op_ymax in obstacles.world_part_aabbs
+        ):
+            return 0.0
+
     worst = 0.0
     for pose in swept:
         if _motion_clear(body, pose, obstacles, hangar):
