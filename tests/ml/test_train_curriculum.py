@@ -388,7 +388,7 @@ def test_train_curriculum_weights_default_neutral():
 def test_collect_rollout_vec_fills_buffer_and_stats():
     import torch
 
-    from ml.encoding import EncoderConfig
+    from ml.encoding import EncoderConfig, static_block
     from ml.policy import HangarFitPolicy
     from ml.train import build_trivial_env, collect_rollout_vec
     from ml.vector_env import SyncVectorEnv, _EnvWorker
@@ -397,7 +397,9 @@ def test_collect_rollout_vec_fills_buffer_and_stats():
     enc = EncoderConfig()
     vec = SyncVectorEnv([_EnvWorker(build_trivial_env(), enc, None) for _ in range(2)])
     policy = HangarFitPolicy()
-    buf, stats = collect_rollout_vec(vec, policy, enc, rollout_len=8)
+    # #752: the rung's cached static block is re-prepended to the trimmed worker obs.
+    sb = static_block(build_trivial_env().hangar, enc)
+    buf, stats = collect_rollout_vec(vec, policy, enc, rollout_len=8, static_block=sb)
     vec.close()
     assert len(buf) == 8 and buf.num_envs == 2
     assert len(buf.last_value) == 2

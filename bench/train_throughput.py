@@ -85,7 +85,7 @@ def run_throughput(
 
     import torch
 
-    from ml.encoding import EncoderConfig
+    from ml.encoding import EncoderConfig, static_block
     from ml.policy import HangarFitPolicy
     from ml.ppo import PPOConfig, ppo_update
     from ml.train import build_trivial_env, collect_rollout_vec
@@ -97,6 +97,9 @@ def run_throughput(
     # benchmark measures throughput, not learning, so a fixed env set is exactly what we want).
     workers = [_EnvWorker(build_trivial_env(seed), enc, None) for _ in range(n_envs)]
     vec_env = SyncVectorEnv(workers)
+    # #752: the workers ship only the dynamic raster channels (uint8); re-prepend the trivial
+    # stage's cached static block (same hangar+config for every worker) in to_batch.
+    rung_static_block = static_block(build_trivial_env(seed).hangar, enc)
     policy = HangarFitPolicy(d_model=d_model, n_layers=n_layers, n_heads=n_heads)
     cfg = PPOConfig(minibatch_size=min(PPOConfig().minibatch_size, rollout_len * n_envs))
     optimizer = torch.optim.Adam(policy.parameters(), lr=cfg.lr)
@@ -106,7 +109,9 @@ def run_throughput(
     for it in range(warmup_iters + iterations):
         timed = it >= warmup_iters
         t0 = time.perf_counter()
-        buf, _ = collect_rollout_vec(vec_env, policy, enc, rollout_len)
+        buf, _ = collect_rollout_vec(
+            vec_env, policy, enc, rollout_len, static_block=rung_static_block
+        )
         t1 = time.perf_counter()
         ppo_update(policy, optimizer, buf, cfg)
         t2 = time.perf_counter()
