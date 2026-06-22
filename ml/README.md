@@ -407,8 +407,9 @@ codes into a single pass/fail verdict — **any failed *or crashed* child → ru
 
 ```bash
 # Two-seed trio-box gate, both cells concurrent (cap 2). The args after `--` are the
-# trio-box recipe above, MINUS --seed/--metrics-out/--checkpoint-out (the sweep injects a
-# distinct one per cell); --load is shared (each seed resumes the same pair-box checkpoint).
+# trio-box recipe above, MINUS --seed/--metrics-out/--checkpoint-out/--save (the sweep
+# strips and injects a distinct one per cell, in both the `--flag value` and `--flag=value`
+# spellings); --load is shared (each seed resumes the same pair-box checkpoint).
 python -u -m ml.sweep --seeds 0,1 --out-dir sweep-trio --tag trio --max-concurrency 2 -- \
   --schedule curriculum --device cuda --n-envs 16 --rollout-len 512 \
   --max-iters-per-stage 300 --promotion-metric valid_placed --promotion-threshold 0.9 \
@@ -423,6 +424,10 @@ python -m ml.gate sweep-trio/metrics-trio-seed0.jsonl --rung trio-box
 python -m ml.gate sweep-trio/metrics-trio-seed1.jsonl --rung trio-box
 ```
 
+By default each cell also gets a distinct per-seed `--checkpoint-out` (a crash-survivable resume
+checkpoint); pass **`--no-checkpoint-out`** to skip it, or **`--save`** to additionally hand each
+cell a distinct per-seed `--save` state_dict path.
+
 **Determinism:** byte-identical (no flag) — each child is bit-identical to running it alone, so
 co-locating cells on one GPU adds nothing beyond `--device cuda`.
 
@@ -431,7 +436,8 @@ bursty run, so K aligned rollout bursts oversubscribe. `--max-concurrency` (defa
 **RAM-bound, not core-bound**: ~10 GB/run → **K=3 risks OOM on a 31 GB box**. Disjoint core
 blocks + per-child thread caps (`OMP_NUM_THREADS`, `taskset`, `sched_setaffinity`) are an operator
 concern set in the launching env; the orchestrator inherits the env into each child unchanged
-(pairs with #747's worker thread-cap so aligned bursts don't oversubscribe the GEOS GIL).
+(pairs with #747's per-worker BLAS/OMP thread cap so aligned rollout bursts don't oversubscribe
+cores).
 
 ## Design
 See `docs/superpowers/specs/2026-06-12-learned-backend-cold-joint-rl-env-design.md`

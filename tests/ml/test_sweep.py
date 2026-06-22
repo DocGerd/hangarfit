@@ -8,9 +8,12 @@ no real multi-minute training (and no torch) is ever spawned.
 
 from __future__ import annotations
 
+import dataclasses
 import threading
 import time
 from collections.abc import Sequence
+
+import pytest
 
 from ml.sweep import (
     CellResult,
@@ -64,6 +67,27 @@ def test_build_train_argv_does_not_duplicate_a_base_seed():
     assert argv.count("--seed") == 1
     assert argv[argv.index("--seed") + 1] == "7"
     assert "--rollout-len" in argv
+
+
+def test_build_train_argv_strips_argparse_equals_form_of_cell_owned_flags():
+    # argparse also accepts --flag=value; that inline form must be stripped too, or a base
+    # `--seed=0` survives next to the cell's `--seed 7` (last-wins is luck, not contract).
+    cell = CellSpec(seed=7, metrics_out="m7.jsonl", checkpoint_out="ck7.pt")
+    argv = build_train_argv(
+        cell,
+        ["--seed=0", "--metrics-out=base.jsonl", "--checkpoint-out=base.pt", "--rollout-len=512"],
+    )
+    # No surviving equals-form of a cell-owned flag.
+    assert not any(tok.startswith("--seed=") for tok in argv)
+    assert not any(tok.startswith("--metrics-out=") for tok in argv)
+    assert not any(tok.startswith("--checkpoint-out=") for tok in argv)
+    # The cell's values are the only ones present, exactly once each.
+    assert argv.count("--seed") == 1
+    assert argv[argv.index("--seed") + 1] == "7"
+    assert argv[argv.index("--metrics-out") + 1] == "m7.jsonl"
+    assert argv[argv.index("--checkpoint-out") + 1] == "ck7.pt"
+    # A non-cell-owned equals-form flag is left untouched.
+    assert "--rollout-len=512" in argv
 
 
 def test_cells_for_seeds_maps_one_cell_per_seed_with_distinct_paths(tmp_path):
@@ -203,6 +227,16 @@ def test_main_returns_nonzero_when_any_cell_fails(capsys):
     assert "FAIL" in out.upper()
 
 
+def test_main_rejects_duplicate_seeds_loudly(capsys):
+    # Duplicate seeds would build two cells with the SAME metrics/checkpoint/save paths,
+    # so concurrent children race-corrupt the shared gate input — reject it loudly.
+    with pytest.raises(ValueError, match="duplicate"):
+        main(
+            ["--seeds", "0,1,1", "--out-dir", "/tmp/sweep-x", "--tag", "t"],
+            run_cell=_fake_runner({0: 0, 1: 0}),
+        )
+
+
 def test_main_parses_seed_list_into_one_cell_each(capsys):
     record: list[int] = []
     code = main(
@@ -232,8 +266,5 @@ def test_main_forwards_extra_train_args_after_separator():
 def test_cell_result_is_immutable():
     r = CellResult(seed=0, exit_code=0)
     assert r.passed is True
-    try:
+    with pytest.raises(dataclasses.FrozenInstanceError):
         r.exit_code = 1  # type: ignore[misc]
-    except (AttributeError, Exception):
-        return
-    raise AssertionError("CellResult should be frozen")

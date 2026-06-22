@@ -144,17 +144,22 @@ def build_train_argv(cell: CellSpec, base_argv: Sequence[str]) -> list[str]:
 
 
 def _strip_flags(argv: Sequence[str], flags: set[str]) -> list[str]:
-    """Drop each ``--flag VALUE`` pair whose flag is in ``flags`` (these are
-    cell-owned). Assumes each is a value-taking option (matches the four cell-owned
-    flags); leaves all other tokens untouched."""
+    """Drop each cell-owned flag (and its value) whose flag name is in ``flags``, in
+    BOTH argparse spellings: the space-separated ``--flag VALUE`` pair and the inline
+    ``--flag=VALUE`` form. Assumes each is a value-taking option (matches the four
+    cell-owned flags); leaves all other tokens untouched."""
     out: list[str] = []
     skip_next = False
     for tok in argv:
         if skip_next:
             skip_next = False  # this token is a stripped flag's value — drop it
             continue
-        if tok in flags:
-            skip_next = True  # also drop its value
+        # tok.split("=", 1)[0] is the flag name for both `--seed 0` and `--seed=0`.
+        name = tok.split("=", 1)[0]
+        if name in flags:
+            # The inline `--flag=value` carries its own value; the bare `--flag` does not,
+            # so only the bare form consumes the next token.
+            skip_next = "=" not in tok
             continue
         out.append(tok)
     return out
@@ -168,6 +173,9 @@ def _default_run_cell(cell: CellSpec, argv: Sequence[str]) -> int:
     cmd = [sys.executable, *argv]
     sys.stderr.write(f"[sweep] seed {cell.seed}: launching {' '.join(cmd)}\n")
     sys.stderr.flush()
+    # No timeout= is deliberate: a hung trainer should be VISIBLY stuck (operator-killable),
+    # not silently SIGKILL'd mid-rung into a half-written metrics file that the gate then
+    # misreads as a clean negative.
     completed = subprocess.run(cmd, check=False)  # noqa: S603 — argv is built, not shell
     sys.stderr.write(f"[sweep] seed {cell.seed}: exited {completed.returncode}\n")
     sys.stderr.flush()
@@ -230,10 +238,16 @@ def _summary(result: SweepResult) -> str:
 
 
 def _parse_seeds(spec: str) -> list[int]:
-    """Parse a comma-separated seed list (e.g. ``0,1,3``) into ints, preserving order."""
+    """Parse a comma-separated seed list (e.g. ``0,1,3``) into ints, preserving order.
+
+    Rejects **duplicate** seeds loudly: two cells with the same seed would share the same
+    per-seed metrics/checkpoint/save paths, so concurrent children would race-corrupt the
+    shared gate input — silently producing one usable cell instead of the requested K."""
     seeds = [int(tok) for tok in spec.split(",") if tok.strip()]
     if not seeds:
         raise ValueError(f"--seeds parsed to no seeds: {spec!r}")
+    if len(set(seeds)) != len(seeds):
+        raise ValueError(f"--seeds has duplicates: {spec!r}")
     return seeds
 
 
