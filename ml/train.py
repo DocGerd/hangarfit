@@ -13,6 +13,7 @@ import copy
 import json
 import os
 import sys
+import traceback
 from collections.abc import Callable, Sequence
 from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import replace
@@ -589,6 +590,12 @@ def train_curriculum(
                                 buf_vec, ep_stats = pending.result()
                                 pending = None
                             history.record(stage.name, it, ep_stats)
+                            # Evaluate the stop gate BEFORE launching the next rollout (and
+                            # before this update) so a stop suppresses the otherwise-wasted
+                            # speculative rollout. Equivalent to the sequential branch's
+                            # post-update gate: the decision reads only this rollout's
+                            # ep_stats + promo_history, never this iteration's ppo_update —
+                            # keep that true if _rung_stop_reason ever grows new inputs.
                             reason = _rung_stop_reason(promo_history, ep_stats, pol, auto_budget)
                             if reason is None and it < ceiling - 1:
                                 snapshot = _clone_policy(policy)
@@ -611,8 +618,21 @@ def train_curriculum(
                         else:
                             history.note_promotion(stage.name, ceiling - 1, by="cap")
                     finally:
-                        # pending is always None here (never launched on the stop/last
-                        # iteration), so this just releases the worker thread.
+                        # On NORMAL exit (break/cap) pending is None — the next rollout
+                        # is never launched on the stop/last iteration. On an EXCEPTIONAL
+                        # exit (e.g. ppo_update raised mid-iteration) pending may still be
+                        # in flight: drain it so a concurrent rollout failure surfaces on
+                        # stderr instead of being silently dropped by shutdown() (which
+                        # joins the thread but never retrieves the future's result). We
+                        # print rather than re-raise so the primary exception that
+                        # triggered this unwind still propagates. shutdown(wait=True) then
+                        # blocks until the rollout finishes stepping `vec`, so the env is
+                        # never torn down under an in-flight step.
+                        if pending is not None:
+                            try:
+                                pending.result()
+                            except Exception:
+                                traceback.print_exc(file=sys.stderr)
                         executor.shutdown(wait=True)
                 else:
                     for it in range(ceiling):
