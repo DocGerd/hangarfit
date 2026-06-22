@@ -28,6 +28,22 @@ All notable changes to this project are documented here. Format follows [Keep a 
   mixed / tapered-fallback fixtures, a monkeypatch test proving the GEOS seam is genuinely bypassed
   (not a silent fallback), and a `solve --sat-collisions` self-determinism + shapely-validity gate.
 
+- **Learned backend (#755, epic #607 Wave 4 / #761): opt-in `--pipeline-update` — overlap the
+  CPU rollout with the GPU PPO update (one-iteration-stale pipeline).** In the vectorized
+  curriculum path, while `ppo_update` runs on the live policy the workers collect the NEXT rollout
+  under a frozen `deepcopy` snapshot of the **pre-update** policy (exactly one iteration stale),
+  recovering the GPU/worker idle time during the otherwise strictly-sequential rollout↔update
+  phases. The rollout runs on a single background thread; the live policy and the snapshot share no
+  mutable state (separate module objects; the env is touched only by the rollout thread, serialized
+  across iterations by `future.result()`). The next rollout is launched only when another iteration
+  will consume it (never on the stop/final iteration), so no speculative rollout is wasted and there
+  is nothing to drain. **Default off = byte-identical** sequential training (the existing loop is
+  left untouched in the `else` branch). **On is NON-deterministic by design** — the one-iteration
+  staleness AND the background rollout sharing the global torch RNG with the update's minibatch
+  shuffle (a safe, mutex-guarded race) perturb the learning curve — so it is re-gated on a two-seed
+  `ml.gate` valid_placed delta, NOT a byte-diff (that re-gate is a follow-up long-run). No effect
+  with `--schedule trivial` or `--n-envs 1`. Dev/CI-only (`ml/`); no shipped-wheel surface.
+
 - **Learned backend (#754, epic #607 Wave 3 / #760): Lever A — whole-leg swept-envelope AABB
   early-out for the rollout's swept-clearance oracle (byte-identical).** `swept_intrusion_m2`
   (`ml/geometry_oracle.py`) sampled a tow leg at 0.05 m / 1° and ran the per-pose `_motion_clear`
