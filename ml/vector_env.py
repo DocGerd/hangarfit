@@ -201,6 +201,9 @@ class SubprocVectorEnv:
             child.close()  # parent keeps only its end
             self._parents.append(parent)
             self._procs.append(proc)
+        # Parent connections are fixed for the env's lifetime, so map each to its worker
+        # index once here — the as-completed fan-in (#748) reuses it every step/reset.
+        self._index_of = {p: i for i, p in enumerate(self._parents)}
         self._closed = False
         for i, (parent, proc) in enumerate(zip(self._parents, self._procs, strict=True)):
             if not parent.poll(timeout=30.0):
@@ -238,14 +241,13 @@ class SubprocVectorEnv:
         read order changes, pinned by ``test_sync_equals_subproc_byte_identical``). Each
         worker sends exactly one reply per command, so one recv drains a ready connection."""
         results: list[object] = [None] * self._n
-        index_of = {p: i for i, p in enumerate(self._parents)}
         pending = list(self._parents)
         while pending:
             # wait() is typed to also accept sockets/fds, so it returns a wider union; we
             # only ever pass our own Connections, so each ready object is one of them.
             for ready in wait(pending):
                 conn = cast("mp.connection.Connection", ready)
-                i = index_of[conn]
+                i = self._index_of[conn]
                 results[i] = self._recv(conn, i)
                 pending.remove(conn)
         return results
