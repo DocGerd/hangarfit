@@ -81,5 +81,6 @@ viewer/node_modules/
 /ck-*.pt
 /metrics-*.jsonl
 /gate-*.log
+/train-*.log
 /.gate-*.pid
 /.workflow-*.js

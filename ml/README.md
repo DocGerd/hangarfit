@@ -373,7 +373,8 @@ this late-climbing rung; the fixed cap stays the simplest, most reproducible def
 - **Do not `pip install .[train]`** if you have a local CUDA torch — it clobbers your `~/.local`
   build. Run `ml.train` from the repo root (the top-level `ml/` package is not on the editable
   install's path).
-- Gate scratch (`metrics-*.jsonl`, `ck-*.pt`) is gitignored (#717) — don't commit run artifacts.
+- Gate scratch (`metrics-*.jsonl`, `ck-*.pt`, and run logs redirected to `train-*.log`) is
+  gitignored (#717) — don't commit run artifacts.
 
 **Read the result with the gate harness** (torch-free, `ml/gate.py`) instead of eyeballing the
 JSONL — it headlines `valid_placed` (never `valid_rate`) and flags the piling basin. Since #742 the
