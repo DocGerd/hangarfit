@@ -252,3 +252,77 @@ def test_collect_rollout_pose_cache_byte_identical():
         return list(buf.reward), list(buf.done), [(s.fraction_placed, s.valid) for s in stats]
 
     assert _run(True) == _run(False)
+
+
+# ---------------------------------------------------------------------------
+# #753: episode-scoped pose cache. The worker holds ONE pose dict ACROSS the
+# episode (not a fresh per-step scope as #733 did), cleared at each episode
+# boundary so it stays memory-bounded. Each worker owns its own dict, so
+# SyncVectorEnv (N workers, one process, one ContextVar) never cross-leaks.
+# ---------------------------------------------------------------------------
+
+
+def test_envworker_holds_episode_pose_dict_persisting_across_steps():
+    """A pose memoized at reset is still present after a (non-terminal) step — the cache
+    spans the episode, it is not thrown away per call as the #733 per-step scope was."""
+    enc = EncoderConfig()
+    w = _EnvWorker(_trivial_env(), enc, next_request=None, pose_cache=True)
+    w.reset()
+    assert w._pose_dict  # reset populated the episode cache (identity body-dims + active pose)
+    keys_after_reset = set(w._pose_dict)
+    w.step(0, 1)  # ("L", +1) move — does not complete the 1-object env, so no auto-reset
+    assert keys_after_reset & set(w._pose_dict)  # stable reset-era entries survived the step
+
+
+def test_envworker_reset_clears_episode_pose_dict():
+    """A new episode (reset) starts from an empty cache — bounding memory."""
+    enc = EncoderConfig()
+    w = _EnvWorker(_trivial_env(), enc, next_request=None, pose_cache=True)
+    w.reset()
+    w._pose_dict[("__sentinel__", 1.0, 2.0, 3.0)] = []  # a marker from "this episode"
+    w.reset()
+    assert ("__sentinel__", 1.0, 2.0, 3.0) not in w._pose_dict
+
+
+def test_envworker_pose_dict_cleared_at_in_step_episode_boundary():
+    """The in-step auto-reset (PARK completes the trivial env) also clears the cache, so a
+    swept episode's poses don't accumulate across episodes."""
+    enc = EncoderConfig()
+    w = _EnvWorker(_trivial_env(), enc, next_request=None, pose_cache=True)
+    w.reset()
+    w._pose_dict[("__sentinel__", 1.0, 2.0, 3.0)] = []
+    _o, _r, done, _i, _ep = w.step(PARK_INDEX, 0)  # completes -> auto-reset -> new episode
+    assert done
+    assert ("__sentinel__", 1.0, 2.0, 3.0) not in w._pose_dict  # cleared at the boundary
+
+
+def test_sync_workers_have_independent_pose_dicts():
+    """Each worker owns its OWN dict, so SyncVectorEnv stepping N workers in one process over
+    one ContextVar cannot leak one worker's cache into another."""
+    enc = EncoderConfig()
+    w1 = _EnvWorker(_trivial_env(), enc, next_request=None, pose_cache=True)
+    w2 = _EnvWorker(_trivial_env(), enc, next_request=None, pose_cache=True)
+    assert w1._pose_dict is not w2._pose_dict
+
+
+def test_episode_pose_cache_builds_identity_body_dims_once_across_steps(monkeypatch):
+    """#753 perf proof (acceptance b): the identity-pose body-dims rebuild (the encoder token
+    path) happens ONCE per episode, not once per step. With the #733 per-step scope it was
+    rebuilt every call (reset + each step); the episode-scoped cache rebuilds it once and hits
+    thereafter. Counts raw builds for the identity pose key specifically."""
+    import hangarfit.geometry as geo
+
+    orig = geo.aircraft_parts_world
+    id_builds = {"n": 0}
+
+    def _counting(obj, placement):
+        if (placement.x_m, placement.y_m, placement.heading_deg) == (0.0, 0.0, 0.0):
+            id_builds["n"] += 1  # the identity (body-dims) pose
+        return orig(obj, placement)
+
+    monkeypatch.setattr(geo, "aircraft_parts_world", _counting)
+    w = _EnvWorker(_trivial_env(), EncoderConfig(), next_request=None, pose_cache=True)
+    w.reset()
+    w.step(0, 1)  # ("L",+1) — non-terminal
+    w.step(1, 1)  # ("S",+1) — non-terminal
+    assert id_builds["n"] == 1  # built once at reset, cache-hit every subsequent step
