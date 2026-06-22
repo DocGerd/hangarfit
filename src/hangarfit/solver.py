@@ -1616,7 +1616,7 @@ def _spread(
     return placements
 
 
-def _score(layout: Layout, sat_collisions: bool) -> tuple[int, float]:
+def _score(layout: Layout, sat_collisions: bool = False) -> tuple[int, float]:
     """Hierarchical scoring (spec §4.4): ``(conflict_count, total_penetration_m2)``.
 
     Lower wins. Tuples compare lexicographically: a lower conflict count
