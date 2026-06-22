@@ -6,4 +6,4 @@
 # the nightly job can install requirements-dev.txt and requirements-fuzz.txt
 # together without version skew (mirrors requirements-build.in).
 -c requirements-dev.txt
-atheris>=3.0.0
+atheris>=3.1.0
