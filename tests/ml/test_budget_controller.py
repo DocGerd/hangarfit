@@ -100,6 +100,36 @@ def test_stop_on_plateau():
     assert c.should_stop(history) is True
 
 
+def test_no_stop_while_flat_at_floor():
+    # #743 regression: a curve flat at ~0 is a WARMUP (not started), not a converged plateau.
+    # Slope alone cannot tell floor-flat from ceiling-flat (both are ~0). The floor-guard keeps
+    # training while the recent level is below min_level, so --auto-budget no longer truncates a
+    # hard rung's flat pre-climb warmup (the trio-box failure: plateau-stopped at iter 29, ~0.04).
+    c = _ctrl(min_level=0.05)
+    assert c.should_stop([0.0] * 15) is False
+
+
+def test_stop_when_plateaued_above_floor():
+    # flat at a MEANINGFUL level (converged below the competency threshold) still stops — the
+    # floor-guard only blocks floor-flat, not a genuine ceiling-plateau.
+    c = _ctrl(min_level=0.05)
+    assert c.should_stop([0.7] * 15) is True
+
+
+def test_floor_guard_uses_recent_level_not_early_floor():
+    # warm up at the floor, then climb to a flat plateau: the early floor iterations must not
+    # veto the genuine late plateau — the guard reads the RECENT slope_window's level.
+    c = _ctrl(min_level=0.05, min_iters=10, slope_window=5, plateau_patience=2)
+    history = [0.0] * 8 + [0.6] * 7  # floor warmup then flat at 0.6
+    assert c.should_stop(history) is True
+
+
+def test_min_level_zero_disables_floor_guard():
+    # min_level=0 restores pure slope-only stopping — the isolation lever for the wiring test.
+    c = _ctrl(min_level=0.0)
+    assert c.should_stop([0.0] * 15) is True
+
+
 def test_stop_on_decline():
     c = _ctrl()
     history = [1.0 - 0.01 * i for i in range(15)]  # slowly declining
@@ -136,6 +166,8 @@ def test_invalid_config_rejected():
         BudgetController(plateau_patience=0)
     with pytest.raises(ValueError):
         BudgetController(max_iters=0)
+    with pytest.raises(ValueError):
+        BudgetController(min_level=-0.1)  # the floor must be a non-negative metric level
 
 
 # ---------------------------------------------------------------------------
@@ -189,13 +221,15 @@ def test_auto_budget_ceiling_replaces_fixed_cap():
 
 def test_auto_budget_stops_early_on_plateau():
     """A controller with a huge eps treats every slope as non-positive, so it plateau-stops
-    as soon as it has min_iters points — well before the high fixed cap."""
+    as soon as it has min_iters points — well before the high fixed cap. min_level=0 isolates
+    the slope-plateau wiring from the #743 floor-guard (separately unit-tested above); without
+    it the floor-guard would keep an early flat-at-floor trivial rung training past min_iters."""
     pytest.importorskip("torch")
     from ml.train import train_curriculum
 
     sched = _one_stage_sched(threshold=2.0, max_iters=100)
     budget = BudgetController(
-        min_iters=2, slope_window=2, plateau_patience=1, max_iters=100, eps=1e9
+        min_iters=2, slope_window=2, plateau_patience=1, max_iters=100, eps=1e9, min_level=0.0
     )
     hist = train_curriculum(
         seed=0, schedule=sched, rollout_len=8, policy_kwargs=_SMALL_NET, auto_budget=budget

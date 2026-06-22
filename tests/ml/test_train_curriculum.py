@@ -93,6 +93,84 @@ def test_train_curriculum_promotes_by_cap_when_unreachable():
     assert all(p[2] == "cap" for p in h.promotions)
 
 
+def test_train_curriculum_competency_reads_honest_per_iteration_mean_not_episode_tail(monkeypatch):
+    # #742 regression: the competency gate must threshold the HONEST per-iteration mean over the
+    # WHOLE rollout, not the last-N-episode tail. Feed a rollout whose full-iteration mean is 0.2
+    # (below threshold 0.9) but whose trailing 20 episodes spike to 1.0; the rung must CAP, never
+    # promote by competency. The pre-#742 last-20-episode deque would have read the 1.0 tail and
+    # false-promoted — this test fails loudly if anyone reintroduces a per-episode window.
+    import ml.train as train_mod
+    from ml.ppo import RolloutBuffer
+
+    ep_stats = [EpisodeStat(0.0, True, 0.0)] * 80 + [EpisodeStat(1.0, True, 0.0)] * 20  # mean 0.2
+
+    def biased_rollout(env, policy, enc, rollout_len, *, sample_request=None):
+        return RolloutBuffer(), list(ep_stats)
+
+    monkeypatch.setattr(train_mod, "collect_rollout", biased_rollout)
+    monkeypatch.setattr(
+        train_mod,
+        "ppo_update",
+        lambda *a, **k: {"policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0, "loss": 0.0},
+    )
+
+    sched = CurriculumSchedule.default()
+    sched = replace(
+        sched,
+        stages=(sched.stages[0],),  # one rung keeps the run tiny
+        policy=PromotionPolicy(metric="fraction_placed", window=1, threshold=0.9, max_iters=2),
+    )
+    h = train_curriculum(
+        seed=0,
+        schedule=sched,
+        rollout_len=8,
+        policy_kwargs={"d_model": 32, "n_layers": 1, "n_heads": 2},
+    )
+    _name, _it, by = h.promotions[-1]
+    assert by == "cap"  # honest mean 0.2 < 0.9 -> never competency, despite the 1.0 episode tail
+
+
+@pytest.mark.parametrize("min_level,expected_by", [(0.0, "budget-plateau"), (0.05, "cap")])
+def test_auto_budget_floor_guard_blocks_premature_stop_in_loop(monkeypatch, min_level, expected_by):
+    # #743 wiring: a rung whose honest valid_placed is flat AT THE FLOOR (every rollout places
+    # but INVALIDLY -> valid_placed 0.0) must NOT budget-plateau early. With the floor-guard on
+    # (min_level=0.05) the rung trains to its cap; with it off (min_level=0.0) the same flat-at-0
+    # series early-stops — the contrast proves the loop routes the honest series through the guard.
+    import ml.train as train_mod
+    from ml.curriculum import BudgetController
+    from ml.ppo import RolloutBuffer
+
+    flat_floor = [EpisodeStat(1.0, False, 0.0)] * 30  # placed but invalid -> valid_placed = 0.0
+
+    def floor_rollout(env, policy, enc, rollout_len, *, sample_request=None):
+        return RolloutBuffer(), list(flat_floor)
+
+    monkeypatch.setattr(train_mod, "collect_rollout", floor_rollout)
+    monkeypatch.setattr(
+        train_mod,
+        "ppo_update",
+        lambda *a, **k: {"policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0, "loss": 0.0},
+    )
+
+    sched = CurriculumSchedule.default()
+    sched = replace(
+        sched,
+        stages=(sched.stages[0],),
+        policy=PromotionPolicy(metric="valid_placed", window=1, threshold=2.0, max_iters=5),
+    )
+    budget = BudgetController(
+        min_iters=2, slope_window=2, plateau_patience=1, max_iters=5, eps=1e9, min_level=min_level
+    )
+    h = train_curriculum(
+        seed=0,
+        schedule=sched,
+        rollout_len=8,
+        policy_kwargs={"d_model": 32, "n_layers": 1, "n_heads": 2},
+        auto_budget=budget,
+    )
+    assert h.promotions[-1][2] == expected_by
+
+
 def test_argparser_schedule_defaults_to_curriculum():
     parser = build_argparser()
     assert parser.parse_args([]).schedule == "curriculum"
@@ -312,6 +390,69 @@ def test_main_no_override_flags_keeps_default_policy(monkeypatch):
     monkeypatch.setattr(train_mod, "train_curriculum", fake)
     train_mod.main(["--schedule", "curriculum"])
     assert captured["schedule"].policy == PromotionPolicy()
+
+
+def test_argparser_promotion_window_and_auto_budget_floor_default_none():
+    a = build_argparser().parse_args([])
+    assert a.promotion_window is None
+    assert a.auto_budget_min_iters is None
+    assert a.auto_budget_min_level is None
+
+
+def test_main_threads_promotion_window_into_policy(monkeypatch):
+    # #742: --promotion-window overrides PromotionPolicy.window (recent ITERATIONS to average).
+    import ml.train as train_mod
+    from ml.curriculum import CurriculumHistory
+
+    captured: dict = {}
+
+    def fake(*, schedule, **kw):
+        captured["schedule"] = schedule
+        return CurriculumHistory()
+
+    monkeypatch.setattr(train_mod, "train_curriculum", fake)
+    train_mod.main(["--schedule", "curriculum", "--promotion-window", "5"])
+    assert captured["schedule"].policy.window == 5
+
+
+def test_main_threads_auto_budget_floor_knobs(monkeypatch):
+    # #743: --auto-budget-min-iters / --auto-budget-min-level build the BudgetController.
+    import ml.train as train_mod
+    from ml.curriculum import CurriculumHistory
+
+    captured: dict = {}
+
+    def fake(*, auto_budget, **kw):
+        captured["auto_budget"] = auto_budget
+        return CurriculumHistory()
+
+    monkeypatch.setattr(train_mod, "train_curriculum", fake)
+    train_mod.main(
+        [
+            "--schedule",
+            "curriculum",
+            "--auto-budget",
+            "--auto-budget-min-iters",
+            "50",
+            "--auto-budget-min-level",
+            "0.1",
+        ]
+    )
+    b = captured["auto_budget"]
+    assert b is not None
+    assert b.min_iters == 50
+    assert b.min_level == pytest.approx(0.1)
+
+
+def test_main_auto_budget_floor_knobs_require_auto_budget():
+    # the floor knobs are inert without --auto-budget: fail LOUD (like --auto-budget-max-iters),
+    # never silently drop a typed numeric flag.
+    import ml.train as train_mod
+
+    with pytest.raises(SystemExit):
+        train_mod.main(["--schedule", "curriculum", "--auto-budget-min-iters", "50"])
+    with pytest.raises(SystemExit):
+        train_mod.main(["--schedule", "curriculum", "--auto-budget-min-level", "0.1"])
 
 
 def test_main_writes_metrics_jsonl(monkeypatch, tmp_path):

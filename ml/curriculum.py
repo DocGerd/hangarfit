@@ -32,7 +32,10 @@ class PromotionPolicy:
     # the set AND validly. "fraction_placed" ignores validity (can promote on overlapping
     # parks); "valid_rate" ignores how much got placed. See should_promote.
     metric: Literal["fraction_placed", "valid_rate", "valid_placed"] = "valid_placed"
-    window: int = 20  # most-recent completed episodes to average
+    # most-recent ITERATIONS to average (each one rollout's honest full-rollout metric mean).
+    # NOT episodes — the #742 fix; see should_promote. A small window suffices because the
+    # per-iteration mean is already low-variance (it averages a whole rollout's episodes).
+    window: int = 3
     # advance when mean(metric over window) >= threshold. The metric is a rate in
     # [0, 1], so threshold > 1 means "never promote by competency" (always cap) and
     # threshold <= 0 means "promote as soon as the window fills" — both are valid levers.
@@ -62,12 +65,22 @@ def window_score(window: Sequence[EpisodeStat], metric: str) -> float:
     return sum(s.fraction_placed for s in window) / len(window)  # fraction_placed
 
 
-def should_promote(window: Sequence[EpisodeStat], policy: PromotionPolicy) -> bool:
-    """Pure gate: True when the last ``policy.window`` episodes meet the threshold."""
-    if len(window) < policy.window:
+def should_promote(history: Sequence[float], policy: PromotionPolicy) -> bool:
+    """Pure competency gate over the per-ITERATION honest-metric series. True when the mean of
+    the last ``policy.window`` iteration scores meets ``policy.threshold``.
+
+    Each element of ``history`` is one PPO iteration's full-rollout metric mean —
+    ``window_score(ep_stats, policy.metric)`` over the WHOLE rollout, the same honest
+    ``valid_placed`` signal the ``--metrics-out`` JSONL and ``ml.gate`` report. This is the
+    #742 fix: the gate previously thresholded the last ``policy.window`` *episodes* of a
+    ``deque(maxlen=window)`` — i.e. only the tail of the latest rollout (~20 of ~250 episodes),
+    a far noisier estimator that false-positive-promoted on a lucky autocorrelated streak.
+    Reading the per-iteration mean over a window of iterations removes that bias. ``policy.metric``
+    is applied upstream when the series is built, so this gate consults only window + threshold."""
+    if len(history) < policy.window:
         return False
-    recent = list(window)[-policy.window :]
-    return window_score(recent, policy.metric) >= policy.threshold
+    recent = list(history)[-policy.window :]
+    return sum(recent) / len(recent) >= policy.threshold
 
 
 def theil_sen_slope(values: Sequence[float]) -> float:
@@ -90,7 +103,9 @@ class BudgetController:
 
     ``should_stop`` is True once the rung has PLATEAUED: the trend over each of the last
     ``plateau_patience`` trailing ``slope_window``-sized windows is non-positive
-    (slope <= ``eps``). The caller separately enforces the competency gate
+    (slope <= ``eps``) AND the recent level has cleared ``min_level`` (the #743 floor-guard —
+    a curve flat at the FLOOR is a warmup, not a converged plateau, and slope alone cannot tell
+    the two apart since both are ~0). The caller separately enforces the competency gate
     (``should_promote``) and the hard ceiling (the loop bound ``max_iters``). Wired into
     train.py behind ``--auto-budget`` (default off), so the fixed-``max_iters`` path stays
     byte-identical (4c-ii default-neutrality)."""
@@ -100,6 +115,11 @@ class BudgetController:
     plateau_patience: int = 4  # consecutive non-positive-slope windows => plateau
     max_iters: int = 1000  # hard ceiling (the loop bound when auto-budget is on)
     eps: float = 1e-4  # slope <= eps counts as flat/non-positive
+    # #743 floor-guard: the recent slope_window's mean must clear this before any plateau-stop —
+    # distinguishes flat-at-floor (warmup, not started) from flat-at-ceiling (converged below the
+    # competency threshold). 0.0 disables the guard (pure slope-only stopping). The default is a
+    # small valid_placed level: below it the rung has effectively not begun to learn.
+    min_level: float = 0.05
 
     def __post_init__(self) -> None:
         if self.min_iters < 1:
@@ -112,15 +132,22 @@ class BudgetController:
             )
         if self.max_iters < 1:
             raise ValueError(f"BudgetController.max_iters must be >= 1, got {self.max_iters}")
+        if self.min_level < 0:
+            raise ValueError(f"BudgetController.min_level must be >= 0, got {self.min_level}")
 
     def should_stop(self, history: Sequence[float]) -> bool:
         """True iff the rung has plateaued: every one of the last ``plateau_patience``
-        trailing ``slope_window``-sized windows has slope <= ``eps``. False until there are
+        trailing ``slope_window``-sized windows has slope <= ``eps`` AND the most recent
+        ``slope_window``'s mean is >= ``min_level`` (the floor-guard). False until there are
         enough points (>= ``min_iters``, and enough to form the trailing windows)."""
         n = len(history)
         if n < self.min_iters:
             return False
         if n < self.slope_window + self.plateau_patience - 1:
+            return False
+        # Floor-guard: a flat curve still near the floor is a warmup, not a converged plateau.
+        recent = history[-self.slope_window :]
+        if sum(recent) / len(recent) < self.min_level:
             return False
         for k in range(self.plateau_patience):
             end = n - k
@@ -136,17 +163,21 @@ def with_promotion_overrides(
     metric: Literal["fraction_placed", "valid_rate", "valid_placed"] | None = None,
     threshold: float | None = None,
     max_iters: int | None = None,
+    window: int | None = None,
 ) -> PromotionPolicy:
     """Return ``policy`` with each non-None field overridden — the CLI plumbing for the
     #710 promotion-gate study (``--promotion-metric`` / ``--promotion-threshold`` /
-    ``--max-iters-per-stage``). All-None returns an equal policy, so the CLI stays
-    default-neutral when no override flag is passed."""
+    ``--max-iters-per-stage``) and the #742 ``--promotion-window`` (recent ITERATIONS to
+    average). All-None returns an equal policy, so the CLI stays default-neutral when no
+    override flag is passed."""
     if metric is not None:
         policy = replace(policy, metric=metric)
     if threshold is not None:
         policy = replace(policy, threshold=threshold)
     if max_iters is not None:
         policy = replace(policy, max_iters=max_iters)
+    if window is not None:
+        policy = replace(policy, window=window)
     return policy
 
 
