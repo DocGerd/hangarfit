@@ -6,6 +6,28 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Solver (#754, epic #607 Wave 3 / #760): Lever B — opt-in `solve --sat-collisions` numpy
+  SAT box oracle for the collision narrow-phase.** The pairwise + ground-obstacle narrow-phase
+  (~61% of each box-rung iteration is shapely `Polygon` work, #381) now has an opt-in second path:
+  for **rectangle × rectangle** part pairs, `collisions.check(..., sat_collisions=True)` routes the
+  plan-view verdict and the `total_penetration_m2` area through pure-numpy SAT / GJK-distance /
+  Sutherland–Hodgman kernels (`hangarfit._sat`, productionized from the #735-validated spike)
+  instead of GEOS. A part-kind guard (`WorldPart.is_oriented_rect`, set only on the scalar
+  oriented-rectangle build path) falls back to shapely the instant any tapered/strut **polygon**
+  part appears — so the SAT path only ever runs where the #735 corpus validated it. Plumbed
+  `cli → SearchConfig.sat_collisions → solver._score → collisions.check`, accelerating the
+  descent's hot scorer. **Determinism (ADR-0003):** the flag defaults **off**, and off is
+  byte-identical to the pre-#754 checker. **On is self-byte-identical** (numpy SAT is referentially
+  transparent) but **NOT equal to the off run** — SAT reproduces the GEOS verdict surface to
+  ~5e-15 with **0 conflict-count flips** on a 200k clearance-weighted corpus, so layout *validity*
+  is unchanged, but the float-noise `total_penetration_m2` can shift the spread/tiebreak trajectory.
+  CPU shapely therefore stays the **validity + determinism authority** (#694): the `(0, 0.0)`
+  validity gate is SAT-invariant (count never flips), so the returned layout is always
+  shapely-valid; SAT only makes the inner search cheaper. Most useful on box-rung-style
+  all-rectangle fleets. Validated by a check-level bit-diff harness vs GEOS across all-rect /
+  mixed / tapered-fallback fixtures, a monkeypatch test proving the GEOS seam is genuinely bypassed
+  (not a silent fallback), and a `solve --sat-collisions` self-determinism + shapely-validity gate.
+
 - **Learned backend (#754, epic #607 Wave 3 / #760): Lever A — whole-leg swept-envelope AABB
   early-out for the rollout's swept-clearance oracle (byte-identical).** `swept_intrusion_m2`
   (`ml/geometry_oracle.py`) sampled a tow leg at 0.05 m / 1° and ran the per-pose `_motion_clear`

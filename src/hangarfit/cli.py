@@ -354,6 +354,22 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
     solve.add_argument(
+        "--sat-collisions",
+        action="store_true",
+        dest="sat_collisions",
+        help=(
+            "(#754 Lever B, opt-in) Accelerate the solver's collision narrow-phase "
+            "with a numpy SAT box oracle for rectangle x rectangle part pairs, "
+            "bypassing shapely/GEOS on the dominant pair test. Default off keeps the "
+            "solve byte-identical (ADR-0003). When on, the search is "
+            "self-byte-identical but NOT equal to the off run (SAT reproduces the "
+            "GEOS verdict to ~5e-15 with 0 conflict-count flips, so validity is "
+            "unchanged; the penetration tiebreak shifts at float noise). Shapely "
+            "stays the validity authority (#694); most useful on box-rung-style "
+            "all-rectangle fleets."
+        ),
+    )
+    solve.add_argument(
         "--backend",
         choices=("rrmc", "learned"),
         default="rrmc",
@@ -756,6 +772,7 @@ def cmd_solve(args: argparse.Namespace) -> int:
                 back_bias_weight=_BACK_FILL_DEFAULT_WEIGHT if args.back_fill else 0.0,
                 max_restarts=args.max_restarts,
                 spread_stall_restarts=args.spread_stall_restarts,
+                sat_collisions=args.sat_collisions,
             )
         except ValueError as e:
             # A bad restart-budget knob (e.g. --max-restarts 0 or --spread-stall-restarts

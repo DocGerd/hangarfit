@@ -1899,6 +1899,20 @@ class SearchConfig:
     ``None`` stays reserved as the disable sentinel for
     ``max_restarts``/``spread_stall_restarts`` (see ``max_restarts``)."""
 
+    sat_collisions: bool = False
+    """(#754 Lever B) When True, the solver's hot scorer (``solver._score`` →
+    ``collisions.check``) opts into the numpy SAT box oracle for rectangle×rectangle
+    part pairs — bypassing GEOS on the dominant pair test. Default False keeps every
+    solve byte-identical (ADR-0003). When True the search is **self-byte-identical**
+    (SAT is referentially transparent) but NOT equal to the ``False`` run: SAT
+    reproduces the GEOS verdict to ~5e-15 (0 conflict-count flips on the #735
+    corpus), so layout *validity* is unchanged, but ``total_penetration_m2`` differs
+    at float noise, which can shift the spread/tiebreak trajectory. CPU shapely
+    therefore stays the determinism + validity authority (#694) — the final
+    validity gate is unaffected; only the inner search is accelerated. A plain
+    ``bool`` (not ``bool | None``): ``None`` stays the disable sentinel for
+    ``max_restarts`` / ``spread_stall_restarts`` (see ``max_restarts``)."""
+
     def __post_init__(self) -> None:
         if self.candidates_per_iter < 1:
             raise ValueError(
