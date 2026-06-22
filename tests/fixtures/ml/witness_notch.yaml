@@ -1,0 +1,27 @@
+# Committed seed-anchor witness for the #736 notch trio rung (trio-notch-anchored).
+#
+# A VALID 3-object layout on the REAL Airfield Herrenteich L-shaped hangar
+# (examples/herrenteich/hangar.yaml). The #736 witness-anchored scaffold rung
+# pre-parks a k-prefix (k=1) of this layout at reset and drives the remaining
+# objects in — converting the cold-start "place one, abandon two" coverage
+# minimum (diagnosed on both notch seeds, vp~0.25) into a ramp. Correctness rests
+# on the same property as the box witness (#712): a k-prefix of a valid layout is
+# itself valid, so any anchored subset is a guaranteed-valid partial start with NO
+# runtime solver / search call.
+#
+# The three poses are lifted VERBATIM (own-gear taildraggers, on_carts defaulting
+# False — matching env._on_carts and the box-witness path) from the committed
+# 8-object real-hangar witness examples/herrenteich/layout.yaml, which passes
+# `hangarfit check` (exit 0). Removing the other five objects cannot create a
+# conflict, so this trio is valid; the PRODUCT checker (collisions.check + Caddy
+# egress) confirms it at the rung's 0.05 m clearance — and at the strict 0.10 m
+# herrenteich file clearance for margin — in tests/ml/test_stage_builder.py
+# (test_witness_notch_*). Do not hand-edit the poses without re-running those tests.
+#
+# No `fleet:` / `hangar:` fields on purpose: the env + stage_builder load this with
+# fleet=/hangar= OVERRIDES (the notch fleet + notch hangar at clearance 0.05), and
+# the loader rejects a file that sets those AND takes overrides.
+placements:
+  - {plane: aviat_husky, x_m: 5.60, y_m: 16.40, heading_deg: 90.0}
+  - {plane: cessna_140, x_m: 12.80, y_m: 5.35, heading_deg: 90.0}
+  - {plane: fk9_mkii, x_m: 7.60, y_m: 10.00, heading_deg: 270.0}

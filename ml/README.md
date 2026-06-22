@@ -141,11 +141,12 @@ per-step active-overlap gradient) and, being potential-based shaping, is **polic
 | `--solo-box-rung` | off | Insert an opt-in `solo-box` rung (1 object, **whole fleet**) after `trivial` so single-object competency transfers before the 2-object jump (#714). Curriculum-only. |
 | `--seed-anchor` | off | Insert an opt-in `pair-anchored` rung **before** `pair-box`: one of its 2 objects is pre-parked at a committed-witness pose (`seed_anchor_k=1`) and the agent only drives the other in — scaffolding 2-object joint discovery with a valid 1-object start (#712). Curriculum-only. |
 | `--mixed-anchor` | off | Insert an opt-in `pair-mixed` rung **before** `pair-box`: each episode randomly starts anchored (k=1) or empty (k=0) with probability `anchor_prob=0.5`, drawn from the curriculum's seeded stream. Keeps empty-start episodes in the training mix so the policy does not collapse to the place-nothing pole on the empty-start `pair-box`. Pair with `--seed-anchor` so `pair-mixed` lands between `pair-anchored` and `pair-box` (not required — `--mixed-anchor` alone inserts it directly before `pair-box`). Curriculum-only. (#712 follow-up) |
+| `--anchor-trio-notch` | off | Insert an opt-in `trio-notch-anchored` rung **before** `trio-notch`: 1 of its 3 notch-witness objects is pre-parked at a committed pose (`seed_anchor_k=1`) and the agent drives the other two in — the trio analogue of `--seed-anchor`, on the **real notch hangar**. Targets the diagnosed cold-start *coverage minimum* (the policy validly parks one aircraft then abandons the other two, vp~0.25 on both notch seeds). Curriculum-only. (#736) |
 | `--stop-after-rung NAME` | off | Truncate the ladder after `NAME` (that rung is the last trained; every rung after it is dropped). Applied **after** the graft flags above, so a name they introduce (`pair-mixed`) is valid. The #722 sweep lever: `--stop-after-rung pair-box` lets a resumed cell stop cleanly instead of grinding on into `trio-*`. Unknown rung → loud `ValueError`. Curriculum-only; absent ⇒ byte-identical. |
 | `--promotion-metric` / `--promotion-threshold` / `--promotion-window` | schedule policy (`valid_placed` / `0.9` / `3`) | Competency-gate overrides. A rung promotes when the mean of the last `--promotion-window` **iterations'** honest per-rollout `--promotion-metric` (the same `valid_placed` the `--metrics-out` JSONL and `ml.gate` report) clears `--promotion-threshold`. `--promotion-window` counts **iterations**, not episodes — the #742 fix: the gate previously thresholded only the last ~20 *episodes* of the latest rollout (a `deque(maxlen=window)` tail), a noisy estimator that false-promoted `by competency` on a lucky autocorrelated streak while the honest per-iteration mean was well below threshold. Curriculum-only. |
 | `--auto-budget` (+ `--auto-budget-max-iters N` ⌀1000, `--auto-budget-min-iters N` ⌀30, `--auto-budget-min-level L` ⌀0.05) | off | Slope-aware per-rung budget (#734): replace the fixed `--max-iters-per-stage` cap with a closed loop — a Theil–Sen slope over the **honest per-iteration** promotion-metric series (the same `valid_placed` the gate reads, #742) **extends** the rung while it climbs and **stops early** on a plateau (or the ceiling `N`). The `--auto-budget-min-level` **floor-guard** (#743) refuses to plateau-stop while the recent level is below `L` — a flat-at-floor *warmup* is not convergence, and slope alone cannot tell the two apart (both ~0); `0` disables it. Raise `--auto-budget-min-iters` for a hard rung with a long pre-climb. Distinct from the manual `--stop-after-rung`. Curriculum-only; absent ⇒ the fixed cap, byte-identical. |
 
-`--load`/`--checkpoint-out`/`--metrics-out`/`--promotion-*`/`--solo-box-rung`/`--seed-anchor`/`--mixed-anchor`/`--stop-after-rung`/`--auto-budget`
+`--load`/`--checkpoint-out`/`--metrics-out`/`--promotion-*`/`--solo-box-rung`/`--seed-anchor`/`--mixed-anchor`/`--anchor-trio-notch`/`--stop-after-rung`/`--auto-budget`
 are curriculum-only (fail loud under `--schedule trivial`). The resume checkpoint
 (`ml/checkpoint.py`) is distinct from `--save` (a bare `state_dict` for the ONNX/`ml.eval`
 consumer) and loads with `weights_only=True`.
@@ -395,6 +396,53 @@ little: committing objects invalidly, *not* a win — distrust any apparent prog
 **WIN = `trio-box` mastered on BOTH seeds.** A clean two-seed `place-nothing` is a valid negative
 (the four-lever ladder does *not* generalize to N=3 → pose-scaffold). A `piling` verdict means the
 ladder is unstable at N=3 and needs the economics re-tuned before re-gating.
+
+### Trio-notch-anchored gate recipe (#736 — break the notch cold-start coverage minimum)
+
+The notch trio is the real frontier: on the **real** Herrenteich notch hangar, the empty-start
+`trio-notch` rung stalls at `valid_placed`~0.25 on **both** seeds — not place-nothing, not
+piling, but a **coverage minimum**: the policy validly parks **one** aircraft (`valid_rate`~0.9)
+and abandons the other two, because a 2nd/3rd commitment risks the hard `w_col`/`w_oob` penalty
+(diagnosed from `metrics-notch-s0/s1.jsonl`). `trio-box` itself proves the trio is learnable
+(seed-0 reached 0.93), and `examples/herrenteich/layout.yaml` is a *valid 8-object witness on
+that exact hangar* — so the trio physically fits; the wall is joint multi-body discovery from a
+cold start. `--anchor-trio-notch` inserts a `trio-notch-anchored` rung before `trio-notch`: it
+pre-parks 1 of 3 notch-witness objects (k=1) and the agent drives the other two in, converting
+the cliff into a ramp (the trio analogue of the #712 `--seed-anchor` scaffold that reached 0.94
+on the box).
+
+```bash
+# Two seeds. The #730 trio-box economics, plus --anchor-trio-notch (the new scaffold rung).
+# Stop after the scaffold + its un-anchored successor so the run answers the transfer question
+# without grinding into trio-notch-strict.
+python -u -m ml.train --schedule curriculum --device cuda --n-envs 16 \
+  --rollout-len 512 --auto-budget --auto-budget-max-iters 120 --auto-budget-min-level 0.1 \
+  --promotion-metric valid_placed --promotion-threshold 0.9 \
+  --r-valid-park 30.0 --r-unplaced-penalty 25.0 --dense-slot-potential \
+  --w-col 20.0 --valid-park-grade-scale 4.0 --r-first-valid 15.0 \
+  --entropy-start 0.05 --entropy-end 0.005 --entropy-anneal-iters 40 \
+  --normalize-returns --validity-conditional-terminal \
+  --solo-box-rung --seed-anchor --mixed-anchor --anchor-trio-notch \
+  --stop-after-rung trio-notch \
+  --metrics-out metrics-notch-anchored-s0.jsonl --checkpoint-out ck-notch-anchored-s0.pt --seed 0
+# …then --seed 1 with the s1 file names.
+```
+
+**Pre-registered kill-criteria** (both seeds, honest `valid_placed` gate, window=iterations per
+#742/#743):
+- **WIN:** the `trio-notch-anchored` rung reaches `valid_placed ≥ 0.9` AND the follow-on
+  *un-anchored* `trio-notch` climbs materially above the measured **0.34 ceiling** (target ≥ 0.6)
+  on **both** seeds — i.e. the scaffold *transfers*, it does not just memorize the anchor.
+- **KILL:** by the rung's iteration budget either (a) the anchored rung itself stalls < 0.9, or
+  (b) it masters anchored but un-anchored `trio-notch` stays ≤ ~0.34 on either seed. Either
+  refutes the lever for this rung; fall back to the Section-A representation knobs (aux-heads /
+  critic-pretrain), which target a *different* failure mode (representation/variance, not the
+  discovery cliff). Grade with `python -m ml.gate metrics-notch-anchored-s*.jsonl --rung
+  trio-notch-anchored` (and `--rung trio-notch` for transfer).
+
+The witness is `tests/fixtures/ml/witness_notch.yaml` (a committed valid 3-object subset of the
+real notch layout; every k-prefix is validated by
+`tests/ml/test_stage_builder.py::test_witness_notch_*`).
 
 ### Concurrent sweep runner (#749 — run the two/three-seed gate in one launch)
 
