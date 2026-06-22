@@ -206,6 +206,55 @@ def test_subproc_worker_failure_is_loud():
 
 
 # ---------------------------------------------------------------------------
+# #751: opt-in --vec-start-method (spawn/forkserver/fork). spawn stays the default
+# byte-identity reference; forkserver shares the parent's imported pages (RAM cut).
+# ---------------------------------------------------------------------------
+
+
+def test_subproc_default_start_method_is_spawn():
+    """The default stays `spawn` — the #708/#747/#748 byte-identity reference. The opt-in
+    methods are #751; the floor must not silently change."""
+    with SubprocVectorEnv([_trivial_worker_fn]) as sub:
+        assert sub.start_method == "spawn"
+
+
+def test_subproc_rejects_unknown_start_method():
+    import pytest
+
+    with pytest.raises(ValueError, match=r"start_method"):
+        SubprocVectorEnv([_trivial_worker_fn], start_method="bogus")
+
+
+def test_subproc_forkserver_byte_identical_to_sync():
+    """#751 acceptance: forkserver forks workers from a shared server (cutting per-worker
+    PSS) but MUST stay byte-identical to the spawn/Sync reference — the worker's stage_rng
+    is `worker_index`-keyed, so the start method can't perturb it. A fixed action stream
+    (incl. a PARK -> auto-reset) yields the same reward + done + encoded-obs as Sync."""
+    from ml.action_space import PARK_INDEX
+
+    actions = [(1, 1), (1, 2)]
+    sync = SyncVectorEnv([_trivial_worker_fn(), _trivial_worker_fn()])
+    sync.reset()
+    ss = sync.step(actions)
+    ss2 = sync.step([(PARK_INDEX, 0), (PARK_INDEX, 0)])
+    sync.close()
+
+    with SubprocVectorEnv(
+        [_trivial_worker_fn, _trivial_worker_fn], start_method="forkserver"
+    ) as sub:
+        sub.reset()
+        bs = sub.step(actions)
+        bs2 = sub.step([(PARK_INDEX, 0), (PARK_INDEX, 0)])
+
+    assert bs.rewards == ss.rewards and bs.dones == ss.dones
+    assert bs2.dones == ss2.dones
+    for a, b in zip(ss.obs, bs.obs, strict=True):
+        assert np.array_equal(a.raster, b.raster) and np.array_equal(a.tokens, b.tokens)
+    for a, b in zip(ss2.obs, bs2.obs, strict=True):
+        assert np.array_equal(a.raster, b.raster) and np.array_equal(a.tokens, b.tokens)
+
+
+# ---------------------------------------------------------------------------
 # #747: per-worker BLAS/OMP thread cap (the prerequisite that makes raising
 # --n-envs toward the core count safe — one worker per core, no oversubscription)
 # ---------------------------------------------------------------------------

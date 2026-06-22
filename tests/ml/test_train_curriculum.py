@@ -247,6 +247,17 @@ def test_argparser_n_envs_default_is_one_byte_identity_floor():
     assert build_argparser().parse_args([]).n_envs == 1
 
 
+def test_argparser_vec_start_method_defaults_to_spawn():
+    """#751: the default stays `spawn` (the byte-identity reference); forkserver/fork are
+    opt-in. A bad value is rejected by argparse choices."""
+    parser = build_argparser()
+    assert parser.parse_args([]).vec_start_method == "spawn"
+    assert parser.parse_args(["--vec-start-method", "forkserver"]).vec_start_method == "forkserver"
+    assert parser.parse_args(["--vec-start-method", "fork"]).vec_start_method == "fork"
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--vec-start-method", "bogus"])
+
+
 def test_argparser_n_envs_auto_resolves_to_positive_int(monkeypatch):
     import ml.train as t
 

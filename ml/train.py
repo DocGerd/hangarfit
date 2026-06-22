@@ -363,6 +363,7 @@ def train_curriculum(
     save_onnx: str | None = None,
     n_envs: int = 1,
     vec_backend: Literal["sync", "subproc"] = "subproc",
+    vec_start_method: Literal["spawn", "forkserver", "fork"] = "spawn",
     device: str = "cpu",
     load: str | None = None,
     checkpoint_out: str | None = None,
@@ -507,7 +508,7 @@ def train_curriculum(
             ]
             vec_cm: SyncVectorEnv | SubprocVectorEnv
             if vec_backend == "subproc":
-                vec_cm = SubprocVectorEnv(worker_fns)
+                vec_cm = SubprocVectorEnv(worker_fns, start_method=vec_start_method)
             else:
                 vec_cm = SyncVectorEnv([fn() for fn in worker_fns])
             with vec_cm as vec:
@@ -918,6 +919,14 @@ def build_argparser() -> argparse.ArgumentParser:
         help="vectorized env backend: sync (in-process, CI-safe) or subproc (parallel workers)",
     )
     p.add_argument(
+        "--vec-start-method",
+        choices=["spawn", "forkserver", "fork"],
+        default="spawn",
+        help="subproc worker start method (#751): spawn (default, byte-identical) or "
+        "forkserver (shares the parent's imported pages, cutting per-worker RAM). fork is "
+        "an explicit escape hatch — unsafe if the parent holds a CUDA context.",
+    )
+    p.add_argument(
         "--device",
         choices=["cpu", "cuda"],
         default="cpu",
@@ -1060,6 +1069,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             save_onnx=args.save_onnx,
             n_envs=args.n_envs,
             vec_backend=args.vec_backend,
+            vec_start_method=args.vec_start_method,
             device=args.device,
             load=args.load,
             checkpoint_out=args.checkpoint_out,
