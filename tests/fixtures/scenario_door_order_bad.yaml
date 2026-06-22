@@ -1,0 +1,5 @@
+# #614 — door_order references an id not in the fleet: must be rejected.
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
+fleet_in: [aviat_husky, ctsl]
+door_order: [ctsl, ghost]
