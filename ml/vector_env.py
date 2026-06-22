@@ -13,7 +13,7 @@ import contextlib
 import multiprocessing as mp
 import os
 import sys
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from typing import Any, NamedTuple, cast
 
 from hangarfit.geometry import pose_cache_scope
@@ -149,7 +149,7 @@ _WORKER_THREAD_ENV_VARS = (
 
 
 @contextlib.contextmanager
-def worker_thread_cap_env() -> Any:
+def worker_thread_cap_env() -> Iterator[None]:
     """Set the single-thread BLAS/OMP/MKL caps in ``os.environ`` for the duration of the
     block, restoring prior values on exit (#747).
 
