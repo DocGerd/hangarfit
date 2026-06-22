@@ -177,6 +177,100 @@ def test_argparser_schedule_defaults_to_curriculum():
     assert parser.parse_args(["--schedule", "trivial"]).schedule == "trivial"
 
 
+# ---------------------------------------------------------------------------
+# #747: --n-envs auto resolver (sched_getaffinity- and MemAvailable-bounded)
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_n_envs_passes_through_explicit_int():
+    from ml.train import resolve_n_envs
+
+    assert resolve_n_envs("1") == 1
+    assert resolve_n_envs("8") == 8
+
+
+@pytest.mark.parametrize("bad", ["0", "-3", "foo", "2.5", "", "auto2"])
+def test_resolve_n_envs_rejects_non_positive_and_garbage(bad):
+    import argparse
+
+    from ml.train import resolve_n_envs
+
+    with pytest.raises(argparse.ArgumentTypeError):
+        resolve_n_envs(bad)
+
+
+def test_resolve_n_envs_auto_is_core_bounded_when_ram_is_ample(monkeypatch):
+    import ml.train as t
+
+    monkeypatch.setattr(t, "_available_cores", lambda: 32)
+    monkeypatch.setattr(t, "_available_gib", lambda: 1000.0)  # RAM never binds
+    assert t.resolve_n_envs("auto") == 32 - t._AUTO_RESERVED_CORES
+
+
+def test_resolve_n_envs_auto_is_ram_bounded_when_memory_is_tight(monkeypatch):
+    import ml.train as t
+
+    monkeypatch.setattr(t, "_available_cores", lambda: 32)
+    monkeypatch.setattr(t, "_available_gib", lambda: 12.0)  # tight RAM binds below cores
+    n = t.resolve_n_envs("auto")
+    expected = max(1, int((12.0 - t._AUTO_RAM_HEADROOM_GIB) / t._AUTO_PER_WORKER_GIB))
+    assert n == expected
+    assert n < 32 - t._AUTO_RESERVED_CORES  # genuinely RAM-bound, not core-bound
+
+
+def test_resolve_n_envs_auto_floors_at_one(monkeypatch):
+    import ml.train as t
+
+    monkeypatch.setattr(t, "_available_cores", lambda: 1)  # cores - reserved <= 0
+    monkeypatch.setattr(t, "_available_gib", lambda: 0.1)
+    assert t.resolve_n_envs("auto") == 1
+
+
+def test_resolve_n_envs_auto_falls_back_to_cores_when_meminfo_missing(monkeypatch):
+    import ml.train as t
+
+    monkeypatch.setattr(t, "_available_cores", lambda: 8)
+    monkeypatch.setattr(t, "_available_gib", lambda: None)  # /proc/meminfo unreadable
+    assert t.resolve_n_envs("auto") == 8 - t._AUTO_RESERVED_CORES
+
+
+def test_available_cores_prefers_affinity_over_cpu_count(monkeypatch):
+    """sched_getaffinity respects cgroup/taskset pinning; os.cpu_count overcounts on
+    WSL2/containers. The resolver must use affinity when available."""
+    import ml.train as t
+
+    monkeypatch.setattr(t.os, "sched_getaffinity", lambda _pid: {0, 1, 2, 3}, raising=False)
+    assert t._available_cores() == 4
+
+
+def test_argparser_n_envs_default_is_one_byte_identity_floor():
+    assert build_argparser().parse_args([]).n_envs == 1
+
+
+def test_argparser_n_envs_auto_resolves_to_positive_int(monkeypatch):
+    import ml.train as t
+
+    monkeypatch.setattr(t, "_available_cores", lambda: 8)
+    monkeypatch.setattr(t, "_available_gib", lambda: 1000.0)
+    ns = build_argparser().parse_args(["--n-envs", "auto"])
+    assert isinstance(ns.n_envs, int) and ns.n_envs == 8 - t._AUTO_RESERVED_CORES
+
+
+def test_argparser_n_envs_rejects_garbage_with_clean_error():
+    parser = build_argparser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--n-envs", "nope"])
+
+
+def test_main_rejects_n_envs_above_one_on_trivial_schedule():
+    """--n-envs > 1 (or auto) is a curriculum-only knob; the trivial path is single-env.
+    A misdirected value must fail LOUD, not silently run serial."""
+    from ml.train import main
+
+    with pytest.raises(SystemExit):
+        main(["--schedule", "trivial", "--n-envs", "4", "--iterations", "1", "--rollout-len", "4"])
+
+
 def test_train_curriculum_validates_ladder_eagerly():
     # A rung whose max_objects exceeds the encoder token capacity must fail by name
     # BEFORE any training, not as a deep tensorizer overflow several rungs in.

@@ -205,6 +205,148 @@ def test_subproc_worker_failure_is_loud():
         sub.reset()
 
 
+# ---------------------------------------------------------------------------
+# #747: per-worker BLAS/OMP thread cap (the prerequisite that makes raising
+# --n-envs toward the core count safe — one worker per core, no oversubscription)
+# ---------------------------------------------------------------------------
+
+_THREAD_ENV_VARS = (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+)
+
+
+def test_limit_worker_threads_caps_blas_env_and_torch_pool(monkeypatch):
+    """_limit_worker_threads pins every BLAS/OMP/MKL env var to 1 and (since torch is
+    imported in this process) caps torch's intra-op pool to 1 thread."""
+    import os
+
+    from ml.vector_env import _limit_worker_threads
+
+    for var in _THREAD_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+    prev_torch = torch.get_num_threads()
+    try:
+        _limit_worker_threads()
+        for var in _THREAD_ENV_VARS:
+            assert os.environ[var] == "1", var
+        assert torch.get_num_threads() == 1  # torch is imported here -> capped
+    finally:
+        torch.set_num_threads(prev_torch)
+
+
+def test_worker_loop_limits_threads_before_building_worker(monkeypatch):
+    """The cap runs at worker-loop ENTRY, before the per-worker factory builds the env —
+    so the env's first BLAS-touching numpy/torch op already sees a 1-thread pool. Driven
+    in-process over a real Pipe (no spawn): pre-queue a 'close' so the loop returns."""
+    import multiprocessing as mp
+    import os
+
+    from ml.vector_env import _worker_loop
+
+    for var in _THREAD_ENV_VARS:
+        monkeypatch.delenv(var, raising=False)
+
+    captured: dict[str, object] = {}
+
+    class _Stub:
+        pass
+
+    def fake_fn() -> _Stub:
+        # Captured AT THE MOMENT the worker is built, i.e. after _limit_worker_threads().
+        captured["omp"] = os.environ.get("OMP_NUM_THREADS")
+        captured["torch"] = torch.get_num_threads()
+        return _Stub()
+
+    prev_torch = torch.get_num_threads()
+    parent, child = mp.Pipe()
+    try:
+        parent.send(("close", None))  # queued; the loop recvs it and returns after 'ready'
+        _worker_loop(child, fake_fn)  # type: ignore[arg-type]
+        assert captured["omp"] == "1"
+        assert captured["torch"] == 1
+    finally:
+        torch.set_num_threads(prev_torch)
+        parent.close()
+
+
+def _env_probe_target(remote):
+    """Module-level (picklable under spawn): report the child's inherited thread-cap env."""
+    import os
+
+    remote.send({var: os.environ.get(var) for var in _THREAD_ENV_VARS})
+    remote.close()
+
+
+def test_worker_thread_cap_env_sets_then_restores(monkeypatch):
+    """worker_thread_cap_env pins every cap var to 1 inside the block and restores prior
+    state on exit — a previously-unset var goes back to absent, a set one to its value."""
+    import os
+
+    from ml.vector_env import worker_thread_cap_env
+
+    monkeypatch.delenv("OMP_NUM_THREADS", raising=False)
+    monkeypatch.setenv("OPENBLAS_NUM_THREADS", "7")  # a pre-existing value to restore to
+    with worker_thread_cap_env():
+        assert os.environ["OMP_NUM_THREADS"] == "1"
+        assert os.environ["OPENBLAS_NUM_THREADS"] == "1"
+    assert "OMP_NUM_THREADS" not in os.environ  # restored to absent
+    assert os.environ["OPENBLAS_NUM_THREADS"] == "7"  # restored to prior value
+
+
+def test_spawn_child_inherits_thread_cap_env():
+    """The load-bearing #747 fix: a child spawned INSIDE worker_thread_cap_env inherits the
+    cap at interpreter startup, so its OpenBLAS/MKL read OPENBLAS/MKL_NUM_THREADS=1 when
+    numpy loads (setting it later in the child is too late — measured cpu/wall ~31 vs 1)."""
+    import multiprocessing as mp
+
+    from ml.vector_env import worker_thread_cap_env
+
+    ctx = mp.get_context("spawn")
+    parent, child = ctx.Pipe()
+    with worker_thread_cap_env():
+        proc = ctx.Process(target=_env_probe_target, args=(child,), daemon=True)
+        proc.start()  # env must be set at start() time -> inherited by the child
+    child.close()
+    try:
+        assert parent.poll(timeout=30.0), "spawn child did not report its env"
+        got = parent.recv()
+    finally:
+        proc.join(timeout=5.0)
+        parent.close()
+    assert got["OMP_NUM_THREADS"] == "1"
+    assert got["OPENBLAS_NUM_THREADS"] == "1"
+    assert got["MKL_NUM_THREADS"] == "1"
+
+
+def test_thread_cap_subproc_reward_stream_matches_sync():
+    """#747 byte-identity: the per-worker cap never changes a number. A fixed action
+    stream (incl. a PARK -> auto-reset) yields the same reward + done + encoded-obs
+    sequence whether stepped uncapped in the parent (Sync) or in a thread-capped spawn
+    worker (Subproc). Anchors on the torch-free-worker invariant; this is the empirical
+    proof the issue asks for."""
+    from ml.action_space import PARK_INDEX
+
+    actions_seq = [(1, 0), (0, 1), (1, 2), (PARK_INDEX, 0), (1, 0)]
+
+    sync = SyncVectorEnv([_trivial_worker_fn(), _trivial_worker_fn()])
+    sync.reset()
+    sync_rec = [sync.step([a, a]) for a in actions_seq]
+    sync.close()
+
+    with SubprocVectorEnv([_trivial_worker_fn, _trivial_worker_fn]) as sub:
+        sub.reset()
+        sub_rec = [sub.step([a, a]) for a in actions_seq]
+
+    for ss, bs in zip(sync_rec, sub_rec, strict=True):
+        assert ss.rewards == bs.rewards and ss.dones == bs.dones
+        for a, b in zip(ss.obs, bs.obs, strict=True):
+            assert np.array_equal(a.raster, b.raster)
+            assert np.array_equal(a.tokens, b.tokens)
+
+
 @pytest.mark.slow
 def test_subproc_faster_than_sync_on_multiobject_stage():
     """Subproc parallelizes the per-env geometry; on a multi-object stage it should beat
