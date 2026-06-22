@@ -215,6 +215,55 @@ def test_worker_loop_limits_threads_before_building_worker(monkeypatch):
         parent.close()
 
 
+def _env_probe_target(remote):
+    """Module-level (picklable under spawn): report the child's inherited thread-cap env."""
+    import os
+
+    remote.send({var: os.environ.get(var) for var in _THREAD_ENV_VARS})
+    remote.close()
+
+
+def test_worker_thread_cap_env_sets_then_restores(monkeypatch):
+    """worker_thread_cap_env pins every cap var to 1 inside the block and restores prior
+    state on exit — a previously-unset var goes back to absent, a set one to its value."""
+    import os
+
+    from ml.vector_env import worker_thread_cap_env
+
+    monkeypatch.delenv("OMP_NUM_THREADS", raising=False)
+    monkeypatch.setenv("OPENBLAS_NUM_THREADS", "7")  # a pre-existing value to restore to
+    with worker_thread_cap_env():
+        assert os.environ["OMP_NUM_THREADS"] == "1"
+        assert os.environ["OPENBLAS_NUM_THREADS"] == "1"
+    assert "OMP_NUM_THREADS" not in os.environ  # restored to absent
+    assert os.environ["OPENBLAS_NUM_THREADS"] == "7"  # restored to prior value
+
+
+def test_spawn_child_inherits_thread_cap_env():
+    """The load-bearing #747 fix: a child spawned INSIDE worker_thread_cap_env inherits the
+    cap at interpreter startup, so its OpenBLAS/MKL read OPENBLAS/MKL_NUM_THREADS=1 when
+    numpy loads (setting it later in the child is too late — measured cpu/wall ~31 vs 1)."""
+    import multiprocessing as mp
+
+    from ml.vector_env import worker_thread_cap_env
+
+    ctx = mp.get_context("spawn")
+    parent, child = ctx.Pipe()
+    with worker_thread_cap_env():
+        proc = ctx.Process(target=_env_probe_target, args=(child,), daemon=True)
+        proc.start()  # env must be set at start() time -> inherited by the child
+    child.close()
+    try:
+        assert parent.poll(timeout=30.0), "spawn child did not report its env"
+        got = parent.recv()
+    finally:
+        proc.join(timeout=5.0)
+        parent.close()
+    assert got["OMP_NUM_THREADS"] == "1"
+    assert got["OPENBLAS_NUM_THREADS"] == "1"
+    assert got["MKL_NUM_THREADS"] == "1"
+
+
 def test_thread_cap_subproc_reward_stream_matches_sync():
     """#747 byte-identity: the per-worker cap never changes a number. A fixed action
     stream (incl. a PARK -> auto-reset) yields the same reward + done + encoded-obs

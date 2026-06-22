@@ -600,8 +600,9 @@ def _available_gib() -> float | None:
 
 def resolve_n_envs(value: str) -> int:
     """argparse ``type`` for ``--n-envs``: an explicit positive int passes through; the
-    literal ``auto`` resolves to ``max(1, min(cores - reserved, ram_budget // per_worker))``
-    using :func:`_available_cores` and :func:`_available_gib`. The floor of 1 keeps the
+    literal ``auto`` resolves to
+    ``max(1, min(cores - reserved, (MemAvailable_gib - headroom) // per_worker))`` using
+    :func:`_available_cores` and :func:`_available_gib`. The floor of 1 keeps the
     byte-identity reference (``--n-envs 1``) reachable even on a 1-core / tiny-RAM box.
     Raises :class:`argparse.ArgumentTypeError` (-> a clean parser error) on a non-positive
     or non-integer value."""
@@ -983,7 +984,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             parser.error("--stop-after-rung requires --schedule curriculum")
         if args.auto_budget or args.auto_budget_max_iters is not None:
             parser.error("--auto-budget/--auto-budget-max-iters require --schedule curriculum")
-        if args.n_envs != 1:
+        if args.n_envs > 1:  # resolve_n_envs floors at 1, so >1 is the only over-floor case
             # --n-envs (and 'auto') only feed the vectorized curriculum path; train() is
             # single-env. Fail LOUD so `--n-envs auto --schedule trivial` is not a silent no-op.
             parser.error("--n-envs > 1 (or 'auto') requires --schedule curriculum")

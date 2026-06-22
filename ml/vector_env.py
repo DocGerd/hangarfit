@@ -148,27 +148,56 @@ _WORKER_THREAD_ENV_VARS = (
 )
 
 
-def _limit_worker_threads() -> None:
-    """Pin a spawned vec-env worker to a single BLAS/OMP/MKL thread (#747).
+@contextlib.contextmanager
+def worker_thread_cap_env() -> Any:
+    """Set the single-thread BLAS/OMP/MKL caps in ``os.environ`` for the duration of the
+    block, restoring prior values on exit (#747).
 
-    Raising ``--n-envs`` toward the core count is only safe once each worker is exactly
-    one core: otherwise N workers each spin a cores-wide OpenBLAS/MKL pool and the box
-    oversubscribes (the measured ~5.5/32-core run is one symptom). GEOS/shapely — the
-    ~61% rollout cost — is single-threaded regardless; this cap mainly stops an incidental
-    numpy BLAS call from fanning out across the box.
+    Why the PARENT, not the child: OpenBLAS/MKL fix their thread-pool size when the shared
+    lib is *loaded* — i.e. at ``import numpy`` — and ignore the env var afterward. Under
+    ``spawn`` the child imports numpy/torch during its bootstrap (it unpickles the worker
+    factory, which lives in ``ml.train`` → imports them) BEFORE the worker body runs, so
+    setting the env vars inside the child is *too late*: the pool is already cores-wide
+    (measured cpu/wall ≈ 31 vs 1). Setting them in the parent before ``Process.start()``
+    means each spawn child inherits the capped env at interpreter startup, so its
+    OpenBLAS/MKL read the cap. The parent's own already-loaded BLAS is unaffected (it does
+    not re-read), so the learner keeps its threads; the caps are restored after spawning so
+    no unrelated parent code sees them.
+
+    Raising ``--n-envs`` toward the core count is only safe with this cap: otherwise N
+    workers each spin a cores-wide pool and the box oversubscribes (the measured ~5.5/32
+    duty cycle is the symptom). GEOS/shapely — the dominant rollout cost — is single-
+    threaded regardless; this stops a numpy BLAS call from fanning out across the box.
 
     Byte-identity: workers are TORCH-FREE in their *ops* (no policy forward/backward — see
-    the module docstring), so their step+encode float reductions are numpy/shapely, not
-    multi-threaded BLAS, and a 1-thread cap cannot perturb the reduction order. This is the
-    torch-free-worker invariant the #747 byte-identity rests on — proven empirically by
-    ``test_sync_equals_subproc_byte_identical`` (Sync runs uncapped in the parent; Subproc
-    runs capped here) plus the fixed-action reward-stream diff, not asserted from theory.
+    the module docstring), so their step+encode float reductions are numpy indexing +
+    shapely, never multi-threaded BLAS, and the thread count cannot perturb the reduction
+    order. This is the torch-free-worker invariant the #747 byte-identity rests on — proven
+    empirically by ``test_sync_equals_subproc_byte_identical`` (Sync runs uncapped in the
+    parent; Subproc runs capped) plus the fixed-action reward-stream diff, not from theory.
+    """
+    prev = {var: os.environ.get(var) for var in _WORKER_THREAD_ENV_VARS}
+    os.environ.update({var: "1" for var in _WORKER_THREAD_ENV_VARS})
+    try:
+        yield
+    finally:
+        for var, old in prev.items():
+            if old is None:
+                os.environ.pop(var, None)
+            else:
+                os.environ[var] = old
 
-    The env vars are set at worker-loop entry, before the worker's first BLAS-touching
-    call, so OpenBLAS/MKL lazy-init reads the cap. torch is imported transitively in every
-    real worker (the picklable factory lives in ``ml.train``, which imports torch), so its
-    intra-op pool is capped too; the lookup is guarded so a genuinely torch-free worker is
-    not force-importing torch just to cap it."""
+
+def _limit_worker_threads() -> None:
+    """Belt-and-suspenders thread cap run at spawn-worker entry (#747).
+
+    The load-bearing cap is the parent-set inherited env (see :func:`worker_thread_cap_env`);
+    this re-asserts the env vars and caps torch's intra-op pool at runtime — the one cap
+    that *is* effective from inside the child, since ``torch.set_num_threads`` resizes the
+    pool live rather than reading an env var at import. torch is imported transitively in
+    every real worker (the picklable factory lives in ``ml.train``, which imports torch), so
+    the guarded lookup finds it without force-importing torch into a genuinely torch-free
+    worker."""
     for var in _WORKER_THREAD_ENV_VARS:
         os.environ[var] = "1"
     torch_mod = sys.modules.get("torch")
@@ -232,13 +261,18 @@ class SubprocVectorEnv:
         self._n = len(worker_fns)
         self._parents: list[mp.connection.Connection] = []
         self._procs: list[Any] = []  # SpawnProcess is not mp.Process in typeshed
-        for fn in worker_fns:
-            parent, child = ctx.Pipe()
-            proc = ctx.Process(target=_worker_loop, args=(child, fn), daemon=True)
-            proc.start()
-            child.close()  # parent keeps only its end
-            self._parents.append(parent)
-            self._procs.append(proc)
+        # Cap the workers' BLAS/OMP threads via the inherited env: each spawn child reads
+        # OPENBLAS/MKL/OMP_NUM_THREADS at its OWN numpy/torch import (during bootstrap),
+        # so the cap must be in os.environ at Process.start() time — not set late inside
+        # the child, where the pool is already cores-wide. Restored once all are spawned.
+        with worker_thread_cap_env():
+            for fn in worker_fns:
+                parent, child = ctx.Pipe()
+                proc = ctx.Process(target=_worker_loop, args=(child, fn), daemon=True)
+                proc.start()
+                child.close()  # parent keeps only its end
+                self._parents.append(parent)
+                self._procs.append(proc)
         self._closed = False
         for i, (parent, proc) in enumerate(zip(self._parents, self._procs, strict=True)):
             if not parent.poll(timeout=30.0):

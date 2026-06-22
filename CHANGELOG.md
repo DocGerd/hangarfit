@@ -12,10 +12,13 @@ All notable changes to this project are documented here. Format follows [Keep a 
   raising `--n-envs` toward the core count would **oversubscribe** the box. Two paired,
   byte-identical changes: (1) each `ml/vector_env.py` spawn worker now caps itself to a
   single thread (`OMP/OPENBLAS/MKL/NUMEXPR_NUM_THREADS=1` + `torch.set_num_threads(1)`) at
-  worker-loop entry — one core per worker; (2) `--n-envs auto` sizes the worker pool to
-  `max(1, min(schedulable_cores − reserved, RAM_budget // per_worker))`, using
-  `os.sched_getaffinity` (cgroup/`taskset`-aware, unlike `cpu_count` which overcounts on
-  WSL2/containers) and `/proc/meminfo` `MemAvailable`. The argparse default stays `1`, so
+  worker-loop entry — one core per worker. The cap is set in the **parent** before
+  `spawn` so each child inherits it at interpreter startup (OpenBLAS/MKL fix their pool
+  size at numpy-import time and ignore a late env write — measured cpu/wall ≈ 31 vs 1).
+  (2) `--n-envs auto` sizes the worker pool to
+  `max(1, min(schedulable_cores − reserved, (MemAvailable − headroom) // per_worker))`,
+  using `os.sched_getaffinity` (cgroup/`taskset`-aware, unlike `cpu_count` which
+  overcounts on WSL2/containers) and `/proc/meminfo` `MemAvailable`. The default stays `1`, so
   `--n-envs 1` remains the byte-identity floor; `auto`/raised values are opt-in per run.
   The thread cap is byte-identical (anchored on the **torch-free-worker** invariant —
   workers run no policy ops, so a 1-thread cap can't perturb numpy/shapely reduction
