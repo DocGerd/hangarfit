@@ -6,6 +6,20 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Learned backend (#751, epic #607 Wave 1 / #758): opt-in `--vec-start-method`
+  {spawn,forkserver,fork} to cut per-worker training RAM.** RAM — not cores or GPU — is the
+  ceiling for both `--n-envs auto` (#747) and the concurrent sweep runner (#749): `spawn`
+  re-imports torch + shapely *privately* in every worker (~327 MiB PSS/worker measured). Since
+  the workers are torch-free in their *ops*, `--vec-start-method forkserver` forks them from a
+  shared server that preloads those modules once, so all workers share the pages copy-on-write —
+  **measured ~327 → ~71 MiB PSS/worker (~4.6×; CPU-only, Linux/Py3.12, N=4)**, which raises the achievable `--n-envs`/sweep
+  concurrency. **Default stays `spawn`** (the byte-identity reference); `forkserver` is verified
+  **byte-identical** to it (the worker's `stage_rng` is `worker_index`-keyed, so the start method
+  can't perturb the trajectory — pinned by `test_subproc_forkserver_byte_identical_to_sync` +
+  `test_sync_equals_subproc_byte_identical`). `fork` is an explicit escape hatch that warns loudly
+  (copying a torch-loaded / CUDA-holding parent can deadlock — `forkserver` is the safe path).
+  Dev/CI-only (`ml/`); no shipped-wheel surface.
+
 - **Learned backend (#750, epic #607, throughput Wave 1): a transitions/sec training-loop canary
   + a vectorized width-N GAE scan.** Two dev/CI-only changes so the rest of the throughput work is
   measured, not eyeballed. (1) `python -m bench.train_throughput` is the `ml/` twin of

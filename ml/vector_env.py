@@ -13,6 +13,7 @@ import contextlib
 import multiprocessing as mp
 import os
 import sys
+import warnings
 from collections.abc import Callable, Iterator, Sequence
 from multiprocessing.connection import wait
 from typing import Any, NamedTuple, cast
@@ -250,15 +251,58 @@ def _worker_loop(remote: mp.connection.Connection, worker_fn: Callable[[], _EnvW
             remote.close()
 
 
-class SubprocVectorEnv:
-    """N _EnvWorkers, each in its own spawn process. Parallelizes the per-env shapely
-    geometry + encoding. Workers are torch-free, so output is byte-identical to
-    SyncVectorEnv on the same action stream."""
+_VALID_START_METHODS = ("spawn", "forkserver", "fork")
 
-    def __init__(self, worker_fns: Sequence[Callable[[], _EnvWorker]]) -> None:
+# Modules whose import dominates a worker's resident memory. Preloading them in the
+# forkserver server (#751) means every forked worker SHARES these pages copy-on-write
+# instead of re-importing torch + shapely privately as it does under spawn — the
+# per-worker PSS cut that raises the achievable --n-envs (#747) and sweep concurrency.
+# ml.train transitively pulls torch / numpy / shapely / hangarfit; ml.vector_env is the
+# worker target module.
+_FORKSERVER_PRELOAD = ("ml.vector_env", "ml.train")
+
+
+class SubprocVectorEnv:
+    """N _EnvWorkers, each in its own worker process. Parallelizes the per-env shapely
+    geometry + encoding. Workers are torch-free, so output is byte-identical to
+    SyncVectorEnv on the same action stream — independent of the start method (#751):
+    ``spawn`` (default, the byte-identity reference), ``forkserver`` (forks workers from a
+    shared server that preloads the heavy modules, so they share its pages copy-on-write —
+    cutting per-worker RAM), or ``fork`` (explicit, parent-must-be-fork-safe)."""
+
+    def __init__(
+        self,
+        worker_fns: Sequence[Callable[[], _EnvWorker]],
+        *,
+        start_method: str = "spawn",
+    ) -> None:
         if not worker_fns:
             raise ValueError("SubprocVectorEnv needs at least one worker_fn")
-        ctx = mp.get_context("spawn")
+        if start_method not in _VALID_START_METHODS:
+            raise ValueError(
+                f"start_method must be one of {_VALID_START_METHODS}, got {start_method!r}"
+            )
+        self._start_method = start_method
+        # get_context(str) is typed BaseContext (no .Process/.Pipe); the concrete
+        # Spawn/ForkServer/Fork context is runtime-dynamic, so widen to Any.
+        ctx: Any = mp.get_context(start_method)
+        if start_method == "forkserver":
+            # Set BEFORE the server is started (first Process.start, inside the thread-cap
+            # window below) so the preloaded torch reads the 1-thread cap. The preload list
+            # is global to the process's single forkserver; idempotent across instances.
+            mp.set_forkserver_preload(list(_FORKSERVER_PRELOAD))
+        elif start_method == "fork":
+            # fork copies the (torch-loaded, possibly multi-threaded) parent. If the parent
+            # holds a CUDA context or live threads this can deadlock or corrupt — forkserver
+            # is the safe path to the RAM cut; fork is the explicit "my parent is fork-safe"
+            # escape hatch, so surface the risk loudly rather than silently.
+            warnings.warn(
+                "SubprocVectorEnv start_method='fork' copies the torch-loaded parent; if it "
+                "holds a CUDA context or live threads this can deadlock/corrupt — prefer "
+                "'forkserver'.",
+                RuntimeWarning,
+                stacklevel=2,
+            )
         self._n = len(worker_fns)
         self._parents: list[mp.connection.Connection] = []
         self._procs: list[Any] = []  # SpawnProcess is not mp.Process in typeshed
@@ -292,6 +336,10 @@ class SubprocVectorEnv:
     @property
     def num_envs(self) -> int:
         return self._n
+
+    @property
+    def start_method(self) -> str:
+        return self._start_method
 
     def _recv(self, parent: mp.connection.Connection, worker_idx: int) -> object:
         try:
@@ -363,8 +411,6 @@ class SubprocVectorEnv:
             if proc.is_alive():  # pragma: no cover
                 proc.terminate()
             elif proc.exitcode not in (0, None):
-                import warnings
-
                 warnings.warn(
                     f"SubprocVectorEnv worker {i} exited with code {proc.exitcode} — "
                     f"training data from this worker may be incomplete.",

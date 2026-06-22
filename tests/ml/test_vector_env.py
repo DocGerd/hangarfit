@@ -206,6 +206,114 @@ def test_subproc_worker_failure_is_loud():
 
 
 # ---------------------------------------------------------------------------
+# #751: opt-in --vec-start-method (spawn/forkserver/fork). spawn stays the default
+# byte-identity reference; forkserver shares the parent's imported pages (RAM cut).
+# ---------------------------------------------------------------------------
+
+
+def test_subproc_default_start_method_is_spawn():
+    """The default stays `spawn` — the #708/#747/#748 byte-identity reference. The opt-in
+    methods are #751; the floor must not silently change."""
+    with SubprocVectorEnv([_trivial_worker_fn]) as sub:
+        assert sub.start_method == "spawn"
+
+
+def test_subproc_rejects_unknown_start_method():
+    import pytest
+
+    with pytest.raises(ValueError, match=r"start_method"):
+        SubprocVectorEnv([_trivial_worker_fn], start_method="bogus")
+
+
+import multiprocessing as _mp_test  # noqa: E402
+
+_FORKSERVER_AVAILABLE = "forkserver" in _mp_test.get_all_start_methods()
+_needs_forkserver = pytest.mark.skipif(
+    not _FORKSERVER_AVAILABLE, reason="forkserver start method is Unix-only"
+)
+
+
+@_needs_forkserver
+def test_subproc_forkserver_byte_identical_to_sync():
+    """#751 acceptance (quick): forkserver forks workers from a shared server (cutting
+    per-worker PSS) but MUST stay byte-identical to the spawn/Sync reference — the worker's
+    stage_rng is `worker_index`-keyed, so the start method can't perturb it. A fixed action
+    stream (incl. a PARK -> auto-reset) yields the same reward + done + encoded-obs as Sync."""
+    from ml.action_space import PARK_INDEX
+
+    actions = [(1, 1), (1, 2)]
+    sync = SyncVectorEnv([_trivial_worker_fn(), _trivial_worker_fn()])
+    sync.reset()
+    ss = sync.step(actions)
+    ss2 = sync.step([(PARK_INDEX, 0), (PARK_INDEX, 0)])
+    sync.close()
+
+    with SubprocVectorEnv(
+        [_trivial_worker_fn, _trivial_worker_fn], start_method="forkserver"
+    ) as sub:
+        sub.reset()
+        bs = sub.step(actions)
+        bs2 = sub.step([(PARK_INDEX, 0), (PARK_INDEX, 0)])
+
+    assert bs.rewards == ss.rewards and bs.dones == ss.dones
+    assert bs2.dones == ss2.dones
+    for a, b in zip(ss.obs, bs.obs, strict=True):
+        assert np.array_equal(a.raster, b.raster) and np.array_equal(a.tokens, b.tokens)
+    for a, b in zip(ss2.obs, bs2.obs, strict=True):
+        assert np.array_equal(a.raster, b.raster) and np.array_equal(a.tokens, b.tokens)
+
+
+@_needs_forkserver
+def test_subproc_forkserver_byte_identical_across_resampling_resets():
+    """#751 DEEP byte-identity: the quick test above uses `next_request=None`, so it never
+    draws from `stage_rng`. This drives SAMPLER-backed workers (real per-worker `stage_rng`)
+    over many PARK-driven auto-resets — each reset RESAMPLES the next episode's object set —
+    so the worker_index-keyed RNG resample path is genuinely exercised. forkserver must
+    reproduce each worker's stream exactly, and the workers must be MUTUALLY DISTINCT (so the
+    match is not a vacuous all-clones artifact)."""
+    from functools import partial
+
+    from ml.action_space import PARK_INDEX
+    from ml.curriculum import CurriculumSchedule
+    from ml.stage_builder import effective_fleet_ids
+    from ml.train import _build_stage_worker
+
+    sched = CurriculumSchedule.default()
+    stage = next(s for s in sched.stages if (s.difficulty.max_objects or 1) >= 2)
+    enc = EncoderConfig()
+    pool = effective_fleet_ids(stage)
+    nobj = stage.difficulty.max_objects or len(pool)
+    n_workers, steps = 3, 24
+    # partial over the MODULE-LEVEL _build_stage_worker is picklable under spawn AND
+    # forkserver; worker_index (the last arg) keys each worker's stage_rng stream.
+    worker_fns = [
+        partial(_build_stage_worker, stage, 0, pool, nobj, 0, None, enc, wi)
+        for wi in range(n_workers)
+    ]
+
+    def _drive(vec):
+        out = []
+        vec.reset()
+        for _ in range(steps):
+            # PARK completes the set -> done -> auto-reset -> resample next episode
+            s = vec.step([(PARK_INDEX, 0)] * n_workers)
+            out.append((tuple(s.rewards), tuple(s.dones), tuple(o.raster.tobytes() for o in s.obs)))
+        return out
+
+    sync = SyncVectorEnv([fn() for fn in worker_fns])
+    sync_rec = _drive(sync)
+    sync.close()
+    with SubprocVectorEnv(worker_fns, start_method="forkserver") as sub:
+        fs_rec = _drive(sub)
+
+    assert any(any(d) for _r, d, _o in sync_rec), "no auto-reset fired — test is vacuous"
+    assert fs_rec == sync_rec  # forkserver reproduces every worker's resample stream exactly
+    # non-vacuity: the workers are genuinely different streams (worker_index-keyed rng)
+    per_worker_rasters = [tuple(rec[2][w] for rec in sync_rec) for w in range(n_workers)]
+    assert len(set(per_worker_rasters)) == n_workers, "workers are not distinct (vacuous match)"
+
+
+# ---------------------------------------------------------------------------
 # #747: per-worker BLAS/OMP thread cap (the prerequisite that makes raising
 # --n-envs toward the core count safe — one worker per core, no oversubscription)
 # ---------------------------------------------------------------------------
