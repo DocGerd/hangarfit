@@ -10,6 +10,7 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import os
 import sys
 from collections.abc import Callable, Sequence
 from dataclasses import replace
@@ -562,6 +563,66 @@ def train_curriculum(
     return history
 
 
+# --n-envs auto (#747): pack one spawn worker per idle core, RAM permitting. The cap
+# constants are deliberately conservative — auto picking too FEW workers wastes cores;
+# picking too many risks OOM (the issue's named risk), so the gate leans toward fewer.
+# Per-worker RAM is grounded in the measured ~0.5 GiB incremental PSS per worker (16-worker
+# trio-box run, see the throughput diagnosis) carried at ~2x for headroom; #751 (forkserver)
+# will later shrink it. These are not user knobs yet — promote to flags if a box needs it.
+_AUTO_RESERVED_CORES = 2  # learner forward/backward + the GPU-feed / main loop
+_AUTO_PER_WORKER_GIB = 1.0  # ~2x the measured ~0.5 GiB incremental PSS per spawn worker
+_AUTO_RAM_HEADROOM_GIB = 2.0  # leave room for the parent (CUDA context, larger batches) to grow
+
+
+def _available_cores() -> int:
+    """Schedulable core count. ``sched_getaffinity`` honours cgroup / ``taskset`` pinning
+    (so WSL2 / container limits are respected); ``os.cpu_count`` overcounts those. Falls
+    back to ``cpu_count`` only where affinity is unavailable (non-Linux)."""
+    getaffinity = getattr(os, "sched_getaffinity", None)
+    if getaffinity is not None:
+        return len(getaffinity(0))
+    return os.cpu_count() or 1
+
+
+def _available_gib() -> float | None:
+    """Allocatable RAM in GiB from ``/proc/meminfo`` ``MemAvailable`` (the kernel's honest
+    "without swapping" figure), or ``None`` where it cannot be read (non-Linux / sandbox).
+    ``None`` makes ``--n-envs auto`` fall back to a cores-only bound."""
+    try:
+        with open("/proc/meminfo", encoding="ascii") as fh:
+            for line in fh:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) / (1024 * 1024)  # kB -> GiB
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
+def resolve_n_envs(value: str) -> int:
+    """argparse ``type`` for ``--n-envs``: an explicit positive int passes through; the
+    literal ``auto`` resolves to ``max(1, min(cores - reserved, ram_budget // per_worker))``
+    using :func:`_available_cores` and :func:`_available_gib`. The floor of 1 keeps the
+    byte-identity reference (``--n-envs 1``) reachable even on a 1-core / tiny-RAM box.
+    Raises :class:`argparse.ArgumentTypeError` (-> a clean parser error) on a non-positive
+    or non-integer value."""
+    if value == "auto":
+        core_cap = max(1, _available_cores() - _AUTO_RESERVED_CORES)
+        gib = _available_gib()
+        if gib is None:
+            return core_cap
+        ram_cap = max(1, int((gib - _AUTO_RAM_HEADROOM_GIB) / _AUTO_PER_WORKER_GIB))
+        return max(1, min(core_cap, ram_cap))
+    try:
+        n = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"--n-envs must be a positive integer or 'auto', got {value!r}"
+        ) from None
+    if n < 1:
+        raise argparse.ArgumentTypeError(f"--n-envs must be >= 1, got {n}")
+    return n
+
+
 def build_argparser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="Train the cold-joint policy (trivial stage or curriculum)."
@@ -844,9 +905,10 @@ def build_argparser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--n-envs",
-        type=int,
+        type=resolve_n_envs,
         default=1,
-        help="number of parallel envs (1 = legacy single-stream, byte-identical)",
+        help="number of parallel envs: an integer, or 'auto' to fill idle cores "
+        "(sched_getaffinity - reserved, RAM-capped). 1 = legacy single-stream, byte-identical",
     )
     p.add_argument(
         "--vec-backend",
@@ -921,6 +983,10 @@ def main(argv: Sequence[str] | None = None) -> None:
             parser.error("--stop-after-rung requires --schedule curriculum")
         if args.auto_budget or args.auto_budget_max_iters is not None:
             parser.error("--auto-budget/--auto-budget-max-iters require --schedule curriculum")
+        if args.n_envs != 1:
+            # --n-envs (and 'auto') only feed the vectorized curriculum path; train() is
+            # single-env. Fail LOUD so `--n-envs auto --schedule trivial` is not a silent no-op.
+            parser.error("--n-envs > 1 (or 'auto') requires --schedule curriculum")
         train(
             seed=args.seed,
             iterations=args.iterations,
@@ -971,6 +1037,16 @@ def main(argv: Sequence[str] | None = None) -> None:
             verb = "requires" if len(supplied_flags) == 1 else "require"
             parser.error(f"{', '.join(supplied_flags)} {verb} --auto-budget")
         budget = BudgetController(**budget_overrides) if args.auto_budget else None
+        if args.n_envs > 1:
+            # Surface the effective parallelism + the box it was sized against, so an
+            # `auto` (or an explicit) value is visible in the run log rather than implicit.
+            gib = _available_gib()
+            mem = f"{gib:.1f} GiB" if gib is not None else "unknown"
+            print(
+                f"note: training with {args.n_envs} parallel envs "
+                f"(schedulable cores={_available_cores()}, MemAvailable={mem})",
+                file=sys.stderr,
+            )
         history = train_curriculum(
             seed=args.seed,
             schedule=sched,

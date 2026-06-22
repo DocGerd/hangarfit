@@ -11,6 +11,8 @@ from __future__ import annotations
 
 import contextlib
 import multiprocessing as mp
+import os
+import sys
 from collections.abc import Callable, Sequence
 from typing import Any, NamedTuple, cast
 
@@ -138,6 +140,42 @@ class SyncVectorEnv:
         self.close()
 
 
+_WORKER_THREAD_ENV_VARS = (
+    "OMP_NUM_THREADS",
+    "OPENBLAS_NUM_THREADS",
+    "MKL_NUM_THREADS",
+    "NUMEXPR_NUM_THREADS",
+)
+
+
+def _limit_worker_threads() -> None:
+    """Pin a spawned vec-env worker to a single BLAS/OMP/MKL thread (#747).
+
+    Raising ``--n-envs`` toward the core count is only safe once each worker is exactly
+    one core: otherwise N workers each spin a cores-wide OpenBLAS/MKL pool and the box
+    oversubscribes (the measured ~5.5/32-core run is one symptom). GEOS/shapely — the
+    ~61% rollout cost — is single-threaded regardless; this cap mainly stops an incidental
+    numpy BLAS call from fanning out across the box.
+
+    Byte-identity: workers are TORCH-FREE in their *ops* (no policy forward/backward — see
+    the module docstring), so their step+encode float reductions are numpy/shapely, not
+    multi-threaded BLAS, and a 1-thread cap cannot perturb the reduction order. This is the
+    torch-free-worker invariant the #747 byte-identity rests on — proven empirically by
+    ``test_sync_equals_subproc_byte_identical`` (Sync runs uncapped in the parent; Subproc
+    runs capped here) plus the fixed-action reward-stream diff, not asserted from theory.
+
+    The env vars are set at worker-loop entry, before the worker's first BLAS-touching
+    call, so OpenBLAS/MKL lazy-init reads the cap. torch is imported transitively in every
+    real worker (the picklable factory lives in ``ml.train``, which imports torch), so its
+    intra-op pool is capped too; the lookup is guarded so a genuinely torch-free worker is
+    not force-importing torch just to cap it."""
+    for var in _WORKER_THREAD_ENV_VARS:
+        os.environ[var] = "1"
+    torch_mod = sys.modules.get("torch")
+    if torch_mod is not None:
+        torch_mod.set_num_threads(1)
+
+
 def _obs_to_picklable(obs: ObservationTensors) -> ObservationTensors:
     """Replace MappingProxyType meta with a plain dict so pickle succeeds across Pipe."""
     if not isinstance(obs.meta, dict):
@@ -157,6 +195,7 @@ def _worker_loop(remote: mp.connection.Connection, worker_fn: Callable[[], _EnvW
     """Child process: build the env, then serve reset/step/close over the pipe. Any
     exception is sent back as ('error', repr) so the parent raises rather than hangs."""
     try:
+        _limit_worker_threads()  # #747: one core per worker, before the env's first BLAS op
         worker = worker_fn()
         remote.send(("ready", None))
         while True:

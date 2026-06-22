@@ -6,6 +6,23 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Learned backend (#747, epic #607 Wave 1 / #758): cap worker BLAS/OMP threads +
+  `--n-envs auto` to fill idle cores.** A measured `--n-envs 16` run pinned only ~5.5 of
+  32 cores, and the spawn workers ran *unconstrained* BLAS/OMP/MKL threading, so naively
+  raising `--n-envs` toward the core count would **oversubscribe** the box. Two paired,
+  byte-identical changes: (1) each `ml/vector_env.py` spawn worker now caps itself to a
+  single thread (`OMP/OPENBLAS/MKL/NUMEXPR_NUM_THREADS=1` + `torch.set_num_threads(1)`) at
+  worker-loop entry — one core per worker; (2) `--n-envs auto` sizes the worker pool to
+  `max(1, min(schedulable_cores − reserved, RAM_budget // per_worker))`, using
+  `os.sched_getaffinity` (cgroup/`taskset`-aware, unlike `cpu_count` which overcounts on
+  WSL2/containers) and `/proc/meminfo` `MemAvailable`. The argparse default stays `1`, so
+  `--n-envs 1` remains the byte-identity floor; `auto`/raised values are opt-in per run.
+  The thread cap is byte-identical (anchored on the **torch-free-worker** invariant —
+  workers run no policy ops, so a 1-thread cap can't perturb numpy/shapely reduction
+  order), proven by `test_sync_equals_subproc_byte_identical` + a fixed-action
+  reward-stream diff. `--n-envs > 1` (or `auto`) on `--schedule trivial` now fails loud
+  (the trivial path is single-env). Dev/CI-only (`ml/`); no shipped-wheel surface.
+
 - **Learned backend (#734, epic #607): slope-aware `--auto-budget` per curriculum rung.**
   A fixed `--max-iters-per-stage` cap is wrong in both directions — it truncated the trio-box
   (N=3) run while `valid_placed` was *still climbing* (peak 0.65, under-trained not collapsed),
