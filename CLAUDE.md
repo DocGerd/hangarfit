@@ -88,6 +88,14 @@ banner right after a merge/push clears on recompute — `mergeable=MERGEABLE` (a
 then close+reopen the PR to trigger CI.) Wire the stack's order as native issue
 deps: `gh api -X POST repos/DocGerd/hangarfit/issues/<n>/dependencies/blocked_by -F issue_id=<numeric id>`.
 
+**Scratch-gitignore is per-branch.** A `.gitignore` rule added on one branch does NOT
+protect a sibling cut from `develop` before it merged — a `git add -A` there sweeps the
+still-untracked scratch (`train-*.log` / `ck-*.pt` / `metrics-*.jsonl`) into the commit and
+pollutes `develop` (a tracked file is never re-ignored; the fix is a `git rm --cached` PR,
+e.g. #786). Prefer **explicit `git add <paths>`** when reproducible gate scratch sits in the
+tree, or merge `develop` in / land the ignore first. Spot a leak with `git ls-files | grep -E
+'train-|ck-|metrics-'` — `git check-ignore` returns 0 for already-tracked files, so it won't.
+
 ### Issues
 
 - Every change is tracked by a GitHub issue. No code without an issue.
