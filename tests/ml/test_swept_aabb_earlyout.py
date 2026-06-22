@@ -119,7 +119,7 @@ def test_fuzzed_legs_byte_identical_to_bruteforce():
     from ml.action_space import decode
 
     rng = random.Random(0xA1B2C3)
-    n_clear = n_intrude = 0
+    n_clear = n_intrude = n_fired = 0
     for _ in range(80):
         parked_y = rng.uniform(6.0, 24.0)
         active_x = rng.uniform(2.0, 13.0)
@@ -144,5 +144,19 @@ def test_fuzzed_legs_byte_identical_to_bruteforce():
             n_intrude += 1
         else:
             n_clear += 1
+            if go._swept_envelope_clear(active, swept, obstacles):
+                n_fired += 1  # the conservative early-out actually short-circuited this leg
     # non-vacuous: the corpus exercised BOTH the early-out (clear) and the full loop (intrude)
     assert n_clear > 0 and n_intrude > 0, f"vacuous corpus: clear={n_clear} intrude={n_intrude}"
+    # the early-out must do REAL work: a regression silently disabling it would still pass the
+    # byte-identity asserts above (the loop just runs), but n_fired would drop to 0.
+    assert n_fired > 0, "the swept-envelope early-out never fired on any clear leg"
+
+
+def test_swept_envelope_clear_predicate_fires_on_clear_not_intruding():
+    """Directly pin the early-out predicate both ways: True on a clearly-separated leg,
+    False when poses sit on the obstacle (so it cannot mask the intruding case)."""
+    _layout, active, _id, obstacles, swept = _clear_leg()
+    assert go._swept_envelope_clear(active, swept, obstacles) is True
+    _layout2, active2, _id2, obstacles2, swept2 = _intruding_leg()
+    assert go._swept_envelope_clear(active2, swept2, obstacles2) is False

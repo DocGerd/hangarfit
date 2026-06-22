@@ -158,6 +158,40 @@ def _footprint_radius(body: Aircraft | GroundObject) -> float:
     return math.sqrt(r2)
 
 
+def _swept_envelope_clear(
+    body: Aircraft | GroundObject, swept: tuple[Pose, ...], obstacles: ObstaclesT
+) -> bool:
+    """Lever A (#754): True iff a conservative whole-leg envelope proves NO sampled pose can
+    overlap any obstacle part — i.e. :func:`swept_intrusion_m2` is provably 0.0, so it can
+    short-circuit the per-pose loop with zero Polygon builds.
+
+    The envelope is the bbox of the swept ``(x, y)`` inflated by the body's footprint radius R
+    (:func:`_footprint_radius`, heading-independent) — a conservative SUPERSET of every sampled
+    pose's footprint. A strict (gap > 0) AABB separation from EVERY precomputed obstacle-part
+    AABB therefore means no pose footprint can overlap any obstacle part. Same conservative
+    lower-bound logic as the per-pose AABB prefilter (and
+    ``collisions._aabbs_separated_beyond_clearance``), hoisted to the whole leg: it returns True
+    only when the full loop's result is exactly 0.0, so it can never mask a real intrusion.
+    (``swept_intrusion_m2``'s leak only accumulates area against ``obstacles.world_parts``;
+    walls/notch/bay gate ``_motion_clear`` but never contribute leak.)"""
+    if not obstacles.world_parts:
+        return True  # no parked parts → the per-pose leak loop has nothing to overlap → 0.0
+    if not swept:
+        return True  # no sampled poses → the per-pose loop is empty → 0.0
+    r = _footprint_radius(body)
+    env_xmin = min(p.x_m for p in swept) - r
+    env_xmax = max(p.x_m for p in swept) + r
+    env_ymin = min(p.y_m for p in swept) - r
+    env_ymax = max(p.y_m for p in swept) + r
+    return all(
+        env_xmin - op_xmax > 0.0
+        or op_xmin - env_xmax > 0.0
+        or env_ymin - op_ymax > 0.0
+        or op_ymin - env_ymax > 0.0
+        for op_xmin, op_ymin, op_xmax, op_ymax in obstacles.world_part_aabbs
+    )
+
+
 def swept_intrusion_m2(
     body: Aircraft | GroundObject,
     swept: tuple[Pose, ...],
@@ -186,33 +220,11 @@ def swept_intrusion_m2(
     )
     hangar = parked_layout.hangar
 
-    # Lever A (#754): whole-leg swept-envelope early-out. The leak below only ever accumulates
-    # overlap AREA against parked obstacle parts (walls/notch/bay gate _motion_clear but never
-    # contribute leak), so the result is 0.0 iff no sampled pose's footprint overlaps any
-    # obstacle part. Every sampled pose's footprint lies within the body's footprint radius R
-    # of that pose's (x, y), so the bbox of the swept (x, y) inflated by R is a conservative
-    # SUPERSET of every pose's footprint. If that envelope AABB is strictly separated (gap > 0)
-    # from every precomputed obstacle-part AABB, no pose can overlap any part → the per-pose
-    # loop would return 0.0 → short-circuit with ZERO per-pose Polygon builds. This is a
-    # byte-identical conservative lower-bound filter (same logic as the per-pose AABB prefilter
-    # below and collisions._aabbs_separated_beyond_clearance), so it only ever fires when the
-    # full loop's result is exactly 0.0 — it can never mask a real intrusion.
-    if not obstacles.world_parts:
-        return 0.0  # no parked parts → no leak possible (the empty loop also returns 0.0)
-    if swept:
-        r = _footprint_radius(body)
-        env_xmin = min(p.x_m for p in swept) - r
-        env_xmax = max(p.x_m for p in swept) + r
-        env_ymin = min(p.y_m for p in swept) - r
-        env_ymax = max(p.y_m for p in swept) + r
-        if all(
-            env_xmin - op_xmax > 0.0
-            or op_xmin - env_xmax > 0.0
-            or env_ymin - op_ymax > 0.0
-            or op_ymin - env_ymax > 0.0
-            for op_xmin, op_ymin, op_xmax, op_ymax in obstacles.world_part_aabbs
-        ):
-            return 0.0
+    # Lever A (#754): a conservative whole-leg envelope short-circuits a clearly-clear leg to
+    # 0.0 with zero per-pose Polygon builds (see :func:`_swept_envelope_clear`) — a byte-
+    # identical lower-bound filter that fires only when the per-pose loop would also return 0.0.
+    if _swept_envelope_clear(body, swept, obstacles):
+        return 0.0
 
     worst = 0.0
     for pose in swept:
