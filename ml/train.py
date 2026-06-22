@@ -9,10 +9,12 @@ from __future__ import annotations
 
 import argparse
 import contextlib
+import copy
 import json
 import os
 import sys
 from collections.abc import Callable, Sequence
+from concurrent.futures import Future, ThreadPoolExecutor
 from dataclasses import replace
 from functools import partial
 from pathlib import Path
@@ -332,6 +334,17 @@ def train(
     return history
 
 
+def _clone_policy(policy: HangarFitPolicy) -> HangarFitPolicy:
+    """A frozen deep copy of ``policy`` for the #755 ``--pipeline-update`` rollout.
+
+    The pipelined rollout reads the **pre-update** weights on a background thread
+    while ``ppo_update`` mutates the live policy in place on the main thread, so the
+    snapshot must be an independent module (params + buffers), not an aliasing view.
+    ``deepcopy`` clones onto the same device; the copy is used only for
+    ``torch.no_grad()`` forward passes in :func:`collect_rollout_vec`."""
+    return copy.deepcopy(policy)
+
+
 def _rung_stop_reason(
     promo_history: list[float],
     ep_stats: Sequence[EpisodeStat],
@@ -379,6 +392,7 @@ def train_curriculum(
     load: str | None = None,
     checkpoint_out: str | None = None,
     auto_budget: BudgetController | None = None,
+    pipeline_update: bool = False,
 ) -> CurriculumHistory:
     """Climb the ladder: one policy/optimizer across rungs (transfer); per rung, run
     PPO until the competency gate fires or the per-stage cap is hit, then advance.
@@ -527,8 +541,9 @@ def train_curriculum(
             # channels (uint8) and collect_rollout_vec re-prepends this block in to_batch.
             rung_static_block = static_block(env.hangar, enc)
             with vec_cm as vec:
-                for it in range(ceiling):
-                    it_cfg = replace(
+
+                def _it_cfg(it: int) -> PPOConfig:
+                    return replace(
                         cfg,
                         entropy_coef=entropy_coef_at(
                             it,
@@ -538,19 +553,83 @@ def train_curriculum(
                             anneal_iters=cfg.entropy_anneal_iters,
                         ),
                     )
-                    buf_vec, ep_stats = collect_rollout_vec(
-                        vec, policy, enc, rollout_len, static_block=rung_static_block
-                    )
-                    ppo_update(policy, optimizer, buf_vec, it_cfg, normalizer=normalizer)
-                    history.record(stage.name, it, ep_stats)
-                    if log:
-                        print(format_iter_log(stage.name, it, ep_stats), flush=True)
-                    reason = _rung_stop_reason(promo_history, ep_stats, pol, auto_budget)
-                    if reason is not None:
-                        history.note_promotion(stage.name, it, by=reason)
-                        break
+
+                if pipeline_update:
+                    # #755 (Wave 4, opt-in, NON-deterministic): overlap the next
+                    # rollout — collected under a frozen snapshot of the PRE-update
+                    # policy, exactly one iteration stale — with this iteration's
+                    # ppo_update. The rollout runs on a single background thread while
+                    # the live policy is updated on the main thread; they share no
+                    # mutable state (separate module objects; the env is touched only
+                    # by the rollout thread, serialized across iterations by
+                    # future.result()). The next rollout is launched ONLY when another
+                    # iteration will consume it (never on the stop / final iteration),
+                    # so no speculative rollout is ever wasted and there is nothing to
+                    # drain. Re-gated on a two-seed ml.gate valid_placed delta, NOT a
+                    # byte-diff (the staleness perturbs the learning curve).
+                    #
+                    # Non-determinism is two-fold and DELIBERATE: (1) the one-iteration
+                    # stale policy snapshot, and (2) the background rollout's action
+                    # sampling shares the GLOBAL torch RNG with the main thread's
+                    # ppo_update (minibatch shuffle), so the two threads' draws
+                    # interleave by timing. torch's generator is mutex-guarded, so this
+                    # is a SAFE race (no state corruption) — but the run is not
+                    # reproducible, which is exactly why this path is gated on a
+                    # learning-metric delta rather than byte-identity.
+                    executor = ThreadPoolExecutor(max_workers=1)
+                    pending: Future[tuple[VecRolloutBuffer, list[EpisodeStat]]] | None = None
+                    try:
+                        for it in range(ceiling):
+                            if pending is None:
+                                # Iteration 0 primes on-policy under the current weights.
+                                buf_vec, ep_stats = collect_rollout_vec(
+                                    vec, policy, enc, rollout_len, static_block=rung_static_block
+                                )
+                            else:
+                                buf_vec, ep_stats = pending.result()
+                                pending = None
+                            history.record(stage.name, it, ep_stats)
+                            reason = _rung_stop_reason(promo_history, ep_stats, pol, auto_budget)
+                            if reason is None and it < ceiling - 1:
+                                snapshot = _clone_policy(policy)
+                                pending = executor.submit(
+                                    collect_rollout_vec,
+                                    vec,
+                                    snapshot,
+                                    enc,
+                                    rollout_len,
+                                    static_block=rung_static_block,
+                                )
+                            ppo_update(
+                                policy, optimizer, buf_vec, _it_cfg(it), normalizer=normalizer
+                            )
+                            if log:
+                                print(format_iter_log(stage.name, it, ep_stats), flush=True)
+                            if reason is not None:
+                                history.note_promotion(stage.name, it, by=reason)
+                                break
+                        else:
+                            history.note_promotion(stage.name, ceiling - 1, by="cap")
+                    finally:
+                        # pending is always None here (never launched on the stop/last
+                        # iteration), so this just releases the worker thread.
+                        executor.shutdown(wait=True)
                 else:
-                    history.note_promotion(stage.name, ceiling - 1, by="cap")
+                    for it in range(ceiling):
+                        it_cfg = _it_cfg(it)
+                        buf_vec, ep_stats = collect_rollout_vec(
+                            vec, policy, enc, rollout_len, static_block=rung_static_block
+                        )
+                        ppo_update(policy, optimizer, buf_vec, it_cfg, normalizer=normalizer)
+                        history.record(stage.name, it, ep_stats)
+                        if log:
+                            print(format_iter_log(stage.name, it, ep_stats), flush=True)
+                        reason = _rung_stop_reason(promo_history, ep_stats, pol, auto_budget)
+                        if reason is not None:
+                            history.note_promotion(stage.name, it, by=reason)
+                            break
+                    else:
+                        history.note_promotion(stage.name, ceiling - 1, by="cap")
         if log:
             by = history.promotions[-1][2]
             print(f"[{stage.name}] promoted by {by}")
@@ -950,6 +1029,16 @@ def build_argparser() -> argparse.ArgumentParser:
         help="compute device: cpu (default — deterministic / byte-identical) or cuda "
         "(opt-in GPU fast path; ~5-6x on the PPO update, non-deterministic)",
     )
+    p.add_argument(
+        "--pipeline-update",
+        action="store_true",
+        help="(#755, opt-in, vectorized path only) overlap the next rollout — under a "
+        "frozen snapshot of the pre-update policy, one iteration stale — with this "
+        "iteration's ppo_update, recovering the GPU/worker idle during the non-overlapping "
+        "phases. Default off = byte-identical sequential training. On is NON-deterministic "
+        "(the staleness perturbs the learning curve) and must be re-gated on a two-seed "
+        "ml.gate valid_placed delta. No effect with --schedule trivial or --n-envs 1.",
+    )
     return p
 
 
@@ -1091,6 +1180,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             load=args.load,
             checkpoint_out=args.checkpoint_out,
             auto_budget=budget,
+            pipeline_update=args.pipeline_update,
         )
         if args.metrics_out is not None:
             records = history_metric_records(history)
