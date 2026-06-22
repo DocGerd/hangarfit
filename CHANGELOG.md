@@ -6,6 +6,24 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Learned backend (#753, epic #607 Wave 2 / #759): episode-scoped pose cache — widen
+  #733 from per-step to per-episode (byte-identical).** #733's `cached_parts_world` memo was
+  opened in a fresh `pose_cache_scope()` per `_EnvWorker.step`/`reset`, so it was thrown away
+  every timestep and every frozen parked / identity-pose body was re-transformed from scratch
+  each step. The worker now holds **one pose dict across the whole episode** (`pose_cache_scope`
+  gained an optional `cache` arg so a caller-owned dict persists across scopes), cleared at each
+  episode boundary (reset + the in-step auto-reset) to bound memory. Each worker owns its own
+  dict, so `SyncVectorEnv` (N workers, one process, one ContextVar) never cross-leaks and the
+  ContextVar set/reset stays per-call LIFO-safe. The genuine win is the encoder's repeated
+  identity-pose `_body_dims` / `_parked_occupancy` rebuilds (the heaviest parked consumers are
+  already env-cached, so the active mover + swept arc still miss — that is #735/#754). **Byte-
+  identical** (ADR-0003): `cached_parts_world` is referentially transparent (exact-float pose
+  key, frozen-slots `WorldPart`, read-only consumers), so widening changes only *when* a pose is
+  rebuilt, never its bytes — pinned by the #733 cache-on/off reward+obs stream test and the
+  solver/towplanner determinism canaries (the `cache=None` default keeps `solve`/`plan_fill`
+  byte-identical). A new test proves the identity body-dims pose is rebuilt **once per episode**,
+  not once per step. Dev/CI-only (`ml/`); no shipped-wheel surface.
+
 - **Learned backend (#752, epic #607 Wave 2 / #759): shrink the rollout IPC payload —
   uint8 raster + drop the re-shipped static channels (byte-identical).** Every vectorized
   training step pickles each worker's 7×192×96 float32 raster over a Pipe, but two-thirds of
