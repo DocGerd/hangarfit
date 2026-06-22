@@ -6,6 +6,24 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Learned backend (#754, epic #607 Wave 3 / #760): Lever A — whole-leg swept-envelope AABB
+  early-out for the rollout's swept-clearance oracle (byte-identical).** `swept_intrusion_m2`
+  (`ml/geometry_oracle.py`) sampled a tow leg at 0.05 m / 1° and ran the per-pose `_motion_clear`
+  + overlap measurement on every sample — and #733's pose cache mostly misses for the swept mover
+  (its pose changes each sample). Lever A proves a whole clear leg in ONE test: the result is 0.0
+  iff no sampled pose's mover parts overlap a parked obstacle part (walls/notch/bay only gate
+  `_motion_clear`, never contribute leak), and every pose's footprint lies within the body's
+  footprint radius `R` of that pose's `(x, y)` — `R` is heading-independent because the
+  determinant-−1 transform preserves Euclidean norm — so the bbox of the swept `(x, y)` inflated
+  by `R` is a conservative superset of every pose's footprint. If that envelope AABB is strictly
+  separated from every precomputed obstacle-part AABB, the leg short-circuits to 0.0 with **zero
+  per-pose Polygon builds**. **Byte-identical** (ADR-0003): a conservative lower-bound filter (the
+  same logic as the per-pose AABB prefilter + `collisions._aabbs_separated_beyond_clearance`) that
+  fires only when the full loop's result is exactly 0.0 — it can never mask a real intrusion,
+  verified by an 80-leg adversarial fuzz asserting equality to the exact unfiltered reference plus
+  a zero-per-pose-build proof. (Lever B — the opt-in `--sat-collisions` numpy-SAT box oracle — is a
+  follow-up.) Dev/CI-only (`ml/`); no shipped-wheel surface.
+
 - **Learned backend (#753, epic #607 Wave 2 / #759): episode-scoped pose cache — widen
   #733 from per-step to per-episode (byte-identical).** #733's `cached_parts_world` memo was
   opened in a fresh `pose_cache_scope()` per `_EnvWorker.step`/`reset`, so it was thrown away
