@@ -414,6 +414,17 @@ def build_parser() -> argparse.ArgumentParser:
         help="Treat the input as a scenario: solve it first, then view the result.",
     )
     view.add_argument(
+        "--alternatives",
+        type=int,
+        default=1,
+        metavar="N",
+        help=(
+            "Solve mode: solve for up to N diverse alternative layouts and build a "
+            "single compare viewer to switch between them (#666). Requires --solve. "
+            "Fewer than N are carried when fewer diverse solutions exist. Default: 1."
+        ),
+    )
+    view.add_argument(
         "--fleet",
         metavar="PATH",
         default=None,
@@ -694,6 +705,42 @@ def _placement_delta(a: Layout, b: Layout) -> tuple[int, float]:
             moved += 1
     mean = total_shift / len(shared) if shared else 0.0
     return moved, mean
+
+
+def _build_compare_solutions(
+    result: SolveResult, *, animate: bool, egress_cap: int | None
+) -> list[dict]:
+    """Build the #666 viewer-compare solution list from a multi-alternative SolveResult.
+
+    Each entry is ``{"label", "scene", "summary"}``: ``scene`` is the unchanged
+    :func:`hangarfit.scene.build_scene` output for that layout (so its bytes are
+    byte-identical to a standalone render, ADR-0003), and ``summary`` carries the same
+    compare metrics ``solve`` already narrates — min inter-plane gap, planes-moved /
+    avg-shift vs solution #1, and tow-routability. Index-aligned with ``result.layouts``."""
+    from hangarfit import scene as scene_mod
+
+    d = result.diagnostics
+    first = result.layouts[0]
+    solutions: list[dict] = []
+    for i, layout in enumerate(result.layouts):
+        plan = result.plans[i] if (animate and i < len(result.plans)) else None
+        egress = _egress_paths_for_render(layout, max_expansions=egress_cap)
+        sc = scene_mod.build_scene(layout, moves_plan=plan, egress_paths=egress)
+        gap = d.min_pairwise_gap_m[i] if i < len(d.min_pairwise_gap_m) else math.inf
+        moved, mean_shift = _placement_delta(first, layout) if i > 0 else (0, 0.0)
+        solutions.append(
+            {
+                "label": f"#{i + 1}",
+                "scene": sc,
+                "summary": {
+                    "min_gap_m": gap if math.isfinite(gap) else None,
+                    "planes_moved_vs_first": moved,
+                    "mean_shift_m": round(mean_shift, 3),
+                    "routable": plan is not None,
+                },
+            }
+        )
+    return solutions
 
 
 def cmd_solve(args: argparse.Namespace) -> int:
@@ -1268,6 +1315,18 @@ def cmd_view(args: argparse.Namespace) -> int:
             "note: --check is ignored with --solve (a solved layout is valid by construction).",
             file=sys.stderr,
         )
+    # #666 --alternatives only makes sense when solving (a hand-authored layout is a
+    # single arrangement). Fail loud rather than silently ignore a dropped intent.
+    if args.alternatives > 1 and not args.solve:
+        print(
+            "error: view --alternatives N requires --solve (it solves the scenario for "
+            "N diverse layouts).",
+            file=sys.stderr,
+        )
+        return 2
+    if args.alternatives < 1:
+        print("error: view --alternatives must be >= 1.", file=sys.stderr)
+        return 2
     try:
         fleet_override = load_fleet(args.fleet) if args.fleet is not None else None
         hangar_override = (
@@ -1287,7 +1346,7 @@ def cmd_view(args: argparse.Namespace) -> int:
             result = solve(
                 scenario,
                 budget_s=args.budget,
-                alternatives=1,
+                alternatives=args.alternatives,
                 seed=args.seed,
                 search=SearchConfig(spread=args.spread, nose_out=args.nose_out),
                 plan_paths=args.animate,
@@ -1296,6 +1355,36 @@ def cmd_view(args: argparse.Namespace) -> int:
             if not result.layouts:
                 print(f"error: no valid layout found (status={result.status})", file=sys.stderr)
                 return 1
+            n_found = len(result.layouts)
+            if args.alternatives > 1 and n_found < args.alternatives:
+                print(
+                    f"note: found {n_found} of {args.alternatives} requested diverse layouts.",
+                    file=sys.stderr,
+                )
+            # #666 multi-solution compare: with >=2 diverse layouts, build ONE HTML
+            # carrying all of them + a switcher. A lone solution (alternatives==1, or
+            # only one diverse layout found) falls through to the byte-identical single
+            # render below — no compare chrome for a single solution.
+            if args.alternatives > 1 and n_found >= 2:
+                if args.animate:
+                    _warn_apron_shallow_drops(result.diagnostics.apron_shallow_drops)
+                egress_cap = (
+                    args.tow_max_expansions
+                    if args.tow_max_expansions is not None
+                    else _VIEW_TOW_MAX_TOTAL_EXPANSIONS
+                )
+                solutions = _build_compare_solutions(
+                    result, animate=args.animate, egress_cap=egress_cap
+                )
+                try:
+                    viewer.render_compare_viewer(
+                        solutions, args.output, count_requested=args.alternatives
+                    )
+                except OSError as e:
+                    print(f"error: could not write {args.output}: {e}", file=sys.stderr)
+                    return 2
+                print(f"wrote 3D compare viewer ({n_found} solutions) to {args.output}")
+                return 0
             layout = result.layouts[0]
             moves_plan = result.plans[0] if (args.animate and result.plans) else None
             if args.animate and moves_plan is None:

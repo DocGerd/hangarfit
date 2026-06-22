@@ -31,3 +31,9 @@ export function banner(msg: string): void {
 export function disableControl(id: string): void {
   byId<HTMLButtonElement>(id).disabled = true;
 }
+
+/** Re-enable a HUD form control by id (the inverse of `disableControl`; used when a
+ * #666 solution switch lands on an animated solution after a static one). */
+export function enableControl(id: string): void {
+  byId<HTMLButtonElement>(id).disabled = false;
+}

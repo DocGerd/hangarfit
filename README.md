@@ -145,12 +145,17 @@ hangarfit view tests/fixtures/valid_left_side_nesting.yaml -o layout3d.html
 # Solve a scenario, then view the result with its tow animation.
 hangarfit view --solve tests/fixtures/scenario_minimal.yaml -o solved3d.html
 
+# Solve for N diverse alternatives and compare them in ONE viewer: a switcher
+# (dropdown / ←→ keys, shared camera) flips between solutions, with per-solution
+# metrics (min gap, planes moved vs #1, tow-routability). Requires --solve.
+hangarfit view --solve tests/fixtures/scenario_minimal.yaml -o compare3d.html --alternatives 3
+
 # Static 3D only (skip tow planning), or overlay collision conflicts.
 hangarfit view examples/layouts/example.yaml -o static3d.html --no-animate
 hangarfit view some_invalid_layout.yaml -o conflicts3d.html --check --no-animate
 ```
 
-Layout mode best-effort tow-plans for the animation; a layout the planner can't route degrades to a static 3D scene with a stderr note. By default the viewer applies a small deterministic global tow-expansion cap, so an un-routable layout (e.g. the default `examples/layouts/example.yaml`) falls back to the static render in a few seconds rather than grinding through the full disprove budget — a fixed expansion count, **not** a wall-clock deadline ([ADR-0003](docs/adr/0003-rr-mc-solver-algorithm.md)); `--tow-max-expansions` overrides it. The viewer is built from a documented `hangarfit.scene/v2` JSON contract (the seam between the Python core and any renderer) and a pinned, vendored copy of Three.js; the transform stays in Python (per-frame affine matrices), so the viewer never re-derives the determinant-−1 map. See [ADR-0017](docs/adr/0017-3d-viewer-architecture.md) and the schema reference [`docs/architecture/scene-v2-schema.md`](docs/architecture/scene-v2-schema.md).
+Layout mode best-effort tow-plans for the animation; a layout the planner can't route degrades to a static 3D scene with a stderr note. By default the viewer applies a small deterministic global tow-expansion cap, so an un-routable layout (e.g. the default `examples/layouts/example.yaml`) falls back to the static render in a few seconds rather than grinding through the full disprove budget — a fixed expansion count, **not** a wall-clock deadline ([ADR-0003](docs/adr/0003-rr-mc-solver-algorithm.md)); `--tow-max-expansions` overrides it. The viewer is built from a documented `hangarfit.scene/v2` JSON contract (the seam between the Python core and any renderer) and a pinned, vendored copy of Three.js; the transform stays in Python (per-frame affine matrices), so the viewer never re-derives the determinant-−1 map. `--solve --alternatives N` carries up to N diverse solutions in one HTML and lets you flip between them with a shared camera (a *switcher*, not split panes — the camera holds still so the planes that moved between solutions pop out), each annotated with its min inter-plane gap, planes-moved-vs-#1, and tow-routability; the multi-solution container is a viewer-HTML wrapper layered over N independent, byte-identical scene/v2 docs, so the schema itself is unchanged. See [ADR-0017](docs/adr/0017-3d-viewer-architecture.md) and the schema reference [`docs/architecture/scene-v2-schema.md`](docs/architecture/scene-v2-schema.md).
 
 ### JSON schemas
 

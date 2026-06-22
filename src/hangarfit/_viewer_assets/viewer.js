@@ -1,3 +1,6 @@
+// src/main.ts
+import * as THREE11 from "three";
+
 // src/dom.ts
 function byId(id) {
   const el = document.getElementById(id);
@@ -12,69 +15,72 @@ function banner(msg) {
 function disableControl(id) {
   byId(id).disabled = true;
 }
+function enableControl(id) {
+  byId(id).disabled = false;
+}
 
 // src/renderer.ts
 import * as THREE from "three";
 import { OrbitControls } from "three/addons/controls/OrbitControls.js";
-function createRenderer(canvas2, H2, BRAND2) {
-  let renderer2;
+function createRenderer(canvas, H, BRAND2) {
+  let renderer;
   try {
-    renderer2 = new THREE.WebGLRenderer({ canvas: canvas2, antialias: true });
+    renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
   } catch (e) {
     banner("WebGL is unavailable in this browser: " + e.message);
     throw e;
   }
-  renderer2.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-  renderer2.setSize(window.innerWidth, window.innerHeight);
-  renderer2.shadowMap.enabled = true;
-  renderer2.shadowMap.type = THREE.PCFSoftShadowMap;
-  const scene2 = new THREE.Scene();
-  scene2.background = new THREE.Color(BRAND2.sceneBg);
-  const cam2 = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 2e3);
-  cam2.up.set(0, 0, 1);
-  const controls2 = new OrbitControls(cam2, renderer2.domElement);
-  controls2.enableDamping = true;
-  controls2.dampingFactor = 0.08;
-  const span2 = Math.max(H2.width_m, H2.length_m);
-  const home2 = () => {
-    cam2.position.set(H2.width_m * 0.5, -H2.length_m * 0.55, span2 * 0.95);
-    controls2.target.set(H2.width_m / 2, H2.length_m / 2, 0.5);
-    controls2.update();
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+  renderer.setSize(window.innerWidth, window.innerHeight);
+  renderer.shadowMap.enabled = true;
+  renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+  const scene = new THREE.Scene();
+  scene.background = new THREE.Color(BRAND2.sceneBg);
+  const cam = new THREE.PerspectiveCamera(55, window.innerWidth / window.innerHeight, 0.1, 2e3);
+  cam.up.set(0, 0, 1);
+  const controls = new OrbitControls(cam, renderer.domElement);
+  controls.enableDamping = true;
+  controls.dampingFactor = 0.08;
+  const span = Math.max(H.width_m, H.length_m);
+  const home = () => {
+    cam.position.set(H.width_m * 0.5, -H.length_m * 0.55, span * 0.95);
+    controls.target.set(H.width_m / 2, H.length_m / 2, 0.5);
+    controls.update();
   };
-  home2();
-  scene2.add(new THREE.HemisphereLight(
+  home();
+  scene.add(new THREE.HemisphereLight(
     new THREE.Color(BRAND2.hemisphereSky),
     new THREE.Color(BRAND2.hemisphereGround),
     BRAND2.hemisphereIntensity
   ));
   const sun = new THREE.DirectionalLight(new THREE.Color(BRAND2.sun), BRAND2.sunIntensity);
-  sun.position.set(H2.width_m * 0.35, -H2.length_m * 0.15, span2 * 1.1);
-  sun.target.position.set(H2.width_m / 2, H2.length_m / 2, 0);
-  scene2.add(sun.target);
+  sun.position.set(H.width_m * 0.35, -H.length_m * 0.15, span * 1.1);
+  sun.target.position.set(H.width_m / 2, H.length_m / 2, 0);
+  scene.add(sun.target);
   sun.castShadow = true;
   sun.shadow.mapSize.set(2048, 2048);
   sun.shadow.normalBias = 0.04;
   const sc = sun.shadow.camera;
-  sc.left = -span2;
-  sc.right = span2;
-  sc.top = span2;
-  sc.bottom = -span2;
+  sc.left = -span;
+  sc.right = span;
+  sc.top = span;
+  sc.bottom = -span;
   sc.near = 0.5;
-  sc.far = span2 * 3.5;
+  sc.far = span * 3.5;
   sc.updateProjectionMatrix();
-  scene2.add(sun);
+  scene.add(sun);
   const fill = new THREE.DirectionalLight(new THREE.Color(BRAND2.fill), BRAND2.fillIntensity);
-  fill.position.set(H2.width_m * 0.7, H2.length_m * 1.2, span2 * 0.6);
-  scene2.add(fill);
-  return { renderer: renderer2, scene: scene2, cam: cam2, controls: controls2, span: span2, home: home2 };
+  fill.position.set(H.width_m * 0.7, H.length_m * 1.2, span * 0.6);
+  scene.add(fill);
+  return { renderer, scene, cam, controls, span, home };
 }
 
 // src/hangar.ts
 import * as THREE2 from "three";
 var WALL_H = 3;
-function addHangar(scene2, H2, BRAND2, span2) {
-  const wallMeshes2 = [];
-  const notches = H2.structural_notches ?? [];
+function addHangar(scene, H, BRAND2, span) {
+  const wallMeshes = [];
+  const notches = H.structural_notches ?? [];
   const floorMat = new THREE2.MeshStandardMaterial({
     color: new THREE2.Color(BRAND2.floor),
     roughness: 1,
@@ -82,14 +88,14 @@ function addHangar(scene2, H2, BRAND2, span2) {
   });
   let floor;
   if (notches.length === 0) {
-    floor = new THREE2.Mesh(new THREE2.PlaneGeometry(H2.width_m, H2.length_m), floorMat);
-    floor.position.set(H2.width_m / 2, H2.length_m / 2, 0);
+    floor = new THREE2.Mesh(new THREE2.PlaneGeometry(H.width_m, H.length_m), floorMat);
+    floor.position.set(H.width_m / 2, H.length_m / 2, 0);
   } else {
     const shape = new THREE2.Shape();
     shape.moveTo(0, 0);
-    shape.lineTo(H2.width_m, 0);
-    shape.lineTo(H2.width_m, H2.length_m);
-    shape.lineTo(0, H2.length_m);
+    shape.lineTo(H.width_m, 0);
+    shape.lineTo(H.width_m, H.length_m);
+    shape.lineTo(0, H.length_m);
     shape.closePath();
     for (const n of notches) {
       const hole = new THREE2.Path();
@@ -103,16 +109,16 @@ function addHangar(scene2, H2, BRAND2, span2) {
     floor = new THREE2.Mesh(new THREE2.ShapeGeometry(shape), floorMat);
   }
   floor.receiveShadow = true;
-  scene2.add(floor);
+  scene.add(floor);
   const grid = new THREE2.GridHelper(
-    span2,
-    Math.round(span2),
+    span,
+    Math.round(span),
     new THREE2.Color(BRAND2.gridMajor),
     new THREE2.Color(BRAND2.gridMinor)
   );
   grid.rotation.x = Math.PI / 2;
-  grid.position.set(H2.width_m / 2, H2.length_m / 2, 3e-3);
-  scene2.add(grid);
+  grid.position.set(H.width_m / 2, H.length_m / 2, 3e-3);
+  scene.add(grid);
   const t = 0.08;
   const addWall = (sx, sy, x, y) => {
     const m = new THREE2.MeshStandardMaterial({
@@ -123,16 +129,16 @@ function addHangar(scene2, H2, BRAND2, span2) {
     });
     const mesh = new THREE2.Mesh(new THREE2.BoxGeometry(sx, sy, WALL_H), m);
     mesh.position.set(x, y, WALL_H / 2);
-    scene2.add(mesh);
-    wallMeshes2.push(mesh);
+    scene.add(mesh);
+    wallMeshes.push(mesh);
   };
-  addWall(t, H2.length_m, 0, H2.length_m / 2);
-  addWall(t, H2.length_m, H2.width_m, H2.length_m / 2);
-  addWall(H2.width_m, t, H2.width_m / 2, H2.length_m);
-  const dl = H2.door.center_x_m - H2.door.width_m / 2;
-  const dr = H2.door.center_x_m + H2.door.width_m / 2;
+  addWall(t, H.length_m, 0, H.length_m / 2);
+  addWall(t, H.length_m, H.width_m, H.length_m / 2);
+  addWall(H.width_m, t, H.width_m / 2, H.length_m);
+  const dl = H.door.center_x_m - H.door.width_m / 2;
+  const dr = H.door.center_x_m + H.door.width_m / 2;
   if (dl > 1e-6) addWall(dl, t, dl / 2, 0);
-  if (dr < H2.width_m - 1e-6) addWall(H2.width_m - dr, t, (dr + H2.width_m) / 2, 0);
+  if (dr < H.width_m - 1e-6) addWall(H.width_m - dr, t, (dr + H.width_m) / 2, 0);
   const eps = 1e-6;
   for (const n of notches) {
     const cx = (n.x_min_m + n.x_max_m) / 2;
@@ -140,11 +146,11 @@ function addHangar(scene2, H2, BRAND2, span2) {
     const w = n.x_max_m - n.x_min_m;
     const l = n.y_max_m - n.y_min_m;
     if (n.x_min_m > eps) addWall(t, l, n.x_min_m, cy);
-    if (n.x_max_m < H2.width_m - eps) addWall(t, l, n.x_max_m, cy);
+    if (n.x_max_m < H.width_m - eps) addWall(t, l, n.x_max_m, cy);
     if (n.y_min_m > eps) addWall(w, t, cx, n.y_min_m);
-    if (n.y_max_m < H2.length_m - eps) addWall(w, t, cx, n.y_max_m);
+    if (n.y_max_m < H.length_m - eps) addWall(w, t, cx, n.y_max_m);
   }
-  const bay = H2.maintenance_bay;
+  const bay = H.maintenance_bay;
   if (bay && bay.closed) {
     const bm = new THREE2.Mesh(
       new THREE2.BoxGeometry(bay.width_m, bay.depth_m, WALL_H),
@@ -154,10 +160,10 @@ function addHangar(scene2, H2, BRAND2, span2) {
         opacity: BRAND2.bayOpacity
       })
     );
-    bm.position.set(bay.center_x_m, H2.length_m - bay.depth_m / 2, WALL_H / 2);
-    scene2.add(bm);
+    bm.position.set(bay.center_x_m, H.length_m - bay.depth_m / 2, WALL_H / 2);
+    scene.add(bm);
   }
-  return wallMeshes2;
+  return wallMeshes;
 }
 
 // src/planes.ts
@@ -232,27 +238,27 @@ function makeLabel(text, BRAND2, conflicted = false) {
   const measure = document.createElement("canvas").getContext("2d");
   measure.font = fontPx + fontStack;
   const tw = Math.ceil(measure.measureText(shown).width);
-  const canvas2 = document.createElement("canvas");
-  canvas2.width = tw + padX * 2;
-  canvas2.height = fontPx + padY * 2;
-  const ctx = canvas2.getContext("2d");
+  const canvas = document.createElement("canvas");
+  canvas.width = tw + padX * 2;
+  canvas.height = fontPx + padY * 2;
+  const ctx = canvas.getContext("2d");
   ctx.font = fontPx + fontStack;
   ctx.textBaseline = "middle";
   ctx.fillStyle = conflicted ? BRAND2.labelConflictChip : BRAND2.labelChipBg;
-  ctx.fillRect(0, 0, canvas2.width, canvas2.height);
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
   ctx.fillStyle = BRAND2.labelText;
-  ctx.fillText(shown, padX, canvas2.height / 2);
-  const tex = new THREE4.CanvasTexture(canvas2);
+  ctx.fillText(shown, padX, canvas.height / 2);
+  const tex = new THREE4.CanvasTexture(canvas);
   tex.anisotropy = 4;
   const sprite = new THREE4.Sprite(
     new THREE4.SpriteMaterial({ map: tex, transparent: true, depthTest: false })
   );
   const hWorld = 0.9;
-  sprite.scale.set(hWorld * canvas2.width / canvas2.height, hWorld, 1);
+  sprite.scale.set(hWorld * canvas.width / canvas.height, hWorld, 1);
   sprite.renderOrder = 999;
   return sprite;
 }
-function addLabelAndNose(g, p, colour, conflicted, BRAND2, labelMeshes2, noseMeshes2) {
+function addLabelAndNose(g, p, colour, conflicted, BRAND2, labelMeshes, noseMeshes) {
   let maxTop = 0, sx = 0, sy = 0, noseX = -Infinity, noseZ = 0;
   for (const b of p.boxes) {
     maxTop = Math.max(maxTop, b.cz + b.height_m / 2);
@@ -267,7 +273,7 @@ function addLabelAndNose(g, p, colour, conflicted, BRAND2, labelMeshes2, noseMes
   const label = makeLabel(p.id, BRAND2, conflicted);
   label.position.set(sx / n, sy / n, maxTop + 1);
   g.add(label);
-  labelMeshes2.push(label);
+  labelMeshes.push(label);
   const noseLen = 0.7, noseR = 0.28;
   const nose = new THREE4.Mesh(
     new THREE4.ConeGeometry(noseR, noseLen, 14),
@@ -283,7 +289,7 @@ function addLabelAndNose(g, p, colour, conflicted, BRAND2, labelMeshes2, noseMes
   nose.position.set(noseX + noseLen / 2, 0, noseZ);
   nose.castShadow = true;
   g.add(nose);
-  noseMeshes2.push(nose);
+  noseMeshes.push(nose);
 }
 
 // src/planes.ts
@@ -325,23 +331,23 @@ function boxMesh(b, colour) {
   mesh.receiveShadow = true;
   return mesh;
 }
-function addPlanes(scene2, SCENE2, BRAND2) {
+function addPlanes(scene, SCENE, BRAND2) {
   const CONFLICT = BRAND2.conflict;
-  const groups2 = {};
-  const labelMeshes2 = [];
-  const noseMeshes2 = [];
+  const groups = {};
+  const labelMeshes = [];
+  const noseMeshes = [];
   const legend = byId("legend");
   const gearMats = makeGearMaterials(BRAND2);
-  for (const p of SCENE2.planes) {
+  for (const p of SCENE.planes) {
     const g = new THREE5.Group();
     g.matrixAutoUpdate = false;
-    const conflicted = SCENE2.conflicts.includes(p.id);
+    const conflicted = SCENE.conflicts.includes(p.id);
     const colour = new THREE5.Color(conflicted ? CONFLICT : p.color);
     for (const b of p.boxes) g.add(boxMesh(b, colour));
     addGear(g, p, gearMats);
-    addLabelAndNose(g, p, colour, conflicted, BRAND2, labelMeshes2, noseMeshes2);
-    groups2[p.id] = g;
-    scene2.add(g);
+    addLabelAndNose(g, p, colour, conflicted, BRAND2, labelMeshes, noseMeshes);
+    groups[p.id] = g;
+    scene.add(g);
     const sw = document.createElement("span");
     sw.className = "sw";
     const dot = document.createElement("i");
@@ -350,7 +356,7 @@ function addPlanes(scene2, SCENE2, BRAND2) {
     sw.appendChild(document.createTextNode(p.id));
     legend.appendChild(sw);
   }
-  return { groups: groups2, labelMeshes: labelMeshes2, noseMeshes: noseMeshes2 };
+  return { groups, labelMeshes, noseMeshes };
 }
 
 // src/ground_objects.ts
@@ -387,18 +393,18 @@ function applyAffine(aff, u, v) {
 }
 
 // src/ground_objects.ts
-function addGroundObjects(scene2, SCENE2) {
-  const groups2 = {};
+function addGroundObjects(scene, SCENE) {
+  const groups = {};
   const legend = byId("legend");
-  for (const go of SCENE2.ground_objects) {
+  for (const go of SCENE.ground_objects) {
     const g = new THREE7.Group();
     g.matrixAutoUpdate = false;
     const colour = new THREE7.Color(go.color);
     for (const b of go.boxes) g.add(boxMesh(b, colour));
     g.matrix.copy(affineMatrix(go.final_pose));
     g.matrixWorldNeedsUpdate = true;
-    groups2[go.id] = g;
-    scene2.add(g);
+    groups[go.id] = g;
+    scene.add(g);
     const sw = document.createElement("span");
     sw.className = "sw";
     const dot = document.createElement("i");
@@ -409,7 +415,7 @@ function addGroundObjects(scene2, SCENE2) {
     sw.appendChild(document.createTextNode(tag));
     legend.appendChild(sw);
   }
-  return { groups: groups2 };
+  return { groups };
 }
 
 // src/paths.ts
@@ -419,23 +425,23 @@ var TY = 5;
 function pathPoints(seg) {
   return seg.samples.map((s) => [s[TX], s[TY]]);
 }
-function addTowPaths(scene2, SCENE2, BRAND2) {
+function addTowPaths(scene, SCENE, BRAND2) {
   const Z_OFFSET = 0.02;
   const segByPlane = {};
-  for (const s of SCENE2.timeline.segments) segByPlane[s.plane_id] = s;
+  for (const s of SCENE.timeline.segments) segByPlane[s.plane_id] = s;
   const lines = [];
-  for (const p of SCENE2.planes) {
+  for (const p of SCENE.planes) {
     const seg = segByPlane[p.id];
     if (!seg) continue;
     const pts = pathPoints(seg);
     if (pts.length < 2) continue;
-    const conflicted = SCENE2.conflicts.includes(p.id);
+    const conflicted = SCENE.conflicts.includes(p.id);
     const colour = new THREE8.Color(conflicted ? BRAND2.conflict : p.color);
     const geom = new THREE8.BufferGeometry().setFromPoints(
       pts.map(([x, y]) => new THREE8.Vector3(x, y, Z_OFFSET))
     );
     const line = new THREE8.Line(geom, new THREE8.LineBasicMaterial({ color: colour }));
-    scene2.add(line);
+    scene.add(line);
     lines.push(line);
   }
   const setVisible = (on) => {
@@ -446,12 +452,12 @@ function addTowPaths(scene2, SCENE2, BRAND2) {
 
 // src/egress.ts
 import * as THREE9 from "three";
-function addEgressLanes(scene2, SCENE2, BRAND2) {
+function addEgressLanes(scene, SCENE, BRAND2) {
   const Z_OFFSET = 0.025;
   const colour = new THREE9.Color(BRAND2.egressLane);
   const lines = [];
-  for (const moverId of Object.keys(SCENE2.egress_lanes).sort()) {
-    const pts = SCENE2.egress_lanes[moverId];
+  for (const moverId of Object.keys(SCENE.egress_lanes).sort()) {
+    const pts = SCENE.egress_lanes[moverId];
     if (pts.length < 2) continue;
     const geom = new THREE9.BufferGeometry().setFromPoints(
       pts.map(([x, y]) => new THREE9.Vector3(x, y, Z_OFFSET))
@@ -467,7 +473,7 @@ function addEgressLanes(scene2, SCENE2, BRAND2) {
       })
     );
     line.computeLineDistances();
-    scene2.add(line);
+    scene.add(line);
     lines.push(line);
   }
   return { lines };
@@ -503,14 +509,14 @@ function compareBoxesToOracle(aff, boxes, want, label) {
   }
   return { structural: "", maxErr };
 }
-function checkAnchors(scene2) {
+function checkAnchors(scene) {
   let maxErr = 0;
-  for (const p of scene2.planes) {
-    const aff = scene2.final_poses[p.id];
-    const r = compareBoxesToOracle(aff, p.boxes, scene2.anchors[p.id], p.id);
+  for (const p of scene.planes) {
+    const aff = scene.final_poses[p.id];
+    const r = compareBoxesToOracle(aff, p.boxes, scene.anchors[p.id], p.id);
     if (r.structural) return { structural: r.structural, maxErr };
     maxErr = Math.max(maxErr, r.maxErr);
-    const gw = scene2.gear_anchors[p.id];
+    const gw = scene.gear_anchors[p.id];
     if (!aff || !gw || !p.wheels) {
       return { structural: "missing gear anchors/wheels for " + p.id, maxErr };
     }
@@ -522,8 +528,8 @@ function checkAnchors(scene2) {
       maxErr = Math.max(maxErr, Math.abs(wx - gw[wi][0]), Math.abs(wy - gw[wi][1]));
     });
   }
-  for (const go of scene2.ground_objects) {
-    const r = compareBoxesToOracle(go.final_pose, go.boxes, scene2.go_anchors[go.id], go.id);
+  for (const go of scene.ground_objects) {
+    const r = compareBoxesToOracle(go.final_pose, go.boxes, scene.go_anchors[go.id], go.id);
     if (r.structural) return { structural: r.structural, maxErr };
     maxErr = Math.max(maxErr, r.maxErr);
   }
@@ -543,18 +549,18 @@ function affineAt(segByPlane, finals, pid, t) {
   const i = Math.round(frac * (seg.samples.length - 1));
   return { vis: true, aff: seg.samples[i] };
 }
-function framePoses(scene2, segByPlane, t) {
+function framePoses(scene, segByPlane, t) {
   const out = {};
-  for (const p of scene2.planes) {
-    out[p.id] = affineAt(segByPlane, scene2.final_poses, p.id, t);
+  for (const p of scene.planes) {
+    out[p.id] = affineAt(segByPlane, scene.final_poses, p.id, t);
   }
-  for (const go of scene2.ground_objects) {
+  for (const go of scene.ground_objects) {
     out[go.id] = affineAt(segByPlane, { [go.id]: go.final_pose }, go.id, t);
   }
   return out;
 }
-function createTimeline(scene2, groups2, goGroups2 = {}) {
-  const TL = scene2.timeline;
+function createTimeline(scene, groups, goGroups = {}) {
+  const TL = scene.timeline;
   const SEGS = TL.segments;
   const TOTAL = TL.total_s;
   const hasAnim = TOTAL > 0 && SEGS.length > 0;
@@ -563,7 +569,7 @@ function createTimeline(scene2, groups2, goGroups2 = {}) {
   const active = byId("active");
   const clock = byId("clock");
   const applyTime = (t) => {
-    const poses = framePoses(scene2, segByPlane, t);
+    const poses = framePoses(scene, segByPlane, t);
     const drive = (id, g) => {
       if (!g) return;
       const { vis, aff } = poses[id];
@@ -573,8 +579,8 @@ function createTimeline(scene2, groups2, goGroups2 = {}) {
         g.matrixWorldNeedsUpdate = true;
       }
     };
-    for (const p of scene2.planes) drive(p.id, groups2[p.id]);
-    for (const go of scene2.ground_objects) drive(go.id, goGroups2[go.id]);
+    for (const p of scene.planes) drive(p.id, groups[p.id]);
+    for (const go of scene.ground_objects) drive(go.id, goGroups[go.id]);
     const cur = SEGS.find((s) => t >= s.start_s && t < s.end_s);
     active.textContent = cur ? "towing: " + cur.plane_id : "";
     clock.textContent = t.toFixed(1) + "s";
@@ -583,9 +589,10 @@ function createTimeline(scene2, groups2, goGroups2 = {}) {
 }
 
 // src/hud.ts
+var ANIM_CONTROLS = ["play", "prev", "next", "scrub", "speed"];
 function startHud(deps) {
-  const { timeline: timeline2, home: home2, controls: controls2, renderer: renderer2, scene: scene2, cam: cam2 } = deps;
-  const { total: TOTAL, hasAnim, segs: SEGS, applyTime } = timeline2;
+  const { home, controls, renderer, scene, cam } = deps;
+  let active = deps.timeline;
   let t = 0;
   let playing = false;
   let speed = 1;
@@ -595,100 +602,239 @@ function startHud(deps) {
   speedSel.addEventListener("change", () => {
     speed = parseFloat(speedSel.value);
   });
-  if (!hasAnim) {
-    ["play", "prev", "next", "scrub", "speed"].forEach(disableControl);
-  }
+  const applyAnimEnabled = () => {
+    for (const id of ANIM_CONTROLS) (active.hasAnim ? enableControl : disableControl)(id);
+  };
+  applyAnimEnabled();
   scrub.addEventListener("input", () => {
-    t = Number(scrub.value) / 1e3 * TOTAL;
+    t = Number(scrub.value) / 1e3 * active.total;
     playing = false;
     playBtn.textContent = "▶";
-    applyTime(t);
+    active.applyTime(t);
   });
   playBtn.addEventListener("click", () => {
-    if (!hasAnim) return;
+    if (!active.hasAnim) return;
     playing = !playing;
     playBtn.textContent = playing ? "❚❚" : "▶";
-    if (t >= TOTAL) t = 0;
+    if (t >= active.total) t = 0;
   });
   const stepTo = (dir) => {
-    const bounds = [0, ...SEGS.map((s) => s.end_s)];
+    const bounds = [0, ...active.segs.map((s) => s.end_s)];
     let i = bounds.findIndex((b) => b > t + 1e-6);
     if (i < 0) i = bounds.length - 1;
     t = dir > 0 ? bounds[Math.min(i, bounds.length - 1)] : bounds[Math.max(0, i - 2)];
     playing = false;
     playBtn.textContent = "▶";
-    if (hasAnim) scrub.value = String(t / TOTAL * 1e3);
-    applyTime(t);
+    if (active.hasAnim) scrub.value = String(t / active.total * 1e3);
+    active.applyTime(t);
   };
   byId("next").addEventListener("click", () => stepTo(1));
   byId("prev").addEventListener("click", () => stepTo(-1));
-  byId("reset").addEventListener("click", home2);
+  byId("reset").addEventListener("click", home);
   window.addEventListener("resize", () => {
-    cam2.aspect = window.innerWidth / window.innerHeight;
-    cam2.updateProjectionMatrix();
-    renderer2.setSize(window.innerWidth, window.innerHeight);
+    cam.aspect = window.innerWidth / window.innerHeight;
+    cam.updateProjectionMatrix();
+    renderer.setSize(window.innerWidth, window.innerHeight);
   });
   let last = performance.now();
   const loop = (now) => {
     requestAnimationFrame(loop);
     const dt = (now - last) / 1e3;
     last = now;
-    if (playing && hasAnim) {
+    if (playing && active.hasAnim) {
       t += dt * speed;
-      if (t >= TOTAL) {
-        t = TOTAL;
+      if (t >= active.total) {
+        t = active.total;
         playing = false;
         playBtn.textContent = "▶";
       }
-      scrub.value = String(t / TOTAL * 1e3);
+      scrub.value = String(t / active.total * 1e3);
     }
-    applyTime(t);
-    controls2.update();
-    renderer2.render(scene2, cam2);
+    active.applyTime(t);
+    controls.update();
+    renderer.render(scene, cam);
   };
-  applyTime(0);
+  active.applyTime(0);
   requestAnimationFrame(loop);
+  return {
+    setActiveTimeline(timeline) {
+      active = timeline;
+      t = 0;
+      playing = false;
+      playBtn.textContent = "▶";
+      scrub.value = "0";
+      applyAnimEnabled();
+      active.applyTime(0);
+    }
+  };
+}
+
+// src/compare.ts
+function wrapIndex(current, n, dir) {
+  if (n <= 0) return 0;
+  return ((current + dir) % n + n) % n;
+}
+function clampIndex(i, n) {
+  if (n <= 0) return 0;
+  if (!Number.isFinite(i)) return 0;
+  return Math.min(Math.max(Math.trunc(i), 0), n - 1);
+}
+function fmtGap(min_gap_m) {
+  return min_gap_m == null ? "n/a" : min_gap_m.toFixed(2) + " m";
+}
+function optionLabels(solutions) {
+  return solutions.map((s) => `${s.label} — gap ${fmtGap(s.summary.min_gap_m)}`);
+}
+function formatSummary(sol) {
+  const s = sol.summary;
+  const parts = [`min gap ${fmtGap(s.min_gap_m)}`];
+  if (s.planes_moved_vs_first > 0) {
+    parts.push(`${s.planes_moved_vs_first} moved vs #1 (avg ${s.mean_shift_m.toFixed(1)} m)`);
+  }
+  parts.push(s.routable ? "tow-routable" : "not tow-routable");
+  return parts.join(" · ");
+}
+function foundLabel(m) {
+  if (m.count_found < m.count_requested) {
+    return `Found ${m.count_found} of ${m.count_requested} requested`;
+  }
+  return `${m.count_found} solution${m.count_found === 1 ? "" : "s"}`;
 }
 
 // src/main.ts
-var SCENE = JSON.parse(byId("scene").textContent ?? "null");
-var BRAND = JSON.parse(byId("brand").textContent ?? "null");
-var H = SCENE.hangar;
-if (SCENE.placeholder) byId("placeholder").hidden = false;
-if (SCENE.readouts) {
+function setReadouts(scene) {
+  byId("placeholder").hidden = !scene.placeholder;
+  const r = scene.readouts;
   const fmtM = (v) => v == null ? "n/a" : v.toFixed(2) + " m";
-  byId("readouts").textContent = "gap " + fmtM(SCENE.readouts.min_gap_m) + " · wing-over-tail " + fmtM(SCENE.readouts.min_wing_over_tail_clearance_m);
+  byId("readouts").textContent = r ? "gap " + fmtM(r.min_gap_m) + " · wing-over-tail " + fmtM(r.min_wing_over_tail_clearance_m) : "";
 }
-var canvas = byId("c");
-var { renderer, scene, cam, controls, span, home } = createRenderer(canvas, H, BRAND);
-var wallMeshes = addHangar(scene, H, BRAND, span);
-var wallsToggle = byId("walls");
-wallsToggle.addEventListener("change", () => {
-  for (const m of wallMeshes) m.visible = wallsToggle.checked;
-});
-var { groups, labelMeshes, noseMeshes } = addPlanes(scene, SCENE, BRAND);
-var labelsToggle = byId("labels");
-labelsToggle.addEventListener("change", () => {
-  const on = labelsToggle.checked;
-  for (const m of labelMeshes) m.visible = on;
-  for (const m of noseMeshes) m.visible = on;
-});
-var { groups: goGroups } = addGroundObjects(scene, SCENE);
-var { setVisible: setPathsVisible } = addTowPaths(scene, SCENE, BRAND);
-var pathsToggle = byId("paths");
-pathsToggle.addEventListener("change", () => setPathsVisible(pathsToggle.checked));
-addEgressLanes(scene, SCENE, BRAND);
-try {
-  const { structural, maxErr } = checkAnchors(SCENE);
-  if (structural) {
-    banner("TRANSFORM CHECK FAILED (" + structural + ") — do not trust this render.");
-  } else if (maxErr > 1e-6) {
-    banner(
-      "TRANSFORM CHECK FAILED (maxErr=" + maxErr.toExponential(2) + "): viewer affine disagrees with the Python oracle — do not trust this render."
-    );
+function buildWorld(scene, data, brand) {
+  byId("legend").textContent = "";
+  const group = new THREE11.Group();
+  scene.add(group);
+  const { groups, labelMeshes, noseMeshes } = addPlanes(group, data, brand);
+  const { groups: goGroups } = addGroundObjects(group, data);
+  const { setVisible: setPathsVisible } = addTowPaths(group, data, brand);
+  addEgressLanes(group, data, brand);
+  try {
+    const { structural, maxErr } = checkAnchors(data);
+    if (structural) {
+      banner("TRANSFORM CHECK FAILED (" + structural + ") — do not trust this render.");
+    } else if (maxErr > 1e-6) {
+      banner(
+        "TRANSFORM CHECK FAILED (maxErr=" + maxErr.toExponential(2) + "): viewer affine disagrees with the Python oracle — do not trust this render."
+      );
+    }
+  } catch (e) {
+    banner("TRANSFORM CHECK ERRORED: " + e.message + " — do not trust this render.");
   }
-} catch (e) {
-  banner("TRANSFORM CHECK ERRORED: " + e.message + " — do not trust this render.");
+  const timeline = createTimeline(data, groups, goGroups);
+  return { group, labelMeshes, noseMeshes, setPathsVisible, timeline };
 }
-var timeline = createTimeline(SCENE, groups, goGroups);
-startHud({ timeline, home, controls, renderer, scene, cam });
+function wireToggles(wallMeshes, getWorld) {
+  const wallsToggle = byId("walls");
+  wallsToggle.addEventListener("change", () => {
+    for (const m of wallMeshes) m.visible = wallsToggle.checked;
+  });
+  const labelsToggle = byId("labels");
+  labelsToggle.addEventListener("change", () => {
+    const on = labelsToggle.checked;
+    const w = getWorld();
+    for (const m of w.labelMeshes) m.visible = on;
+    for (const m of w.noseMeshes) m.visible = on;
+  });
+  const pathsToggle = byId("paths");
+  pathsToggle.addEventListener("change", () => getWorld().setPathsVisible(pathsToggle.checked));
+}
+function applyToggleState(world) {
+  const on = byId("labels").checked;
+  for (const m of world.labelMeshes) m.visible = on;
+  for (const m of world.noseMeshes) m.visible = on;
+  world.setPathsVisible(byId("paths").checked);
+}
+function disposeWorld(group) {
+  group.traverse((obj) => {
+    const m = obj;
+    if (m.geometry) m.geometry.dispose();
+    const mat = m.material;
+    const mats = Array.isArray(mat) ? mat : mat ? [mat] : [];
+    for (const one of mats) {
+      const tex = one.map;
+      if (tex) tex.dispose();
+      one.dispose();
+    }
+  });
+}
+function setupStage(hangar, brand) {
+  const canvas = byId("c");
+  const r = createRenderer(canvas, hangar, brand);
+  const wallMeshes = addHangar(r.scene, hangar, brand, r.span);
+  return { ...r, wallMeshes };
+}
+function bootSingle(data, brand) {
+  setReadouts(data);
+  const stage = setupStage(data.hangar, brand);
+  const world = buildWorld(stage.scene, data, brand);
+  wireToggles(stage.wallMeshes, () => world);
+  startHud({
+    timeline: world.timeline,
+    home: stage.home,
+    controls: stage.controls,
+    renderer: stage.renderer,
+    scene: stage.scene,
+    cam: stage.cam
+  });
+}
+function startCompare(manifest, brand) {
+  const solutions = manifest.solutions;
+  const stage = setupStage(solutions[0].scene.hangar, brand);
+  let current = 0;
+  let world = buildWorld(stage.scene, solutions[0].scene, brand);
+  setReadouts(solutions[0].scene);
+  wireToggles(stage.wallMeshes, () => world);
+  const hud = startHud({
+    timeline: world.timeline,
+    home: stage.home,
+    controls: stage.controls,
+    renderer: stage.renderer,
+    scene: stage.scene,
+    cam: stage.cam
+  });
+  const select = byId("compare");
+  for (const label of optionLabels(solutions)) {
+    const opt = document.createElement("option");
+    opt.textContent = label;
+    select.appendChild(opt);
+  }
+  const metrics = byId("compare-metrics");
+  const showMetrics = () => {
+    metrics.textContent = foundLabel(manifest) + " · " + formatSummary(solutions[current]);
+  };
+  const mount = (k) => {
+    const next = clampIndex(k, solutions.length);
+    if (next === current) return;
+    current = next;
+    select.selectedIndex = current;
+    stage.scene.remove(world.group);
+    disposeWorld(world.group);
+    world = buildWorld(stage.scene, solutions[current].scene, brand);
+    applyToggleState(world);
+    setReadouts(solutions[current].scene);
+    hud.setActiveTimeline(world.timeline);
+    showMetrics();
+  };
+  select.addEventListener("change", () => mount(select.selectedIndex));
+  window.addEventListener("keydown", (e) => {
+    if (e.key === "ArrowRight") mount(wrapIndex(current, solutions.length, 1));
+    else if (e.key === "ArrowLeft") mount(wrapIndex(current, solutions.length, -1));
+  });
+  select.selectedIndex = 0;
+  showMetrics();
+}
+var BRAND = JSON.parse(byId("brand").textContent ?? "null");
+var solutionsEl = document.getElementById("solutions");
+if (solutionsEl) {
+  startCompare(JSON.parse(solutionsEl.textContent ?? "null"), BRAND);
+} else {
+  bootSingle(JSON.parse(byId("scene").textContent ?? "null"), BRAND);
+}
