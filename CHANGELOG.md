@@ -6,20 +6,21 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
-- **Solver (#614, epic #600 / milestone #34): SOFT door-priority tie-breaker
+- **Solver (#614, epic #600 / milestone 34): SOFT door-priority tie-breaker
   (`Scenario.door_order`).** The deferred soft half of #603's HARD Caddy egress gate: a scenario
   may declare a desired door-proximity order (a top-level `door_order:` list of placeable body ids;
   the first should park nearest the door). Among the already-collision-valid candidate basins the
   solver collects, a new **lexicographically-subordinate** selection term ranks layouts by a
   Kendall-tau inversion count over the placed `door_order` bodies (door distance = the `y_m`
-  reference coordinate, consistent with the `_back_bias`/`_region` soft terms; absent bodies, e.g.
+  reference coordinate, the same idiom as the `_back_bias` soft term; absent bodies, e.g.
   a maintenance plane treated as away, are skipped). It sits **above** the ADR-0008 spread terms (a
   declared order wins over maximal spread) but strictly **below every hard rule** — consumed only
-  after the collision + egress gates pass, so it can never make an invalid layout selectable nor
-  reorder a hard rejection. **Determinism (ADR-0003):** unset (`door_order` absent, the default) ⇒
-  a constant `0.0` deviation prefix on the selection key ⇒ byte-identical solver, verified by the
-  6-plane canaries and an unset-is-zero unit. Closes the Ground-objects + Herrenteich-calibration
-  milestone (#600 epic).
+  after the collision gate passes, and it stays subordinate to the ADR-0026 egress gate (which
+  independently rejects un-routable layouts downstream), so it can never make an invalid layout
+  selectable nor reorder a hard rejection. **Determinism (ADR-0003):** unset (`door_order` absent,
+  the default) ⇒ a constant `0.0` deviation prefix on the selection key ⇒ byte-identical solver,
+  verified by the 6-plane canaries and an unset-is-zero unit. Closes #614, the last open child of
+  epic #600 / milestone 34 (Ground objects + Herrenteich calibration).
 
 - **Solver (#754, epic #607 Wave 3 / #760): Lever B — opt-in `solve --sat-collisions` numpy
   SAT box oracle for the collision narrow-phase.** The pairwise + ground-obstacle narrow-phase

@@ -93,6 +93,21 @@ def test_door_order_deviation_skips_absent_bodies():
     assert _door_order_deviation(placements, s) == 0.0
 
 
+def test_door_order_deviation_empty_order_is_inert():
+    # An empty door_order () validates (no ids, no dups) and is a no-op: no
+    # orderable pair ⇒ 0.0, equivalent to None (inert, byte-identical selection).
+    s = _scenario(door_order=())
+    placements = {"a": _pl("a", 9.0), "b": _pl("b", 1.0)}
+    assert _door_order_deviation(placements, s) == 0.0
+
+
+def test_door_order_deviation_single_element_is_inert():
+    # A single-element order can never invert (Kendall-tau needs a pair): inert.
+    s = _scenario(door_order=("a",))
+    placements = {"a": _pl("a", 9.0), "b": _pl("b", 1.0)}
+    assert _door_order_deviation(placements, s) == 0.0
+
+
 # --- _select_spread_diverse ordering --------------------------------------
 
 

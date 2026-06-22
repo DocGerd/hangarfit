@@ -1398,12 +1398,17 @@ def _door_order_deviation(placements: Mapping[str, Placement], scenario: Scenari
     the placed bodies match the requested order exactly; higher ⇒ more inversions.
 
     Door distance is the placement ``y_m`` reference coordinate (a soft proxy,
-    consistent with :func:`_back_bias_energy`'s ``y`` / :func:`_region_energy`'s
-    ``x``; the HARD egress geometry is ADR-0026's separate gate). Bodies absent
+    the same single-reference-coordinate idiom as :func:`_back_bias_energy`'s
+    ``y``; the HARD egress geometry is ADR-0026's separate gate). Bodies absent
     from ``placements`` (e.g. a maintenance plane treated as away) are skipped, so
     only the realized relative order is scored ("position 2 when position 1 is
     geometrically impossible is acceptable", #603). Strict ``>`` means equal-``y``
     ties add no inversion either way — order-neutral and deterministic.
+
+    An order needs ≥2 *placed* bodies to express anything: an empty ``door_order``
+    ``()``, a single-element order, and a ``None`` order all have no orderable pair
+    and so all yield ``0.0`` — i.e. they are equivalent inert no-ops (the term is
+    purely *relative* ordering, never absolute door-attraction).
 
     Returns ``0.0`` when ``door_order`` is ``None`` (inert ⇒ byte-identical
     selection, ADR-0003) — the early return also keeps the default path free."""

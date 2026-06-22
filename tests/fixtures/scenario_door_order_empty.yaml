@@ -1,0 +1,5 @@
+# #614 — an explicit empty door_order is accepted and inert (parses to ()).
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
+fleet_in: [aviat_husky, ctsl]
+door_order: []
