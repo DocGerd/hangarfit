@@ -93,10 +93,182 @@ def test_train_curriculum_promotes_by_cap_when_unreachable():
     assert all(p[2] == "cap" for p in h.promotions)
 
 
+def test_train_curriculum_competency_reads_honest_per_iteration_mean_not_episode_tail(monkeypatch):
+    # #742 regression: the competency gate must threshold the HONEST per-iteration mean over the
+    # WHOLE rollout, not the last-N-episode tail. Feed a rollout whose full-iteration mean is 0.2
+    # (below threshold 0.9) but whose trailing 20 episodes spike to 1.0; the rung must CAP, never
+    # promote by competency. The pre-#742 last-20-episode deque would have read the 1.0 tail and
+    # false-promoted — this test fails loudly if anyone reintroduces a per-episode window.
+    import ml.train as train_mod
+    from ml.ppo import RolloutBuffer
+
+    ep_stats = [EpisodeStat(0.0, True, 0.0)] * 80 + [EpisodeStat(1.0, True, 0.0)] * 20  # mean 0.2
+
+    def biased_rollout(env, policy, enc, rollout_len, *, sample_request=None):
+        return RolloutBuffer(), list(ep_stats)
+
+    monkeypatch.setattr(train_mod, "collect_rollout", biased_rollout)
+    monkeypatch.setattr(
+        train_mod,
+        "ppo_update",
+        lambda *a, **k: {"policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0, "loss": 0.0},
+    )
+
+    sched = CurriculumSchedule.default()
+    sched = replace(
+        sched,
+        stages=(sched.stages[0],),  # one rung keeps the run tiny
+        policy=PromotionPolicy(metric="fraction_placed", window=1, threshold=0.9, max_iters=2),
+    )
+    h = train_curriculum(
+        seed=0,
+        schedule=sched,
+        rollout_len=8,
+        policy_kwargs={"d_model": 32, "n_layers": 1, "n_heads": 2},
+    )
+    _name, _it, by = h.promotions[-1]
+    assert by == "cap"  # honest mean 0.2 < 0.9 -> never competency, despite the 1.0 episode tail
+
+
+@pytest.mark.parametrize("min_level,expected_by", [(0.0, "budget-plateau"), (0.05, "cap")])
+def test_auto_budget_floor_guard_blocks_premature_stop_in_loop(monkeypatch, min_level, expected_by):
+    # #743 wiring: a rung whose honest valid_placed is flat AT THE FLOOR (every rollout places
+    # but INVALIDLY -> valid_placed 0.0) must NOT budget-plateau early. With the floor-guard on
+    # (min_level=0.05) the rung trains to its cap; with it off (min_level=0.0) the same flat-at-0
+    # series early-stops — the contrast proves the loop routes the honest series through the guard.
+    import ml.train as train_mod
+    from ml.curriculum import BudgetController
+    from ml.ppo import RolloutBuffer
+
+    flat_floor = [EpisodeStat(1.0, False, 0.0)] * 30  # placed but invalid -> valid_placed = 0.0
+
+    def floor_rollout(env, policy, enc, rollout_len, *, sample_request=None):
+        return RolloutBuffer(), list(flat_floor)
+
+    monkeypatch.setattr(train_mod, "collect_rollout", floor_rollout)
+    monkeypatch.setattr(
+        train_mod,
+        "ppo_update",
+        lambda *a, **k: {"policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0, "loss": 0.0},
+    )
+
+    sched = CurriculumSchedule.default()
+    sched = replace(
+        sched,
+        stages=(sched.stages[0],),
+        policy=PromotionPolicy(metric="valid_placed", window=1, threshold=2.0, max_iters=5),
+    )
+    budget = BudgetController(
+        min_iters=2, slope_window=2, plateau_patience=1, max_iters=5, eps=1e9, min_level=min_level
+    )
+    h = train_curriculum(
+        seed=0,
+        schedule=sched,
+        rollout_len=8,
+        policy_kwargs={"d_model": 32, "n_layers": 1, "n_heads": 2},
+        auto_budget=budget,
+    )
+    assert h.promotions[-1][2] == expected_by
+
+
 def test_argparser_schedule_defaults_to_curriculum():
     parser = build_argparser()
     assert parser.parse_args([]).schedule == "curriculum"
     assert parser.parse_args(["--schedule", "trivial"]).schedule == "trivial"
+
+
+# ---------------------------------------------------------------------------
+# #747: --n-envs auto resolver (sched_getaffinity- and MemAvailable-bounded)
+# ---------------------------------------------------------------------------
+
+
+def test_resolve_n_envs_passes_through_explicit_int():
+    from ml.train import resolve_n_envs
+
+    assert resolve_n_envs("1") == 1
+    assert resolve_n_envs("8") == 8
+
+
+@pytest.mark.parametrize("bad", ["0", "-3", "foo", "2.5", "", "auto2"])
+def test_resolve_n_envs_rejects_non_positive_and_garbage(bad):
+    import argparse
+
+    from ml.train import resolve_n_envs
+
+    with pytest.raises(argparse.ArgumentTypeError):
+        resolve_n_envs(bad)
+
+
+def test_resolve_n_envs_auto_is_core_bounded_when_ram_is_ample(monkeypatch):
+    import ml.train as t
+
+    monkeypatch.setattr(t, "_available_cores", lambda: 32)
+    monkeypatch.setattr(t, "_available_gib", lambda: 1000.0)  # RAM never binds
+    assert t.resolve_n_envs("auto") == 32 - t._AUTO_RESERVED_CORES
+
+
+def test_resolve_n_envs_auto_is_ram_bounded_when_memory_is_tight(monkeypatch):
+    import ml.train as t
+
+    monkeypatch.setattr(t, "_available_cores", lambda: 32)
+    monkeypatch.setattr(t, "_available_gib", lambda: 12.0)  # tight RAM binds below cores
+    n = t.resolve_n_envs("auto")
+    expected = max(1, int((12.0 - t._AUTO_RAM_HEADROOM_GIB) / t._AUTO_PER_WORKER_GIB))
+    assert n == expected
+    assert n < 32 - t._AUTO_RESERVED_CORES  # genuinely RAM-bound, not core-bound
+
+
+def test_resolve_n_envs_auto_floors_at_one(monkeypatch):
+    import ml.train as t
+
+    monkeypatch.setattr(t, "_available_cores", lambda: 1)  # cores - reserved <= 0
+    monkeypatch.setattr(t, "_available_gib", lambda: 0.1)
+    assert t.resolve_n_envs("auto") == 1
+
+
+def test_resolve_n_envs_auto_falls_back_to_cores_when_meminfo_missing(monkeypatch):
+    import ml.train as t
+
+    monkeypatch.setattr(t, "_available_cores", lambda: 8)
+    monkeypatch.setattr(t, "_available_gib", lambda: None)  # /proc/meminfo unreadable
+    assert t.resolve_n_envs("auto") == 8 - t._AUTO_RESERVED_CORES
+
+
+def test_available_cores_prefers_affinity_over_cpu_count(monkeypatch):
+    """sched_getaffinity respects cgroup/taskset pinning; os.cpu_count overcounts on
+    WSL2/containers. The resolver must use affinity when available."""
+    import ml.train as t
+
+    monkeypatch.setattr(t.os, "sched_getaffinity", lambda _pid: {0, 1, 2, 3}, raising=False)
+    assert t._available_cores() == 4
+
+
+def test_argparser_n_envs_default_is_one_byte_identity_floor():
+    assert build_argparser().parse_args([]).n_envs == 1
+
+
+def test_argparser_n_envs_auto_resolves_to_positive_int(monkeypatch):
+    import ml.train as t
+
+    monkeypatch.setattr(t, "_available_cores", lambda: 8)
+    monkeypatch.setattr(t, "_available_gib", lambda: 1000.0)
+    ns = build_argparser().parse_args(["--n-envs", "auto"])
+    assert isinstance(ns.n_envs, int) and ns.n_envs == 8 - t._AUTO_RESERVED_CORES
+
+
+def test_argparser_n_envs_rejects_garbage_with_clean_error():
+    parser = build_argparser()
+    with pytest.raises(SystemExit):
+        parser.parse_args(["--n-envs", "nope"])
+
+
+def test_main_rejects_n_envs_above_one_on_trivial_schedule():
+    """--n-envs > 1 (or auto) is a curriculum-only knob; the trivial path is single-env.
+    A misdirected value must fail LOUD, not silently run serial."""
+    from ml.train import main
+
+    with pytest.raises(SystemExit):
+        main(["--schedule", "trivial", "--n-envs", "4", "--iterations", "1", "--rollout-len", "4"])
 
 
 def test_train_curriculum_validates_ladder_eagerly():
@@ -312,6 +484,69 @@ def test_main_no_override_flags_keeps_default_policy(monkeypatch):
     monkeypatch.setattr(train_mod, "train_curriculum", fake)
     train_mod.main(["--schedule", "curriculum"])
     assert captured["schedule"].policy == PromotionPolicy()
+
+
+def test_argparser_promotion_window_and_auto_budget_floor_default_none():
+    a = build_argparser().parse_args([])
+    assert a.promotion_window is None
+    assert a.auto_budget_min_iters is None
+    assert a.auto_budget_min_level is None
+
+
+def test_main_threads_promotion_window_into_policy(monkeypatch):
+    # #742: --promotion-window overrides PromotionPolicy.window (recent ITERATIONS to average).
+    import ml.train as train_mod
+    from ml.curriculum import CurriculumHistory
+
+    captured: dict = {}
+
+    def fake(*, schedule, **kw):
+        captured["schedule"] = schedule
+        return CurriculumHistory()
+
+    monkeypatch.setattr(train_mod, "train_curriculum", fake)
+    train_mod.main(["--schedule", "curriculum", "--promotion-window", "5"])
+    assert captured["schedule"].policy.window == 5
+
+
+def test_main_threads_auto_budget_floor_knobs(monkeypatch):
+    # #743: --auto-budget-min-iters / --auto-budget-min-level build the BudgetController.
+    import ml.train as train_mod
+    from ml.curriculum import CurriculumHistory
+
+    captured: dict = {}
+
+    def fake(*, auto_budget, **kw):
+        captured["auto_budget"] = auto_budget
+        return CurriculumHistory()
+
+    monkeypatch.setattr(train_mod, "train_curriculum", fake)
+    train_mod.main(
+        [
+            "--schedule",
+            "curriculum",
+            "--auto-budget",
+            "--auto-budget-min-iters",
+            "50",
+            "--auto-budget-min-level",
+            "0.1",
+        ]
+    )
+    b = captured["auto_budget"]
+    assert b is not None
+    assert b.min_iters == 50
+    assert b.min_level == pytest.approx(0.1)
+
+
+def test_main_auto_budget_floor_knobs_require_auto_budget():
+    # the floor knobs are inert without --auto-budget: fail LOUD (like --auto-budget-max-iters),
+    # never silently drop a typed numeric flag.
+    import ml.train as train_mod
+
+    with pytest.raises(SystemExit):
+        train_mod.main(["--schedule", "curriculum", "--auto-budget-min-iters", "50"])
+    with pytest.raises(SystemExit):
+        train_mod.main(["--schedule", "curriculum", "--auto-budget-min-level", "0.1"])
 
 
 def test_main_writes_metrics_jsonl(monkeypatch, tmp_path):

@@ -378,23 +378,34 @@ def compute_gae_vec(
     gamma: float = 0.99,
     lam: float = 0.95,
 ) -> tuple[Tensor, Tensor]:
-    """Per-env GAE: run the single-stream ``compute_gae`` on each env column (each env's
-    ``done`` resets its own λ-recursion + bootstrap), then flatten row-major ``(t, env) ->
-    t*N + env`` to match ``VecRolloutBuffer.batch()``."""
+    """Width-N GAE: a single reverse scan over the (T, N) buffer, vectorized across the N
+    envs at each timestep (each env's ``done`` resets its own λ-recursion + bootstrap),
+    flattened row-major ``(t, env) -> t*N + env`` to match ``VecRolloutBuffer.batch()``.
+
+    BYTE-IDENTITY (#750): the equivalent per-env scalar ``compute_gae`` boxes every term via
+    ``float()`` → a Python-float (float64) accumulator. A naive float32 tensor scan diverges
+    by ~2.4e-6 — a determinism break that fails the n_envs=1 / Sync≡Subproc byte-identity
+    oracle. So the ``delta`` / ``last_gae`` accumulator runs in float64 (``.double()``) and is
+    cast back to float32 ONLY when writing each ``adv[t]`` row — mirroring the scalar loop's
+    per-step ``advantages[t] = last_gae`` assignment, which is the single float64→float32
+    rounding point. This makes the vectorized scan bit-identical to the old per-env loop
+    (verified by ``test_compute_gae_vec_byte_identical_to_per_env_loop``)."""
     t_len, n = rewards.shape
-    adv = torch.zeros(t_len, n)
-    ret = torch.zeros(t_len, n)
-    for env in range(n):
-        a, r = compute_gae(
-            rewards[:, env],
-            values[:, env],
-            dones[:, env],
-            float(last_values[env]),
-            gamma=gamma,
-            lam=lam,
-        )
-        adv[:, env] = a
-        ret[:, env] = r
+    # float64 intermediates: the accumulator and its inputs match the scalar loop's
+    # float(...) boxing; only the per-row adv[t] write rounds back to float32.
+    rewards64 = rewards.double()
+    values64 = values.double()
+    nonterminal64 = (~dones).double()  # (T, N): 1.0 where not done, 0.0 on a terminal
+    last_values64 = torch.as_tensor([float(lv) for lv in last_values], dtype=torch.float64)  # (N,)
+    adv = torch.zeros(t_len, n)  # float32 output, written per-row from the float64 scan
+    last_gae = torch.zeros(n, dtype=torch.float64)
+    for t in reversed(range(t_len)):
+        nonterminal = nonterminal64[t]
+        next_value = (last_values64 if t == t_len - 1 else values64[t + 1]) * nonterminal
+        delta = rewards64[t] + gamma * next_value - values64[t]
+        last_gae = delta + gamma * lam * nonterminal * last_gae
+        adv[t] = last_gae.float()  # the lone float64 -> float32 rounding point per step
+    ret = adv + values  # returns = advantages + values, float32 (matches the scalar path)
     return adv.reshape(-1), ret.reshape(-1)
 
 

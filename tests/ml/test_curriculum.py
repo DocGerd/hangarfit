@@ -39,38 +39,38 @@ from ml.encoding import EncoderConfig
 from ml.types import DifficultyConfig
 
 
-def test_should_promote_fires_when_windowed_mean_meets_threshold():
-    pol = PromotionPolicy(metric="fraction_placed", window=2, threshold=0.5)
-    window = [EpisodeStat(0.4, False, -1.0), EpisodeStat(0.8, True, 1.0)]  # mean 0.6 >= 0.5
-    assert should_promote(window, pol) is True
+def test_should_promote_fires_when_iteration_mean_meets_threshold():
+    # should_promote reads the per-ITERATION honest-metric series — each element is one PPO
+    # iteration's full-rollout metric mean — NOT a per-episode tail (the #742 fix). The metric
+    # credit rule (valid_placed/valid_rate/fraction_placed) is applied upstream when the series
+    # is built, so the gate itself only thresholds the windowed mean of those iteration scores.
+    pol = PromotionPolicy(window=2, threshold=0.5)
+    assert should_promote([0.4, 0.8], pol) is True  # mean 0.6 >= 0.5
 
 
 def test_should_promote_false_below_threshold():
-    pol = PromotionPolicy(metric="fraction_placed", window=2, threshold=0.9)
-    window = [EpisodeStat(0.4, False, -1.0), EpisodeStat(0.8, True, 1.0)]  # mean 0.6 < 0.9
-    assert should_promote(window, pol) is False
+    pol = PromotionPolicy(window=2, threshold=0.9)
+    assert should_promote([0.4, 0.8], pol) is False  # mean 0.6 < 0.9
 
 
 def test_should_promote_waits_for_full_window():
     pol = PromotionPolicy(window=3, threshold=0.0)
-    assert should_promote([EpisodeStat(1.0, True, 1.0)], pol) is False  # only 1 < window 3
+    assert should_promote([1.0], pol) is False  # only 1 iteration < window 3
 
 
 def test_should_promote_uses_last_window_only():
-    pol = PromotionPolicy(metric="fraction_placed", window=2, threshold=0.95)
-    # old low episodes must NOT drag down a recently-mastered window
-    window = [
-        EpisodeStat(0.0, False, 0.0),
-        EpisodeStat(1.0, True, 0.0),
-        EpisodeStat(1.0, True, 0.0),
-    ]
-    assert should_promote(window, pol) is True  # last 2 both 1.0
+    # old low iterations must NOT drag down a recently-mastered window
+    pol = PromotionPolicy(window=2, threshold=0.95)
+    assert should_promote([0.0, 1.0, 1.0], pol) is True  # last 2 both 1.0
 
 
-def test_should_promote_valid_rate_metric():
-    pol = PromotionPolicy(metric="valid_rate", window=2, threshold=1.0)
-    assert should_promote([EpisodeStat(1.0, True, 0.0), EpisodeStat(0.5, False, 0.0)], pol) is False
-    assert should_promote([EpisodeStat(0.1, True, 0.0), EpisodeStat(0.2, True, 0.0)], pol) is True
+def test_should_promote_does_not_fire_on_subthreshold_iteration_mean():
+    # THE #742 regression: a rung whose honest per-iteration mean sits ~0.65 must NOT promote
+    # at threshold 0.9, however noisy the underlying per-episode tail is — the gate now reads
+    # the full-rollout per-iteration mean, not a lucky last-20-episode spike that read >= 0.9.
+    history = [0.62, 0.71, 0.65, 0.68, 0.64]  # every iteration's honest mean ~0.65, all < 0.9
+    pol = PromotionPolicy(window=3, threshold=0.9)
+    assert should_promote(history, pol) is False
 
 
 def test_sample_request_is_deterministic_for_equal_rngs():
@@ -216,14 +216,11 @@ def test_default_promotion_metric_is_valid_placed():
     assert PromotionPolicy().metric == "valid_placed"
 
 
-def test_should_promote_valid_placed_credits_only_valid_episodes():
-    pol = PromotionPolicy(metric="valid_placed", window=2, threshold=0.5)
-    # both fully placed, but only one valid -> mean(1.0, 0.0) = 0.5 >= 0.5
-    assert should_promote([EpisodeStat(1.0, True, 0.0), EpisodeStat(1.0, False, 0.0)], pol) is True
-    # both fully placed but BOTH invalid -> mean(0.0, 0.0) = 0.0 < 0.5
-    assert (
-        should_promote([EpisodeStat(1.0, False, 0.0), EpisodeStat(1.0, False, 0.0)], pol) is False
-    )
+def test_default_promotion_window_counts_iterations_not_episodes():
+    # #742: the window is now a count of recent ITERATIONS (each an honest full-rollout mean),
+    # not the last-N completed episodes. The default is a small smoothing window because the
+    # per-iteration mean is already low-variance (it averages a whole rollout's episodes).
+    assert PromotionPolicy().window == 3
 
 
 def test_stage_rng_worker_index_zero_is_legacy_and_distinct():
@@ -268,18 +265,17 @@ def test_episode_metrics_empty_is_n0_with_none_rates():
     assert m["valid_placed"] is None
 
 
-def test_episode_metrics_valid_placed_matches_should_promote_scoring():
-    # the per-iter valid_placed must use the SAME credit rule as the promotion gate
+def test_episode_metrics_valid_placed_feeds_should_promote_as_one_iteration_score():
+    # episode_metrics(...)["valid_placed"] IS one element of the honest series the gate reads:
+    # feed it as a 1-element history and the window=1 gate fires exactly at that value. This
+    # pins the contract that the metric the JSONL/ml.gate report is the metric the gate uses.
     stats = [EpisodeStat(0.8, True, 0.0), EpisodeStat(0.9, False, 0.0), EpisodeStat(0.4, True, 0.0)]
+    score = episode_metrics(stats)["valid_placed"]
     expected = (0.8 + 0.0 + 0.4) / 3
-    assert episode_metrics(stats)["valid_placed"] == pytest.approx(expected)
-    # and the gate fires exactly when that mean meets threshold
-    assert should_promote(
-        stats, PromotionPolicy(metric="valid_placed", window=3, threshold=expected)
-    )
-    assert not should_promote(
-        stats, PromotionPolicy(metric="valid_placed", window=3, threshold=expected + 0.01)
-    )
+    assert score == pytest.approx(expected)
+    assert isinstance(score, float)
+    assert should_promote([score], PromotionPolicy(window=1, threshold=expected))
+    assert not should_promote([score], PromotionPolicy(window=1, threshold=expected + 0.01))
 
 
 def test_history_metric_records_one_record_per_recorded_iteration():
@@ -332,6 +328,13 @@ def test_with_promotion_overrides_sets_only_given_fields():
     assert got.threshold == pytest.approx(0.3)
     assert got.max_iters == 120
     assert got.window == 20  # untouched field preserved
+
+
+def test_with_promotion_overrides_sets_window():
+    # #742: --promotion-window threads through with_promotion_overrides like the other levers.
+    base = PromotionPolicy(window=3)
+    assert with_promotion_overrides(base, window=8).window == 8
+    assert with_promotion_overrides(base).window == 3  # None -> unchanged (default-neutral)
 
 
 # ---------------------------------------------------------------------------

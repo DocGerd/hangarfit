@@ -10,8 +10,8 @@ from __future__ import annotations
 import argparse
 import contextlib
 import json
+import os
 import sys
-from collections import deque
 from collections.abc import Callable, Sequence
 from dataclasses import replace
 from functools import partial
@@ -31,6 +31,7 @@ from ml.curriculum import (
     CurriculumSchedule,
     EpisodeStart,
     EpisodeStat,
+    PromotionPolicy,
     Stage,
     format_iter_log,
     history_metric_records,
@@ -320,6 +321,34 @@ def train(
     return history
 
 
+def _rung_stop_reason(
+    promo_history: list[float],
+    ep_stats: Sequence[EpisodeStat],
+    pol: PromotionPolicy,
+    auto_budget: BudgetController | None,
+) -> str | None:
+    """Append this iteration's HONEST per-iteration metric mean to ``promo_history`` — the
+    ``window_score`` over the WHOLE rollout's episodes, the same ``valid_placed`` the
+    ``--metrics-out`` JSONL and ``ml.gate`` report — then decide whether the rung stops THIS
+    iteration. Returns the promotion reason (``"competency"`` | ``"budget-plateau"``) or None
+    to keep training. The #742 fix routes BOTH the competency gate (``should_promote``) and the
+    #734 auto-budget slope-fit through this single honest series, replacing the old per-episode
+    ``deque(maxlen=window)`` tail that each read separately.
+
+    Only an iteration that completed >= 1 episode contributes a score: an empty rollout carries
+    no competency signal (matching ``episode_metrics``' None-when-empty convention and
+    ``ml.gate``'s None-row filter), so it neither advances the gate nor injects a phantom-flat
+    point that could trip the auto-budget plateau detector. Competency wins over a budget
+    plateau when both fire in the same iteration."""
+    if ep_stats:
+        promo_history.append(window_score(ep_stats, pol.metric))
+    if should_promote(promo_history, pol):
+        return "competency"
+    if auto_budget is not None and auto_budget.should_stop(promo_history):
+        return "budget-plateau"
+    return None
+
+
 def train_curriculum(
     *,
     seed: int = 0,
@@ -421,21 +450,24 @@ def train_curriculum(
         pool = effective_fleet_ids(stage)
         n = stage.difficulty.max_objects if stage.difficulty.max_objects is not None else len(pool)
         rng = stage_rng(seed, stage_index)
-        # The window holds the last `pol.window` COMPLETED EPISODES (not iterations): one
-        # rollout can complete many episodes, so a rung the transferred policy already
-        # masters can legitimately promote on its first iteration. That is intended — the
-        # curriculum advances as soon as competent, it does not "serve time" per rung.
-        window: deque[EpisodeStat] = deque(maxlen=pol.window)
+        # promo_history holds ONE honest score per ITERATION — window_score over the WHOLE
+        # rollout's episodes (the same valid_placed the JSONL/ml.gate report), NOT the last
+        # `pol.window` completed episodes (the #742 fix). should_promote thresholds its windowed
+        # mean and the #734 auto-budget controller fits its slope on the SAME series, so the gate
+        # and the budget watch one honest trajectory. A rung the transferred policy already
+        # masters can promote as soon as `pol.window` consecutive iterations are competent (3 by
+        # default) — the curriculum advances on sustained competency, it does not "serve time".
+        promo_history: list[float] = []
         # partial binds THIS stage's pool/n/rng by value (so the per-iteration closure
         # is not the flake8-bugbear B023 late-binding trap) and stays mypy-inferrable
         # where a default-arg lambda would not be.
         next_request = make_episode_sampler(stage, pool, n, rng)
         # #734 auto-budget: with a controller, each rung runs up to its hard ceiling and
         # stops early on a valid_placed plateau; without one, the fixed pol.max_iters cap.
-        # auto_budget is None (default) => same bound + no controller calls => byte-identical.
+        # auto_budget is None (default) => same loop bound + no controller calls.
         ceiling = auto_budget.max_iters if auto_budget is not None else pol.max_iters
-        metric_history: list[float] = []
-        # n_envs == 1: the single-stream path (byte-identical when auto_budget is None).
+        # n_envs == 1: the legacy single-stream path — byte-identical to the pre-#708 loop (the
+        # #708 contract); it shares the #742 per-iteration gate with the vectorized path below.
         if n_envs == 1:
             for it in range(ceiling):
                 # Per-rung entropy schedule: `it` resets to 0 each stage, so each rung
@@ -454,18 +486,13 @@ def train_curriculum(
                     env, policy, enc, rollout_len, sample_request=next_request
                 )
                 ppo_update(policy, optimizer, buf, it_cfg, normalizer=normalizer)
-                window.extend(ep_stats)
                 history.record(stage.name, it, ep_stats)
                 if log:
                     print(format_iter_log(stage.name, it, ep_stats), flush=True)
-                if should_promote(list(window), pol):
-                    history.note_promotion(stage.name, it, by="competency")
+                reason = _rung_stop_reason(promo_history, ep_stats, pol, auto_budget)
+                if reason is not None:
+                    history.note_promotion(stage.name, it, by=reason)
                     break
-                if auto_budget is not None:
-                    metric_history.append(window_score(list(window), pol.metric))
-                    if auto_budget.should_stop(metric_history):
-                        history.note_promotion(stage.name, it, by="budget-plateau")
-                        break
             else:
                 history.note_promotion(stage.name, ceiling - 1, by="cap")
         else:
@@ -497,18 +524,13 @@ def train_curriculum(
                     )
                     buf_vec, ep_stats = collect_rollout_vec(vec, policy, enc, rollout_len)
                     ppo_update(policy, optimizer, buf_vec, it_cfg, normalizer=normalizer)
-                    window.extend(ep_stats)
                     history.record(stage.name, it, ep_stats)
                     if log:
                         print(format_iter_log(stage.name, it, ep_stats), flush=True)
-                    if should_promote(list(window), pol):
-                        history.note_promotion(stage.name, it, by="competency")
+                    reason = _rung_stop_reason(promo_history, ep_stats, pol, auto_budget)
+                    if reason is not None:
+                        history.note_promotion(stage.name, it, by=reason)
                         break
-                    if auto_budget is not None:
-                        metric_history.append(window_score(list(window), pol.metric))
-                        if auto_budget.should_stop(metric_history):
-                            history.note_promotion(stage.name, it, by="budget-plateau")
-                            break
                 else:
                     history.note_promotion(stage.name, ceiling - 1, by="cap")
         if log:
@@ -541,6 +563,67 @@ def train_curriculum(
     return history
 
 
+# --n-envs auto (#747): pack one spawn worker per idle core, RAM permitting. The cap
+# constants are deliberately conservative — auto picking too FEW workers wastes cores;
+# picking too many risks OOM (the issue's named risk), so the gate leans toward fewer.
+# Per-worker RAM is grounded in the measured ~0.5 GiB incremental PSS per worker (16-worker
+# trio-box run, see the throughput diagnosis) carried at ~2x for headroom; #751 (forkserver)
+# will later shrink it. These are not user knobs yet — promote to flags if a box needs it.
+_AUTO_RESERVED_CORES = 2  # learner forward/backward + the GPU-feed / main loop
+_AUTO_PER_WORKER_GIB = 1.0  # ~2x the measured ~0.5 GiB incremental PSS per spawn worker
+_AUTO_RAM_HEADROOM_GIB = 2.0  # leave room for the parent (CUDA context, larger batches) to grow
+
+
+def _available_cores() -> int:
+    """Schedulable core count. ``sched_getaffinity`` honours cgroup / ``taskset`` pinning
+    (so WSL2 / container limits are respected); ``os.cpu_count`` overcounts those. Falls
+    back to ``cpu_count`` only where affinity is unavailable (non-Linux)."""
+    getaffinity = getattr(os, "sched_getaffinity", None)
+    if getaffinity is not None:
+        return len(getaffinity(0))
+    return os.cpu_count() or 1
+
+
+def _available_gib() -> float | None:
+    """Allocatable RAM in GiB from ``/proc/meminfo`` ``MemAvailable`` (the kernel's honest
+    "without swapping" figure), or ``None`` where it cannot be read (non-Linux / sandbox).
+    ``None`` makes ``--n-envs auto`` fall back to a cores-only bound."""
+    try:
+        with open("/proc/meminfo", encoding="ascii") as fh:
+            for line in fh:
+                if line.startswith("MemAvailable:"):
+                    return int(line.split()[1]) / (1024 * 1024)  # kB -> GiB
+    except (OSError, ValueError, IndexError):
+        return None
+    return None
+
+
+def resolve_n_envs(value: str) -> int:
+    """argparse ``type`` for ``--n-envs``: an explicit positive int passes through; the
+    literal ``auto`` resolves to
+    ``max(1, min(cores - reserved, (MemAvailable_gib - headroom) // per_worker))`` using
+    :func:`_available_cores` and :func:`_available_gib`. The floor of 1 keeps the
+    byte-identity reference (``--n-envs 1``) reachable even on a 1-core / tiny-RAM box.
+    Raises :class:`argparse.ArgumentTypeError` (-> a clean parser error) on a non-positive
+    or non-integer value."""
+    if value == "auto":
+        core_cap = max(1, _available_cores() - _AUTO_RESERVED_CORES)
+        gib = _available_gib()
+        if gib is None:
+            return core_cap
+        ram_cap = max(1, int((gib - _AUTO_RAM_HEADROOM_GIB) / _AUTO_PER_WORKER_GIB))
+        return max(1, min(core_cap, ram_cap))
+    try:
+        n = int(value)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"--n-envs must be a positive integer or 'auto', got {value!r}"
+        ) from None
+    if n < 1:
+        raise argparse.ArgumentTypeError(f"--n-envs must be >= 1, got {n}")
+    return n
+
+
 def build_argparser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="Train the cold-joint policy (trivial stage or curriculum)."
@@ -570,6 +653,22 @@ def build_argparser() -> argparse.ArgumentParser:
         "1000). Ignored without --auto-budget.",
     )
     p.add_argument(
+        "--auto-budget-min-iters",
+        type=int,
+        default=None,
+        help="curriculum: --auto-budget no-stop floor — no plateau-stop decision before this many "
+        "iterations (default = BudgetController default, 30). Raise it for a hard rung with a long "
+        "pre-climb warmup. Requires --auto-budget.",
+    )
+    p.add_argument(
+        "--auto-budget-min-level",
+        type=float,
+        default=None,
+        help="curriculum: --auto-budget floor-guard (#743) — the recent metric level must clear "
+        "this before any plateau-stop, so a flat-at-floor WARMUP is not mistaken for convergence "
+        "(default = BudgetController default, 0.05; 0 disables the guard). Requires --auto-budget.",
+    )
+    p.add_argument(
         "--promotion-metric",
         choices=["fraction_placed", "valid_rate", "valid_placed"],
         default=None,
@@ -582,6 +681,15 @@ def build_argparser() -> argparse.ArgumentParser:
         default=None,
         help="curriculum: PromotionPolicy.threshold override in [0,1] "
         "(default = schedule policy, 0.9); lower it so the easy rungs reveal the ladder",
+    )
+    p.add_argument(
+        "--promotion-window",
+        type=int,
+        default=None,
+        help="curriculum: PromotionPolicy.window override — recent ITERATIONS to average for the "
+        "competency gate (default = schedule policy, 3). Each iteration contributes its honest "
+        "full-rollout valid_placed mean (the #742 fix), NOT a per-episode tail; raise it to "
+        "require sustained competency over more iterations before promoting.",
     )
     p.add_argument(
         "--metrics-out",
@@ -798,9 +906,10 @@ def build_argparser() -> argparse.ArgumentParser:
     )
     p.add_argument(
         "--n-envs",
-        type=int,
+        type=resolve_n_envs,
         default=1,
-        help="number of parallel envs (1 = legacy single-stream, byte-identical)",
+        help="number of parallel envs: an integer, or 'auto' to fill idle cores "
+        "(sched_getaffinity - reserved, RAM-capped). 1 = legacy single-stream, byte-identical",
     )
     p.add_argument(
         "--vec-backend",
@@ -875,6 +984,10 @@ def main(argv: Sequence[str] | None = None) -> None:
             parser.error("--stop-after-rung requires --schedule curriculum")
         if args.auto_budget or args.auto_budget_max_iters is not None:
             parser.error("--auto-budget/--auto-budget-max-iters require --schedule curriculum")
+        if args.n_envs > 1:  # resolve_n_envs floors at 1, so >1 is the only over-floor case
+            # --n-envs (and 'auto') only feed the vectorized curriculum path; train() is
+            # single-env. Fail LOUD so `--n-envs auto --schedule trivial` is not a silent no-op.
+            parser.error("--n-envs > 1 (or 'auto') requires --schedule curriculum")
         train(
             seed=args.seed,
             iterations=args.iterations,
@@ -896,6 +1009,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 metric=args.promotion_metric,
                 threshold=args.promotion_threshold,
                 max_iters=args.max_iters_per_stage,
+                window=args.promotion_window,
             ),
         )
         if args.solo_box_rung:
@@ -907,17 +1021,32 @@ def main(argv: Sequence[str] | None = None) -> None:
         # Truncate LAST, after the grafts, so a name they introduce (pair-mixed) is in scope.
         if args.stop_after_rung is not None:
             sched = truncate_after_rung(sched, args.stop_after_rung)
-        # #734: build the slope-aware controller only when --auto-budget is set; None keeps
-        # the fixed per-rung cap (byte-identical default). Fail LOUD on a ceiling without the
-        # switch rather than silently dropping a typed numeric flag.
-        if args.auto_budget_max_iters is not None and not args.auto_budget:
-            parser.error("--auto-budget-max-iters requires --auto-budget")
-        budget = None
-        if args.auto_budget:
-            budget = (
-                BudgetController(max_iters=args.auto_budget_max_iters)
-                if args.auto_budget_max_iters is not None
-                else BudgetController()
+        # #734/#743: build the slope-aware controller only when --auto-budget is set; None keeps
+        # the fixed per-rung cap (byte-identical default). Each per-knob override (max-iters /
+        # min-iters / min-level) is inert without the switch, so fail LOUD rather than silently
+        # dropping a typed numeric flag. Unsupplied knobs fall back to the BudgetController default.
+        # (field, user-facing flag, value) — the flag string is explicit, not derived from the
+        # field name, so a future knob whose flag diverges from its dataclass field can't desync.
+        budget_specs = (
+            ("max_iters", "--auto-budget-max-iters", args.auto_budget_max_iters),
+            ("min_iters", "--auto-budget-min-iters", args.auto_budget_min_iters),
+            ("min_level", "--auto-budget-min-level", args.auto_budget_min_level),
+        )
+        budget_overrides = {field: v for field, _flag, v in budget_specs if v is not None}
+        supplied_flags = [flag for _field, flag, v in budget_specs if v is not None]
+        if supplied_flags and not args.auto_budget:
+            verb = "requires" if len(supplied_flags) == 1 else "require"
+            parser.error(f"{', '.join(supplied_flags)} {verb} --auto-budget")
+        budget = BudgetController(**budget_overrides) if args.auto_budget else None
+        if args.n_envs > 1:
+            # Surface the effective parallelism + the box it was sized against, so an
+            # `auto` (or an explicit) value is visible in the run log rather than implicit.
+            gib = _available_gib()
+            mem = f"{gib:.1f} GiB" if gib is not None else "unknown"
+            print(
+                f"note: training with {args.n_envs} parallel envs "
+                f"(schedulable cores={_available_cores()}, MemAvailable={mem})",
+                file=sys.stderr,
             )
         history = train_curriculum(
             seed=args.seed,

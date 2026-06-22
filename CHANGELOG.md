@@ -6,6 +6,74 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Learned backend (#750, epic #607, throughput Wave 1): a transitions/sec training-loop canary
+  + a vectorized width-N GAE scan.** Two dev/CI-only changes so the rest of the throughput work is
+  measured, not eyeballed. (1) `python -m bench.train_throughput` is the `ml/` twin of
+  `bench.profile_pipeline`: it runs a small, fixed, deterministic CPU training loop (`SyncVectorEnv`)
+  and reports **transitions/sec** + **iters/sec** with the per-phase rollout-vs-update split as a
+  table or `--json`, **bound on a fixed step COUNT** (`iterations × rollout_len × n_envs`, mirroring
+  the #381 `max_restarts` binding) so only machine speed varies run-to-run. It confirms the Wave 1
+  premise — ~85% of per-iteration wall-clock is the shapely-bound rollout. No `--gate`: a throughput
+  ceiling is jitter-prone on shared runners, so it reports, never enforces. (2) `compute_gae_vec`
+  (`ml/ppo.py`) is rewritten from a `for env in range(N)` wrapper around the scalar reverse-scan into
+  a single width-N reverse scan, removing the last O(T·N) pure-Python loop so GAE stops scaling with
+  `n_envs`. **Byte-identical** (ADR-0003): the scalar loop boxes every term via `float()` → a float64
+  accumulator, so the vector scan runs its `delta`/`last_gae` accumulator in float64 (`.double()`) and
+  casts back to float32 only at each `adv[t]` write — a naive float32 scan diverges by ~2.4e-6 (a
+  determinism break that fails the `n_envs=1` / Sync≡Subproc byte-identity oracle). Verified by
+  `torch.equal` against the per-env `compute_gae` over mid-rollout / all-done / no-done patterns
+  (`test_compute_gae_vec_byte_identical_to_per_env_loop`). Dev/CI-only (`ml/` + `bench/`); no
+  shipped-wheel surface. The torch-CI hook stays scoped out of v1 (CI installs only `[dev]`, no torch).
+
+- **Learned backend (#749, epic #607, throughput Wave 1): concurrent multi-seed sweep runner
+  `python -m ml.sweep`.** The mastery deliverable is the two/three-seed gate (the `ml/README`
+  trio-box recipe), run **serially** today — one launch per seed, babysat by hand. One on-policy
+  run is throughput-capped by its synchronous step-dependency, so the box sits idle (~26 cores,
+  ~10% GPU). `ml/sweep.py` is a **torch-free** orchestrator that spawns K **unmodified**
+  `python -m ml.train` subprocesses (one per `--seed`), each with a distinct `--seed` +
+  per-cell `--metrics-out`/`--checkpoint-out`/`--save` path, runs them **concurrently** up to
+  `--max-concurrency` (default **2**, documented **RAM-bound** — ~10 GB/run → K=3 risks OOM on a
+  31 GB box, *not* core-bound), and aggregates child exit codes into a single pass/fail verdict
+  in deterministic seed order. **Loud by contract** (the #749 risk): any non-zero child — or a
+  child that *crashes* — makes the runner exit non-zero, surfaced as a failed cell with its
+  error text rather than silently corrupting a 2-seed verdict. Pure orchestration, **no
+  training-loop edits** — each child is byte-identical to running it alone, so co-locating cells
+  on one GPU adds nothing beyond `--device cuda`. The job-spawning seam is injectable for fast
+  deterministic unit tests (no real multi-minute training spawned). Per-cell metrics roll up via
+  the existing torch-free `python -m ml.gate`. Expected **~2× sweep wall-clock** (not Kx —
+  aligned rollout bursts oversubscribe). Dev/CI-only (`ml/`); no shipped-wheel surface.
+
+- **Learned backend (#748, epic #607 Wave 1 / #758): out-of-order (as-completed) vec-env
+  fan-in.** `SubprocVectorEnv` collected each step's N worker replies with a strict in-order
+  blocking recv (`worker 0`, then `1`, …), so the single slowest shapely worker stalled the
+  whole batch every step (head-of-line blocking) — worsening as `--n-envs` and per-rung
+  shapely-cost variance grow. It now drains workers **as they complete**
+  (`multiprocessing.connection.wait`) and **re-indexes by worker** before batching, so the
+  per-index payloads and the policy input are unchanged — only the pipe read order differs.
+  **Byte-identical, no flag** (pinned by `test_sync_equals_subproc_byte_identical` + a new
+  reversed-completion-order test proving index alignment is preserved). Recovers the
+  worst-case-worker stall; the win grows with `n_envs`. Dev/CI-only (`ml/`); no shipped-wheel surface.
+
+- **Learned backend (#747, epic #607 Wave 1 / #758): cap worker BLAS/OMP threads +
+  `--n-envs auto` to fill idle cores.** A measured `--n-envs 16` run pinned only ~5.5 of
+  32 cores, and the spawn workers ran *unconstrained* BLAS/OMP/MKL threading, so naively
+  raising `--n-envs` toward the core count would **oversubscribe** the box. Two paired,
+  byte-identical changes: (1) each `ml/vector_env.py` spawn worker now caps itself to a
+  single thread (`OMP/OPENBLAS/MKL/NUMEXPR_NUM_THREADS=1` + `torch.set_num_threads(1)`) at
+  worker-loop entry — one core per worker. The cap is set in the **parent** before
+  `spawn` so each child inherits it at interpreter startup (OpenBLAS/MKL fix their pool
+  size at numpy-import time and ignore a late env write — measured cpu/wall ≈ 31 vs 1).
+  (2) `--n-envs auto` sizes the worker pool to
+  `max(1, min(schedulable_cores − reserved, (MemAvailable − headroom) // per_worker))`,
+  using `os.sched_getaffinity` (cgroup/`taskset`-aware, unlike `cpu_count` which
+  overcounts on WSL2/containers) and `/proc/meminfo` `MemAvailable`. The default stays `1`, so
+  `--n-envs 1` remains the byte-identity floor; `auto`/raised values are opt-in per run.
+  The thread cap is byte-identical (anchored on the **torch-free-worker** invariant —
+  workers run no policy ops, so a 1-thread cap can't perturb numpy/shapely reduction
+  order), proven by `test_sync_equals_subproc_byte_identical` + a fixed-action
+  reward-stream diff. `--n-envs > 1` (or `auto`) on `--schedule trivial` now fails loud
+  (the trivial path is single-env). Dev/CI-only (`ml/`); no shipped-wheel surface.
+
 - **Learned backend (#734, epic #607): slope-aware `--auto-budget` per curriculum rung.**
   A fixed `--max-iters-per-stage` cap is wrong in both directions — it truncated the trio-box
   (N=3) run while `valid_placed` was *still climbing* (peak 0.65, under-trained not collapsed),
@@ -459,6 +527,30 @@ All notable changes to this project are documented here. Format follows [Keep a 
   the tow-motion abstraction (#643).
 
 ### Fixed
+
+- **Learned backend (#742/#743, epic #607): the curriculum competency gate and
+  `--auto-budget` now read the honest per-iteration metric, not a noisy 20-episode tail.**
+  The promotion gate (`should_promote`) and the #734 auto-budget slope-fit both watched a
+  per-episode `deque(maxlen=window)`; after `window.extend(ep_stats)` that retained only the
+  **last ~20 episodes of the latest rollout** (out of ~250), a far noisier estimator than the
+  per-iteration `valid_placed` the `--metrics-out` JSONL and `ml.gate` report. Two symptoms:
+  **(#742)** a rung false-promoted `by competency` on a lucky autocorrelated 20-episode streak
+  while its honest per-iteration mean was well below threshold (observed on `trio-box`: trainer
+  said mastered at iter 136, `ml.gate` reported peak `valid_placed` 0.709 / `never` competent,
+  still climbing); **(#743)** `--auto-budget` plateau-stopped a hard rung **during its flat
+  pre-climb warmup** (`trio-box` stopped at iter 29, `valid_placed` ~0.04 — the climb only
+  started ~iter 50). The fix unifies both decisions onto a single per-iteration honest series
+  (`window_score` over the whole rollout, skipping no-episode iterations), so `PromotionPolicy.window`
+  now counts **iterations** (default 3, was 20 episodes) and `should_promote` thresholds their
+  mean — the trainer's verdict is now as trustworthy as `ml.gate`'s. A new `BudgetController`
+  **floor-guard** (`min_level`, default 0.05) refuses to read a flat-at-floor warmup as a
+  converged plateau (slope alone cannot tell floor-flat from ceiling-flat). New default-neutral
+  CLI levers: `--promotion-window`, `--auto-budget-min-iters`, `--auto-budget-min-level`.
+  **Deliberate re-baseline:** the gate now advances rungs at different iterations than the
+  buggy per-episode tail did, so trained policies differ from pre-#742 runs. Run-twice
+  determinism is preserved, and the `--auto-budget` flag stays default-neutral (toggling it off
+  adds no controller call) — the re-baseline lives in the gate itself, not the auto-budget
+  machinery. Dev/CI-only (`ml/`); no shipped-wheel surface.
 
 - **Learned backend (#732, epic #607): PBRS now forces Φ(terminal) = 0 — removes a
   spurious −Φ(terminal) return bias.** The potential-based reward shaping added

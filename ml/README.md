@@ -142,12 +142,21 @@ per-step active-overlap gradient) and, being potential-based shaping, is **polic
 | `--seed-anchor` | off | Insert an opt-in `pair-anchored` rung **before** `pair-box`: one of its 2 objects is pre-parked at a committed-witness pose (`seed_anchor_k=1`) and the agent only drives the other in — scaffolding 2-object joint discovery with a valid 1-object start (#712). Curriculum-only. |
 | `--mixed-anchor` | off | Insert an opt-in `pair-mixed` rung **before** `pair-box`: each episode randomly starts anchored (k=1) or empty (k=0) with probability `anchor_prob=0.5`, drawn from the curriculum's seeded stream. Keeps empty-start episodes in the training mix so the policy does not collapse to the place-nothing pole on the empty-start `pair-box`. Pair with `--seed-anchor` so `pair-mixed` lands between `pair-anchored` and `pair-box` (not required — `--mixed-anchor` alone inserts it directly before `pair-box`). Curriculum-only. (#712 follow-up) |
 | `--stop-after-rung NAME` | off | Truncate the ladder after `NAME` (that rung is the last trained; every rung after it is dropped). Applied **after** the graft flags above, so a name they introduce (`pair-mixed`) is valid. The #722 sweep lever: `--stop-after-rung pair-box` lets a resumed cell stop cleanly instead of grinding on into `trio-*`. Unknown rung → loud `ValueError`. Curriculum-only; absent ⇒ byte-identical. |
-| `--auto-budget` (+ `--auto-budget-max-iters N`, default 1000) | off | Slope-aware per-rung budget (#734): replace the fixed `--max-iters-per-stage` cap with a closed loop — a Theil–Sen slope over the windowed-mean promotion-metric series (default `valid_placed`) **extends** the rung while it climbs and **stops early** on a plateau (or the ceiling `N`). Fixes the trio-box "truncated while still climbing" waste. Distinct from the manual `--stop-after-rung`. Curriculum-only; absent ⇒ the fixed cap, byte-identical. |
+| `--promotion-metric` / `--promotion-threshold` / `--promotion-window` | schedule policy (`valid_placed` / `0.9` / `3`) | Competency-gate overrides. A rung promotes when the mean of the last `--promotion-window` **iterations'** honest per-rollout `--promotion-metric` (the same `valid_placed` the `--metrics-out` JSONL and `ml.gate` report) clears `--promotion-threshold`. `--promotion-window` counts **iterations**, not episodes — the #742 fix: the gate previously thresholded only the last ~20 *episodes* of the latest rollout (a `deque(maxlen=window)` tail), a noisy estimator that false-promoted `by competency` on a lucky autocorrelated streak while the honest per-iteration mean was well below threshold. Curriculum-only. |
+| `--auto-budget` (+ `--auto-budget-max-iters N` ⌀1000, `--auto-budget-min-iters N` ⌀30, `--auto-budget-min-level L` ⌀0.05) | off | Slope-aware per-rung budget (#734): replace the fixed `--max-iters-per-stage` cap with a closed loop — a Theil–Sen slope over the **honest per-iteration** promotion-metric series (the same `valid_placed` the gate reads, #742) **extends** the rung while it climbs and **stops early** on a plateau (or the ceiling `N`). The `--auto-budget-min-level` **floor-guard** (#743) refuses to plateau-stop while the recent level is below `L` — a flat-at-floor *warmup* is not convergence, and slope alone cannot tell the two apart (both ~0); `0` disables it. Raise `--auto-budget-min-iters` for a hard rung with a long pre-climb. Distinct from the manual `--stop-after-rung`. Curriculum-only; absent ⇒ the fixed cap, byte-identical. |
 
 `--load`/`--checkpoint-out`/`--metrics-out`/`--promotion-*`/`--solo-box-rung`/`--seed-anchor`/`--mixed-anchor`/`--stop-after-rung`/`--auto-budget`
 are curriculum-only (fail loud under `--schedule trivial`). The resume checkpoint
 (`ml/checkpoint.py`) is distinct from `--save` (a bare `state_dict` for the ONNX/`ml.eval`
 consumer) and loads with `weights_only=True`.
+
+**Honest competency gate (#742/#743).** The trainer's `promoted by competency` and the
+`--auto-budget` slope are now fit on **one** per-iteration series — each rung iteration
+contributes its full-rollout `valid_placed` mean, the exact signal `ml.gate` re-reads from the
+JSONL — instead of a per-episode `deque` tail. The trainer's verdict is therefore as trustworthy
+as `ml.gate`'s (still re-grade with `python -m ml.gate` as a torch-free cross-check, but the two
+no longer disagree by construction). The companion `--auto-budget` floor-guard stops a hard rung
+from being truncated during its flat pre-climb warmup.
 
 ### What the #710 levers achieved, and the #714 multi-object fix
 
@@ -314,16 +323,31 @@ competency at `w_col=20`). Read `valid_placed`, NOT `valid_rate` (an empty layou
 The two-seed `pair-box` PASS above broke the *2-object* cliff. The open question is whether the
 same four-lever ladder clears the **3-object** `trio-box` rung (`max_objects=3`, already in
 `DEFAULT_LADDER`) — historically every ≥2-object rung collapsed, and `trio-box` is the first
-≥2-object rung after the validated `pair-box`. This is a **checkpoint-resume sweep**: take a checkpoint whose
-`completed_stages` already include `pair-box` (the `--checkpoint-out` from the pair-box gate above),
-then train **only** `trio-box` with `--stop-after-rung trio-box`. The L4 clip knobs are now the
-default (#728) but are kept explicit below for reproducibility.
+≥2-object rung after the validated `pair-box`. This is a **checkpoint-resume sweep**: take a
+checkpoint whose `completed_stages` **end at `pair-box`**, then train **only** `trio-box` with
+`--stop-after-rung trio-box`. Produce that pair-box-ending checkpoint by re-running the L5+L4
+pair-box recipe above **with `--stop-after-rung pair-box --checkpoint-out ck-seed0-pairbox.pt`** —
+the truncation is what makes `pair-box` the last completed rung (the un-truncated recipe trains the
+whole ladder, so its checkpoint would already contain `trio-box` and the resume below would skip it).
+
+> **Verify the resume source first** (the single most common way to silently corrupt the gate):
+> the checkpoint's last completed rung MUST be `pair-box`. If `trio-box` (or anything after it) is
+> already in `completed_stages`, the resumed run **skips `trio-box` and trains nothing**.
+> ```bash
+> python -c "from ml.checkpoint import load_checkpoint; print(load_checkpoint('ck-seed0-pairbox.pt').completed_stages)"
+> # expect: [..., 'pair-mixed', 'pair-box']   (ends at pair-box)
+> ```
+
+The L4 clip knobs are now the default (#728) but are kept explicit below for reproducibility.
 
 ```bash
 # Per seed (run twice, --seed 0 and --seed 1, with the matching pair-box checkpoint).
 # --load resumes; the loop SKIPS trivial…pair-box (already in completed_stages) and trains trio-box.
+# The cap is 300, not 80: trio-box's honest valid_placed was still CLIMBING at iter 136 (peak ~0.71)
+# when an undersized cap last cut it off — give it room. The competency gate stops the rung early
+# the moment it genuinely masters (`--promotion-window` iterations averaging >= the threshold).
 python -u -m ml.train --schedule curriculum --device cuda --n-envs 16 \
-  --rollout-len 512 --max-iters-per-stage 80 \
+  --rollout-len 512 --max-iters-per-stage 300 \
   --promotion-metric valid_placed --promotion-threshold 0.9 \
   --r-valid-park 30.0 --r-unplaced-penalty 25.0 --dense-slot-potential \
   --w-col 20.0 --valid-park-grade-scale 4.0 --r-first-valid 15.0 \
@@ -331,9 +355,16 @@ python -u -m ml.train --schedule curriculum --device cuda --n-envs 16 \
   --entropy-start 0.05 --entropy-end 0.005 --entropy-anneal-iters 40 \
   --normalize-returns --validity-conditional-terminal --solo-box-rung \
   --seed-anchor --mixed-anchor --stop-after-rung trio-box \
-  --load ck-seed0-l5l4.pt \
+  --load ck-seed0-pairbox.pt \
   --metrics-out metrics-seed0-trio.jsonl --checkpoint-out ck-seed0-trio.pt --seed 0
 ```
+
+**Fixed cap vs `--auto-budget`.** The command above is the **fixed-cap** variant (`--max-iters-per-stage 300`).
+To let the rung size its own budget instead, pass `--auto-budget` (+ optionally `--auto-budget-max-iters N`,
+`--auto-budget-min-iters N`, `--auto-budget-min-level L`) and **drop `--max-iters-per-stage`** — it is
+*ignored* under `--auto-budget` (the loop bound becomes `--auto-budget-max-iters`, default 1000). The #743
+floor-guard now keeps `--auto-budget` from truncating trio-box's flat pre-climb warmup, so it is safe for
+this late-climbing rung; the fixed cap stays the simplest, most reproducible default.
 
 **Resume gotchas (the single most likely way to corrupt the gate):**
 - **Re-pass `--solo-box-rung --seed-anchor --mixed-anchor` on every resumed cell.** The checkpoint
@@ -345,7 +376,10 @@ python -u -m ml.train --schedule curriculum --device cuda --n-envs 16 \
 - Gate scratch (`metrics-*.jsonl`, `ck-*.pt`) is gitignored (#717) — don't commit run artifacts.
 
 **Read the result with the gate harness** (torch-free, `ml/gate.py`) instead of eyeballing the
-JSONL — it headlines `valid_placed` (never `valid_rate`) and flags the piling basin:
+JSONL — it headlines `valid_placed` (never `valid_rate`) and flags the piling basin. Since #742 the
+trainer's own `promoted by competency` reads the **same** honest per-iteration `valid_placed` the
+gate does (no longer a noisy last-20-episode tail that false-positived), so the two agree by
+construction — `ml.gate` remains the torch-free cross-check and the canonical verdict:
 
 ```bash
 python -m ml.gate metrics-seed0-trio.jsonl --rung trio-box   # exit 0=mastered, 1=not, 2=no-data
@@ -360,6 +394,50 @@ little: committing objects invalidly, *not* a win — distrust any apparent prog
 **WIN = `trio-box` mastered on BOTH seeds.** A clean two-seed `place-nothing` is a valid negative
 (the four-lever ladder does *not* generalize to N=3 → pose-scaffold). A `piling` verdict means the
 ladder is unstable at N=3 and needs the economics re-tuned before re-gating.
+
+### Concurrent sweep runner (#749 — run the two/three-seed gate in one launch)
+
+The gate recipes above are **per-seed** (`--seed 0`, then `--seed 1`), run serially today — one
+launch per seed, babysat by hand. `python -m ml.sweep` is a **torch-free orchestrator** that
+spawns the K `python -m ml.train` cells **concurrently** (one per seed, each with a distinct
+`--seed` + per-cell `--metrics-out`/`--checkpoint-out`/`--save` path) and aggregates their exit
+codes into a single pass/fail verdict — **any failed *or crashed* child → runner exit non-zero**
+(a silently-swallowed crash would corrupt a 2-seed verdict). The per-cell `ml.train` args go
+**after a `--` separator**; everything before it is the sweep's own options:
+
+```bash
+# Two-seed trio-box gate, both cells concurrent (cap 2). The args after `--` are the
+# trio-box recipe above, MINUS --seed/--metrics-out/--checkpoint-out/--save (the sweep
+# strips and injects a distinct one per cell, in both the `--flag value` and `--flag=value`
+# spellings); --load is shared (each seed resumes the same pair-box checkpoint).
+python -u -m ml.sweep --seeds 0,1 --out-dir sweep-trio --tag trio --max-concurrency 2 -- \
+  --schedule curriculum --device cuda --n-envs 16 --rollout-len 512 \
+  --max-iters-per-stage 300 --promotion-metric valid_placed --promotion-threshold 0.9 \
+  --r-valid-park 30.0 --r-unplaced-penalty 25.0 --dense-slot-potential \
+  --w-col 20.0 --valid-park-grade-scale 4.0 --r-first-valid 15.0 \
+  --entropy-start 0.05 --entropy-end 0.005 --entropy-anneal-iters 40 \
+  --normalize-returns --validity-conditional-terminal --solo-box-rung \
+  --seed-anchor --mixed-anchor --stop-after-rung trio-box --load ck-pairbox.pt
+
+# Then roll up each cell's metrics with the same torch-free gate (exit 0=mastered, 1=not, 2=no-data):
+python -m ml.gate sweep-trio/metrics-trio-seed0.jsonl --rung trio-box
+python -m ml.gate sweep-trio/metrics-trio-seed1.jsonl --rung trio-box
+```
+
+By default each cell also gets a distinct per-seed `--checkpoint-out` (a crash-survivable resume
+checkpoint); pass **`--no-checkpoint-out`** to skip it, or **`--save`** to additionally hand each
+cell a distinct per-seed `--save` state_dict path.
+
+**Determinism:** byte-identical (no flag) — each child is bit-identical to running it alone, so
+co-locating cells on one GPU adds nothing beyond `--device cuda`.
+
+**Expect ~2× sweep wall-clock, NOT Kx** — 5.5 cores is the time-averaged busy fraction of one
+bursty run, so K aligned rollout bursts oversubscribe. `--max-concurrency` (default 2) is
+**RAM-bound, not core-bound**: ~10 GB/run → **K=3 risks OOM on a 31 GB box**. Disjoint core
+blocks + per-child thread caps (`OMP_NUM_THREADS`, `taskset`, `sched_setaffinity`) are an operator
+concern set in the launching env; the orchestrator inherits the env into each child unchanged
+(pairs with #747's per-worker BLAS/OMP thread cap so aligned rollout bursts don't oversubscribe
+cores).
 
 ## Design
 See `docs/superpowers/specs/2026-06-12-learned-backend-cold-joint-rl-env-design.md`
