@@ -32,6 +32,14 @@ a failure as a regression. The `max_restarts`-scoped companion
 (`test_solve_deterministic_best_partial_under_max_restarts`) is the
 load-independent determinism check.
 
+A common local trigger for "heavy concurrent CPU load" is a **background `ml/`
+GPU training run** (`python -m ml.train …`): the rollout is CPU-shapely-bound, so
+a training job running alongside the suite can starve the `serial` double-solve
+canaries (and the bench `--gate` speed jobs, §2) into spurious divergence.
+Iterate with `make test-fast` (skips the serial canaries) and trust the
+load-insensitive `determinism-guard` byte-diff; run the full serial pass when the
+training load is low.
+
 ## 2. The same wall-clock fragility bites non-serial tests too
 
 It worsens as the model gains parts. A `solve`/`view` smoke test that runs a
