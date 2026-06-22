@@ -13,8 +13,9 @@ All notable changes to this project are documented here. Format follows [Keep a 
   that moved between alternatives visibly pop — and a per-solution metrics readout (min inter-plane
   gap, planes moved vs solution #1 and average shift, tow-routability), mirroring the numbers
   `solve` already narrates. When fewer than N diverse solutions exist it carries what there is and
-  labels "Found n of N"; with a single solution it falls through to the byte-identical single
-  render. `--alternatives` requires `--solve` (a hand-authored layout is a single arrangement) and
+  labels "Found n of N"; with a single solution it falls through to the ordinary single-scene
+  render (no compare chrome). `--alternatives` requires `--solve` (a hand-authored layout is a
+  single arrangement) and
   exits 2 otherwise. The multi-solution container is a viewer-HTML-level `<script id="solutions">`
   blob (`hangarfit.viewer-compare/v1`) layered **over** N independent `scene/v2` docs — not a
   scene/v2 schema change — so `scene.build_scene` (and its byte-determinism + the scene-contract

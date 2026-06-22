@@ -714,9 +714,11 @@ def _build_compare_solutions(
 
     Each entry is ``{"label", "scene", "summary"}``: ``scene`` is the unchanged
     :func:`hangarfit.scene.build_scene` output for that layout (so its bytes are
-    byte-identical to a standalone render, ADR-0003), and ``summary`` carries the same
-    compare metrics ``solve`` already narrates — min inter-plane gap, planes-moved /
-    avg-shift vs solution #1, and tow-routability. Index-aligned with ``result.layouts``."""
+    byte-identical to a standalone render, ADR-0003), and ``summary`` carries the
+    compare metrics ``solve`` reports — min inter-plane gap and tow-routability, plus
+    the planes-moved / avg-shift diversity delta (here always against solution #1,
+    where ``solve``'s human narration compares against every prior layout). Index-aligned
+    with ``result.layouts``."""
     from hangarfit import scene as scene_mod
 
     d = result.diagnostics
@@ -1363,8 +1365,10 @@ def cmd_view(args: argparse.Namespace) -> int:
                 )
             # #666 multi-solution compare: with >=2 diverse layouts, build ONE HTML
             # carrying all of them + a switcher. A lone solution (alternatives==1, or
-            # only one diverse layout found) falls through to the byte-identical single
-            # render below — no compare chrome for a single solution.
+            # only one diverse layout found) falls through to the ordinary single
+            # render below — no compare chrome for a single solution. (The scene blob
+            # is byte-identical to a standalone render; the inlined viewer.js bundle is
+            # the same one either mode ships.)
             if args.alternatives > 1 and n_found >= 2:
                 if args.animate:
                     _warn_apron_shallow_drops(result.diagnostics.apron_shallow_drops)

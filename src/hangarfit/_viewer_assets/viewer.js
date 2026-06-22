@@ -12,6 +12,11 @@ function banner(msg) {
   b.hidden = false;
   b.textContent = msg;
 }
+function clearBanner() {
+  const b = byId("banner");
+  b.hidden = true;
+  b.textContent = "";
+}
 function disableControl(id) {
   byId(id).disabled = true;
 }
@@ -815,6 +820,7 @@ function startCompare(manifest, brand) {
     if (next === current) return;
     current = next;
     select.selectedIndex = current;
+    clearBanner();
     stage.scene.remove(world.group);
     disposeWorld(world.group);
     world = buildWorld(stage.scene, solutions[current].scene, brand);
@@ -825,6 +831,7 @@ function startCompare(manifest, brand) {
   };
   select.addEventListener("change", () => mount(select.selectedIndex));
   window.addEventListener("keydown", (e) => {
+    if (e.target === select) return;
     if (e.key === "ArrowRight") mount(wrapIndex(current, solutions.length, 1));
     else if (e.key === "ArrowLeft") mount(wrapIndex(current, solutions.length, -1));
   });

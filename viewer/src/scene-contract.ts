@@ -112,7 +112,7 @@ export interface SolutionSummary {
   min_gap_m: number | null; // tightest inter-plane gap (m); null for <2 planes
   planes_moved_vs_first: number; // planes shifted vs solution #1 (0 for #1)
   mean_shift_m: number; // mean (x,y) shift vs solution #1 (0 for #1)
-  routable: boolean; // a tow plan exists for this layout
+  routable: boolean; // a tow plan was BUILT for this layout (always false under --no-animate)
 }
 
 export interface CompareSolution {

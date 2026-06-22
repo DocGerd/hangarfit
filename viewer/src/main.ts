@@ -12,7 +12,7 @@
 // `#solutions` compare manifest is present (#666), N alternatives the user switches
 // between (startCompare). Single mode is behaviour-identical to the pre-#666 viewer.
 import * as THREE from 'three';
-import { banner, byId } from './dom.ts';
+import { banner, byId, clearBanner } from './dom.ts';
 import { createRenderer } from './renderer.ts';
 import { addHangar } from './hangar.ts';
 import { addPlanes } from './planes.ts';
@@ -190,6 +190,7 @@ function startCompare(manifest: CompareManifest, brand: BrandTokens): void {
     if (next === current) return;
     current = next;
     select.selectedIndex = current;
+    clearBanner(); // drop any prior solution's transform warning before re-checking
     stage.scene.remove(world.group);
     disposeWorld(world.group);
     world = buildWorld(stage.scene, solutions[current].scene, brand);
@@ -201,6 +202,9 @@ function startCompare(manifest: CompareManifest, brand: BrandTokens): void {
 
   select.addEventListener('change', () => mount(select.selectedIndex));
   window.addEventListener('keydown', (e) => {
+    // When the <select> is focused the browser already steps it on ←/→ (firing
+    // `change` → mount); skip the window handler so a keypress advances once.
+    if (e.target === select) return;
     if (e.key === 'ArrowRight') mount(wrapIndex(current, solutions.length, 1));
     else if (e.key === 'ArrowLeft') mount(wrapIndex(current, solutions.length, -1));
   });

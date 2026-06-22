@@ -26,6 +26,15 @@ export function banner(msg: string): void {
   b.textContent = msg;
 }
 
+/** Re-hide + clear the `#banner` so it tracks the ACTIVE state. Used on a #666
+ * compare switch so a prior solution's transform-check warning does not persist
+ * over a subsequently-selected clean solution. */
+export function clearBanner(): void {
+  const b = byId('banner');
+  b.hidden = true;
+  b.textContent = '';
+}
+
 /** Disable a HUD form control by id (button / range / select all carry the same
  * `.disabled` IDL attribute — typing as a button suffices to reach it). */
 export function disableControl(id: string): void {
