@@ -395,6 +395,44 @@ little: committing objects invalidly, *not* a win — distrust any apparent prog
 (the four-lever ladder does *not* generalize to N=3 → pose-scaffold). A `piling` verdict means the
 ladder is unstable at N=3 and needs the economics re-tuned before re-gating.
 
+### Concurrent sweep runner (#749 — run the two/three-seed gate in one launch)
+
+The gate recipes above are **per-seed** (`--seed 0`, then `--seed 1`), run serially today — one
+launch per seed, babysat by hand. `python -m ml.sweep` is a **torch-free orchestrator** that
+spawns the K `python -m ml.train` cells **concurrently** (one per seed, each with a distinct
+`--seed` + per-cell `--metrics-out`/`--checkpoint-out`/`--save` path) and aggregates their exit
+codes into a single pass/fail verdict — **any failed *or crashed* child → runner exit non-zero**
+(a silently-swallowed crash would corrupt a 2-seed verdict). The per-cell `ml.train` args go
+**after a `--` separator**; everything before it is the sweep's own options:
+
+```bash
+# Two-seed trio-box gate, both cells concurrent (cap 2). The args after `--` are the
+# trio-box recipe above, MINUS --seed/--metrics-out/--checkpoint-out (the sweep injects a
+# distinct one per cell); --load is shared (each seed resumes the same pair-box checkpoint).
+python -u -m ml.sweep --seeds 0,1 --out-dir sweep-trio --tag trio --max-concurrency 2 -- \
+  --schedule curriculum --device cuda --n-envs 16 --rollout-len 512 \
+  --max-iters-per-stage 300 --promotion-metric valid_placed --promotion-threshold 0.9 \
+  --r-valid-park 30.0 --r-unplaced-penalty 25.0 --dense-slot-potential \
+  --w-col 20.0 --valid-park-grade-scale 4.0 --r-first-valid 15.0 \
+  --entropy-start 0.05 --entropy-end 0.005 --entropy-anneal-iters 40 \
+  --normalize-returns --validity-conditional-terminal --solo-box-rung \
+  --seed-anchor --mixed-anchor --stop-after-rung trio-box --load ck-pairbox.pt
+
+# Then roll up each cell's metrics with the same torch-free gate (exit 0=mastered, 1=not, 2=no-data):
+python -m ml.gate sweep-trio/metrics-trio-seed0.jsonl --rung trio-box
+python -m ml.gate sweep-trio/metrics-trio-seed1.jsonl --rung trio-box
+```
+
+**Determinism:** byte-identical (no flag) — each child is bit-identical to running it alone, so
+co-locating cells on one GPU adds nothing beyond `--device cuda`.
+
+**Expect ~2× sweep wall-clock, NOT Kx** — 5.5 cores is the time-averaged busy fraction of one
+bursty run, so K aligned rollout bursts oversubscribe. `--max-concurrency` (default 2) is
+**RAM-bound, not core-bound**: ~10 GB/run → **K=3 risks OOM on a 31 GB box**. Disjoint core
+blocks + per-child thread caps (`OMP_NUM_THREADS`, `taskset`, `sched_setaffinity`) are an operator
+concern set in the launching env; the orchestrator inherits the env into each child unchanged
+(pairs with #747's worker thread-cap so aligned bursts don't oversubscribe the GEOS GIL).
+
 ## Design
 See `docs/superpowers/specs/2026-06-12-learned-backend-cold-joint-rl-env-design.md`
 and ADR-0027 (learned-path determinism scope).

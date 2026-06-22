@@ -6,6 +6,24 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Learned backend (#749, epic #607, throughput Wave 1): concurrent multi-seed sweep runner
+  `python -m ml.sweep`.** The mastery deliverable is the two/three-seed gate (the `ml/README`
+  trio-box recipe), run **serially** today — one launch per seed, babysat by hand. One on-policy
+  run is throughput-capped by its synchronous step-dependency, so the box sits idle (~26 cores,
+  ~10% GPU). `ml/sweep.py` is a **torch-free** orchestrator that spawns K **unmodified**
+  `python -m ml.train` subprocesses (one per `--seed`), each with a distinct `--seed` +
+  per-cell `--metrics-out`/`--checkpoint-out`/`--save` path, runs them **concurrently** up to
+  `--max-concurrency` (default **2**, documented **RAM-bound** — ~10 GB/run → K=3 risks OOM on a
+  31 GB box, *not* core-bound), and aggregates child exit codes into a single pass/fail verdict
+  in deterministic seed order. **Loud by contract** (the #749 risk): any non-zero child — or a
+  child that *crashes* — makes the runner exit non-zero, surfaced as a failed cell with its
+  error text rather than silently corrupting a 2-seed verdict. Pure orchestration, **no
+  training-loop edits** — each child is byte-identical to running it alone, so co-locating cells
+  on one GPU adds nothing beyond `--device cuda`. The job-spawning seam is injectable for fast
+  deterministic unit tests (no real multi-minute training spawned). Per-cell metrics roll up via
+  the existing torch-free `python -m ml.gate`. Expected **~2× sweep wall-clock** (not Kx —
+  aligned rollout bursts oversubscribe). Dev/CI-only (`ml/`); no shipped-wheel surface.
+
 - **Learned backend (#734, epic #607): slope-aware `--auto-budget` per curriculum rung.**
   A fixed `--max-iters-per-stage` cap is wrong in both directions — it truncated the trio-box
   (N=3) run while `valid_placed` was *still climbing* (peak 0.65, under-trained not collapsed),
