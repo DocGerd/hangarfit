@@ -76,7 +76,15 @@ every PR on `develop`, never on the parent feature branch**: CI (`on:
 pull_request: branches:[develop,main]`) and GitHub `Closes #N` linkage only fire
 for develop/main-base PRs, so a feature-branch-based PR silently gets **no CI run
 and no issue link**. Accept the cumulative diff until parents merge, and document
-the merge order. (Mis-based already? `gh api -X PATCH repos/DocGerd/hangarfit/pulls/<n> -f base=develop`,
+the merge order. **Cascading CHANGELOG conflicts:** stacked PRs each insert a
+`[Unreleased]` entry at the top of the same `### Added` block, so **every sibling
+re-conflicts on `CHANGELOG.md` each time one merges** — re-sync the rest (`git
+merge origin/develop`, NOT rebase — no force-push; keep ALL entries) after each
+lands. GitHub mergeability **lags a push**: a transient `CONFLICTING`/`DIRTY`
+banner right after a merge/push clears on recompute — `mergeable=MERGEABLE` (and
+`git merge-base --is-ancestor origin/develop <branch>`) is authoritative;
+`mergeStateStatus=BLOCKED` just means required CI is still pending, not a conflict.
+(Mis-based already? `gh api -X PATCH repos/DocGerd/hangarfit/pulls/<n> -f base=develop`,
 then close+reopen the PR to trigger CI.) Wire the stack's order as native issue
 deps: `gh api -X POST repos/DocGerd/hangarfit/issues/<n>/dependencies/blocked_by -F issue_id=<numeric id>`.
 
