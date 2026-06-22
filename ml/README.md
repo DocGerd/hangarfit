@@ -323,16 +323,31 @@ competency at `w_col=20`). Read `valid_placed`, NOT `valid_rate` (an empty layou
 The two-seed `pair-box` PASS above broke the *2-object* cliff. The open question is whether the
 same four-lever ladder clears the **3-object** `trio-box` rung (`max_objects=3`, already in
 `DEFAULT_LADDER`) — historically every ≥2-object rung collapsed, and `trio-box` is the first
-≥2-object rung after the validated `pair-box`. This is a **checkpoint-resume sweep**: take a checkpoint whose
-`completed_stages` already include `pair-box` (the `--checkpoint-out` from the pair-box gate above),
-then train **only** `trio-box` with `--stop-after-rung trio-box`. The L4 clip knobs are now the
-default (#728) but are kept explicit below for reproducibility.
+≥2-object rung after the validated `pair-box`. This is a **checkpoint-resume sweep**: take a
+checkpoint whose `completed_stages` **end at `pair-box`**, then train **only** `trio-box` with
+`--stop-after-rung trio-box`. Produce that pair-box-ending checkpoint by re-running the L5+L4
+pair-box recipe above **with `--stop-after-rung pair-box --checkpoint-out ck-seed0-pairbox.pt`** —
+the truncation is what makes `pair-box` the last completed rung (the un-truncated recipe trains the
+whole ladder, so its checkpoint would already contain `trio-box` and the resume below would skip it).
+
+> **Verify the resume source first** (the single most common way to silently corrupt the gate):
+> the checkpoint's last completed rung MUST be `pair-box`. If `trio-box` (or anything after it) is
+> already in `completed_stages`, the resumed run **skips `trio-box` and trains nothing**.
+> ```bash
+> python -c "from ml.checkpoint import load_checkpoint; print(load_checkpoint('ck-seed0-pairbox.pt').completed_stages)"
+> # expect: [..., 'pair-mixed', 'pair-box']   (ends at pair-box)
+> ```
+
+The L4 clip knobs are now the default (#728) but are kept explicit below for reproducibility.
 
 ```bash
 # Per seed (run twice, --seed 0 and --seed 1, with the matching pair-box checkpoint).
 # --load resumes; the loop SKIPS trivial…pair-box (already in completed_stages) and trains trio-box.
+# The cap is 300, not 80: trio-box's honest valid_placed was still CLIMBING at iter 136 (peak ~0.71)
+# when an undersized cap last cut it off — give it room. The competency gate stops the rung early
+# the moment it genuinely masters (`--promotion-window` iterations averaging >= the threshold).
 python -u -m ml.train --schedule curriculum --device cuda --n-envs 16 \
-  --rollout-len 512 --max-iters-per-stage 80 \
+  --rollout-len 512 --max-iters-per-stage 300 \
   --promotion-metric valid_placed --promotion-threshold 0.9 \
   --r-valid-park 30.0 --r-unplaced-penalty 25.0 --dense-slot-potential \
   --w-col 20.0 --valid-park-grade-scale 4.0 --r-first-valid 15.0 \
@@ -340,9 +355,16 @@ python -u -m ml.train --schedule curriculum --device cuda --n-envs 16 \
   --entropy-start 0.05 --entropy-end 0.005 --entropy-anneal-iters 40 \
   --normalize-returns --validity-conditional-terminal --solo-box-rung \
   --seed-anchor --mixed-anchor --stop-after-rung trio-box \
-  --load ck-seed0-l5l4.pt \
+  --load ck-seed0-pairbox.pt \
   --metrics-out metrics-seed0-trio.jsonl --checkpoint-out ck-seed0-trio.pt --seed 0
 ```
+
+**Fixed cap vs `--auto-budget`.** The command above is the **fixed-cap** variant (`--max-iters-per-stage 300`).
+To let the rung size its own budget instead, pass `--auto-budget` (+ optionally `--auto-budget-max-iters N`,
+`--auto-budget-min-iters N`, `--auto-budget-min-level L`) and **drop `--max-iters-per-stage`** — it is
+*ignored* under `--auto-budget` (the loop bound becomes `--auto-budget-max-iters`, default 1000). The #743
+floor-guard now keeps `--auto-budget` from truncating trio-box's flat pre-climb warmup, so it is safe for
+this late-climbing rung; the fixed cap stays the simplest, most reproducible default.
 
 **Resume gotchas (the single most likely way to corrupt the gate):**
 - **Re-pass `--solo-box-rung --seed-anchor --mixed-anchor` on every resumed cell.** The checkpoint
@@ -354,7 +376,10 @@ python -u -m ml.train --schedule curriculum --device cuda --n-envs 16 \
 - Gate scratch (`metrics-*.jsonl`, `ck-*.pt`) is gitignored (#717) — don't commit run artifacts.
 
 **Read the result with the gate harness** (torch-free, `ml/gate.py`) instead of eyeballing the
-JSONL — it headlines `valid_placed` (never `valid_rate`) and flags the piling basin:
+JSONL — it headlines `valid_placed` (never `valid_rate`) and flags the piling basin. Since #742 the
+trainer's own `promoted by competency` reads the **same** honest per-iteration `valid_placed` the
+gate does (no longer a noisy last-20-episode tail that false-positived), so the two agree by
+construction — `ml.gate` remains the torch-free cross-check and the canonical verdict:
 
 ```bash
 python -m ml.gate metrics-seed0-trio.jsonl --rung trio-box   # exit 0=mastered, 1=not, 2=no-data
