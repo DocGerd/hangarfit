@@ -58,7 +58,15 @@ def to_batch(
     reproducing the full :func:`encode` raster bit-for-bit. Full float32 obs — every
     non-vectorized caller — pass straight through, so ``static_block`` is required ONLY for
     trimmed obs (and is harmlessly ignored otherwise)."""
-    if obs[0].raster.dtype == np.uint8:
+    trimmed = obs[0].raster.dtype == np.uint8
+    if any((o.raster.dtype == np.uint8) != trimmed for o in obs):
+        raise ValueError(
+            "to_batch received a mix of full (float32) and trimmed (uint8) rasters; a batch "
+            "must be uniformly one or the other (the vec rollout is all-trimmed, every other "
+            "caller all-full). A mixed batch would reassemble a full obs into a wrong-shaped "
+            "raster."
+        )
+    if trimmed:
         if static_block is None:
             raise ValueError(
                 "to_batch got uint8 (dynamic-only) rasters but no static_block to re-prepend "

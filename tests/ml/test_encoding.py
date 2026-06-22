@@ -455,3 +455,19 @@ def test_reassemble_raster_equals_full_encode_bitwise():
     assert reassembled.shape == (RASTER_CHANNELS, 192, 96) and reassembled.dtype == np.float32
     assert np.array_equal(reassembled, full)
     assert reassembled.tobytes() == full.tobytes()
+
+
+def test_reassemble_raster_rejects_wrong_channel_counts():
+    """A wrong-sized static or dynamic block must fail loudly in reassemble_raster, not
+    silently concat to the wrong channel count and surface as a cryptic conv error far
+    downstream (silent-failure review of #752)."""
+    from ml.encoding import DYNAMIC_CHANNELS, STATIC_CHANNELS, reassemble_raster
+
+    good_static = np.zeros((STATIC_CHANNELS, 8, 8), np.float32)
+    good_dyn = np.zeros((DYNAMIC_CHANNELS, 8, 8), np.uint8)
+    # sanity: the well-formed pair reassembles
+    assert reassemble_raster(good_static, good_dyn).shape[0] == STATIC_CHANNELS + DYNAMIC_CHANNELS
+    with pytest.raises(ValueError, match="static"):
+        reassemble_raster(np.zeros((STATIC_CHANNELS + 1, 8, 8), np.float32), good_dyn)
+    with pytest.raises(ValueError, match="dynamic"):
+        reassemble_raster(good_static, np.zeros((DYNAMIC_CHANNELS + 1, 8, 8), np.uint8))

@@ -209,3 +209,15 @@ def test_to_batch_full_obs_ignores_static_block():
     full, _dyn, h, c = _obs_full_and_dynamic()
     sb = static_block(h, c)
     assert torch.equal(to_batch([full], static_block=sb)["raster"], to_batch([full])["raster"])
+
+
+def test_to_batch_rejects_mixed_full_and_trimmed_rasters():
+    """A batch mixing full (float32/7ch) and trimmed (uint8/3ch) obs is a wiring error;
+    to_batch must reject it rather than reassemble a full obs into a wrong-shaped raster
+    (silent-failure + ml-rl-guard review of #752)."""
+    from ml.encoding import static_block
+
+    full, dyn, h, c = _obs_full_and_dynamic()
+    sb = static_block(h, c)
+    with pytest.raises(ValueError, match="mix"):
+        to_batch([dyn, full], static_block=sb)  # obs[0] trimmed, obs[1] full

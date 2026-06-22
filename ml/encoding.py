@@ -368,7 +368,21 @@ def reassemble_raster(static: np.ndarray, dynamic: np.ndarray) -> np.ndarray:
     """Re-prepend a cached static block onto a (uint8) dynamic block → the full
     (RASTER_CHANNELS, H, W) float32 raster, **bit-for-bit equal to** :func:`encode`'s raster.
     The dynamic block is binary (0/1), so the uint8→float32 widening is lossless — only the
-    transport encoding changed, never a value. This is the byte-identity seam of #752."""
+    transport encoding changed, never a value. This is the byte-identity seam of #752.
+
+    Validates the leading (channel) dim of both blocks: a wrong-sized static block would
+    otherwise concatenate to the wrong channel count and surface only as a cryptic Conv2d
+    in-channel mismatch deep in the policy forward — far from the cause."""
+    if static.shape[0] != STATIC_CHANNELS:
+        raise ValueError(
+            f"reassemble_raster: static block has {static.shape[0]} channels, expected "
+            f"STATIC_CHANNELS={STATIC_CHANNELS} (a static_block for a different config?)"
+        )
+    if dynamic.shape[0] != DYNAMIC_CHANNELS:
+        raise ValueError(
+            f"reassemble_raster: dynamic block has {dynamic.shape[0]} channels, expected "
+            f"DYNAMIC_CHANNELS={DYNAMIC_CHANNELS} (not an encode_dynamic raster?)"
+        )
     return np.concatenate([static, dynamic.astype(np.float32)], axis=0).astype(np.float32)
 
 
