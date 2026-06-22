@@ -12,7 +12,7 @@ All notable changes to this project are documented here. Format follows [Keep a 
   re-imports torch + shapely *privately* in every worker (~327 MiB PSS/worker measured). Since
   the workers are torch-free in their *ops*, `--vec-start-method forkserver` forks them from a
   shared server that preloads those modules once, so all workers share the pages copy-on-write —
-  **measured ~327 → ~71 MiB PSS/worker (~4.6×)**, which raises the achievable `--n-envs`/sweep
+  **measured ~327 → ~71 MiB PSS/worker (~4.6×; CPU-only, Linux/Py3.12, N=4)**, which raises the achievable `--n-envs`/sweep
   concurrency. **Default stays `spawn`** (the byte-identity reference); `forkserver` is verified
   **byte-identical** to it (the worker's `stage_rng` is `worker_index`-keyed, so the start method
   can't perturb the trajectory — pinned by `test_subproc_forkserver_byte_identical_to_sync` +

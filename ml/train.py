@@ -923,7 +923,7 @@ def build_argparser() -> argparse.ArgumentParser:
         choices=["spawn", "forkserver", "fork"],
         default="spawn",
         help="subproc worker start method (#751): spawn (default, byte-identical) or "
-        "forkserver (shares the parent's imported pages, cutting per-worker RAM). fork is "
+        "forkserver (forks from a shared preloaded server, cutting per-worker RAM). fork is "
         "an explicit escape hatch — unsafe if the parent holds a CUDA context.",
     )
     p.add_argument(

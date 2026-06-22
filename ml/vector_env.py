@@ -266,8 +266,9 @@ class SubprocVectorEnv:
     """N _EnvWorkers, each in its own worker process. Parallelizes the per-env shapely
     geometry + encoding. Workers are torch-free, so output is byte-identical to
     SyncVectorEnv on the same action stream — independent of the start method (#751):
-    ``spawn`` (default, the byte-identity reference), ``forkserver`` (shares the parent's
-    imported pages, cutting per-worker RAM), or ``fork`` (explicit, parent-must-be-fork-safe)."""
+    ``spawn`` (default, the byte-identity reference), ``forkserver`` (forks workers from a
+    shared server that preloads the heavy modules, so they share its pages copy-on-write —
+    cutting per-worker RAM), or ``fork`` (explicit, parent-must-be-fork-safe)."""
 
     def __init__(
         self,
