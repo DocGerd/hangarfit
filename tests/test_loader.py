@@ -2471,6 +2471,7 @@ maintenance_bay: {center_x_m: 13.5, width_m: 9, depth_m: 9}
             "maintenance:\n  plane: foo\n"
             "constraints:\n  foo:\n    priority: 1.0\n"
             "ground_objects:\n  - fixture_caddy\n"
+            "door_order:\n  - foo\n"
         )
         file_keys = set(yaml.safe_load(body))
         assert file_keys == _ALLOWED_SCENARIO_KEYS, (
@@ -2482,3 +2483,4 @@ maintenance_bay: {center_x_m: 13.5, width_m: 9, depth_m: 9}
         assert scn.ground_objects == ("fixture_caddy",)
         assert "fixture_caddy" in scn.ground_object_defs
         assert scn.maintenance_plane == "foo"
+        assert scn.door_order == ("foo",)
