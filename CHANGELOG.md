@@ -6,6 +6,14 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [0.16.0] — 2026-06-22
+
+### Added
+
 - **Solver (#614, epic #600 / milestone 34): SOFT door-priority tie-breaker
   (`Scenario.door_order`).** The deferred soft half of #603's HARD Caddy egress gate: a scenario
   may declare a desired door-proximity order (a top-level `door_order:` list of placeable body ids;
@@ -1483,7 +1491,8 @@ First Phase 1 cut — substrate for arranging the flying club fleet in a stack-s
 - Apache-2.0 license, public-audience README, CI matrix (Python 3.11 + 3.12), branch protection on develop + main (#13, #14, #15, #16).
 - Strut-aware golden tests + all-9-planes fixture using larger test-only hangar to accommodate strut-bracing geometry on placeholder dimensions (#5).
 
-[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.15.0...HEAD
+[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.16.0...HEAD
+[0.16.0]: https://github.com/DocGerd/hangarfit/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/DocGerd/hangarfit/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/DocGerd/hangarfit/compare/v0.13.0...v0.14.0
 [0.13.0]: https://github.com/DocGerd/hangarfit/compare/v0.12.0...v0.13.0

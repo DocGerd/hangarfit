@@ -384,7 +384,7 @@ median (~6 %) at n = 3 — baseline ~15 s, itself down from the spike's 40.6 s a
 #453/#454 landed. The saving is O(n²)→O(n) in plane count, so it grows with fleet
 size.
 
-## Amendment (#614, 2026-06-22): door-priority is the primary soft selection key
+### 2026-06-22 — door-priority is the primary soft selection key (#614)
 
 `Scenario.door_order` (#614, the deferred SOFT half of #603's HARD Caddy egress
 gate) adds a second soft preference that sits **above** this spread term in the
