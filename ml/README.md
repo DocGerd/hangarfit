@@ -315,8 +315,11 @@ The two-seed `pair-box` PASS above broke the *2-object* cliff. The open question
 same four-lever ladder clears the **3-object** `trio-box` rung (`max_objects=3`, already in
 `DEFAULT_LADDER`) — historically every ≥2-object rung collapsed, and `trio-box` is the first
 ≥2-object rung after the validated `pair-box`. This is a **checkpoint-resume sweep**: take a
-checkpoint whose `completed_stages` **end at `pair-box`** (a pair-box gate run with
-`--stop-after-rung pair-box`), then train **only** `trio-box` with `--stop-after-rung trio-box`.
+checkpoint whose `completed_stages` **end at `pair-box`**, then train **only** `trio-box` with
+`--stop-after-rung trio-box`. Produce that pair-box-ending checkpoint by re-running the L5+L4
+pair-box recipe above **with `--stop-after-rung pair-box --checkpoint-out ck-seed0-pairbox.pt`** —
+the truncation is what makes `pair-box` the last completed rung (the un-truncated recipe trains the
+whole ladder, so its checkpoint would already contain `trio-box` and the resume below would skip it).
 
 > **Verify the resume source first** (the single most common way to silently corrupt the gate):
 > the checkpoint's last completed rung MUST be `pair-box`. If `trio-box` (or anything after it) is
