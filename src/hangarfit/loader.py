@@ -659,7 +659,7 @@ def load_layout(
 # the too-strict direction. Per-plane ``constraints`` entries carry their own
 # allowlist (:data:`_ALLOWED_CONSTRAINT_KEYS`).
 _ALLOWED_SCENARIO_KEYS = frozenset(
-    {"fleet_in", "fleet", "hangar", "maintenance", "constraints", "ground_objects"}
+    {"fleet_in", "fleet", "hangar", "maintenance", "constraints", "ground_objects", "door_order"}
 )
 
 
@@ -915,6 +915,14 @@ def load_scenario(
                 except (ValueError, LoaderError) as e:
                     raise LoaderError(f"{path}: ground_objects[{i}] ({gid}): {e}") from e
 
+    # Door order (#614): an optional top-level list of body ids. Absent ⇒ None
+    # (inert, byte-identical). Cross-reference validation (placeable ids, no
+    # duplicates) is the Scenario's job — its ValueError is wrapped below.
+    door_order_raw = raw.get("door_order")
+    if door_order_raw is not None and not isinstance(door_order_raw, list):
+        raise LoaderError(f"{path}: 'door_order' must be a list")
+    door_order = None if door_order_raw is None else tuple(str(x) for x in door_order_raw)
+
     try:
         return Scenario(
             fleet=fleet,
@@ -926,6 +934,7 @@ def load_scenario(
             ground_object_defs=ground_objects,
             fixed_obstacle_placements=tuple(fixed_obstacle_placements),
             region_preferences=region_preferences,
+            door_order=door_order,
         )
     except ValueError as e:
         raise LoaderError(f"{path}: {e}") from e

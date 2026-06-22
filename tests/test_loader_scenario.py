@@ -369,7 +369,8 @@ def test_load_scenario_all_allowed_top_level_keys_load(tmp_path):
         "constraints:\n"
         "  aviat_husky:\n"
         "    priority: 1.0\n"
-        "ground_objects: []\n",
+        "ground_objects: []\n"
+        "door_order: [aviat_husky]\n",
     )
     file_keys = set(yaml.safe_load(p.read_text()))
     assert file_keys == _ALLOWED_SCENARIO_KEYS, (
@@ -381,6 +382,7 @@ def test_load_scenario_all_allowed_top_level_keys_load(tmp_path):
     assert s.maintenance_plane == "ctsl"
     assert "aviat_husky" in s.constraints
     assert s.ground_objects == ()
+    assert s.door_order == ("aviat_husky",)
 
 
 def test_load_scenario_unknown_key_wins_over_missing_required(tmp_path):

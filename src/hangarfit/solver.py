@@ -325,6 +325,7 @@ def _run_restart(
                 restart_index=restart_index,
                 nose_out_flips=n_flips,
                 region_alignment=cand_alignment,
+                door_deviation=_door_order_deviation(placements, scenario),
             )
             break  # found a basin
 
@@ -1386,6 +1387,39 @@ def _region_alignment(
     return tuple(out)
 
 
+def _door_order_deviation(placements: Mapping[str, Placement], scenario: Scenario) -> float:
+    """Soft door-priority deviation: a Kendall-tau inversion count (#614).
+
+    ``scenario.door_order`` is a desired door-proximity sequence (the first id
+    should park nearest the door at ``y = 0``; ADR-0002 ``+y`` is deeper in).
+    For the placed door_order bodies, in request order, count the pairs that are
+    OUT of order by door distance — i.e. an earlier-requested body parked
+    *farther* from the door (larger ``y``) than a later-requested one. ``0.0`` ⇒
+    the placed bodies match the requested order exactly; higher ⇒ more inversions.
+
+    Door distance is the placement ``y_m`` reference coordinate (a soft proxy,
+    consistent with :func:`_back_bias_energy`'s ``y`` / :func:`_region_energy`'s
+    ``x``; the HARD egress geometry is ADR-0026's separate gate). Bodies absent
+    from ``placements`` (e.g. a maintenance plane treated as away) are skipped, so
+    only the realized relative order is scored ("position 2 when position 1 is
+    geometrically impossible is acceptable", #603). Strict ``>`` means equal-``y``
+    ties add no inversion either way — order-neutral and deterministic.
+
+    Returns ``0.0`` when ``door_order`` is ``None`` (inert ⇒ byte-identical
+    selection, ADR-0003) — the early return also keeps the default path free."""
+    order = scenario.door_order
+    if order is None:
+        return 0.0
+    seq = [pid for pid in order if pid in placements]
+    ys = [placements[pid].y_m for pid in seq]
+    inversions = 0
+    for i in range(len(ys)):
+        for j in range(i + 1, len(ys)):
+            if ys[i] > ys[j]:  # earlier-requested body is FARTHER from the door
+                inversions += 1
+    return float(inversions)
+
+
 def _resolve_spread_scale(scenario: Scenario, search: SearchConfig) -> float:
     """Repulsion length-scale for spread (spec §4): explicit override or
     20% of the smaller hangar dimension. Single source so ``_spread`` and
@@ -2033,6 +2067,9 @@ class _SpreadCandidate(NamedTuple):
     restart_index: int
     nose_out_flips: int = 0
     region_alignment: tuple[RegionAlignment, ...] = ()
+    # #614 soft door-priority deviation (Kendall-tau inversions; 0.0 when
+    # door_order is unset ⇒ a constant key prefix ⇒ byte-identical selection).
+    door_deviation: float = 0.0
 
 
 def _select_spread_diverse(
@@ -2042,9 +2079,12 @@ def _select_spread_diverse(
 ) -> tuple[list[_SpreadCandidate], int]:
     """Select up to ``alternatives`` best-spread, pairwise-diverse candidates.
 
-    Order the pool by ``(−min_gap, energy, restart_index)``: largest minimum
-    plan-view gap first, ties broken by lower repulsion energy, then by restart
-    order for a *total* (so deterministic — ADR-0003) ordering. Greedily accept
+    Order the pool by ``(door_deviation, −min_gap, energy, restart_index)``:
+    fewest door-order inversions first (#614 — a constant ``0.0`` when
+    ``door_order`` is unset, so the spread ordering is then byte-identical),
+    then largest minimum plan-view gap, ties broken by lower repulsion energy,
+    then by restart order for a *total* (so deterministic — ADR-0003) ordering.
+    Greedily accept
     a candidate iff it is diverse enough (ADR-0004) against everything already
     selected; the first pick is always accepted (diversity is vacuous on the
     empty selection). Returns ``(selected, diversity_rejected)`` in best-spread
@@ -2053,7 +2093,12 @@ def _select_spread_diverse(
     ``alternatives == 1`` this is always 0 — selection stops after the first,
     vacuous pick.
     """
-    ordered = sorted(pool, key=lambda c: (-c.min_gap, c.energy, c.restart_index))
+    # #614 door-priority is the PRIMARY soft key (above the ADR-0008 spread
+    # terms): fewer door-order inversions first, then maximin gap, then lower
+    # repulsion energy, then restart_index for a total (deterministic) order.
+    # With door_order unset every candidate's door_deviation is 0.0, so this
+    # constant prefix leaves the spread ordering byte-identical (ADR-0003).
+    ordered = sorted(pool, key=lambda c: (c.door_deviation, -c.min_gap, c.energy, c.restart_index))
     selected: list[_SpreadCandidate] = []
     diversity_rejected = 0
     for cand in ordered:

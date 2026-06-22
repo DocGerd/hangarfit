@@ -383,3 +383,23 @@ re-summed in full. Measured: `roomy_three_spread_on` placement 15.04 s → 14.08
 median (~6 %) at n = 3 — baseline ~15 s, itself down from the spike's 40.6 s after
 #453/#454 landed. The saving is O(n²)→O(n) in plane count, so it grows with fleet
 size.
+
+## Amendment (#614, 2026-06-22): door-priority is the primary soft selection key
+
+`Scenario.door_order` (#614, the deferred SOFT half of #603's HARD Caddy egress
+gate) adds a second soft preference that sits **above** this spread term in the
+selection lexicographic order. `_select_spread_diverse` now ranks the
+already-collision-valid candidate pool by
+`(door_deviation, −min_gap, energy, restart_index)`: fewest door-order
+inversions first (`solver._door_order_deviation`, a Kendall-tau count over the
+placed `door_order` bodies ranked by `y_m` door-proximity), then this ADR's
+maximin spread (`−min_gap`, then `energy`), then `restart_index` for a total
+order. So a declared door order wins over maximal spread, while spread stays the
+**lower-priority tie-breaker** among layouts that satisfy the order equally — and
+because the inversion count is discrete, door-order-satisfying candidates group
+together and spread decides *within* the group. Door-priority is still strictly
+**below every hard rule** (the pool is built only from `(0, 0.0)`-valid basins),
+so it can never make an invalid layout selectable. With `door_order` unset (the
+default) every candidate's `door_deviation` is a constant `0.0`, so the key
+reduces to this ADR's original `(−min_gap, energy, restart_index)` ordering
+**byte-for-byte** (ADR-0003) — verified by the 6-plane determinism canaries.

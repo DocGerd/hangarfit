@@ -1201,6 +1201,7 @@ class Scenario:
       constraints (the occupant is treated as away — those constraints would be
       incoherent and would be silently ignored by the solver)
     - region_preferences.keys() ⊆ placeable bodies (fleet_in ∪ placed_routed_mover ids)
+    - door_order (if set) ⊆ placeable bodies and has no duplicate ids (#614)
     - fixed_obstacle_placements entries reference distinct fixed_obstacle ground
       objects (in ground_object_defs)
     - fleet and constraints are wrapped in MappingProxyType (same pattern as Layout)
@@ -1231,6 +1232,12 @@ class Scenario:
     region_preferences: Mapping[str, RegionPreference] = field(
         default_factory=lambda: MappingProxyType({})
     )
+    # #614 SOFT door-priority: a desired door-proximity order (the first id should
+    # park nearest the door). A lexicographically-subordinate selection term,
+    # consumed only after every hard rule passes (see ``solver._door_order_deviation``;
+    # it sits below ADR-0026's HARD egress gate). ``None`` ⇒ inert / byte-identical
+    # solver (ADR-0003). A tuple (immutable already), so no MappingProxyType wrap.
+    door_order: tuple[str, ...] | None = None
 
     # The mapping fields wrapped in MappingProxyType for immutability. This is
     # the single source of truth for both the construction-time wrap (in
@@ -1387,6 +1394,20 @@ class Scenario:
                     f"placeable body (aircraft or placed_routed_mover); "
                     f"placeable ids: {sorted(placeable)}"
                 )
+
+        # Door order (#614): every id must reference a placeable body (mirrors
+        # region_preferences) and no id may repeat (a body can't hold two
+        # door-proximity ranks). None ⇒ no constraint (inert, byte-identical).
+        if self.door_order is not None:
+            if len(set(self.door_order)) != len(self.door_order):
+                raise ValueError(f"Scenario.door_order has duplicate entries: {self.door_order}")
+            for did in self.door_order:
+                if did not in placeable:
+                    raise ValueError(
+                        f"Scenario.door_order references {did!r} which is not a "
+                        f"placeable body (aircraft or placed_routed_mover); "
+                        f"placeable ids: {sorted(placeable)}"
+                    )
         seen_fixed: set[str] = set()
         for p in self.fixed_obstacle_placements:
             if p.plane_id not in self.ground_object_defs:
