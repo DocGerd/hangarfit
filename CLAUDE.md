@@ -80,7 +80,10 @@ the merge order. **Cascading CHANGELOG conflicts:** stacked PRs each insert a
 `[Unreleased]` entry at the top of the same `### Added` block, so **every sibling
 re-conflicts on `CHANGELOG.md` each time one merges** — re-sync the rest (`git
 merge origin/develop`, NOT rebase — no force-push; keep ALL entries) after each
-lands. GitHub mergeability **lags a push**: a transient `CONFLICTING`/`DIRTY`
+lands. **Prevention (preferred for ≥2 PRs delivered in parallel):** keep the
+`[Unreleased]` entry OUT of each feature PR and collect them all in ONE separate
+CHANGELOG-only PR — no sibling then conflicts (user preference, 2026-06-23). The
+default "entry per PR" rule still holds for one-at-a-time delivery. GitHub mergeability **lags a push**: a transient `CONFLICTING`/`DIRTY`
 banner right after a merge/push clears on recompute — `mergeable=MERGEABLE` (and
 `git merge-base --is-ancestor origin/develop <branch>`) is authoritative;
 `mergeStateStatus=BLOCKED` just means required CI is still pending, not a conflict.
@@ -162,7 +165,7 @@ After cloning and running `claude`, use the `/mcp` command. The `github` and `co
 
 ## Worktrees
 
-Allowed but not the default — use only for genuinely parallel feature work; plain branch checkout is simpler for sequential issues. Two gotchas if you do: **(1)** the editable install's `.pth` points at the **main** checkout, so a bare `pytest`/`python`/`hangarfit` *inside* a worktree imports the wrong `src` (the PostToolUse hook's pytest included) — use `PYTHONPATH=$PWD/src python -m …` (there is no `__main__.py`; the entry point is `hangarfit.cli:main`). **(2)** `EnterWorktree` branches off the wrong base — this clone's local `origin/HEAD` is unset, so it falls back to `origin/main` not `develop`; fix once with `git remote set-head origin -a`, then per-worktree verify `git merge-base --is-ancestor origin/develop HEAD` (else `git fetch origin develop && git rebase origin/develop` before pushing). The native auto-cleanup won't delete a `git branch -m`-renamed branch, so `git branch -d` it after the worktree is removed.
+Allowed but not the default — use only for genuinely parallel feature work; plain branch checkout is simpler for sequential issues. Two gotchas if you do: **(1)** the editable install's `.pth` points at the **main** checkout, so a bare `pytest`/`python`/`hangarfit` *inside* a worktree imports the wrong `src` (the PostToolUse hook's pytest included) — use `PYTHONPATH=$PWD/src python -m …` (there is no `__main__.py`; the entry point is `hangarfit.cli:main`). **(2)** `EnterWorktree` branches off the wrong base — this clone's local `origin/HEAD` is unset, so it falls back to `origin/main` not `develop`; fix once with `git remote set-head origin -a`, then per-worktree verify `git merge-base --is-ancestor origin/develop HEAD` (else `git fetch origin develop && git rebase origin/develop` before pushing). The native auto-cleanup won't delete a `git branch -m`-renamed branch, so `git branch -d` it after the worktree is removed. **(3)** A long `ml.train` run reads fixture FILES (the witness layout, the rung's hangar/fleet YAML) **lazily** from the working tree when the curriculum reaches that rung — *not* at startup — so switching the shared checkout's branch mid-run breaks it (a `LoaderError` deep in the loop, even though its Python modules are already imported). Run a long training job from a **worktree pinned to its branch** (cwd inside the worktree so `ml` resolves there and `_ROOT` points at it), then your main checkout is free to switch branches. Cost a 37-min crash (#736 run, 2026-06-23).
 
 ---
 
