@@ -6,6 +6,18 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Learned backend (#711, epic #607): statistical reach-rate harness (`python -m ml.reach_rate`).**
+  Lifts the #695 reach benchmark from a 4-row binary existence table to a reproducible
+  reach-**rate** over a **sampled population**: reach-rate ± **Wilson** CI per scenario-kind,
+  for both **multi-alternative RR-MC** (`rrmc_reach_multi` solves for N alternatives and counts
+  reached if *any* is valid + fully routable — strictly stronger than the #695 `alternatives=1`
+  best-spread-only check) and a trained policy (`--policy`, multi-sample stochastic rollouts for
+  variance). Both arms judge reach by the same product-checker predicate (`geometry_oracle.layout_valid`
+  + routable-by-construction, #694), never the env oracle. `sample_population` draws fleet-subset
+  fill scenarios deterministic in `seed`. Per the issue's cost caveat, the RR-MC arm defaults to a
+  small population at a modest restart budget (a large baseline is meant to be recorded once and
+  frozen, mirroring the `bench_baseline.json` freeze). The RR-MC + stats arms are torch-free;
+  `--policy` needs `[train]`. `ml/` is dev/CI-only (never shipped in the wheel).
 - **Compare multiple solver alternatives in the 3D viewer (`view --solve --alternatives N`, #666).**
   `hangarfit view --solve --alternatives N -o out.html` solves for up to N diverse layouts and
   builds **one** self-contained offline HTML carrying all of them, with a **switcher** (a
