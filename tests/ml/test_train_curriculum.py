@@ -44,6 +44,21 @@ def test_trivial_train_still_runs_with_new_return_type():
     assert len(history) == 1
 
 
+def test_spatial_tokens_ppo_smoke_trains_without_nan():
+    # A handful of PPO iterations on the trivial rung with the ON architecture (#809) must run
+    # and return finite rewards — proves the spatial path trains end-to-end (rollout + GAE +
+    # update) with no NaN and no terminal-forward crash.
+    history = train(
+        seed=0,
+        iterations=2,
+        rollout_len=32,
+        policy_kwargs={"spatial_tokens": True, "d_model": 32, "n_layers": 1, "n_heads": 2},
+    )
+    assert len(history) == 2
+    # finite (no NaN/inf): r == r rejects NaN; the magnitude bound rejects inf.
+    assert all(isinstance(r, float) and r == r and abs(r) < 1e9 for r in history)
+
+
 from ml.curriculum import (  # noqa: E402
     CurriculumSchedule,
     DifficultyConfig,
