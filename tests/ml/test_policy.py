@@ -293,3 +293,37 @@ def test_feat_mean_equals_adaptive_avgpool():
     via_mean = feat.mean(dim=(2, 3))
     via_pool = nn.Flatten()(nn.AdaptiveAvgPool2d(1)(feat))
     assert torch.allclose(via_mean, via_pool, atol=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# #809: default-neutrality — spatial_tokens=False is byte-identical to today
+# ---------------------------------------------------------------------------
+
+
+def test_spatial_off_is_byte_identical_to_default():
+    # spatial_tokens=False (the default) must reproduce today's net exactly: same params,
+    # same module order (same seed -> identical weights), same forward.
+    torch.manual_seed(7)
+    a = HangarFitPolicy(d_model=64, n_layers=2, n_heads=4, spatial_tokens=False).eval()
+    torch.manual_seed(7)
+    b = HangarFitPolicy(d_model=64, n_layers=2, n_heads=4).eval()  # default
+    sa, sb = a.state_dict(), b.state_dict()
+    assert set(sa) == set(sb)
+    for k in sa:
+        assert torch.equal(sa[k], sb[k]), k
+    oa, ob = a(to_batch([_obs()])), b(to_batch([_obs()]))
+    assert torch.equal(oa.kind_gear_logits, ob.kind_gear_logits)
+    assert torch.equal(oa.magnitude_bin_logits, ob.magnitude_bin_logits)
+    assert torch.equal(oa.value, ob.value)
+
+
+def test_spatial_off_registers_no_spatial_params():
+    m = HangarFitPolicy(d_model=64, spatial_tokens=False)
+    assert not any("spatial_proj" in k for k in m.state_dict())
+    assert m.value_head[0].weight.shape == (64, 128)  # 2*d_model input
+
+
+def test_spatial_on_adds_spatial_proj_and_widens_value_head():
+    m = HangarFitPolicy(d_model=64, spatial_tokens=True)
+    assert any("spatial_proj" in k for k in m.state_dict())
+    assert m.value_head[0].weight.shape == (64, 192)  # 3*d_model input
