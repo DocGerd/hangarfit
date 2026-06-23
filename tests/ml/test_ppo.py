@@ -334,6 +334,72 @@ def test_entropy_coef_at_end_none_anneals_toward_base():
 
 
 # ---------------------------------------------------------------------------
+# #815: per-rung entropy FLOOR — hold the high-entropy basin-discovery regime on
+# named frontier rungs only. entropy_coef_with_floor is the pure primitive;
+# iter_entropy_coef composes the anneal with the rung-gated floor. Both must be
+# byte-identical (passthrough) when the floor is off, so a default run is unchanged.
+# ---------------------------------------------------------------------------
+from ml.ppo import entropy_coef_with_floor, iter_entropy_coef  # noqa: E402
+
+
+def test_entropy_coef_with_floor_passthrough_when_floor_none():
+    # floor None -> identity regardless of apply (off => byte-identical).
+    assert entropy_coef_with_floor(0.005, floor=None, apply=True) == 0.005
+    assert entropy_coef_with_floor(0.005, floor=None, apply=False) == 0.005
+
+
+def test_entropy_coef_with_floor_passthrough_when_not_applied():
+    # apply False -> identity even with a floor set (non-frontier rung).
+    assert entropy_coef_with_floor(0.005, floor=0.02, apply=False) == 0.005
+
+
+def test_entropy_coef_with_floor_raises_value_below_floor():
+    assert entropy_coef_with_floor(0.005, floor=0.02, apply=True) == pytest.approx(0.02)
+
+
+def test_entropy_coef_with_floor_leaves_value_above_floor():
+    # already above the floor -> unchanged (max semantics, never lowers).
+    assert entropy_coef_with_floor(0.05, floor=0.02, apply=True) == pytest.approx(0.05)
+
+
+def test_iter_entropy_coef_floors_only_on_frontier_rung():
+    # Annealed value past the window is the end (0.005), below the 0.02 floor.
+    cfg = PPOConfig(
+        entropy_coef=0.01,
+        entropy_coef_start=0.05,
+        entropy_coef_end=0.005,
+        entropy_anneal_iters=40,
+        entropy_floor=0.02,
+        entropy_floor_rungs=("trio-notch-anchored", "trio-notch"),
+    )
+    annealed_end = entropy_coef_at(100, base=0.01, start=0.05, end=0.005, anneal_iters=40)  # 0.005
+    # frontier rung: floored UP to 0.02.
+    assert iter_entropy_coef(cfg, 100, "trio-notch-anchored") == pytest.approx(0.02)
+    # non-frontier rung: bare anneal, no floor.
+    assert iter_entropy_coef(cfg, 100, "pair-box") == pytest.approx(annealed_end)
+
+
+def test_iter_entropy_coef_default_neutral_matches_bare_anneal():
+    # floor off (None) + empty rungs => iter_entropy_coef is byte-identical to
+    # entropy_coef_at across the whole iteration range, on ANY stage name.
+    cfg = PPOConfig(
+        entropy_coef=0.01,
+        entropy_coef_start=0.05,
+        entropy_coef_end=0.005,
+        entropy_anneal_iters=40,
+    )
+    for it in range(0, 60, 3):
+        bare = entropy_coef_at(it, base=0.01, start=0.05, end=0.005, anneal_iters=40)
+        assert iter_entropy_coef(cfg, it, "trio-notch-anchored") == bare
+
+
+def test_ppoconfig_entropy_floor_fields_default_off():
+    c = PPOConfig()
+    assert c.entropy_floor is None
+    assert c.entropy_floor_rungs == ()
+
+
+# ---------------------------------------------------------------------------
 # Task 4: ReturnNormalizer
 # ---------------------------------------------------------------------------
 from ml.ppo import ReturnNormalizer  # noqa: E402

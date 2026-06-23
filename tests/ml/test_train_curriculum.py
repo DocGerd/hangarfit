@@ -1502,3 +1502,93 @@ def test_main_threads_r_valid_progress_into_weights(monkeypatch):
     # #812: --r-valid-progress flows all the way into the RewardWeights used for training.
     w = _capture_main(monkeypatch, ["--r-valid-progress", "8.0"])["weights"]
     assert w.r_valid_progress == 8.0
+
+
+# ---------------------------------------------------------------------------
+# #815 entropy floor on frontier rungs — flags default-neutral, comma-split rung
+# list, LOUD guards (floor requires rungs; both are curriculum-only), and the
+# flags thread into the PPOConfig handed to train_curriculum.
+# ---------------------------------------------------------------------------
+
+
+def test_entropy_floor_flags_default_off():
+    a = build_argparser().parse_args([])
+    assert a.entropy_floor is None
+    assert a.frontier_rungs == ()
+
+
+def test_frontier_rungs_comma_split_strips_whitespace():
+    a = build_argparser().parse_args(["--frontier-rungs", "trio-notch-anchored, trio-notch"])
+    assert a.frontier_rungs == ("trio-notch-anchored", "trio-notch")
+
+
+def test_entropy_floor_requires_frontier_rungs():
+    # A floor with no rung to apply it to is a misconfiguration — fail LOUD.
+    import ml.train as train_mod
+
+    with pytest.raises(SystemExit):
+        train_mod.main(["--schedule", "curriculum", "--entropy-floor", "0.02"])
+
+
+def test_entropy_floor_flags_require_curriculum():
+    # The floor is rung-scoped; the trivial path has no rungs. Fail LOUD, not silent-ignore.
+    import ml.train as train_mod
+
+    with pytest.raises(SystemExit):
+        train_mod.main(
+            ["--schedule", "trivial", "--entropy-floor", "0.02", "--frontier-rungs", "x"]
+        )
+    with pytest.raises(SystemExit):
+        train_mod.main(["--schedule", "trivial", "--frontier-rungs", "x"])
+
+
+def test_main_threads_entropy_floor_into_ppo(monkeypatch):
+    cfg = _capture_main(
+        monkeypatch,
+        ["--entropy-floor", "0.02", "--frontier-rungs", "trio-notch-anchored,trio-notch"],
+    )["ppo"]
+    assert cfg.entropy_floor == 0.02
+    assert cfg.entropy_floor_rungs == ("trio-notch-anchored", "trio-notch")
+
+
+def test_entropy_floor_applies_only_on_frontier_rung_in_train_curriculum(monkeypatch):
+    # BEHAVIORAL: prove the floor reaches the entropy_coef ppo_update actually receives, on
+    # the frontier rung ONLY. Same recorder/empty-rollout stubs as the rewarm test so the
+    # per-stage loop runs its full max_iters with no real torch training. Mirrors that test's
+    # discriminating-assertion style. _tiny_schedule stages are "t0" (non-frontier) and "t1"
+    # (the frontier rung); the floor must raise only t1's below-floor late-anneal iterations.
+    import ml.train as train_mod
+    from ml.ppo import PPOConfig, RolloutBuffer
+
+    recorded: list[float] = []
+
+    def recorder(policy, optimizer, buf, config, *, normalizer=None):
+        recorded.append(config.entropy_coef)
+        return {"policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0, "loss": 0.0}
+
+    def empty_rollout(env, policy, enc, rollout_len, *, sample_request=None):
+        return RolloutBuffer(), []  # no completed episodes -> never promotes by competency
+
+    monkeypatch.setattr(train_mod, "ppo_update", recorder)
+    monkeypatch.setattr(train_mod, "collect_rollout", empty_rollout)
+
+    max_iters = 3
+    sched = _tiny_schedule(threshold=2.0)  # zero episodes -> every rung caps at max_iters
+    sched = CurriculumSchedule(
+        stages=sched.stages, policy=replace(sched.policy, max_iters=max_iters)
+    )
+    # anneal: it=0->0.05, it=1->0.0275, it>=2->0.005 (below the 0.02 floor at the tail).
+    cfg = PPOConfig(
+        entropy_coef_start=0.05,
+        entropy_coef_end=0.005,
+        entropy_anneal_iters=2,
+        entropy_floor=0.02,
+        entropy_floor_rungs=("t1",),  # frontier = the SECOND rung only
+    )
+    train_curriculum(seed=0, schedule=sched, rollout_len=8, ppo=cfg)
+
+    assert len(recorded) == 2 * max_iters
+    t0 = recorded[:max_iters]  # non-frontier: bare anneal, NOT floored
+    t1 = recorded[max_iters:]  # frontier: floored UP where the anneal dips below 0.02
+    assert t0 == pytest.approx([0.05, 0.0275, 0.005])
+    assert t1 == pytest.approx([0.05, 0.0275, 0.02])  # tail raised 0.005 -> 0.02

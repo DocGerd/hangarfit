@@ -44,6 +44,13 @@ class PPOConfig:
     value_clip_eps: float | None = 0.2  # PPO2 clipped value loss; caps per-update critic movement.
     target_kl: float | None = 0.03  # early-stop the epoch loop once a full epoch's mean approx-KL
     # exceeds this (a per-update trust region), so one catastrophic batch cannot over-rotate.
+    # #815: per-rung entropy FLOOR. Clamp the annealed entropy coef UP to entropy_floor, but ONLY
+    # on the curriculum rungs named in entropy_floor_rungs — a frontier-scoped exploration floor
+    # that holds the high-entropy regime where the valid dense-pose basin is reachable, while the
+    # mastered lower ladder anneals normally. entropy_floor None OR a rung not in the (empty by
+    # default) tuple => byte-identical to the bare anneal (the C2 default-neutrality invariant).
+    entropy_floor: float | None = None
+    entropy_floor_rungs: tuple[str, ...] = ()
 
 
 def entropy_coef_at(
@@ -61,6 +68,32 @@ def entropy_coef_at(
         return finish
     frac = iteration / anneal_iters
     return start + (finish - start) * frac
+
+
+def entropy_coef_with_floor(value: float, *, floor: float | None, apply: bool) -> float:
+    """Clamp ``value`` UP to ``floor`` when ``apply`` and a floor is set; else identity.
+    The floor never LOWERS the coefficient (max semantics), so on a non-frontier rung
+    (``apply`` False) or with no floor (``floor`` None) it is byte-identical passthrough
+    — the #815 default-neutrality contract."""
+    return max(value, floor) if (apply and floor is not None) else value
+
+
+def iter_entropy_coef(cfg: PPOConfig, iteration: int, stage_name: str) -> float:
+    """Per-iteration entropy coefficient for a curriculum stage: the annealed schedule
+    (``entropy_coef_at``), then floored UP to ``cfg.entropy_floor`` on frontier rungs only
+    (``stage_name in cfg.entropy_floor_rungs``). #815. Off by default — floor None, or the
+    stage not a frontier rung — returns the bare anneal, so a default curriculum run is
+    byte-identical. ``train_trivial`` has no rungs and keeps the bare ``entropy_coef_at``."""
+    annealed = entropy_coef_at(
+        iteration,
+        base=cfg.entropy_coef,
+        start=cfg.entropy_coef_start,
+        end=cfg.entropy_coef_end,
+        anneal_iters=cfg.entropy_anneal_iters,
+    )
+    return entropy_coef_with_floor(
+        annealed, floor=cfg.entropy_floor, apply=stage_name in cfg.entropy_floor_rungs
+    )
 
 
 class ReturnNormalizer:
