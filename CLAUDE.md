@@ -132,7 +132,7 @@ Most coding goes direct in-session. Subagent dispatch is for review work and iso
 
 ## Project-local Claude Code config
 
-The `.claude/` directory holds team-shared Claude Code settings (currently: a PreToolUse guard that blocks hand-edits to the hash-pinned `requirements-*.txt` lockfiles, a PostToolUse hook that runs ruff + pytest after edits under `src/hangarfit/` or `tests/` (and ruff + the scoped `pytest tests/ml/` after `ml/*.py` edits), a second PostToolUse hook that reminds you to rebuild `viewer.js` after `viewer/src/*.ts` edits (#568), a third PostToolUse hook that reminds you to regenerate the lockfiles after a `pyproject.toml` dependency change (#801), a PreToolUse Bash hook that warns on `gh pr create` when the branch carries no `CHANGELOG.md` entry (advisory, non-blocking; #802), plus a Stop-event hook that runs mypy — over `src/hangarfit/`, and `ml/` too when torch is importable — once when a turn finishes; and the `pyright-lsp` + `typescript-lsp` editor plugins under `enabledPlugins`). See [.claude/README.md](.claude/README.md) for what's there and how to disable per-contributor via a gitignored `.claude/settings.local.json`.
+The `.claude/` directory holds team-shared Claude Code settings (currently: a SessionStart hook that provisions a one-time Python 3.12 venv for the remote/web container so the bare-name tool hooks (ruff/pytest/mypy) resolve there (#354), a PreToolUse guard that blocks hand-edits to the hash-pinned `requirements-*.txt` lockfiles, a PostToolUse hook that runs ruff + pytest after edits under `src/hangarfit/` or `tests/` (and ruff + the scoped `pytest tests/ml/` after `ml/*.py` edits), a second PostToolUse hook that reminds you to rebuild `viewer.js` after `viewer/src/*.ts` edits (#568), a third PostToolUse hook that reminds you to regenerate the lockfiles after a `pyproject.toml` dependency change (#801), a PreToolUse Bash hook that warns on `gh pr create` when the branch carries no `CHANGELOG.md` entry (advisory, non-blocking; #802), plus a Stop-event hook that runs mypy — over `src/hangarfit/`, and `ml/` too when torch is importable — once when a turn finishes; and the `pyright-lsp` + `typescript-lsp` editor plugins under `enabledPlugins`). See [.claude/README.md](.claude/README.md) for what's there and how to disable per-contributor via a gitignored `.claude/settings.local.json`.
 
 ---
 
@@ -205,7 +205,7 @@ pytest -m ""
 # canaries (rationale: docs/dev/test-flakes-and-ci-gotchas.md §1):
 make test        # two-pass split: parallel bulk + serial canaries (the safe mirror)
 make test-fast   # parallel bulk only (skips the serial canaries — faster iteration)
-# `make help` lists every target (test-slow / lint / typecheck / format / check).
+# `make help` lists every target (test-slow / test-all / lint / typecheck / format / check).
 
 # GOTCHA (test flakes + CI quirks) → docs/dev/test-flakes-and-ci-gotchas.md.
 # Read it before treating a determinism/coverage CI failure as a regression: the
