@@ -6,7 +6,7 @@ This directory holds **team-shared** [Claude Code](https://docs.claude.com/en/do
 
 | File | Status | Purpose |
 |---|---|---|
-| `settings.json` | committed | Team defaults — a `SessionStart` hook that provisions Python 3.12 in web/remote sessions, a `PreToolUse` guard that blocks hand-edits to the hash-pinned `requirements-*.txt` lockfiles, a `PostToolUse` hook that runs `ruff` + `pytest` after edits under `src/hangarfit/` or `tests/` (and `ruff` + the scoped `pytest tests/ml/` after edits to `ml/*.py`), a second `PostToolUse` hook that reminds you to rebuild `viewer.js` after editing `viewer/src/*.ts`, plus a `Stop` hook that runs `mypy` — over `src/hangarfit/`, and `ml/` too when `torch` is importable — once when a turn finishes. It also lists the team-shared **LSP plugins** under `enabledPlugins` ([see below](#lsp-plugins)). |
+| `settings.json` | committed | Team defaults — a `SessionStart` hook that provisions Python 3.12 in web/remote sessions, a `PreToolUse` guard that blocks hand-edits to the hash-pinned `requirements-*.txt` lockfiles, a `PostToolUse` hook that runs `ruff` + `pytest` after edits under `src/hangarfit/` or `tests/` (and `ruff` + the scoped `pytest tests/ml/` after edits to `ml/*.py`), a second `PostToolUse` hook that reminds you to rebuild `viewer.js` after editing `viewer/src/*.ts`, a third `PostToolUse` hook that reminds you to regenerate the lockfiles after a `pyproject.toml` dependency change, a `PreToolUse` `Bash` hook that warns on `gh pr create` when the branch carries no `CHANGELOG.md` entry (advisory, non-blocking), plus a `Stop` hook that runs `mypy` — over `src/hangarfit/`, and `ml/` too when `torch` is importable — once when a turn finishes. It also lists the team-shared **LSP plugins** under `enabledPlugins` ([see below](#lsp-plugins)). |
 | `hooks/session-start.sh` | committed | The `SessionStart` provisioner script (the one hook complex enough to warrant a file rather than an inline command). |
 | `agents/` | committed | Project-specific review subagents: `determinism-guard` (solver/towplanner byte-identity), `geometry-invariant-guard` (the coordinate sign-flip trap), and `ml-rl-guard` (the `ml/` RL invariants — seeding/reproducibility, the 4c-ii knob default-neutrality, product-checker validity per #694, the numeric silent-failure guards). |
 | `skills/` | committed | Project skills invoked as `/<name>`: `new-fixture`, `new-adr`, `release-prep`, `release-cut`, `trim-memory`, and `ml-ab` (the #607 4c-ii control-vs-treatment basin-escape A/B). |
@@ -15,7 +15,7 @@ This directory holds **team-shared** [Claude Code](https://docs.claude.com/en/do
 
 ## The hooks
 
-`settings.json` registers five hooks, all shared with every contributor on clone: one fires when a session starts (`SessionStart`), three fire on the `Edit` and `Write` tools (the `PreToolUse` lockfile guard plus two `PostToolUse` hooks — ruff + pytest, and a viewer-rebuild reminder), and one fires when a turn finishes (`Stop`).
+`settings.json` registers seven hooks, all shared with every contributor on clone: one fires when a session starts (`SessionStart`); two fire on the `PreToolUse` event (the `Edit`/`Write` lockfile guard, and a `Bash` `gh pr create` CHANGELOG advisory); three fire on the `Edit`/`Write` `PostToolUse` event (ruff + pytest, a viewer-rebuild reminder, and a lockfile-regen reminder); and one fires when a turn finishes (`Stop`).
 
 ### SessionStart — Python 3.12 provisioner (non-blocking, web/remote only)
 
@@ -32,6 +32,10 @@ It is **non-blocking**: a missing `python3.12` or a failed `pip install` is repo
 ### PreToolUse — lockfile guard (blocking)
 
 Before an edit lands, this hook inspects the target path. If its basename matches `requirements-*.txt` it **blocks the edit** (exit code `2`) and tells Claude to regenerate the lockfile with the matching `pip-compile` command in [`CLAUDE.md`](../CLAUDE.md) instead. Those files (`requirements-dev.txt`, `requirements-build.txt`, `requirements-fuzz.txt`, `requirements-pip-tools.txt`) are hash-pinned and machine-generated; hand-editing them passes locally but fails the `*-lockfile-drift` CI jobs confusingly. The guard keys on the `requirements-*.txt` glob, so the editable `requirements-*.in` sources are never blocked, and `pip-compile` (which runs via Bash, not Edit/Write) is unaffected. This is the one **blocking** hook — a safety rail, not advisory.
+
+### PreToolUse — CHANGELOG reminder on `gh pr create` (advisory, non-blocking)
+
+Before a `Bash` command runs, this hook inspects the command string. When it contains `gh pr create`, it checks the branch diff (`git diff origin/develop...HEAD --name-only`) for a `CHANGELOG.md` change and, if none is present, prints a one-line reminder to stderr. The reminder **names its own exceptions** so it never reads as a hard error: dev-tooling / `.claude` changes need no entry, and for ≥2 PRs delivered in parallel the entries are collected in one separate CHANGELOG-only PR (see [`CLAUDE.md`](../CLAUDE.md)) — so a missing entry can be intentional. Unlike the lockfile guard above (which `exit 2`-blocks), this is purely **advisory**: it always `exit 0`s and never aborts the `gh pr create`. It is the early local signal for the "each user-facing change carries its own `[Unreleased]` entry" discipline that otherwise surfaces only at review/release time (#802).
 
 ### PostToolUse — ruff + pytest (non-blocking)
 
@@ -51,19 +55,24 @@ After Claude Code edits a `viewer/src/*.ts` file, this second `PostToolUse` hook
 
 It deliberately does **not** run esbuild — that would re-impose the velocity-tax pattern that got the per-edit pytest hook disabled — and it makes no git-status check: at `PostToolUse` the bundle is *always* unrebuilt, so a path-match-only reminder is the honest signal. Like its sibling it is **non-blocking** (always exits `0`) and fires only on `.ts` edits, so non-viewer work is untouched.
 
+### PostToolUse — lockfile-regen reminder (non-blocking)
+
+After Claude Code edits `pyproject.toml`, this third `PostToolUse` hook prints **one** line reminding you that a change to `[project]` dependencies (or an optional extra) requires regenerating the four hash-pinned lockfiles (`requirements-dev.txt`, `requirements-build.txt`, `requirements-fuzz.txt`, `requirements-pip-tools.txt`) with the `pip-compile` recipes in [`CLAUDE.md`](../CLAUDE.md) / [`docs/dev/lockfiles.md`](../docs/dev/lockfiles.md). It is the dependency-surface complement to the `PreToolUse` lockfile **guard** above: the guard blocks hand-edits to the *generated* lockfiles, while this reminder catches the *upstream* `pyproject.toml` edit that makes them stale — before the `*-lockfile-drift` CI jobs surface it (#801). Like the other `PostToolUse` hooks it is **non-blocking** (always exits `0`), fires only on a `pyproject.toml` basename match, and honours its own `HANGARFIT_SKIP_LOCKFILE_HOOK` opt-out.
+
 ### Stop — mypy (non-blocking)
 
 When a turn finishes, this hook runs `mypy src/hangarfit` once and shows the tail of its output in the transcript; when `torch` is importable it additionally runs `mypy ml/` (the RL workspace). The `ml/` pass is gated on `torch` because `ml/` imports it — so the check is a clean no-op in the torch-less CI/web env, matching the future torch-CI rung rather than failing there. `mypy` is a hard CI gate (`.github/workflows/ci.yml`, "Type-check with mypy") and the *one* gate the on-edit `PostToolUse` hook does not mirror — running a full type-check on every single edit is too slow to be worth it. Amortizing it to once per turn surfaces type errors before a PR reaches CI without paying the cost on each keystroke. Like the `PostToolUse` hooks it is **non-blocking**: it always exits `0` even when `mypy` reports errors, so a turn is never aborted — the output is feedback, not a gate.
 
 ## Opting out (per contributor)
 
-Set the env var `HANGARFIT_SKIP_PYTEST_HOOK=1` in your shell init (`~/.bashrc`, `~/.zshrc`, etc.). The **PostToolUse** ruff + pytest hook detects this and exits immediately. The **PostToolUse** viewer-rebuild reminder honours its own `HANGARFIT_SKIP_VIEWER_HOOK=1`, the **Stop** mypy hook honours a separate `HANGARFIT_SKIP_MYPY_HOOK=1`, and the **SessionStart** provisioner honours `HANGARFIT_SKIP_SESSIONSTART_HOOK=1`, so each can be disabled independently (the SessionStart hook also already no-ops entirely outside the web/remote env). Unset (or restart your shell) to re-enable. The PreToolUse lockfile guard is intentionally **not** opt-out-able — it is a cheap safety rail and the legitimate regeneration path (`pip-compile` via Bash) is never blocked anyway.
+Set the env var `HANGARFIT_SKIP_PYTEST_HOOK=1` in your shell init (`~/.bashrc`, `~/.zshrc`, etc.). The **PostToolUse** ruff + pytest hook detects this and exits immediately. The **PostToolUse** viewer-rebuild reminder honours its own `HANGARFIT_SKIP_VIEWER_HOOK=1`, the **PostToolUse** lockfile-regen reminder honours `HANGARFIT_SKIP_LOCKFILE_HOOK=1`, the **Stop** mypy hook honours a separate `HANGARFIT_SKIP_MYPY_HOOK=1`, and the **SessionStart** provisioner honours `HANGARFIT_SKIP_SESSIONSTART_HOOK=1`, so each can be disabled independently (the SessionStart hook also already no-ops entirely outside the web/remote env). Unset (or restart your shell) to re-enable. The two **PreToolUse** hooks are intentionally **not** opt-out-able: the lockfile guard is a cheap safety rail whose legitimate regeneration path (`pip-compile` via Bash) is never blocked anyway, and the `gh pr create` CHANGELOG advisory is a single non-blocking line that fires only on PR creation and already names its own exceptions.
 
 ```bash
 # ~/.bashrc or ~/.zshrc
 export HANGARFIT_SKIP_SESSIONSTART_HOOK=1
 export HANGARFIT_SKIP_PYTEST_HOOK=1
 export HANGARFIT_SKIP_VIEWER_HOOK=1
+export HANGARFIT_SKIP_LOCKFILE_HOOK=1
 export HANGARFIT_SKIP_MYPY_HOOK=1
 ```
 

@@ -21,6 +21,16 @@
             "timeout": 10
           }
         ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "cmd=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get(\"tool_input\",{}).get(\"command\",\"\"))'); case \"$cmd\" in *\"gh pr create\"*) if ! git diff origin/develop...HEAD --name-only 2>/dev/null | grep -q '^CHANGELOG.md$'; then echo \"[hangarfit hook] no CHANGELOG.md diff vs origin/develop on this branch. If this PR has a user-facing change, add a CHANGELOG.md [Unreleased] entry before opening it. EXCEPTIONS (no entry needed): dev-tooling/.claude changes; and for >=2 parallel PRs the CHANGELOG entries go in ONE separate CHANGELOG-only PR (see CLAUDE.md), so a missing entry here may be intentional. Advisory only; not blocking.\" >&2; fi ;; *) : ;; esac; exit 0",
+            "timeout": 10
+          }
+        ]
       }
     ],
     "PostToolUse": [
@@ -41,6 +51,16 @@
             "type": "command",
             "command": "if [ -n \"$HANGARFIT_SKIP_VIEWER_HOOK\" ]; then cat > /dev/null; exit 0; fi; path=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get(\"tool_input\",{}).get(\"file_path\",\"\"))'); case \"$path\" in */viewer/src/*.ts) echo \"[hangarfit hook] edited $path — rebuild the committed bundle (npm --prefix viewer/ run build) and commit src/hangarfit/_viewer_assets/viewer.js in the SAME change; the viewer-build-drift CI guard (ADR-0020) rebuilds and diffs it.\" ;; *) : ;; esac; exit 0",
             "timeout": 15
+          }
+        ]
+      },
+      {
+        "matcher": "Edit|Write",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "if [ -n \"$HANGARFIT_SKIP_LOCKFILE_HOOK\" ]; then cat > /dev/null; exit 0; fi; path=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get(\"tool_input\",{}).get(\"file_path\",\"\"))'); case \"$(basename \"$path\")\" in pyproject.toml) echo \"[hangarfit hook] edited $path — if you changed [project] dependencies or an optional extra, regenerate the four hash-pinned lockfiles (pip-compile recipes in CLAUDE.md / docs/dev/lockfiles.md); the *-lockfile-drift CI jobs enforce drift.\" ;; *) : ;; esac; exit 0",
+            "timeout": 10
           }
         ]
       }
