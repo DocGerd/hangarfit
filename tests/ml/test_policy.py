@@ -246,3 +246,50 @@ def test_sincos_pos_2d_row_major_distinct_cells():
 def test_sincos_pos_2d_requires_d_model_div4():
     with pytest.raises((AssertionError, ValueError)):
         _sincos_pos_2d(24, 12, 66)
+
+
+# ---------------------------------------------------------------------------
+# #809: spatial-token ON-branch forward
+# ---------------------------------------------------------------------------
+
+
+def _model_spatial(seed=0, d_model=64):
+    torch.manual_seed(seed)
+    return HangarFitPolicy(d_model=d_model, n_layers=2, n_heads=4, spatial_tokens=True).eval()
+
+
+def test_spatial_on_forward_output_shapes():
+    out = _model_spatial()(to_batch([_obs(), _obs()]))
+    assert isinstance(out, PolicyOutput)
+    assert out.kind_gear_logits.shape == (2, 9)
+    assert out.magnitude_bin_logits.shape == (2, 5)
+    assert out.value.shape == (2,)
+
+
+def test_spatial_on_forward_deterministic_and_finite():
+    m = _model_spatial(seed=5)
+    batch = to_batch([_obs()])
+    a, b = m(batch), m(batch)
+    assert torch.isfinite(a.value).all()
+    assert torch.isfinite(a.kind_gear_logits.nan_to_num(neginf=0.0)).all()
+    assert torch.equal(a.value, b.value)
+    assert torch.equal(a.kind_gear_logits, b.kind_gear_logits)
+
+
+def test_spatial_on_still_masks_illegal_kinds():
+    batch = to_batch([_obs()])
+    out = _model_spatial()(batch)
+    legal = batch["legal_action_mask"][0]
+    probs = out.kind_gear_logits.softmax(-1)[0]
+    assert torch.all(probs[~legal] == 0.0)
+
+
+def test_feat_mean_equals_adaptive_avgpool():
+    # The ON branch computes g = cnn_proj(feat.mean((2,3))); this must equal the old
+    # AdaptiveAvgPool2d(1)+Flatten so the global pathway is preserved exactly.
+    from torch import nn
+
+    feat = torch.randn(2, 64, 24, 12)
+    via_mean = feat.mean(dim=(2, 3))
+    via_pool = nn.Flatten()(nn.AdaptiveAvgPool2d(1)(feat))
+    assert torch.allclose(via_mean, via_pool, atol=1e-6)
