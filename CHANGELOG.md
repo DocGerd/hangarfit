@@ -18,6 +18,22 @@ All notable changes to this project are documented here. Format follows [Keep a 
   small population at a modest restart budget (a large baseline is meant to be recorded once and
   frozen, mirroring the `bench_baseline.json` freeze). The RR-MC + stats arms are torch-free;
   `--policy` needs `[train]`. `ml/` is dev/CI-only (never shipped in the wheel).
+- **Learned backend (#736, epic #607): witness-anchored notch-trio curriculum rung
+  (`--anchor-trio-notch`) — the 3-object joint-discovery scaffold on the real notch hangar.**
+  A diagnostic of the stalled notch trio (`valid_placed`~0.25 on both seeds) found not a
+  place-nothing collapse but a **coverage minimum**: the policy validly parks **one** aircraft
+  and abandons the other two, because a 2nd/3rd commitment risks the hard collision penalty.
+  Since `examples/herrenteich/layout.yaml` is a *valid 8-object witness on that exact hangar*,
+  the trio physically fits — the wall is cold-start joint discovery, not capacity.
+  `--anchor-trio-notch` (curriculum-only) inserts an opt-in `trio-notch-anchored` rung before
+  `trio-notch` that **pre-parks a k=1 prefix of a committed 3-object notch witness**
+  (`tests/fixtures/ml/witness_notch.yaml`) and drives the other two in — the trio analogue of the
+  #712 `--seed-anchor` box scaffold. The pool is pinned to the witness's objects (so
+  `max_objects` equals the witness count, validated pre-flight). Default-neutral:
+  `--anchor-trio-notch` absent ⇒ `DEFAULT_LADDER` byte-identical; the flag fails loud under
+  `--schedule trivial`. The witness's every k-prefix is product-checker valid (`collisions.check`
+  + Caddy egress) at the rung's 0.05 m and the file's 0.10 m clearance. `ml/` is dev/CI-only
+  (never shipped in the wheel).
 
 ### Changed
 

@@ -418,6 +418,11 @@ _BOX_FLEET = "data/fleet.yaml"
 _WITNESS_BOX = "tests/fixtures/ml/witness_box.yaml"
 _NOTCH_HANGAR = "examples/herrenteich/hangar.yaml"
 _NOTCH_FLEET = "examples/herrenteich/fleet.yaml"
+# Committed seed-anchor witness for the #736 notch trio rung (trio-notch-anchored). A valid
+# 3-object layout on the real notch hangar (a subset of examples/herrenteich/layout.yaml); the
+# anchored rung pre-parks a k-prefix of it. Dev/CI-only fixture, validated by
+# tests/ml/test_stage_builder.py::test_witness_notch_*.
+_WITNESS_NOTCH = "tests/fixtures/ml/witness_notch.yaml"
 _LENIENT_CLEARANCE = (
     0.05  # below the herrenteich file value (0.10) so the clearance ramp truly tightens
 )
@@ -448,6 +453,27 @@ _PAIR_ANCHORED_STAGE = Stage(
     hangar_path=_BOX_HANGAR,
     fleet_path=_BOX_FLEET,
     anchor_layout_path=_WITNESS_BOX,
+    clearance_m=_LENIENT_CLEARANCE,
+)
+
+# Opt-in #736 rung (wired via with_trio_notch_anchored_rung / --anchor-trio-notch), NOT in
+# DEFAULT_LADDER. Three objects on the REAL notch hangar, but ONE is pre-parked at a committed
+# notch-witness pose (seed_anchor_k=1) and the agent drives the other two in — the trio analogue
+# of pair-anchored (#712). It targets the diagnosed cold-start coverage minimum on the notch
+# (the policy validly parks ONE aircraft then abandons the other two, vp~0.25 on both seeds),
+# scaffolding 3-object joint discovery with a valid 1-object start before the empty-start
+# trio-notch (k=0). The pool IS the witness's 3 objects (anchor_layout_path set => stage_builder
+# pins it, and max_objects must equal the witness object count), so the per-episode seeded
+# permutation makes k=1 a seeded-random single-object anchor. Two objects are driven, so the
+# budget sits between pair-anchored's (drive 1) and trio-notch's (drive 3).
+_TRIO_NOTCH_ANCHORED_STAGE = Stage(
+    name="trio-notch-anchored",
+    difficulty=DifficultyConfig(
+        max_objects=3, seed_anchor_k=1, per_object_step_budget=80, total_step_budget=180
+    ),
+    hangar_path=_NOTCH_HANGAR,
+    fleet_path=_NOTCH_FLEET,
+    anchor_layout_path=_WITNESS_NOTCH,
     clearance_m=_LENIENT_CLEARANCE,
 )
 
@@ -553,6 +579,28 @@ def with_pair_anchored_rung(schedule: CurriculumSchedule) -> CurriculumSchedule:
             "with_pair_anchored_rung: schedule has no 'pair-box' rung to insert before"
         ) from None
     return replace(schedule, stages=stages[:before] + (_PAIR_ANCHORED_STAGE,) + stages[before:])
+
+
+def with_trio_notch_anchored_rung(schedule: CurriculumSchedule) -> CurriculumSchedule:
+    """Return ``schedule`` with the opt-in ``trio-notch-anchored`` rung inserted immediately
+    BEFORE the ``trio-notch`` rung — the #736 ``--anchor-trio-notch`` lever. It pre-parks 1 of
+    its 3 notch-witness objects at a committed pose (k=1) and the agent drives the other two in,
+    scaffolding 3-object joint discovery on the real notch hangar before the empty-start
+    trio-notch (k=0). Directly targets the diagnosed cold-start coverage minimum (the policy
+    validly parks one aircraft then abandons the other two, vp~0.25 on both seeds — the trio
+    analogue of the #712 pair-anchored scaffold that reached 0.94 on the box). Only the ladder
+    changes (the promotion policy is preserved); the default ladder is left untouched, so
+    default runs stay byte-identical (this is opt-in)."""
+    stages = schedule.stages
+    try:
+        before = next(i for i, s in enumerate(stages) if s.name == "trio-notch")
+    except StopIteration:
+        raise ValueError(
+            "with_trio_notch_anchored_rung: schedule has no 'trio-notch' rung to insert before"
+        ) from None
+    return replace(
+        schedule, stages=stages[:before] + (_TRIO_NOTCH_ANCHORED_STAGE,) + stages[before:]
+    )
 
 
 def with_mixed_anchor_rung(schedule: CurriculumSchedule) -> CurriculumSchedule:
