@@ -444,6 +444,18 @@ The witness is `tests/fixtures/ml/witness_notch.yaml` (a committed valid 3-objec
 real notch layout; every k-prefix is validated by
 `tests/ml/test_stage_builder.py::test_witness_notch_*`).
 
+**Result (2026-06-23 two-seed run) — KILL, lever refuted.** The `trio-notch-anchored` rung
+plateaued at **peak vp 0.333 on both seeds** (well below 0.9), in the *two faces* of the coverage
+minimum: seed-0 converged to **place-nothing-new** (`fp=0.333, vr=1.000` — keeps only the freebie
+k=1 anchor, drives in nothing), seed-1 to **piling** (`fp≈0.8, vr≈0.3` — drives objects in but
+invalidly). The downstream un-anchored `trio-notch` then **collapsed to vp≈0.000** on both seeds
+(no transfer). The sharpened diagnosis: a *valid 1-object start does not teach the policy to add a
+commitment* — so the notch wall is **not** cold-start joint discovery (which this scaffold
+addresses) but the **marginal-commitment economics** (place-nothing-new vs invalid-pile). Per the
+pre-registration, the next lever is the Section-A representation knobs (aux-heads / critic-pretrain)
+or harder per-commitment economics — **not** more start-state scaffolding. The rung itself stays as
+opt-in, default-neutral infrastructure for a future combined attempt.
+
 ### Concurrent sweep runner (#749 — run the two/three-seed gate in one launch)
 
 The gate recipes above are **per-seed** (`--seed 0`, then `--seed 1`), run serially today — one
