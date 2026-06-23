@@ -327,3 +327,32 @@ def test_spatial_on_adds_spatial_proj_and_widens_value_head():
     m = HangarFitPolicy(d_model=64, spatial_tokens=True)
     assert any("spatial_proj" in k for k in m.state_dict())
     assert m.value_head[0].weight.shape == (64, 192)  # 3*d_model input
+
+
+# ---------------------------------------------------------------------------
+# #809: checkpoint-flag guard + terminal-observation contract
+# ---------------------------------------------------------------------------
+
+
+def test_state_dict_does_not_cross_load_across_flag():
+    # The two branches have different state_dict key-sets; a strict load must raise rather
+    # than silently partial-load (the checkpoint persists policy_kwargs incl. spatial_tokens).
+    off = HangarFitPolicy(d_model=64, spatial_tokens=False)
+    on = HangarFitPolicy(d_model=64, spatial_tokens=True)
+    with pytest.raises(RuntimeError):
+        on.load_state_dict(off.state_dict())
+    with pytest.raises(RuntimeError):
+        off.load_state_dict(on.state_dict())
+
+
+@pytest.mark.parametrize("spatial", [False, True])
+def test_act_on_terminal_observation_raises_both_branches(spatial):
+    # PPO never value-forwards a terminal obs (compute_gae zeroes last_value via 1-dones[-1]);
+    # act() is the public guard and must reject a terminal obs on BOTH branches, so the
+    # 288 always-valid spatial tokens never turn a terminal forward into finite garbage.
+    torch.manual_seed(2)
+    m = HangarFitPolicy(d_model=64, n_layers=2, n_heads=4, spatial_tokens=spatial).eval()
+    obs_t = _terminal_obs()
+    assert obs_t.active_index < 0
+    with pytest.raises(ValueError, match="terminal"):
+        m.act(obs_t, turn_radius_m=8.0)
