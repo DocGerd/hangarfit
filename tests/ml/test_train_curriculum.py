@@ -126,7 +126,13 @@ def test_train_curriculum_competency_reads_honest_per_iteration_mean_not_episode
     monkeypatch.setattr(
         train_mod,
         "ppo_update",
-        lambda *a, **k: {"policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0, "loss": 0.0},
+        lambda *a, **k: {
+            "policy_loss": 0.0,
+            "value_loss": 0.0,
+            "entropy": 0.0,
+            "loss": 0.0,
+            "epochs_run": 1.0,
+        },
     )
 
     sched = CurriculumSchedule.default()
@@ -164,7 +170,13 @@ def test_auto_budget_floor_guard_blocks_premature_stop_in_loop(monkeypatch, min_
     monkeypatch.setattr(
         train_mod,
         "ppo_update",
-        lambda *a, **k: {"policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0, "loss": 0.0},
+        lambda *a, **k: {
+            "policy_loss": 0.0,
+            "value_loss": 0.0,
+            "entropy": 0.0,
+            "loss": 0.0,
+            "epochs_run": 1.0,
+        },
     )
 
     sched = CurriculumSchedule.default()
@@ -331,7 +343,13 @@ def test_entropy_schedule_rewarms_per_stage_in_train_curriculum(monkeypatch):
 
     def recorder(policy, optimizer, buf, config, *, normalizer=None):
         recorded.append(config.entropy_coef)
-        return {"policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0, "loss": 0.0}
+        return {
+            "policy_loss": 0.0,
+            "value_loss": 0.0,
+            "entropy": 0.0,
+            "loss": 0.0,
+            "epochs_run": 1.0,
+        }
 
     def empty_rollout(env, policy, enc, rollout_len, *, sample_request=None):
         return RolloutBuffer(), []  # no completed episodes -> never promotes by competency
@@ -1566,7 +1584,13 @@ def test_entropy_floor_applies_only_on_frontier_rung_in_train_curriculum(monkeyp
 
     def recorder(policy, optimizer, buf, config, *, normalizer=None):
         recorded.append(config.entropy_coef)
-        return {"policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0, "loss": 0.0}
+        return {
+            "policy_loss": 0.0,
+            "value_loss": 0.0,
+            "entropy": 0.0,
+            "loss": 0.0,
+            "epochs_run": 1.0,
+        }
 
     def empty_rollout(env, policy, enc, rollout_len, *, sample_request=None):
         return RolloutBuffer(), []  # no completed episodes -> never promotes by competency
@@ -1642,3 +1666,26 @@ def test_comma_split_rungs_edge_cases(raw, expected):
     from ml.train import _comma_split_rungs
 
     assert _comma_split_rungs(raw) == expected
+
+
+# ---------------------------------------------------------------------------
+# #816 frontier-gate instrumentation — epochs_run + applied entropy_coef land
+# in the --metrics-out JSONL (the #815 gate's target_kl confound watch needs them).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("n_envs", [1, 2])
+def test_curriculum_jsonl_carries_epochs_run_and_entropy_coef(n_envs):
+    # Real (tiny) curriculum run over BOTH the serial (n_envs==1) and vectorized
+    # (n_envs>1) call-sites: every per-iteration metrics record must carry epochs_run
+    # (>=1, the target_kl epoch count) and the applied entropy_coef (default 0.01).
+    from ml.curriculum import history_metric_records
+
+    sched = _tiny_schedule(threshold=2.0)  # caps at max_iters
+    sched = CurriculumSchedule(stages=sched.stages, policy=replace(sched.policy, max_iters=2))
+    h = train_curriculum(seed=0, schedule=sched, rollout_len=16, n_envs=n_envs, vec_backend="sync")
+    recs = history_metric_records(h)
+    assert recs  # non-vacuous
+    for r in recs:
+        assert isinstance(r["epochs_run"], float) and r["epochs_run"] >= 1.0
+        assert r["entropy_coef"] == pytest.approx(0.01)  # PPOConfig default, no anneal

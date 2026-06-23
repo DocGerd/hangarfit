@@ -146,3 +146,12 @@ def test_pipeline_preserves_sequential_run_structure():
     assert [(s, by) for s, _it, by in pipe.promotions] == [(s, by) for s, _it, by in seq.promotions]
     assert pipe.promotions[-1][2] == "cap"
     assert len(pipe.iterations) == len(seq.iterations) == 3
+    # #816: the pipeline path records AFTER ppo_update (moved from before), so its
+    # per-iteration telemetry lands in the metrics JSONL like the serial/vec paths.
+    from ml.curriculum import history_metric_records
+
+    pipe_recs = history_metric_records(pipe)
+    assert len(pipe_recs) == 3
+    for r in pipe_recs:
+        assert isinstance(r["epochs_run"], float) and r["epochs_run"] >= 1.0
+        assert "entropy_coef" in r

@@ -348,6 +348,14 @@ def _clone_policy(policy: HangarFitPolicy) -> HangarFitPolicy:
     return copy.deepcopy(policy)
 
 
+def _iter_train_metrics(metrics: dict[str, float], it_cfg: PPOConfig) -> dict[str, float]:
+    """#816: the per-iteration training telemetry recorded alongside each iteration for the
+    --metrics-out JSONL — ``epochs_run`` (the target_kl-bounded epoch count, which a higher
+    --entropy-floor can collapse toward 1) and ``entropy_coef`` (the applied coef, confirming
+    a frontier-rung floor actually bit). Pure; consumed by ``CurriculumHistory.record``."""
+    return {"epochs_run": metrics["epochs_run"], "entropy_coef": it_cfg.entropy_coef}
+
+
 def _rung_stop_reason(
     promo_history: list[float],
     ep_stats: Sequence[EpisodeStat],
@@ -506,8 +514,10 @@ def train_curriculum(
                 buf, ep_stats = collect_rollout(
                     env, policy, enc, rollout_len, sample_request=next_request
                 )
-                ppo_update(policy, optimizer, buf, it_cfg, normalizer=normalizer)
-                history.record(stage.name, it, ep_stats)
+                metrics = ppo_update(policy, optimizer, buf, it_cfg, normalizer=normalizer)
+                history.record(
+                    stage.name, it, ep_stats, train_metrics=_iter_train_metrics(metrics, it_cfg)
+                )
                 if log:
                     print(format_iter_log(stage.name, it, ep_stats), flush=True)
                 reason = _rung_stop_reason(promo_history, ep_stats, pol, auto_budget)
@@ -578,7 +588,6 @@ def train_curriculum(
                             else:
                                 buf_vec, ep_stats = pending.result()
                                 pending = None
-                            history.record(stage.name, it, ep_stats)
                             # Evaluate the stop gate BEFORE launching the next rollout (and
                             # before this update) so a stop suppresses the otherwise-wasted
                             # speculative rollout. Equivalent to the sequential branch's
@@ -596,8 +605,19 @@ def train_curriculum(
                                     rollout_len,
                                     static_block=rung_static_block,
                                 )
-                            ppo_update(
-                                policy, optimizer, buf_vec, _it_cfg(it), normalizer=normalizer
+                            it_cfg = _it_cfg(it)
+                            metrics = ppo_update(
+                                policy, optimizer, buf_vec, it_cfg, normalizer=normalizer
+                            )
+                            # #816: record AFTER the update so this iteration's epochs_run is
+                            # captured. record does not feed _rung_stop_reason (which already
+                            # ran above off ep_stats), so moving it is behavior-neutral for
+                            # promotion; this opt-in pipeline path is non-deterministic anyway.
+                            history.record(
+                                stage.name,
+                                it,
+                                ep_stats,
+                                train_metrics=_iter_train_metrics(metrics, it_cfg),
                             )
                             if log:
                                 print(format_iter_log(stage.name, it, ep_stats), flush=True)
@@ -629,8 +649,15 @@ def train_curriculum(
                         buf_vec, ep_stats = collect_rollout_vec(
                             vec, policy, enc, rollout_len, static_block=rung_static_block
                         )
-                        ppo_update(policy, optimizer, buf_vec, it_cfg, normalizer=normalizer)
-                        history.record(stage.name, it, ep_stats)
+                        metrics = ppo_update(
+                            policy, optimizer, buf_vec, it_cfg, normalizer=normalizer
+                        )
+                        history.record(
+                            stage.name,
+                            it,
+                            ep_stats,
+                            train_metrics=_iter_train_metrics(metrics, it_cfg),
+                        )
                         if log:
                             print(format_iter_log(stage.name, it, ep_stats), flush=True)
                         reason = _rung_stop_reason(promo_history, ep_stats, pol, auto_budget)
