@@ -546,6 +546,70 @@ it on the notch.** The next lever is **per-commitment economics** (the marginal 
 other representation knobs (aux-heads / critic-pretrain) target representation *variance* and were not
 tested here.
 
+### Per-commitment economics A/B (#812/#813 — does a marginal valid-coverage carrot break the notch plateau?)
+
+The #810 spatial-token KILL re-pointed the next lever at **per-commitment economics** (a representation
+change cannot move a reward-economics argmax, so the marginal cost/credit of adding the 2nd/3rd object is
+the thing to perturb). `--r-valid-progress R` (#812, PR #813) is that lever — a **banked marginal
+valid-coverage credit** `R·max(0, valid_park_count − 1)` added to `step_reward` **only on a Park that passes
+the `park_valid` product checker** (whole layout valid). The 1st valid park pays 0 (`--r-first-valid` owns
+the breakthrough), the 2nd pays `1·R`, the 3rd `2·R`; it is **pile-safe by construction** (an invalid Park
+fails the gate, so piling pays 0) and **default-neutral** (`0.0` ⇒ byte-identical). The A/B is the **#736
+trio-notch-anchored recipe above with `--r-valid-progress 8.0` added** (on top of `--valid-park-grade-scale
+4.0`; one knob changed, full-ladder auto-budget-120 from scratch — the exact #736/#810-KILL control
+protocol), two seeds via `ml.sweep`.
+
+```bash
+# Identical to the trio-notch-anchored recipe above, plus --r-valid-progress 8.0 (the only change),
+# run as a two-seed sweep. (Stage 1 of the pre-registered {6,8,12} magnitude sweep.)
+python -u -m ml.sweep --seeds 0,1 --out-dir sweep-rvp8 --tag rvp8 --max-concurrency 2 -- \
+  --schedule curriculum --device cuda --n-envs 16 --rollout-len 512 \
+  --auto-budget --auto-budget-max-iters 120 --auto-budget-min-level 0.1 \
+  --promotion-metric valid_placed --promotion-threshold 0.9 \
+  --r-valid-park 30.0 --r-unplaced-penalty 25.0 --dense-slot-potential \
+  --w-col 20.0 --valid-park-grade-scale 4.0 --r-first-valid 15.0 --r-valid-progress 8.0 \
+  --entropy-start 0.05 --entropy-end 0.005 --entropy-anneal-iters 40 \
+  --normalize-returns --validity-conditional-terminal \
+  --solo-box-rung --seed-anchor --mixed-anchor --anchor-trio-notch --stop-after-rung trio-notch
+```
+
+**Result (2026-06-23 two-seed run) — KILL, but the *first lever to move the argmax* (and it moved it the
+wrong way).** The lower ladder stays clean (the carrot is near-neutral below the frontier — trivial→pair all
+promote 0.92–0.97 on both seeds), so the frontier read is trustworthy. The decisive `trio-notch-anchored`
+rung and its un-anchored transfer:
+
+| Rung | rvp=8 seed 0 | rvp=8 seed 1 | Control (#736, no lever) |
+|---|---|---|---|
+| `trio-notch-anchored` | **PILING** — peak vp 0.451 → final 0.273 (`fraction_placed`→0.978) | **PILING** — peak vp 0.330 → final 0.095 (`fraction_placed`→1.000) | **flat 0.333** (s0 place-nothing-new, s1 pile) |
+| `trio-notch` (transfer) | ~0.000 (place-nothing) | ~0.000 (pile) | ~0.000 |
+
+Unlike the #736 and #810 KILLs — which both froze at exactly the **0.333 place-nothing-new economic fixed
+point** — the carrot **escaped abstention**: `fraction_placed` jumped 0.333 → 0.978 / 1.000, proving the
+notch bottleneck is *partly* economics and that a reward term **can** move this argmax. But it moved it the
+**wrong way**: it lured the policy out of the safe valid-anchor-only state (vp 0.333 — which the control
+*held on seed 0*; control seed 1 was already piling) into **invalid piling** (vp 0.27 / 0.10, *below*
+control), and the valid-multi-park basin it briefly
+found (peak 0.451 at iter ~19, high entropy) **decayed as entropy annealed** — found in exploration, lost
+under exploitation. The carrot is **pile-safe**, so it is not *causing* the piling; escaping the abstention
+pole merely dropped the policy into the *other* pre-existing failure basin (invalid-pile) rather than the
+valid-mastery one.
+
+**Sharpened diagnosis — a valid dense-pose DISCOVERY / basin-stability wall, not abstention economics.**
+A pile-safe carrot can only *reward* valid multi-park, never *teach* it; with the policy unable to reliably
+find the tight valid 3rd pose, the carrot just over-rotates it toward commitment it executes invalidly. This
+is the **second independent refutation** (after #810's spatial-representation refutation) converging on
+discovery. **The pre-registered `--r-valid-progress` `{6,8,12}` magnitude sweep (Stage 1 ran 8 here) and the
+deferred *convex-stick adjunct* — a proposed super-linear `unplaced_penalty_exponent` term (NOT yet
+implemented; not a shipped flag) that would penalize a residual *abstain* floor — are both contraindicated:**
+a bigger pile-safe carrot (`{12}`) amplifies the harmful temptation without adding pull on a piling policy,
+and a stiffer penalty on *unplaced* objects adds *more* pressure to commit — the wrong target, since the
+failure is placed-but-invalid (piling), not unplaced (abstention). The next lever therefore targets
+**discovery / basin stability** (the chosen direction), **not** more economics — candidate mechanisms (the
+specific one TBD): a pose-curriculum that anneals the notch anchor k = 2→1→0 (a valid 2-object start so the
+policy need only discover the single tight 3rd pose) and/or a higher entropy floor on the frontier rungs so
+the valid basin consolidates instead of decaying. The lever stays merged as opt-in, default-neutral
+infrastructure (`r_valid_progress=0.0` ⇒ byte-identical) for a future combined attempt.
+
 ### Concurrent sweep runner (#749 — run the two/three-seed gate in one launch)
 
 The gate recipes above are **per-seed** (`--seed 0`, then `--seed 1`), run serially today — one
