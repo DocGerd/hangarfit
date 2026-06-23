@@ -528,18 +528,23 @@ pair-box peak 0.84 by budget-plateau) but then lands on the **identical frontier
 
 | Rung | Spatial-token (seed 0) | Global-pool control |
 |---|---|---|
-| `trio-box` | peak vp **0.31** — coverage-minimum (`valid_rate≈0.97 × fraction≈0.33`, park-one-abandon-two) | n/a — `trio-box 0.93` was the *fixed-cap-300* #730 recipe, not this auto-budget-120 ladder; the same-recipe control value is undocumented |
+| `trio-box` | peak vp **0.31** — coverage-minimum (`valid_rate≈0.97 × fraction≈0.32`, park-one-abandon-two) | n/a — `trio-box 0.93` was the *fixed-cap-300* #730 recipe, not this auto-budget-120 ladder; the same-recipe control value is undocumented |
 | `trio-notch-anchored` | vp **0.333** exactly (`valid_rate 1.000 × fraction 0.333` = place-nothing-new fixed point) | **0.333** |
 | `trio-notch` (transfer) | ~**0.000** (place-nothing) | ~0.000 |
 
-The frontier rung converged to vp **0.333 — byte-equal to the documented control** — and sat there flat:
-it reached the *place-nothing-new economic fixed point*, **not** a budget-truncated climb. A representation
-change **cannot move a reward-economics argmax**, so this **deconfounds spatial-blindness from the notch
-wall**: the **marginal-commitment economics** diagnosis stands (the cost of a 2nd/3rd commitment, not the
-policy's spatial vision, is the bottleneck). The 1 m-tap (48×24) escalation pre-registered in #810 was
-**not** tried — pointless against an economic fixed point. `--spatial-tokens` remains opt-in,
-default-neutral infrastructure; **do not re-run it on the notch.** The next lever is **per-commitment
-economics** (the marginal cost/credit of adding the 2nd/3rd object), not more representation work.
+The frontier rung converged to vp **0.333 — the same value as the documented control** — and sat there
+flat: it reached the *place-nothing-new economic fixed point*, **not** a budget-truncated climb. (Seed-0
+only; unlike the #736 two-seed gate a confirming seed-1 was not run — the place-nothing-new plateau is a
+*deterministic economic attractor* and the control reached 0.333 on **both** seeds, so a seed flip is
+implausible.) A representation change **cannot move a reward-economics argmax**, so this **deconfounds
+spatial-blindness from the notch wall**: the **marginal-commitment economics** diagnosis stands (the cost
+of a 2nd/3rd commitment, not the policy's spatial vision, is the bottleneck). The 1 m-tap (48×24, double
+the default 24×12 raster) escalation pre-registered in #810 was **not** tried — pointless against an
+economic fixed point. `--spatial-tokens` remains opt-in, default-neutral infrastructure; **do not re-run
+it on the notch.** The next lever is **per-commitment economics** (the marginal cost/credit of adding the
+2nd/3rd object). This A/B refutes the *spatial-blindness* sub-hypothesis specifically — the #736 fork's
+other representation knobs (aux-heads / critic-pretrain) target representation *variance* and were not
+tested here.
 
 ### Concurrent sweep runner (#749 — run the two/three-seed gate in one launch)
 
