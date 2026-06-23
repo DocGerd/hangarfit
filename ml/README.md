@@ -584,10 +584,11 @@ rung and its un-anchored transfer:
 | `trio-notch` (transfer) | ~0.000 (place-nothing) | ~0.000 (pile) | ~0.000 |
 
 Unlike the #736 and #810 KILLs — which both froze at exactly the **0.333 place-nothing-new economic fixed
-point** — the carrot **escaped abstention**: `fraction_placed` jumped 0.333 → ~0.98, proving the notch
-bottleneck is *partly* economics and that a reward term **can** move this argmax. But it moved it the
-**wrong way**: it lured the policy out of the safe valid-anchor-only state (vp 0.333, which the control
-*held*) into **invalid piling** (vp 0.27 / 0.10, *below* control), and the valid-multi-park basin it briefly
+point** — the carrot **escaped abstention**: `fraction_placed` jumped 0.333 → 0.978 / 1.000, proving the
+notch bottleneck is *partly* economics and that a reward term **can** move this argmax. But it moved it the
+**wrong way**: it lured the policy out of the safe valid-anchor-only state (vp 0.333 — which the control
+*held on seed 0*; control seed 1 was already piling) into **invalid piling** (vp 0.27 / 0.10, *below*
+control), and the valid-multi-park basin it briefly
 found (peak 0.451 at iter ~19, high entropy) **decayed as entropy annealed** — found in exploration, lost
 under exploitation. The carrot is **pile-safe**, so it is not *causing* the piling; escaping the abstention
 pole merely dropped the policy into the *other* pre-existing failure basin (invalid-pile) rather than the
@@ -597,15 +598,17 @@ valid-mastery one.
 A pile-safe carrot can only *reward* valid multi-park, never *teach* it; with the policy unable to reliably
 find the tight valid 3rd pose, the carrot just over-rotates it toward commitment it executes invalidly. This
 is the **second independent refutation** (after #810's spatial-representation refutation) converging on
-discovery. **The pre-registered `{6,8,12}` magnitude sweep and the convex-stick adjunct are contraindicated:**
+discovery. **The pre-registered `--r-valid-progress` `{6,8,12}` magnitude sweep (Stage 1 ran 8 here) and the
+deferred *convex-stick adjunct* — a proposed super-linear `unplaced_penalty_exponent` term (NOT yet
+implemented; not a shipped flag) that would penalize a residual *abstain* floor — are both contraindicated:**
 a bigger pile-safe carrot (`{12}`) amplifies the harmful temptation without adding pull on a piling policy,
-and `--unplaced-penalty-exponent` (a penalty on *unplaced* objects) adds *more* pressure to commit — the
-wrong target, since the failure is placed-but-invalid (piling), not unplaced (abstention). The next lever
-targets **discovery / basin stability** — e.g. a pose-curriculum that anneals the notch anchor k = 2→1→0 (a
-valid 2-object start so the policy need only discover the single tight 3rd pose) and/or a higher entropy
-floor on the frontier rungs so the valid basin consolidates instead of decaying — **not** more economics.
-The lever stays merged as opt-in, default-neutral infrastructure (`r_valid_progress=0.0` ⇒ byte-identical)
-for a future combined attempt.
+and a stiffer penalty on *unplaced* objects adds *more* pressure to commit — the wrong target, since the
+failure is placed-but-invalid (piling), not unplaced (abstention). The next lever therefore targets
+**discovery / basin stability** (the chosen direction), **not** more economics — candidate mechanisms (the
+specific one TBD): a pose-curriculum that anneals the notch anchor k = 2→1→0 (a valid 2-object start so the
+policy need only discover the single tight 3rd pose) and/or a higher entropy floor on the frontier rungs so
+the valid basin consolidates instead of decaying. The lever stays merged as opt-in, default-neutral
+infrastructure (`r_valid_progress=0.0` ⇒ byte-identical) for a future combined attempt.
 
 ### Concurrent sweep runner (#749 — run the two/three-seed gate in one launch)
 
