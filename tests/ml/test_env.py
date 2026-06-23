@@ -843,3 +843,48 @@ def test_first_valid_bonus_resets_across_episodes():
 
     assert first_valid_delta() == pytest.approx(9.0)  # episode 1
     assert first_valid_delta() == pytest.approx(9.0)  # after reset -> flag cleared, paid again
+
+
+# ---------------------------------------------------------------------------
+# #812 — env feeds valid_park_count to the banked marginal valid-coverage credit
+# ---------------------------------------------------------------------------
+
+
+def test_r_valid_progress_pays_the_marginal_valid_park_through_the_env():
+    # Park two objects at clean non-overlapping poses (A then B): the 1st valid Park (count 1)
+    # pays 0 (max(0, n-1)=0), the 2nd (count 2) banks r_valid_progress. Mirrors the r_first_valid
+    # once-per-episode test, but the per-commitment credit fires on the LATER valid Park. (#812)
+    def run(progress: float) -> tuple[float, bool, float, bool]:
+        env = HangarFitEnv(
+            hangar=empty_hangar(),
+            fleet=_fuji(),
+            requested_ids=("fuji", "aviat_husky"),
+            weights=RewardWeights(r_valid_progress=progress),
+        )
+        env.reset()
+        r1, v1 = _park_reward_at(env, _FIRST_VALID_POSE_A)
+        r2, v2 = _park_reward_at(env, _FIRST_VALID_POSE_B)
+        return r1, v1, r2, v2
+
+    r1_0, v1_0, r2_0, v2_0 = run(0.0)
+    r1_p, v1_p, r2_p, v2_p = run(8.0)
+    assert v1_0 and v2_0 and v1_p and v2_p, "fixture poses must both Park validly"
+    assert r1_p - r1_0 == pytest.approx(0.0)  # 1st valid Park: the freebie pays nothing
+    assert r2_p - r2_0 == pytest.approx(8.0)  # 2nd valid Park: banks r_valid_progress*(2-1)
+
+
+def test_env_valid_park_count_in_info_terms_gated_on_validity():
+    # The diagnostic term reflects len(_parked) on a valid Park, and 0 on an invalid one. (#812)
+    env = HangarFitEnv(hangar=empty_hangar(), fleet=_fuji(), requested_ids=("fuji", "aviat_husky"))
+    env.reset()
+    env._active_pose = _FIRST_VALID_POSE_A
+    _o, _r, _d, info1 = env.step(Park())  # 1st valid park
+    assert info1.valid is True and info1.terms["valid_park_count"] == 1.0
+    env._active_pose = _FIRST_VALID_POSE_B
+    _o, _r, _d, info2 = env.step(Park())  # 2nd valid park
+    assert info2.valid is True and info2.terms["valid_park_count"] == 2.0
+
+    bad = HangarFitEnv(hangar=empty_hangar(), fleet=_fuji(), requested_ids=("fuji", "aviat_husky"))
+    bad.reset()
+    _o, _r, _d, info_bad = bad.step(Park())  # object 1 parked on the apron -> invalid layout
+    assert info_bad.valid is False and info_bad.terms["valid_park_count"] == 0.0
