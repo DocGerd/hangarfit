@@ -539,8 +539,9 @@ def train_curriculum(
 
                 def _it_cfg(it: int, _stage_name: str = stage.name) -> PPOConfig:
                     # #815: anneal then frontier-rung-gated entropy floor (inert OFF).
-                    # stage.name is bound as a def-time default (B023) — the closure is
-                    # created and consumed within this stage iteration, so it stays current.
+                    # stage.name is captured as a def-time default arg (the standard B023
+                    # fix): the closure binds THIS stage's name at definition, not by late
+                    # lookup of the loop variable — correct regardless of call-site timing.
                     return replace(cfg, entropy_coef=iter_entropy_coef(cfg, it, _stage_name))
 
                 if pipeline_update:
@@ -1182,6 +1183,11 @@ def main(argv: Sequence[str] | None = None) -> None:
         # be inert) — fail LOUD rather than silently no-op a typed flag.
         if args.entropy_floor is not None and not args.frontier_rungs:
             parser.error("--entropy-floor requires --frontier-rungs")
+        # The floor RAISES the entropy coef; a non-positive value can never raise a
+        # (non-negative) coef, so it is silently inert. Reject it loud (the off state is the
+        # absent flag, not 0/negative).
+        if args.entropy_floor is not None and args.entropy_floor <= 0:
+            parser.error("--entropy-floor must be > 0")
         sched = CurriculumSchedule.default()
         sched = replace(
             sched,

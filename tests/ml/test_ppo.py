@@ -360,6 +360,8 @@ def test_entropy_coef_with_floor_raises_value_below_floor():
 def test_entropy_coef_with_floor_leaves_value_above_floor():
     # already above the floor -> unchanged (max semantics, never lowers).
     assert entropy_coef_with_floor(0.05, floor=0.02, apply=True) == pytest.approx(0.05)
+    # boundary: value == floor -> the value (max tie-break is a no-op).
+    assert entropy_coef_with_floor(0.02, floor=0.02, apply=True) == pytest.approx(0.02)
 
 
 def test_iter_entropy_coef_floors_only_on_frontier_rung():

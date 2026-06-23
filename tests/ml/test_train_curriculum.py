@@ -1551,14 +1551,16 @@ def test_main_threads_entropy_floor_into_ppo(monkeypatch):
     assert cfg.entropy_floor_rungs == ("trio-notch-anchored", "trio-notch")
 
 
-def test_entropy_floor_applies_only_on_frontier_rung_in_train_curriculum(monkeypatch):
+@pytest.mark.parametrize("n_envs", [1, 2])
+def test_entropy_floor_applies_only_on_frontier_rung_in_train_curriculum(monkeypatch, n_envs):
     # BEHAVIORAL: prove the floor reaches the entropy_coef ppo_update actually receives, on
-    # the frontier rung ONLY. Same recorder/empty-rollout stubs as the rewarm test so the
-    # per-stage loop runs its full max_iters with no real torch training. Mirrors that test's
-    # discriminating-assertion style. _tiny_schedule stages are "t0" (non-frontier) and "t1"
+    # the frontier rung ONLY. Parametrized over BOTH curriculum call-sites: the serial
+    # n_envs==1 inline path AND the vectorized n_envs>1 `_it_cfg` closure (vec_backend=sync,
+    # in-process). Recorder/empty-rollout stubs so the per-stage loop runs its full max_iters
+    # with no real torch training. _tiny_schedule stages are "t0" (non-frontier) and "t1"
     # (the frontier rung); the floor must raise only t1's below-floor late-anneal iterations.
     import ml.train as train_mod
-    from ml.ppo import PPOConfig, RolloutBuffer
+    from ml.ppo import PPOConfig, RolloutBuffer, VecRolloutBuffer
 
     recorded: list[float] = []
 
@@ -1569,8 +1571,12 @@ def test_entropy_floor_applies_only_on_frontier_rung_in_train_curriculum(monkeyp
     def empty_rollout(env, policy, enc, rollout_len, *, sample_request=None):
         return RolloutBuffer(), []  # no completed episodes -> never promotes by competency
 
+    def empty_rollout_vec(vec, policy, enc, rollout_len, *, static_block=None):
+        return VecRolloutBuffer(num_envs=n_envs), []  # never read (ppo_update is stubbed)
+
     monkeypatch.setattr(train_mod, "ppo_update", recorder)
     monkeypatch.setattr(train_mod, "collect_rollout", empty_rollout)
+    monkeypatch.setattr(train_mod, "collect_rollout_vec", empty_rollout_vec)
 
     max_iters = 3
     sched = _tiny_schedule(threshold=2.0)  # zero episodes -> every rung caps at max_iters
@@ -1585,10 +1591,54 @@ def test_entropy_floor_applies_only_on_frontier_rung_in_train_curriculum(monkeyp
         entropy_floor=0.02,
         entropy_floor_rungs=("t1",),  # frontier = the SECOND rung only
     )
-    train_curriculum(seed=0, schedule=sched, rollout_len=8, ppo=cfg)
+    train_curriculum(
+        seed=0, schedule=sched, rollout_len=8, ppo=cfg, n_envs=n_envs, vec_backend="sync"
+    )
 
     assert len(recorded) == 2 * max_iters
     t0 = recorded[:max_iters]  # non-frontier: bare anneal, NOT floored
     t1 = recorded[max_iters:]  # frontier: floored UP where the anneal dips below 0.02
     assert t0 == pytest.approx([0.05, 0.0275, 0.005])
     assert t1 == pytest.approx([0.05, 0.0275, 0.02])  # tail raised 0.005 -> 0.02
+
+
+def test_entropy_floor_must_be_positive():
+    # The floor RAISES the coef; a non-positive value is silently inert -> fail LOUD.
+    import ml.train as train_mod
+
+    for bad in ("0", "-0.5"):
+        with pytest.raises(SystemExit):
+            train_mod.main(
+                ["--schedule", "curriculum", "--entropy-floor", bad, "--frontier-rungs", "t1"]
+            )
+
+
+def test_frontier_rungs_without_floor_is_accepted_and_inert(monkeypatch):
+    # The asymmetric-but-valid combo: rungs set, floor omitted. Accepted (no guard) and
+    # inert — entropy_floor stays None, so iter_entropy_coef is pure passthrough regardless
+    # of rung membership (the None-floor branch dominates rung membership).
+    from ml.ppo import entropy_coef_at, iter_entropy_coef
+
+    cfg = _capture_main(monkeypatch, ["--frontier-rungs", "t1"])["ppo"]
+    assert cfg.entropy_floor is None
+    assert cfg.entropy_floor_rungs == ("t1",)
+    cfg2 = replace(cfg, entropy_coef_start=0.05, entropy_coef_end=0.005, entropy_anneal_iters=2)
+    for it in range(5):
+        bare = entropy_coef_at(it, base=cfg2.entropy_coef, start=0.05, end=0.005, anneal_iters=2)
+        assert iter_entropy_coef(cfg2, it, "t1") == bare  # frontier rung, but floor None -> bare
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("a,b,", ("a", "b")),  # trailing comma dropped
+        ("a,,b", ("a", "b")),  # empty interior token dropped
+        ("a", ("a",)),  # single value
+        ("  ,  ", ()),  # all-whitespace -> empty (the load-bearing strip+filter)
+        ("trio-notch-anchored, trio-notch", ("trio-notch-anchored", "trio-notch")),
+    ],
+)
+def test_comma_split_rungs_edge_cases(raw, expected):
+    from ml.train import _comma_split_rungs
+
+    assert _comma_split_rungs(raw) == expected
