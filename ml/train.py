@@ -49,6 +49,7 @@ from ml.curriculum import (
     with_pair_anchored_rung,
     with_promotion_overrides,
     with_solo_box_rung,
+    with_trio_notch_anchored_rung,
 )
 from ml.encoding import EncoderConfig, encode, static_block
 from ml.env import HangarFitEnv
@@ -894,6 +895,14 @@ def build_argparser() -> argparse.ArgumentParser:
         "and pair-box.",
     )
     p.add_argument(
+        "--anchor-trio-notch",
+        action="store_true",
+        help="curriculum: insert the opt-in #736 'trio-notch-anchored' rung before trio-notch "
+        "(1 of 3 notch-witness objects pre-parked at a committed pose, the other two driven "
+        "in), scaffolding 3-object joint discovery on the real notch hangar to break the "
+        "cold-start coverage minimum (place one, abandon two) before the empty-start trio-notch",
+    )
+    p.add_argument(
         "--stop-after-rung",
         type=str,
         default=None,
@@ -1115,6 +1124,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             parser.error("--seed-anchor requires --schedule curriculum")
         if args.mixed_anchor:
             parser.error("--mixed-anchor requires --schedule curriculum")
+        if args.anchor_trio_notch:
+            parser.error("--anchor-trio-notch requires --schedule curriculum")
         if args.stop_after_rung is not None:
             parser.error("--stop-after-rung requires --schedule curriculum")
         if args.auto_budget or args.auto_budget_max_iters is not None:
@@ -1153,6 +1164,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             sched = with_pair_anchored_rung(sched)
         if args.mixed_anchor:
             sched = with_mixed_anchor_rung(sched)
+        if args.anchor_trio_notch:
+            sched = with_trio_notch_anchored_rung(sched)
         # Truncate LAST, after the grafts, so a name they introduce (pair-mixed) is in scope.
         if args.stop_after_rung is not None:
             sched = truncate_after_rung(sched, args.stop_after_rung)

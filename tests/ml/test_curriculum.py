@@ -34,6 +34,7 @@ from ml.curriculum import (
     with_pair_anchored_rung,
     with_promotion_overrides,
     with_solo_box_rung,
+    with_trio_notch_anchored_rung,
 )
 from ml.encoding import EncoderConfig
 from ml.types import DifficultyConfig
@@ -449,6 +450,63 @@ def test_seed_anchor_composes_with_solo_box_rung():
     sched = with_pair_anchored_rung(with_solo_box_rung(CurriculumSchedule.default()))
     names = [s.name for s in sched.stages]
     assert names[:4] == ["trivial", "solo-box", "pair-anchored", "pair-box"]
+
+
+# #736 — the opt-in witness-anchored notch trio rung (trio-notch-anchored)
+
+
+def test_default_ladder_has_no_trio_notch_anchored_rung():
+    # Byte-identity guard: trio-notch-anchored is opt-in; the default ladder is unchanged.
+    assert all(s.name != "trio-notch-anchored" for s in DEFAULT_LADDER)
+
+
+def test_with_trio_notch_anchored_rung_inserts_before_trio_notch():
+    sched = with_trio_notch_anchored_rung(CurriculumSchedule.default())
+    names = [s.name for s in sched.stages]
+    i = names.index("trio-notch")
+    assert names[i - 1] == "trio-notch-anchored"
+
+
+def test_trio_notch_anchored_rung_is_three_object_k1_on_the_notch_with_a_witness():
+    sched = with_trio_notch_anchored_rung(CurriculumSchedule.default())
+    rung = next(s for s in sched.stages if s.name == "trio-notch-anchored")
+    assert rung.difficulty.max_objects == 3  # three objects in the set...
+    assert rung.difficulty.seed_anchor_k == 1  # ...one pre-parked, two driven in
+    assert rung.anchor_layout_path is not None  # the committed notch witness layout
+    # Scaffolds the SAME real notch hangar as the empty-start trio-notch it precedes.
+    trio_notch = next(s for s in sched.stages if s.name == "trio-notch")
+    assert rung.hangar_path == trio_notch.hangar_path
+    assert rung.clearance_m == trio_notch.clearance_m  # same lenient 0.05 clearance
+
+
+def test_with_trio_notch_anchored_rung_preserves_policy_and_validates():
+    base = CurriculumSchedule.default()
+    sched = with_trio_notch_anchored_rung(base)
+    assert sched.policy == base.policy  # only the ladder changes, not the promotion gate
+    validate_ladder(sched.stages, encoder_max_objects=EncoderConfig().max_objects)  # no raise
+
+
+def test_with_trio_notch_anchored_rung_does_not_mutate_the_default_ladder():
+    with_trio_notch_anchored_rung(CurriculumSchedule.default())
+    assert all(s.name != "trio-notch-anchored" for s in DEFAULT_LADDER)  # default still pristine
+
+
+def test_with_trio_notch_anchored_rung_raises_without_trio_notch():
+    no_trio_notch = CurriculumSchedule(
+        stages=tuple(s for s in DEFAULT_LADDER if s.name != "trio-notch"),
+        policy=PromotionPolicy(),
+    )
+    with pytest.raises(ValueError, match="trio-notch"):
+        with_trio_notch_anchored_rung(no_trio_notch)
+
+
+def test_trio_notch_anchored_composes_with_pair_anchored_rung():
+    # The anchor levers stack independently: pair-anchored before pair-box, trio-notch-anchored
+    # before trio-notch — and the default ladder stays pristine under both grafts.
+    sched = with_trio_notch_anchored_rung(with_pair_anchored_rung(CurriculumSchedule.default()))
+    names = [s.name for s in sched.stages]
+    assert names.index("pair-anchored") < names.index("pair-box")
+    assert names.index("trio-notch-anchored") == names.index("trio-notch") - 1
 
 
 def _anchored_test_stage(*, max_objects: int, seed_anchor_k: int) -> Stage:
