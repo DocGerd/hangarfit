@@ -39,7 +39,7 @@ export interface TowPaths {
  * gets no line — there is no route to draw. Lines sit a hair above the floor
  * (z = `Z_OFFSET`) so they don't z-fight the floor plane or the grid, and below
  * the parked planes' bellies. Returns the lines + a visibility toggle. */
-export function addTowPaths(scene: THREE.Scene, SCENE: SceneV2, BRAND: BrandTokens): TowPaths {
+export function addTowPaths(scene: THREE.Object3D, SCENE: SceneV2, BRAND: BrandTokens): TowPaths {
   const Z_OFFSET = 0.02; // just above the floor (grid sits at 0.003); under any belly
   const segByPlane: Record<string, SegmentData> = {};
   for (const s of SCENE.timeline.segments) segByPlane[s.plane_id] = s;

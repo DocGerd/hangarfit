@@ -22,7 +22,7 @@ export interface EgressLanes {
  * keep-clear corridor reads on top of a route that overlaps it. Mover ids are
  * sorted for deterministic build order. Egress lanes are a safety annotation, so
  * they are always on (no HUD toggle). */
-export function addEgressLanes(scene: THREE.Scene, SCENE: SceneV2, BRAND: BrandTokens): EgressLanes {
+export function addEgressLanes(scene: THREE.Object3D, SCENE: SceneV2, BRAND: BrandTokens): EgressLanes {
   const Z_OFFSET = 0.025; // just above the tow paths (0.02) so the corridor reads on top
   const colour = new THREE.Color(BRAND.egressLane);
   const lines: THREE.Line[] = [];

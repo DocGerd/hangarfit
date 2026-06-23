@@ -277,6 +277,19 @@ google-chrome --headless=new --use-gl=angle --use-angle=swiftshader \
   --enable-unsafe-swiftshader --virtual-time-budget=8000 \
   --screenshot=out.png "file://$PWD/out.html"
 
+# #666 multi-solution compare: `view --solve --alternatives N` carries up to N diverse
+# solutions in ONE HTML with a switcher (dropdown / ←→ keys, shared camera) + per-
+# solution metrics. Requires --solve (a hand-authored layout is a single arrangement;
+# --alternatives without --solve exits 2). The compare container is a viewer-HTML-level
+# `<script id="solutions">` blob (schema `hangarfit.viewer-compare/v1`) layered OVER N
+# independent scene/v2 docs — NOT a scene/v2 schema change, so `build_scene` and its
+# key-parity guard are untouched and each carried scene's bytes are byte-identical to a
+# standalone render (ADR-0003). With <2 diverse layouts found it falls through to the
+# single render. The switch path (`mount`→`buildWorld`→`checkAnchors`) re-runs the
+# transform self-check per solution; headlessly drive it by dispatching a `change` on
+# `#compare` and reading `#banner`.hidden (the viewer exposes state via the DOM).
+hangarfit view tests/fixtures/scenario_minimal.yaml --solve --alternatives 3 -o compare.html
+
 # #412 staging apron (ADR-0021): with apron_depth_m > 0 each tow path starts
 # OUTSIDE the door (y<0) and slides in. Set it on the hangar.yaml or override
 # per run with --apron-depth N|auto (auto = ~max plane length + max turn radius)

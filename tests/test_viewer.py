@@ -238,6 +238,121 @@ def test_render_viewer_is_byte_identical_across_two_calls(tmp_path):
     assert out1.read_bytes() == out2.read_bytes()
 
 
+# ── #666: the multi-solution compare viewer ─────────────────────────────────
+
+
+def _solution(scene_dict: dict, label: str, **summary) -> dict:
+    return {"label": label, "scene": scene_dict, "summary": summary}
+
+
+def _compare_html(tmp_path, n: int = 2, *, count_requested: int | None = None) -> str:
+    lay = load_layout(LAYOUT)
+    sc = scene.build_scene(lay, moves_plan=plan_fill(lay))
+    sols = [
+        _solution(
+            sc, "#1", min_gap_m=1.2, planes_moved_vs_first=0, mean_shift_m=0.0, routable=True
+        ),
+        _solution(
+            sc, "#2", min_gap_m=0.9, planes_moved_vs_first=3, mean_shift_m=2.1, routable=False
+        ),
+    ][:n]
+    out = tmp_path / "cmp.html"
+    viewer.render_compare_viewer(sols, out, count_requested=count_requested or n)
+    return out.read_text(encoding="utf-8")
+
+
+def _solutions_blob(html: str) -> dict:
+    m = re.search(r'<script type="application/json" id="solutions">(.*?)</script>', html, re.S)
+    assert m is not None
+    return json.loads(m.group(1))
+
+
+def test_compare_html_is_self_contained_and_offline(tmp_path):
+    html = _compare_html(tmp_path)
+    assert html.lstrip().startswith("<!DOCTYPE html>")
+    assert 'type="importmap"' in html
+    assert 'type="application/json" id="solutions"' in html
+    assert "data:text/javascript;base64," in html
+    assert "http://" not in html and "https://" not in html
+
+
+def test_compare_manifest_round_trips(tmp_path):
+    manifest = _solutions_blob(_compare_html(tmp_path, n=2))
+    assert manifest["schema"] == "hangarfit.viewer-compare/v1"
+    assert manifest["count_requested"] == 2
+    assert manifest["count_found"] == 2
+    assert len(manifest["solutions"]) == 2
+    # Each carried scene is a full, valid scene/v2 doc.
+    assert manifest["solutions"][0]["scene"]["schema"] == "hangarfit.scene/v2"
+    assert manifest["solutions"][1]["summary"]["planes_moved_vs_first"] == 3
+
+
+def test_compare_per_solution_scene_bytes_match_standalone(tmp_path):
+    # ADR-0003: a layout's scene/v2 emission is byte-identical whether rendered
+    # alone or carried as compare alternative #k — the container is purely additive.
+    lay = load_layout(LAYOUT)
+    sc = scene.build_scene(lay, moves_plan=plan_fill(lay))
+    html = _compare_html(tmp_path)
+    assert viewer._embed_json(sc) in html  # the standalone scene bytes appear verbatim
+
+
+def test_compare_uses_solutions_blob_not_single_scene(tmp_path):
+    # Compare mode carries N scenes in #solutions and omits the single #scene blob;
+    # the viewer branches on which blob is present.
+    html = _compare_html(tmp_path)
+    assert 'type="application/json" id="scene"' not in html
+
+
+def test_compare_hud_carries_switcher_control(tmp_path):
+    html = _compare_html(tmp_path)
+    assert 'id="compare"' in html  # the solution <select>
+    assert 'id="compare-metrics"' in html  # per-solution metrics readout
+
+
+def test_compare_manifest_has_no_raw_angle_bracket(tmp_path):
+    # Same </script>-breakout guard as the scene/BRAND blobs.
+    m = re.search(r'id="solutions">(.*?)</script>', _compare_html(tmp_path), re.S)
+    assert m is not None
+    assert "<" not in m.group(1)
+
+
+def test_compare_records_partial_found_vs_requested(tmp_path):
+    # "If available": fewer diverse solutions than requested keeps both counts so
+    # the viewer can label "Found n of N" (mirroring solve).
+    manifest = _solutions_blob(_compare_html(tmp_path, n=1, count_requested=3))
+    assert manifest["count_found"] == 1
+    assert manifest["count_requested"] == 3
+
+
+def test_compare_render_is_byte_identical_across_two_calls(tmp_path):
+    lay = load_layout(LAYOUT)
+    sc = scene.build_scene(lay, moves_plan=plan_fill(lay))
+    sols = [
+        _solution(sc, "#1", min_gap_m=1.2, planes_moved_vs_first=0, mean_shift_m=0.0, routable=True)
+    ]
+    a, b = tmp_path / "a.html", tmp_path / "b.html"
+    viewer.render_compare_viewer(sols, a, count_requested=1)
+    viewer.render_compare_viewer(sols, b, count_requested=1)
+    assert a.read_bytes() == b.read_bytes()
+
+
+def test_compare_requires_at_least_one_solution(tmp_path):
+    import pytest
+
+    with pytest.raises(ValueError, match="at least one solution"):
+        viewer.render_compare_viewer([], tmp_path / "x.html", count_requested=3)
+
+
+def test_compare_inlines_committed_bundle(tmp_path):
+    # Same contract as single mode: the assembler inlines the committed bundle RAW.
+    src = (
+        resources.files("hangarfit._viewer_assets")
+        .joinpath("viewer.js")
+        .read_text(encoding="utf-8")
+    )
+    assert src in _compare_html(tmp_path)
+
+
 def test_brand_module_exports():
     # The single token source (#419) exposes the palettes, status inks, and the
     # 3D viewer token object the BRAND blob is built from.

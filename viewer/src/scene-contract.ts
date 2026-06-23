@@ -101,6 +101,34 @@ export interface Readouts {
   min_wing_over_tail_clearance_m: number | null;
 }
 
+// ── #666 multi-solution compare container ────────────────────────────────────
+// A viewer-HTML-level wrapper layered OVER N independent scene/v2 docs (read from a
+// separate `<script id="solutions">` blob, NOT from `#scene`). Deliberately NOT part
+// of SceneV2 — so `scene.build_scene` and the scene-contract key-parity guard stay
+// untouched and each carried scene's bytes are byte-identical to a standalone render.
+
+/** Per-solution compare metrics (Python-computed; the same numbers `solve` narrates). */
+export interface SolutionSummary {
+  min_gap_m: number | null; // tightest inter-plane gap (m); null for <2 planes
+  planes_moved_vs_first: number; // planes shifted vs solution #1 (0 for #1)
+  mean_shift_m: number; // mean (x,y) shift vs solution #1 (0 for #1)
+  routable: boolean; // a tow plan was BUILT for this layout (always false under --no-animate)
+}
+
+export interface CompareSolution {
+  label: string; // e.g. "#1"
+  scene: SceneV2; // a full, self-contained scene/v2 doc
+  summary: SolutionSummary;
+}
+
+/** The `#solutions` blob: N alternatives + the found/requested counts (#666). */
+export interface CompareManifest {
+  schema: string; // always "hangarfit.viewer-compare/v1"
+  count_requested: number; // the --alternatives N the user asked for
+  count_found: number; // how many diverse solutions were actually found
+  solutions: CompareSolution[];
+}
+
 export interface SceneV2 {
   schema: string; // always "hangarfit.scene/v2"
   units: string; // always "m"
