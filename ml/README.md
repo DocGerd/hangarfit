@@ -498,6 +498,54 @@ pre-registration, the next lever is the Section-A representation knobs (aux-head
 or harder per-commitment economics — **not** more start-state scaffolding. The rung itself stays as
 opt-in, default-neutral infrastructure for a future combined attempt.
 
+### Spatial-token representation A/B (#809/#810 — does richer spatial vision break the notch plateau?)
+
+The #736 KILL pre-registered the **Section-A representation knobs** as the next lever, on the theory
+that the policy's `AdaptiveAvgPool2d(1)` global-average-pools the occupancy raster and is therefore
+*spatially blind* on dense packing (it sees "how full" but not "where the gaps are"). `--spatial-tokens`
+(#810) tests that directly: it replaces the single pooled summary with object tokens that **cross-attend
+to per-cell free-space tokens**. The A/B is the **#736 notch recipe above with `--spatial-tokens` added**
+(toggle only the architecture; default-off is byte-identical), trained full-ladder-from-scratch — the new
+net cannot `--load` a global-pool checkpoint (architecture mismatch), so it re-climbs every rung.
+
+```bash
+# Identical to the trio-notch-anchored recipe above, plus --spatial-tokens (the only change).
+python -u -m ml.train --schedule curriculum --device cuda --n-envs 16 \
+  --rollout-len 512 --auto-budget --auto-budget-max-iters 120 --auto-budget-min-level 0.1 \
+  --promotion-metric valid_placed --promotion-threshold 0.9 \
+  --r-valid-park 30.0 --r-unplaced-penalty 25.0 --dense-slot-potential \
+  --w-col 20.0 --valid-park-grade-scale 4.0 --r-first-valid 15.0 \
+  --entropy-start 0.05 --entropy-end 0.005 --entropy-anneal-iters 40 \
+  --normalize-returns --validity-conditional-terminal \
+  --solo-box-rung --seed-anchor --mixed-anchor --anchor-trio-notch \
+  --stop-after-rung trio-notch --spatial-tokens \
+  --metrics-out metrics-notch-spatial-s0.jsonl --checkpoint-out ck-notch-spatial-s0.pt --seed 0
+```
+
+**Result (2026-06-23 seed-0 run) — KILL, lever refuted.** The spatial-token net climbs the lower ladder
+normally (trivial 0.95 / solo-box 0.93 / pair-anchored 0.97 / pair-mixed 0.92 promote by competency;
+pair-box peak 0.84 by budget-plateau) but then lands on the **identical frontier plateau as global-pool**:
+
+| Rung | Spatial-token (seed 0) | Global-pool control |
+|---|---|---|
+| `trio-box` | peak vp **0.31** — coverage-minimum (`valid_rate≈0.97 × fraction≈0.32`, park-one-abandon-two) | n/a — `trio-box 0.93` was the *fixed-cap-300* #730 recipe, not this auto-budget-120 ladder; the same-recipe control value is undocumented |
+| `trio-notch-anchored` | vp **0.333** exactly (`valid_rate 1.000 × fraction 0.333` = place-nothing-new fixed point) | **0.333** |
+| `trio-notch` (transfer) | ~**0.000** (place-nothing) | ~0.000 |
+
+The frontier rung converged to vp **0.333 — the same value as the documented control** — and sat there
+flat: it reached the *place-nothing-new economic fixed point*, **not** a budget-truncated climb. (Seed-0
+only; unlike the #736 two-seed gate a confirming seed-1 was not run — the place-nothing-new plateau is a
+*deterministic economic attractor* and the control reached 0.333 on **both** seeds, so a seed flip is
+implausible.) A representation change **cannot move a reward-economics argmax**, so this **deconfounds
+spatial-blindness from the notch wall**: the **marginal-commitment economics** diagnosis stands (the cost
+of a 2nd/3rd commitment, not the policy's spatial vision, is the bottleneck). The 1 m-tap (48×24, double
+the default 24×12 raster) escalation pre-registered in #810 was **not** tried — pointless against an
+economic fixed point. `--spatial-tokens` remains opt-in, default-neutral infrastructure; **do not re-run
+it on the notch.** The next lever is **per-commitment economics** (the marginal cost/credit of adding the
+2nd/3rd object). This A/B refutes the *spatial-blindness* sub-hypothesis specifically — the #736 fork's
+other representation knobs (aux-heads / critic-pretrain) target representation *variance* and were not
+tested here.
+
 ### Concurrent sweep runner (#749 — run the two/three-seed gate in one launch)
 
 The gate recipes above are **per-seed** (`--seed 0`, then `--seed 1`), run serially today — one
