@@ -153,6 +153,50 @@ def test_curriculum_history_records_and_notes():
     assert h.promotions == [("s0", 3, "competency")]
 
 
+def test_history_records_train_metrics_surfaced_in_jsonl():
+    # #816: per-iteration training telemetry (epochs_run + applied entropy_coef) is stored in
+    # the parallel iter_train_metrics list (the 3-tuple iterations shape is UNCHANGED) and
+    # merged into the --metrics-out JSONL record.
+    h = CurriculumHistory()
+    h.record(
+        "s0",
+        0,
+        [EpisodeStat(0.5, True, 1.0)],
+        train_metrics={"epochs_run": 3.0, "entropy_coef": 0.02},
+    )
+    assert h.iterations == [("s0", 0, (EpisodeStat(0.5, True, 1.0),))]  # shape unchanged
+    assert h.iter_train_metrics == [{"epochs_run": 3.0, "entropy_coef": 0.02}]
+    rec = history_metric_records(h)[0]
+    assert rec["epochs_run"] == 3.0
+    assert rec["entropy_coef"] == 0.02
+    assert rec["stage"] == "s0" and rec["iter"] == 0
+
+
+def test_history_metric_records_default_neutral_without_train_metrics():
+    # A record with no train_metrics (every pre-#816 call site) adds NO new JSONL keys —
+    # the parallel list gets an empty dict so it stays in lockstep with iterations.
+    h = CurriculumHistory()
+    h.record("s0", 0, [EpisodeStat(0.5, True, 1.0)])
+    assert h.iter_train_metrics == [{}]
+    rec = history_metric_records(h)[0]
+    assert "epochs_run" not in rec and "entropy_coef" not in rec
+
+
+def test_history_metric_records_index_guards_short_train_metrics():
+    # Defensive (documented back-compat): a hand-built / pre-#816-deserialized history whose
+    # iter_train_metrics is SHORTER than iterations merges an empty telemetry dict for the
+    # unguarded tail rather than raising IndexError. record() keeps them in lockstep, so this
+    # branch is only reachable by direct construction — pin it so a refactor can't drop it.
+    h = CurriculumHistory()
+    h.iterations.append(("s0", 0, ()))
+    h.iterations.append(("s0", 1, ()))
+    h.iter_train_metrics = [{"epochs_run": 2.0}]  # one short of iterations
+    recs = history_metric_records(h)
+    assert len(recs) == 2
+    assert recs[0]["epochs_run"] == 2.0
+    assert "epochs_run" not in recs[1]  # index-guarded tail -> empty, no IndexError
+
+
 def test_curriculum_schedule_default_is_the_committed_ladder():
     sched = CurriculumSchedule.default()
     assert sched.stages == DEFAULT_LADDER

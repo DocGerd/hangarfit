@@ -6,7 +6,7 @@ env builder lives in ml/stage_builder.py; the torch training loop in ml/train.py
 from __future__ import annotations
 
 import random
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from functools import partial
 from typing import Literal
@@ -228,12 +228,16 @@ def format_iter_log(stage_name: str, it: int, ep_stats: Sequence[EpisodeStat]) -
 
 def history_metric_records(history: CurriculumHistory) -> list[dict[str, object]]:
     """One JSONL-ready record per recorded training iteration: ``stage``, ``iter`` index,
-    and the ``episode_metrics`` over that iteration's completed episodes. Pure over the
-    history — the #710 per-rung ``valid_placed`` learning curve the CLI dumps via
-    ``--metrics-out``."""
+    the ``episode_metrics`` over that iteration's completed episodes, and (#816) any
+    per-iteration training telemetry recorded alongside it (``epochs_run``, the applied
+    ``entropy_coef``). Pure over the history — the #710 per-rung ``valid_placed`` learning
+    curve the CLI dumps via ``--metrics-out``. Index-guards ``iter_train_metrics`` so a
+    history built without it (pre-#816 or hand-constructed) merges an empty telemetry dict
+    rather than raising — additive: no new keys when no train_metrics were recorded."""
+    tm = history.iter_train_metrics
     return [
-        {"stage": stage, "iter": it, **episode_metrics(ep_stats)}
-        for stage, it, ep_stats in history.iterations
+        {"stage": stage, "iter": it, **episode_metrics(ep_stats), **(tm[i] if i < len(tm) else {})}
+        for i, (stage, it, ep_stats) in enumerate(history.iterations)
     ]
 
 
@@ -392,9 +396,23 @@ class CurriculumHistory:
 
     iterations: list[tuple[str, int, tuple[EpisodeStat, ...]]] = field(default_factory=list)
     promotions: list[tuple[str, int, str]] = field(default_factory=list)
+    # #816: per-iteration training telemetry (e.g. epochs_run, the applied entropy_coef),
+    # appended in lockstep with ``iterations`` by ``record``. Kept in a PARALLEL list rather
+    # than widening the ``iterations`` 3-tuple, so every existing ``iterations``-tuple unpacker
+    # and the determinism canary (which compares ``iterations``) are untouched. Empty dict when
+    # a record carries no train_metrics, so the two lists stay index-aligned.
+    iter_train_metrics: list[dict[str, float]] = field(default_factory=list)
 
-    def record(self, stage_name: str, it: int, ep_stats: Sequence[EpisodeStat]) -> None:
+    def record(
+        self,
+        stage_name: str,
+        it: int,
+        ep_stats: Sequence[EpisodeStat],
+        *,
+        train_metrics: Mapping[str, float] | None = None,
+    ) -> None:
         self.iterations.append((stage_name, it, tuple(ep_stats)))
+        self.iter_train_metrics.append(dict(train_metrics or {}))
 
     def note_promotion(self, stage_name: str, it: int, *, by: str) -> None:
         self.promotions.append((stage_name, it, by))
