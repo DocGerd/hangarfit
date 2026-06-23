@@ -5,7 +5,7 @@ disable-model-invocation: true
 argument-hint: issue=<N> slug=<kebab-slug> [title="<PR title>"]
 ---
 
-Drive committed feature work through the hangarfit per-PR review arc (CLAUDE.md §Branching / §Per-PR process / §Issues). This skill manages the PR *lifecycle* — it does **not** write the feature; the implementation is already committed (or staged) on your branch before you invoke it. It **delegates the review** to the `pr-review-toolkit:review-pr` skill; it never reimplements a review checklist, and it **never merges**.
+Drive committed feature work through the hangarfit per-PR review arc (CLAUDE.md §Branching / §Per-PR process / §Issues). This skill manages the PR *lifecycle* — it does **not** write the feature; the implementation is already committed on your branch before you invoke it. It **delegates the review** to the `pr-review-toolkit:review-pr` skill; it never reimplements a review checklist, and it **never merges**.
 
 **Arguments from the invocation**: $ARGUMENTS
 
@@ -39,7 +39,7 @@ If any argument is missing or invalid, stop immediately and print a clear error 
 
 ## Step 3 — Ensure you are on `feature/<slug>` off `develop`
 
-- If the current branch is `develop` (or any protected branch), create the feature branch: `git switch -c feature/<slug>` — but only if there are no uncommitted changes that belong elsewhere. NEVER work or push directly on `develop`/`main`.
+- If the current branch is `develop`/`main` (or any protected branch): create the feature branch **only if the working tree is clean** (`git switch -c feature/<slug>`); if there are uncommitted changes, STOP per Failure-mode 4 rather than carry them onto a new branch. NEVER work or push directly on `develop`/`main`. (If you are already on the target `feature/<slug>`, there is nothing to create — skip to the ancestor check below.)
 - If already on a `feature/*` branch, verify it is based on `develop`:
   ```bash
   git merge-base --is-ancestor origin/develop HEAD || echo "BRANCH IS BEHIND develop"
@@ -67,8 +67,8 @@ About to open a DRAFT pull request:
 [ ] 2. gh pr create --draft --base develop  (body: "Closes #<issue>")
        title:     <title or derived>
        assignee:  DocGerd
-       labels:    <labels>
-       milestone: <none | resolved title>
+       label:     <derived from the issue, or omit if none apply>
+       milestone: <omit — usually the user assigns>
 
 Confirm? Type YES to proceed, anything else to abort.
 ```
@@ -78,32 +78,24 @@ Wait for user input. Proceed only on exactly `YES` (case-sensitive). Any other r
 ## Step 6 — Open the PR as a DRAFT
 
 ```bash
-git push -u origin feature/<slug>
+git push -u origin HEAD          # pushes the current branch
 gh pr create --draft --base develop \
   --title "<title>" \
   --body "Closes #<issue>
 
 <short description of the change and how it was verified>" \
   --assignee DocGerd \
-  --label <label>
+  --label <labels-from-issue>   # omit this flag entirely if no label applies
 ```
 
 - `Closes #<issue>` / `Fixes #<issue>` goes in the **body**, not the title (only body syntax auto-closes).
 - A PR stays a **draft** until its review arc is clean — draft signals "not yet for the human's attention."
-- Set `--assignee`/`--label`/`--milestone` at create time (these flags work). For a **milestone**, `gh pr create --milestone` wants the **title string** — look it up with `gh api 'repos/DocGerd/hangarfit/milestones?state=all&per_page=100'` (paginates at 30; a fresh milestone hides past page 1). If milestone assignment is the user's call, omit it.
+- Set `--assignee`/`--label`/`--milestone` at create time (these flags work). **Labels:** derive from the tracking issue (extend the Step 2 lookup with `.labels[].name`) or pick from the repo's `type`×`area`×`status` taxonomy, one per repeated `--label` — `gh` **errors on a non-existent label**, so omit the flag rather than guess. **Milestone — note the title/number asymmetry:** the create-time `--milestone` flag wants the milestone **title string** (look it up with `gh api 'repos/DocGerd/hangarfit/milestones?state=all&per_page=100'` — paginates at 30, a fresh milestone hides past page 1), whereas the REST PATCH fallback (next bullet) wants its **number**. If milestone assignment is the user's call, omit it.
 - Post-creation metadata fixes go via REST PATCH (`gh pr edit --milestone`/`--assignee` are broken here): `gh api -X PATCH repos/DocGerd/hangarfit/issues/<PR_NUMBER> -F milestone=<NUMBER> -f 'assignees[]=DocGerd'` (the REST API wants the milestone **number**, not the title).
 
 ## Step 7 — Run the review arc (DELEGATED)
 
-Invoke the **`pr-review-toolkit:review-pr`** skill (the `/pr-review` command) on this PR. Do NOT inline a review checklist — delegate. That skill runs the mandated `pr-review-toolkit:code-reviewer` main pass plus the applicable specialists; ensure the topical ones fire for what this PR touches:
-
-- `pr-review-toolkit:comment-analyzer` — PRs that meaningfully change docs (README, CLAUDE.md, docstrings).
-- `pr-review-toolkit:silent-failure-hunter` — loader / collision code.
-- `pr-review-toolkit:type-design-analyzer` — `models.py`.
-- `geometry-invariant-guard` — `geometry.py` / `collisions.py`.
-- `determinism-guard` — `solver.py` / `towplanner.py`.
-- `ml-rl-guard` — `ml/*.py` / `tests/ml/`.
-- `scene-schema-guard` — `scene.py` / `viewer.py` / `viewer/src/*.ts`.
+Invoke the **`pr-review-toolkit:review-pr`** skill (the `/pr-review` command) on this PR — do **not** inline a review checklist. That skill runs the mandated `pr-review-toolkit:code-reviewer` main pass and **selects the applicable topical specialists itself**, based on which files this PR touches, from the authoritative **`## Subagents`** roster in [`CLAUDE.md`](../../CLAUDE.md). Do **not** duplicate that roster here — it drifts as the project adds guards over time. CLAUDE.md is the single source of truth for which guard fires on which path.
 
 Review subagents must stay **read-only** in the shared checkout — point them at `origin/<branch>` refs (`gh pr diff <n>`); never `git switch`/`stash` in place.
 
@@ -113,7 +105,7 @@ Convert **each** finding into its own review thread anchored on the diff line �
 
 ## Step 9 — Resolve every thread
 
-For each thread: **fix the code** (preferred — commit + push) or reply with rationale, then explicitly mark it resolved via the GraphQL `resolveReviewThread` mutation (a reply alone does NOT resolve; read threads via the `pullRequest.reviewThreads` GraphQL path). Leave an auditable trace ON the PR — a submitted review summary naming the subagents run and the outcome, even for a clean pass.
+For each thread: **fix the code** (preferred — commit + push) or reply with rationale, then explicitly mark it resolved via the GraphQL `resolveReviewThread` mutation (a reply alone does NOT resolve; read threads via the `pullRequest.reviewThreads` GraphQL path). Fix commits carry the standard `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>` trailer (matching the other skills). Leave an auditable trace ON the PR — a submitted review summary naming the subagents run and the outcome, even for a clean pass.
 
 ## Step 10 — Re-review if non-trivial, then flip to ready and hand off
 
