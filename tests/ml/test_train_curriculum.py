@@ -93,6 +93,9 @@ def test_train_curriculum_is_deterministic():
     h2 = train_curriculum(seed=0, schedule=sched, rollout_len=16)
     assert h1.promotions == h2.promotions
     assert h1.iterations == h2.iterations
+    # #816: the parallel telemetry is also deterministic (epochs_run is target_kl-driven but
+    # reproducible on the fixed-seed serial path; entropy_coef is a pure computed value).
+    assert h1.iter_train_metrics == h2.iter_train_metrics
 
 
 def test_train_curriculum_promotes_by_competency_then_advances():
@@ -1689,3 +1692,44 @@ def test_curriculum_jsonl_carries_epochs_run_and_entropy_coef(n_envs):
     for r in recs:
         assert isinstance(r["epochs_run"], float) and r["epochs_run"] >= 1.0
         assert r["entropy_coef"] == pytest.approx(0.01)  # PPOConfig default, no anneal
+
+
+def test_jsonl_entropy_coef_is_the_applied_floored_value_not_the_base(monkeypatch):
+    # The decisive #816 x #815 test: the JSONL must carry the APPLIED per-iteration coef
+    # (it_cfg.entropy_coef, post-anneal + post-floor) — not the base cfg.entropy_coef. Stubs
+    # ppo_update (returning epochs_run) + empty rollouts so the loop caps; then reads the
+    # entropy_coef straight out of history_metric_records. t1 is the frontier rung: its tail
+    # anneal (0.005) must show FLOORED to 0.02 in the JSONL, while t0 shows the bare anneal.
+    import ml.train as train_mod
+    from ml.curriculum import history_metric_records
+    from ml.ppo import PPOConfig, RolloutBuffer
+
+    def stub_update(policy, optimizer, buf, config, *, normalizer=None):
+        return {
+            "policy_loss": 0.0,
+            "value_loss": 0.0,
+            "entropy": 0.0,
+            "loss": 0.0,
+            "epochs_run": 1.0,
+        }
+
+    def empty_rollout(env, policy, enc, rollout_len, *, sample_request=None):
+        return RolloutBuffer(), []
+
+    monkeypatch.setattr(train_mod, "ppo_update", stub_update)
+    monkeypatch.setattr(train_mod, "collect_rollout", empty_rollout)
+
+    sched = _tiny_schedule(threshold=2.0)
+    sched = CurriculumSchedule(stages=sched.stages, policy=replace(sched.policy, max_iters=3))
+    cfg = PPOConfig(
+        entropy_coef_start=0.05,
+        entropy_coef_end=0.005,
+        entropy_anneal_iters=2,
+        entropy_floor=0.02,
+        entropy_floor_rungs=("t1",),
+    )
+    recs = history_metric_records(train_curriculum(seed=0, schedule=sched, rollout_len=8, ppo=cfg))
+    t0 = [r["entropy_coef"] for r in recs if r["stage"] == "t0"]
+    t1 = [r["entropy_coef"] for r in recs if r["stage"] == "t1"]
+    assert t0 == pytest.approx([0.05, 0.0275, 0.005])  # non-frontier: bare anneal in the JSONL
+    assert t1 == pytest.approx([0.05, 0.0275, 0.02])  # frontier: FLOORED applied value, not 0.005

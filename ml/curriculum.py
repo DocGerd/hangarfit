@@ -398,9 +398,9 @@ class CurriculumHistory:
     promotions: list[tuple[str, int, str]] = field(default_factory=list)
     # #816: per-iteration training telemetry (e.g. epochs_run, the applied entropy_coef),
     # appended in lockstep with ``iterations`` by ``record``. Kept in a PARALLEL list rather
-    # than widening the ``iterations`` 3-tuple, so every existing unpacker and the determinism
-    # canary (which compares ``iterations``) are untouched. Empty dict when a record carries
-    # no train_metrics, so the two lists stay index-aligned.
+    # than widening the ``iterations`` 3-tuple, so every existing ``iterations``-tuple unpacker
+    # and the determinism canary (which compares ``iterations``) are untouched. Empty dict when
+    # a record carries no train_metrics, so the two lists stay index-aligned.
     iter_train_metrics: list[dict[str, float]] = field(default_factory=list)
 
     def record(

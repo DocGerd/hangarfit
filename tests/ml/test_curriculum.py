@@ -182,6 +182,21 @@ def test_history_metric_records_default_neutral_without_train_metrics():
     assert "epochs_run" not in rec and "entropy_coef" not in rec
 
 
+def test_history_metric_records_index_guards_short_train_metrics():
+    # Defensive (documented back-compat): a hand-built / pre-#816-deserialized history whose
+    # iter_train_metrics is SHORTER than iterations merges an empty telemetry dict for the
+    # unguarded tail rather than raising IndexError. record() keeps them in lockstep, so this
+    # branch is only reachable by direct construction — pin it so a refactor can't drop it.
+    h = CurriculumHistory()
+    h.iterations.append(("s0", 0, ()))
+    h.iterations.append(("s0", 1, ()))
+    h.iter_train_metrics = [{"epochs_run": 2.0}]  # one short of iterations
+    recs = history_metric_records(h)
+    assert len(recs) == 2
+    assert recs[0]["epochs_run"] == 2.0
+    assert "epochs_run" not in recs[1]  # index-guarded tail -> empty, no IndexError
+
+
 def test_curriculum_schedule_default_is_the_committed_ladder():
     sched = CurriculumSchedule.default()
     assert sched.stages == DEFAULT_LADDER
