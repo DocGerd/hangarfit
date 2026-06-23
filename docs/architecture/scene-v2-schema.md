@@ -239,3 +239,36 @@ part, `::test_build_scene_v2_byte_deterministic_with_polygon`). A polygon box's
 `vertices` come straight from the load-time-canonicalized `Part.local_vertices`
 (CCW, lex-min start — ADR-0024), so two equivalent author orderings produce a
 byte-identical scene.
+
+## The multi-solution compare container (NOT part of scene/v2)
+
+`hangarfit view --solve --alternatives N` (#666) carries several solver
+alternatives in **one** offline HTML so a human can switch between them. This is a
+**viewer-HTML-level wrapper, deliberately layered _over_ N independent scene/v2
+documents — it is not part of this schema.** It rides in a separate
+`<script type="application/json" id="solutions">` blob (the single-scene viewer keeps
+its `id="scene"` blob), with shape:
+
+```jsonc
+{
+  "schema": "hangarfit.viewer-compare/v1",
+  "count_requested": 3,        // the --alternatives N the user asked for
+  "count_found": 2,            // diverse solutions actually found ("Found n of N")
+  "solutions": [
+    { "label": "#1",
+      "scene": { /* a full, standalone hangarfit.scene/v2 doc */ },
+      "summary": { "min_gap_m": 1.23, "planes_moved_vs_first": 0,
+                   "mean_shift_m": 0.0, "routable": true } },
+    // …
+  ]
+}
+```
+
+Keeping the container out of scene/v2 is deliberate: `scene.build_scene` (and its
+byte-determinism + the `scene-contract.ts` key-parity guard) stay untouched, and each
+carried `scene` is **byte-identical** to a standalone single-solution render of that
+layout (ADR-0003) — the container is purely additive. The `summary` numbers are the
+same compare metrics `solve` narrates (`cli._placement_delta`, the diagnostics
+`min_pairwise_gap_m`). The viewer reads this blob into the `CompareManifest` interface
+(`viewer/src/scene-contract.ts`), which — being viewer-only — is **not** checked against
+any Python key set.

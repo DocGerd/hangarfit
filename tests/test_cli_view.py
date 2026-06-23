@@ -356,3 +356,53 @@ def test_view_check_populates_conflicts(tmp_path):
     assert block is not None
     scene = json.loads(block.group(1))
     assert scene["conflicts"]  # non-empty — the overlay is wired, not ignored
+
+
+# ── #666 multi-solution compare ─────────────────────────────────────────────
+
+SCENARIO = "tests/fixtures/scenario_minimal.yaml"
+
+
+def test_view_alternatives_without_solve_errors(tmp_path, capsys):
+    # --alternatives only makes sense when solving; a hand-authored layout is a
+    # single arrangement. Fail loud (rc 2), don't silently ignore.
+    rc = main(["view", NESTING, "-o", str(tmp_path / "x.html"), "--alternatives", "3"])
+    assert rc == 2
+    assert "requires --solve" in capsys.readouterr().err
+
+
+def test_view_alternatives_below_one_errors(tmp_path, capsys):
+    rc = main(["view", "--solve", SCENARIO, "-o", str(tmp_path / "x.html"), "--alternatives", "0"])
+    assert rc == 2
+    assert "must be >= 1" in capsys.readouterr().err
+
+
+def test_view_solve_alternatives_writes_compare_html(tmp_path, capsys):
+    import json
+    import re
+
+    out = tmp_path / "cmp.html"
+    rc = main(["view", "--solve", SCENARIO, "-o", str(out), "--alternatives", "3", "--seed", "0"])
+    assert rc == 0
+    html = out.read_text(encoding="utf-8")
+    block = re.search(r'id="solutions">(.*?)</script>', html, re.S)
+    assert block is not None  # the compare manifest blob, not the single #scene blob
+    manifest = json.loads(block.group(1))
+    assert manifest["schema"] == "hangarfit.viewer-compare/v1"
+    assert manifest["count_requested"] == 3
+    assert manifest["count_found"] >= 2  # >=2 diverse layouts → compare path taken
+    # Each carried scene is a full scene/v2 doc; #1 has no moved-vs-first shift.
+    assert manifest["solutions"][0]["scene"]["schema"] == "hangarfit.scene/v2"
+    assert manifest["solutions"][0]["summary"]["planes_moved_vs_first"] == 0
+    assert "compare viewer" in capsys.readouterr().out
+
+
+def test_view_solve_single_alternative_uses_single_render(tmp_path):
+    # alternatives defaults to 1 → the byte-identical single render path (#scene blob,
+    # no #solutions container, no compare chrome).
+    out = tmp_path / "single.html"
+    rc = main(["view", "--solve", SCENARIO, "-o", str(out), "--seed", "0"])
+    assert rc == 0
+    html = out.read_text(encoding="utf-8")
+    assert 'id="scene"' in html
+    assert 'id="solutions"' not in html

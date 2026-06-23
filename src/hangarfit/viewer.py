@@ -57,10 +57,22 @@ def _embed_brand() -> str:
     )
 
 
-def render_viewer(scene: dict, output_path: Path | str) -> None:
-    """Write a single self-contained, offline HTML viewer for ``scene`` to
-    ``output_path``. ``scene`` is a ``hangarfit.scene/v2`` dict from
-    :func:`hangarfit.scene.build_scene`."""
+# The viewer-compare container (#666). This is a viewer-HTML-level wrapper layered
+# OVER N independent ``hangarfit.scene/v2`` docs — it is deliberately NOT part of
+# the scene/v2 schema, so ``scene.build_scene`` (and its byte-determinism + the
+# scene-contract.ts key-parity guard) stay untouched. The viewer reads it from a
+# separate ``<script id="solutions">`` blob instead of the single-mode ``#scene``.
+_COMPARE_SCHEMA = "hangarfit.viewer-compare/v1"
+
+
+def _assemble_html(*, extra_head: str, hud_html: str, data_scripts: str) -> str:
+    """Assemble the shared self-contained viewer HTML skeleton.
+
+    ``data_scripts`` is the JSON ``<script>`` payload that the bundle consumes —
+    the single ``#scene`` blob, or the multi ``#solutions`` compare manifest. The
+    BRAND blob, importmap, canvas/HUD shell, and inlined bundle are common to both
+    modes; ``extra_head`` is an optional extra ``<head>`` fragment (empty in single
+    mode, so single output is template-identical)."""
     three_src = _asset_text(_THREE, "three.module.js")
     orbit_src = _asset_text(_THREE, "OrbitControls.js")
     viewer_js = _asset_text(_ASSETS, "viewer.js")
@@ -71,12 +83,13 @@ def render_viewer(scene: dict, output_path: Path | str) -> None:
             "three/addons/controls/OrbitControls.js": _data_url(orbit_src),
         }
     }
-    html = (
+    return (
         "<!DOCTYPE html>\n"
         '<html lang="en"><head><meta charset="utf-8">\n'
         '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
         "<title>hangarfit — 3D viewer</title>\n"
         f"<style>{_CSS}</style>\n"
+        f"{extra_head}"
         f'<script type="importmap">{json.dumps(import_map)}</script>\n'
         "</head><body>\n"
         '<div id="app"><canvas id="c"></canvas></div>\n'
@@ -84,14 +97,57 @@ def render_viewer(scene: dict, output_path: Path | str) -> None:
         # #401 honesty banner: static text (not user data), shown by viewer.js
         # when scene.placeholder is true. Same wording as the 2D PNG.
         f'<div id="placeholder" hidden>{metrics.PLACEHOLDER_BANNER}</div>\n'
-        f'<div id="hud">{_HUD}</div>\n'
+        f'<div id="hud">{hud_html}</div>\n'
         # The canonical BRAND token blob (#419), separate from the scene blob so
         # the scene/v2 schema stays unchanged. viewer.js reads its colours from
         # here instead of hard-coding 0x literals.
         f'<script type="application/json" id="brand">{_embed_brand()}</script>\n'
-        f'<script type="application/json" id="scene">{_embed_json(scene)}</script>\n'
+        f"{data_scripts}"
         f'<script type="module">{viewer_js}</script>\n'
         "</body></html>\n"
+    )
+
+
+def render_viewer(scene: dict, output_path: Path | str) -> None:
+    """Write a single self-contained, offline HTML viewer for ``scene`` to
+    ``output_path``. ``scene`` is a ``hangarfit.scene/v2`` dict from
+    :func:`hangarfit.scene.build_scene`."""
+    data = f'<script type="application/json" id="scene">{_embed_json(scene)}</script>\n'
+    html = _assemble_html(extra_head="", hud_html=_HUD, data_scripts=data)
+    Path(output_path).write_text(html, encoding="utf-8")
+
+
+def render_compare_viewer(
+    solutions: list[dict],
+    output_path: Path | str,
+    *,
+    count_requested: int,
+) -> None:
+    """Write a self-contained, offline 3D viewer carrying N solver alternatives
+    for side-by-side comparison (#666).
+
+    Each ``solutions`` entry is a dict ``{"label": str, "scene": <scene/v2 dict>,
+    "summary": {...}}`` where ``scene`` comes from :func:`hangarfit.scene.build_scene`
+    (so every alternative's scene bytes are byte-identical to a standalone render —
+    the multi-scene container is purely additive, ADR-0003) and ``summary`` carries
+    the per-solution compare metrics (min gap, planes-moved-vs-#1, routability).
+
+    ``count_requested`` is the ``--alternatives N`` the user asked for; when fewer
+    diverse solutions exist the manifest records both so the viewer can label
+    "Found n of N" (mirroring ``solve``)."""
+    if not solutions:
+        raise ValueError("render_compare_viewer requires at least one solution")
+    manifest = {
+        "schema": _COMPARE_SCHEMA,
+        "count_requested": count_requested,
+        "count_found": len(solutions),
+        "solutions": list(solutions),
+    }
+    data = f'<script type="application/json" id="solutions">{_embed_json(manifest)}</script>\n'
+    html = _assemble_html(
+        extra_head=f"<style>{_CSS_COMPARE}</style>\n",
+        hud_html=_HUD_COMPARE,
+        data_scripts=data,
     )
     Path(output_path).write_text(html, encoding="utf-8")
 
@@ -149,4 +205,22 @@ _HUD = (
     '<label><input id="paths" type="checkbox" checked> paths</label>'
     '<span id="readouts"></span>'
     '<span id="legend"></span>'
+)
+# #666 compare HUD: a solution switcher (dropdown, also ←/→ keys) prepended to the
+# standard HUD, plus a per-solution metrics readout. The <select> ships empty —
+# viewer.js fills its options from the #solutions manifest at load (the labels are
+# built by the pure, node-tested compare.ts). Only emitted by render_compare_viewer,
+# so single-mode HUD bytes are unchanged.
+_HUD_COMPARE = (
+    '<label id="cmp-label">solution '
+    '<select id="compare" title="compare alternatives (←/→ keys)"></select></label>'
+    '<span id="compare-metrics"></span>' + _HUD
+)
+# Compare-only chrome, emitted as an extra <style> by render_compare_viewer so the
+# single-mode <style> block (and its byte output) is untouched. Sourced from the
+# same brand tokens as _CSS (#419) — no drift.
+_CSS_COMPARE = (
+    f"#cmp-label{{font:500 13px {brand.FONT_SANS}}}"
+    f"#compare-metrics{{font-family:{brand.FONT_MONO};"
+    f'font-feature-settings:"tnum" 1,"zero" 1;color:{brand.READOUTS_TEXT}}}'
 )
