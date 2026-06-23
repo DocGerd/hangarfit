@@ -5,6 +5,7 @@ ObservationTensors -> batched-tensor adapter. Requires the [train] extra (torch)
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 
@@ -43,6 +44,32 @@ class PolicyOutput:
         assert self.kind_gear_logits.shape[-1] == ACTION_DIM
         assert self.magnitude_bin_logits.shape[-1] == MAGNITUDE_DIM
         assert self.kind_gear_logits.shape[0] == self.value.shape[0]
+
+
+def _sincos_pos_2d(h: int, w: int, d_model: int) -> Tensor:
+    """Fixed (non-learned) 2D sin/cos positional encoding for an ``h × w`` grid,
+    flattened ROW-MAJOR to ``(h*w, d_model)`` so cell index ``row*w + col`` matches
+    ``Tensor.flatten(2)``. The first ``d_model/2`` channels encode the row, the second
+    half the column. Deterministic (no RNG). Requires ``d_model % 4 == 0``."""
+    if d_model % 4 != 0:
+        raise ValueError(f"_sincos_pos_2d needs d_model % 4 == 0, got {d_model}")
+    d_half = d_model // 2
+
+    def _1d(length: int, dim: int) -> Tensor:
+        pos = torch.arange(length, dtype=torch.float32).unsqueeze(1)  # (length, 1)
+        idx = torch.arange(0, dim, 2, dtype=torch.float32)  # (dim/2,)
+        div = torch.exp(-math.log(10000.0) * idx / dim)  # (dim/2,)
+        out = torch.zeros(length, dim, dtype=torch.float32)
+        out[:, 0::2] = torch.sin(pos * div)
+        out[:, 1::2] = torch.cos(pos * div)
+        return out
+
+    row_pe = _1d(h, d_half)  # (h, d_half)
+    col_pe = _1d(w, d_half)  # (w, d_half)
+    grid = torch.zeros(h, w, d_model, dtype=torch.float32)
+    grid[:, :, :d_half] = row_pe.unsqueeze(1)  # row varies along dim 0
+    grid[:, :, d_half:] = col_pe.unsqueeze(0)  # col varies along dim 1
+    return grid.reshape(h * w, d_model)  # row-major flatten
 
 
 def to_batch(

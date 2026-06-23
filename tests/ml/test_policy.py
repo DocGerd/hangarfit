@@ -8,7 +8,7 @@ torch = pytest.importorskip("torch")  # whole module skips without the [train] e
 
 from hangarfit.models import Placement  # noqa: E402
 from ml.encoding import EncoderConfig, encode  # noqa: E402
-from ml.policy import HangarFitPolicy, PolicyOutput, to_batch  # noqa: E402
+from ml.policy import HangarFitPolicy, PolicyOutput, _sincos_pos_2d, to_batch  # noqa: E402
 from ml.types import ActiveObject, Observation, Park, ParkedObject, Pose, Primitive  # noqa: E402
 from tests.ml.conftest import _fuji, empty_hangar  # noqa: E402
 
@@ -221,3 +221,28 @@ def test_to_batch_rejects_mixed_full_and_trimmed_rasters():
     sb = static_block(h, c)
     with pytest.raises(ValueError, match="mix"):
         to_batch([dyn, full], static_block=sb)  # obs[0] trimmed, obs[1] full
+
+
+# ---------------------------------------------------------------------------
+# #809: spatial-token cross-attention policy — fixed sin/cos 2D PE helper
+# ---------------------------------------------------------------------------
+
+
+def test_sincos_pos_2d_shape_finite_deterministic():
+    pe = _sincos_pos_2d(24, 12, 64)
+    assert pe.shape == (24 * 12, 64)
+    assert pe.dtype == torch.float32
+    assert torch.isfinite(pe).all()
+    assert torch.equal(pe, _sincos_pos_2d(24, 12, 64))  # no RNG -> identical
+
+
+def test_sincos_pos_2d_row_major_distinct_cells():
+    pe = _sincos_pos_2d(24, 12, 64)
+    # row-major: index = row*w + col. (0,0)=0, (0,1)=1, (1,0)=12 must all differ.
+    assert not torch.equal(pe[0], pe[1])
+    assert not torch.equal(pe[0], pe[12])
+
+
+def test_sincos_pos_2d_requires_d_model_div4():
+    with pytest.raises((AssertionError, ValueError)):
+        _sincos_pos_2d(24, 12, 66)
