@@ -17,6 +17,11 @@ environment + reward (`HangarFitEnv`), reusing `hangarfit`'s geometry oracle.
   above) across the frozen reach-not-beat benchmark set and print the
   side-by-side both-rates table against the recorded RR-MC baseline (needs the
   `[train]` extra / torch).
+- `python -m ml.reach_rate [--policy P]` — the **statistical reach-rate harness**
+  (#711): sample a population of fill scenarios and report **reach-rate ± Wilson CI**
+  per scenario-kind for multi-alternative RR-MC and (with `--policy P`) a trained
+  policy. The RR-MC arm is torch-free; `--policy` needs `[train]`. See "Statistical
+  reach-rate (#711)" below for the methodology + budget.
 
 ### Vectorized training (#708)
 
@@ -71,6 +76,43 @@ oracle — the single shared `layout_valid` oracle is now used by both the env
 reward and `ml/eval` (the prior over-enforcement of the inert maintenance bay
 was fixed in 4c-ii, #694). Fixed-obstacle pre-placements from
 `Scenario.fixed_obstacle_placements` are honoured by the env since 4c-ii (#693).
+
+## Statistical reach-rate (#711)
+
+`ml/benchmark.py` + `ml/eval.py` answer a **binary** question on **4 frozen** scenarios:
+"does RR-MC / the policy reach *these*?" `ml/reach_rate.py` lifts that to a **rate** over a
+**sampled population**: reach-rate ± **Wilson** CI per scenario-kind, for both arms. Both
+arms judge reach by the **same** predicate the bench uses — the product checker
+(`geometry_oracle.layout_valid` = `collisions.check` + Caddy egress, #694) **and**
+routable-by-construction (`plan_fill` gives every placeable body a real tow path) — never
+the env oracle's parked-score validity.
+
+- **Population (v1):** `sample_population` draws fill scenarios that vary the **fleet subset**
+  (`k ∈ [k_min, k_max]` aircraft from a pool) on a fixed roomy hangar, deterministic in `seed`.
+  Varying hangar geometry / GO placements (the issue's other axes) is a documented extension.
+- **Multi-alternative RR-MC:** `rrmc_reach_multi` solves for `--alternatives N` and counts
+  RR-MC-reached if **any** candidate is valid + fully routable — strictly stronger than
+  `benchmark.rrmc_reach` (`alternatives=1`, best-spread only). Load-bearing the moment the
+  solver yields valid-but-**un**routable dense layouts.
+- **Multi-sample policy:** `policy_reach_count` rolls the policy out `--samples M` times per
+  scenario (stochastic, seeded per sample) so its rate carries variance for the CI.
+- **Wilson CI** (not normal-approx) because a reach-rate sits at the 0/1 extremes, where the
+  normal interval gives negative / zero-width bounds.
+
+```bash
+# RR-MC reach-rate over a small sampled population (torch-free).
+python -m ml.reach_rate --scenarios 8 --k-min 2 --k-max 4 --alternatives 4 --max-restarts 16
+# …plus the policy arm from a trained checkpoint (needs [train]).
+python -m ml.reach_rate --scenarios 8 --policy model.pt --samples 16
+```
+
+**Budget (the issue's cost caveat).** RR-MC reach is the expensive arm (a `solve` + `plan_fill`
+per scenario, ≈10 s/restart on dense anchors — 200 restarts was "unrunnable", ≈30–50 min/anchor).
+So the harness defaults to a **small** population at a **modest** restart budget, and a
+large-population RR-MC baseline is meant to be recorded once and **frozen** (mirroring the
+`bench_baseline.json` freeze, spec D4); pre-register the population `seed` + budgets before
+measuring so the policy-vs-RR-MC comparison can't go circular. The policy arm is cheap (rollouts,
+no solver), so it affords a larger population × more samples.
 
 ## Training knobs (4c-ii)
 
