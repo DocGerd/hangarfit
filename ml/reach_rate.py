@@ -214,6 +214,7 @@ def policy_reach_count(scenario: Scenario, policy, *, samples: int, seed: int = 
     (imported lazily)."""
     import torch
 
+    from ml.benchmark import _verdict_from  # single-source the spec §4 reach predicate
     from ml.encoding import EncoderConfig, encode
 
     enc = EncoderConfig()
@@ -237,13 +238,20 @@ def policy_reach_count(scenario: Scenario, policy, *, samples: int, seed: int = 
                 )
                 obs, _reward, done, info = env.step(action)
                 max_swept = max(max_swept, info.terms.get("hard_swept", 0.0))
-        if (
-            info is not None
-            and done
-            and info.placed == info.total
-            and max_swept == 0.0
-            and go.layout_valid(env._layout())
-        ):
+        if info is None:
+            continue  # a 0-step episode (no placeable bodies) never reaches
+        # Build the verdict via the bench's predicate (NOT an inline copy) so the env-oracle-
+        # vs-product-checker contract (#694) stays single-sourced: final_valid is the PRODUCT
+        # checker on the terminal layout, never info.valid.
+        final_valid = go.layout_valid(env._layout()) if done else False
+        verdict = _verdict_from(
+            parked=info.placed,
+            total=info.total,
+            done=done,
+            final_valid=final_valid,
+            max_swept=max_swept,
+        )
+        if verdict.reached:
             reached += 1
     return reached
 
@@ -280,10 +288,12 @@ def policy_population_rates(
     population: Sequence[SampledScenario], policy, *, samples: int, seed: int = 0
 ) -> dict[str, ReachRate]:
     """Policy reach-rate ± CI per kind: each scenario contributes ``samples`` Bernoulli
-    trials (stochastic rollouts) to its kind's rate."""
+    trials (stochastic rollouts) to its kind's rate. The per-scenario seed folds in the
+    scenario index, so two scenarios with an identical fleet subset still draw independent
+    rollout noise (while staying fully reproducible in ``seed``)."""
     pairs: list[tuple[str, bool]] = []
-    for ss in population:
-        r = policy_reach_count(ss.scenario, policy, samples=samples, seed=seed)
+    for idx, ss in enumerate(population):
+        r = policy_reach_count(ss.scenario, policy, samples=samples, seed=seed + idx)
         pairs.extend((ss.kind, True) for _ in range(r))
         pairs.extend((ss.kind, False) for _ in range(samples - r))
     return aggregate(pairs)
@@ -324,6 +334,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     p.add_argument(
         "--samples", type=int, default=8, help="stochastic rollouts per scenario, policy arm"
     )
+    # Policy architecture (must match the checkpoint's), mirroring ml.eval's flags so a
+    # checkpoint trained at a non-default size loads instead of failing load_state_dict.
+    p.add_argument("--d-model", type=int, default=128)
+    p.add_argument("--n-layers", type=int, default=2)
+    p.add_argument("--n-heads", type=int, default=4)
     args = p.parse_args(argv)
 
     population = sample_population(
@@ -351,7 +366,14 @@ def main(argv: Sequence[str] | None = None) -> None:
     if args.policy is not None:
         from ml.eval import load_policy
 
-        policy = load_policy(args.policy)
+        policy = load_policy(
+            args.policy,
+            policy_kwargs={
+                "d_model": args.d_model,
+                "n_layers": args.n_layers,
+                "n_heads": args.n_heads,
+            },
+        )
         pol = policy_population_rates(population, policy, samples=args.samples, seed=args.seed)
         _print_rates(f"policy reach-rate ({args.samples} samples/scenario)", pol)
 

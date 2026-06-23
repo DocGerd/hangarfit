@@ -108,6 +108,7 @@ def test_sample_population_rejects_k_over_pool():
 # ── multi-alternative RR-MC ──────────────────────────────────────────────────
 
 
+@pytest.mark.slow
 def test_rrmc_reach_multi_reaches_an_easy_two_plane_fill():
     # A 2-plane fill on the roomy test hangar is trivially valid+routable; RR-MC reaches it
     # at a small budget. (Fast: 2 planes, few restarts.)
@@ -118,6 +119,7 @@ def test_rrmc_reach_multi_reaches_an_easy_two_plane_fill():
     assert reached is True
 
 
+@pytest.mark.slow
 def test_rrmc_reach_multi_is_deterministic():
     ss = sample_population(n=1, k_min=2, k_max=2, seed=3)[0]
     kw = dict(alternatives=2, max_restarts=4, tow_max_expansions=2000, seed=0)
