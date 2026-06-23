@@ -62,6 +62,7 @@ from ml.ppo import (
     VecRolloutBuffer,
     entropy_coef_at,
     factored_logprob_entropy,
+    iter_entropy_coef,
     ppo_update,
     sample_action,
 )
@@ -500,16 +501,8 @@ def train_curriculum(
             for it in range(ceiling):
                 # Per-rung entropy schedule: `it` resets to 0 each stage, so each rung
                 # re-warms from entropy_coef_start (the intended high→low warmup per rung).
-                it_cfg = replace(
-                    cfg,
-                    entropy_coef=entropy_coef_at(
-                        it,
-                        base=cfg.entropy_coef,
-                        start=cfg.entropy_coef_start,
-                        end=cfg.entropy_coef_end,
-                        anneal_iters=cfg.entropy_anneal_iters,
-                    ),
-                )
+                # #815: floored UP to cfg.entropy_floor on frontier rungs only (inert OFF).
+                it_cfg = replace(cfg, entropy_coef=iter_entropy_coef(cfg, it, stage.name))
                 buf, ep_stats = collect_rollout(
                     env, policy, enc, rollout_len, sample_request=next_request
                 )
@@ -544,17 +537,12 @@ def train_curriculum(
             rung_static_block = static_block(env.hangar, enc)
             with vec_cm as vec:
 
-                def _it_cfg(it: int) -> PPOConfig:
-                    return replace(
-                        cfg,
-                        entropy_coef=entropy_coef_at(
-                            it,
-                            base=cfg.entropy_coef,
-                            start=cfg.entropy_coef_start,
-                            end=cfg.entropy_coef_end,
-                            anneal_iters=cfg.entropy_anneal_iters,
-                        ),
-                    )
+                def _it_cfg(it: int, _stage_name: str = stage.name) -> PPOConfig:
+                    # #815: anneal then frontier-rung-gated entropy floor (inert OFF).
+                    # stage.name is captured as a def-time default arg (the standard B023
+                    # fix): the closure binds THIS stage's name at definition, not by late
+                    # lookup of the loop variable — correct regardless of call-site timing.
+                    return replace(cfg, entropy_coef=iter_entropy_coef(cfg, it, _stage_name))
 
                 if pipeline_update:
                     # #755 (Wave 4, opt-in, NON-deterministic): overlap the next
@@ -740,6 +728,12 @@ def resolve_n_envs(value: str) -> int:
     if n < 1:
         raise argparse.ArgumentTypeError(f"--n-envs must be >= 1, got {n}")
     return n
+
+
+def _comma_split_rungs(value: str) -> tuple[str, ...]:
+    """argparse type for --frontier-rungs: a comma-separated rung-name list → tuple,
+    whitespace-stripped, empties dropped. #815."""
+    return tuple(part.strip() for part in value.split(",") if part.strip())
 
 
 def build_argparser() -> argparse.ArgumentParser:
@@ -993,6 +987,21 @@ def build_argparser() -> argparse.ArgumentParser:
         help="number of iterations over which to anneal entropy_coef (0 = no schedule)",
     )
     p.add_argument(
+        "--entropy-floor",
+        type=float,
+        default=None,
+        help="#815: clamp the annealed entropy coef UP to this on --frontier-rungs only "
+        "(a frontier-scoped exploration floor that holds the high-entropy basin-discovery "
+        "regime). Requires --frontier-rungs and --schedule curriculum.",
+    )
+    p.add_argument(
+        "--frontier-rungs",
+        type=_comma_split_rungs,
+        default=(),
+        help="comma-separated curriculum rung names the --entropy-floor applies to "
+        "(e.g. trio-notch-anchored,trio-notch); empty default => floor inert.",
+    )
+    p.add_argument(
         "--normalize-returns",
         action="store_true",
         help="std-only Welford return normalization before GAE",
@@ -1121,6 +1130,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         entropy_coef_start=args.entropy_start,
         entropy_coef_end=args.entropy_end,
         entropy_anneal_iters=args.entropy_anneal_iters,
+        entropy_floor=args.entropy_floor,
+        entropy_floor_rungs=args.frontier_rungs,
         normalize_returns=args.normalize_returns,
         reward_clip=args.reward_clip,
         value_clip_eps=args.value_clip_eps,
@@ -1146,6 +1157,9 @@ def main(argv: Sequence[str] | None = None) -> None:
             parser.error("--anchor-trio-notch requires --schedule curriculum")
         if args.stop_after_rung is not None:
             parser.error("--stop-after-rung requires --schedule curriculum")
+        if args.entropy_floor is not None or args.frontier_rungs:
+            # The entropy floor is rung-scoped; the trivial path has no rungs.
+            parser.error("--entropy-floor/--frontier-rungs require --schedule curriculum")
         if args.auto_budget or args.auto_budget_max_iters is not None:
             parser.error("--auto-budget/--auto-budget-max-iters require --schedule curriculum")
         if args.n_envs > 1:  # resolve_n_envs floors at 1, so >1 is the only over-floor case
@@ -1165,6 +1179,15 @@ def main(argv: Sequence[str] | None = None) -> None:
             device=args.device,
         )
     else:
+        # #815: a floor with no rung to apply it to is a misconfiguration (the floor would
+        # be inert) — fail LOUD rather than silently no-op a typed flag.
+        if args.entropy_floor is not None and not args.frontier_rungs:
+            parser.error("--entropy-floor requires --frontier-rungs")
+        # The floor RAISES the entropy coef; a non-positive value can never raise a
+        # (non-negative) coef, so it is silently inert. Reject it loud (the off state is the
+        # absent flag, not 0/negative).
+        if args.entropy_floor is not None and args.entropy_floor <= 0:
+            parser.error("--entropy-floor must be > 0")
         sched = CurriculumSchedule.default()
         sched = replace(
             sched,
