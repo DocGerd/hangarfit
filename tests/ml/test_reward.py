@@ -312,3 +312,54 @@ def test_dense_slot_potential_on_lowers_potential_when_misfit_positive():
     # Only the misfit term differs between the two (same dist-to-slot, unplaced, overlap),
     # so the knob-on potential must be STRICTLY lower by exactly the misfit penalty.
     assert potential_at(dense=True) < potential_at(dense=False)
+
+
+# ---------------------------------------------------------------------------
+# #812 — banked marginal valid-coverage credit (r_valid_progress)
+# ---------------------------------------------------------------------------
+
+
+def test_r_valid_progress_default_zero_is_byte_identical():
+    # park_valid True with a count set, but the knob default 0.0 -> no change.
+    ctx = _ctx(park_valid=True, valid_park_count=3)
+    assert step_reward(ctx, RewardWeights()) == step_reward(
+        ctx, RewardWeights(r_valid_progress=0.0)
+    )
+
+
+def test_r_valid_progress_pays_marginal_count_beyond_the_freebie():
+    w = RewardWeights(r_valid_progress=8.0)
+    base = RewardWeights(r_valid_progress=0.0)
+    # 1st valid object (count 1) pays 0; 2nd pays 8; 3rd pays 16 (max(0, n-1) * 8).
+    for count, expected in ((1, 0.0), (2, 8.0), (3, 16.0)):
+        ctx = _ctx(park_valid=True, valid_park_count=count)
+        assert step_reward(ctx, w) - step_reward(ctx, base) == pytest.approx(expected)
+
+
+def test_r_valid_progress_not_paid_on_invalid_park():
+    # park_valid False (an overlapping pile) earns ZERO coverage credit -> firewall.
+    w = RewardWeights(r_valid_progress=8.0)
+    base = RewardWeights(r_valid_progress=0.0)
+    ctx = _ctx(park_valid=False, valid_park_count=0, overlap_m2=0.05)
+    assert step_reward(ctx, w) == step_reward(ctx, base)
+
+
+def test_r_valid_progress_not_paid_on_nonpark_step():
+    # park_valid None (a movement step) -> term structurally absent.
+    w = RewardWeights(r_valid_progress=8.0)
+    base = RewardWeights(r_valid_progress=0.0)
+    ctx = _ctx(park_valid=None)
+    assert step_reward(ctx, w) == step_reward(ctx, base)
+
+
+def test_r_valid_progress_clip_headroom_at_recipe_scale():
+    # The banked valid-Park bonus (valid_park + valid_progress + first_valid) must stay within
+    # reward_clip=50 at the recipe scale so GAE never sees it truncated:
+    # r_valid_park 30 + r_valid_progress 8*(3-1) + r_first_valid 0 = 46 <= 50.
+    REWARD_CLIP = 50.0
+    w = RewardWeights(r_valid_park=30.0, r_valid_progress=8.0, r_first_valid=0.0)
+    off = RewardWeights(r_valid_park=0.0, r_valid_progress=0.0, r_first_valid=0.0)
+    ctx = _ctx(park_valid=True, valid_park_count=3, overlap_m2=0.0, intrusion_m2=0.0)
+    bonus = step_reward(ctx, w) - step_reward(ctx, off)
+    assert bonus == pytest.approx(46.0)
+    assert bonus <= REWARD_CLIP

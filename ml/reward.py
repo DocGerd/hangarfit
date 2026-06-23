@@ -32,6 +32,10 @@ class RewardContext:
     # True on EXACTLY the one Park step where the episode first reaches a valid placement; the
     # env flips it once per episode. Consumed only when RewardWeights.r_first_valid > 0. (#720)
     first_valid_now: bool = False
+    # The number of validly-co-placed objects at THIS Park step (len(_parked) on a Park where
+    # the whole layout is valid, else 0). Consumed only when RewardWeights.r_valid_progress > 0.
+    # Internal reward input — not an observation. (#812)
+    valid_park_count: int = 0
 
 
 def potential(
@@ -81,7 +85,13 @@ def step_reward(ctx: RewardContext, w: RewardWeights) -> float:
     shaping = w.gamma * ctx.potential - ctx.prev_potential
     valid_park = _valid_park_term(ctx, w)
     first_valid = w.r_first_valid if ctx.first_valid_now else 0.0
-    return hard + movement + soft + terminal + shaping + valid_park + first_valid
+    # Banked marginal valid-coverage credit (#812): pays only on a Park where the whole layout
+    # is valid (park_valid True), scaled by the marginal valid-object count beyond the freebie.
+    # park_valid None (non-Park) and False (invalid pile) both pay 0 -> the pile firewall.
+    valid_progress = (
+        w.r_valid_progress * float(max(0, ctx.valid_park_count - 1)) if ctx.park_valid else 0.0
+    )
+    return hard + movement + soft + terminal + shaping + valid_park + first_valid + valid_progress
 
 
 def _valid_park_term(ctx: RewardContext, w: RewardWeights) -> float:
