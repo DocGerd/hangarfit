@@ -956,6 +956,14 @@ def build_argparser() -> argparse.ArgumentParser:
         "off the place-nothing pole); paid once per episode, 0 = off (byte-identical); #720 L5",
     )
     p.add_argument(
+        "--r-valid-progress",
+        type=float,
+        default=0.0,
+        help="banked per-valid-Park credit scaled by the marginal valid-object count beyond the "
+        "freebie (r_valid_progress*max(0, n-1) on a Park where the whole layout is valid); 0 = off "
+        "(byte-identical); the #812 per-commitment economics lever",
+    )
+    p.add_argument(
         "--validity-conditional-terminal",
         action="store_true",
         help="terminal credits the VALID placed fraction (invalid layout -> 0), so an "
@@ -1089,6 +1097,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         r_valid_park=args.r_valid_park,
         valid_park_grade_scale=args.valid_park_grade_scale,
         r_first_valid=args.r_first_valid,
+        r_valid_progress=args.r_valid_progress,
         dense_slot_potential=args.dense_slot_potential,
         r_unplaced_penalty=args.r_unplaced_penalty,
         validity_conditional_terminal=args.validity_conditional_terminal,

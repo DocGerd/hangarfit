@@ -136,6 +136,13 @@ class RewardWeights:
     # validity-blind, invisible at N=1 where fraction is 0/1). Validity = the same whole-layout
     # product checker (collisions.check + Caddy egress) that drives the valid_placed gate.
     validity_conditional_terminal: bool = False
+    # Banked per-valid-Park credit, scaled by the marginal valid-object count beyond the freebie:
+    # pays r_valid_progress * max(0, valid_park_count - 1) on a Park where the WHOLE layout is
+    # valid (valid_park_count = # driven-in objects). 0.0 -> term identically 0 -> byte-identical.
+    # The 1st valid object pays 0 (r_first_valid owns the breakthrough), the 2nd pays
+    # r_valid_progress, the 3rd 2x. Banked per-step so it survives GAE while the #714 terminal
+    # flag collapses; gated on park_valid so an invalid pile never pays. (#812)
+    r_valid_progress: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)

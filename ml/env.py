@@ -307,6 +307,9 @@ class HangarFitEnv:
                 # bool (== _layout_valid()) for the #714 validity-conditional terminal.
                 terminal_valid=park_valid if done else None,
                 first_valid_now=first_valid_now,
+                # len(_parked) includes the just-appended pose; 0 on an invalid park so the
+                # banked coverage credit never pays a pile (#812).
+                valid_park_count=len(self._parked) if park_valid else 0,
             )
             reward = step_reward(ctx, weights)
             self._prev_potential = new_phi
@@ -394,6 +397,7 @@ class HangarFitEnv:
                 "move_cost": ctx.move_cost,
                 "shaping": ctx.potential - ctx.prev_potential,
                 "terminal_fraction": ctx.terminal_fraction or 0.0,
+                "valid_park_count": float(ctx.valid_park_count),
             },
             valid=self._layout_valid(),
             placed=len(self._parked),

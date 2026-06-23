@@ -1489,3 +1489,16 @@ def test_main_no_flags_l5_neutral_l4_default_on(monkeypatch):
     assert ppo.reward_clip == 50.0
     assert ppo.value_clip_eps == 0.2
     assert ppo.target_kl == 0.03
+
+
+def test_r_valid_progress_flag_defaults_neutral():
+    # #812: the per-commitment economics knob defaults 0.0 (byte-identical) and parses a value.
+    parser = build_argparser()
+    assert parser.parse_args([]).r_valid_progress == 0.0
+    assert parser.parse_args(["--r-valid-progress", "8.0"]).r_valid_progress == 8.0
+
+
+def test_main_threads_r_valid_progress_into_weights(monkeypatch):
+    # #812: --r-valid-progress flows all the way into the RewardWeights used for training.
+    w = _capture_main(monkeypatch, ["--r-valid-progress", "8.0"])["weights"]
+    assert w.r_valid_progress == 8.0

@@ -6,6 +6,16 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Learned backend (#812, epic #607): per-commitment economics reward lever (`--r-valid-progress`).**
+  A banked marginal valid-coverage credit that targets the dense `trio-notch` plateau (#736), where the
+  policy validly parks one freebie aircraft then *abstains* on the rest because the marginal 2nd/3rd
+  commitment's expected value is negative — the **economics** argmax the spatial-token representation
+  lever (#809) was refuted as unable to move. `step_reward` gains one term
+  `r_valid_progress * max(0, valid_park_count − 1)`, paid **only on a Park where the whole layout is
+  valid** (the product checker) and scaled by the marginal valid-object count beyond the freebie — so
+  the 2nd validly-placed object banks the weight and the 3rd twice it. Banked per-step (it survives GAE
+  while the #714 terminal-validity flag collapses) and gated on `park_valid`, so an invalid pile pays
+  exactly 0. Default `0.0` ⇒ **byte-identical**. `ml/` is dev/CI-only (never shipped in the wheel).
 - **Learned backend (#809, epic #607): opt-in spatial-token cross-attention policy (`--spatial-tokens`).**
   Replaces the spatially-blind global-average-pool — which collapsed the CNN occupancy feature map
   to a single vector broadcast to every object token, so the policy knew *how full* the hangar was
