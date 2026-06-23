@@ -347,12 +347,96 @@ def test_state_dict_does_not_cross_load_across_flag():
 
 @pytest.mark.parametrize("spatial", [False, True])
 def test_act_on_terminal_observation_raises_both_branches(spatial):
-    # PPO never value-forwards a terminal obs (compute_gae zeroes last_value via 1-dones[-1]);
-    # act() is the public guard and must reject a terminal obs on BOTH branches, so the
-    # 288 always-valid spatial tokens never turn a terminal forward into finite garbage.
+    # act()'s active_index<0 guard fires BEFORE any forward on BOTH branches, and PPO never
+    # value-forwards a terminal obs (compute_gae zeroes last_value via 1-dones[-1]). So the ON
+    # path's 288 always-valid spatial tokens are simply never reached on a terminal obs — the
+    # forward is never taken, so there is no finite-garbage output to guard against. This pins
+    # act()'s public contract (it does not exercise _forward_spatial itself, by design).
     torch.manual_seed(2)
     m = HangarFitPolicy(d_model=64, n_layers=2, n_heads=4, spatial_tokens=spatial).eval()
     obs_t = _terminal_obs()
     assert obs_t.active_index < 0
     with pytest.raises(ValueError, match="terminal"):
         m.act(obs_t, turn_radius_m=8.0)
+
+
+# ---------------------------------------------------------------------------
+# #809: ON-path liveness — cross-row isolation, gradient flow, PE layout
+# ---------------------------------------------------------------------------
+
+
+def test_spatial_on_single_and_batched_consistency():
+    # Two DISTINCT obs in the batch so a per-row mask/attention cross-leak in the 304-seq path
+    # is detectable (the shape tests batch identical rows, which hide cross-row bugs). act()
+    # runs single while PPO runs batched, so a divergence here is a real train/act skew.
+    m = _model_spatial(seed=1)
+    o_a = _obs()
+    fleet = _fuji()
+    pl = Placement(plane_id="fuji", x_m=11.0, y_m=12.0, heading_deg=0.0, on_carts=False)
+    active_b = ActiveObject(
+        object_id="aviat_husky",
+        body=fleet["aviat_husky"],
+        pose=Pose(x_m=5.0, y_m=-2.0, heading_deg=30.0),
+        on_carts=False,
+    )
+    o_b = encode(
+        Observation(
+            active=active_b,
+            parked=(ParkedObject(object_id="fuji", placement=pl),),
+            unplaced_ids=("cessna_150",),
+            steps_this_object=0,
+            steps_total=0,
+        ),
+        empty_hangar(),
+        fleet,
+        EncoderConfig(),
+    )
+    sa, sb = m(to_batch([o_a])), m(to_batch([o_b]))
+    batched = m(to_batch([o_a, o_b]))
+    # value + mag logits are finite (kind logits carry -inf masked slots, so skip those).
+    assert torch.allclose(sa.value, batched.value[:1], atol=1e-5)
+    assert torch.allclose(sb.value, batched.value[1:], atol=1e-5)
+    assert torch.allclose(sa.magnitude_bin_logits, batched.magnitude_bin_logits[:1], atol=1e-5)
+    assert torch.allclose(sb.magnitude_bin_logits, batched.magnitude_bin_logits[1:], atol=1e-5)
+
+
+def test_spatial_on_gradients_reach_spatial_proj():
+    # The lever only works if the spatial path is LIVE: spatial_proj must get non-zero gradient.
+    # A finite-reward smoke would still pass if the branch were detached from the graph.
+    m = HangarFitPolicy(d_model=64, n_layers=2, n_heads=4, spatial_tokens=True)  # train mode
+    out = m(to_batch([_obs(), _obs()]))
+    (out.magnitude_bin_logits.sum() + out.value.sum()).backward()
+    grad = m.spatial_proj.weight.grad
+    assert grad is not None and torch.any(grad != 0)
+
+
+def test_spatial_on_critic_summary_is_load_bearing():
+    # pooled_spatial occupies the LAST d_model input columns of value_head[0] (cat order:
+    # pooled_obj, g, pooled_spatial). Those columns must receive gradient from value alone,
+    # proving the critic spatial summary actually influences value — a zeroed/detached
+    # pooled_spatial would pass every shape/finite test otherwise.
+    d = 64
+    m = HangarFitPolicy(d_model=d, n_layers=2, n_heads=4, spatial_tokens=True)
+    out = m(to_batch([_obs(), _obs()]))
+    out.value.sum().backward()
+    w_grad = m.value_head[0].weight.grad  # (d, 3*d)
+    assert w_grad is not None
+    assert torch.any(w_grad[:, 2 * d :] != 0)  # the pooled_spatial slice is load-bearing
+
+
+def test_sincos_pos_2d_row_major_matches_flatten_layout():
+    # The PE lays out the h*w grid ROW-MAJOR (index = row*w + col) to match feat.flatten(2),
+    # with the first d/2 channels encoding ROW and the second d/2 encoding COL. Pin that exact
+    # correspondence: a transposed/column-major PE passes the weaker "cells differ" check but
+    # fails here (and would silently feed the policy a permuted geometry).
+    h, w, d = 4, 3, 8
+    pe = _sincos_pos_2d(h, w, d).reshape(h, w, d)
+    dh = d // 2
+    for r in range(h):  # row-half: constant across a row, differs between rows
+        for c in range(1, w):
+            assert torch.equal(pe[r, c, :dh], pe[r, 0, :dh])
+    assert not torch.equal(pe[0, 0, :dh], pe[1, 0, :dh])
+    for c in range(w):  # col-half: constant down a column, differs between columns
+        for r in range(1, h):
+            assert torch.equal(pe[r, c, dh:], pe[0, c, dh:])
+    assert not torch.equal(pe[0, 0, dh:], pe[0, 1, dh:])
