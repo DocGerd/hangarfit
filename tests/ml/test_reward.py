@@ -356,6 +356,9 @@ def test_r_valid_progress_clip_headroom_at_recipe_scale():
     # The banked valid-Park bonus (valid_park + valid_progress + first_valid) must stay within
     # reward_clip=50 at the recipe scale so GAE never sees it truncated:
     # r_valid_park 30 + r_valid_progress 8*(3-1) + r_first_valid 0 = 46 <= 50.
+    # 50.0 mirrors PPOConfig().reward_clip; that default is independently pinned by
+    # tests/ml/test_train_curriculum.py::test_main_no_flags_l5_neutral_l4_default_on, so a lowered
+    # clip default fails THERE — keeping this literal torch-free (test_reward.py stays torch-free).
     REWARD_CLIP = 50.0
     w = RewardWeights(r_valid_park=30.0, r_valid_progress=8.0, r_first_valid=0.0)
     off = RewardWeights(r_valid_park=0.0, r_valid_progress=0.0, r_first_valid=0.0)
@@ -363,3 +366,25 @@ def test_r_valid_progress_clip_headroom_at_recipe_scale():
     bonus = step_reward(ctx, w) - step_reward(ctx, off)
     assert bonus == pytest.approx(46.0)
     assert bonus <= REWARD_CLIP
+
+
+def test_r_valid_progress_count_zero_pays_nothing():
+    # Defensive: a (structurally impossible) valid Park at count 0 is clamped by max(0, n-1) to 0,
+    # so the term cannot go negative if a future refactor produced a 0 count on a valid Park.
+    w = RewardWeights(r_valid_progress=8.0)
+    base = RewardWeights(r_valid_progress=0.0)
+    ctx = _ctx(park_valid=True, valid_park_count=0)
+    assert step_reward(ctx, w) == step_reward(ctx, base)
+
+
+def test_r_valid_progress_cumulative_over_a_valid_trio():
+    # spec §8 #4: a valid 3-object episode banks r_valid_progress*(0 + 1 + 2) cumulatively
+    # (the freebie pays 0, the 2nd pays 1x, the 3rd 2x).
+    w = RewardWeights(r_valid_progress=8.0)
+    base = RewardWeights(r_valid_progress=0.0)
+    total = sum(
+        step_reward(_ctx(park_valid=True, valid_park_count=n), w)
+        - step_reward(_ctx(park_valid=True, valid_park_count=n), base)
+        for n in (1, 2, 3)
+    )
+    assert total == pytest.approx(8.0 * (0 + 1 + 2))  # 0 + 8 + 16 = 24

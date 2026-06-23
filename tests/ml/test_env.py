@@ -888,3 +888,31 @@ def test_env_valid_park_count_in_info_terms_gated_on_validity():
     bad.reset()
     _o, _r, _d, info_bad = bad.step(Park())  # object 1 parked on the apron -> invalid layout
     assert info_bad.valid is False and info_bad.terms["valid_park_count"] == 0.0
+
+
+def test_r_valid_progress_firewall_holds_across_a_poisoned_episode():
+    # spec §8 #3: after a valid freebie, an overlapping (invalid) park earns 0 marginal credit and
+    # reports valid_park_count 0; the poison persists, so a LATER park is still uncredited. (#812)
+    def run(progress: float):
+        env = HangarFitEnv(
+            hangar=empty_hangar(),
+            fleet=_fuji(),
+            requested_ids=("fuji", "aviat_husky", "cessna_150"),
+            weights=RewardWeights(r_valid_progress=progress),
+        )
+        env.reset()
+        _r1, v1 = _park_reward_at(env, _FIRST_VALID_POSE_A)  # freebie, valid (count 1)
+        env._active_pose = _FIRST_VALID_POSE_A  # object 2 ONTO object 1 -> overlap -> invalid
+        _o, r2, _d, info2 = env.step(Park())
+        env._active_pose = _FIRST_VALID_POSE_B  # object 3 clean pose; layout still poisoned
+        _o, r3, _d, info3 = env.step(Park())
+        return v1, r2, info2, r3, info3
+
+    v1_0, r2_0, info2_0, r3_0, info3_0 = run(0.0)
+    v1_8, r2_8, info2_8, r3_8, info3_8 = run(8.0)
+    assert v1_0 and v1_8  # the freebie parked validly in both runs
+    assert info2_0.valid is False and info3_0.valid is False  # poisoned for the rest of the episode
+    assert info2_8.terms["valid_park_count"] == 0.0  # firewall: 0 count on the poisoned parks
+    assert info3_8.terms["valid_park_count"] == 0.0
+    assert r2_8 == pytest.approx(r2_0)  # no marginal credit on the invalid 2nd park
+    assert r3_8 == pytest.approx(r3_0)  # nor on the later (still-invalid) 3rd park
