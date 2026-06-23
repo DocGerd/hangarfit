@@ -8,7 +8,7 @@ torch = pytest.importorskip("torch")  # whole module skips without the [train] e
 
 from hangarfit.models import Placement  # noqa: E402
 from ml.encoding import EncoderConfig, encode  # noqa: E402
-from ml.policy import HangarFitPolicy, PolicyOutput, to_batch  # noqa: E402
+from ml.policy import HangarFitPolicy, PolicyOutput, _sincos_pos_2d, to_batch  # noqa: E402
 from ml.types import ActiveObject, Observation, Park, ParkedObject, Pose, Primitive  # noqa: E402
 from tests.ml.conftest import _fuji, empty_hangar  # noqa: E402
 
@@ -221,3 +221,222 @@ def test_to_batch_rejects_mixed_full_and_trimmed_rasters():
     sb = static_block(h, c)
     with pytest.raises(ValueError, match="mix"):
         to_batch([dyn, full], static_block=sb)  # obs[0] trimmed, obs[1] full
+
+
+# ---------------------------------------------------------------------------
+# #809: spatial-token cross-attention policy — fixed sin/cos 2D PE helper
+# ---------------------------------------------------------------------------
+
+
+def test_sincos_pos_2d_shape_finite_deterministic():
+    pe = _sincos_pos_2d(24, 12, 64)
+    assert pe.shape == (24 * 12, 64)
+    assert pe.dtype == torch.float32
+    assert torch.isfinite(pe).all()
+    assert torch.equal(pe, _sincos_pos_2d(24, 12, 64))  # no RNG -> identical
+
+
+def test_sincos_pos_2d_row_major_distinct_cells():
+    pe = _sincos_pos_2d(24, 12, 64)
+    # row-major: index = row*w + col. (0,0)=0, (0,1)=1, (1,0)=12 must all differ.
+    assert not torch.equal(pe[0], pe[1])
+    assert not torch.equal(pe[0], pe[12])
+
+
+def test_sincos_pos_2d_requires_d_model_div4():
+    with pytest.raises((AssertionError, ValueError)):
+        _sincos_pos_2d(24, 12, 66)
+
+
+# ---------------------------------------------------------------------------
+# #809: spatial-token ON-branch forward
+# ---------------------------------------------------------------------------
+
+
+def _model_spatial(seed=0, d_model=64):
+    torch.manual_seed(seed)
+    return HangarFitPolicy(d_model=d_model, n_layers=2, n_heads=4, spatial_tokens=True).eval()
+
+
+def test_spatial_on_forward_output_shapes():
+    out = _model_spatial()(to_batch([_obs(), _obs()]))
+    assert isinstance(out, PolicyOutput)
+    assert out.kind_gear_logits.shape == (2, 9)
+    assert out.magnitude_bin_logits.shape == (2, 5)
+    assert out.value.shape == (2,)
+
+
+def test_spatial_on_forward_deterministic_and_finite():
+    m = _model_spatial(seed=5)
+    batch = to_batch([_obs()])
+    a, b = m(batch), m(batch)
+    assert torch.isfinite(a.value).all()
+    assert torch.isfinite(a.kind_gear_logits.nan_to_num(neginf=0.0)).all()
+    assert torch.equal(a.value, b.value)
+    assert torch.equal(a.kind_gear_logits, b.kind_gear_logits)
+
+
+def test_spatial_on_still_masks_illegal_kinds():
+    batch = to_batch([_obs()])
+    out = _model_spatial()(batch)
+    legal = batch["legal_action_mask"][0]
+    probs = out.kind_gear_logits.softmax(-1)[0]
+    assert torch.all(probs[~legal] == 0.0)
+
+
+def test_feat_mean_equals_adaptive_avgpool():
+    # The ON branch computes g = cnn_proj(feat.mean((2,3))); this must equal the old
+    # AdaptiveAvgPool2d(1)+Flatten so the global pathway is preserved exactly.
+    from torch import nn
+
+    feat = torch.randn(2, 64, 24, 12)
+    via_mean = feat.mean(dim=(2, 3))
+    via_pool = nn.Flatten()(nn.AdaptiveAvgPool2d(1)(feat))
+    assert torch.allclose(via_mean, via_pool, atol=1e-6)
+
+
+# ---------------------------------------------------------------------------
+# #809: default-neutrality — spatial_tokens=False is byte-identical to today
+# ---------------------------------------------------------------------------
+
+
+def test_spatial_off_is_byte_identical_to_default():
+    # spatial_tokens=False (the default) must reproduce today's net exactly: same params,
+    # same module order (same seed -> identical weights), same forward.
+    torch.manual_seed(7)
+    a = HangarFitPolicy(d_model=64, n_layers=2, n_heads=4, spatial_tokens=False).eval()
+    torch.manual_seed(7)
+    b = HangarFitPolicy(d_model=64, n_layers=2, n_heads=4).eval()  # default
+    sa, sb = a.state_dict(), b.state_dict()
+    assert set(sa) == set(sb)
+    for k in sa:
+        assert torch.equal(sa[k], sb[k]), k
+    oa, ob = a(to_batch([_obs()])), b(to_batch([_obs()]))
+    assert torch.equal(oa.kind_gear_logits, ob.kind_gear_logits)
+    assert torch.equal(oa.magnitude_bin_logits, ob.magnitude_bin_logits)
+    assert torch.equal(oa.value, ob.value)
+
+
+def test_spatial_off_registers_no_spatial_params():
+    m = HangarFitPolicy(d_model=64, spatial_tokens=False)
+    assert not any("spatial_proj" in k for k in m.state_dict())
+    assert m.value_head[0].weight.shape == (64, 128)  # 2*d_model input
+
+
+def test_spatial_on_adds_spatial_proj_and_widens_value_head():
+    m = HangarFitPolicy(d_model=64, spatial_tokens=True)
+    assert any("spatial_proj" in k for k in m.state_dict())
+    assert m.value_head[0].weight.shape == (64, 192)  # 3*d_model input
+
+
+# ---------------------------------------------------------------------------
+# #809: checkpoint-flag guard + terminal-observation contract
+# ---------------------------------------------------------------------------
+
+
+def test_state_dict_does_not_cross_load_across_flag():
+    # The two branches have different state_dict key-sets; a strict load must raise rather
+    # than silently partial-load (the checkpoint persists policy_kwargs incl. spatial_tokens).
+    off = HangarFitPolicy(d_model=64, spatial_tokens=False)
+    on = HangarFitPolicy(d_model=64, spatial_tokens=True)
+    with pytest.raises(RuntimeError):
+        on.load_state_dict(off.state_dict())
+    with pytest.raises(RuntimeError):
+        off.load_state_dict(on.state_dict())
+
+
+@pytest.mark.parametrize("spatial", [False, True])
+def test_act_on_terminal_observation_raises_both_branches(spatial):
+    # act()'s active_index<0 guard fires BEFORE any forward on BOTH branches, and PPO never
+    # value-forwards a terminal obs (compute_gae zeroes last_value via 1-dones[-1]). So the ON
+    # path's 288 always-valid spatial tokens are simply never reached on a terminal obs — the
+    # forward is never taken, so there is no finite-garbage output to guard against. This pins
+    # act()'s public contract (it does not exercise _forward_spatial itself, by design).
+    torch.manual_seed(2)
+    m = HangarFitPolicy(d_model=64, n_layers=2, n_heads=4, spatial_tokens=spatial).eval()
+    obs_t = _terminal_obs()
+    assert obs_t.active_index < 0
+    with pytest.raises(ValueError, match="terminal"):
+        m.act(obs_t, turn_radius_m=8.0)
+
+
+# ---------------------------------------------------------------------------
+# #809: ON-path liveness — cross-row isolation, gradient flow, PE layout
+# ---------------------------------------------------------------------------
+
+
+def test_spatial_on_single_and_batched_consistency():
+    # Two DISTINCT obs in the batch so a per-row mask/attention cross-leak in the 304-seq path
+    # is detectable (the shape tests batch identical rows, which hide cross-row bugs). act()
+    # runs single while PPO runs batched, so a divergence here is a real train/act skew.
+    m = _model_spatial(seed=1)
+    o_a = _obs()
+    fleet = _fuji()
+    pl = Placement(plane_id="fuji", x_m=11.0, y_m=12.0, heading_deg=0.0, on_carts=False)
+    active_b = ActiveObject(
+        object_id="aviat_husky",
+        body=fleet["aviat_husky"],
+        pose=Pose(x_m=5.0, y_m=-2.0, heading_deg=30.0),
+        on_carts=False,
+    )
+    o_b = encode(
+        Observation(
+            active=active_b,
+            parked=(ParkedObject(object_id="fuji", placement=pl),),
+            unplaced_ids=("cessna_150",),
+            steps_this_object=0,
+            steps_total=0,
+        ),
+        empty_hangar(),
+        fleet,
+        EncoderConfig(),
+    )
+    sa, sb = m(to_batch([o_a])), m(to_batch([o_b]))
+    batched = m(to_batch([o_a, o_b]))
+    # value + mag logits are finite (kind logits carry -inf masked slots, so skip those).
+    assert torch.allclose(sa.value, batched.value[:1], atol=1e-5)
+    assert torch.allclose(sb.value, batched.value[1:], atol=1e-5)
+    assert torch.allclose(sa.magnitude_bin_logits, batched.magnitude_bin_logits[:1], atol=1e-5)
+    assert torch.allclose(sb.magnitude_bin_logits, batched.magnitude_bin_logits[1:], atol=1e-5)
+
+
+def test_spatial_on_gradients_reach_spatial_proj():
+    # The lever only works if the spatial path is LIVE: spatial_proj must get non-zero gradient.
+    # A finite-reward smoke would still pass if the branch were detached from the graph.
+    m = HangarFitPolicy(d_model=64, n_layers=2, n_heads=4, spatial_tokens=True)  # train mode
+    out = m(to_batch([_obs(), _obs()]))
+    (out.magnitude_bin_logits.sum() + out.value.sum()).backward()
+    grad = m.spatial_proj.weight.grad
+    assert grad is not None and torch.any(grad != 0)
+
+
+def test_spatial_on_critic_summary_is_load_bearing():
+    # pooled_spatial occupies the LAST d_model input columns of value_head[0] (cat order:
+    # pooled_obj, g, pooled_spatial). Those columns must receive gradient from value alone,
+    # proving the critic spatial summary actually influences value — a zeroed/detached
+    # pooled_spatial would pass every shape/finite test otherwise.
+    d = 64
+    m = HangarFitPolicy(d_model=d, n_layers=2, n_heads=4, spatial_tokens=True)
+    out = m(to_batch([_obs(), _obs()]))
+    out.value.sum().backward()
+    w_grad = m.value_head[0].weight.grad  # (d, 3*d)
+    assert w_grad is not None
+    assert torch.any(w_grad[:, 2 * d :] != 0)  # the pooled_spatial slice is load-bearing
+
+
+def test_sincos_pos_2d_row_major_matches_flatten_layout():
+    # The PE lays out the h*w grid ROW-MAJOR (index = row*w + col) to match feat.flatten(2),
+    # with the first d/2 channels encoding ROW and the second d/2 encoding COL. Pin that exact
+    # correspondence: a transposed/column-major PE passes the weaker "cells differ" check but
+    # fails here (and would silently feed the policy a permuted geometry).
+    h, w, d = 4, 3, 8
+    pe = _sincos_pos_2d(h, w, d).reshape(h, w, d)
+    dh = d // 2
+    for r in range(h):  # row-half: constant across a row, differs between rows
+        for c in range(1, w):
+            assert torch.equal(pe[r, c, :dh], pe[r, 0, :dh])
+    assert not torch.equal(pe[0, 0, :dh], pe[1, 0, :dh])
+    for c in range(w):  # col-half: constant down a column, differs between columns
+        for r in range(1, h):
+            assert torch.equal(pe[r, c, dh:], pe[0, c, dh:])
+    assert not torch.equal(pe[0, 0, dh:], pe[0, 1, dh:])

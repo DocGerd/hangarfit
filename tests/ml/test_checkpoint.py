@@ -123,6 +123,36 @@ def test_save_load_checkpoint_roundtrip(tmp_path):
     assert rn2.state_dict() == rn.state_dict()
 
 
+def test_save_load_checkpoint_roundtrip_spatial_tokens(tmp_path):
+    # The ON (spatial_tokens=True) architecture must survive save -> load -> reconstruct via the
+    # persisted policy_kwargs (the #809 "persisted in the checkpoint's policy_kwargs" contract),
+    # with forward-output identity. Mirrors test_save_load_checkpoint_roundtrip on the ON branch.
+    torch.manual_seed(0)
+    pk = {"d_model": 32, "n_layers": 1, "n_heads": 2, "spatial_tokens": True}
+    policy = HangarFitPolicy(**pk)
+    batch = _fixed_obs_batch()
+    ckpt_path = tmp_path / "ckpt_spatial.pt"
+    save_checkpoint(
+        ckpt_path,
+        policy=policy,
+        optimizer=torch.optim.Adam(policy.parameters(), lr=1e-3),
+        normalizer=ReturnNormalizer(),
+        policy_kwargs=pk,
+        completed_stages=["t0"],
+    )
+    loaded = load_checkpoint(ckpt_path)
+    assert loaded.policy_kwargs == pk
+    assert loaded.policy_kwargs["spatial_tokens"] is True
+    policy2 = HangarFitPolicy(**loaded.policy_kwargs)
+    policy2.load_state_dict(loaded.policy_state)
+    policy.eval()
+    policy2.eval()
+    with torch.no_grad():
+        a, b = policy(batch), policy2(batch)
+    assert torch.equal(a.value, b.value)
+    assert torch.equal(a.magnitude_bin_logits, b.magnitude_bin_logits)
+
+
 def test_save_load_checkpoint_normalizer_none(tmp_path):
     # normalize_returns off -> no normalizer -> the checkpoint round-trips None cleanly.
     policy = HangarFitPolicy()

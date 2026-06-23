@@ -6,6 +6,15 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Learned backend (#809, epic #607): opt-in spatial-token cross-attention policy (`--spatial-tokens`).**
+  Replaces the spatially-blind global-average-pool — which collapsed the CNN occupancy feature map
+  to a single vector broadcast to every object token, so the policy knew *how full* the hangar was
+  but never *where* the free gaps were (the dense trio-notch plateau lever, #736). With
+  `--spatial-tokens` the CNN feature map becomes per-cell **spatial tokens** (fixed sin/cos 2D
+  positional encoding) that the object tokens **cross-attend** to, plus a spatial summary fed to the
+  critic. Default off ⇒ **byte-identical** to the prior net (zero new parameters; a deliberate
+  new-architecture re-baseline when on, persisted in the checkpoint's `policy_kwargs`). `ml/` is
+  dev/CI-only (never shipped in the wheel).
 - **Learned backend (#711, epic #607): statistical reach-rate harness (`python -m ml.reach_rate`).**
   Lifts the #695 reach benchmark from a 4-row binary existence table to a reproducible
   reach-**rate** over a **sampled population**: reach-rate ± **Wilson** CI per scenario-kind,

@@ -838,6 +838,14 @@ def build_argparser() -> argparse.ArgumentParser:
         help="attention heads (None = HangarFitPolicy default, 4)",
     )
     p.add_argument(
+        "--spatial-tokens",
+        action="store_true",
+        help="opt-in spatial-token cross-attention policy (#809): object tokens attend to "
+        "free-space cells instead of one global-pool summary. Default off = byte-identical net "
+        "(a deliberate new-architecture re-baseline when on; the flag is persisted in the "
+        "checkpoint's policy_kwargs)",
+    )
+    p.add_argument(
         "--epochs",
         type=int,
         default=PPOConfig().epochs,
@@ -1093,6 +1101,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             ("d_model", args.d_model),
             ("n_layers", args.n_layers),
             ("n_heads", args.n_heads),
+            ("spatial_tokens", True if args.spatial_tokens else None),
         )
         if v is not None
     } or None
