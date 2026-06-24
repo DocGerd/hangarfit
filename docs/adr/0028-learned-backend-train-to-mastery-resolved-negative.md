@@ -105,10 +105,16 @@ success criterion is the shipped, verifier-gated inference seam (#706).
 
 1. a future policy's dense-notch **reach-rate** (Wilson CI) **exceeds RR-MC's** on a
    **witness-absent** scenario-kind (the true charter target — masquerade-proof), **or**
-2. a **relative / object-centric coordinate encoder lands** (replacing the absolute-world-coord
-   encoder) — *rationale: that encoder is the one structurally-untested confound, and the reason
-   imitation/BC/DAgger into the current weights is an oracle-masquerade trap on a finite witness
-   set*, **or**
+2. ~~a **relative / object-centric coordinate encoder lands**~~ — **RESOLVED-NEGATIVE
+   (#827 / #829, 2026-06-25).** *Rationale at the time: that encoder was the one
+   structurally-untested confound.* The opt-in `--relative-encoder` ego-centric augment encoder
+   (SE(2) body-frame pose columns, `TOKEN_DIM` 24→28) landed and was gated on the same two-seed
+   trio-notch ladder: `trio-notch-anchored` windowed-final `valid_placed` **0.353 / 0.332**
+   (both PILING) ≈ the OFF control **0.317 / 0.316**, both sub-0.45; transfer ≈ 0 on both arms.
+   Two graders agree, all three confounds pass (engagement checkpoint-proven), and a 4-lens
+   adversarial panel returned **0/4 refuters**. The confound is now **measured** —
+   representation / coordinate-frame is *not* the bottleneck — so this trigger is **spent**:
+   it *confirms* the decision rather than re-opening it, **or**
 3. the use case is **re-chartered** toward last-1–2-plane completion.
 
 ### Do-not-reattempt (refuted axes)
@@ -119,9 +125,12 @@ backplay k→0 (the k=0 endpoint **is** pure empty-start — refuted, env-guarde
 `seed_anchor_k == n-1`, and the easiest sub-case is already 0.000); any new Φ/PBRS shaping incl.
 `--dense-slot-potential` (policy-invariant) and pile-safe carrots (#813 family); entropy floor
 (#817) and RND/count-based novelty (same exploration-temperature axis, inert on the
-isolated-point geometry); spatial-token / richer-representation levers (#810 — representation is
-not the bottleneck); removing the L4 PPO trust-region clip (**load-bearing** — clip-off →
-place-nothing); dwell-longer (the control already shows ~39-iter flat dwell at 0.333).
+isolated-point geometry); spatial-token / richer-representation levers (#810) and the
+ego-centric / relative coordinate-frame encoder (#827 / #829 — both confirm
+representation / coordinate-frame is *not* the bottleneck; #827 *did* reproducibly lift the
+upstream generic `trio-box` rung, but that gain does not transfer to the notch wall); removing
+the L4 PPO trust-region clip (**load-bearing** — clip-off → place-nothing); dwell-longer (the
+control already shows ~39-iter flat dwell at 0.333).
 
 ## Consequences
 
