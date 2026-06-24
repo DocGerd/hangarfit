@@ -32,6 +32,49 @@ def _obs():
     return encode(obs, empty_hangar(), fleet, EncoderConfig())
 
 
+def _ego_obs():
+    fleet = _fuji()
+    pl = Placement(plane_id="fuji", x_m=11.0, y_m=12.0, heading_deg=0.0, on_carts=False)
+    active = ActiveObject(
+        object_id="aviat_husky",
+        body=fleet["aviat_husky"],
+        pose=Pose(x_m=11.0, y_m=-4.0, heading_deg=90.0),
+        on_carts=False,
+    )
+    obs = Observation(
+        active=active,
+        parked=(ParkedObject(object_id="fuji", placement=pl),),
+        unplaced_ids=("cessna_150",),
+        steps_this_object=0,
+        steps_total=0,
+    )
+    return encode(obs, empty_hangar(), fleet, EncoderConfig(ego_centric=True))
+
+
+def test_policy_off_is_byte_identical():
+    torch.manual_seed(0)
+    a = HangarFitPolicy()
+    torch.manual_seed(0)
+    b = HangarFitPolicy(relative_encoder=False)
+    sa, sb = a.state_dict(), b.state_dict()
+    assert sa.keys() == sb.keys()
+    assert all(torch.equal(sa[k], sb[k]) for k in sa)
+    assert a.token_proj.in_features == 24
+
+
+def test_policy_relative_encoder_sizes_token_proj():
+    p = HangarFitPolicy(relative_encoder=True)
+    assert p.relative_encoder is True
+    assert p.token_proj.in_features == 28
+
+
+def test_policy_relative_forward_consumes_28_wide_tokens():
+    obs_t = _ego_obs()
+    assert obs_t.tokens.shape[-1] == 28
+    out = HangarFitPolicy(relative_encoder=True).eval()(to_batch([obs_t]))
+    assert out.kind_gear_logits.shape == (1, 9) and out.magnitude_bin_logits.shape == (1, 5)
+
+
 def test_to_batch_shapes_and_dtypes():
     batch = to_batch([_obs(), _obs()])
     assert batch["raster"].shape == (2, 7, 192, 96) and batch["raster"].dtype == torch.float32
