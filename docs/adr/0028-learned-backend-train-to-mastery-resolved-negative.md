@@ -98,7 +98,9 @@ it, and that one measured capability is `0.000`.
 
 **Chosen option: bank + stop, with a falsifiable re-open gate.** The negative result is
 *strengthened* by the probe — five orthogonal lever axes are now a single **measured** root
-cause, not five tries — and the charter never required clearing the dense trio. The actually-met
+cause, not five tries (a sixth axis, the #827 ego-centric coordinate encoder, was gated
+*after* this decision and **confirms** it — see re-open trigger #2 below) — and the charter
+never required clearing the dense trio. The actually-met
 success criterion is the shipped, verifier-gated inference seam (#706).
 
 **Re-open this decision if (any one):**
