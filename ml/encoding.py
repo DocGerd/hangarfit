@@ -20,6 +20,7 @@ from ml import geometry_oracle as go
 from ml.types import Observation
 
 SCHEMA_VERSION = 1
+SCHEMA_VERSION_EGO = 2  # stamped when EncoderConfig.ego_centric (the augment ego frame, #827)
 
 # Canonical discrete action order for the legal-action mask. Magnitude is a
 # sub-project #3 concern; this covers only (kind, gear) legality + PARK.
@@ -36,6 +37,8 @@ _CANONICAL_ACTIONS: tuple[tuple[SegmentKind, Literal[1, -1]], ...] = (
 ACTION_DIM = len(_CANONICAL_ACTIONS) + 1  # + PARK
 PARK_INDEX = ACTION_DIM - 1
 TOKEN_DIM = 24
+EGO_EXTRA_COLS = 4  # ego-relative pose cols (fwd, right, sinΔθ, cosΔθ) appended when ego_centric
+EGO_TOKEN_DIM = TOKEN_DIM + EGO_EXTRA_COLS  # 28
 RASTER_CHANNELS = 7
 # #752: the 7 raster channels split into a STATIC block (depends only on hangar+config)
 # and a DYNAMIC block (depends on the observation). The vectorized rollout ships only the
@@ -55,6 +58,17 @@ class EncoderConfig:
     max_objects: int = 16  # token padding cap (Herrenteich set is 12)
     z_split_m: float = 1.6  # low-band / wing-band boundary (ADR-0023)
     pos_ref_m: float = 20.0  # normalization reference for dims / radii
+    ego_centric: bool = False  # #827: augment tokens with SE(2) ego-relative pose cols (24..27)
+
+
+def token_dim(config: EncoderConfig) -> int:
+    """Per-token feature width for ``config``: EGO_TOKEN_DIM (28) when ego-centric, else 24."""
+    return EGO_TOKEN_DIM if config.ego_centric else TOKEN_DIM
+
+
+def schema_version_for(config: EncoderConfig) -> int:
+    """Schema version for ``config``: SCHEMA_VERSION_EGO (2) when ego-centric, else 1."""
+    return SCHEMA_VERSION_EGO if config.ego_centric else SCHEMA_VERSION
 
 
 @dataclass(frozen=True, slots=True)

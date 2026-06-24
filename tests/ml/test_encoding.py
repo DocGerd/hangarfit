@@ -46,6 +46,21 @@ def test_schema_version_and_dims_constants():
     assert encoding.PARK_INDEX == 8
 
 
+def test_ego_constants_and_helpers():
+    # OFF constants are unchanged (byte-identity anchor)
+    assert encoding.TOKEN_DIM == 24 and encoding.SCHEMA_VERSION == 1
+    # New ego constants
+    assert encoding.EGO_EXTRA_COLS == 4
+    assert encoding.EGO_TOKEN_DIM == 28
+    assert encoding.SCHEMA_VERSION_EGO == 2
+    off = EncoderConfig()
+    on = EncoderConfig(ego_centric=True)
+    assert off.ego_centric is False and on.ego_centric is True
+    assert encoding.token_dim(off) == 24 and encoding.token_dim(on) == 28
+    assert encoding.schema_version_for(off) == 1
+    assert encoding.schema_version_for(on) == 2
+
+
 def test_config_defaults():
     c = EncoderConfig()
     assert (c.cell_m, c.grid_w, c.grid_h, c.max_objects) == (0.25, 96, 192, 16)
