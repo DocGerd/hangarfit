@@ -247,8 +247,9 @@ def _token_row(
     on_carts: bool,
     pose: tuple[float, float, float] | None,
     config: EncoderConfig,
+    active_pose: tuple[float, float, float] | None = None,
 ) -> np.ndarray:
-    row = np.zeros(TOKEN_DIM, dtype=np.float32)
+    row = np.zeros(token_dim(config), dtype=np.float32)
     row[_STATUS_COL[status]] = 1.0  # status one-hot 0..2
     if isinstance(body, Aircraft):
         row[3] = 1.0  # aircraft type bit
@@ -275,6 +276,20 @@ def _token_row(
         th = np.radians(pose[2])
         row[18], row[19], row[20], row[21] = nx, ny, float(np.sin(th)), float(np.cos(th))
     # reserved 22..23 stay 0 (region_side, seq_order)
+    if config.ego_centric and pose is not None and active_pose is not None:
+        # #827: object pose in the active object's SE(2) body frame. Basis (compass, det-1):
+        # forward=(sinθ_a, cosθ_a), right=(cosθ_a, -sinθ_a). Invariant under rigid scene motion.
+        ax, ay, ah = active_pose
+        th_a = np.radians(ah)
+        s_a, c_a = float(np.sin(th_a)), float(np.cos(th_a))
+        dx, dy = pose[0] - ax, pose[1] - ay
+        fwd = dx * s_a + dy * c_a
+        right = dx * c_a - dy * s_a
+        dth = np.radians(pose[2] - ah)
+        row[TOKEN_DIM + 0] = fwd / config.pos_ref_m
+        row[TOKEN_DIM + 1] = right / config.pos_ref_m
+        row[TOKEN_DIM + 2] = float(np.sin(dth))
+        row[TOKEN_DIM + 3] = float(np.cos(dth))
     return row
 
 
@@ -287,7 +302,7 @@ def _tokens(
 
     Row order: parked (placement order) → active → unplaced (queue order), padded.
     ``active_index`` is the row of the active object, or -1 at a terminal state."""
-    tokens = np.zeros((config.max_objects, TOKEN_DIM), dtype=np.float32)
+    tokens = np.zeros((config.max_objects, token_dim(config)), dtype=np.float32)
     mask = np.zeros(config.max_objects, dtype=bool)
     entries: list[tuple[Aircraft | GroundObject, str, bool, tuple[float, float, float] | None]] = []
     for po in obs.parked:
@@ -318,8 +333,20 @@ def _tokens(
             f"unplaced={len(obs.unplaced_ids)}); the curriculum must guarantee "
             f"parked + active <= max_objects"
         )
+    active_pose = (
+        (obs.active.pose.x_m, obs.active.pose.y_m, obs.active.pose.heading_deg)
+        if obs.active is not None
+        else None
+    )
     for i, (body, status, on_carts, pose) in enumerate(entries[: config.max_objects]):
-        tokens[i] = _token_row(body, status=status, on_carts=on_carts, pose=pose, config=config)
+        tokens[i] = _token_row(
+            body,
+            status=status,
+            on_carts=on_carts,
+            pose=pose,
+            config=config,
+            active_pose=active_pose,
+        )
         mask[i] = True
     return tokens, mask, active_index
 
