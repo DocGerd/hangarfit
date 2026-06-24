@@ -215,6 +215,70 @@ def test_committed_trio_notch_anchored_rung_builds_and_resets_from_a_valid_parti
 
 
 # ---------------------------------------------------------------------------
+# #821 — the held-out SECOND notch witness (backplay-seed generalization probe)
+# ---------------------------------------------------------------------------
+
+_WITNESS_NOTCH_B = "tests/fixtures/ml/witness_notch_B.yaml"
+
+
+def _load_witness_notch_b(clearance_m: float = 0.05):
+    """Load the held-out second notch witness against the SAME real notch hangar + fleet the
+    trio-notch rungs train on — so it is a drop-in alternative backplay/transfer seed geometry."""
+    hangar = dataclasses.replace(
+        load_hangar("examples/herrenteich/hangar.yaml"), clearance_m=clearance_m, apron_depth_m=8.0
+    )
+    fleet = load_fleet("examples/herrenteich/fleet.yaml")
+    return load_layout(_WITNESS_NOTCH_B, fleet=fleet, hangar=hangar)
+
+
+def test_witness_notch_b_is_a_valid_three_object_layout():
+    # The held-out witness is itself a valid 3-object layout on the real notch hangar under the
+    # rung's 0.05 m clearance — PRODUCT checker (collisions.check + Caddy egress), no solver.
+    lay = _load_witness_notch_b()
+    assert len(lay.placements) == 3
+    assert go.layout_valid(lay)
+
+
+def test_witness_notch_b_every_prefix_is_valid():
+    # Same seed-anchor correctness property as witness_notch: every k-prefix is valid, so the
+    # held-out witness is a drop-in alternative anchor/backplay seed with no per-reset search.
+    lay = _load_witness_notch_b()
+    for k in range(len(lay.placements) + 1):
+        prefix = dataclasses.replace(lay, placements=lay.placements[:k])
+        assert go.layout_valid(prefix), f"witness_B prefix k={k} is invalid"
+
+
+def test_witness_notch_b_every_single_anchor_is_valid():
+    # Any single object of the held-out trio may be the seeded anchor — each must be valid alone.
+    lay = _load_witness_notch_b()
+    for i in range(len(lay.placements)):
+        single = dataclasses.replace(lay, placements=(lay.placements[i],))
+        assert go.layout_valid(single), (
+            f"witness_B single anchor #{i} ({lay.placements[i].plane_id}) invalid"
+        )
+
+
+def test_witness_notch_b_has_robust_margin():
+    # Robustness: valid not just at the file's 0.10 m but well past it (the fixture was selected
+    # for margin up to 0.50 m), so it is a solid, non-borderline held-out geometry.
+    assert go.layout_valid(_load_witness_notch_b(clearance_m=0.10))
+    assert go.layout_valid(_load_witness_notch_b(clearance_m=0.50))
+
+
+def test_witness_notch_b_is_a_genuine_held_out_of_witness_notch():
+    # The held-out property (#821): SAME trio, GEOMETRICALLY DISTINCT arrangement — so a policy
+    # that memorized the witness_notch absolute coordinates cannot satisfy witness_B. Every object
+    # is relocated (>= 5 m planar) and every heading differs between the two witnesses.
+    a = {p.plane_id: p for p in _load_witness_notch().placements}
+    b = {p.plane_id: p for p in _load_witness_notch_b().placements}
+    assert set(a) == set(b), "held-out witness must use the SAME trio (isolates memorization)"
+    for pid in a:
+        disp = ((a[pid].x_m - b[pid].x_m) ** 2 + (a[pid].y_m - b[pid].y_m) ** 2) ** 0.5
+        assert disp >= 5.0, f"{pid} moved only {disp:.2f} m — not geometrically distinct enough"
+        assert a[pid].heading_deg != b[pid].heading_deg, f"{pid} heading unchanged — too similar"
+
+
+# ---------------------------------------------------------------------------
 # #712 — stage_builder threads the witness into an anchored rung's env
 # ---------------------------------------------------------------------------
 
