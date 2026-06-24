@@ -21,6 +21,15 @@ def test_policy_reach_runs_on_go_free_control():
     # An untrained policy will not reach; we only assert it runs end-to-end and verdicts.
 
 
+def test_policy_reach_runs_on_ego_policy_without_shape_crash():
+    # #827: policy_reach must derive a 28-wide ego encoder from policy.relative_encoder rather
+    # than shape-crash a 24-wide default encoder against an ego policy's token_proj.
+    policy = HangarFitPolicy(d_model=32, n_layers=1, n_heads=2, relative_encoder=True)
+    v = policy_reach(_DEMO, policy)
+    assert isinstance(v, ReachVerdict)
+    assert v.total == 3
+
+
 def test_checkpoint_save_load_roundtrip(tmp_path):
     policy = HangarFitPolicy(d_model=32, n_layers=1, n_heads=2)
     ckpt = tmp_path / "p.pt"

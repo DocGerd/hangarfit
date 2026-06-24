@@ -217,7 +217,9 @@ def policy_reach_count(scenario: Scenario, policy, *, samples: int, seed: int = 
     from ml.benchmark import _verdict_from  # single-source the spec §4 reach predicate
     from ml.encoding import EncoderConfig, encode
 
-    enc = EncoderConfig()
+    # #827: the encoder's ego-frame follows the policy's own architecture (single source of
+    # truth), so an ego policy gets 28-wide ego tokens instead of a 24-vs-28 shape crash.
+    enc = EncoderConfig(ego_centric=getattr(policy, "relative_encoder", False))
     env = _build_env(scenario)
     bodies = {**env.fleet, **env.ground_objects}
     deterministic = samples == 1
