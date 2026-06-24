@@ -6,13 +6,17 @@ from __future__ import annotations
 import pytest
 
 from ml.reach_rate import (
+    DominanceVerdict,
+    KindDominance,
     ReachRate,
     SampledScenario,
     aggregate,
+    dominance_verdict,
     reach_rate,
     rrmc_reach_multi,
     sample_population,
     wilson_ci,
+    witness_absent_kinds,
 )
 
 # ── pure statistics ──────────────────────────────────────────────────────────
@@ -153,3 +157,107 @@ def test_policy_population_rates_shape():
     assert "overall" in rates
     assert rates["overall"].n == 4  # 2 scenarios × 2 samples
     assert 0.0 <= rates["overall"].rate <= 1.0
+
+
+# ── trigger-#1 dominance gate (ADR-0028 re-open condition #1) ─────────────────
+# Pure decision logic over Wilson CIs — torch-free, no solver. The Wilson math itself is
+# covered by the wilson_ci tests above, so these construct synthetic ReachRates with chosen
+# bounds and assert the *gate* logic: which kinds are witness-absent, and the masquerade-proof
+# CI-non-overlap dominance verdict.
+
+
+def _rr(kind: str, *, ci_lo: float = 0.0, ci_hi: float = 1.0) -> ReachRate:
+    """A synthetic ReachRate whose only meaningful fields are the Wilson bounds the dominance
+    logic keys on; n/reached/rate are filler."""
+    return ReachRate(kind=kind, n=0, reached=0, rate=0.0, ci_lo=ci_lo, ci_hi=ci_hi)
+
+
+def test_witness_absent_kinds_selects_low_rrmc_and_excludes_high():
+    rrmc = {
+        "k2": _rr("k2", ci_hi=0.95),  # RR-MC reaches ⇒ NOT witness-absent
+        "k7": _rr("k7", ci_hi=0.08),  # RR-MC misses ⇒ witness-absent
+    }
+    assert witness_absent_kinds(rrmc, tau=0.1) == ["k7"]
+
+
+def test_witness_absent_kinds_excludes_overall_pool_row():
+    rrmc = {"overall": _rr("overall", ci_hi=0.05), "k7": _rr("k7", ci_hi=0.05)}
+    assert witness_absent_kinds(rrmc, tau=0.1) == ["k7"]  # the pooled row is never a kind
+
+
+def test_witness_absent_kinds_is_sorted():
+    rrmc = {k: _rr(k, ci_hi=0.05) for k in ("k9", "k3", "k7")}
+    assert witness_absent_kinds(rrmc, tau=0.1) == ["k3", "k7", "k9"]
+
+
+def test_witness_absent_kinds_boundary_is_inclusive():
+    rrmc = {"k7": _rr("k7", ci_hi=0.10)}
+    assert witness_absent_kinds(rrmc, tau=0.10) == ["k7"]  # ci_hi == tau ⇒ included
+
+
+def test_witness_absent_kinds_rejects_bad_tau():
+    with pytest.raises(ValueError, match="tau"):
+        witness_absent_kinds({}, tau=1.5)
+
+
+def test_dominance_verdict_reopens_when_policy_ci_clears_rrmc():
+    rrmc = {"k7": _rr("k7", ci_hi=0.08)}
+    policy = {"k7": _rr("k7", ci_lo=0.20)}  # 0.20 > 0.08 ⇒ CI non-overlap ⇒ beats
+    v = dominance_verdict(rrmc, policy, tau=0.1)
+    assert v.reopen is True
+    assert v.exercised is True
+    assert v.witness_absent == ("k7",)
+    (kd,) = v.per_kind
+    assert kd.policy_beats is True
+
+
+def test_dominance_verdict_no_reopen_on_ci_overlap():
+    # Masquerade-proof: the policy POINT estimate could be higher, but overlapping CIs don't trip.
+    rrmc = {"k7": _rr("k7", ci_hi=0.30)}
+    policy = {"k7": _rr("k7", ci_lo=0.25)}  # 0.25 is NOT > 0.30
+    v = dominance_verdict(rrmc, policy, tau=0.35)
+    assert v.reopen is False
+    assert v.exercised is True
+    assert v.per_kind[0].policy_beats is False
+
+
+def test_dominance_verdict_ignores_kinds_rrmc_already_reaches():
+    # A kind RR-MC reaches (not witness-absent) is excluded even if the policy "beats" there:
+    # reaching what the solver already reaches is not the charter.
+    rrmc = {"k2": _rr("k2", ci_hi=0.90)}
+    policy = {"k2": _rr("k2", ci_lo=0.99)}
+    v = dominance_verdict(rrmc, policy, tau=0.1)
+    assert v.exercised is False  # no witness-absent kind ⇒ gate not exercised
+    assert v.reopen is False
+    assert v.witness_absent == ()
+
+
+def test_dominance_verdict_missing_policy_kind_counts_as_no_evidence():
+    rrmc = {"k7": _rr("k7", ci_hi=0.05)}
+    policy: dict[str, ReachRate] = {}  # policy arm never covered k7
+    v = dominance_verdict(rrmc, policy, tau=0.1)
+    assert v.exercised is True
+    assert v.reopen is False
+    kd = v.per_kind[0]
+    assert kd.policy_covered is False
+    assert kd.policy_beats is False
+
+
+def test_dominance_verdict_not_exercised_distinct_from_not_met():
+    # Empty population ⇒ NOT exercised (vacuous), which must not masquerade as a clean negative.
+    v = dominance_verdict({}, {}, tau=0.1)
+    assert v.exercised is False
+    assert v.reopen is False
+
+
+def test_dominance_verdict_rejects_bad_tau():
+    with pytest.raises(ValueError, match="tau"):
+        dominance_verdict({}, {}, tau=-0.1)
+
+
+def test_dominance_verdict_types():
+    rrmc = {"k7": _rr("k7", ci_hi=0.05)}
+    policy = {"k7": _rr("k7", ci_lo=0.5)}
+    v = dominance_verdict(rrmc, policy, tau=0.1)
+    assert isinstance(v, DominanceVerdict)
+    assert all(isinstance(kd, KindDominance) for kd in v.per_kind)
