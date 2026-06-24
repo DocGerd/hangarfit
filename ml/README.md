@@ -616,12 +616,14 @@ The #812 carrot-KILL re-pointed the next lever at **discovery / basin stability*
 this candidate explicitly: *"a higher entropy floor on the frontier rungs so the valid basin consolidates
 instead of decaying."* `--entropy-floor F --frontier-rungs trio-notch-anchored,trio-notch` (#815, PR #817) is
 that lever — it clamps the **per-rung-annealed** `entropy_coef` **up** to `F` on the named rungs only, so the
-frontier stays in the high-entropy regime where the valid 2–3-object basin was empirically reachable (#812
-peak vp 0.451), while the mastered lower ladder anneals normally. Default-off ⇒ byte-identical (4c-ii). The
+frontier stays in the high-entropy regime, testing whether #812's *transient* touch of the valid 2–3-object
+basin (peak vp 0.451 — carrot-assisted, `r_valid_progress=8`, and since decayed) consolidates instead of
+decaying once entropy is held up; the mastered lower ladder anneals normally. Default-off ⇒ byte-identical (4c-ii). The
 A/B is the **#736 trio-notch-anchored recipe with `--entropy-floor 0.02 --frontier-rungs
 trio-notch-anchored,trio-notch` added** (the only change), two seeds via `ml.sweep`, against a same-session
 fresh control. The #816 instrumentation (PR #818) persists the applied `entropy_coef` + `epochs_run` per-iter
-to the `--metrics-out` JSONL so the confound below is checkable.
+to the `--metrics-out` JSONL (the recipe below carries no `--metrics-out` because `ml.sweep` injects a distinct
+per-cell `--metrics-out`/`--checkpoint-out`) so the confound below is checkable.
 
 ```bash
 # +floor arm — identical to the control protocol plus the two lever flags (the only change).
@@ -661,7 +663,8 @@ KL-gated; min 1 only on isolated KL-spike iters, never a systematic collapse). T
 many* consolidation epochs as control, so the KILL cannot be an epoch-starvation artifact — no
 `--no-target-kl` retune is needed.
 
-**Diagnosis (4th refuted #736 lever).** Undirected exploration cannot *steer* toward the valid basin. Holding
+**Diagnosis (4th refuted #736 lever — the original #736 anchor lever, then #810, #812, #815).** Undirected
+exploration cannot *steer* toward the valid basin. Holding
 entropy high merely widens the search symmetrically: it changed the *texture* of failure without changing the
 *outcome* — the floor arm actually logged **fewer** hard-piling iters (8–9 vs control's 11–19; higher entropy
 traded some piling for abstention) yet valid placement never rose above the vp-0.333 cap. Finding the
