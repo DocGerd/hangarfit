@@ -6,6 +6,29 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Learned backend (#821, epic #607): backplay reverse-curriculum lever (`--backplay-trio-notch`)
+  for the dense `trio-notch` plateau (#736), plus a held-out `witness_notch_B` generalization probe.**
+  The fifth #736 lever after four refutations (#736 anchor, #809 representation, #812 economics,
+  #815 entropy floor) — and the only one that shifts the **start-state distribution** (ρ₀) rather
+  than reward/representation/exploration (Ng–Harada–Russell proves potential-based shaping cannot
+  move the argmax, which is why those failed). `--backplay-trio-notch` (curriculum-only) inserts an
+  opt-in ladder of `trio-notch-backplay-{50,75,100}` sub-rungs before `trio-notch`: each pre-parks
+  the **k=N−1 prefix** of a committed 3-object notch witness (`tests/fixtures/ml/witness_notch.yaml`)
+  and spawns the single driven object a fraction φ∼U(0, φ_cap) along the corridor from its witness
+  park-pose (φ=0, near-solved) **out to the door** (φ=1); the φ_cap ceiling anneals 0.5→1.0 across
+  the contiguous sub-rungs, promoted on the **same** windowed `valid_placed` gate (the reverse
+  curriculum *is* the rung sequence — no per-iteration anneal code). This collapses the diagnosed
+  cold-start coverage minimum (validly park one, abandon two) by starting near the dense solution
+  and receding. The env **never snaps or auto-parks** — it only moves *where* the episode begins;
+  the corridor spawn is taken only when collision-free (deterministic admissibility check) else it
+  falls back to the door. The held-out `witness_notch_B.yaml` (a second geometrically-distinct valid
+  notch packing, shipped via #822) is the witness-absent transfer-evaluation variant that hardens
+  the pre-registered gate against near-witness overfit. Default-neutral: `--backplay-trio-notch`
+  absent ⇒ `DEFAULT_LADDER` byte-identical (φ=None ⇒ byte-identical door spawn); the flag fails
+  loud under `--schedule trivial`, `backplay_phi_cap` and `anchor_prob` are mutually exclusive, and
+  every witness k-prefix is product-checker valid (`collisions.check` + Caddy egress). The
+  per-iteration `--metrics-out` JSONL surfaces the rung's `phi_cap` (the gate's confound watch).
+  `ml/` is dev/CI-only (never shipped in the wheel).
 - **Learned backend (#812, epic #607): per-commitment economics reward lever (`--r-valid-progress`).**
   A banked marginal valid-coverage credit that targets the dense `trio-notch` plateau (#736), where the
   policy validly parks one freebie aircraft then *abstains* on the rest because the marginal 2nd/3rd

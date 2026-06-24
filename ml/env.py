@@ -3,6 +3,7 @@ no gymnasium/torch dependency (those arrive in the training rung #3)."""
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Mapping
 
 from hangarfit.models import Aircraft, GroundObject, Hangar, Layout, Placement
@@ -19,6 +20,27 @@ from ml.types import (
     RewardWeights,
     StepInfo,
 )
+
+
+def _lerp_heading_deg(a_deg: float, b_deg: float, t: float) -> float:
+    """Interpolate ``a_deg`` -> ``b_deg`` along the SHORTEST arc, ``t`` in [0, 1]
+    (t=0 -> a, t=1 -> b). Wraps to [0, 360)."""
+    delta = ((b_deg - a_deg + 180.0) % 360.0) - 180.0
+    return (a_deg + delta * t) % 360.0
+
+
+def _backplay_corridor_pose(witness: Placement, door: Pose, phi: float) -> Pose:
+    """Pose a fraction ``phi`` along the straight corridor from the witness park-pose
+    (phi=0, the valid dense terminal) out to the door spawn (phi=1); heading interpolates on
+    the shortest arc. A degenerate but kinematically-agnostic corridor (#821 v1): it realizes
+    the reverse-curriculum reachable-state shift without a Reeds-Shepp solve. phi=0 returns the
+    witness pose (heading normalized to [0, 360) — exact for any witness heading already in
+    range, which the committed fixtures are); phi=1 returns the door pose exactly."""
+    return Pose(
+        x_m=witness.x_m + (door.x_m - witness.x_m) * phi,
+        y_m=witness.y_m + (door.y_m - witness.y_m) * phi,
+        heading_deg=_lerp_heading_deg(witness.heading_deg, door.heading_deg, phi),
+    )
 
 
 class HangarFitEnv:
@@ -101,6 +123,9 @@ class HangarFitEnv:
         # #720 one-shot: flipped True on the first Park that yields a valid layout, so the
         # r_first_valid bonus is paid once per episode. Cleared here every reset.
         self._first_valid_reached = False
+        # #821 backplay: the per-episode corridor fraction phi (drawn by the curriculum sampler
+        # and passed to reset()). None => no spawn override => byte-identical door spawn.
+        self._backplay_phi: float | None = None
 
     def _body(self, object_id: str) -> Aircraft | GroundObject:
         return self.fleet[object_id] if object_id in self.fleet else self.ground_objects[object_id]
@@ -121,16 +146,58 @@ class HangarFitEnv:
         return body.movement_mode == "always_cart" or getattr(body, "on_carts", False)
 
     def _spawn(self) -> None:
-        """Pop the next queued object and place it on the apron at the door centre."""
+        """Pop the next queued object and place it on the apron at the door centre.
+
+        #821 backplay: when an episode carries a corridor fraction ``self._backplay_phi`` and the
+        spawned object has a witness park-pose, start it a fraction phi along the corridor from
+        that pose (phi=0, near-solved) out to the door (phi=1) instead of at the door — but ONLY
+        if that start is collision-free; otherwise fall back to the door spawn. The env never
+        snaps or auto-parks: it only moves WHERE the episode begins.
+        """
         self._active_id = self._queue.pop(0)
         depth = self.hangar.apron_depth_m or 0.0
-        self._active_pose = Pose(
+        door_pose = Pose(
             x_m=self.hangar.door.center_x_m,
             y_m=-(depth / 2.0 if depth else 0.0),
             heading_deg=0.0,
         )
+        self._active_pose = door_pose
+        phi = self._backplay_phi
+        if phi is not None and self._active_id in self._anchor_by_id:
+            candidate = _backplay_corridor_pose(self._anchor_by_id[self._active_id], door_pose, phi)
+            if self._backplay_admissible(candidate):
+                self._active_pose = candidate
         self._prev_gear = None
         self._steps_this_object = 0
+
+    def _backplay_admissible(self, candidate: Pose) -> bool:
+        """The active object placed at ``candidate``, added to the frozen scene (parked + fixed),
+        must be product-valid (no overlap / intrusion / egress block) — else backplay declines the
+        corridor pose and the spawn stays at the door. phi=0 is the witness pose, so with the
+        k=N-1 prefix already parked the full witness is valid and phi=0 always admits."""
+        active_id = self._active_id
+        assert active_id is not None
+        pl = Placement(
+            plane_id=active_id,
+            x_m=candidate.x_m,
+            y_m=candidate.y_m,
+            heading_deg=candidate.heading_deg,
+            on_carts=self._on_carts(active_id),
+        )
+        frozen = self._layout()
+        if active_id in self.fleet:
+            combined = dataclasses.replace(
+                frozen,
+                fleet={**frozen.fleet, active_id: self.fleet[active_id]},
+                placements=frozen.placements + (pl,),
+            )
+        else:
+            combined = dataclasses.replace(
+                frozen,
+                ground_objects={**frozen.ground_objects, active_id: self.ground_objects[active_id]},
+                ground_object_placements=frozen.ground_object_placements + (pl,),
+            )
+        return go.layout_valid(combined)
 
     def _layout(self) -> Layout:
         """The scene of FROZEN objects: driven-in (parked) PLUS pre-placed fixed obstacles
@@ -227,6 +294,7 @@ class HangarFitEnv:
         requested_ids: tuple[str, ...] | None = None,
         *,
         seed_anchor_k: int | None = None,
+        backplay_phi: float | None = None,
     ) -> Observation:
         if requested_ids is not None:
             if not requested_ids:
@@ -244,6 +312,9 @@ class HangarFitEnv:
             n = self.difficulty.max_objects
             self.requested_ids = requested_ids if n is None else requested_ids[:n]
         self._reset_state(seed_anchor_k_override=seed_anchor_k)
+        # Set the per-episode backplay fraction BEFORE _spawn (which consumes it). _reset_state
+        # cleared it to None, so a plain reset (backplay_phi=None) is byte-identical.
+        self._backplay_phi = backplay_phi
         self._spawn()
         self._prev_potential = self._potential()
         return self._observe()

@@ -93,6 +93,13 @@ class DifficultyConfig:
     # episodes in the training mix. None => fixed-k rung (use seed_anchor_k as-is) =>
     # byte-identical to the pre-change env. anchor_prob is P(k = seed_anchor_k) per episode.
     anchor_prob: float | None = None
+    # #821 backplay reverse-curriculum: when set (0..1), each episode draws phi ~ U(0, this)
+    # from the curriculum's seeded stream and the env spawns the DRIVEN object a fraction phi
+    # along the corridor from its witness park-pose (phi=0, near-solved) out to the door
+    # (phi=1). Combined with a seed_anchor_k = N-1 prefix this shows the valid dense terminal
+    # first and recedes. None => inert (no override) => byte-identical to the door-spawn env.
+    # This is the difficulty CEILING; the per-episode draw is made by the curriculum sampler.
+    backplay_phi_cap: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
