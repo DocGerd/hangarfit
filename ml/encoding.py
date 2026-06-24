@@ -474,7 +474,7 @@ def encode(
         active_index=active_index,
         legal_action_mask=legal,
         meta=meta,
-        schema_version=SCHEMA_VERSION,
+        schema_version=schema_version_for(config),
     )
 
 
@@ -501,5 +501,5 @@ def encode_dynamic(
         active_index=active_index,
         legal_action_mask=legal,
         meta=meta,
-        schema_version=SCHEMA_VERSION,
+        schema_version=schema_version_for(config),
     )

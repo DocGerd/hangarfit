@@ -351,6 +351,48 @@ def test_encode_full_shapes_and_meta():
     assert all(isinstance(v, float) for v in out.meta.values())
 
 
+def test_encode_ego_schema_is_2():
+    fleet = _fuji()
+    out = encode(_two_body_obs(fleet), empty_hangar(), fleet, EncoderConfig(ego_centric=True))
+    assert out.schema_version == 2
+    assert out.tokens.shape == (16, 28)
+
+
+def test_ego_cols_are_se2_invariant():
+    import math
+
+    fleet = _fuji()
+
+    def build(rot_deg: float, tx: float, ty: float):
+        # One rigid SE(2) scene motion: rotate (x,y) CCW by rot_deg, then translate. Compass
+        # headings are CW-positive, so a CCW position rotation pairs with heading - rot_deg
+        # (the position and facing must rotate in the same physical sense).
+        a = math.radians(rot_deg)
+        ca, sa = math.cos(a), math.sin(a)
+
+        def xf(x, y):
+            return (ca * x - sa * y + tx, sa * x + ca * y + ty)
+
+        px, py = xf(11.0, 12.0)
+        axp, ayp = xf(11.0, -4.0)
+        pl = Placement(plane_id="fuji", x_m=px, y_m=py, heading_deg=0.0 - rot_deg, on_carts=False)
+        active = ActiveObject(
+            object_id="aviat_husky",
+            body=fleet["aviat_husky"],
+            pose=Pose(x_m=axp, y_m=ayp, heading_deg=90.0 - rot_deg),
+            on_carts=False,
+        )
+        obs = _obs(parked=(ParkedObject(object_id="fuji", placement=pl),), active=active)
+        return _tokens(obs, fleet, EncoderConfig(ego_centric=True))[0]
+
+    base = build(0.0, 0.0, 0.0)
+    moved = build(37.0, 5.0, -8.0)
+    # ego cols (24..27) of the parked object are unchanged under the rigid motion
+    assert np.allclose(base[0, 24:28], moved[0, 24:28], atol=1e-5)
+    # absolute cols (18..21) DO change (different world pose)
+    assert not np.allclose(base[0, 18:22], moved[0, 18:22], atol=1e-3)
+
+
 def test_encode_meta_is_immutable():
     c = EncoderConfig()
     fleet = _fuji()
