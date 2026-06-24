@@ -163,8 +163,9 @@ the env oracle's parked-score validity.
   independently, so it can repeat one. RR-MC reach is **deterministic** per subset, so a repeated
   subset is **not** an independent trial — counting it inflates `n` and tightens the Wilson CI for
   free. `--distinct` draws guaranteed-distinct subsets and **caps** the population at the available
-  distinct count (printing `[distinct: capped from N to M …]`). It matters at high `k` / over-
-  capacity, where the distinct space is tiny (e.g. `C(9, 8) = 9`). Default off → byte-identical.
+  distinct count (printing `[distinct: capped from N to M …]`). Capping triggers whenever the
+  request exceeds the available distinct count — most acute at high `k` relative to the pool, where
+  the distinct space is tiny (e.g. `C(9, 8) = 9`). Default off → byte-identical.
 - **Multi-alternative RR-MC:** `rrmc_reach_multi` solves for `--alternatives N` and counts
   RR-MC-reached if **any** candidate is valid + fully routable — strictly stronger than
   `benchmark.rrmc_reach` (`alternatives=1`, best-spread only). Load-bearing the moment the

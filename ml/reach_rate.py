@@ -130,10 +130,11 @@ def sample_population(
 
     When ``distinct`` is True, the members are guaranteed-distinct ``(k, subset)`` pairs and the
     population is **capped** at the number of available distinct subsets across ``[k_min, k_max]``
-    (a request for more returns *fewer*, never duplicates). This matters at high ``k`` / over-
-    capacity, where the distinct-subset space is small (e.g. ``C(9, 8) = 9``): RR-MC reach is
-    deterministic per subset, so a duplicate subset is **not** an independent trial, and counting
-    it would inflate ``n`` and tighten the Wilson CI without new information (pseudo-replication).
+    (a request for more returns *fewer*, never duplicates). Capping triggers whenever ``n`` exceeds
+    the available distinct count — most acute at high ``k`` relative to the pool, where the
+    distinct-subset space is small (e.g. ``C(9, 8) = 9``): RR-MC reach is deterministic per subset,
+    so a duplicate subset is **not** an independent trial, and counting it would inflate ``n`` and
+    tighten the Wilson CI without new information (pseudo-replication).
     Default ``False`` preserves the independent-draw behaviour byte-for-byte."""
     if not 1 <= k_min <= k_max:
         raise ValueError(f"sample_population: need 1 <= k_min <= k_max, got {k_min}, {k_max}")
