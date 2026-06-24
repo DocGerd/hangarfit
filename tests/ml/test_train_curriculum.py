@@ -59,6 +59,22 @@ def test_spatial_tokens_ppo_smoke_trains_without_nan():
     assert all(isinstance(r, float) and r == r and abs(r) < 1e9 for r in history)
 
 
+def test_relative_encoder_ppo_smoke_trains_without_nan():
+    # A handful of PPO iterations on the trivial rung with the ego encoder (#827) must run and
+    # return finite rewards — proves the train()-derived 28-wide ego tokens are consumed by the
+    # relative_encoder policy end-to-end (rollout + GAE + update), no NaN, no shape crash. The
+    # encoder's ego_centric is DERIVED from policy_kwargs, so passing only the policy kwarg here
+    # exercises the derivation in train().
+    history = train(
+        seed=0,
+        iterations=2,
+        rollout_len=32,
+        policy_kwargs={"relative_encoder": True, "d_model": 32, "n_layers": 1, "n_heads": 2},
+    )
+    assert len(history) == 2
+    assert all(isinstance(r, float) and r == r and abs(r) < 1e9 for r in history)
+
+
 from ml.curriculum import (  # noqa: E402
     CurriculumSchedule,
     DifficultyConfig,
@@ -286,6 +302,11 @@ def test_argparser_vec_start_method_defaults_to_spawn():
     assert parser.parse_args(["--vec-start-method", "fork"]).vec_start_method == "fork"
     with pytest.raises(SystemExit):
         parser.parse_args(["--vec-start-method", "bogus"])
+
+
+def test_argparser_relative_encoder_flag():
+    assert build_argparser().parse_args([]).relative_encoder is False
+    assert build_argparser().parse_args(["--relative-encoder"]).relative_encoder is True
 
 
 def test_argparser_n_envs_auto_resolves_to_positive_int(monkeypatch):

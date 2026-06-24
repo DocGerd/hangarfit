@@ -26,6 +26,12 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Learned backend (#827, epic #607): opt-in `--relative-encoder` ego-centric observation encoder
+  (ADR-0028 re-open trigger #2).** Augments object pose tokens with four SE(2) ego-relative
+  coordinates (`fwd, right, sinΔθ, cosΔθ` in the active object's body frame); `TOKEN_DIM` 24→28 and
+  `SCHEMA_VERSION` 1→2 when on, default off = byte-identical. The encoder's frame is derived from the
+  policy architecture so the token width and `token_proj` can never disagree. Dev/CI-only (`ml/`),
+  not shipped in the wheel. The `trio-notch` ladder gate result is recorded separately once run.
 - **Learned backend (#821, epic #607): backplay reverse-curriculum lever (`--backplay-trio-notch`)
   for the dense `trio-notch` plateau (#736), plus a held-out `witness_notch_B` generalization probe.**
   The fifth #736 lever after four refutations (#736 anchor, #809 representation, #812 economics,

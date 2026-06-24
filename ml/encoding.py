@@ -20,6 +20,7 @@ from ml import geometry_oracle as go
 from ml.types import Observation
 
 SCHEMA_VERSION = 1
+SCHEMA_VERSION_EGO = 2  # stamped when EncoderConfig.ego_centric (the augment ego frame, #827)
 
 # Canonical discrete action order for the legal-action mask. Magnitude is a
 # sub-project #3 concern; this covers only (kind, gear) legality + PARK.
@@ -36,6 +37,8 @@ _CANONICAL_ACTIONS: tuple[tuple[SegmentKind, Literal[1, -1]], ...] = (
 ACTION_DIM = len(_CANONICAL_ACTIONS) + 1  # + PARK
 PARK_INDEX = ACTION_DIM - 1
 TOKEN_DIM = 24
+EGO_EXTRA_COLS = 4  # ego-relative pose cols (fwd, right, sinΔθ, cosΔθ) appended when ego_centric
+EGO_TOKEN_DIM = TOKEN_DIM + EGO_EXTRA_COLS  # 28
 RASTER_CHANNELS = 7
 # #752: the 7 raster channels split into a STATIC block (depends only on hangar+config)
 # and a DYNAMIC block (depends on the observation). The vectorized rollout ships only the
@@ -55,6 +58,17 @@ class EncoderConfig:
     max_objects: int = 16  # token padding cap (Herrenteich set is 12)
     z_split_m: float = 1.6  # low-band / wing-band boundary (ADR-0023)
     pos_ref_m: float = 20.0  # normalization reference for dims / radii
+    ego_centric: bool = False  # #827: augment tokens with SE(2) ego-relative pose cols (24..27)
+
+
+def token_dim(config: EncoderConfig) -> int:
+    """Per-token feature width for ``config``: EGO_TOKEN_DIM (28) when ego-centric, else 24."""
+    return EGO_TOKEN_DIM if config.ego_centric else TOKEN_DIM
+
+
+def schema_version_for(config: EncoderConfig) -> int:
+    """Schema version for ``config``: SCHEMA_VERSION_EGO (2) when ego-centric, else 1."""
+    return SCHEMA_VERSION_EGO if config.ego_centric else SCHEMA_VERSION
 
 
 @dataclass(frozen=True, slots=True)
@@ -233,8 +247,9 @@ def _token_row(
     on_carts: bool,
     pose: tuple[float, float, float] | None,
     config: EncoderConfig,
+    active_pose: tuple[float, float, float] | None = None,
 ) -> np.ndarray:
-    row = np.zeros(TOKEN_DIM, dtype=np.float32)
+    row = np.zeros(token_dim(config), dtype=np.float32)
     row[_STATUS_COL[status]] = 1.0  # status one-hot 0..2
     if isinstance(body, Aircraft):
         row[3] = 1.0  # aircraft type bit
@@ -261,6 +276,20 @@ def _token_row(
         th = np.radians(pose[2])
         row[18], row[19], row[20], row[21] = nx, ny, float(np.sin(th)), float(np.cos(th))
     # reserved 22..23 stay 0 (region_side, seq_order)
+    if config.ego_centric and pose is not None and active_pose is not None:
+        # #827: object pose in the active object's SE(2) body frame. Basis (compass, det-1):
+        # forward=(sinθ_a, cosθ_a), right=(cosθ_a, -sinθ_a). Invariant under rigid scene motion.
+        ax, ay, ah = active_pose
+        th_a = np.radians(ah)
+        s_a, c_a = float(np.sin(th_a)), float(np.cos(th_a))
+        dx, dy = pose[0] - ax, pose[1] - ay
+        fwd = dx * s_a + dy * c_a
+        right = dx * c_a - dy * s_a
+        dth = np.radians(pose[2] - ah)
+        row[TOKEN_DIM + 0] = fwd / config.pos_ref_m
+        row[TOKEN_DIM + 1] = right / config.pos_ref_m
+        row[TOKEN_DIM + 2] = float(np.sin(dth))
+        row[TOKEN_DIM + 3] = float(np.cos(dth))
     return row
 
 
@@ -273,7 +302,7 @@ def _tokens(
 
     Row order: parked (placement order) → active → unplaced (queue order), padded.
     ``active_index`` is the row of the active object, or -1 at a terminal state."""
-    tokens = np.zeros((config.max_objects, TOKEN_DIM), dtype=np.float32)
+    tokens = np.zeros((config.max_objects, token_dim(config)), dtype=np.float32)
     mask = np.zeros(config.max_objects, dtype=bool)
     entries: list[tuple[Aircraft | GroundObject, str, bool, tuple[float, float, float] | None]] = []
     for po in obs.parked:
@@ -304,8 +333,20 @@ def _tokens(
             f"unplaced={len(obs.unplaced_ids)}); the curriculum must guarantee "
             f"parked + active <= max_objects"
         )
+    active_pose = (
+        (obs.active.pose.x_m, obs.active.pose.y_m, obs.active.pose.heading_deg)
+        if obs.active is not None
+        else None
+    )
     for i, (body, status, on_carts, pose) in enumerate(entries[: config.max_objects]):
-        tokens[i] = _token_row(body, status=status, on_carts=on_carts, pose=pose, config=config)
+        tokens[i] = _token_row(
+            body,
+            status=status,
+            on_carts=on_carts,
+            pose=pose,
+            config=config,
+            active_pose=active_pose,
+        )
         mask[i] = True
     return tokens, mask, active_index
 
@@ -433,7 +474,7 @@ def encode(
         active_index=active_index,
         legal_action_mask=legal,
         meta=meta,
-        schema_version=SCHEMA_VERSION,
+        schema_version=schema_version_for(config),
     )
 
 
@@ -460,5 +501,5 @@ def encode_dynamic(
         active_index=active_index,
         legal_action_mask=legal,
         meta=meta,
-        schema_version=SCHEMA_VERSION,
+        schema_version=schema_version_for(config),
     )

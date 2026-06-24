@@ -17,6 +17,7 @@ from ml import action_space
 from ml.action_space import MAGNITUDE_DIM
 from ml.encoding import (
     ACTION_DIM,
+    EGO_TOKEN_DIM,
     RASTER_CHANNELS,
     TOKEN_DIM,
     ObservationTensors,
@@ -124,9 +125,11 @@ class HangarFitPolicy(nn.Module):
         n_heads: int = 4,
         cnn_channels: tuple[int, ...] = (16, 32, 64),
         spatial_tokens: bool = False,
+        relative_encoder: bool = False,
     ) -> None:
         super().__init__()
         self.spatial_tokens = spatial_tokens
+        self.relative_encoder = relative_encoder
         convs: list[nn.Module] = []
         in_ch = RASTER_CHANNELS
         for ch in cnn_channels:
@@ -140,7 +143,8 @@ class HangarFitPolicy(nn.Module):
                 *convs, nn.AdaptiveAvgPool2d(1), nn.Flatten()
             )  # (B, cnn_channels[-1])
         self.cnn_proj = nn.Linear(cnn_channels[-1], d_model)  # g: -> D
-        self.token_proj = nn.Linear(TOKEN_DIM, d_model)  # tokens 24 -> D
+        token_in = EGO_TOKEN_DIM if relative_encoder else TOKEN_DIM
+        self.token_proj = nn.Linear(token_in, d_model)  # tokens 24 (or 28 ego) -> D
         self.fuse = nn.Linear(2 * d_model, d_model)  # concat(token, g) 2D -> D
         layer = nn.TransformerEncoderLayer(
             d_model, n_heads, dim_feedforward=4 * d_model, batch_first=True

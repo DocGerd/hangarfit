@@ -46,6 +46,21 @@ def test_schema_version_and_dims_constants():
     assert encoding.PARK_INDEX == 8
 
 
+def test_ego_constants_and_helpers():
+    # OFF constants are unchanged (byte-identity anchor)
+    assert encoding.TOKEN_DIM == 24 and encoding.SCHEMA_VERSION == 1
+    # New ego constants
+    assert encoding.EGO_EXTRA_COLS == 4
+    assert encoding.EGO_TOKEN_DIM == 28
+    assert encoding.SCHEMA_VERSION_EGO == 2
+    off = EncoderConfig()
+    on = EncoderConfig(ego_centric=True)
+    assert off.ego_centric is False and on.ego_centric is True
+    assert encoding.token_dim(off) == 24 and encoding.token_dim(on) == 28
+    assert encoding.schema_version_for(off) == 1
+    assert encoding.schema_version_for(on) == 2
+
+
 def test_config_defaults():
     c = EncoderConfig()
     assert (c.cell_m, c.grid_w, c.grid_h, c.max_objects) == (0.25, 96, 192, 16)
@@ -202,6 +217,49 @@ def test_tokens_status_type_pose_and_padding():
     assert tokens[5].sum() == 0.0
 
 
+def test_tokens_ego_relative_cols_worked_example():
+    c = EncoderConfig(ego_centric=True)
+    fleet = _fuji()
+    pl = Placement(plane_id="fuji", x_m=11.0, y_m=12.0, heading_deg=0.0, on_carts=False)
+    active = ActiveObject(
+        object_id="aviat_husky",
+        body=fleet["aviat_husky"],
+        pose=Pose(x_m=11.0, y_m=-4.0, heading_deg=90.0),
+        on_carts=False,
+    )
+    obs = _obs(
+        parked=(ParkedObject(object_id="fuji", placement=pl),),
+        active=active,
+        unplaced=("cessna_150",),
+    )
+    tokens, _mask, active_index = _tokens(obs, fleet, c)
+    # width grew to 28
+    assert tokens.shape == (16, encoding.EGO_TOKEN_DIM)
+    # absolute cols 18..21 are STILL written (augment, not replace): active heading 90 -> sin1 cos0
+    assert abs(tokens[1, 20] - 1.0) < 1e-6 and abs(tokens[1, 21]) < 1e-6
+    # active object's own ego cols are the origin (0,0,0,1)
+    assert active_index == 1
+    assert list(tokens[1, 24:28]) == [0.0, 0.0, 0.0, 1.0]
+    # parked fuji is 16 m due-north of an east-facing active -> fwd 0, right -16 (to its left),
+    # normalized by pos_ref_m=20 -> (0, -0.8); relative heading 0-90=-90 -> sin -1, cos 0
+    assert abs(tokens[0, 24] - 0.0) < 1e-6
+    assert abs(tokens[0, 25] - (-0.8)) < 1e-6
+    assert abs(tokens[0, 26] - (-1.0)) < 1e-6
+    assert abs(tokens[0, 27] - 0.0) < 1e-6
+    # unplaced row has zero ego cols (no pose)
+    assert list(tokens[2, 24:28]) == [0.0, 0.0, 0.0, 0.0]
+
+
+def test_tokens_off_path_is_24_wide_and_unchanged():
+    # OFF config: width stays 24, no ego cols exist (byte-identity anchor)
+    c = EncoderConfig()
+    fleet = _fuji()
+    pl = Placement(plane_id="fuji", x_m=11.0, y_m=12.0, heading_deg=0.0, on_carts=False)
+    obs = _obs(parked=(ParkedObject(object_id="fuji", placement=pl),), active=None, unplaced=())
+    tokens, _mask, _ai = _tokens(obs, fleet, c)
+    assert tokens.shape == (16, encoding.TOKEN_DIM) == (16, 24)
+
+
 def test_tokens_wing_and_movement_one_hots():
     c = EncoderConfig()
     fleet = _fuji()
@@ -291,6 +349,48 @@ def test_encode_full_shapes_and_meta():
         "steps_total",
     }
     assert all(isinstance(v, float) for v in out.meta.values())
+
+
+def test_encode_ego_schema_is_2():
+    fleet = _fuji()
+    out = encode(_two_body_obs(fleet), empty_hangar(), fleet, EncoderConfig(ego_centric=True))
+    assert out.schema_version == 2
+    assert out.tokens.shape == (16, 28)
+
+
+def test_ego_cols_are_se2_invariant():
+    import math
+
+    fleet = _fuji()
+
+    def build(rot_deg: float, tx: float, ty: float):
+        # One rigid SE(2) scene motion: rotate (x,y) CCW by rot_deg, then translate. Compass
+        # headings are CW-positive, so a CCW position rotation pairs with heading - rot_deg
+        # (the position and facing must rotate in the same physical sense).
+        a = math.radians(rot_deg)
+        ca, sa = math.cos(a), math.sin(a)
+
+        def xf(x, y):
+            return (ca * x - sa * y + tx, sa * x + ca * y + ty)
+
+        px, py = xf(11.0, 12.0)
+        axp, ayp = xf(11.0, -4.0)
+        pl = Placement(plane_id="fuji", x_m=px, y_m=py, heading_deg=0.0 - rot_deg, on_carts=False)
+        active = ActiveObject(
+            object_id="aviat_husky",
+            body=fleet["aviat_husky"],
+            pose=Pose(x_m=axp, y_m=ayp, heading_deg=90.0 - rot_deg),
+            on_carts=False,
+        )
+        obs = _obs(parked=(ParkedObject(object_id="fuji", placement=pl),), active=active)
+        return _tokens(obs, fleet, EncoderConfig(ego_centric=True))[0]
+
+    base = build(0.0, 0.0, 0.0)
+    moved = build(37.0, 5.0, -8.0)
+    # ego cols (24..27) of the parked object are unchanged under the rigid motion
+    assert np.allclose(base[0, 24:28], moved[0, 24:28], atol=1e-5)
+    # absolute cols (18..21) DO change (different world pose)
+    assert not np.allclose(base[0, 18:22], moved[0, 18:22], atol=1e-3)
 
 
 def test_encode_meta_is_immutable():

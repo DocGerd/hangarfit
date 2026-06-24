@@ -306,6 +306,9 @@ def train(
     enc = encoder or EncoderConfig()
     env = build_trivial_env(seed, weights=weights)
     policy = HangarFitPolicy(**(policy_kwargs or {})).to(torch.device(device))
+    # #827: the encoder's ego-frame is DERIVED from the policy architecture so the token width
+    # and the policy's token_proj input can never disagree.
+    enc = replace(enc, ego_centric=bool((policy_kwargs or {}).get("relative_encoder", False)))
     optimizer = torch.optim.Adam(policy.parameters(), lr=cfg.lr)
     normalizer = ReturnNormalizer(eps=cfg.return_norm_eps) if cfg.normalize_returns else None
     history: list[float] = []
@@ -501,6 +504,10 @@ def train_curriculum(
         policy = HangarFitPolicy(**saved_policy_kwargs).to(dev)
         optimizer = torch.optim.Adam(policy.parameters(), lr=cfg.lr)
         normalizer = ReturnNormalizer(eps=cfg.return_norm_eps) if cfg.normalize_returns else None
+    # #827: derive the encoder's ego-frame from the (post-load authoritative) architecture, so the
+    # token width and the policy's token_proj can never disagree, and a loaded ego checkpoint
+    # auto-uses an ego encoder regardless of whether --relative-encoder was re-passed.
+    enc = replace(enc, ego_centric=bool(saved_policy_kwargs.get("relative_encoder", False)))
     completed_set = set(completed_stages)
     history = CurriculumHistory()
     for stage_index, stage in enumerate(sched.stages):
@@ -901,6 +908,15 @@ def build_argparser() -> argparse.ArgumentParser:
         "checkpoint's policy_kwargs)",
     )
     p.add_argument(
+        "--relative-encoder",
+        action="store_true",
+        help="opt-in ego-centric augment encoder (#827, ADR-0028 re-open trigger #2): each "
+        "object's pose is ALSO written in the active object's SE(2) body frame (4 extra token "
+        "cols). Default off = byte-identical (TOKEN_DIM 24, schema 1); a deliberate "
+        "representation re-baseline when on (TOKEN_DIM 28, schema 2); persisted in the "
+        "checkpoint's policy_kwargs",
+    )
+    p.add_argument(
         "--epochs",
         type=int,
         default=PPOConfig().epochs,
@@ -1172,6 +1188,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = parser.parse_args(argv)
     if args.device == "cuda" and not torch.cuda.is_available():
         parser.error("--device cuda requested but torch.cuda.is_available() is False")
+    if args.relative_encoder and args.save_onnx:
+        parser.error(
+            "--save-onnx is not yet supported with --relative-encoder; torch-free ONNX "
+            "inference for the ego-centric encoder is a deferred #827 follow-up"
+        )
     weights = RewardWeights(
         w_col=args.w_col,
         r_valid_park=args.r_valid_park,
@@ -1191,6 +1212,7 @@ def main(argv: Sequence[str] | None = None) -> None:
             ("n_layers", args.n_layers),
             ("n_heads", args.n_heads),
             ("spatial_tokens", True if args.spatial_tokens else None),
+            ("relative_encoder", True if args.relative_encoder else None),
         )
         if v is not None
     } or None
