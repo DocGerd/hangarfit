@@ -3,6 +3,47 @@
 Dev/CI-only, never shipped in the wheel. Sub-project #1: the cold-joint RL
 environment + reward (`HangarFitEnv`), reusing `hangarfit`'s geometry oracle.
 
+## Status — dense train-to-mastery is RESOLVED-NEGATIVE (#736, [ADR-0028](../docs/adr/0028-learned-backend-train-to-mastery-resolved-negative.md))
+
+The **inference seam ships** (#706, verifier-gated, `solve --backend learned`). The
+**dense train-to-mastery** goal — having a PPO policy *construct* a valid dense packing of
+the frontier `trio-notch` rung — is **resolved-negative and the lever program is stopped.**
+Five gate-run levers, one per lever class, each KILLed at the same `valid_placed ≈ 0.333`
+"place-one-validly-then-abstain" fixed point:
+
+| Lever | Class | Verdict |
+|---|---|---|
+| #794 `--anchor-trio-notch` | start-state scaffold | vp 0.333, no transfer |
+| #810 `--spatial-tokens` | representation | vp 0.333 = control exactly |
+| #813 `--r-valid-progress` | reward economics | argmax moved → invalid **piling** |
+| #817 `--entropy-floor` | exploration | inert, vp 0.333 = control |
+| #823 `--backplay-trio-notch` | start-state distribution (ρ₀) | transfer 0.000; scaffold-only 0.63–0.69 |
+
+A **pre-registered measure-first probe** (`basin_mc.py` + `phi_eval.py` + `phi_eval_control.py`
++ `probe-verdict.md`, gitignored gate-run scratch; torch-light, through the product checker;
+independently reproduced by a multi-agent verification pass) then adjudicated the two
+never-measured numbers the diagnosis rested on:
+
+- **φ=1 cold-start completion `vp = 0.000`** — with two of three notch aircraft pre-parked at a
+  valid witness prefix and the third spawned **at the door**, the policy cannot drive-and-pack
+  it (`0.000` on the backplay checkpoint **and** on both non-backplay control checkpoints; φ=0
+  spawn-at-its-own-valid-pose positive control = `1.000`). The earlier "0.63–0.69 placement is
+  learnable" was a φ-mixture average dominated by near-witness episodes.
+- **Valid-triple manifold ≈ 2e-3, FLAT across clearance** (0.10→0.30 m, +200%) while
+  `P(valid pair) ≈ 0.107` — valid 3-packings are sparse isolated points a clearance relax does
+  **not** widen.
+- **RR-MC already solves `trio-notch`** (~30 s, 4/4 seeds) — so it is a curriculum
+  *stepping-stone*, not a charter target (the chartered dense target is all-8, strictly harder).
+
+**Diagnosis:** the binding wall is **cold-start drive-and-pack of the marginal object** into a
+sparse, clearance-invariant valid slot. Reward / representation / exploration-temperature levers
+reweight already-reachable outcomes (Ng–Harada–Russell); only a ρ₀ lever that *trains* the
+cold-start completion distribution could move it, and that capability is measured `0.000`. See
+**[ADR-0028](../docs/adr/0028-learned-backend-train-to-mastery-resolved-negative.md)** for the
+decision, the **re-open gate**, and the **do-not-reattempt** list. The lever recipes below are
+retained for reproducibility and any future re-open; do **not** re-run a refuted axis on the
+notch.
+
 ## Run the tests
     pytest tests/ml/
 

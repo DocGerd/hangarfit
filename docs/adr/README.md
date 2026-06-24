@@ -105,3 +105,4 @@ manual workflow above is canonical.
 | 0025 | [Ground-object taxonomy — concrete catalog types, Layout-uniform placement, and pairwise-set keep-out seam](0025-ground-object-taxonomy.md) | Accepted |
 | 0026 | [Caddy hard-door egress — clear-egress routability gate](0026-caddy-hard-door-egress.md) | Accepted |
 | 0027 | [Learned-backend determinism scope — verifier strict, proposer weaker (amends [ADR-0003](0003-rr-mc-solver-algorithm.md))](0027-learned-backend-determinism-scope.md) | Proposed |
+| 0028 | [Learned-backend dense train-to-mastery — resolved-negative; scope to the shipped inference seam](0028-learned-backend-train-to-mastery-resolved-negative.md) | Accepted |

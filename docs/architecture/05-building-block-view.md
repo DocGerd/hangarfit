@@ -367,7 +367,12 @@ torch `[train]` stack used to *produce* the weights). **Determinism:** the learn
 the ADR-0003 byte-identical contract — `collisions.check` (plus `towplanner`)
 remains the sole arbiter of validity and routability ([ADR-0027](../adr/0027-learned-backend-determinism-scope.md)).
 Only this seam ships in the wheel; the inference implementation (`ml.infer`) and
-the RL training stack live in `ml/`, present in source checkouts only.
+the RL training stack live in `ml/`, present in source checkouts only. **Scope:**
+the seam is the chartered, shipped deliverable; *train-to-mastery* on the dense
+`trio-notch` rung is **resolved-negative** (a measured cold-start drive-and-pack
+wall — see [ADR-0028](../adr/0028-learned-backend-train-to-mastery-resolved-negative.md)
+and [`ml/README.md`](../../ml/README.md)), so a bare install reporting the backend
+unavailable is the expected steady state until a re-open trigger fires.
 
 ### `towplanner.py` — tow-path planning
 
