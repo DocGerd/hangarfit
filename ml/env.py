@@ -34,7 +34,8 @@ def _backplay_corridor_pose(witness: Placement, door: Pose, phi: float) -> Pose:
     (phi=0, the valid dense terminal) out to the door spawn (phi=1); heading interpolates on
     the shortest arc. A degenerate but kinematically-agnostic corridor (#821 v1): it realizes
     the reverse-curriculum reachable-state shift without a Reeds-Shepp solve. phi=0 returns the
-    witness pose exactly; phi=1 returns the door pose exactly."""
+    witness pose (heading normalized to [0, 360) — exact for any witness heading already in
+    range, which the committed fixtures are); phi=1 returns the door pose exactly."""
     return Pose(
         x_m=witness.x_m + (door.x_m - witness.x_m) * phi,
         y_m=witness.y_m + (door.y_m - witness.y_m) * phi,

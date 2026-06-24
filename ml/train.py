@@ -124,8 +124,17 @@ def collect_rollout(
     """Drive the env single-stream for `rollout_len` steps; return the buffer and the
     per-completed-episode stats (competency + reward sum). On each episode boundary,
     `sample_request()` (when given) returns an EpisodeStart that picks the next episode's
-    object subset and optional seed_anchor_k; None keeps the env's fixed requested set
-    (the 4a trivial path).
+    object subset and optional seed_anchor_k / backplay_phi; None keeps the env's fixed
+    requested set (the 4a trivial path).
+
+    The FIRST episode of each rollout starts from the env's construction defaults (the bare
+    `env.reset()` below) — `sample_request()` is consulted only from the first episode boundary
+    on. So a per-episode start override (requested_ids, seed_anchor_k, AND the #821 backplay
+    phi) is applied from episode 1, not episode 0; this is a deliberate, long-standing property
+    kept for byte-identity (threading the start into the initial reset would add an rng draw and
+    shift every existing rung's stream). The vectorized path (`collect_rollout_vec` →
+    `_EnvWorker.reset`) applies the start from episode 0, so the GPU gate's vec runs exercise
+    the backplay shift on every episode.
 
     `pose_cache` (#733, default-on) opens a per-step `pose_cache_scope` spanning the
     encode + env.step so the shapely parts are built once across the encoder and the

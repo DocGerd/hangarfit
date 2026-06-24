@@ -869,15 +869,20 @@ def test_sample_backplay_start_phi_spans_the_corridor():
     # (near-witness AND near-door starts), not pinned to one end.
     rng = random.Random(123)
     phis = [
-        sample_backplay_start(("a", "b", "c"), 3, rng, phi_cap=1.0).backplay_phi
+        phi
         for _ in range(2000)
+        if (phi := sample_backplay_start(("a", "b", "c"), 3, rng, phi_cap=1.0).backplay_phi)
+        is not None
     ]
+    assert len(phis) == 2000  # every backplay draw carries a phi
     assert min(phis) < 0.1  # near-witness (near-solved) starts present
     assert max(phis) > 0.9  # near-door starts present
     assert 0.45 <= sum(phis) / len(phis) <= 0.55  # mean ~0.5 of U(0,1)
 
 
-def _backplay_stage(cap=0.5, *, anchor_path=_WITNESS_NOTCH, anchor_prob=None) -> Stage:
+def _backplay_stage(
+    cap: float = 0.5, *, anchor_path: str | None = _WITNESS_NOTCH, anchor_prob: float | None = None
+) -> Stage:
     return Stage(
         name="trio-notch-backplay",
         difficulty=DifficultyConfig(
@@ -915,7 +920,8 @@ def test_with_trio_notch_backplay_rung_inserts_sub_rungs_before_trio_notch():
 def test_backplay_sub_rungs_are_three_object_k2_with_ascending_phi_to_one():
     sched = with_trio_notch_backplay_rung(CurriculumSchedule.default())
     rungs = [s for s in sched.stages if "backplay" in s.name]
-    caps = [s.difficulty.backplay_phi_cap for s in rungs]
+    caps = [c for s in rungs if (c := s.difficulty.backplay_phi_cap) is not None]
+    assert len(caps) == len(rungs)  # every backplay sub-rung carries a phi_cap
     assert caps == sorted(caps)  # the reverse-curriculum anneal grows the hardest start
     assert caps[-1] == 1.0  # the final sub-rung solves from the true door (confound-watch target)
     for s in rungs:
@@ -972,3 +978,17 @@ def test_validate_ladder_rejects_backplay_combined_with_anchor_prob():
     # The two start-state samplers are mutually exclusive (each owns one fixed rng draw order).
     with pytest.raises(ValueError, match="backplay_phi_cap"):
         validate_ladder([_backplay_stage(0.5, anchor_prob=0.5)], encoder_max_objects=8)
+
+
+def test_validate_ladder_rejects_backplay_rung_with_wrong_prefix_k():
+    # Backplay must pre-park the k=N-1 prefix so EXACTLY ONE object is driven via the corridor —
+    # _backplay_phi persists across spawns, so k<N-1 (>1 driven) would backplay every driven object.
+    bad = Stage(
+        name="trio-notch-backplay",
+        difficulty=DifficultyConfig(max_objects=3, seed_anchor_k=1, backplay_phi_cap=0.5),
+        hangar_path=_NOTCH_HANGAR,
+        fleet_path=_NOTCH_FLEET,
+        anchor_layout_path=_WITNESS_NOTCH,
+    )
+    with pytest.raises(ValueError, match="k=N-1"):
+        validate_ladder([bad], encoder_max_objects=8)

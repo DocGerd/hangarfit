@@ -429,6 +429,16 @@ def validate_ladder(ladder: Sequence[Stage], *, encoder_max_objects: int) -> Non
                     f"stage {s.name!r}: backplay_phi_cap and anchor_prob are mutually exclusive "
                     f"(each owns one fixed per-episode rng draw order)"
                 )
+            # Backplay pre-parks the k=N-1 prefix so EXACTLY ONE object is driven via the corridor:
+            # _backplay_phi persists across the per-object _spawn calls, so a smaller k (>1 driven)
+            # would silently backplay-spawn EVERY driven object — not the single-driven reverse
+            # curriculum the lever (and every docstring) specifies. Enforce it pre-flight.
+            if s.difficulty.seed_anchor_k != n - 1:
+                raise ValueError(
+                    f"stage {s.name!r}: a backplay rung must pre-park the k=N-1 prefix "
+                    f"(seed_anchor_k == max_objects - 1 == {n - 1}) so exactly one object is "
+                    f"driven, got seed_anchor_k={s.difficulty.seed_anchor_k}"
+                )
 
 
 @dataclass(slots=True)
@@ -550,8 +560,9 @@ _TRIO_NOTCH_ANCHORED_STAGE = Stage(
 # diagnosed cold-start coverage minimum on the notch by collapsing the tight-3rd-pose discovery
 # horizon to ~0 and growing it back — the only lever class that shifts rho_0 (the start-state
 # distribution) rather than reward/representation/exploration. The pool IS the witness's 3 objects
-# (anchor_layout_path set => stage_builder pins it); ONE object is driven, so the budget matches the
-# pair-anchored drive-one (per_object == total). Inserted before the empty-start trio-notch.
+# (anchor_layout_path set => stage_builder pins it); ONE object is driven, so per_object == total
+# (the drive-one budget structure of pair-anchored) at trio-notch's per-object magnitude (80), NOT
+# pair-anchored's 60/60. Inserted before the empty-start trio-notch.
 _BACKPLAY_PHI_CEILINGS: tuple[float, ...] = (0.5, 0.75, 1.0)
 
 
