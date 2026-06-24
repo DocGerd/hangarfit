@@ -610,6 +610,70 @@ policy need only discover the single tight 3rd pose) and/or a higher entropy flo
 the valid basin consolidates instead of decaying. The lever stays merged as opt-in, default-neutral
 infrastructure (`r_valid_progress=0.0` ⇒ byte-identical) for a future combined attempt.
 
+### Frontier entropy-floor A/B (#815 — does holding entropy high on the frontier rungs consolidate the valid basin?)
+
+The #812 carrot-KILL re-pointed the next lever at **discovery / basin stability**, and that section named
+this candidate explicitly: *"a higher entropy floor on the frontier rungs so the valid basin consolidates
+instead of decaying."* `--entropy-floor F --frontier-rungs trio-notch-anchored,trio-notch` (#815, PR #817) is
+that lever — it clamps the **per-rung-annealed** `entropy_coef` **up** to `F` on the named rungs only, so the
+frontier stays in the high-entropy regime where the valid 2–3-object basin was empirically reachable (#812
+peak vp 0.451), while the mastered lower ladder anneals normally. Default-off ⇒ byte-identical (4c-ii). The
+A/B is the **#736 trio-notch-anchored recipe with `--entropy-floor 0.02 --frontier-rungs
+trio-notch-anchored,trio-notch` added** (the only change), two seeds via `ml.sweep`, against a same-session
+fresh control. The #816 instrumentation (PR #818) persists the applied `entropy_coef` + `epochs_run` per-iter
+to the `--metrics-out` JSONL so the confound below is checkable.
+
+```bash
+# +floor arm — identical to the control protocol plus the two lever flags (the only change).
+python -u -m ml.sweep --seeds 0,1 --out-dir sweep-floor --tag floor --max-concurrency 1 -- \
+  --schedule curriculum --device cuda --n-envs 16 --rollout-len 512 \
+  --auto-budget --auto-budget-max-iters 120 --auto-budget-min-level 0.1 \
+  --promotion-metric valid_placed --promotion-threshold 0.9 \
+  --r-valid-park 30.0 --r-unplaced-penalty 25.0 --dense-slot-potential \
+  --w-col 20.0 --valid-park-grade-scale 4.0 --r-first-valid 15.0 \
+  --entropy-start 0.05 --entropy-end 0.005 --entropy-anneal-iters 40 \
+  --normalize-returns --validity-conditional-terminal \
+  --solo-box-rung --seed-anchor --mixed-anchor --anchor-trio-notch --stop-after-rung trio-notch \
+  --entropy-floor 0.02 --frontier-rungs trio-notch-anchored,trio-notch
+```
+
+**Result (2026-06-24 two-seed run) — KILL, the floor is inert (floor ≈ control).** Lower ladder clean on both
+arms (trivial→pair-mixed all mastered 0.91–0.99), so the frontier read is trustworthy. Windowed-final vp
+(last-10-iter mean) on the decisive rungs:
+
+| Rung | floor seed 0 | floor seed 1 | control seed 0 | control seed 1 |
+|---|---|---|---|---|
+| `trio-notch-anchored` | 0.331 PILING | 0.281 PILING | 0.333 PILING | 0.213 PILING |
+| `trio-notch` (transfer) | 0.000 place-nothing | 0.000 place-nothing | 0.000 place-nothing | 0.000 place-nothing |
+
+The floor changed **nothing** on the frontier: every cell capped at the same **place-one-anchor fixed point
+(windowed-final vp ≤ 0.333, all graded PILING)** and collapsed to place-nothing on transfer, whether
+`entropy_coef` was clamped at 0.02 (floor) or left to anneal toward 0.005–0.016 (control). The control anneal
+is **per-rung**, so it only reaches the 0.005 end when a rung runs the full 40 iters: **seed 0 is the
+maximal-contrast cell** (control fully annealed to 0.005 — a 4× lower entropy than the floor's 0.02) and there
+the floor was *exactly* inert (0.331 vs 0.333), confirmed per-iter in the #816 JSONL. Unlike #812's carrot —
+which at least *moved* the argmax — the floor never even reached #812's transient 0.451 basin (peak vp 0.333).
+
+**#816 confound cleared — refuted, not merely absent.** The feared mechanism was *floor → higher approx-KL →
+the `--target-kl 0.03` epoch loop early-stops → `epochs_run`→1 → starved consolidation*. The JSONL shows the
+opposite: `epochs_run` averaged 3.26–3.34 on the **floor** arm vs 3.19–3.24 on **control** (target 4,
+KL-gated; min 1 only on isolated KL-spike iters, never a systematic collapse). The floor ran with *at least as
+many* consolidation epochs as control, so the KILL cannot be an epoch-starvation artifact — no
+`--no-target-kl` retune is needed.
+
+**Diagnosis (4th refuted #736 lever).** Undirected exploration cannot *steer* toward the valid basin. Holding
+entropy high merely widens the search symmetrically: it changed the *texture* of failure without changing the
+*outcome* — the floor arm actually logged **fewer** hard-piling iters (8–9 vs control's 11–19; higher entropy
+traded some piling for abstention) yet valid placement never rose above the vp-0.333 cap. Finding the
+invalid-pile / abstain region more readily is not finding the valid one. This is the **third independent
+refutation converging on discovery** (after #810's representation refutation and #812's economics refutation):
+the valid dense 3rd-pose must be **shown** (imitation / witness-graft), not *encouraged* (entropy) or
+*rewarded* (carrot). The surviving pre-registered discovery levers are **witness-imitation / DAgger** (graft
+the committed 3-object notch witness into the training distribution so the policy learns the valid
+configuration by imitation) and the **k = 2→1→0 pose-anneal localizer** (a valid 2-object start so the policy
+need only discover the single tight 3rd pose). `--entropy-floor` stays merged as opt-in, default-neutral
+infrastructure (`entropy_floor=None` ⇒ byte-identical). **Do not re-run the entropy floor on the notch.**
+
 ### Concurrent sweep runner (#749 — run the two/three-seed gate in one launch)
 
 The gate recipes above are **per-seed** (`--seed 0`, then `--seed 1`), run serially today — one
