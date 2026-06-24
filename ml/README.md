@@ -207,6 +207,8 @@ python -m ml.reach_rate --hangar tests/fixtures/canary_hangar_tight_18m.yaml \
   --policy model.pt --samples 12 --witness-absent-tau 0.35
 # NB: there are only C(9,8)=9 DISTINCT k8 subsets; RR-MC is deterministic, so beyond 9 the
 # sampler repeats scenarios (pseudo-replication). Enumerate the distinct subsets for a clean CI.
+# tau 0.35 > the measured RR-MC ci_hi 0.30, so k8 registers as witness-absent; the 0.15 default
+# would NOT (0.30 > 0.15) — at n=9 the Wilson width forces tau above the small-sample ci_hi.
 ```
 
 **Current reading (2026-06-25, NOT MET).** Executed on the witness-absent `k8` stratum (9 distinct
