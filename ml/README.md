@@ -711,7 +711,7 @@ python -u -m ml.sweep --seeds 0,1 --out-dir sweep-backplay --tag bp --max-concur
 ```
 
 **Result (2026-06-24 two-seed run) — KILL, but the most informative negative in five levers: it deconfounds the
-wall.** Lower ladder mastered 0.93–0.95 on both arms (frontier read trustworthy). Windowed-final vp (last-10-iter
+wall.** Lower ladder mastered ~0.92–0.96 on both arms (frontier read trustworthy). Windowed-final vp (last-10-iter
 mean) on the decisive rungs, `ml.gate`-cross-confirmed (all four transfer cells exit 1, never competent):
 
 | Rung | bp seed 0 | bp seed 1 | control seed 0 | control seed 1 |
