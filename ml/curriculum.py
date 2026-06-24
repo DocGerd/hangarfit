@@ -264,10 +264,13 @@ def sample_request(pool: Sequence[str], n: int, rng: random.Random) -> tuple[str
 class EpisodeStart:
     """Per-episode start spec produced by the sampler, consumed by env.reset. ``seed_anchor_k``
     None => the env uses ``difficulty.seed_anchor_k`` (plain rung); an int => per-episode
-    override (the #712 mixed-start rung's seeded k draw)."""
+    override (the #712 mixed-start rung's seeded k draw). ``backplay_phi`` None => no spawn
+    override (byte-identical door spawn); a float in [0, 1] => the #821 backplay corridor
+    fraction for the driven object (0 = its witness park-pose, 1 = the door)."""
 
     requested_ids: tuple[str, ...]
     seed_anchor_k: int | None = None
+    backplay_phi: float | None = None
 
 
 def plain_start(pool: Sequence[str], n: int, rng: random.Random) -> EpisodeStart:
@@ -294,21 +297,44 @@ def sample_mixed_start(
     return EpisodeStart(ids, k)
 
 
+def sample_backplay_start(
+    pool: Sequence[str],
+    n: int,
+    rng: random.Random,
+    *,
+    phi_cap: float,
+) -> EpisodeStart:
+    """A #821 backplay reverse-curriculum episode: draw the requested ids, THEN draw the corridor
+    fraction phi ~ U(0, ``phi_cap``) from the SAME rng (FIXED draw order: ids then phi), so Sync
+    and Subproc workers sharing one stream stay byte-identical. ``seed_anchor_k`` is left None (the
+    rung's fixed N-1 prefix is the env default, not a per-episode draw); the env spawns the single
+    driven object a fraction phi along the corridor from its witness park-pose (phi=0, near-solved)
+    out to the door (phi=1)."""
+    ids = sample_request(pool, n, rng)
+    phi = rng.uniform(0.0, phi_cap)
+    return EpisodeStart(ids, None, phi)
+
+
 def make_episode_sampler(
     stage: Stage, pool: Sequence[str], n: int, rng: random.Random
 ) -> Callable[[], EpisodeStart]:
-    """Build this stage's per-episode start sampler. A mixed-start rung (anchor_prob set)
-    gets ``sample_mixed_start`` (seeded per-episode k draw); every other rung gets
-    ``plain_start`` (byte-identical id draw, k left to the env default). Both bind pool/n/rng
-    by value via partial (no late-binding closure trap)."""
-    ap = stage.difficulty.anchor_prob
+    """Build this stage's per-episode start sampler. A backplay rung (backplay_phi_cap set) gets
+    ``sample_backplay_start`` (seeded per-episode phi draw); a mixed-start rung (anchor_prob set)
+    gets ``sample_mixed_start`` (seeded per-episode k draw); every other rung gets ``plain_start``
+    (byte-identical id draw, k/phi left to the env default). The backplay and mixed knobs are
+    mutually exclusive (validate_ladder enforces it). All bind pool/n/rng by value via partial
+    (no late-binding closure trap)."""
+    diff = stage.difficulty
+    if diff.backplay_phi_cap is not None:
+        return partial(sample_backplay_start, pool, n, rng, phi_cap=diff.backplay_phi_cap)
+    ap = diff.anchor_prob
     if ap is not None:
         return partial(
             sample_mixed_start,
             pool,
             n,
             rng,
-            seed_anchor_k=stage.difficulty.seed_anchor_k,
+            seed_anchor_k=diff.seed_anchor_k,
             anchor_prob=ap,
         )
     return partial(plain_start, pool, n, rng)
@@ -384,6 +410,24 @@ def validate_ladder(ladder: Sequence[Stage], *, encoder_max_objects: int) -> Non
                 raise ValueError(
                     f"stage {s.name!r}: a mixed-start rung (anchor_prob set) needs "
                     f"max_objects >= 2 (room for both a k=1 and a k=0 draw), got {n}"
+                )
+        # #821 backplay rung: phi_cap must be a real corridor fraction in (0, 1] (0 = degenerate
+        # always-witness, no corridor; >1 extrapolates past the door), needs a witness for the
+        # corridor terminals + the pre-parked prefix, and is mutually exclusive with the mixed-start
+        # k draw (each sampler owns ONE fixed rng draw order — sharing one stage desyncs them).
+        cap = s.difficulty.backplay_phi_cap
+        if cap is not None:
+            if not (0.0 < cap <= 1.0):
+                raise ValueError(f"stage {s.name!r}: backplay_phi_cap must be in (0, 1], got {cap}")
+            if s.anchor_layout_path is None:
+                raise ValueError(
+                    f"stage {s.name!r}: a backplay rung (backplay_phi_cap set) needs an "
+                    f"anchor_layout_path (the witness the driven corridor recedes from)"
+                )
+            if ap is not None:
+                raise ValueError(
+                    f"stage {s.name!r}: backplay_phi_cap and anchor_prob are mutually exclusive "
+                    f"(each owns one fixed per-episode rng draw order)"
                 )
 
 
@@ -493,6 +537,43 @@ _TRIO_NOTCH_ANCHORED_STAGE = Stage(
     fleet_path=_NOTCH_FLEET,
     anchor_layout_path=_WITNESS_NOTCH,
     clearance_m=_LENIENT_CLEARANCE,
+)
+
+# Opt-in #821 reverse-curriculum (Backplay) sub-rungs (wired via with_trio_notch_backplay_rung /
+# --backplay-trio-notch), NOT in DEFAULT_LADDER. The three notch-witness objects with the k=N-1=2
+# prefix pre-parked and the SINGLE remaining (driven) object spawned a fraction phi ~ U(0, phi_cap)
+# along the corridor from its witness park-pose (phi=0, near-solved) out to the door (phi=1). Each
+# sub-rung is a FIXED phi_cap; the ceiling anneals 0.5 -> 1.0 across the ladder, promoted on the
+# SAME windowed valid_placed competency gate (no per-iteration anneal code — the reverse curriculum
+# IS the rung sequence). The final phi_cap=1.0 sub-rung must solve from the true door, so a WIN
+# that reaches it rules out near-witness overfit (the issue-#821 confound watch). It targets the
+# diagnosed cold-start coverage minimum on the notch by collapsing the tight-3rd-pose discovery
+# horizon to ~0 and growing it back — the only lever class that shifts rho_0 (the start-state
+# distribution) rather than reward/representation/exploration. The pool IS the witness's 3 objects
+# (anchor_layout_path set => stage_builder pins it); ONE object is driven, so the budget matches the
+# pair-anchored drive-one (per_object == total). Inserted before the empty-start trio-notch.
+_BACKPLAY_PHI_CEILINGS: tuple[float, ...] = (0.5, 0.75, 1.0)
+
+
+def _trio_notch_backplay_stage(phi_cap: float) -> Stage:
+    return Stage(
+        name=f"trio-notch-backplay-{int(round(phi_cap * 100))}",
+        difficulty=DifficultyConfig(
+            max_objects=3,
+            seed_anchor_k=2,
+            backplay_phi_cap=phi_cap,
+            per_object_step_budget=80,
+            total_step_budget=80,
+        ),
+        hangar_path=_NOTCH_HANGAR,
+        fleet_path=_NOTCH_FLEET,
+        anchor_layout_path=_WITNESS_NOTCH,
+        clearance_m=_LENIENT_CLEARANCE,
+    )
+
+
+_TRIO_NOTCH_BACKPLAY_STAGES: tuple[Stage, ...] = tuple(
+    _trio_notch_backplay_stage(cap) for cap in _BACKPLAY_PHI_CEILINGS
 )
 
 DEFAULT_LADDER: tuple[Stage, ...] = (
@@ -619,6 +700,27 @@ def with_trio_notch_anchored_rung(schedule: CurriculumSchedule) -> CurriculumSch
     return replace(
         schedule, stages=stages[:before] + (_TRIO_NOTCH_ANCHORED_STAGE,) + stages[before:]
     )
+
+
+def with_trio_notch_backplay_rung(schedule: CurriculumSchedule) -> CurriculumSchedule:
+    """Return ``schedule`` with the opt-in #821 backplay (reverse-curriculum) sub-rung ladder
+    inserted immediately BEFORE the ``trio-notch`` rung — the ``--backplay-trio-notch`` lever. It
+    pre-parks the k=N-1=2 notch-witness prefix and spawns the single driven object a fraction
+    phi ~ U(0, phi_cap) along the corridor from its witness park-pose (phi=0, near-solved) out to
+    the door (phi=1); the phi_cap ceiling anneals 0.5 -> 1.0 across the contiguous sub-rungs,
+    promoted on the SAME competency gate. This collapses the diagnosed cold-start coverage minimum
+    (place one, abandon two) by starting near the dense solution and receding to the true door —
+    the only #736 lever that shifts the start-state distribution rather than reward/representation/
+    exploration. Only the ladder changes (the promotion policy is preserved); the default ladder is
+    left untouched, so default runs stay byte-identical (this is opt-in)."""
+    stages = schedule.stages
+    try:
+        before = next(i for i, s in enumerate(stages) if s.name == "trio-notch")
+    except StopIteration:
+        raise ValueError(
+            "with_trio_notch_backplay_rung: schedule has no 'trio-notch' rung to insert before"
+        ) from None
+    return replace(schedule, stages=stages[:before] + _TRIO_NOTCH_BACKPLAY_STAGES + stages[before:])
 
 
 def with_mixed_anchor_rung(schedule: CurriculumSchedule) -> CurriculumSchedule:

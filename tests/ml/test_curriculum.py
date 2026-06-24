@@ -9,9 +9,12 @@ import pytest
 from ml.curriculum import (
     _BOX_FLEET,
     _BOX_HANGAR,
+    _NOTCH_FLEET,
+    _NOTCH_HANGAR,
     _PAIR_MIXED_STAGE,
     _SOLO_BOX_STAGE,
     _WITNESS_BOX,
+    _WITNESS_NOTCH,
     DEFAULT_LADDER,
     CurriculumHistory,
     CurriculumSchedule,
@@ -24,6 +27,7 @@ from ml.curriculum import (
     history_metric_records,
     make_episode_sampler,
     plain_start,
+    sample_backplay_start,
     sample_mixed_start,
     sample_request,
     should_promote,
@@ -35,6 +39,7 @@ from ml.curriculum import (
     with_promotion_overrides,
     with_solo_box_rung,
     with_trio_notch_anchored_rung,
+    with_trio_notch_backplay_rung,
 )
 from ml.encoding import EncoderConfig
 from ml.types import DifficultyConfig
@@ -816,3 +821,154 @@ def test_truncate_after_rung_at_trio_box_is_the_gate_sweep_shape():
     trio = truncated.stages[-1]
     assert trio.name == "trio-box"
     assert trio.difficulty.max_objects == 3  # the ≥2-object rung the four-lever ladder must clear
+
+
+# ---------------------------------------------------------------------------
+# #821 — backplay reverse-curriculum: EpisodeStart.backplay_phi, the
+#        sample_backplay_start sampler, and the trio-notch-backplay sub-rung ladder
+# ---------------------------------------------------------------------------
+
+
+def test_episode_start_backplay_phi_defaults_none():
+    # Byte-identity: a plain/mixed EpisodeStart carries no backplay corridor fraction.
+    assert EpisodeStart(("fuji",)).backplay_phi is None
+    assert EpisodeStart(("fuji",), 1).backplay_phi is None
+
+
+def test_sample_backplay_start_draws_phi_in_range_and_leaves_k_to_env():
+    rng = random.Random(0)
+    s = sample_backplay_start(("a", "b", "c"), 3, rng, phi_cap=0.5)
+    assert isinstance(s, EpisodeStart)
+    assert set(s.requested_ids) == {"a", "b", "c"}
+    # seed_anchor_k is left None (the rung's fixed N-1 prefix is the env default, not a draw).
+    assert s.seed_anchor_k is None
+    assert s.backplay_phi is not None and 0.0 <= s.backplay_phi <= 0.5
+
+
+def test_sample_backplay_start_is_deterministic_for_equal_rngs():
+    pool = ("a", "b", "c")
+    a = sample_backplay_start(pool, 3, random.Random(7), phi_cap=1.0)
+    b = sample_backplay_start(pool, 3, random.Random(7), phi_cap=1.0)
+    assert a == b  # same seed -> identical ids AND phi
+
+
+def test_sample_backplay_start_draw_order_is_ids_then_phi():
+    # The FIXED draw order (ids via sample_request, THEN one uniform phi draw) is what keeps
+    # Sync and Subproc workers sharing one rng stream byte-identical. Reproduce it manually.
+    pool = ("a", "b", "c")
+    got = sample_backplay_start(pool, 3, random.Random(3), phi_cap=0.8)
+    ref = random.Random(3)
+    ref_ids = sample_request(pool, 3, ref)
+    ref_phi = ref.uniform(0.0, 0.8)
+    assert got.requested_ids == ref_ids
+    assert got.backplay_phi == ref_phi
+
+
+def test_sample_backplay_start_phi_spans_the_corridor():
+    # phi is a genuine U(0, cap) draw: over many episodes it spreads across the corridor
+    # (near-witness AND near-door starts), not pinned to one end.
+    rng = random.Random(123)
+    phis = [
+        sample_backplay_start(("a", "b", "c"), 3, rng, phi_cap=1.0).backplay_phi
+        for _ in range(2000)
+    ]
+    assert min(phis) < 0.1  # near-witness (near-solved) starts present
+    assert max(phis) > 0.9  # near-door starts present
+    assert 0.45 <= sum(phis) / len(phis) <= 0.55  # mean ~0.5 of U(0,1)
+
+
+def _backplay_stage(cap=0.5, *, anchor_path=_WITNESS_NOTCH, anchor_prob=None) -> Stage:
+    return Stage(
+        name="trio-notch-backplay",
+        difficulty=DifficultyConfig(
+            max_objects=3, seed_anchor_k=2, backplay_phi_cap=cap, anchor_prob=anchor_prob
+        ),
+        hangar_path=_NOTCH_HANGAR,
+        fleet_path=_NOTCH_FLEET,
+        anchor_layout_path=anchor_path,
+    )
+
+
+def test_make_episode_sampler_backplay_for_a_backplay_stage():
+    # A stage carrying backplay_phi_cap gets the backplay sampler: every draw carries a phi.
+    sampler = make_episode_sampler(_backplay_stage(0.5), ("a", "b", "c"), 3, random.Random(5))
+    s = sampler()
+    assert s.backplay_phi is not None and 0.0 <= s.backplay_phi <= 0.5
+    assert s.seed_anchor_k is None  # k stays the env default (the rung's fixed N-1 prefix)
+
+
+def test_default_ladder_has_no_backplay_rung():
+    # Byte-identity guard: every backplay sub-rung is opt-in; the default ladder is unchanged.
+    assert all("backplay" not in s.name for s in DEFAULT_LADDER)
+
+
+def test_with_trio_notch_backplay_rung_inserts_sub_rungs_before_trio_notch():
+    sched = with_trio_notch_backplay_rung(CurriculumSchedule.default())
+    names = [s.name for s in sched.stages]
+    i = names.index("trio-notch")
+    inserted = [n for n in names if "backplay" in n]
+    assert inserted  # at least one backplay sub-rung is grafted
+    # the sub-rungs sit immediately before the empty-start trio-notch, contiguous and in order
+    assert names[i - len(inserted) : i] == inserted
+
+
+def test_backplay_sub_rungs_are_three_object_k2_with_ascending_phi_to_one():
+    sched = with_trio_notch_backplay_rung(CurriculumSchedule.default())
+    rungs = [s for s in sched.stages if "backplay" in s.name]
+    caps = [s.difficulty.backplay_phi_cap for s in rungs]
+    assert caps == sorted(caps)  # the reverse-curriculum anneal grows the hardest start
+    assert caps[-1] == 1.0  # the final sub-rung solves from the true door (confound-watch target)
+    for s in rungs:
+        assert s.difficulty.max_objects == 3
+        assert s.difficulty.seed_anchor_k == 2  # N-1 prefix pre-parked, ONE driven via backplay
+        assert s.anchor_layout_path is not None  # the committed notch witness layout
+
+
+def test_backplay_sub_rungs_scaffold_the_same_notch_as_trio_notch():
+    sched = with_trio_notch_backplay_rung(CurriculumSchedule.default())
+    trio_notch = next(s for s in sched.stages if s.name == "trio-notch")
+    for s in (st for st in sched.stages if "backplay" in st.name):
+        assert s.hangar_path == trio_notch.hangar_path
+        assert s.clearance_m == trio_notch.clearance_m  # same lenient 0.05 clearance
+
+
+def test_with_trio_notch_backplay_rung_preserves_policy_and_validates():
+    base = CurriculumSchedule.default()
+    sched = with_trio_notch_backplay_rung(base)
+    assert sched.policy == base.policy  # only the ladder changes, not the promotion gate
+    validate_ladder(sched.stages, encoder_max_objects=EncoderConfig().max_objects)  # no raise
+
+
+def test_with_trio_notch_backplay_rung_does_not_mutate_the_default_ladder():
+    with_trio_notch_backplay_rung(CurriculumSchedule.default())
+    assert all("backplay" not in s.name for s in DEFAULT_LADDER)  # default still pristine
+
+
+def test_with_trio_notch_backplay_rung_raises_without_trio_notch():
+    no_trio_notch = CurriculumSchedule(
+        stages=tuple(s for s in DEFAULT_LADDER if s.name != "trio-notch"),
+        policy=PromotionPolicy(),
+    )
+    with pytest.raises(ValueError, match="trio-notch"):
+        with_trio_notch_backplay_rung(no_trio_notch)
+
+
+def test_validate_ladder_accepts_valid_backplay_rung():
+    validate_ladder([_backplay_stage(0.5)], encoder_max_objects=8)  # no raise
+
+
+@pytest.mark.parametrize("cap", [0.0, -0.1, 1.1])
+def test_validate_ladder_rejects_backplay_phi_cap_out_of_range(cap):
+    with pytest.raises(ValueError, match="backplay_phi_cap"):
+        validate_ladder([_backplay_stage(cap)], encoder_max_objects=8)
+
+
+def test_validate_ladder_rejects_backplay_rung_without_witness():
+    with pytest.raises(ValueError, match="anchor_layout_path"):
+        validate_ladder([_backplay_stage(0.5, anchor_path=None)], encoder_max_objects=8)
+
+
+def test_validate_ladder_rejects_backplay_combined_with_anchor_prob():
+    # The two start-state samplers are mutually exclusive (each owns one fixed rng draw order).
+    with pytest.raises(ValueError, match="backplay_phi_cap"):
+        validate_ladder([_backplay_stage(0.5, anchor_prob=0.5)], encoder_max_objects=8)

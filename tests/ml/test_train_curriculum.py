@@ -1733,3 +1733,77 @@ def test_jsonl_entropy_coef_is_the_applied_floored_value_not_the_base(monkeypatc
     t1 = [r["entropy_coef"] for r in recs if r["stage"] == "t1"]
     assert t0 == pytest.approx([0.05, 0.0275, 0.005])  # non-frontier: bare anneal in the JSONL
     assert t1 == pytest.approx([0.05, 0.0275, 0.02])  # frontier: FLOORED applied value, not 0.005
+
+
+# ---------------------------------------------------------------------------
+# #821 — backplay reverse-curriculum: the --backplay-trio-notch CLI graft + guard,
+#        and the phi_cap surfaced into the #816 per-iteration JSONL telemetry
+# ---------------------------------------------------------------------------
+
+
+def test_main_backplay_trio_notch_requires_curriculum_schedule(monkeypatch):
+    # --backplay-trio-notch is curriculum-only (the trivial path has no rungs); with --schedule
+    # trivial it must fail LOUD and BEFORE any training, never silently drop the typed flag.
+    import ml.train as train_mod
+
+    ran = {"train": False}
+
+    def guard(**kw):
+        ran["train"] = True
+        return []
+
+    monkeypatch.setattr(train_mod, "train", guard)
+    with pytest.raises(SystemExit):
+        train_mod.main(["--schedule", "trivial", "--backplay-trio-notch"])
+    assert ran["train"] is False
+
+
+def test_main_backplay_trio_notch_grafts_sub_rungs_into_schedule(monkeypatch):
+    # The flag inserts the backplay sub-rung ladder immediately before the empty-start trio-notch.
+    import ml.train as train_mod
+    from ml.curriculum import CurriculumHistory
+
+    captured: dict = {}
+
+    def fake(*, schedule, **kw):
+        captured["schedule"] = schedule
+        return CurriculumHistory()
+
+    monkeypatch.setattr(train_mod, "train_curriculum", fake)
+    train_mod.main(["--schedule", "curriculum", "--backplay-trio-notch"])
+    names = [s.name for s in captured["schedule"].stages]
+    assert any("backplay" in n for n in names)
+    i = names.index("trio-notch")
+    assert "backplay" in names[i - 1]  # sub-rungs land right before the empty-start rung
+
+
+def test_main_no_backplay_flag_keeps_default_ladder(monkeypatch):
+    # default-neutral: without --backplay-trio-notch the schedule carries no backplay rung.
+    import ml.train as train_mod
+    from ml.curriculum import CurriculumHistory
+
+    captured: dict = {}
+
+    def fake(*, schedule, **kw):
+        captured["schedule"] = schedule
+        return CurriculumHistory()
+
+    monkeypatch.setattr(train_mod, "train_curriculum", fake)
+    train_mod.main(["--schedule", "curriculum"])
+    assert all("backplay" not in s.name for s in captured["schedule"].stages)
+
+
+def test_iter_train_metrics_logs_phi_cap_only_for_backplay_rungs():
+    # #816/#821: a backplay rung surfaces its fixed phi_cap ceiling for the gate's confound
+    # watch ("a WIN must coincide with phi_cap annealed to ~1.0"). A non-backplay rung adds NO
+    # phi_cap key, so its per-iteration JSONL telemetry stays byte-identical to the pre-#821 dict.
+    from ml.ppo import PPOConfig
+    from ml.train import _iter_train_metrics
+
+    metrics = {"epochs_run": 3.0}
+    cfg = PPOConfig()
+    plain = _iter_train_metrics(metrics, cfg)
+    assert "phi_cap" not in plain
+    bp = _iter_train_metrics(metrics, cfg, backplay_phi_cap=0.75)
+    assert bp["phi_cap"] == pytest.approx(0.75)
+    assert bp["epochs_run"] == 3.0  # the existing telemetry is preserved

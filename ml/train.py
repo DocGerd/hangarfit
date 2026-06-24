@@ -50,6 +50,7 @@ from ml.curriculum import (
     with_promotion_overrides,
     with_solo_box_rung,
     with_trio_notch_anchored_rung,
+    with_trio_notch_backplay_rung,
 )
 from ml.encoding import EncoderConfig, encode, static_block
 from ml.env import HangarFitEnv
@@ -173,6 +174,7 @@ def collect_rollout(
                 obs = env.reset(
                     requested_ids=start.requested_ids if start else None,
                     seed_anchor_k=start.seed_anchor_k if start else None,
+                    backplay_phi=start.backplay_phi if start else None,
                 )
             else:
                 obs = nxt
@@ -348,12 +350,24 @@ def _clone_policy(policy: HangarFitPolicy) -> HangarFitPolicy:
     return copy.deepcopy(policy)
 
 
-def _iter_train_metrics(metrics: dict[str, float], it_cfg: PPOConfig) -> dict[str, float]:
+def _iter_train_metrics(
+    metrics: dict[str, float],
+    it_cfg: PPOConfig,
+    *,
+    backplay_phi_cap: float | None = None,
+) -> dict[str, float]:
     """#816: the per-iteration training telemetry recorded alongside each iteration for the
     --metrics-out JSONL — ``epochs_run`` (the target_kl-bounded epoch count, which a higher
     --entropy-floor can collapse toward 1) and ``entropy_coef`` (the applied coef, confirming
-    a frontier-rung floor actually bit). Pure; consumed by ``CurriculumHistory.record``."""
-    return {"epochs_run": metrics["epochs_run"], "entropy_coef": it_cfg.entropy_coef}
+    a frontier-rung floor actually bit). #821: on a backplay rung, also surface its fixed
+    ``phi_cap`` ceiling so the gate's confound watch ("a WIN must coincide with phi_cap
+    annealed to ~1.0") reads it numerically without parsing the stage name; absent (no key) on
+    every non-backplay rung, so their telemetry stays byte-identical to the pre-#821 dict. Pure;
+    consumed by ``CurriculumHistory.record``."""
+    out = {"epochs_run": metrics["epochs_run"], "entropy_coef": it_cfg.entropy_coef}
+    if backplay_phi_cap is not None:
+        out["phi_cap"] = backplay_phi_cap
+    return out
 
 
 def _rung_stop_reason(
@@ -516,7 +530,12 @@ def train_curriculum(
                 )
                 metrics = ppo_update(policy, optimizer, buf, it_cfg, normalizer=normalizer)
                 history.record(
-                    stage.name, it, ep_stats, train_metrics=_iter_train_metrics(metrics, it_cfg)
+                    stage.name,
+                    it,
+                    ep_stats,
+                    train_metrics=_iter_train_metrics(
+                        metrics, it_cfg, backplay_phi_cap=stage.difficulty.backplay_phi_cap
+                    ),
                 )
                 if log:
                     print(format_iter_log(stage.name, it, ep_stats), flush=True)
@@ -617,7 +636,11 @@ def train_curriculum(
                                 stage.name,
                                 it,
                                 ep_stats,
-                                train_metrics=_iter_train_metrics(metrics, it_cfg),
+                                train_metrics=_iter_train_metrics(
+                                    metrics,
+                                    it_cfg,
+                                    backplay_phi_cap=stage.difficulty.backplay_phi_cap,
+                                ),
                             )
                             if log:
                                 print(format_iter_log(stage.name, it, ep_stats), flush=True)
@@ -656,7 +679,9 @@ def train_curriculum(
                             stage.name,
                             it,
                             ep_stats,
-                            train_metrics=_iter_train_metrics(metrics, it_cfg),
+                            train_metrics=_iter_train_metrics(
+                                metrics, it_cfg, backplay_phi_cap=stage.difficulty.backplay_phi_cap
+                            ),
                         )
                         if log:
                             print(format_iter_log(stage.name, it, ep_stats), flush=True)
@@ -932,6 +957,16 @@ def build_argparser() -> argparse.ArgumentParser:
         "cold-start coverage minimum (place one, abandon two) before the empty-start trio-notch",
     )
     p.add_argument(
+        "--backplay-trio-notch",
+        action="store_true",
+        help="curriculum: insert the opt-in #821 backplay (reverse-curriculum) sub-rung ladder "
+        "before trio-notch — the k=N-1 notch-witness prefix pre-parked and the single driven "
+        "object spawned a fraction phi~U(0,phi_cap) along the corridor from its witness pose "
+        "(near-solved) out to the door, with phi_cap annealing 0.5->1.0 across the sub-rungs. "
+        "Shifts the start-state distribution to break the cold-start coverage minimum before "
+        "the empty-start trio-notch (the #736 frontier lever)",
+    )
+    p.add_argument(
         "--stop-after-rung",
         type=str,
         default=None,
@@ -1182,6 +1217,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             parser.error("--mixed-anchor requires --schedule curriculum")
         if args.anchor_trio_notch:
             parser.error("--anchor-trio-notch requires --schedule curriculum")
+        if args.backplay_trio_notch:
+            parser.error("--backplay-trio-notch requires --schedule curriculum")
         if args.stop_after_rung is not None:
             parser.error("--stop-after-rung requires --schedule curriculum")
         if args.entropy_floor is not None or args.frontier_rungs:
@@ -1234,6 +1271,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             sched = with_mixed_anchor_rung(sched)
         if args.anchor_trio_notch:
             sched = with_trio_notch_anchored_rung(sched)
+        if args.backplay_trio_notch:
+            sched = with_trio_notch_backplay_rung(sched)
         # Truncate LAST, after the grafts, so a name they introduce (pair-mixed) is in scope.
         if args.stop_after_rung is not None:
             sched = truncate_after_rung(sched, args.stop_after_rung)

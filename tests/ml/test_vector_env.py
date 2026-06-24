@@ -37,6 +37,21 @@ def test_worker_reset_anchors_when_episode_start_k_is_one():
     assert len(worker._env._parked) == 1  # k=1 from the record -> one pre-parked
 
 
+# #821: worker threads EpisodeStart.backplay_phi into env.reset (vec reset path)
+
+
+def test_worker_reset_passes_backplay_phi_from_episode_start():
+    # The vec reset path threads start.backplay_phi to env.reset; the env records it for _spawn.
+    from ml.curriculum import _TRIO_NOTCH_BACKPLAY_STAGES
+    from ml.stage_builder import build_stage_env
+
+    env = build_stage_env(_TRIO_NOTCH_BACKPLAY_STAGES[0])
+    ids = env.requested_ids
+    worker = _EnvWorker(env, EncoderConfig(), next_request=lambda: EpisodeStart(ids, None, 0.0))
+    worker.reset()
+    assert worker._env._backplay_phi == 0.0  # backplay fraction reached the env
+
+
 def test_envworker_step_matches_manual_step_encode():
     """A worker.step reproduces a manual env.step + encode (same tensors, reward, done)."""
     enc = EncoderConfig()
