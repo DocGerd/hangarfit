@@ -8,16 +8,18 @@ environment + reward (`HangarFitEnv`), reusing `hangarfit`'s geometry oracle.
 The **inference seam ships** (#706, verifier-gated, `solve --backend learned`). The
 **dense train-to-mastery** goal — having a PPO policy *construct* a valid dense packing of
 the frontier `trio-notch` rung — is **resolved-negative and the lever program is stopped.**
-Five gate-run levers, one per lever class, each KILLed at the same `valid_placed ≈ 0.333`
-"place-one-validly-then-abstain" fixed point:
+Six gate-run levers, spanning every lever class (the representation axis was probed twice —
+#810 spatial pooling and #827 ego-centric coordinate frame), each KILLed at the same
+`valid_placed ≈ 0.333` "place-one-validly-then-abstain" fixed point:
 
 | Lever | Class | Verdict |
 |---|---|---|
 | #794 `--anchor-trio-notch` | start-state scaffold | vp 0.333, no transfer |
-| #810 `--spatial-tokens` | representation | vp 0.333 = control exactly |
+| #810 `--spatial-tokens` | representation (spatial pooling) | vp 0.333 = control exactly |
 | #813 `--r-valid-progress` | reward economics | argmax moved → invalid **piling** |
 | #817 `--entropy-floor` | exploration | inert, vp 0.333 = control |
 | #823 `--backplay-trio-notch` | start-state distribution (ρ₀) | transfer 0.000; scaffold-only 0.63–0.69 |
+| #827 `--relative-encoder` | representation (coordinate frame) | vp 0.353/0.332 PILING ≈ control 0.317/0.316 |
 
 (The empty-start `trio-notch` *baseline* sat slightly lower at `valid_placed ≈ 0.25` — the
 coverage-minimum number quoted in the lever recipes below; the *levered* runs converge to the
@@ -50,13 +52,24 @@ for these figures and this section is the operational mirror. The lever recipes 
 retained for reproducibility and any future re-open; do **not** re-run a refuted axis on the
 notch.
 
-**In flight — re-open trigger #2 (#827).** The opt-in `--relative-encoder` lever implements
+**Resolved — re-open trigger #2 (#827), KILL.** The opt-in `--relative-encoder` lever implemented
 ADR-0028's one structurally-untested axis: an **ego-centric augment** encoder that *also* writes
-each object's pose in the active object's SE(2) body frame (all five KILLed levers ran on the
+each object's pose in the active object's SE(2) body frame (the other five KILLed levers ran on the
 **absolute** world-coordinate encoder — `ml/encoding.py`). `TOKEN_DIM` 24→28 and `SCHEMA_VERSION`
-1→2 when on; default off = byte-identical. Implemented + tested; the `trio-notch` ladder gate
-(2 seeds, GPU) is pending — a KILL adds it to the ledger as the 6th refuted lever, a WIN advances
-to the trigger-#1 reach-rate-vs-RR-MC follow-up. Design spec:
+1→2 when on; default off = byte-identical. The two-seed GPU `trio-notch` ladder gate (#829,
+2026-06-25) **KILLed it**: `trio-notch-anchored` windowed-final `valid_placed` = **0.353 / 0.332**
+(both PILING) vs the OFF control's **0.317 / 0.316** — the same 0.333 coverage-minimum ceiling,
+both well below the 0.45 WIN line; transfer `trio-notch` ≈ 0 on both arms. Two graders agree
+(`analyze.py` + `ml.gate`); all three pre-registered confounds pass (OFF reproduces baseline,
+`epochs_run` parity, exactly one flag — engagement checkpoint-proven, `token_proj` input 28 vs 24,
+`relative_encoder` True vs None); a 4-lens adversarial verification panel returned **0/4 refuters**
+(seed1's absolute single-iteration max over all 45 iters is `0.3333`, so a both-seeds win is
+*physically impossible* under any window). One honest nuance the panel surfaced: the encoder **does**
+reproducibly lift the *upstream* generic `trio-box` rung (+0.15–0.24 vp both seeds — richer
+coordinates help generic multi-box packing), but that gain does **not** transfer to the notch
+drive-and-pack wall. So representation/coordinate-frame is confirmed *not* the bottleneck (ADR-0028's
+diagnosis stands), and re-open trigger #2 is **resolved-negative** — the encoder stays opt-in infra;
+do **not** re-run it on the notch. Design spec:
 `docs/superpowers/specs/2026-06-24-relative-encoder-ego-centric-design.md`.
 
 ## Run the tests
