@@ -82,3 +82,21 @@ def test_train_save_onnx_writes_file(tmp_path):
     onnx_path = tmp_path / "trivial.onnx"
     train(iterations=1, rollout_len=16, save_onnx=str(onnx_path))
     assert onnx_path.exists() and onnx_path.stat().st_size > 0
+
+
+def test_export_onnx_ego_policy_without_example_fails_clearly(tmp_path):
+    # #827: a relative_encoder (28-wide) policy with the default 24-wide dummy must fail with a
+    # clear message naming the deferred follow-up, NOT an obscure matmul RuntimeError.
+    policy = HangarFitPolicy(relative_encoder=True)
+    with pytest.raises(ValueError, match="relative_encoder"):
+        export_onnx(policy, tmp_path / "ego.onnx")
+
+
+def test_main_rejects_relative_encoder_with_save_onnx(tmp_path):
+    # #827: --save-onnx + --relative-encoder must fail FAST (before any training run), not crash
+    # at export after the whole run completes.
+    from ml.train import main
+
+    argv = ["--schedule", "trivial", "--relative-encoder", "--save-onnx", str(tmp_path / "x.onnx")]
+    with pytest.raises(SystemExit):
+        main(argv)

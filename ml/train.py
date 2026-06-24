@@ -1188,6 +1188,11 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = parser.parse_args(argv)
     if args.device == "cuda" and not torch.cuda.is_available():
         parser.error("--device cuda requested but torch.cuda.is_available() is False")
+    if args.relative_encoder and args.save_onnx:
+        parser.error(
+            "--save-onnx is not yet supported with --relative-encoder; torch-free ONNX "
+            "inference for the ego-centric encoder is a deferred #827 follow-up"
+        )
     weights = RewardWeights(
         w_col=args.w_col,
         r_valid_park=args.r_valid_park,
