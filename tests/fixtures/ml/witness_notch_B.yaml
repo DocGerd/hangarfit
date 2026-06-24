@@ -1,0 +1,32 @@
+# HELD-OUT second notch witness (#821) — a SECOND, geometrically-distinct valid
+# 3-object packing of the SAME notch trio (aviat_husky, cessna_140, fk9_mkii) on the
+# REAL Airfield Herrenteich L-shaped hangar (examples/herrenteich/hangar.yaml).
+#
+# WHY a second witness. The encoder writes ABSOLUTE world coordinates into the object
+# token (ml/encoding.py), and there is only ONE committed notch geometry
+# (witness_notch.yaml). So a policy could satisfy the trio-notch transfer WIN by
+# MEMORIZING the witness coordinates rather than learning to pack — the oracle-
+# masquerade the imitation design panel flagged (#821). This file is the held-out
+# generalization probe: a backplay/transfer EVALUATION seeded from THIS geometry
+# fails for a coordinate-memorizing policy and passes only for one that generalizes.
+#
+# DISTINCTNESS (vs witness_notch.yaml). Every object is relocated by >= 10.9 m AND
+# every heading is changed (90->0, 90->270, 270->90); the trio spans the full hangar
+# depth (y 5.78 -> 25.57, into the deep notch-approach region) rather than the front
+# half. So reproducing the witness_notch coordinates cannot satisfy this layout.
+#
+# VALIDITY. Found by a deterministic search (seed 736) over the SAME notch fleet +
+# hangar and accepted by the PRODUCT checker (collisions.check + Caddy egress): the
+# full trio, every prefix, and every single anchor are valid at the rung's 0.05 m
+# clearance, with real geometric margin (still valid up to 0.50 m clearance — 5x the
+# witness_notch 0.10 m bar). Verified in tests/ml/test_stage_builder.py
+# (test_witness_notch_b_*). Do not hand-edit the poses without re-running those tests.
+#
+# No `fleet:` / `hangar:` fields on purpose (same as witness_notch.yaml): the env +
+# stage_builder load this with fleet=/hangar= OVERRIDES (the notch fleet + notch
+# hangar at clearance 0.05), and the loader rejects a file that sets those AND takes
+# overrides.
+placements:
+  - {plane: aviat_husky, x_m: 8.07, y_m: 5.78, heading_deg: 0.0}
+  - {plane: cessna_140, x_m: 4.51, y_m: 13.94, heading_deg: 270.0}
+  - {plane: fk9_mkii, x_m: 6.17, y_m: 25.57, heading_deg: 90.0}
