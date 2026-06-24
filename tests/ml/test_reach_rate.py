@@ -105,6 +105,46 @@ def test_sample_population_rejects_k_over_pool():
         sample_population(n=1, k_min=2, k_max=999, seed=0)
 
 
+def _subset_keys(pop):
+    return [(s.kind, tuple(s.scenario.fleet_in)) for s in pop]
+
+
+def test_sample_population_distinct_has_no_duplicate_subsets():
+    # distinct=True guarantees each (kind, subset) appears at most once — RR-MC is deterministic,
+    # so duplicate subsets are not independent trials (pseudo-replication).
+    pop = sample_population(n=30, k_min=2, k_max=4, seed=0, distinct=True)
+    keys = _subset_keys(pop)
+    assert len(keys) == len(set(keys))
+
+
+def test_sample_population_distinct_caps_at_available():
+    # Only C(9,8)=9 distinct k8 subsets exist; a request for more is capped, not padded with dups.
+    pop = sample_population(n=50, k_min=8, k_max=8, seed=0, distinct=True)
+    keys = _subset_keys(pop)
+    assert len(pop) == 9
+    assert len(keys) == len(set(keys))
+
+
+def test_sample_population_distinct_is_deterministic_in_seed():
+    a = sample_population(n=12, k_min=2, k_max=4, seed=5, distinct=True)
+    b = sample_population(n=12, k_min=2, k_max=4, seed=5, distinct=True)
+    assert [s.name for s in a] == [s.name for s in b]
+    assert _subset_keys(a) == _subset_keys(b)
+
+
+def test_sample_population_distinct_varies_with_seed():
+    a = _subset_keys(sample_population(n=10, k_min=2, k_max=4, seed=1, distinct=True))
+    b = _subset_keys(sample_population(n=10, k_min=2, k_max=4, seed=2, distinct=True))
+    assert a != b  # n < available ⇒ a different seeded draw selects different subsets
+
+
+def test_sample_population_default_is_unchanged_and_can_repeat():
+    # Default (distinct=False) is byte-identical to today: returns exactly n even where the
+    # distinct space is smaller (here 9 distinct k8 subsets, but n=20 is honored).
+    pop = sample_population(n=20, k_min=8, k_max=8, seed=0)
+    assert len(pop) == 20
+
+
 # ── multi-alternative RR-MC ──────────────────────────────────────────────────
 
 

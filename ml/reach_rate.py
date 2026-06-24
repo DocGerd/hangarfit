@@ -34,6 +34,7 @@ import math
 import random
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, replace
+from itertools import combinations
 from pathlib import Path
 
 from hangarfit.loader import load_fleet, load_hangar
@@ -120,11 +121,20 @@ def sample_population(
     seed: int,
     fleet_path: str = "data/fleet.yaml",
     hangar_path: str = "tests/fixtures/test_hangar_large.yaml",
+    distinct: bool = False,
 ) -> list[SampledScenario]:
     """Sample ``n`` aircraft-subset fill scenarios on a fixed hangar — the reach-rate
     population. Each draws ``k ∈ [k_min, k_max]`` aircraft from the fleet pool (no ground
     objects, no maintenance, no pins). Deterministic in ``seed`` (its sole RNG), so the
-    population — and thus the baseline — is reproducible."""
+    population — and thus the baseline — is reproducible.
+
+    When ``distinct`` is True, the members are guaranteed-distinct ``(k, subset)`` pairs and the
+    population is **capped** at the number of available distinct subsets across ``[k_min, k_max]``
+    (a request for more returns *fewer*, never duplicates). This matters at high ``k`` / over-
+    capacity, where the distinct-subset space is small (e.g. ``C(9, 8) = 9``): RR-MC reach is
+    deterministic per subset, so a duplicate subset is **not** an independent trial, and counting
+    it would inflate ``n`` and tighten the Wilson CI without new information (pseudo-replication).
+    Default ``False`` preserves the independent-draw behaviour byte-for-byte."""
     if not 1 <= k_min <= k_max:
         raise ValueError(f"sample_population: need 1 <= k_min <= k_max, got {k_min}, {k_max}")
     fleet = load_fleet(str(_ROOT / fleet_path))
@@ -133,11 +143,9 @@ def sample_population(
     if k_max > len(pool):
         raise ValueError(f"sample_population: k_max {k_max} exceeds fleet pool size {len(pool)}")
     rng = random.Random(seed)
-    out: list[SampledScenario] = []
-    for i in range(n):
-        k = rng.randint(k_min, k_max)
-        subset = tuple(sorted(rng.sample(pool, k)))
-        sc = Scenario(
+
+    def _scenario(subset: tuple[str, ...]) -> Scenario:
+        return Scenario(
             fleet=fleet,
             hangar=hangar,
             fleet_in=subset,
@@ -145,7 +153,27 @@ def sample_population(
             ground_object_defs={},
             region_preferences={},
         )
-        out.append(SampledScenario(name=f"sample{i:03d}_k{k}", kind=f"k{k}", scenario=sc))
+
+    if distinct:
+        # Enumerate the distinct-subset universe, deterministically shuffle, take min(n, available).
+        universe = [
+            tuple(subset) for k in range(k_min, k_max + 1) for subset in combinations(pool, k)
+        ]
+        rng.shuffle(universe)
+        return [
+            SampledScenario(
+                name=f"sample{i:03d}_k{len(s)}", kind=f"k{len(s)}", scenario=_scenario(s)
+            )
+            for i, s in enumerate(universe[:n])
+        ]
+
+    out: list[SampledScenario] = []
+    for i in range(n):
+        k = rng.randint(k_min, k_max)
+        subset = tuple(sorted(rng.sample(pool, k)))
+        out.append(
+            SampledScenario(name=f"sample{i:03d}_k{k}", kind=f"k{k}", scenario=_scenario(subset))
+        )
     return out
 
 
@@ -320,6 +348,12 @@ def main(argv: Sequence[str] | None = None) -> None:
     p.add_argument("--scenarios", type=int, default=8, help="population size N (default: 8)")
     p.add_argument("--k-min", type=int, default=2, help="min aircraft per scenario (default: 2)")
     p.add_argument("--k-max", type=int, default=4, help="max aircraft per scenario (default: 4)")
+    p.add_argument(
+        "--distinct",
+        action="store_true",
+        help="draw DISTINCT fleet subsets and cap N at the available distinct count — avoids "
+        "RR-MC pseudo-replication at high k / few distinct subsets (e.g. C(9,8)=9)",
+    )
     p.add_argument("--seed", type=int, default=0, help="population + RR-MC seed (default: 0)")
     p.add_argument("--alternatives", type=int, default=4, help="RR-MC alternatives (default: 4)")
     p.add_argument("--max-restarts", type=int, default=16, help="RR-MC restarts (default: 16)")
@@ -350,10 +384,17 @@ def main(argv: Sequence[str] | None = None) -> None:
         seed=args.seed,
         fleet_path=args.fleet,
         hangar_path=args.hangar,
+        distinct=args.distinct,
     )
+    capped = args.distinct and len(population) < args.scenarios
     print(
         f"population: {len(population)} fill scenarios (k {args.k_min}..{args.k_max}) on "
         f"{args.hangar}, seed {args.seed}"
+        + (
+            f" [distinct: capped from {args.scenarios} to the {len(population)} available subsets]"
+            if capped
+            else (" [distinct]" if args.distinct else "")
+        )
     )
     rrmc = rrmc_population_rates(
         population,
