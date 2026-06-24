@@ -677,6 +677,78 @@ configuration by imitation) and the **k = 2→1→0 pose-anneal localizer** (a v
 need only discover the single tight 3rd pose). `--entropy-floor` stays merged as opt-in, default-neutral
 infrastructure (`entropy_floor=None` ⇒ byte-identical). **Do not re-run the entropy floor on the notch.**
 
+### Backplay reverse-curriculum A/B (#821 — does starting the driven object near its solution break the notch by changing ρ₀?)
+
+The #815 entropy-floor KILL was the **third independent refutation converging on discovery** (after #810
+representation and #812 economics): the valid dense 3rd-pose must be *reachable*, not merely *encouraged* or
+*rewarded*. An adversarial imitation design panel (2026-06-24) then made the decisive observation: there is
+exactly **one** notch witness geometry and the encoder writes **absolute** world coordinates (`ml/encoding.py`),
+so every "imitate into the weights" candidate (BC / DAgger / demo-augmented / goal-token) can satisfy its WIN by
+**memorizing the witness coordinates** — an oracle-masquerade. **Reverse-curriculum / backplay** is the only
+candidate structurally immune (its scored transfer rung is witness-*absent*) and the only lever that touches
+**C1 — ρ₀, the reachable-state distribution** (Ng–Harada–Russell proves potential-based reward shaping cannot;
+representation and exploration temperature cannot either). `--backplay-trio-notch` (#821) inserts
+`trio-notch-backplay-{50,75,100}` sub-rungs before `trio-notch`: it pre-parks the k=N−1 witness prefix and spawns
+the **driven** object a fraction φ along a straight corridor from its witness park-pose (φ=0, near-solved) out to
+the normal apron/door spawn (φ=1), with `phi_cap` annealing 0.5→0.75→1.0 gated on the same windowed
+`valid_placed` competency the promotion gate reads. The env never snaps or auto-parks — backplay only changes
+*where the episode begins*; the agent still drives and rotates the object in itself. Default-off ⇒ byte-identical
+(4c-ii). The A/B is the **#736 trio-notch-anchored recipe + `--backplay-trio-notch` only** (entropy-floor OFF),
+two seeds via `ml.sweep`, against a same-session fresh control.
+
+```bash
+# +backplay arm — identical to the #736 control protocol plus the one lever flag (the only change).
+python -u -m ml.sweep --seeds 0,1 --out-dir sweep-backplay --tag bp --max-concurrency 1 -- \
+  --schedule curriculum --device cuda --n-envs 16 --rollout-len 512 \
+  --auto-budget --auto-budget-max-iters 120 --auto-budget-min-level 0.1 \
+  --promotion-metric valid_placed --promotion-threshold 0.9 \
+  --r-valid-park 30.0 --r-unplaced-penalty 25.0 --dense-slot-potential \
+  --w-col 20.0 --valid-park-grade-scale 4.0 --r-first-valid 15.0 \
+  --entropy-start 0.05 --entropy-end 0.005 --entropy-anneal-iters 40 \
+  --normalize-returns --validity-conditional-terminal \
+  --solo-box-rung --seed-anchor --mixed-anchor --anchor-trio-notch --backplay-trio-notch \
+  --stop-after-rung trio-notch
+```
+
+**Result (2026-06-24 two-seed run) — KILL, but the most informative negative in five levers: it deconfounds the
+wall.** Lower ladder mastered ~0.92–0.96 on both arms (frontier read trustworthy). Windowed-final vp (last-10-iter
+mean) on the decisive rungs, `ml.gate`-cross-confirmed (all four transfer cells exit 1, never competent):
+
+| Rung | bp seed 0 | bp seed 1 | control seed 0 | control seed 1 |
+|---|---|---|---|---|
+| `trio-notch-backplay-50` (φ=0.5) | 0.635 | 0.694 | — | — |
+| `trio-notch-backplay-75` (φ=0.75) | 0.686 | 0.681 | — | — |
+| `trio-notch-backplay-100` (φ=1.0) | 0.629 | 0.660 | — | — |
+| `trio-notch` (transfer, empty-start) | **0.000** | **0.000** | 0.000 | 0.000 |
+
+`phi_cap` annealed 0.5/0.75/1.0 on both seeds → the **confound-watch is satisfied**: the WIN precondition (solving
+from φ=1.0, the true apron/door spawn) was genuinely met *on the scaffold*. So the KILL is the pre-registered
+clause (b) in pure form — **the backplay rung reaches ≥ 0.6 but the empty-start transfer collapses** (here to
+0.000, below even the 0.333 abstention floor).
+
+**Why this KILL is the most valuable: it deconfounds the notch wall.** For the first time in five levers a
+treatment **broke the vp-0.333 attractor** — backplay sustained vp ~0.63–0.69 on *both* seeds *even at* φ=1.0
+(the driven object spawned at the normal apron/door, the other two pre-parked). That proves **valid multi-object
+placement in the real notch is learnable** — it is NOT a spatial-representation limit (#810), reward-economics
+limit (#812), or exploration-temperature limit (#815). The single unlearned skill is **empty-start multi-object
+sequencing / discovery**: backplay always pre-parks k=N−1, so it only ever trains "complete a nearly-finished
+layout (add the last piece)" — a categorically different skill from "construct a valid dense layout from an empty
+hangar," and the empty-start observation distribution never appears in training. This is an *interpretable* KILL
+(issue #821's pre-registered open-risk B — near-φ solve without back-chain), **not** a masquerade: the
+witness-absent transfer rung did exactly its job. `--backplay-trio-notch` stays merged as opt-in,
+default-neutral infrastructure (`backplay_phi_cap=None` ⇒ byte-identical); the held-out `witness_notch_B` (#822)
+hardening eval was moot (no WIN to harden) and remains a reusable asset.
+
+**Direction (open — strategy-level reassessment).** Per-object placement is now *proven* learnable, so a further
+lever must target empty-start sequencing specifically — candidates: an **empty-start coverage k-anneal** (explicit
+drive-2-from-empty then drive-3-from-empty rungs, k:2→1→0 — the surviving #815 fork-B, now much better-motivated)
+or **multi-object backplay** (anneal the pre-park count k→0 so the proven near-solution-spawn mechanism trains
+from empty). A strategic alternative is to **reframe toward completion**: hangarfit's on-demand-exception use case
+rarely starts from an empty hangar (it fits the displaced last 1–2 planes into a mostly-set layout), which is
+exactly the completion skill backplay already delivers (~65% valid). **Contraindicated / do-not-reattempt:**
+witness-imitation / DAgger (oracle-masquerade, panel-rejected), the pile-safe carrot (#812), the entropy floor
+(#815), and spatial representation (#810).
+
 ### Concurrent sweep runner (#749 — run the two/three-seed gate in one launch)
 
 The gate recipes above are **per-seed** (`--seed 0`, then `--seed 1`), run serially today — one
