@@ -344,8 +344,9 @@ python -m ml.train --save P    # train + export state_dict (needs [train])
 # #706 learned-backend inference (epic #607 sub-project #5). Export a trained policy to
 # ONNX, then run it torch-free behind the verifier. Export needs [train] (torch + onnx);
 # inference needs the [learned-infer] extra (onnxruntime). With trivial-schedule (under-
-# trained) weights the verifier rejects the proposal → a no-layout result, NOT an error;
-# reaching valid dense layouts is the train-to-mastery work (#698/#7).
+# trained) weights the verifier rejects the proposal → a no-layout result, NOT an error.
+# (Reaching valid *dense* layouts was the train-to-mastery goal — now resolved-negative; the
+# seam still ships and works on what it reaches. See ADR-0028.)
 python -m ml.train --schedule trivial --save /tmp/p.pt --save-onnx /tmp/p.onnx   # [train]
 hangarfit solve tests/fixtures/scenario_minimal.yaml --backend learned --weights /tmp/p.onnx
 

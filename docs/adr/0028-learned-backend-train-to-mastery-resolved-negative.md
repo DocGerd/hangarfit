@@ -47,8 +47,8 @@ Two torch-light experiments through the **product checker** (`ml.geometry_oracle
 = `collisions.check` + Caddy egress — the same oracle the env, the bonus, and the benchmark
 use), independently reproduced by a multi-agent verification pass. Scripts and raw results are
 **gitignored gate-run scratch** (`basin_mc.py`, `phi_eval.py`, `phi_eval_control.py`,
-`probe-verdict.md`), reproducible from the recipes in [`ml/README.md`](../../ml/README.md); the
-decisive numbers are reproduced below.
+`probe-verdict.md`); they run against the checkpoints the lever recipes in
+[`ml/README.md`](../../ml/README.md) produce. The decisive numbers are reproduced below.
 
 - **φ=1 cold-start completion `vp = 0.000`.** With two of the three notch aircraft pre-parked
   at a valid witness prefix and the **third spawned at the door**, the policy cannot
@@ -59,11 +59,13 @@ decisive numbers are reproduced below.
   learnable" was a φ-mixture average dominated by near-witness episodes; honest cold-start
   completion is zero across two independent training regimes.
 - **Valid-triple manifold ≈ 2e-3 and FLAT across clearance.** Over 10 000 uniform 3-pose
-  samples, `P(valid triple) ≈ 2e-3` at 0.10 m and unchanged at 0.30 m (+200% clearance),
-  while `P(valid pair) ≈ 0.107` and per-object placement is mastered. Valid 3-packings exist
-  but are **sparse isolated points** that relaxing clearance does **not** widen — so a
-  clearance-relaxation modeling fix cannot help; the binding constraint is the joint packing
-  geometry of the third object.
+  samples — a uniform-over-bounding-box estimate, so a *lower bound* on the true valid measure —
+  `P(valid triple) ≈ 2e-3` at 0.10 m and **unchanged** at 0.30 m (+200% clearance), while
+  `P(valid pair) ≈ 0.107` and per-object placement is mastered. The load-bearing, sampler-
+  independent claim is the *flat-across-clearance* comparison (the absolute fraction is the
+  lower bound, the flatness is robust): valid 3-packings exist but are **sparse isolated
+  points** that relaxing clearance does **not** widen — so a clearance-relaxation modeling fix
+  cannot help; the binding constraint is the joint packing geometry of the third object.
 - **RR-MC already solves `trio-notch`** (all three aircraft, 0.10 m, ~30 s, 4/4 seeds). So
   `trio-notch` is a curriculum *stepping-stone*, **not** a charter target — clearing it would
   not even be a chartered win. The chartered dense target (all-8,
@@ -103,9 +105,10 @@ success criterion is the shipped, verifier-gated inference seam (#706).
 
 1. a future policy's dense-notch **reach-rate** (Wilson CI) **exceeds RR-MC's** on a
    **witness-absent** scenario-kind (the true charter target — masquerade-proof), **or**
-2. a **relative / object-centric coordinate encoder** lands (removing the absolute-world-coord
-   encoder — the one structurally-untested confound, and the reason imitation/BC/DAgger into the
-   weights is an oracle-masquerade trap on a finite witness set), **or**
+2. a **relative / object-centric coordinate encoder lands** (replacing the absolute-world-coord
+   encoder) — *rationale: that encoder is the one structurally-untested confound, and the reason
+   imitation/BC/DAgger into the current weights is an oracle-masquerade trap on a finite witness
+   set*, **or**
 3. the use case is **re-chartered** toward last-1–2-plane completion.
 
 ### Do-not-reattempt (refuted axes)
@@ -140,3 +143,16 @@ place-nothing); dwell-longer (the control already shows ~39-iter flat dwell at 0
 - The refuted-axes list above is the standing guard against re-treading. The probe artifacts
   (`basin_mc.py`, `phi_eval.py`, `phi_eval_control.py`, `probe-verdict.md`) are the cited
   evidence; the lever-by-lever record stays in [`ml/README.md`](../../ml/README.md).
+
+## More Information
+
+- Related ADRs: [ADR-0027](0027-learned-backend-determinism-scope.md) (the learned-path
+  determinism/safety contract, which this decision leaves untouched);
+  [ADR-0003](0003-rr-mc-solver-algorithm.md) (the deterministic solver that already reaches
+  `trio-notch`).
+- Related architecture: [§3 Context & Scope](../architecture/03-context-and-scope.md) (the
+  charter exclusion of the reshuffle problem); [§5 Building Block View](../architecture/05-building-block-view.md)
+  (the `learned.py` seam).
+- Operational record + lever recipes: [`ml/README.md`](../../ml/README.md).
+- Related issues: epic #607; the training-improvement backlog #736 (closed resolved-negative);
+  the shipped inference seam #706.
