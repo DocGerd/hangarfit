@@ -4,6 +4,26 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Changed
+
+- **Learned backend (epic #607, #736): dense train-to-mastery is RESOLVED-NEGATIVE — the lever
+  program is stopped and the backend is scoped to the shipped inference seam (#706).** New
+  [ADR-0028](docs/adr/0028-learned-backend-train-to-mastery-resolved-negative.md) records the
+  decision; `ml/README.md` and arc42 §5 carry the honest scope. Five gate-run levers (one per
+  lever class: #794 start-state scaffold, #809 representation, #812 reward economics, #815
+  exploration, #821 reverse-curriculum) each KILLed at the same `valid_placed ≈ 0.333`
+  place-one-then-abstain fixed point; a pre-registered measure-first probe then converted those
+  into a single **measured** root cause — φ=1 cold-start completion `vp = 0.000` (confirmed on
+  both backplay *and* non-backplay control checkpoints), a valid-triple manifold ≈ 2e-3 that is
+  FLAT across clearance, and the fact that the deterministic RR-MC solver already reaches
+  `trio-notch` (so it was a curriculum stepping-stone, never a charter target). The wall is
+  cold-start drive-and-pack of the marginal object into a sparse, clearance-invariant slot; only
+  a ρ₀ lever that *trains* that distribution could move it, and the measured capability is zero.
+  ADR-0028 carries the falsifiable **re-open gate** (reach-rate beats RR-MC witness-absent, or a
+  relative-coordinate encoder lands, or a re-charter to completion) and the **do-not-reattempt**
+  list. No behavior change: the inference seam, the determinism contract ([ADR-0027](docs/adr/0027-learned-backend-determinism-scope.md)),
+  and `ml/`'s dev/CI-only status are untouched.
+
 ### Added
 
 - **Learned backend (#821, epic #607): backplay reverse-curriculum lever (`--backplay-trio-notch`)

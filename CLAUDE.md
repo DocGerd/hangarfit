@@ -8,7 +8,7 @@ This file is the durable **operational** context for the project: how we work, w
 
 `hangarfit` is an **on-demand exception tool** for a flying club: when the standard hangar parking layout breaks (delayed return, surprise maintenance, etc.), it helps find *a* valid alternative arrangement. The tool checks whether a hand-authored candidate layout is physically valid and renders a top-down PNG so a human can eyeball it; the solver searches for one when no candidate is in hand.
 
-**Status:** Phase 1 (substrate), Phase 2a (static layout solver, `hangarfit solve`), Phase 2b–2c (solver realism + spread/diversity polish), Phase 3a (tow-path planning, `hangarfit solve --render-paths`), Phase 3b (Reeds–Shepp reverse-capable tow motion), and Phase 4 (interactive 3D viewer, `hangarfit view`) have all shipped. An opt-in **learned backend** (epic #607) has its inference **seam** shipped — the `--backend learned` / `--weights` CLI flags route through the wheel-shipped `hangarfit.learned` module (verifier-gated, same `SolveResult` shape, #706). The ONNX inference *implementation* (`ml.infer`) and the RL *training* both live in the dev/CI-only `ml/` package (a top-level package outside `src/`, so `packages.find` never ships it in the wheel), so a bare install reports the backend unavailable until `ml/` + the `[learned-infer]` extra + trained weights are present; reaching valid *dense* layouts (train-to-mastery) is still in active development. Live milestone status lives in auto-memory and GitHub milestones, not here.
+**Status:** Phase 1 (substrate), Phase 2a (static layout solver, `hangarfit solve`), Phase 2b–2c (solver realism + spread/diversity polish), Phase 3a (tow-path planning, `hangarfit solve --render-paths`), Phase 3b (Reeds–Shepp reverse-capable tow motion), and Phase 4 (interactive 3D viewer, `hangarfit view`) have all shipped. An opt-in **learned backend** (epic #607) has its inference **seam** shipped — the `--backend learned` / `--weights` CLI flags route through the wheel-shipped `hangarfit.learned` module (verifier-gated, same `SolveResult` shape, #706). The ONNX inference *implementation* (`ml.infer`) and the RL *training* both live in the dev/CI-only `ml/` package (a top-level package outside `src/`, so `packages.find` never ships it in the wheel), so a bare install reports the backend unavailable until `ml/` + the `[learned-infer]` extra + trained weights are present. **Train-to-mastery on the dense `trio-notch` rung is resolved-negative (the lever program is stopped); the backend is scoped to the shipped seam** — see [ADR-0028](docs/adr/0028-learned-backend-train-to-mastery-resolved-negative.md) for the measured root cause (cold-start drive-and-pack wall) and the falsifiable re-open gate. Live milestone status lives in auto-memory and GitHub milestones, not here.
 
 ---
 
@@ -344,8 +344,9 @@ python -m ml.train --save P    # train + export state_dict (needs [train])
 # #706 learned-backend inference (epic #607 sub-project #5). Export a trained policy to
 # ONNX, then run it torch-free behind the verifier. Export needs [train] (torch + onnx);
 # inference needs the [learned-infer] extra (onnxruntime). With trivial-schedule (under-
-# trained) weights the verifier rejects the proposal → a no-layout result, NOT an error;
-# reaching valid dense layouts is the train-to-mastery work (#698/#7).
+# trained) weights the verifier rejects the proposal → a no-layout result, NOT an error.
+# (Reaching valid *dense* layouts was the train-to-mastery goal — now resolved-negative; the
+# seam still ships and works on what it reaches. See ADR-0028.)
 python -m ml.train --schedule trivial --save /tmp/p.pt --save-onnx /tmp/p.onnx   # [train]
 hangarfit solve tests/fixtures/scenario_minimal.yaml --backend learned --weights /tmp/p.onnx
 
