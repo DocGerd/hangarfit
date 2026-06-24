@@ -50,6 +50,15 @@ for these figures and this section is the operational mirror. The lever recipes 
 retained for reproducibility and any future re-open; do **not** re-run a refuted axis on the
 notch.
 
+**In flight — re-open trigger #2 (#827).** The opt-in `--relative-encoder` lever implements
+ADR-0028's one structurally-untested axis: an **ego-centric augment** encoder that *also* writes
+each object's pose in the active object's SE(2) body frame (all five KILLed levers ran on the
+**absolute** world-coordinate encoder — `ml/encoding.py`). `TOKEN_DIM` 24→28 and `SCHEMA_VERSION`
+1→2 when on; default off = byte-identical. Implemented + tested; the `trio-notch` ladder gate
+(2 seeds, GPU) is pending — a KILL adds it to the ledger as the 6th refuted lever, a WIN advances
+to the trigger-#1 reach-rate-vs-RR-MC follow-up. Design spec:
+`docs/superpowers/specs/2026-06-24-relative-encoder-ego-centric-design.md`.
+
 ## Run the tests
     pytest tests/ml/
 
