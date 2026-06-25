@@ -229,8 +229,8 @@ frontier stays out of reach for any backend trained on the current rungs, not in
 verdict survives the **fairest** framing too: re-run on the *specific* `k = 4` subsets RR-MC misses
 (the witness-absent boundary nearest competence — not the far-OOD `k = 8`; RR-MC drops ≈41 % of `k4`
 here), all six checkpoints still reach **0/216** → NOT MET. So "no current policy beats RR-MC where
-it misses" holds from the boundary nearest competence (`k = 4`) to far OOD (`k = 8`) — not an
-artifact of out-of-distribution testing.
+it misses" holds at **both** measured ends — the boundary nearest competence (`k = 4`) *and* far
+OOD (`k = 8`) — so the verdict is not an artifact of out-of-distribution testing.
 
 ## Training knobs (4c-ii)
 
