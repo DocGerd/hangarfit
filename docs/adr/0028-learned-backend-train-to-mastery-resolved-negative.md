@@ -100,8 +100,9 @@ it, and that one measured capability is `0.000`.
 *strengthened* by the probe — five orthogonal lever axes are now a single **measured** root
 cause, not five tries (a sixth axis, the #827 ego-centric coordinate encoder, was gated
 *after* this decision and **confirms** it — see re-open trigger #2 below; and the #837 completion
-paired-witness probe — re-open trigger #3 — **confirms** the root cause is **manifold-width-invariant
-drive-binding**, not slot sparsity) — and the charter never required clearing the dense trio. The
+paired-witness probe — re-open trigger #3 — **confirms** the root cause is **drive-binding that
+persists across a ~4.3× manifold-width contrast**, not slot sparsity) — and the charter never
+required clearing the dense trio. The
 actually-met success criterion is the shipped, verifier-gated inference seam (#706).
 
 **Re-open this decision if (any one):**
@@ -134,7 +135,7 @@ actually-met success criterion is the shipped, verifier-gated inference seam (#7
    widen it and the policy completes."* The **completion paired-witness probe** tested exactly that:
    pre-park k=2 of a valid 3-object witness, door-spawn (φ=1, no backplay) the marginal object, on
    two manifold arms differing **only** in slot width — tight Herrenteich notch (conditional
-   last-slot ~0.064) vs roomy 25×30 m (~0.278, **~3.7× wider**). If the wall were slot-geometry the
+   last-slot ~0.064) vs roomy 25×30 m (~0.278, **~4.3× wider**). If the wall were slot-geometry the
    roomy arm would complete (marginal ≥ 0.30); it did not. Windowed-final marginal completion =
    **0.0000 on all four cells** (2 arms × 2 seeds; notch `0.661 / 0.662`, roomy `0.667 / 0.667` →
    all at the **2-of-3 abandonment floor**, both seeds, reward-positive stable attractor). The fat
@@ -159,7 +160,7 @@ upstream generic `trio-box` rung, but that gain does not transfer to the notch w
 the L4 PPO trust-region clip (**load-bearing** — clip-off → place-nothing); dwell-longer (the
 control already shows ~39-iter flat dwell at 0.333); widening the completion slot / roomy-manifold
 completion (#837 — door-spawn completion abandons the marginal object at the 2-of-3 floor on a
-~3.7×-wider slot just as on the tight notch, so manifold width is not the barrier).
+~4.3×-wider slot just as on the tight notch, so manifold width is not the barrier).
 
 ## Consequences
 
