@@ -159,6 +159,13 @@ the env oracle's parked-score validity.
 - **Population (v1):** `sample_population` draws fill scenarios that vary the **fleet subset**
   (`k ∈ [k_min, k_max]` aircraft from a pool) on a fixed roomy hangar, deterministic in `seed`.
   Varying hangar geometry / GO placements (the issue's other axes) is a documented extension.
+- **`--distinct` (avoid pseudo-replication):** by default the sampler draws each subset
+  independently, so it can repeat one. RR-MC reach is **deterministic** per subset, so a repeated
+  subset is **not** an independent trial — counting it inflates `n` and tightens the Wilson CI for
+  free. `--distinct` draws guaranteed-distinct subsets and **caps** the population at the available
+  distinct count (printing `[distinct: capped from N to M …]`). Capping triggers whenever the
+  request exceeds the available distinct count — most acute at high `k` relative to the pool, where
+  the distinct space is tiny (e.g. `C(9, 8) = 9`). Default off → byte-identical.
 - **Multi-alternative RR-MC:** `rrmc_reach_multi` solves for `--alternatives N` and counts
   RR-MC-reached if **any** candidate is valid + fully routable — strictly stronger than
   `benchmark.rrmc_reach` (`alternatives=1`, best-spread only). Load-bearing the moment the
