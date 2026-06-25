@@ -223,8 +223,9 @@ trigger #1 is not met, now as a runnable verdict rather than a prediction. A per
 sweep (distinct over-capacity subsets, same fair budget) maps the boundary directly: reach falls
 **1.00 → 0.83 → 0.50 → 0.42** across `k = 2…5`, then **0.00 at `k ≥ 6`** — so the witness-absent
 frontier (`k ≥ 6`) sits well above the policies' `≤3`-aircraft competence, making the disjointness
-quantitative. (The only band where a *future* learned backend could plausibly help is the `k = 4…5`
-transition, where RR-MC is already half-missing just past where the policies operate.)
+quantitative. (The band closest to plausible near-term help is the `k = 4…5` transition — RR-MC is
+already half-missing there, just past where *today's* `≤3`-aircraft policies operate; the `k ≥ 6`
+frontier stays out of reach for any backend trained on the current rungs, not intrinsically.)
 
 ## Training knobs (4c-ii)
 
