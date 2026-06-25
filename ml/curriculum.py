@@ -499,6 +499,49 @@ _LENIENT_CLEARANCE = (
     0.05  # below the herrenteich file value (0.10) so the clearance ramp truly tightens
 )
 
+# ADR-0028 trigger-#3 completion paired-witness probe (opt-in via --completion-probe; NOT in any
+# default ladder, so absent the flag the env is byte-identical). The ROOMY arm's hangar/fleet:
+_ROOMY_HANGAR = "tests/fixtures/test_hangar_large.yaml"
+_ROOMY_FLEET = "data/fleet.yaml"
+# Committed roomy completion witness (a valid 3-object fill on the 25x30 test hangar). Validity
+# pinned by tests/ml/test_stage_builder.py::test_witness_roomy_*.
+_WITNESS_ROOMY = "tests/fixtures/ml/witness_roomy.yaml"
+_ROOMY_CLEARANCE = 0.3  # the test_hangar_large file value; the roomy slot is the controlled var
+
+
+def _completion_stage(witness: str) -> Stage:
+    """A single door-spawn COMPLETION rung for the ADR-0028 trigger-#3 paired probe: pre-park
+    k=N-1=2 of a valid 3-object witness and drive the LAST object in from the door (phi=1, NO
+    backplay knob). ``witness`` selects the manifold arm — 'notch' (tight Herrenteich notch,
+    conditional last-slot ~0.064, the measured 0.000 wall) or 'roomy' (the fat 25x30 hangar,
+    ~0.278). The arms differ ONLY in hangar/fleet/witness/clearance; manifold width is the
+    controlled variable. Opt-in (built only by --completion-probe); no default ladder includes
+    it, so the env stays byte-identical when the flag is absent."""
+    if witness == "notch":
+        return Stage(
+            name="completion-notch",
+            difficulty=DifficultyConfig(
+                max_objects=3, seed_anchor_k=2, per_object_step_budget=80, total_step_budget=80
+            ),
+            hangar_path=_NOTCH_HANGAR,
+            fleet_path=_NOTCH_FLEET,
+            anchor_layout_path=_WITNESS_NOTCH,
+            clearance_m=_LENIENT_CLEARANCE,
+        )
+    if witness == "roomy":
+        return Stage(
+            name="completion-roomy",
+            difficulty=DifficultyConfig(
+                max_objects=3, seed_anchor_k=2, per_object_step_budget=80, total_step_budget=80
+            ),
+            hangar_path=_ROOMY_HANGAR,
+            fleet_path=_ROOMY_FLEET,
+            anchor_layout_path=_WITNESS_ROOMY,
+            clearance_m=_ROOMY_CLEARANCE,
+        )
+    raise ValueError(f"_completion_stage: unknown witness {witness!r} (expected 'notch'|'roomy')")
+
+
 # Opt-in #714 rung (wired via with_solo_box_rung / --solo-box-rung), NOT part of DEFAULT_LADDER.
 # max_objects=1 like trivial, but the WHOLE-fleet pool (fleet_ids omitted) instead of trivial's
 # single ("fuji",) — decouples the count jump (1->2) from the sampling-pool jump at the
