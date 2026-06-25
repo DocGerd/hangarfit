@@ -33,7 +33,7 @@ notch (conditional last-slot ~0.064) vs roomy 25×30 m `witness_roomy.yaml` (~0.
 **ran** (4 cells = 2 arms × 2 seeds, identical config except the witness; 200 iters, CPU single-env).
 Both arms read marginal completion `max(0, 3·valid_placed − 2)` against a pre-registered 2/3 floor;
 **GO** would have needed roomy marginal ≥ 0.30 (both seeds) with notch ≈ 0. **Result: marginal
-`0.0000` on all four cells** — windowed-final `valid_placed` notch `0.661/0.661`, roomy
+`0.0000` on all four cells** — windowed-final `valid_placed` notch `0.661/0.662`, roomy
 `0.667/0.667`; every cell converged to the **2-of-3 abandonment floor** (keep the two valid
 pre-parked, abandon the marginal third; reward-positive stable attractor, both seeds). The fat
 roomy slot abandons the marginal object **exactly like** the tight notch → the wall is

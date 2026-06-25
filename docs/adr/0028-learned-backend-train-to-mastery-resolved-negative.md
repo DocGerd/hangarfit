@@ -136,7 +136,7 @@ actually-met success criterion is the shipped, verifier-gated inference seam (#7
    two manifold arms differing **only** in slot width — tight Herrenteich notch (conditional
    last-slot ~0.064) vs roomy 25×30 m (~0.278, **~3.7× wider**). If the wall were slot-geometry the
    roomy arm would complete (marginal ≥ 0.30); it did not. Windowed-final marginal completion =
-   **0.0000 on all four cells** (2 arms × 2 seeds; notch `0.661 / 0.661`, roomy `0.667 / 0.667` →
+   **0.0000 on all four cells** (2 arms × 2 seeds; notch `0.661 / 0.662`, roomy `0.667 / 0.667` →
    all at the **2-of-3 abandonment floor**, both seeds, reward-positive stable attractor). The fat
    slot abandons the marginal object **exactly like** the tight notch → the wall is **drive-binding
    (cold-start drive-and-pack), not slot-geometry**, and generalizes across manifold width. So this
