@@ -107,12 +107,17 @@ success criterion is the shipped, verifier-gated inference seam (#706).
 
 1. a future policy's dense-notch **reach-rate** (Wilson CI) **exceeds RR-MC's** on a
    **witness-absent** scenario-kind (the true charter target — masquerade-proof). *This gate is
-   now **runnable** (`ml.reach_rate.dominance_verdict` / `--witness-absent-tau`, #831) and was
-   executed once: on the witness-absent `k8` over-capacity stratum (a fair-budget RR-MC reaches
-   **0/9** distinct subsets, Wilson `ci_hi` 0.30) all six trained gate-run checkpoints
-   (control / ego / backplay × 2 seeds) reach **0/108** → verdict **NOT MET**. The trigger stays
-   open for a future policy; no current one trips it, because the policies' competence regime
-   (≤3-aircraft rungs) and RR-MC's miss regime (over-capacity dense) are disjoint.* **or**
+   **runnable** (`ml.reach_rate.dominance_verdict` / `--witness-absent-tau`, #831) but is **not yet
+   validly executed.** A witness-absent kind requires a **proven feasibility witness** — a valid
+   layout that demonstrably **exists** and that the fair-budget *deployed* RR-MC misses. The one
+   execution to date (#832) selected its "witness-absent" `k8` / `k4` strata by RR-MC reach ≈ 0
+   **alone**, on **over-capacity** fleet subsets of the tight 18 m hangar that cannot fit them —
+   where RR-MC reaches 0 because the layout is **infeasible**, not because it missed a reachable
+   one. Testing a policy there is testing the impossible (a 0 reach-rate is vacuously correct, not a
+   failure to dominate), so that run's `0/9` RR-MC / `0/108` policy → "**NOT MET**" reading is
+   **retracted** (#835). A valid execution needs a **feasibility-witnessed** population — e.g. the
+   all-8 `examples/herrenteich/layout.yaml` (a valid packing `hangarfit check` accepts yet RR-MC
+   cannot find) and siblings — and is future work; the trigger stays **open and untested**.* **or**
 2. ~~a **relative / object-centric coordinate encoder lands**~~ — **RESOLVED-NEGATIVE
    (#827 / #829, 2026-06-25).** *Rationale at the time: that encoder was the one
    structurally-untested confound.* The opt-in `--relative-encoder` ego-centric augment encoder
