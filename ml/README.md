@@ -20,20 +20,29 @@ Six gate-run levers, spanning every lever class (the representation axis was pro
 | #817 `--entropy-floor` | exploration | inert, vp 0.333 = control |
 | #823 `--backplay-trio-notch` | start-state distribution (ρ₀) | transfer 0.000; scaffold-only 0.63–0.69 |
 | #827 `--relative-encoder` | representation (coordinate frame) | vp 0.353/0.332 PILING ≈ control 0.317/0.316 |
-| **ADR-0028 trigger-#3** | **completion paired-witness probe** | **runnable — not yet run** |
+| **ADR-0028 trigger-#3** | **completion paired-witness probe** | **RAN → NO-GO: notch & roomy both marginal 0.000 (2-of-3 abandon floor)** |
 
 (The empty-start `trio-notch` *baseline* sat slightly lower at `valid_placed ≈ 0.25` — the
 coverage-minimum number quoted in the lever recipes below; the *levered* runs converge to the
 1-of-3 = `0.333` place-one fixed point. Same failure mode, two measurement contexts.)
 
-**Pending probe: ADR-0028 trigger-#3 (completion paired-witness).** The third re-open diagnostic
-(runnable but not yet run) is a **paired-witness A/B** on the completion skill — door-spawn φ=1,
-pre-park k=2 of 3, NO backplay knob, testing whether manifold width is the barrier: tight notch vs
-roomy (`witness_roomy.yaml`). Both arms
-measure marginal completion `max(0, 3·valid_placed − 2)` against a pre-registered 2/3 floor. GO =
-roomy vp ≥ 0.30 & notch ≈ 0 → slot geometry drives the wall → reframe to roomy scoped charter
-(the on-demand-exception real use case). NO-GO = both ≈ 0 → drive binding without witness spawn
-→ resolved-negative generalizes to completion. See [ADR-0028](../docs/adr/0028-learned-backend-train-to-mastery-resolved-negative.md) for the charter details and re-open gate.
+**Completion paired-witness probe: ADR-0028 trigger-#3 → NO-GO (#837, 2026-06-25).** The third
+re-open diagnostic — a **paired-witness A/B** on the completion skill (door-spawn φ=1, pre-park
+k=2 of 3, NO backplay knob), testing whether **manifold width** is the barrier: tight Herrenteich
+notch (conditional last-slot ~0.064) vs roomy 25×30 m `witness_roomy.yaml` (~0.278, ~4.3× wider) —
+**ran** (4 cells = 2 arms × 2 seeds, identical config except the witness; 200 iters, CPU single-env).
+Both arms read marginal completion `max(0, 3·valid_placed − 2)` against a pre-registered 2/3 floor;
+**GO** would have needed roomy marginal ≥ 0.30 (both seeds) with notch ≈ 0. **Result: marginal
+`0.0000` on all four cells** — windowed-final `valid_placed` notch `0.661/0.662`, roomy
+`0.667/0.667`; every cell converged to the **2-of-3 abandonment floor** (keep the two valid
+pre-parked, abandon the marginal third; reward-positive stable attractor, both seeds). The fat
+roomy slot abandons the marginal object **exactly like** the tight notch → the wall is
+**drive-binding (cold-start drive-and-pack), not slot-geometry**; the geometry confound is closed
+and the resolved-negative result **generalizes across manifold width**. Trigger-#3 is therefore
+**spent — it confirms the decision** rather than re-opening it (two of the three re-open triggers
+are now negative-confirming; only trigger #1, feasibility-witnessed reach-rate, stays open). See
+[ADR-0028](../docs/adr/0028-learned-backend-train-to-mastery-resolved-negative.md) for the charter
+details and the re-open gate.
 
 A **pre-registered measure-first probe** (`basin_mc.py` + `phi_eval.py` + `phi_eval_control.py`
 + `probe-verdict.md`, gitignored gate-run scratch; torch-light, through the product checker;
@@ -883,9 +892,16 @@ hardening eval was moot (no WIN to harden) and remains a reusable asset.
 lever must target empty-start sequencing specifically — candidates: an **empty-start coverage k-anneal** (explicit
 drive-2-from-empty then drive-3-from-empty rungs, k:2→1→0 — the surviving #815 fork-B, now much better-motivated)
 or **multi-object backplay** (anneal the pre-park count k→0 so the proven near-solution-spawn mechanism trains
-from empty). A strategic alternative is to **reframe toward completion**: hangarfit's on-demand-exception use case
+from empty). ~~A strategic alternative is to **reframe toward completion**: hangarfit's on-demand-exception use case
 rarely starts from an empty hangar (it fits the displaced last 1–2 planes into a mostly-set layout), which is
-exactly the completion skill backplay already delivers (~65% valid). **Contraindicated / do-not-reattempt:**
+exactly the completion skill backplay already delivers (~65% valid).~~ **Superseded — RESOLVED-NEGATIVE
+(#837, see the Status section at the top).** Genuine cold-start completion is not achieved on either manifold,
+by two independent measurements: the measure-first probe already showed true φ=1 completion is `0.000` (the
+"~65%" was a φ-mixture average dominated by near-witness episodes — see Status), and the ADR-0028 trigger-#3
+completion paired-witness probe — training pure door-spawn completion (φ=1, pre-park k=2, drive the marginal
+object) directly, read through the floor-aware **marginal** metric `max(0, 3·valid_placed − 2)` — converges
+only to the **2-of-3 abandonment floor** (marginal `0.000` on both the tight notch and a ~4.3×-wider roomy
+slot; `valid_placed ≈ 0.667`). So re-charter-to-completion is **closed, not an open direction**. **Contraindicated / do-not-reattempt:**
 witness-imitation / DAgger (oracle-masquerade, panel-rejected), the pile-safe carrot (#812), the entropy floor
 (#815), and spatial representation (#810).
 
