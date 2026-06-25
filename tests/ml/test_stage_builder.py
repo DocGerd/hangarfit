@@ -287,8 +287,8 @@ _WITNESS_ROOMY = "tests/fixtures/ml/witness_roomy.yaml"
 
 def _load_witness_roomy(clearance_m: float = 0.3):
     """Load the committed roomy witness against the roomy completion rung's hangar
-    (test_hangar_large, clearance override) + the synthetic box fleet — the same hangar/fleet
-    the completion-roomy probe trains on (ADR-0028 trigger-#3 paired probe)."""
+    (test_hangar_large, clearance override) + the shared central ``data/fleet.yaml`` fleet — the
+    same hangar/fleet the completion-roomy probe trains on (ADR-0028 trigger-#3 paired probe)."""
     hangar = dataclasses.replace(
         load_hangar("tests/fixtures/test_hangar_large.yaml"),
         clearance_m=clearance_m,

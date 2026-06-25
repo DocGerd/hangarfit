@@ -506,7 +506,8 @@ _ROOMY_FLEET = "data/fleet.yaml"
 # Committed roomy completion witness (a valid 3-object fill on the 25x30 test hangar). Validity
 # pinned by tests/ml/test_stage_builder.py::test_witness_roomy_*.
 _WITNESS_ROOMY = "tests/fixtures/ml/witness_roomy.yaml"
-_ROOMY_CLEARANCE = 0.3  # the test_hangar_large file value; the roomy slot is the controlled var
+_ROOMY_CLEARANCE = 0.3  # explicit clearance for the roomy arm (matches test_hangar_large.yaml;
+# keep in sync if that file changes)
 
 
 def _completion_stage(witness: str) -> Stage:

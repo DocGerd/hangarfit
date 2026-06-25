@@ -1197,26 +1197,38 @@ def build_argparser() -> argparse.ArgumentParser:
 def build_schedule(args: argparse.Namespace) -> list[Stage]:
     """Map parsed CLI args → the ordered list of curriculum Stages to train.
 
-    Short-circuits to a single completion rung when ``--completion-probe`` is set
-    (ADR-0028 trigger-#3 diagnostic), taking precedence over all other ladder flags and
-    returning a one-element list from a fresh policy. Default ``None`` → identical Stage
-    list to before (byte-identical for every existing flag combination). Extracted from
-    ``main()`` so it is unit-testable.
-
-    Note: promotion-policy overrides (``--promotion-metric`` etc.) are embedded in the
-    ``CurriculumSchedule`` built by ``_build_curriculum_schedule``; ``main()`` uses that
-    helper to get the full schedule object for ``train_curriculum``. This function exposes
-    only the Stage list for testing the ladder shape."""
-    # ADR-0028 trigger-#3: one rung, fresh policy, overrides everything else.
-    if args.completion_probe is not None:
-        return [_completion_stage(args.completion_probe)]
+    Delegates to ``_build_curriculum_schedule`` so the ladder logic — including the
+    ``--completion-probe`` short-circuit — lives in exactly one place and the runtime
+    path cannot diverge from tests."""
     return list(_build_curriculum_schedule(args).stages)
 
 
 def _build_curriculum_schedule(args: argparse.Namespace) -> CurriculumSchedule:
     """Build the full ``CurriculumSchedule`` (stages + promotion policy) from parsed args.
-    Used by ``main()`` for ``train_curriculum``; ``build_schedule`` delegates here for the
-    non-probe path so the ladder logic lives in one place."""
+    Used by ``main()`` for ``train_curriculum``; ``build_schedule`` delegates here so the
+    two cannot diverge.
+
+    ADR-0028 trigger-#3: when ``--completion-probe`` is set, short-circuits to a single
+    completion rung (taking precedence over all other ladder flags). Promotion-policy
+    overrides (``--max-iters-per-stage`` etc.) are applied to the single-stage schedule so
+    the probe respects iteration controls. Default ``None`` → behaviour byte-identical to
+    before (the short-circuit is an added early-return branch only)."""
+    # ADR-0028 trigger-#3: one rung, fresh policy, overrides everything else.
+    if args.completion_probe is not None:
+        single = CurriculumSchedule(
+            stages=(_completion_stage(args.completion_probe),), policy=PromotionPolicy()
+        )
+        single = replace(
+            single,
+            policy=with_promotion_overrides(
+                single.policy,
+                metric=args.promotion_metric,
+                threshold=args.promotion_threshold,
+                max_iters=args.max_iters_per_stage,
+                window=args.promotion_window,
+            ),
+        )
+        return single
     sched = CurriculumSchedule.default()
     sched = replace(
         sched,
@@ -1316,6 +1328,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         if args.entropy_floor is not None or args.frontier_rungs:
             # The entropy floor is rung-scoped; the trivial path has no rungs.
             parser.error("--entropy-floor/--frontier-rungs require --schedule curriculum")
+        if args.completion_probe is not None:
+            parser.error("--completion-probe requires --schedule curriculum")
         if args.auto_budget or args.auto_budget_max_iters is not None:
             parser.error("--auto-budget/--auto-budget-max-iters require --schedule curriculum")
         if args.n_envs > 1:  # resolve_n_envs floors at 1, so >1 is the only over-floor case

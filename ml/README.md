@@ -27,8 +27,9 @@ coverage-minimum number quoted in the lever recipes below; the *levered* runs co
 1-of-3 = `0.333` place-one fixed point. Same failure mode, two measurement contexts.)
 
 **Pending probe: ADR-0028 trigger-#3 (completion paired-witness).** The third re-open diagnostic
-(runnable but not yet run) is a **paired-witness A/B** on the completion skill backplay proved
-viable: door-spawn φ=1, pre-park k=2 of 3, tight notch vs roomy (`witness_roomy.yaml`). Both arms
+(runnable but not yet run) is a **paired-witness A/B** on the completion skill — door-spawn φ=1,
+pre-park k=2 of 3, NO backplay knob, testing whether manifold width is the barrier: tight notch vs
+roomy (`witness_roomy.yaml`). Both arms
 measure marginal completion `max(0, 3·valid_placed − 2)` against a pre-registered 2/3 floor. GO =
 roomy vp ≥ 0.30 & notch ≈ 0 → slot geometry drives the wall → reframe to roomy scoped charter
 (the on-demand-exception real use case). NO-GO = both ≈ 0 → drive binding without witness spawn

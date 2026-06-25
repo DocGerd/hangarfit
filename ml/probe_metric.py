@@ -7,23 +7,24 @@ training-time aggregate ``valid_placed`` is FLOORED and must be read MARGINALLY,
 success rate (the #821 0.63 masquerade). For a DRIVE-ONE rung (k = N-1, no backplay mixture) the
 relation is exact and conservative:
 
-    valid_placed = (N-1)/N + p/N - (2/N)*q     where p = P(last object validly parked),
-                                                     q = P(last object INVALIDLY piled)
+    valid_placed = (N-1)/N + p/N - ((N-1)/N)*q     where p = P(last object validly parked),
+                                                         q = P(last object INVALIDLY piled)
     => p = N*valid_placed - (N-1)   when q ≈ 0 (abstain, not pile);
        q>0 only makes N*valid_placed-(N-1) an UNDER-estimate, so clamping at 0 never yields a
        false positive. Hence marginal_completion = max(0, N*valid_placed - (N-1)).
+
+Note: ABANDON episodes contribute (N-1)/N (not 0) to ``valid_placed`` because the pre-parked
+prefix is valid and included in the count — this is exactly what establishes the floor.
 
 Analysis-only: no env/reward/encoding change. Read the door-spawn rung's windowed-final
 ``valid_placed`` (both seeds) through this transform; threshold the result, never the raw value.
 """
 
-from __future__ import annotations
-
 
 def marginal_completion(valid_placed: float, *, n: int = 3, k: int = 2) -> float:
     """Floor-aware marginal last-object completion from a drive-one completion rung's aggregate
     ``valid_placed``. Returns ``max(0, n*valid_placed - k)``. Requires k == n-1 (drive exactly
-    one object); the affine transform is undefined for drive>1."""
+    one object); the affine transform is not derived for drive>1."""
     if k != n - 1:
         raise ValueError(
             f"marginal_completion is defined only for a drive-one rung (k == n-1); got n={n}, k={k}"
