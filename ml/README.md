@@ -190,7 +190,7 @@ large-population RR-MC baseline is meant to be recorded once and **frozen** (mir
 measuring so the policy-vs-RR-MC comparison can't go circular. The policy arm is cheap (rollouts,
 no solver), so it affords a larger population × more samples.
 
-### The trigger-#1 dominance gate (#831 — the re-open test, now runnable)
+### The trigger-#1 dominance gate (#831 — runnable, but not yet validly executed)
 
 [ADR-0028](../docs/adr/0028-learned-backend-train-to-mastery-resolved-negative.md)'s **re-open
 trigger #1** is the masquerade-proof charter test: *a future policy's dense-notch reach-rate
@@ -198,46 +198,49 @@ trigger #1** is the masquerade-proof charter test: *a future policy's dense-notc
 both arms; `#831` encodes the **decision** so it's a runnable verdict, not a human eyeballing two
 tables:
 
-- `witness_absent_kinds(rrmc, tau)` — the kinds RR-MC genuinely **misses** (Wilson `ci_hi <= tau`).
-  Only these are chartered ground; a policy "win" anywhere RR-MC already reaches is not a win.
+- `witness_absent_kinds(rrmc, tau)` — the kinds whose RR-MC reach-rate Wilson `ci_hi <= tau`.
+  ⚠ **Necessary, not sufficient.** "RR-MC reach ≈ 0" has two causes: it *missed* a valid layout
+  that **exists** (the chartered ground), **or** **no valid layout exists** — the kind is
+  **infeasible**. This function cannot tell them apart, so a kind it returns is chartered ground
+  **only once an independent feasibility witness** (a valid layout *proven to exist*) is exhibited
+  for it. A policy "win" anywhere RR-MC already reaches is not a win; a policy "loss" on an
+  *infeasible* kind is **vacuous** — there is nothing to reach.
 - `dominance_verdict(rrmc, policy, tau)` — the trigger-#1 predicate as one boolean. It requires
   Wilson-CI **non-overlap** (`policy.ci_lo > rrmc.ci_hi`), so a policy that merely *matches* RR-MC
-  by sampling luck cannot trip it; it reports `exercised` (was there a witness-absent kind at all?)
-  separately from `reopen`, so a **vacuous** "no witness-absent kind" negative never masquerades as
-  a clean "tested and did not beat RR-MC".
+  by sampling luck cannot trip it; it reports `exercised` (was there an RR-MC-misses kind at all?)
+  separately from `reopen`. **`exercised` does not certify feasibility** — it only means some kind
+  had RR-MC `ci_hi <= tau`. Feed it a **feasibility-witnessed** population, or its negative is the
+  infeasible-masquerade below.
 
 ```bash
-# A witness-absent population needs a regime a FAIR-budget RR-MC misses (not a starved one).
-# Over-capacity fleet subsets on the tight 18 m hangar work; the witness-absent kind is k8.
-python -m ml.reach_rate --hangar tests/fixtures/canary_hangar_tight_18m.yaml \
-  --k-min 8 --k-max 8 --scenarios 9 --alternatives 4 --max-restarts 16 \
-  --policy model.pt --samples 12 --witness-absent-tau 0.35
-# NB: there are only C(9,8)=9 DISTINCT k8 subsets; RR-MC is deterministic, so beyond 9 the
-# sampler repeats scenarios (pseudo-replication). Enumerate the distinct subsets for a clean CI.
-# tau 0.35 > the measured RR-MC ci_hi 0.30, so k8 registers as witness-absent; the 0.15 default
-# would NOT (0.30 > 0.15) — at n=9 the Wilson width forces tau above the small-sample ci_hi.
+# A VALID trigger-#1 population is FEASIBILITY-WITNESSED: every scenario carries a valid layout
+# PROVEN to exist (hand-authored like the all-8 examples/herrenteich/layout.yaml that `hangarfit
+# check` accepts yet RR-MC cannot find, or one a big-budget `solve` returns) that the fair-budget
+# DEPLOYED RR-MC misses. Building that population is future work (#835).
+python -m ml.reach_rate --hangar <feasibility-witnessed-hangar> \
+  --k-min K --k-max K --distinct --alternatives 4 --max-restarts 16 \
+  --policy model.pt --samples 12 --witness-absent-tau TAU
+#
+# ⚠ ANTI-PATTERN — do NOT do this; it produced the retracted #832 result. Selecting the
+# "witness-absent" stratum as over-capacity fleet subsets of a hangar that cannot fit them
+# (e.g. k8 on the tight 18 m hangar) makes RR-MC reach 0 because the layout is INFEASIBLE — no
+# witness exists — so the policy reaching 0 is vacuous, not a dominance failure.
 ```
 
-**Current reading (2026-06-25, NOT MET).** Executed on the witness-absent `k8` stratum (9 distinct
-over-capacity subsets): a fair-budget RR-MC reaches **0/9** (Wilson `ci_hi` 0.30), and **all six**
-trained gate-run checkpoints (control / ego / backplay × 2 seeds) reach **0/108** → `policy.ci_lo`
-0.000 cannot clear `rrmc.ci_hi` 0.30, so **trigger #1 is NOT MET** on every checkpoint. The
-structural reason is the charter gap [ADR-0028](../docs/adr/0028-learned-backend-train-to-mastery-resolved-negative.md)
-measured: where RR-MC misses (over-capacity dense) the policies (trained on ≤3-aircraft rungs) reach
-**0**, and where the policies are competent (trio-box / trio-notch) RR-MC reaches everything, so
-there is no witness-absent kind there to contest. The two regimes are **disjoint** — which is *why*
-trigger #1 is not met, now as a runnable verdict rather than a prediction. A per-`k` RR-MC reach
-sweep (distinct over-capacity subsets, same fair budget) maps the boundary directly: reach falls
-**1.00 → 0.83 → 0.50 → 0.42** across `k = 2…5`, then **0.00 at `k ≥ 6`** — so the witness-absent
-frontier (`k ≥ 6`) sits well above the policies' `≤3`-aircraft competence, making the disjointness
-quantitative. (The band closest to plausible near-term help is the `k = 4…5` transition — RR-MC is
-already half-missing there, just past where *today's* `≤3`-aircraft policies operate; the `k ≥ 6`
-frontier stays out of reach for any backend trained on the current rungs, not intrinsically.) The
-verdict survives the **fairest** framing too: re-run on the *specific* `k = 4` subsets RR-MC misses
-(the witness-absent boundary nearest competence — not the far-OOD `k = 8`; RR-MC drops ≈41 % of `k4`
-here), all six checkpoints still reach **0/216** → NOT MET. So "no current policy beats RR-MC where
-it misses" holds at **both** measured ends — the boundary nearest competence (`k = 4`) *and* far
-OOD (`k = 8`) — so the verdict is not an artifact of out-of-distribution testing.
+**Status (2026-06-25): retracted, not yet validly executed (#835).** The one execution to date
+(#831/#832) selected its "witness-absent" `k8` / `k4` strata by RR-MC reach ≈ 0 on **over-capacity**
+fleet subsets of the tight 18 m hangar — which **cannot fit the full fleet** (CLAUDE.md,
+"Placeholder hangar can't fit the full fleet"). There RR-MC reaches 0 because the layout is
+**infeasible**, not missed: no valid layout exists, so no policy could reach one, and the `0/9`
+RR-MC / `0/108` policy → "**NOT MET**" reading is **vacuous and is retracted**. Selecting an eval
+population by "the baseline failed" structurally selects for impossibility (the #832 lesson). A
+*valid* trigger-#1 run needs the **feasibility-witnessed** population described above and is future
+work; until then **trigger #1 is open and untested**. ADR-0028's decision does not depend on it —
+it rests on the feasibility-grounded cold-start probe (φ=1 `vp = 0.000`), not on this retracted
+reach-rate verdict. (A rung-by-rung feasibility audit — #835 — separately confirms every *training*
+rung is feasible: `trio-notch` / `trio-box` RR-MC reach **1.000** at `k=3`, plus the committed
+`witness_box` / `witness_notch` fixtures, so the lever KILLs above, all measured on feasible rungs,
+stand.)
 
 ## Training knobs (4c-ii)
 

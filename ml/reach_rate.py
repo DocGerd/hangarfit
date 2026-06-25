@@ -109,9 +109,17 @@ def _check_tau(tau: float) -> None:
 
 
 def witness_absent_kinds(rrmc: Mapping[str, ReachRate], *, tau: float) -> list[str]:
-    """The scenario-kinds RR-MC genuinely *misses* — its reach-rate upper Wilson bound sits at
-    or below ``tau``. Only on these can a learned policy "reach what the deterministic solver
-    misses" (the #607 charter); a policy win anywhere RR-MC already reaches is not chartered.
+    """The scenario-kinds whose RR-MC reach-rate upper Wilson bound sits at or below ``tau``.
+
+    ⚠ **Necessary, not sufficient** for a true witness-absent kind. "RR-MC reach ≈ 0" has two
+    causes: RR-MC *missed* a valid layout that **exists** (the chartered ground — "reach what the
+    deterministic solver misses", #607), **or** **no valid layout exists** and the kind is
+    **infeasible**. This function cannot distinguish them — it sees only the reach-rate — so a kind
+    it returns is chartered ground **only once an independent feasibility witness** (a valid layout
+    *proven to exist*: a hand-authored one like ``examples/herrenteich/layout.yaml`` or a
+    big-budget ``solve`` result) is exhibited for it. Without that, an infeasible over-capacity
+    kind masquerades as witness-absent and any dominance verdict over it is **vacuous** (the #832
+    retraction, #835). A policy "win" anywhere RR-MC already reaches is likewise not chartered.
     Excludes the synthetic ``"overall"`` pooled row. Sorted for a deterministic verdict."""
     _check_tau(tau)
     return sorted(k for k, r in rrmc.items() if k != "overall" and r.ci_hi <= tau)
@@ -137,9 +145,16 @@ class DominanceVerdict:
     **non-overlap** (policy lower bound strictly above RR-MC upper bound), so a policy that merely
     matches RR-MC by sampling luck cannot trip it.
 
-    ``exercised`` (the population actually contained a witness-absent kind) is reported separately
-    from ``reopen`` so a *vacuous* negative — "no witness-absent kind in this population" — is never
-    mistaken for a clean "policy tested and did not beat RR-MC"."""
+    ``exercised`` (the population actually contained an RR-MC-misses kind) is reported separately
+    from ``reopen`` so a *vacuous* negative — "no such kind in this population" — is never mistaken
+    for a clean "policy tested and did not beat RR-MC".
+
+    ⚠ ``exercised`` does **not** certify feasibility: it only means some kind had RR-MC
+    ``ci_hi <= tau`` (see :func:`witness_absent_kinds`). A trustworthy verdict requires the
+    population to be **feasibility-witnessed** — each contested kind backed by a valid layout proven
+    to exist that the fair-budget *deployed* RR-MC misses. Over an over-capacity-infeasible
+    population, ``reopen=False`` is the infeasible-masquerade, not a real "did not beat RR-MC"
+    (#835)."""
 
     tau: float
     witness_absent: tuple[str, ...]
@@ -430,12 +445,23 @@ def _print_dominance(v: DominanceVerdict) -> None:
     print(f"\nADR-0028 trigger #1 — reach-not-beat (witness-absent tau={v.tau})")
     if not v.exercised:
         print(
-            "  ⚠ NOT EXERCISED — no witness-absent kind in this population (every kind's RR-MC\n"
-            "    reach-rate CI upper bound exceeds tau). Use a denser/tighter population\n"
-            "    (--hangar <tight fixture> and/or a higher --k-max) to create one."
+            "  ⚠ NOT EXERCISED — no kind here has RR-MC reach-rate CI upper bound\n"
+            "    <= tau, so there is no RR-MC-misses kind to contest. A valid\n"
+            "    witness-absent kind must ALSO carry a feasibility witness (a valid\n"
+            "    layout proven to exist that the deployed RR-MC misses) — e.g. a\n"
+            "    hand-authored packing or a big-budget `solve` result. Do NOT\n"
+            "    manufacture one by tightening the hangar past feasibility:\n"
+            "    over-capacity => RR-MC reaches 0 because the layout is INFEASIBLE,\n"
+            "    not missed, and a policy 'loss' there is vacuous (#832 retract, #835)."
         )
         return
-    print(f"  witness-absent kinds: {', '.join(v.witness_absent)}")
+    print(f"  RR-MC-misses kinds (ci_hi <= tau): {', '.join(v.witness_absent)}")
+    print(
+        "  ⚠ chartered ground ONLY if each carries a feasibility witness (a valid\n"
+        "    layout proven to exist). RR-MC reach 0 on an over-capacity-infeasible\n"
+        "    kind is not a miss, so a policy 'loss' there is vacuous — verify\n"
+        "    feasibility before trusting this verdict (#835)."
+    )
     print(f"  {'kind':10}  {'RR-MC ci_hi':>12}  {'policy ci_lo':>13}  {'beats?':>7}")
     for kd in v.per_kind:
         pol = f"{kd.policy_ci_lo:.3f}" if kd.policy_covered else "(n/a)"
@@ -524,7 +550,12 @@ def main(argv: Sequence[str] | None = None) -> None:
         f"RR-MC reach-rate (alternatives={args.alternatives}, restarts={args.max_restarts})", rrmc
     )
     wa = witness_absent_kinds(rrmc, tau=args.witness_absent_tau)
-    print(f"\nwitness-absent kinds (RR-MC ci_hi <= {args.witness_absent_tau}): {wa or '(none)'}")
+    print(f"\nRR-MC-misses kinds (ci_hi <= {args.witness_absent_tau}): {wa or '(none)'}")
+    if wa:
+        print(
+            "  ⚠ witness-absent ONLY if each carries a feasibility witness (a valid layout proven "
+            "to exist); an over-capacity-infeasible kind is not a miss (#835)."
+        )
     if args.policy is not None:
         from ml.eval import load_policy
 
