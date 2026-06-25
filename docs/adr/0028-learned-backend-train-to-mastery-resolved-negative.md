@@ -99,9 +99,10 @@ it, and that one measured capability is `0.000`.
 **Chosen option: bank + stop, with a falsifiable re-open gate.** The negative result is
 *strengthened* by the probe — five orthogonal lever axes are now a single **measured** root
 cause, not five tries (a sixth axis, the #827 ego-centric coordinate encoder, was gated
-*after* this decision and **confirms** it — see re-open trigger #2 below) — and the charter
-never required clearing the dense trio. The actually-met
-success criterion is the shipped, verifier-gated inference seam (#706).
+*after* this decision and **confirms** it — see re-open trigger #2 below; and the #837 completion
+paired-witness probe — re-open trigger #3 — **confirms** the root cause is **manifold-width-invariant
+drive-binding**, not slot sparsity) — and the charter never required clearing the dense trio. The
+actually-met success criterion is the shipped, verifier-gated inference seam (#706).
 
 **Re-open this decision if (any one):**
 
@@ -128,7 +129,20 @@ success criterion is the shipped, verifier-gated inference seam (#706).
    adversarial panel returned **0/4 refuters**. The confound is now **measured** —
    representation / coordinate-frame is *not* the bottleneck — so this trigger is **spent**:
    it *confirms* the decision rather than re-opening it, **or**
-3. the use case is **re-chartered** toward last-1–2-plane completion.
+3. ~~the use case is **re-chartered** toward last-1–2-plane completion~~ — **RESOLVED-NEGATIVE /
+   SPENT (#837, 2026-06-25).** *Rationale at the time: "maybe the notch slot is just too tight —
+   widen it and the policy completes."* The **completion paired-witness probe** tested exactly that:
+   pre-park k=2 of a valid 3-object witness, door-spawn (φ=1, no backplay) the marginal object, on
+   two manifold arms differing **only** in slot width — tight Herrenteich notch (conditional
+   last-slot ~0.064) vs roomy 25×30 m (~0.278, **~3.7× wider**). If the wall were slot-geometry the
+   roomy arm would complete (marginal ≥ 0.30); it did not. Windowed-final marginal completion =
+   **0.0000 on all four cells** (2 arms × 2 seeds; notch `0.661 / 0.661`, roomy `0.667 / 0.667` →
+   all at the **2-of-3 abandonment floor**, both seeds, reward-positive stable attractor). The fat
+   slot abandons the marginal object **exactly like** the tight notch → the wall is **drive-binding
+   (cold-start drive-and-pack), not slot-geometry**, and generalizes across manifold width. So this
+   trigger is **spent: it confirms the decision** rather than re-opening it. (A genuine re-charter
+   would still need a *different* cold-start-completion training signal, not provided here — but the
+   "notch is merely too tight" escape hatch is now **measured shut**.)
 
 ### Do-not-reattempt (refuted axes)
 
@@ -143,7 +157,9 @@ ego-centric / relative coordinate-frame encoder (#827 / #829 — both confirm
 representation / coordinate-frame is *not* the bottleneck; #827 *did* reproducibly lift the
 upstream generic `trio-box` rung, but that gain does not transfer to the notch wall); removing
 the L4 PPO trust-region clip (**load-bearing** — clip-off → place-nothing); dwell-longer (the
-control already shows ~39-iter flat dwell at 0.333).
+control already shows ~39-iter flat dwell at 0.333); widening the completion slot / roomy-manifold
+completion (#837 — door-spawn completion abandons the marginal object at the 2-of-3 floor on a
+~3.7×-wider slot just as on the tight notch, so manifold width is not the barrier).
 
 ## Consequences
 
