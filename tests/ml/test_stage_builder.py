@@ -279,6 +279,52 @@ def test_witness_notch_b_is_a_genuine_held_out_of_witness_notch():
 
 
 # ---------------------------------------------------------------------------
+# ADR-0028 trigger-#3 — the roomy completion witness (paired probe, roomy arm)
+# ---------------------------------------------------------------------------
+
+_WITNESS_ROOMY = "tests/fixtures/ml/witness_roomy.yaml"
+
+
+def _load_witness_roomy(clearance_m: float = 0.3):
+    """Load the committed roomy witness against the roomy completion rung's hangar
+    (test_hangar_large, clearance override) + the shared central ``data/fleet.yaml`` fleet — the
+    same hangar/fleet the completion-roomy probe trains on (ADR-0028 trigger-#3 paired probe)."""
+    hangar = dataclasses.replace(
+        load_hangar("tests/fixtures/test_hangar_large.yaml"),
+        clearance_m=clearance_m,
+        apron_depth_m=8.0,
+    )
+    fleet = load_fleet("data/fleet.yaml")
+    return load_layout(_WITNESS_ROOMY, fleet=fleet, hangar=hangar)
+
+
+def test_witness_roomy_is_a_valid_three_object_layout():
+    lay = _load_witness_roomy()
+    assert len(lay.placements) == 3
+    assert go.layout_valid(lay)
+
+
+def test_witness_roomy_every_prefix_is_valid():
+    lay = _load_witness_roomy()
+    for k in range(len(lay.placements) + 1):
+        prefix = dataclasses.replace(lay, placements=lay.placements[:k])
+        assert go.layout_valid(prefix), f"roomy witness prefix k={k} is invalid"
+
+
+def test_witness_roomy_every_single_anchor_is_valid():
+    lay = _load_witness_roomy()
+    for i in range(len(lay.placements)):
+        single = dataclasses.replace(lay, placements=(lay.placements[i],))
+        assert go.layout_valid(single), f"single anchor #{i} ({lay.placements[i].plane_id}) invalid"
+
+
+def test_witness_roomy_has_margin_at_stricter_clearance():
+    # Roomy slack: still valid at a stricter 0.5 m clearance, so the trio has real geometric
+    # margin at the rung's 0.3 m (the fat-slot manifold is not a borderline graze).
+    assert go.layout_valid(_load_witness_roomy(clearance_m=0.5))
+
+
+# ---------------------------------------------------------------------------
 # #712 — stage_builder threads the witness into an anchored rung's env
 # ---------------------------------------------------------------------------
 

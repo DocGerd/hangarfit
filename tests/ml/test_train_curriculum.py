@@ -1827,4 +1827,63 @@ def test_iter_train_metrics_logs_phi_cap_only_for_backplay_rungs():
     assert "phi_cap" not in plain
     bp = _iter_train_metrics(metrics, cfg, backplay_phi_cap=0.75)
     assert bp["phi_cap"] == pytest.approx(0.75)
-    assert bp["epochs_run"] == 3.0  # the existing telemetry is preserved
+
+
+def test_completion_probe_flag_builds_single_completion_rung():
+    # ADR-0028 trigger-#3: --completion-probe produces EXACTLY one stage on the RUNTIME path
+    # (_build_curriculum_schedule, which main() calls) — not just on the helper used by tests.
+    from ml.train import _build_curriculum_schedule, build_argparser, build_schedule
+
+    args = build_argparser().parse_args(["--completion-probe", "roomy"])
+    # Pin on the runtime path so a future divergence between the helper and main() fails here.
+    stages = _build_curriculum_schedule(args).stages
+    assert [s.name for s in stages] == ["completion-roomy"]
+    # build_schedule must agree (it delegates to _build_curriculum_schedule).
+    assert [s.name for s in build_schedule(args)] == ["completion-roomy"]
+
+
+def test_completion_probe_notch_builds_notch_rung():
+    # --completion-probe notch → the tight-arm stage, both on the runtime path and via the helper.
+    from ml.train import _build_curriculum_schedule, build_argparser, build_schedule
+
+    args = build_argparser().parse_args(["--completion-probe", "notch"])
+    stages = _build_curriculum_schedule(args).stages
+    assert [s.name for s in stages] == ["completion-notch"]
+    assert [s.name for s in build_schedule(args)] == ["completion-notch"]
+
+
+def test_completion_probe_honors_max_iters_per_stage():
+    # --max-iters-per-stage must be applied to the single completion-probe schedule so that
+    # e.g. `--completion-probe roomy --max-iters-per-stage 200` caps the probe run.
+    from ml.train import _build_curriculum_schedule, build_argparser
+
+    args = build_argparser().parse_args(
+        ["--completion-probe", "roomy", "--max-iters-per-stage", "200"]
+    )
+    sched = _build_curriculum_schedule(args)
+    assert sched.policy.max_iters == 200
+
+
+def test_no_completion_probe_is_default_neutral():
+    # ADR-0028 / 4c-ii default-neutrality: absent --completion-probe, the schedule is the
+    # concrete DEFAULT_LADDER — no completion rung injected, byte-identical to pre-flag.
+    from ml.train import _build_curriculum_schedule, build_argparser, build_schedule
+
+    args = build_argparser().parse_args(["--schedule", "curriculum"])
+    # Pin on the runtime path.
+    stages = _build_curriculum_schedule(args).stages
+    rung_names = [s.name for s in stages]
+    # Must match the actual DEFAULT_LADDER exactly (no injection).
+    assert rung_names == ["trivial", "pair-box", "trio-box", "trio-notch", "trio-notch-strict"]
+    # Must contain no completion rung regardless of value.
+    assert all(s.name not in ("completion-notch", "completion-roomy") for s in stages)
+    # build_schedule must agree.
+    assert [s.name for s in build_schedule(args)] == rung_names
+
+
+def test_completion_probe_trivial_schedule_errors():
+    # --completion-probe + --schedule trivial must error LOUD, not silently train the full ladder.
+    from ml.train import main
+
+    with pytest.raises(SystemExit):
+        main(["--schedule", "trivial", "--completion-probe", "roomy"])

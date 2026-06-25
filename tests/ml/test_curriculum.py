@@ -992,3 +992,45 @@ def test_validate_ladder_rejects_backplay_rung_with_wrong_prefix_k():
     )
     with pytest.raises(ValueError, match="k=N-1"):
         validate_ladder([bad], encoder_max_objects=8)
+
+
+# ---------------------------------------------------------------------------
+# ADR-0028 trigger-#3 — _completion_stage builder (paired-witness probe)
+# ---------------------------------------------------------------------------
+
+
+def test_completion_stage_notch_is_door_spawn_drive_one():
+    from ml.curriculum import _completion_stage
+
+    s = _completion_stage("notch")
+    assert s.name == "completion-notch"
+    assert s.difficulty.max_objects == 3
+    assert s.difficulty.seed_anchor_k == 2  # pre-park 2, drive 1
+    assert s.difficulty.backplay_phi_cap is None  # door spawn (phi=1), no backplay mixture
+    assert s.difficulty.anchor_prob is None  # fixed-k, not mixed-start
+    assert s.anchor_layout_path == "tests/fixtures/ml/witness_notch.yaml"
+    assert s.hangar_path == "examples/herrenteich/hangar.yaml"
+    assert s.clearance_m == 0.05
+
+
+def test_completion_stage_roomy_uses_large_hangar_and_roomy_witness():
+    from ml.curriculum import _completion_stage
+
+    s = _completion_stage("roomy")
+    assert s.name == "completion-roomy"
+    assert s.difficulty.max_objects == 3
+    assert s.difficulty.seed_anchor_k == 2
+    assert s.difficulty.backplay_phi_cap is None
+    assert s.anchor_layout_path == "tests/fixtures/ml/witness_roomy.yaml"
+    assert s.hangar_path == "tests/fixtures/test_hangar_large.yaml"
+    assert s.fleet_path == "data/fleet.yaml"
+    assert s.clearance_m == 0.3
+
+
+def test_completion_stage_rejects_unknown_witness():
+    import pytest
+
+    from ml.curriculum import _completion_stage
+
+    with pytest.raises(ValueError):
+        _completion_stage("bogus")

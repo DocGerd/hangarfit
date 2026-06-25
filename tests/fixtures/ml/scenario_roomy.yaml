@@ -1,0 +1,6 @@
+# Solve scenario used to AUTHOR tests/fixtures/ml/witness_roomy.yaml (ADR-0028 trigger-#3).
+# A roomy 3-object fill on the 25x30 test hangar: produces the fat-conditional-last-slot
+# witness (the paired probe's roomy arm). Reproducible/auditable per the spec's default.
+fleet: ../../../data/fleet.yaml
+hangar: ../test_hangar_large.yaml
+fleet_in: [fuji, cessna_150, aviat_husky]

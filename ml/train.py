@@ -37,6 +37,7 @@ from ml.curriculum import (
     EpisodeStat,
     PromotionPolicy,
     Stage,
+    _completion_stage,
     format_iter_log,
     history_metric_records,
     make_episode_sampler,
@@ -1002,6 +1003,16 @@ def build_argparser() -> argparse.ArgumentParser:
         "--mixed-anchor grafts, so a name they introduce (pair-mixed) is valid.",
     )
     p.add_argument(
+        "--completion-probe",
+        choices=["notch", "roomy"],
+        default=None,
+        help="ADR-0028 trigger-#3 diagnostic: train ONLY a single door-spawn completion rung "
+        "(pre-park 2 of a 3-object witness, drive the last in from the door at phi=1) on the "
+        "chosen manifold arm — 'notch' (tight, the measured 0.000 wall) or 'roomy' (fat slot). "
+        "Overrides the ladder with one rung from a fresh policy; default None = unchanged "
+        "(byte-identical).",
+    )
+    p.add_argument(
         "--r-valid-park",
         type=float,
         default=0.0,
@@ -1183,6 +1194,68 @@ def build_argparser() -> argparse.ArgumentParser:
     return p
 
 
+def build_schedule(args: argparse.Namespace) -> list[Stage]:
+    """Map parsed CLI args → the ordered list of curriculum Stages to train.
+
+    Delegates to ``_build_curriculum_schedule`` so the ladder logic — including the
+    ``--completion-probe`` short-circuit — lives in exactly one place and the runtime
+    path cannot diverge from tests."""
+    return list(_build_curriculum_schedule(args).stages)
+
+
+def _build_curriculum_schedule(args: argparse.Namespace) -> CurriculumSchedule:
+    """Build the full ``CurriculumSchedule`` (stages + promotion policy) from parsed args.
+    Used by ``main()`` for ``train_curriculum``; ``build_schedule`` delegates here so the
+    two cannot diverge.
+
+    ADR-0028 trigger-#3: when ``--completion-probe`` is set, short-circuits to a single
+    completion rung (taking precedence over all other ladder flags). Promotion-policy
+    overrides (``--max-iters-per-stage`` etc.) are applied to the single-stage schedule so
+    the probe respects iteration controls. Default ``None`` → behaviour byte-identical to
+    before (the short-circuit is an added early-return branch only)."""
+    # ADR-0028 trigger-#3: one rung, fresh policy, overrides everything else.
+    if args.completion_probe is not None:
+        single = CurriculumSchedule(
+            stages=(_completion_stage(args.completion_probe),), policy=PromotionPolicy()
+        )
+        single = replace(
+            single,
+            policy=with_promotion_overrides(
+                single.policy,
+                metric=args.promotion_metric,
+                threshold=args.promotion_threshold,
+                max_iters=args.max_iters_per_stage,
+                window=args.promotion_window,
+            ),
+        )
+        return single
+    sched = CurriculumSchedule.default()
+    sched = replace(
+        sched,
+        policy=with_promotion_overrides(
+            sched.policy,
+            metric=args.promotion_metric,
+            threshold=args.promotion_threshold,
+            max_iters=args.max_iters_per_stage,
+            window=args.promotion_window,
+        ),
+    )
+    if args.solo_box_rung:
+        sched = with_solo_box_rung(sched)
+    if args.seed_anchor:
+        sched = with_pair_anchored_rung(sched)
+    if args.mixed_anchor:
+        sched = with_mixed_anchor_rung(sched)
+    if args.anchor_trio_notch:
+        sched = with_trio_notch_anchored_rung(sched)
+    if args.backplay_trio_notch:
+        sched = with_trio_notch_backplay_rung(sched)
+    # Truncate LAST, after the grafts, so a name they introduce (pair-mixed) is in scope.
+    if args.stop_after_rung is not None:
+        sched = truncate_after_rung(sched, args.stop_after_rung)
+    return sched
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     parser = build_argparser()
     args = parser.parse_args(argv)
@@ -1255,6 +1328,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         if args.entropy_floor is not None or args.frontier_rungs:
             # The entropy floor is rung-scoped; the trivial path has no rungs.
             parser.error("--entropy-floor/--frontier-rungs require --schedule curriculum")
+        if args.completion_probe is not None:
+            parser.error("--completion-probe requires --schedule curriculum")
         if args.auto_budget or args.auto_budget_max_iters is not None:
             parser.error("--auto-budget/--auto-budget-max-iters require --schedule curriculum")
         if args.n_envs > 1:  # resolve_n_envs floors at 1, so >1 is the only over-floor case
@@ -1283,30 +1358,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         # absent flag, not 0/negative).
         if args.entropy_floor is not None and args.entropy_floor <= 0:
             parser.error("--entropy-floor must be > 0")
-        sched = CurriculumSchedule.default()
-        sched = replace(
-            sched,
-            policy=with_promotion_overrides(
-                sched.policy,
-                metric=args.promotion_metric,
-                threshold=args.promotion_threshold,
-                max_iters=args.max_iters_per_stage,
-                window=args.promotion_window,
-            ),
-        )
-        if args.solo_box_rung:
-            sched = with_solo_box_rung(sched)
-        if args.seed_anchor:
-            sched = with_pair_anchored_rung(sched)
-        if args.mixed_anchor:
-            sched = with_mixed_anchor_rung(sched)
-        if args.anchor_trio_notch:
-            sched = with_trio_notch_anchored_rung(sched)
-        if args.backplay_trio_notch:
-            sched = with_trio_notch_backplay_rung(sched)
-        # Truncate LAST, after the grafts, so a name they introduce (pair-mixed) is in scope.
-        if args.stop_after_rung is not None:
-            sched = truncate_after_rung(sched, args.stop_after_rung)
+        sched = _build_curriculum_schedule(args)
         # #734/#743: build the slope-aware controller only when --auto-budget is set; None keeps
         # the fixed per-rung cap (byte-identical default). Each per-knob override (max-iters /
         # min-iters / min-level) is inert without the switch, so fail LOUD rather than silently

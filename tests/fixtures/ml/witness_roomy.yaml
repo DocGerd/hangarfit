@@ -1,0 +1,17 @@
+# Committed seed-anchor witness for the ADR-0028 trigger-#3 completion-roomy probe rung.
+#
+# A VALID 3-object layout on the roomy 25x30 test hangar (tests/fixtures/test_hangar_large.yaml),
+# produced by `hangarfit solve tests/fixtures/ml/scenario_roomy.yaml` and verified by
+# `hangarfit check` (exit 0). The paired completion probe pre-parks a k=2 prefix and drives the
+# last object in from the door (phi=1); the fat conditional last-slot (~0.278, vs the notch's
+# ~0.064) is the manifold-width arm. A k-prefix of a valid layout is itself valid, so the
+# pre-parked 2-prefix is feasibility-clean with NO runtime solver call. Validity pinned by
+# tests/ml/test_stage_builder.py::test_witness_roomy_*. Do not hand-edit poses without re-running.
+#
+# No `fleet:`/`hangar:` fields on purpose: the env + stage_builder load this with fleet=/hangar=
+# OVERRIDES (test_hangar_large at clearance 0.3 + data/fleet.yaml), and the loader rejects a file
+# that sets those AND takes overrides.
+placements:
+  - {plane: fuji, x_m: 4.71, y_m: 25.29, heading_deg: 130.40165377698696, on_carts: false}
+  - {plane: cessna_150, x_m: 5.085, y_m: 8.461677752183649, heading_deg: 13.664575523528717, on_carts: true}
+  - {plane: aviat_husky, x_m: 19.59, y_m: 24.438637914466803, heading_deg: 262.7182656910553, on_carts: false}
