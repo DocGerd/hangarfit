@@ -146,10 +146,13 @@ All notable changes to this project are documented here. Format follows [Keep a 
   wings (e.g. `aviat_husky`, `z[2.0,2.3]`). A high-winger towed past the parked Scheibe then hit a
   wing-vs-wing collision the parts-model would never see in reality (a high wing simply overhangs a
   low one), making the real, valid all-8 `examples/herrenteich/layout.yaml` un-tow-routable. The wing
-  is now a thin raised keep-out band `z[1.70,1.80]` — the narrow corridor that clears the fuselages it
-  overhangs (floor 0.20 m above the 1.5 m fuselage tops) yet sits below the high-wing layer (ceiling
-  0.20 m under `aviat_husky`'s 2.0 m wing) so high-wingers correctly overhang it. Both bundled layouts
-  (`layout.yaml`, the dense `layout_today.yaml`) stay statically valid; a new
+  is now a thin raised keep-out band `z[1.72,1.78]` — centred at 1.75 m in the narrow corridor between
+  the fuselages it overhangs and the high-wing layer, with a 0.22 m gap on each side: the floor clears
+  the 1.5 m fuselage tops and the ceiling sits below `aviat_husky`'s 2.0 m wing so high-wingers overhang
+  it. The thin centred band clears the wing-layer clearance under BOTH hangars that share this catalog
+  entry — herrenteich's 0.15 m and the synthetic `data/hangar.yaml`'s 0.20 m (a band exactly on the
+  0.20 m boundary would false-conflict on float: `1.70 - 1.50 == 0.19999…96 < 0.20`). Both bundled
+  layouts (`layout.yaml`, the dense `layout_today.yaml`) stay statically valid; a new
   `test_scheibe_wing_sits_below_the_high_wing_layer` pins the z-layering invariant (which is
   static-validity-neutral, so the existing layout tests alone would not catch a regression). Render
   colour is unchanged (`wing_position: high` still selects it; collision z-layering reads the explicit

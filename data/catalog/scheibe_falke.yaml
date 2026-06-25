@@ -3,14 +3,14 @@ type: aircraft
 id: scheibe_falke
 name: "Scheibe SF-25E Super Falke"
 wing_position: high     # real aircraft is LOW-wing (EASA TCDS); the wing is modelled as a thin raised flat
-                        # keep-out band (z[1.7,1.8]) for the monowheel tilt — see the wing z-layering note (#842).
+                        # keep-out band (z[1.72,1.78]) for the monowheel tilt — see the wing z-layering note (#842).
                         # `high` here only selects the render colour (visualize.py); collision z-layering reads
                         # the explicit part z_* values below, so this label does not put the wing in the high layer.
 gear: monowheel         # central monowheel + under-wing outriggers + tailwheel (TCDS-confirmed)
 movement_mode: always_cart
 turn_radius_m: null  # always_cart → towplanner uses 0 (pivot); see ADR-0007
 measured: false
-notes: "18 m span (EASA TCDS A.098). Cantilever wing; real aircraft is low-wing, modelled as a thin raised flat keep-out band z[1.7,1.8] to represent the monowheel TILT while clearing the neighbouring fuselages it overhangs (see the wing z-layering note, #842). Central monowheel + outriggers + tailwheel; parks lengthwise (too wide nose-in)."
+notes: "18 m span (EASA TCDS A.098). Cantilever wing; real aircraft is low-wing, modelled as a thin raised flat keep-out band z[1.72,1.78] to represent the monowheel TILT while clearing the neighbouring fuselages it overhangs (see the wing z-layering note, #842). Central monowheel + outriggers + tailwheel; parks lengthwise (too wide nose-in)."
 parts:
   - kind: fuselage
     length_m: 7.58        # EASA TCDS A.098 (length)
@@ -19,27 +19,38 @@ parts:
     offset_y_m: 0.0
     z_bottom_m: 0.0
     z_top_m: 1.5
-  - kind: wing            # thin flat keep-out band z[1.7,1.8] for the monowheel tilt — see the z-layering note (#842)
+  - kind: wing            # thin flat keep-out band z[1.72,1.78] for the monowheel tilt — see the z-layering note (#842)
     length_m: 1.01        # mean chord = area 18.20 m² / span 18.00 m (EASA TCDS A.098)
     width_m: 18.0         # span (EASA TCDS A.098)
     offset_x_m: 1.5
     offset_y_m: 0.0
     # z-LAYERING (#842): the SF-25E is a real LOW-wing motor glider on a central monowheel;
     # parked it rests on the monowheel + a wingtip outrigger + tailwheel and sits slightly
-    # tilted. Its 18 m wing is modelled as a thin flat keep-out band — NOT at its true low-wing
-    # root height — sitting in the narrow vertical corridor between the fuselages it overhangs
-    # and the genuine high-wingers' wing layer:
-    #   * FLOOR 1.70 m: in the dense 9-aircraft layout_today.yaml the wing overhangs the zlin
-    #     and husky AFT fuselages (tops 1.5 m); 1.70 leaves a 0.20 m gap, clearing the 0.15 m
-    #     wing-layer clearance. (A true-low band z~0.4-0.6 would clip those fuselages outright.)
-    #   * CEILING 1.80 m: sits 0.20 m below the high-wingers' wing layer (e.g. aviat_husky wing
-    #     bottom 2.0 m), so their wings correctly overhang it as in reality — this is the gap
-    #     that lets aviat_husky tow PAST the parked Scheibe.
+    # tilted. Its 18 m wing is modelled as a THIN flat keep-out band — NOT at its true low-wing
+    # root height — centred at 1.75 m in the narrow vertical corridor between the fuselages it
+    # overhangs and the genuine high-wingers' wing layer, giving a 0.22 m gap on each side:
+    #   * FLOOR 1.72 m: in the dense 9-aircraft layout_today.yaml the wing overhangs the AFT
+    #     section of the zlin and husky fuselages (single whole-body fuselage part, top 1.5 m;
+    #     the loader's ADR-0012 front/aft split preserves z_top). The 0.22 m gap clears the
+    #     wing-layer clearance under BOTH hangars that share this catalog entry — herrenteich's
+    #     0.15 m AND the synthetic data/hangar.yaml's 0.20 m (a band exactly on the 0.20 m
+    #     boundary would false-conflict: 1.70-1.50 == 0.19999…96 < 0.20 in float). A true-low
+    #     band z~0.4-0.6 would clip those fuselages outright. NB this must be the AFT fuselage:
+    #     a wing over a fuselage_front / cockpit is a HARD conflict at ANY height (ADR-0012 D1),
+    #     so no z-band would rescue an overhang nudged forward over a neighbour's cockpit.
+    #   * CEILING 1.78 m: sits 0.22 m below the high-wingers' wing layer (aviat_husky wing
+    #     bottom 2.0 m is the representative one a tow passes under), so their wings correctly
+    #     overhang it as in reality — this is the gap that lets aviat_husky tow PAST the parked
+    #     Scheibe. (The z-gap rule only bites under plan-view overlap, which the husky TOW path
+    #     creates; statically-distant high-wingers like zlin never overlap the Scheibe wing.)
     # The prior z[1.9,2.1] put this LOW-wing glider's wing INTO the high-wing layer, manufacturing
     # a phantom wing-vs-wing collision during the tow that has no real-world counterpart and made
     # the real, valid Herrenteich all-8 layout un-tow-routable (#842).
-    z_bottom_m: 1.7
-    z_top_m: 1.8
+    # These neighbour z-values (husky wing bottom, fuselage tops) are pinned dynamically by
+    # tests/test_herrenteich_dataset.py::test_scheibe_wing_sits_below_the_high_wing_layer; if you
+    # change aviat_husky's wing-z or the fuselage tops, re-read them there, not from this prose.
+    z_bottom_m: 1.72
+    z_top_m: 1.78
     # Symmetric double-taper (no sweep, root kink at y=0) → a 6-vertex hexagon
     # (ADR-0024). The SF-25E wing is the realistically-tapered glider whose
     # narrowed wingtip nests where its bounding rectangle falsely conflicts with
