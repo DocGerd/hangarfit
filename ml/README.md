@@ -20,10 +20,19 @@ Six gate-run levers, spanning every lever class (the representation axis was pro
 | #817 `--entropy-floor` | exploration | inert, vp 0.333 = control |
 | #823 `--backplay-trio-notch` | start-state distribution (ρ₀) | transfer 0.000; scaffold-only 0.63–0.69 |
 | #827 `--relative-encoder` | representation (coordinate frame) | vp 0.353/0.332 PILING ≈ control 0.317/0.316 |
+| **ADR-0028 trigger-#3** | **completion paired-witness probe** | **runnable — not yet run** |
 
 (The empty-start `trio-notch` *baseline* sat slightly lower at `valid_placed ≈ 0.25` — the
 coverage-minimum number quoted in the lever recipes below; the *levered* runs converge to the
 1-of-3 = `0.333` place-one fixed point. Same failure mode, two measurement contexts.)
+
+**Pending probe: ADR-0028 trigger-#3 (completion paired-witness).** The third re-open diagnostic
+(runnable but not yet run) is a **paired-witness A/B** on the completion skill backplay proved
+viable: door-spawn φ=1, pre-park k=2 of 3, tight notch vs roomy (`witness_roomy.yaml`). Both arms
+measure marginal completion `max(0, 3·valid_placed − 2)` against a pre-registered 2/3 floor. GO =
+roomy vp ≥ 0.30 & notch ≈ 0 → slot geometry drives the wall → reframe to roomy scoped charter
+(the on-demand-exception real use case). NO-GO = both ≈ 0 → drive binding without witness spawn
+→ resolved-negative generalizes to completion. See [ADR-0028](../docs/adr/0028-learned-backend-train-to-mastery-resolved-negative.md) for the charter details and re-open gate.
 
 A **pre-registered measure-first probe** (`basin_mc.py` + `phi_eval.py` + `phi_eval_control.py`
 + `probe-verdict.md`, gitignored gate-run scratch; torch-light, through the product checker;
