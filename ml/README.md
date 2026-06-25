@@ -895,12 +895,13 @@ or **multi-object backplay** (anneal the pre-park count k→0 so the proven near
 from empty). ~~A strategic alternative is to **reframe toward completion**: hangarfit's on-demand-exception use case
 rarely starts from an empty hangar (it fits the displaced last 1–2 planes into a mostly-set layout), which is
 exactly the completion skill backplay already delivers (~65% valid).~~ **Superseded — RESOLVED-NEGATIVE
-(#837, see the Status section at the top).** The ADR-0028 trigger-#3 completion paired-witness probe trained
-this exact door-spawn-completion regime (φ=1, pre-park k=2, drive the marginal object) and read it through the
-floor-aware **marginal** metric `max(0, 3·valid_placed − 2)`: marginal completion = **0.000 on both the tight
-notch and a ~4.3×-wider roomy slot** (every cell sat at the 2-of-3 abandonment floor `valid_placed ≈ 0.667`).
-The "~65% valid" was an aggregate `valid_placed` the marginal floor strips to zero — not genuine cold-start
-completion — so re-charter-to-completion is **closed, not an open direction**. **Contraindicated / do-not-reattempt:**
+(#837, see the Status section at the top).** Genuine cold-start completion is not achieved on either manifold,
+by two independent measurements: the measure-first probe already showed true φ=1 completion is `0.000` (the
+"~65%" was a φ-mixture average dominated by near-witness episodes — see Status), and the ADR-0028 trigger-#3
+completion paired-witness probe — training pure door-spawn completion (φ=1, pre-park k=2, drive the marginal
+object) directly, read through the floor-aware **marginal** metric `max(0, 3·valid_placed − 2)` — converges
+only to the **2-of-3 abandonment floor** (marginal `0.000` on both the tight notch and a ~4.3×-wider roomy
+slot; `valid_placed ≈ 0.667`). So re-charter-to-completion is **closed, not an open direction**. **Contraindicated / do-not-reattempt:**
 witness-imitation / DAgger (oracle-masquerade, panel-rejected), the pile-safe carrot (#812), the entropy floor
 (#815), and spatial representation (#810).
 
