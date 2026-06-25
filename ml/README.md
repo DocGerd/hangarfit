@@ -219,7 +219,12 @@ structural reason is the charter gap [ADR-0028](../docs/adr/0028-learned-backend
 measured: where RR-MC misses (over-capacity dense) the policies (trained on ≤3-aircraft rungs) reach
 **0**, and where the policies are competent (trio-box / trio-notch) RR-MC reaches everything, so
 there is no witness-absent kind there to contest. The two regimes are **disjoint** — which is *why*
-trigger #1 is not met, now as a runnable verdict rather than a prediction.
+trigger #1 is not met, now as a runnable verdict rather than a prediction. A per-`k` RR-MC reach
+sweep (distinct over-capacity subsets, same fair budget) maps the boundary directly: reach falls
+**1.00 → 0.83 → 0.50 → 0.42** across `k = 2…5`, then **0.00 at `k ≥ 6`** — so the witness-absent
+frontier (`k ≥ 6`) sits well above the policies' `≤3`-aircraft competence, making the disjointness
+quantitative. (The only band where a *future* learned backend could plausibly help is the `k = 4…5`
+transition, where RR-MC is already half-missing just past where the policies operate.)
 
 ## Training knobs (4c-ii)
 
