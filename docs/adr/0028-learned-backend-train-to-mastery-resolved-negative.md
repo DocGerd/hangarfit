@@ -106,7 +106,13 @@ success criterion is the shipped, verifier-gated inference seam (#706).
 **Re-open this decision if (any one):**
 
 1. a future policy's dense-notch **reach-rate** (Wilson CI) **exceeds RR-MC's** on a
-   **witness-absent** scenario-kind (the true charter target — masquerade-proof), **or**
+   **witness-absent** scenario-kind (the true charter target — masquerade-proof). *This gate is
+   now **runnable** (`ml.reach_rate.dominance_verdict` / `--witness-absent-tau`, #831) and was
+   executed once: on the witness-absent `k8` over-capacity stratum (a fair-budget RR-MC reaches
+   **0/9** distinct subsets, Wilson `ci_hi` 0.30) all six trained gate-run checkpoints
+   (control / ego / backplay × 2 seeds) reach **0/108** → verdict **NOT MET**. The trigger stays
+   open for a future policy; no current one trips it, because the policies' competence regime
+   (≤3-aircraft rungs) and RR-MC's miss regime (over-capacity dense) are disjoint.* **or**
 2. ~~a **relative / object-centric coordinate encoder lands**~~ — **RESOLVED-NEGATIVE
    (#827 / #829, 2026-06-25).** *Rationale at the time: that encoder was the one
    structurally-untested confound.* The opt-in `--relative-encoder` ego-centric augment encoder

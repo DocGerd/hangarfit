@@ -32,7 +32,7 @@ from __future__ import annotations
 import argparse
 import math
 import random
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass, replace
 from pathlib import Path
 
@@ -97,6 +97,90 @@ def aggregate(pairs: Iterable[tuple[str, bool]]) -> dict[str, ReachRate]:
     if all_trials:
         out["overall"] = reach_rate("overall", sum(all_trials), len(all_trials))
     return out
+
+
+# ── trigger-#1 dominance gate (ADR-0028 re-open condition #1) ─────────────────
+
+
+def _check_tau(tau: float) -> None:
+    if not 0.0 <= tau <= 1.0:
+        raise ValueError(f"tau must be in [0, 1], got {tau}")
+
+
+def witness_absent_kinds(rrmc: Mapping[str, ReachRate], *, tau: float) -> list[str]:
+    """The scenario-kinds RR-MC genuinely *misses* — its reach-rate upper Wilson bound sits at
+    or below ``tau``. Only on these can a learned policy "reach what the deterministic solver
+    misses" (the #607 charter); a policy win anywhere RR-MC already reaches is not chartered.
+    Excludes the synthetic ``"overall"`` pooled row. Sorted for a deterministic verdict."""
+    _check_tau(tau)
+    return sorted(k for k, r in rrmc.items() if k != "overall" and r.ci_hi <= tau)
+
+
+@dataclass(frozen=True, slots=True)
+class KindDominance:
+    """Per-kind dominance fact on one witness-absent kind: does the policy's reach-rate Wilson
+    lower bound clear RR-MC's upper bound? ``policy_covered`` is False when the policy arm never
+    sampled this kind (no evidence ⇒ cannot beat)."""
+
+    kind: str
+    rrmc_ci_hi: float
+    policy_covered: bool
+    policy_ci_lo: float
+    policy_beats: bool
+
+
+@dataclass(frozen=True, slots=True)
+class DominanceVerdict:
+    """ADR-0028 re-open **trigger #1**: does a policy's dense-notch reach-rate Wilson CI *exceed*
+    RR-MC's on a **witness-absent** kind? Masquerade-proof by construction — it requires Wilson-CI
+    **non-overlap** (policy lower bound strictly above RR-MC upper bound), so a policy that merely
+    matches RR-MC by sampling luck cannot trip it.
+
+    ``exercised`` (the population actually contained a witness-absent kind) is reported separately
+    from ``reopen`` so a *vacuous* negative — "no witness-absent kind in this population" — is never
+    mistaken for a clean "policy tested and did not beat RR-MC"."""
+
+    tau: float
+    witness_absent: tuple[str, ...]
+    per_kind: tuple[KindDominance, ...]
+    reopen: bool
+
+    @property
+    def exercised(self) -> bool:
+        """True iff the population contained at least one witness-absent kind to test on."""
+        return bool(self.witness_absent)
+
+
+def dominance_verdict(
+    rrmc: Mapping[str, ReachRate], policy: Mapping[str, ReachRate], *, tau: float
+) -> DominanceVerdict:
+    """The trigger-#1 verdict from the two arms' per-kind reach-rates (the ``aggregate`` outputs).
+    See :class:`DominanceVerdict`."""
+    wa = witness_absent_kinds(rrmc, tau=tau)
+    per_kind: list[KindDominance] = []
+    for k in wa:
+        rr_hi = rrmc[k].ci_hi
+        p = policy.get(k)
+        if p is None:
+            per_kind.append(
+                KindDominance(k, rr_hi, policy_covered=False, policy_ci_lo=0.0, policy_beats=False)
+            )
+        else:
+            per_kind.append(
+                KindDominance(
+                    k,
+                    rr_hi,
+                    policy_covered=True,
+                    policy_ci_lo=p.ci_lo,
+                    policy_beats=p.ci_lo > rr_hi,
+                )
+            )
+    return DominanceVerdict(
+        tau=tau,
+        witness_absent=tuple(wa),
+        per_kind=tuple(per_kind),
+        reopen=any(kd.policy_beats for kd in per_kind),
+    )
 
 
 # ── sampled population ───────────────────────────────────────────────────────
@@ -312,6 +396,26 @@ def _print_rates(title: str, rates: dict[str, ReachRate]) -> None:
         print(f"  {kind:10}  {r.rate:>10.3f}  {ci:>16}  {r.n:>5}")
 
 
+def _print_dominance(v: DominanceVerdict) -> None:
+    """Print the ADR-0028 trigger-#1 verdict — the masquerade-proof reach-not-beat decision."""
+    print(f"\nADR-0028 trigger #1 — reach-not-beat (witness-absent tau={v.tau})")
+    if not v.exercised:
+        print(
+            "  ⚠ NOT EXERCISED — no witness-absent kind in this population (every kind's RR-MC\n"
+            "    reach-rate CI upper bound exceeds tau). Use a denser/tighter population\n"
+            "    (--hangar <tight fixture> and/or a higher --k-max) to create one."
+        )
+        return
+    print(f"  witness-absent kinds: {', '.join(v.witness_absent)}")
+    print(f"  {'kind':10}  {'RR-MC ci_hi':>12}  {'policy ci_lo':>13}  {'beats?':>7}")
+    for kd in v.per_kind:
+        pol = f"{kd.policy_ci_lo:.3f}" if kd.policy_covered else "(n/a)"
+        beats = "YES" if kd.policy_beats else "no"
+        print(f"  {kd.kind:10}  {kd.rrmc_ci_hi:>12.3f}  {pol:>13}  {beats:>7}")
+    decision = "MET — RE-OPEN ADR-0028 (trigger #1)" if v.reopen else "NOT MET (decision stands)"
+    print(f"  ==> TRIGGER #1: {decision}")
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     p = argparse.ArgumentParser(
         description="Statistical reach-rate harness (#711): reach-rate ± CI over a sampled "
@@ -341,6 +445,18 @@ def main(argv: Sequence[str] | None = None) -> None:
     p.add_argument("--d-model", type=int, default=128)
     p.add_argument("--n-layers", type=int, default=2)
     p.add_argument("--n-heads", type=int, default=4)
+    p.add_argument(
+        "--relative-encoder",
+        action="store_true",
+        help="load the policy with the #827 ego-centric encoder (must match the checkpoint)",
+    )
+    p.add_argument(
+        "--witness-absent-tau",
+        type=float,
+        default=0.15,
+        help="a kind is witness-absent when its RR-MC reach-rate Wilson ci_hi <= tau "
+        "(default: 0.15) — the only kinds on which trigger #1 can be met",
+    )
     args = p.parse_args(argv)
 
     population = sample_population(
@@ -365,6 +481,8 @@ def main(argv: Sequence[str] | None = None) -> None:
     _print_rates(
         f"RR-MC reach-rate (alternatives={args.alternatives}, restarts={args.max_restarts})", rrmc
     )
+    wa = witness_absent_kinds(rrmc, tau=args.witness_absent_tau)
+    print(f"\nwitness-absent kinds (RR-MC ci_hi <= {args.witness_absent_tau}): {wa or '(none)'}")
     if args.policy is not None:
         from ml.eval import load_policy
 
@@ -374,10 +492,12 @@ def main(argv: Sequence[str] | None = None) -> None:
                 "d_model": args.d_model,
                 "n_layers": args.n_layers,
                 "n_heads": args.n_heads,
+                "relative_encoder": args.relative_encoder,
             },
         )
         pol = policy_population_rates(population, policy, samples=args.samples, seed=args.seed)
         _print_rates(f"policy reach-rate ({args.samples} samples/scenario)", pol)
+        _print_dominance(dominance_verdict(rrmc, pol, tau=args.witness_absent_tau))
 
 
 if __name__ == "__main__":

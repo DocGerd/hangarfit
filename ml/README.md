@@ -183,6 +183,55 @@ large-population RR-MC baseline is meant to be recorded once and **frozen** (mir
 measuring so the policy-vs-RR-MC comparison can't go circular. The policy arm is cheap (rollouts,
 no solver), so it affords a larger population × more samples.
 
+### The trigger-#1 dominance gate (#831 — the re-open test, now runnable)
+
+[ADR-0028](../docs/adr/0028-learned-backend-train-to-mastery-resolved-negative.md)'s **re-open
+trigger #1** is the masquerade-proof charter test: *a future policy's dense-notch reach-rate
+(Wilson CI) **exceeds RR-MC's** on a **witness-absent** scenario-kind*. The harness above measures
+both arms; `#831` encodes the **decision** so it's a runnable verdict, not a human eyeballing two
+tables:
+
+- `witness_absent_kinds(rrmc, tau)` — the kinds RR-MC genuinely **misses** (Wilson `ci_hi <= tau`).
+  Only these are chartered ground; a policy "win" anywhere RR-MC already reaches is not a win.
+- `dominance_verdict(rrmc, policy, tau)` — the trigger-#1 predicate as one boolean. It requires
+  Wilson-CI **non-overlap** (`policy.ci_lo > rrmc.ci_hi`), so a policy that merely *matches* RR-MC
+  by sampling luck cannot trip it; it reports `exercised` (was there a witness-absent kind at all?)
+  separately from `reopen`, so a **vacuous** "no witness-absent kind" negative never masquerades as
+  a clean "tested and did not beat RR-MC".
+
+```bash
+# A witness-absent population needs a regime a FAIR-budget RR-MC misses (not a starved one).
+# Over-capacity fleet subsets on the tight 18 m hangar work; the witness-absent kind is k8.
+python -m ml.reach_rate --hangar tests/fixtures/canary_hangar_tight_18m.yaml \
+  --k-min 8 --k-max 8 --scenarios 9 --alternatives 4 --max-restarts 16 \
+  --policy model.pt --samples 12 --witness-absent-tau 0.35
+# NB: there are only C(9,8)=9 DISTINCT k8 subsets; RR-MC is deterministic, so beyond 9 the
+# sampler repeats scenarios (pseudo-replication). Enumerate the distinct subsets for a clean CI.
+# tau 0.35 > the measured RR-MC ci_hi 0.30, so k8 registers as witness-absent; the 0.15 default
+# would NOT (0.30 > 0.15) — at n=9 the Wilson width forces tau above the small-sample ci_hi.
+```
+
+**Current reading (2026-06-25, NOT MET).** Executed on the witness-absent `k8` stratum (9 distinct
+over-capacity subsets): a fair-budget RR-MC reaches **0/9** (Wilson `ci_hi` 0.30), and **all six**
+trained gate-run checkpoints (control / ego / backplay × 2 seeds) reach **0/108** → `policy.ci_lo`
+0.000 cannot clear `rrmc.ci_hi` 0.30, so **trigger #1 is NOT MET** on every checkpoint. The
+structural reason is the charter gap [ADR-0028](../docs/adr/0028-learned-backend-train-to-mastery-resolved-negative.md)
+measured: where RR-MC misses (over-capacity dense) the policies (trained on ≤3-aircraft rungs) reach
+**0**, and where the policies are competent (trio-box / trio-notch) RR-MC reaches everything, so
+there is no witness-absent kind there to contest. The two regimes are **disjoint** — which is *why*
+trigger #1 is not met, now as a runnable verdict rather than a prediction. A per-`k` RR-MC reach
+sweep (distinct over-capacity subsets, same fair budget) maps the boundary directly: reach falls
+**1.00 → 0.83 → 0.50 → 0.42** across `k = 2…5`, then **0.00 at `k ≥ 6`** — so the witness-absent
+frontier (`k ≥ 6`) sits well above the policies' `≤3`-aircraft competence, making the disjointness
+quantitative. (The band closest to plausible near-term help is the `k = 4…5` transition — RR-MC is
+already half-missing there, just past where *today's* `≤3`-aircraft policies operate; the `k ≥ 6`
+frontier stays out of reach for any backend trained on the current rungs, not intrinsically.) The
+verdict survives the **fairest** framing too: re-run on the *specific* `k = 4` subsets RR-MC misses
+(the witness-absent boundary nearest competence — not the far-OOD `k = 8`; RR-MC drops ≈41 % of `k4`
+here), all six checkpoints still reach **0/216** → NOT MET. So "no current policy beats RR-MC where
+it misses" holds at **both** measured ends — the boundary nearest competence (`k = 4`) *and* far
+OOD (`k = 8`) — so the verdict is not an artifact of out-of-distribution testing.
+
 ## Training knobs (4c-ii)
 
 Four optional basin-escape knobs were added in sub-project #4c-ii (#693). All
