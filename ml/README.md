@@ -225,7 +225,12 @@ sweep (distinct over-capacity subsets, same fair budget) maps the boundary direc
 frontier (`k ≥ 6`) sits well above the policies' `≤3`-aircraft competence, making the disjointness
 quantitative. (The band closest to plausible near-term help is the `k = 4…5` transition — RR-MC is
 already half-missing there, just past where *today's* `≤3`-aircraft policies operate; the `k ≥ 6`
-frontier stays out of reach for any backend trained on the current rungs, not intrinsically.)
+frontier stays out of reach for any backend trained on the current rungs, not intrinsically.) The
+verdict survives the **fairest** framing too: re-run on the *specific* `k = 4` subsets RR-MC misses
+(the witness-absent boundary nearest competence — not the far-OOD `k = 8`; RR-MC drops ≈41 % of `k4`
+here), all six checkpoints still reach **0/216** → NOT MET. So "no current policy beats RR-MC where
+it misses" holds from the boundary nearest competence (`k = 4`) to far OOD (`k = 8`) — not an
+artifact of out-of-distribution testing.
 
 ## Training knobs (4c-ii)
 
