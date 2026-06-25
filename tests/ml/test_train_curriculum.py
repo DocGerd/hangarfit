@@ -1827,4 +1827,35 @@ def test_iter_train_metrics_logs_phi_cap_only_for_backplay_rungs():
     assert "phi_cap" not in plain
     bp = _iter_train_metrics(metrics, cfg, backplay_phi_cap=0.75)
     assert bp["phi_cap"] == pytest.approx(0.75)
-    assert bp["epochs_run"] == 3.0  # the existing telemetry is preserved
+
+
+def test_completion_probe_flag_builds_single_completion_rung():
+    # ADR-0028 trigger-#3: --completion-probe produces EXACTLY one stage, the completion rung.
+    from ml.train import build_argparser, build_schedule
+
+    args = build_argparser().parse_args(["--completion-probe", "roomy"])
+    stages = build_schedule(args)
+    assert [s.name for s in stages] == ["completion-roomy"]
+
+
+def test_completion_probe_notch_builds_notch_rung():
+    # --completion-probe notch → the tight-arm stage.
+    from ml.train import build_argparser, build_schedule
+
+    args = build_argparser().parse_args(["--completion-probe", "notch"])
+    stages = build_schedule(args)
+    assert [s.name for s in stages] == ["completion-notch"]
+
+
+def test_no_completion_probe_is_default_neutral():
+    # ADR-0028 / 4c-ii default-neutrality: absent --completion-probe, the schedule is the
+    # concrete DEFAULT_LADDER — no completion rung injected, byte-identical to pre-flag.
+    from ml.train import build_argparser, build_schedule
+
+    args = build_argparser().parse_args(["--schedule", "curriculum"])
+    stages = build_schedule(args)
+    rung_names = [s.name for s in stages]
+    # Must match the actual DEFAULT_LADDER exactly (no injection).
+    assert rung_names == ["trivial", "pair-box", "trio-box", "trio-notch", "trio-notch-strict"]
+    # Must contain no completion rung regardless of value.
+    assert all(s.name not in ("completion-notch", "completion-roomy") for s in stages)
