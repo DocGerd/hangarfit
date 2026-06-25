@@ -467,7 +467,11 @@ def _print_dominance(v: DominanceVerdict) -> None:
         pol = f"{kd.policy_ci_lo:.3f}" if kd.policy_covered else "(n/a)"
         beats = "YES" if kd.policy_beats else "no"
         print(f"  {kd.kind:10}  {kd.rrmc_ci_hi:>12.3f}  {pol:>13}  {beats:>7}")
-    decision = "MET — RE-OPEN ADR-0028 (trigger #1)" if v.reopen else "NOT MET (decision stands)"
+    decision = (
+        "MET — RE-OPEN ADR-0028 (trigger #1)"
+        if v.reopen
+        else "NOT MET (trustworthy only if the contested kinds are feasibility-witnessed — #835)"
+    )
     print(f"  ==> TRIGGER #1: {decision}")
 
 

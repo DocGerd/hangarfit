@@ -216,7 +216,9 @@ tables:
 # A VALID trigger-#1 population is FEASIBILITY-WITNESSED: every scenario carries a valid layout
 # PROVEN to exist (hand-authored like the all-8 examples/herrenteich/layout.yaml that `hangarfit
 # check` accepts yet RR-MC cannot find, or one a big-budget `solve` returns) that the fair-budget
-# DEPLOYED RR-MC misses. Building that population is future work (#835).
+# DEPLOYED RR-MC misses. Building that population is future work (#835), so the
+# <…>/K/TAU placeholders below are intentionally unfilled — this is the SHAPE of a
+# valid invocation, not a runnable command (no witnessed fixture exists yet).
 python -m ml.reach_rate --hangar <feasibility-witnessed-hangar> \
   --k-min K --k-max K --distinct --alternatives 4 --max-restarts 16 \
   --policy model.pt --samples 12 --witness-absent-tau TAU
