@@ -159,7 +159,7 @@ budget:
 
 | Run | Routed? | Expansions | Wall |
 |---|---|---|---|
-| OFF (setup validation) | no — budget-exhausted (matches #840: never space-exhausts) | ≤32 k | — |
+| OFF (setup validation) | no — budget-exhausted at every tested budget (500 / 2 000 / 32 000); never space-exhausts (matches #840) | up to 32 k | — |
 | ON @ 8 000 | **no** — budget-exhausted | 8 000 | 444 s |
 | ON @ 16 000 | **no** — budget-exhausted | 16 000 | 952 s |
 | ON @ 32 000 | **no** — budget-exhausted | 32 000 | 2 051 s (34 min) |
@@ -171,21 +171,24 @@ budget:
   forward excursion** (`fwd_span = 0.00 m`). (This refutes the "the optimal RS word is a big forward
   S-curve that won't fit" worry, which assumed a car-like turn radius.)
 - **Probe — guidance vs resolution (coarse):** tracking min Euclidean dist-to-goal over the coarse ON
-  search, the closest pose ever reached is **3.10 m** from goal at the *wrong x* (9.77 vs goal 12.8).
+  search, the closest pose ever reached is **3.103 m** from goal at the *wrong x* (9.77 vs goal 12.8).
   It can't get *near* the goal nook — not "reached the goal but couldn't close." With the obstacle-aware
   grid geodesic heuristic (which pulls toward the goal around obstacles), this points to a
   **geometric/resolution** wall, not heuristic mis-guidance.
 - **Probe — resolution + macro salvageability (fine 0.25 m/10°, the witness resolution, with fine macro
-  deltas):** ON @ 40 k reaches **2.50 m** from goal — at the *correct goal-x (12.81)* and near-heading,
-  2.5 m short in y — closer than coarse, but still no route (40 k < the witness's 96 949-exp budget). So
+  deltas):** ON @ 40 k reaches **2.501 m** from goal — at the *correct goal-x (12.81)*, heading 80°
+  (goal heading 90°), 2.5 m short in y — closer than coarse, but still no route (40 k < the witness's
+  96 949-exp budget). So
   **finer resolution makes more progress** (a valid path exists at fine grid = the witness), and the
   macro did **not** slash the fine-grid cost.
 
 **Conclusion.** #844 is a **fine-resolution search-efficiency wall**: the valid nook maneuver lives at
 sub-coarse resolution and is *expensive to find even at fine grid* (39 min). The macro adds
 **longer-range moves on a lattice, not resolution**, so it cannot represent the sub-grid maneuver — it
-fails at the coarse grid and adds little at the fine grid. It is **not** salvageable for an
-adaptive-grid combo. **The implementation was discarded** (the design provenance is kept at
+fails at the coarse grid and adds little at the fine grid. Its one contribution (longer-range lattice
+moves) would be **subsumed** by the resolution improvement an adaptive grid itself provides, so it adds
+no advantage over adaptive grid alone (which remains an open candidate — direction 1 above). **The
+implementation was discarded** (the design provenance is kept at
 `docs/superpowers/specs/2026-06-26-fk9-cessna-parallel-park-macro-design.md` + its plan). **Direction
 pivoted to candidate 3 — #840 learned/guided motion** — which attacks the grounded bottleneck
 (efficiently searching the fine-resolution space) and has a proven teacher (the fine-grid A\* witness).

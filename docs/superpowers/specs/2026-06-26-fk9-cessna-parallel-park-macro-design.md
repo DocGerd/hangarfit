@@ -10,7 +10,14 @@
 > needs. The implementation was **discarded**; the team **pivoted to #840 learned/guided motion**.
 > Full gate numbers and the root-cause probes are in
 > [`docs/spikes/herrenteich-fk9-cessna-lateral-shuffle.md`](../../spikes/herrenteich-fk9-cessna-lateral-shuffle.md)
-> (§ "Parallel-park macro: implemented and refuted"). This spec is kept as design provenance.
+> (§ "Parallel-park macro (candidate 2): implemented and refuted"). This spec is kept as design provenance.
+>
+> **Two premises below were corrected at implementation time** (the spec predates the R=0 finding):
+> §2 assumes the movers are car-like (`r > 0`, alternating-cusp RS word) — **wrong**: both Herrenteich
+> movers are **R=0 (pivot-in-place)**, so the implemented macro word is a *pivot 90° · drive Δ · pivot
+> back* (zero forward excursion), not an arc. §3's "tightness" (2-cusp/4-cusp) dimension was therefore
+> **not built** — at R=0 the optimal RS word for a same-heading lateral offset is unique — so the
+> implemented family was 4 candidates (direction × Δ), not 8.
 
 Grounding evidence (do **not** re-investigate):
 [`docs/spikes/herrenteich-fk9-cessna-lateral-shuffle.md`](../../spikes/herrenteich-fk9-cessna-lateral-shuffle.md)

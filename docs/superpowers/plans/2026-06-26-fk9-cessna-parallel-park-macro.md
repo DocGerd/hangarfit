@@ -5,7 +5,9 @@
 > witness's fine grid. Tasks 4–7 were **not** run; the implementation was **discarded** and the team
 > pivoted to **#840 learned/guided motion**. Root cause + gate numbers:
 > [`docs/spikes/herrenteich-fk9-cessna-lateral-shuffle.md`](../../spikes/herrenteich-fk9-cessna-lateral-shuffle.md).
-> Kept as design provenance.
+> Kept as design provenance. **Note:** the `r = 6.0` turn radius in the Task-1 test templates was a
+> placeholder; both movers are actually **R=0 (pivot-in-place)** (`effective_turn_radius_m()` → 0), so
+> the macro words built/tested were pivot-drive-pivot, not arcs.
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
