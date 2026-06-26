@@ -91,6 +91,58 @@ def test_everyone_home_layout_is_valid() -> None:
     )
 
 
+def test_scheibe_wing_sits_below_the_high_wing_layer() -> None:
+    """Regression for #842. The Scheibe SF-25 is a real LOW-wing glider whose 18 m wing is
+    modelled as a thin RAISED keep-out band — deliberately NOT in the high-wing layer. Two
+    z-layering invariants are NECESSARY for the high-winger↔Scheibe tow to clear (they are not
+    by themselves *sufficient* for the full all-8 route, which additionally depends on a separate
+    fill-order factor — see #842); a future edit must not silently break either. Both are
+    static-validity-neutral, so the layout tests above would NOT catch a regression on the
+    ceiling one:
+
+      * CEILING — the wing top must sit at least ``wing_layer_clearance_m`` BELOW the high-wing
+        layer of any aircraft whose tow path passes OVER the parked Scheibe (creating the
+        plan-view overlap the z-gap rule needs). aviat_husky (wing bottom 2.0 m) is that plane:
+        it is towed past the Scheibe, so its wing must overhang the Scheibe band. We assert
+        against husky specifically, NOT the min over all high-wingers — a statically-distant
+        high-winger like zlin (wing bottom 1.9 m) never overlaps the Scheibe wing in plan view,
+        so requiring clearance below *it* would over-constrain a relationship the geometry never
+        exercises. The prior z[1.9,2.1] put this wing INTO husky's layer, manufacturing a phantom
+        wing-vs-wing block during the tow that made the (real, valid) all-8 un-tow-routable.
+      * FLOOR — the wing bottom must sit at least ``wing_layer_clearance_m`` ABOVE the fuselage
+        tops it overhangs in the dense layouts (the aft section of the zlin/husky fuselage, top
+        1.5 m), or it clips them (statically invalid) — the constraint that sets the 1.72 m floor.
+    """
+    fleet = load_fleet(HERRENTEICH / "fleet.yaml")
+    hangar = load_hangar(HERRENTEICH / "hangar.yaml")
+    wlc = hangar.wing_layer_clearance_m
+
+    scheibe_wings = [p for p in fleet["scheibe_falke"].parts if p.kind == "wing"]
+    scheibe_bottom = min(p.z_bottom_m for p in scheibe_wings)
+    scheibe_top = max(p.z_top_m for p in scheibe_wings)
+
+    # CEILING: stay clear below aviat_husky's wing — the high-winger whose tow path passes over
+    # the parked Scheibe (so the two wings overlap in plan view and the z-gap rule applies).
+    husky_wing_bottom = min(p.z_bottom_m for p in fleet["aviat_husky"].parts if p.kind == "wing")
+    assert scheibe_top + wlc <= husky_wing_bottom + 1e-9, (
+        f"Scheibe wing top {scheibe_top} m + wing-layer clearance {wlc} m must stay below the "
+        f"high-wing layer (aviat_husky wing bottom {husky_wing_bottom} m) so high-wingers can tow "
+        f"past the parked Scheibe (#842); a wing in the high layer re-creates the phantom block."
+    )
+
+    # FLOOR: clear the fuselage tops the wing overhangs in the dense layout_today.yaml.
+    fuselage_top = max(
+        p.z_top_m
+        for pid in ("zlin_savage", "aviat_husky")
+        for p in fleet[pid].parts
+        if p.kind.startswith("fuselage")
+    )
+    assert scheibe_bottom >= fuselage_top + wlc - 1e-9, (
+        f"Scheibe wing floor {scheibe_bottom} m must clear the overhung fuselage tops "
+        f"({fuselage_top} m) by the wing-layer clearance {wlc} m (#842)."
+    )
+
+
 def test_layout_clears_office_notch() -> None:
     """No plane sits in the back-right office notch.
 
