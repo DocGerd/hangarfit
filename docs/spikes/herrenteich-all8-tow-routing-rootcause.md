@@ -114,10 +114,17 @@ specific pair**:
   set that contains `cessna`; symmetrically `cessna` exhausts (11174 exp) against any set containing
   `fk9`. So at the 0.5 m/15° grid **no monotone order can place both** — the second one in is always
   walled by the first.
+- **The block is intrinsic to the pair.** It holds with **nothing else present** — `fk9` exhausts
+  against `cessna` alone (10184) and vice-versa (11174), independent of the Scheibe and of crowding.
+  Running the all-7 **without** the Scheibe does **not** route the front cluster either.
 - **Both are genuine high-wingers** (`fk9` wing z[1.9,2.2], `cessna` z[2.0,2.3]) — a fleet audit
   confirms neither is a Scheibe-style miscoding. Their tow-time wing interaction is **physical**:
   two real high wings cannot overlap, and threading one tug-path past the other near the door needs
   fine lateral precision.
+- **Not a coarse wing model.** Unlike the Scheibe, fk9/cessna wings are plain rectangles, so a
+  natural suspect was tip overstatement. But tapering **both** wings rectangle→glider (tip ratio
+  1.0 → 0.45) leaves them exhausting (~10184–10638) — the wing-tip shape is not the binding
+  geometry. So this is a *search* limit at the corridor, not a fixable *model* coarseness.
 - **Resolution is the suspected lever but unconfirmed.** `fk9` *provably* has no path at 0.5 m/15°
   (exhausted), but a sweep at 0.25 / 0.20 / 0.15 m **walled at 600 s without settling** — at a finer
   grid A* would usually find an existing path fast, so a wall is "no path **or** search too slow",
@@ -162,6 +169,8 @@ the "comparison to other options discarded" the brief asked for.
 | **Single-tree RRT / RRT-Connect oracle** would route it | Prototyped both | **Discarded** — weaker than the shipped `plan_path` Hybrid-A* in this clutter (goal tree trapped; ~2 % extend success) |
 | **Multi-body "move aside" needed** | Checked whether a parked plane must move | **Discarded** — the club never moves parked planes; the fill is monotone. The block was fidelity, not a need to relocate |
 | **A second wing-z fidelity bug** in the front cluster | Fleet-wide wing-z audit | **Not found** — scheibe is the only outlier; the front-cluster block reads as order/search, not another physics error |
+| **Coarse rectangular wing model** (fk9/cessna wings are plain rectangles, not tapered like scheibe — tip overstate causing a false conflict?) | Tapered **both** fk9 & cessna wings rectangle→glider (tip ratio 1.0 → 0.85 → 0.70 → 0.55 → 0.45, the ADR-0024 hexagon) and re-ran the isolated pair | **Refuted** — every taper still space-exhausts (~10184–10638, vs 10184 for the rectangle). The wing-tip shape is not the binding geometry; tapering does not open the corridor |
+| **The Scheibe is the complication** (its up/down wing ambiguity blocks the fill) | Ran the all-7 **without** scheibe (deepest-first), and the fk9↔cessna pair in **isolation** | **Falsified as the residual cause** — without scheibe the front cluster (husky/fk9/cessna) **still blocks**, and fk9↔cessna mutually exhaust with **nothing else present**. Scheibe (Factor 1) was a *separate* earlier blocker, now fixed; the residual is independent of it |
 
 ---
 
