@@ -2517,16 +2517,20 @@ def plan_path(
     if heuristic == "grid":
         _field = _build_grid_heuristic(goal, obstacles, hangar)
 
-        def _h(p: Pose) -> float:
+        def _grid_h(p: Pose) -> float:
             cell = (round(p.x_m / _GRID_XY_M), round(p.y_m / _GRID_XY_M))
             g = _field.get(cell)
             if g is None:
                 return math.hypot(goal.x_m - p.x_m, goal.y_m - p.y_m)
             return g
+
+        _h = _grid_h
     else:
 
-        def _h(p: Pose) -> float:
+        def _euclid_h(p: Pose) -> float:
             return math.hypot(goal.x_m - p.x_m, goal.y_m - p.y_m)
+
+        _h = _euclid_h
 
     # Dev/test seam (#840): an explicit heuristic_fn overrides the cost-to-go
     # estimate (used by the SE(2) heading-aware headroom probe). Default None ⇒
