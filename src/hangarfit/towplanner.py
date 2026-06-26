@@ -2426,6 +2426,7 @@ def plan_path(
     entries: tuple[Pose, ...] | None = None,
     max_expansions: int = _MAX_EXPANSIONS,
     heuristic: Literal["euclidean", "grid"] = "euclidean",
+    heuristic_fn: Callable[[Pose], float] | None = None,
     stats: dict[str, object] | None = None,
 ) -> DubinsArc:
     """Deterministic Hybrid-A* tow path from ``entry`` (or ``entries``) to ``goal``.
@@ -2479,6 +2480,9 @@ def plan_path(
     and the exact-oracle safety net are untouched, so a ``"grid"`` path is just
     as exact-oracle-clean as a ``"euclidean"`` one. Both modes are deterministic
     (ADR-0003): the grid Dijkstra is RNG-free with a monotonic-counter tie-break.
+    ``heuristic_fn``, when not ``None``, overrides the cost-to-go callable
+    selected by ``heuristic`` — intended for dev/test probes only (#840); passing
+    ``None`` (the default) is byte-identical to omitting the parameter (ADR-0003).
 
     ``stats`` is an optional out-parameter (diagnostics only; ``None`` ⇒ no-op,
     no behaviour change): on return/raise it is populated with ``expansions``,
@@ -2509,6 +2513,7 @@ def plan_path(
     # the obstacle-aware free-space geodesic field, falling back to Euclidean on
     # any cell outside the field (blocked / off-grid). The default branch's
     # expression is unchanged so the determinism canaries stay byte-identical.
+    _h: Callable[[Pose], float]
     if heuristic == "grid":
         _field = _build_grid_heuristic(goal, obstacles, hangar)
 
@@ -2522,6 +2527,13 @@ def plan_path(
 
         def _h(p: Pose) -> float:
             return math.hypot(goal.x_m - p.x_m, goal.y_m - p.y_m)
+
+    # Dev/test seam (#840): an explicit heuristic_fn overrides the cost-to-go
+    # estimate (used by the SE(2) heading-aware headroom probe). Default None ⇒
+    # the `heuristic` Literal's `_h` above is used unchanged ⇒ byte-identical
+    # (ADR-0003): the determinism canaries never pass heuristic_fn.
+    if heuristic_fn is not None:
+        _h = heuristic_fn
 
     counter = 0
 
