@@ -20,7 +20,7 @@ way, and the confidence in each conclusion.
 | | Finding | Status | Confidence |
 |---|---|---|---|
 | **Factor 1** | The Scheibe SF-25 (a real **low-wing** glider) had its 18 m wing modelled in the **high-wing z-layer** (`z[1.9,2.1]`), the same layer as the genuine high-wingers' wings. Towing a high-winger (e.g. `aviat_husky`, wing `z[2.0,2.3]`) past the parked Scheibe then hit a **phantom wing-vs-wing collision** with no real-world counterpart. | **Fixed** — wing re-modelled as a thin band `z[1.72,1.78]` below the high-wing layer (#842, PR #843). | **~95 %** |
-| **Factor 2** | Even with Factor 1 fixed, the **full** all-8 does not route in `plan_fill`'s natural *deepest-first* order: a front-door cluster (`aviat_husky`, `fk9_mkii`, `cessna_140`) mutually blocks, and the planner's order-backtracking does not converge in reasonable time (>20 min). | **Characterised**, not solved — handed to a follow-up. It is an **order / planner** problem, separable from the fidelity bug. | medium |
+| **Factor 2** | Even with Factor 1 fixed, the **full** all-8 does not auto-route. Narrowed to one pair: `fk9_mkii` and `cessna_140` (both genuine high-wingers) **mutually block** near the door — each space-exhausts against the other at the 0.5 m/15° grid, so no monotone order places both. A finer-grid sweep walled inconclusively (search too slow), but the 0.05 m tow clearance + "few cm" real spacing make **search resolution** the prime suspect. | **Characterised**, not solved — handed to #844. A **search-efficiency** problem (resolution/order/budget), separable from the fidelity bug; not (so far as measured) another physics error. | medium |
 
 The headline: **at least one definite model-fidelity bug made the use case impossible**, and it
 is fixed. A second factor — finding a *feasible monotone order* under the deployed planner —
@@ -97,41 +97,53 @@ The taper planform (ADR-0024 / #541) and the render colour (`wing_position: high
 ## Factor 2 — a feasible monotone order is not found by the deployed planner (CHARACTERISED)
 
 With Factor 1 fixed, the husky↔Scheibe block is gone, but the **whole** all-8 still does not
-auto-route under `plan_fill`. The evidence:
+auto-route under `plan_fill`. A long series of targeted experiments narrowed the residue to **one
+specific pair**:
 
-- **Natural deepest-first order (`back_first_order`).** Testing each plane against its exact
-  predecessors in that order (8 parallel `plan_path` calls): **5 of 8 route** (zlin, scheibe,
-  wild_thing, stemme, ctsl — ctsl even routes against all 7 predecessors), but **`aviat_husky`,
-  `fk9_mkii`, `cessna_140` block** (space-exhausted at the default 0.5 m/15° grid). These are all
-  **front-door** planes (low *y*).
-- **It is an order interaction, not (visibly) more physics.** `aviat_husky` routes past
-  `{zlin, scheibe}` but **blocks** once `wild_thing` is added — i.e. `wild_thing` walls the husky
-  corridor in this order. A different relative order of the front cluster is needed.
-- **`plan_fill` backtracks over order (#667) but does not converge.** Given a generous budget it
-  ran **>20 min** without completing — the front-cluster planes are expensive both to route and
-  to *disprove*, so the order-backtracking burns budget on failed branches.
-- **Resolution is inconclusive for the front cluster.** A grid-resolution sweep on the confirmed
-  blocker (`cessna_140` vs its 6 predecessors) space-exhausted at 0.5 m/15° but the finer grids
-  (0.33 → 0.15 m) did not *finish* within a 500 s wall — so finer resolution is neither confirmed
-  nor refuted there; it is simply too slow to settle this way.
+- **Natural deepest-first order (`back_first_order`).** Each plane tested against its exact
+  predecessors (8 parallel `plan_path` calls): **5 of 8 route** (zlin, scheibe, wild_thing, stemme,
+  ctsl — ctsl even routes against all 7), but the **front-door** planes `aviat_husky`, `fk9_mkii`,
+  `cessna_140` block.
+- **All eight are R=0 (pivot).** husky/fk9/cessna are `tow_pivotable`, so even off-carts their
+  effective turn radius is 0 — the front-cluster block is **not** a turn-radius problem.
+- **husky is purely an ORDER issue.** It routes past `{zlin, scheibe}` (1066 expansions) but
+  exhausts once `wild_thing` is also placed; placing husky earlier fixes it.
+- **The linchpin: `fk9_mkii` and `cessna_140` MUTUALLY block.** Run to completion (no time wall):
+  `fk9` routes past `{zlin, scheibe}` instantly (0 exp) and past `{zlin, scheibe, husky}` (6720 exp,
+  ~6 min) — but **genuinely space-exhausts** (10184 exp, complete search) against any predecessor
+  set that contains `cessna`; symmetrically `cessna` exhausts (11174 exp) against any set containing
+  `fk9`. So at the 0.5 m/15° grid **no monotone order can place both** — the second one in is always
+  walled by the first.
+- **Both are genuine high-wingers** (`fk9` wing z[1.9,2.2], `cessna` z[2.0,2.3]) — a fleet audit
+  confirms neither is a Scheibe-style miscoding. Their tow-time wing interaction is **physical**:
+  two real high wings cannot overlap, and threading one tug-path past the other near the door needs
+  fine lateral precision.
+- **Resolution is the suspected lever but unconfirmed.** `fk9` *provably* has no path at 0.5 m/15°
+  (exhausted), but a sweep at 0.25 / 0.20 / 0.15 m **walled at 600 s without settling** — at a finer
+  grid A* would usually find an existing path fast, so a wall is "no path **or** search too slow",
+  not a proof either way.
+- **The deployed planner can't brute-force it.** `plan_fill` with a 7.5×-raised per-plane budget
+  (60 k) and a 250×-raised global budget (4 M) **walled at 40 min** without routing — its
+  deepest-first order is wrong for the front cluster, and the fk9↔cessna mutual block sends the
+  order-backtracking into an expensive, non-converging search.
 
-**Interpretation.** Physically a monotone order exists (the club parks all eight every day). The
-gap is the deployed planner *finding* it: `back_first_order` is the wrong order for the front
-cluster, and the order-backtracking + per-plane budget are not tuned to converge on the tight
-front corridors. This is a **planner/search** problem. It is handed to a follow-up; candidate
-directions (in rough order of expected value):
+**Interpretation.** The dominant blocker was Factor 1 (now fixed). The residual is a single tight
+maneuvering corridor between two real high-wingers at the door. Physically a monotone fill exists
+(the club parks all eight daily, "with only a few cm between planes at certain parts"), and the
+tow **motion** clearance is just 0.05 m — so the real maneuver threads with ~cm precision that a
+0.5 m / 15° grid simply **cannot represent**. The most likely truth is that finer resolution would
+route it, but the current Hybrid-A* is too slow to confirm that at a cm-scale grid within practical
+time. This is a **search-efficiency** problem, handed to #844; candidate directions:
 
-1. **A better entry order than strict deepest-first** for the front cluster (e.g. order by corridor
-   tightness, or a front-cluster-aware tiebreak), so greedy routes without deep backtracking.
-2. **Per-plane budget / wall tuning** so a tight-but-feasible front plane actually routes instead
-   of spuriously failing and triggering backtracking.
-3. **Finer grid *only* where needed** (adaptive resolution near tight corridors) — the user's
-   "a few cm / finer heading" intuition, which the per-cluster sweeps could not yet settle because
-   a uniform fine grid is too slow.
+1. **Adaptive / finer grid near tight corridors** (the user's "few cm / finer heading" intuition) —
+   the prime suspect, blocked only by search speed today.
+2. **A front-cluster-aware entry order** (husky before wild_thing; fk9/cessna ordered to avoid the
+   mutual block) rather than strict deepest-first.
+3. **Per-plane budget tuning** (the default 8000 is far below the ~7–15 k these searches need).
 
 A learned tow-motion policy (the original spike direction, #840) is the longer-term lever for
-exactly this "thread the tight corridor / pick the order" search; this investigation sharpens its
-target to the front-door cluster.
+exactly this "thread the cm-scale corridor" search; this investigation sharpens its target to the
+front-door `fk9`↔`cessna` pair.
 
 ---
 
@@ -146,7 +158,7 @@ the "comparison to other options discarded" the brief asked for.
 | **Pivot point / cart strafe / reverse** mis-modelled | Exercised cart-strafe and reverse seeds in isolation | **Discarded** — present and correct |
 | **Aircraft dimensions wrong** | Re-checked spans/lengths against EASA TCDS / published specs | **Discarded** — dimensions match sources |
 | **Clearances too strict** | Swept clearance; the all-8 is valid at the calibrated 0.10/0.15 m (and motion 0.05) | **Discarded** — not the binding constraint |
-| **Search resolution too coarse** (the user's second suspicion) | Re-ran the *husky↔scheibe* block at 0.2 m/5° | **Discarded for that pair** (still space-exhausted with the wing high → it was fidelity, not resolution). **Open for the front cluster** (finer-grid runs too slow to settle — see Factor 2). |
+| **Search resolution too coarse** (the user's second suspicion) | Re-ran the *husky↔scheibe* block at 0.2 m/5°; swept the *fk9↔cessna* block at 0.25 / 0.20 / 0.15 m | **Discarded for husky↔scheibe** (still space-exhausted with the wing high → that was fidelity, not resolution). **Still the prime suspect for fk9↔cessna** (proven no path at 0.5 m/15°; finer grids walled without settling — too slow to confirm). See Factor 2. |
 | **Single-tree RRT / RRT-Connect oracle** would route it | Prototyped both | **Discarded** — weaker than the shipped `plan_path` Hybrid-A* in this clutter (goal tree trapped; ~2 % extend success) |
 | **Multi-body "move aside" needed** | Checked whether a parked plane must move | **Discarded** — the club never moves parked planes; the fill is monotone. The block was fidelity, not a need to relocate |
 | **A second wing-z fidelity bug** in the front cluster | Fleet-wide wing-z audit | **Not found** — scheibe is the only outlier; the front-cluster block reads as order/search, not another physics error |
@@ -159,11 +171,15 @@ the "comparison to other options discarded" the brief asked for.
   are clean and reproducible, the fix is shipped with a regression test, and both real layouts stay
   valid. The 5 % is residual model risk (the synthetic hangar is still a placeholder; the wing-band
   height is a tilt *approximation*, defensible but not tape-measured).
-- **Factor 2 (front-cluster order): medium and explicitly open.** A feasible monotone order
-  provably exists (real-world daily use), but the deployed planner does not yet find it in
-  reasonable time. This is a planner/search task, handed to a follow-up — not a claim that the
-  all-8 now routes end-to-end.
+- **Factor 2 (fk9↔cessna front-door corridor): medium and explicitly open.** A feasible monotone
+  fill provably exists (real-world daily use, "a few cm" spacing, 0.05 m tow clearance), but the
+  deployed planner cannot find it: the two real high-wingers mutually block at 0.5 m/15°, and a
+  finer grid — the prime suspect — is too slow for the current Hybrid-A* to settle. This is a
+  **search-efficiency** task (resolution / order / budget), handed to #844 — **not** a claim that
+  the all-8 now routes end-to-end, and **not** evidence of another physics error (both planes are
+  correctly modelled).
 
-**Bottom line:** the use case was blocked by a real, fixable model bug, now fixed. Making the full
-all-8 route end-to-end additionally needs a planner-order improvement, which is scoped and handed
-off rather than overclaimed.
+**Bottom line:** the use case was blocked by a real, fixable model bug (Factor 1), now fixed and the
+dominant cause. The remaining gap is a single tight front-door maneuvering corridor that the
+deployed grid search can't yet thread — a planner-efficiency problem, scoped to #844 and connected
+to the #840 learned-motion direction, rather than overclaimed as solved.
