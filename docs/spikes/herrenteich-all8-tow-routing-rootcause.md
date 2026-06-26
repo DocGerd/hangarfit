@@ -20,7 +20,7 @@ way, and the confidence in each conclusion.
 | | Finding | Status | Confidence |
 |---|---|---|---|
 | **Factor 1** | The Scheibe SF-25 (a real **low-wing** glider) had its 18 m wing modelled in the **high-wing z-layer** (`z[1.9,2.1]`), the same layer as the genuine high-wingers' wings. Towing a high-winger (e.g. `aviat_husky`, wing `z[2.0,2.3]`) past the parked Scheibe then hit a **phantom wing-vs-wing collision** with no real-world counterpart. | **Fixed** — wing re-modelled as a thin band `z[1.72,1.78]` below the high-wing layer (#842, PR #843). | **~95 %** |
-| **Factor 2** | Even with Factor 1 fixed, the **full** all-8 does not auto-route. Narrowed to one pair: `fk9_mkii` and `cessna_140` (both genuine high-wingers) **mutually block** near the door — each space-exhausts against the other at the 0.5 m/15° grid, so no monotone order places both. A finer-grid sweep walled inconclusively (search too slow), but the 0.05 m tow clearance + "few cm" real spacing make **search resolution** the prime suspect. | **Characterised**, not solved — handed to #844. A **search-efficiency** problem (resolution/order/budget), separable from the fidelity bug; not (so far as measured) another physics error. | medium |
+| **Factor 2** | Even with Factor 1 fixed, the **full** all-8 does not auto-route. Narrowed to one pair: `fk9_mkii` and `cessna_140` (both genuine high-wingers) **mutually block** near the door — each space-exhausts against the other at the 0.5 m/15° grid, so no monotone order places both. A finer-grid sweep walled inconclusively (search too slow at the time), making **search resolution** the prime suspect. **Update (#844): confirmed** — a 0.25 m/10° own-gear A\* later **found** a no-carts path (96 949 exp, 39 min), so a feasible own-gear path provably exists and the deployed coarse grid simply can't represent the deep lateral shuffle. See [`herrenteich-fk9-cessna-lateral-shuffle.md`](herrenteich-fk9-cessna-lateral-shuffle.md). | **Characterised**, not solved — handed to #844. A **search-efficiency** problem (now grounded: feasible path exists, too deep/slow at the deployed grid), separable from the fidelity bug; not another physics error. | medium |
 
 The headline: **at least one definite model-fidelity bug made the use case impossible**, and it
 is fixed. A second factor — finding a *feasible monotone order* under the deployed planner —
@@ -98,11 +98,17 @@ The taper planform (ADR-0024 / #541) and the render colour (`wing_position: high
 
 > **Update (2026-06-26, #844):** a follow-up witness-first probe has **grounded** Factor 2 — see
 > [`herrenteich-fk9-cessna-lateral-shuffle.md`](herrenteich-fk9-cessna-lateral-shuffle.md). The
-> "resolution is the prime suspect" framing below is **superseded**: carts (lateral motion) route
-> the pair at the *coarse* grid while own gear can't at any tested resolution, so the binding
-> constraint is **lateral displacement / search depth**, not grid coarseness. The cheap exits
-> (carts/`on_carts`, pivot-point fidelity, finer-grid-alone) are all ruled out there, and the all-8
-> is shown to have a *second* blocker (husky ordering). Read that doc for the current conclusion.
+> "resolution is the prime suspect" framing below is **VINDICATED, not refuted**: own-gear A\* at
+> **0.25 m/10° finds a no-carts path** (96 949 exp, 39 min, exact-oracle-validated) while the deployed
+> 0.5 m/15° grid finds none — so a feasible own-gear path provably **exists** and the coarse grid
+> simply can't represent the deep lateral-displacement ("parallel-park") shuffle that threads the
+> corridor. #844 is therefore a search-**efficiency** problem (the find is too deep/slow to ship), not
+> a feasibility or fidelity gap. Carts route the pair cheaply at the coarse grid — the **diagnostic**
+> that isolates *lateral displacement* as the crux, not the fix (the club hand-shuffles on own gear).
+> Ruled out as the ship-fix: carts/`on_carts` (unfaithful), pivot-point fidelity, and
+> finer-grid-*everywhere* / raised-budget-alone (too slow). The all-8 also has a *second* blocker
+> (husky ordering). The Factor 2 narrative below is the **historical investigation** as it stood
+> before that find; read the follow-up doc for the current conclusion.
 
 With Factor 1 fixed, the husky↔Scheibe block is gone, but the **whole** all-8 still does not
 auto-route under `plan_fill`. A long series of targeted experiments narrowed the residue to **one
@@ -173,7 +179,7 @@ the "comparison to other options discarded" the brief asked for.
 | **Pivot point / cart strafe / reverse** mis-modelled | Exercised cart-strafe and reverse seeds in isolation | **Discarded** — present and correct |
 | **Aircraft dimensions wrong** | Re-checked spans/lengths against EASA TCDS / published specs | **Discarded** — dimensions match sources |
 | **Clearances too strict** | Swept clearance; the all-8 is valid at the calibrated 0.10/0.15 m (and motion 0.05) | **Discarded** — not the binding constraint |
-| **Search resolution too coarse** (the user's second suspicion) | Re-ran the *husky↔scheibe* block at 0.2 m/5°; swept the *fk9↔cessna* block at 0.25 / 0.20 / 0.15 m | **Discarded for husky↔scheibe** (still space-exhausted with the wing high → that was fidelity, not resolution). **Still the prime suspect for fk9↔cessna** (proven no path at 0.5 m/15°; finer grids walled without settling — too slow to confirm). See Factor 2. |
+| **Search resolution too coarse** (the user's second suspicion) | Re-ran the *husky↔scheibe* block at 0.2 m/5°; swept the *fk9↔cessna* block at 0.25 / 0.20 / 0.15 m | **Discarded for husky↔scheibe** (still space-exhausted with the wing high → that was fidelity, not resolution). **Confirmed the lever for fk9↔cessna** (proven no path at 0.5 m/15°; **0.25 m/10° later found a no-carts path**, #844 — so finer grid represents the deep shuffle, the search is just too slow to ship). See Factor 2 + the follow-up doc. |
 | **Single-tree RRT / RRT-Connect oracle** would route it | Prototyped both | **Discarded** — weaker than the shipped `plan_path` Hybrid-A* in this clutter (goal tree trapped; ~2 % extend success) |
 | **Multi-body "move aside" needed** | Checked whether a parked plane must move | **Discarded** — the club never moves parked planes; the fill is monotone. The block was fidelity, not a need to relocate |
 | **A second wing-z fidelity bug** in the front cluster | Fleet-wide wing-z audit | **Not found** — scheibe is the only outlier; the front-cluster block reads as order/search, not another physics error |

@@ -42,7 +42,10 @@ open work being speed, not existence.
 
 A read-only scratch harness drives the **production tow oracle** (`plan_path` — Hybrid-A* +
 Reeds–Shepp, the same entry cone, 0.05 m motion clearance, and grid heuristic as `plan_fill`) on the
-**isolated 2-body subproblem** (`fk9` vs `cessna`, against their real `layout.yaml` poses). Grid step
+**isolated 2-body subproblem** (`fk9` vs `cessna`, against their goal poses in
+`examples/herrenteich/layout.yaml` — the tool's valid all-8 *nested* arrangement, a proven-valid
+witness, not a record of the club's actual parking; the club's own-gear handling is corroborated
+separately by `layout_today.yaml`, where fk9/cessna are likewise `on_carts: false`). Grid step
 (`_GRID_XY_M`/`_GRID_DEG`) and budget are monkeypatched per run; nothing shipped changes (the
 determinism contract is untouched). The strafe lever is clean: `mover_on_carts=True` adds Reeds–Shepp
 **lateral** primitives but does **not** change the footprint geometry (`aircraft_parts_world` derives
