@@ -86,7 +86,7 @@ def test_se2_field_is_heading_aware() -> None:
         # Structural heading-awareness: find at least one (ix,iy) group with
         # ≥2 distinct heading bins that have different cost-to-go values.
         by_xy: dict[tuple[int, int], list[float]] = defaultdict(list)
-        for (ix, iy, _iheading), cost in field.items():
+        for (ix, iy, _), cost in field.items():
             by_xy[(ix, iy)].append(cost)
         found_heading_sensitive = any(
             max(costs) > min(costs) for costs in by_xy.values() if len(costs) >= 2

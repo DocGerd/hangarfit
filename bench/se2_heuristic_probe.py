@@ -116,7 +116,7 @@ def build_toy_nook() -> ToyNook:
 def build_se2_field(
     mover: Aircraft | GroundObject,
     goal: Pose,
-    obstacles: object,  # towplanner._Obstacles (private)
+    obstacles: towplanner._Obstacles,
     motion_hangar: Hangar,
     r: float,
     *,
@@ -133,10 +133,11 @@ def build_se2_field(
     goal.  Concretely: applying a reverse primitive from pose ``p`` yields the
     predecessor ``q`` that can reach ``p`` via the corresponding forward
     primitive at equal cost — so one Dijkstra pass from the goal computes
-    admissible cost-to-go for all reachable ``_cell``-binned poses.
+    cost-to-go for all reachable ``_cell``-binned poses.
 
-    Cusp penalties are intentionally omitted to keep the field a lower bound
-    (admissible heuristic).  Obstacle-blocked edges are pruned via
+    Cusp penalties are intentionally omitted to keep the field an
+    admissible-leaning lower bound (exact admissibility is not guaranteed once
+    the flood is capped at ``max_cells``).  Obstacle-blocked edges are pruned via
     ``_motion_clear`` over the sampled arc.  The flood is capped at
     ``max_cells`` to bound memory and time.
     """
@@ -161,7 +162,7 @@ def build_se2_field(
                 continue
             nd = d + towplanner._seg_cost(seg, r)
             nkey = towplanner._cell(nxt)
-            if nd < field.get(nkey, math.inf) - 1e-9:
+            if nd < field.get(nkey, math.inf) - 1e-12:
                 field[nkey] = nd
                 counter += 1
                 heapq.heappush(heap, (nd, counter, nxt))
