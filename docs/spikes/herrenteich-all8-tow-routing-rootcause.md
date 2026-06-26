@@ -96,6 +96,14 @@ The taper planform (ADR-0024 / #541) and the render colour (`wing_position: high
 
 ## Factor 2 — a feasible monotone order is not found by the deployed planner (CHARACTERISED)
 
+> **Update (2026-06-26, #844):** a follow-up witness-first probe has **grounded** Factor 2 — see
+> [`herrenteich-fk9-cessna-lateral-shuffle.md`](herrenteich-fk9-cessna-lateral-shuffle.md). The
+> "resolution is the prime suspect" framing below is **superseded**: carts (lateral motion) route
+> the pair at the *coarse* grid while own gear can't at any tested resolution, so the binding
+> constraint is **lateral displacement / search depth**, not grid coarseness. The cheap exits
+> (carts/`on_carts`, pivot-point fidelity, finer-grid-alone) are all ruled out there, and the all-8
+> is shown to have a *second* blocker (husky ordering). Read that doc for the current conclusion.
+
 With Factor 1 fixed, the husky↔Scheibe block is gone, but the **whole** all-8 still does not
 auto-route under `plan_fill`. A long series of targeted experiments narrowed the residue to **one
 specific pair**:
