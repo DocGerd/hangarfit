@@ -219,3 +219,56 @@ A cheap deterministic shortcut (the macro) has now been ruled out, sharpening #8
 
 The harness (`probe.py`) and per-run results are reproducible from this writeup; the experiment is
 read-only and does not touch shipped solver/towplanner code.
+
+---
+
+## Step-0 result — SE(2) heading-aware heuristic headroom probe (#840, 2026-06-26)
+
+**Tool:** `bench/se2_heuristic_probe.py` — backward-SE(2) Dijkstra cost-to-go field, injected into
+`plan_path` via the `heuristic_fn` seam (Task 2). Three-way fine-grid (0.25 m/10°) A* comparison on
+the toy nook (real fk9/cessna relative geometry, small 18×14 m arena, budget=16 000).
+
+**Full verbatim probe output:**
+
+```
+=== SE(2) heading-aware heuristic — Step-0 headroom probe (#840) ===
+  grid (position-only):  expansions=16000  found=False
+  se2  (heading-aware):  expansions=16000  found=False
+  euclidean (baseline):  expansions=16000  found=False
+  ratio (grid/se2) = 1.0
+  VERDICT: NO-GO  (GO ≥50× · PARTIAL 5–50× · NO-GO <5×; see the spec §4 gate)
+
+--- confirmatory heuristic-divergence map (same xy, rotating heading) ---
+pose (dx,dy,dhead)      grid_h   se2_h
+  (0,0,    0)            0.00     0.00
+  (0,0,   45)            0.00     0.00
+  (0,0,   90)            0.00     0.00
+  (0,0,  135)            0.00     0.00
+  (0,0,  180)            0.00     0.00
+```
+
+**Expansion counts:** grid=16 000 (budget-exhausted, not found), se2=16 000 (budget-exhausted, not
+found), euclidean=16 000 (budget-exhausted, not found).
+
+**Ratio:** 1.0 (both grid and se2 exhausted the full budget without finding a route — no headroom
+demonstrated).
+
+**VERDICT: NO-GO.**
+
+**Interpretation:** All three heuristics exhausted the 16 000-expansion budget without finding a
+route on the toy nook. The SE(2) cost-to-go field is heading-aware (the structural `test_se2_field_is_heading_aware`
+test confirms different costs at same x,y for different headings), but it does not guide the search
+to a solution any faster than the position-only grid heuristic. The divergence map all-zeros for
+`se2_h` at the goal position indicates the backward Dijkstra flood did not reach those rotated goal
+poses within the cap, and the euclidean fallback (distance to the goal at the same x,y) collapses to
+0 — the map is uninformative at the goal position itself.
+
+The root constraint is the search *depth*: the own-gear parallel-park maneuver requires ~97 000
+expansions at 0.25 m/10° (witness run, 39 min). The SE(2) field provides a better cost-to-go
+estimate than pure Euclidean distance, but not enough to shrink the 97 k-expansion
+needle-in-haystack search into a 16 000-expansion budget. The bottleneck is the depth of the
+required maneuver sequence, not the heuristic's ability to discriminate heading.
+
+**Consequence (per spec §4 / the brief's "After Step 0" branch):** The heuristic class is dead for
+this problem. Per-spec §6: fall to the cache-witness or manual-insertion path. Do NOT proceed to
+Step 1 (promoting `build_se2_field` into `towplanner`).

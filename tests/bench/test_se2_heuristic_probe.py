@@ -6,7 +6,14 @@ from collections import defaultdict
 
 import pytest
 
-from bench.se2_heuristic_probe import build_se2_field, build_toy_nook, fine_grid, make_field_h
+from bench.se2_heuristic_probe import (
+    ProbeResult,
+    build_se2_field,
+    build_toy_nook,
+    fine_grid,
+    make_field_h,
+    run_probe,
+)
 from hangarfit import towplanner
 from hangarfit.towplanner import Pose, plan_path
 
@@ -108,3 +115,15 @@ def test_se2_field_is_heading_aware() -> None:
         # Far-away pose absent from the field → euclidean fallback (finite, > 0).
         far = Pose(nook.goal.x_m + 50.0, nook.goal.y_m, nook.goal.heading_deg)
         assert math.isfinite(h(far)) and h(far) > 0.0
+
+
+@pytest.mark.slow
+def test_run_probe_emits_a_verdict() -> None:
+    """The probe runs all three heuristics on the toy nook and classifies. Use a
+    small budget so the test stays fast; we assert STRUCTURE, not the outcome
+    (the outcome is the research finding, read by a human)."""
+    result = run_probe(budget=4000)
+    assert isinstance(result, ProbeResult)
+    assert result.verdict in {"GO", "PARTIAL", "NO-GO"}
+    # The SE(2) field must at least be exercised (an int expansion count when it ran).
+    assert result.exp_se2 is None or isinstance(result.exp_se2, int)

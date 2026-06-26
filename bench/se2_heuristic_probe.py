@@ -18,7 +18,7 @@ from dataclasses import dataclass
 from hangarfit import towplanner
 from hangarfit.loader import load_layout
 from hangarfit.models import Aircraft, Door, GroundObject, Hangar, Layout, MaintenanceBay, Placement
-from hangarfit.towplanner import Pose
+from hangarfit.towplanner import Pose, plan_path
 
 # Fine-grid resolution for the probe (the witness found the real path at 0.25 m/10°).
 _FINE_XY_M = 0.25
@@ -192,29 +192,115 @@ def make_field_h(
     return _h
 
 
-if __name__ == "__main__":
-    import sys
+@dataclass(frozen=True, slots=True)
+class ProbeResult:
+    exp_grid: int | None
+    found_grid: bool
+    exp_se2: int | None
+    found_se2: bool
+    exp_euclid: int | None
+    found_euclid: bool
+    ratio: float  # exp_grid / exp_se2 (inf if se2 found at 0 / grid didn't find)
+    verdict: str
 
-    from hangarfit.towplanner import plan_path
 
-    nook = build_toy_nook()
-    print(f"entry={nook.entry}  goal={nook.goal}")
-    print(f"hangar {nook.hangar.width_m}×{nook.hangar.length_m} m")
+def _run_one(nook: ToyNook, budget: int, heuristic: str, h_fn: object) -> tuple[int, bool]:
     stats: dict[str, object] = {}
+    try:
+        plan_path(
+            nook.mover,
+            nook.entry,
+            nook.goal,
+            hangar=nook.hangar,
+            placed=nook.placed,
+            mover_on_carts=nook.mover_on_carts,
+            max_expansions=budget,
+            heuristic=heuristic,
+            heuristic_fn=h_fn,
+            stats=stats,
+        )
+        return int(stats["expansions"]), True  # type: ignore[arg-type]
+    except towplanner.NoFeasiblePlanError:
+        return int(stats["expansions"]), False  # type: ignore[arg-type]
+
+
+def run_probe(budget: int = 16_000) -> ProbeResult:
+    nook = build_toy_nook()
+    r = nook.mover.effective_turn_radius_m()
     with fine_grid():
-        try:
-            arc = plan_path(
-                nook.mover,
-                nook.entry,
-                nook.goal,
-                hangar=nook.hangar,
-                placed=nook.placed,
-                mover_on_carts=nook.mover_on_carts,
-                max_expansions=40_000,
-                heuristic="grid",
-                stats=stats,
-            )
-            print(f"found  expansions={stats['expansions']}")
-        except towplanner.NoFeasiblePlanError:
-            print(f"no path  expansions={stats.get('expansions', '?')}")
-    sys.exit(0)
+        obstacles = towplanner._build_obstacles(nook.placed, mover_id=nook.mover.id)
+        field = build_se2_field(
+            nook.mover,
+            nook.goal,
+            obstacles,
+            nook.hangar.motion_hangar(),
+            r,
+            mover_on_carts=nook.mover_on_carts,
+        )
+        h_se2 = make_field_h(field, nook.goal)
+        exp_grid, found_grid = _run_one(nook, budget, "grid", None)
+        exp_se2, found_se2 = _run_one(nook, budget, "euclidean", h_se2)
+        exp_euclid, found_euclid = _run_one(nook, budget, "euclidean", None)
+
+    # Ratio: how many fewer expansions the SE(2) field needed vs the deployed grid.
+    if found_se2 and exp_se2 == 0:
+        ratio = math.inf
+    elif found_se2 and not found_grid:
+        ratio = math.inf  # se2 found within budget where grid exhausted
+    elif found_se2 and found_grid and exp_se2 > 0:
+        ratio = exp_grid / exp_se2
+    else:
+        ratio = 1.0  # se2 did not find ⇒ no headroom demonstrated
+
+    if found_se2 and ratio >= 50.0:
+        verdict = "GO"
+    elif found_se2 and ratio >= 5.0:
+        verdict = "PARTIAL"
+    else:
+        verdict = "NO-GO"
+    return ProbeResult(
+        exp_grid, found_grid, exp_se2, found_se2, exp_euclid, found_euclid, ratio, verdict
+    )
+
+
+def _divergence_map(nook: ToyNook, field: dict[tuple[int, int, int], float]) -> str:
+    """Confirmatory: at a few poses near the goal column, show grid-h (position-only)
+    vs se2-h (heading-aware). The mechanism is confirmed if mis-oriented poses get a
+    small grid-h but a large se2-h (grid is blind to the needed pivot)."""
+    h_se2 = make_field_h(field, nook.goal)
+    lines = ["pose (dx,dy,dhead)      grid_h   se2_h"]
+    for dh in (0.0, 45.0, 90.0, 135.0, 180.0):
+        p = Pose(nook.goal.x_m, nook.goal.y_m, (nook.goal.heading_deg + dh) % 360.0)
+        grid_h = math.hypot(nook.goal.x_m - p.x_m, nook.goal.y_m - p.y_m)  # position-only = 0 here
+        lines.append(f"  (0,0,{dh:5.0f})          {grid_h:6.2f}   {h_se2(p):6.2f}")
+    return "\n".join(lines)
+
+
+def main() -> None:
+    result = run_probe()
+    print("=== SE(2) heading-aware heuristic — Step-0 headroom probe (#840) ===")
+    print(f"  grid (position-only):  expansions={result.exp_grid}  found={result.found_grid}")
+    print(f"  se2  (heading-aware):  expansions={result.exp_se2}  found={result.found_se2}")
+    print(f"  euclidean (baseline):  expansions={result.exp_euclid}  found={result.found_euclid}")
+    print(f"  ratio (grid/se2) = {result.ratio:.1f}")
+    print(
+        f"  VERDICT: {result.verdict}  (GO ≥50× · PARTIAL 5–50× · NO-GO <5×; see the spec §4 gate)"
+    )
+    nook = build_toy_nook()
+    r = nook.mover.effective_turn_radius_m()
+    with fine_grid():
+        obstacles = towplanner._build_obstacles(nook.placed, mover_id=nook.mover.id)
+        field = build_se2_field(
+            nook.mover,
+            nook.goal,
+            obstacles,
+            nook.hangar.motion_hangar(),
+            r,
+            mover_on_carts=nook.mover_on_carts,
+        )
+        print("\n--- confirmatory heuristic-divergence map (same xy, rotating heading) ---")
+        print(_divergence_map(nook, field))
+
+
+if __name__ == "__main__":
+    main()
