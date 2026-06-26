@@ -1,4 +1,4 @@
-# Factor 2 (fk9↔cessna front-door corridor): a **lateral-displacement search** problem, not grid coarseness
+# Factor 2 (fk9↔cessna front-door corridor): a **search-efficiency** problem — a feasible own-gear path exists, too deep for the deployed grid
 
 **Status:** witness-first feasibility probe — **complete**; #844 reframed from a speculative
 "resolution" suspicion to a **grounded** search problem. **Date:** 2026-06-26. **Issue:** #844.
