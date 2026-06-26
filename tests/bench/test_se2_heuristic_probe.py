@@ -13,6 +13,13 @@ from hangarfit.towplanner import plan_path
 def test_toy_nook_requires_search_at_fine_grid() -> None:
     """The toy must be HARD: the analytic Reeds–Shepp shot must not solve it
     trivially (expansions > 0), so the heuristic actually drives expansion order."""
+    # @pytest.mark.slow is INTENTIONAL: the fine-grid (0.25 m/10°) A* run takes
+    # ~34 s by nature (that slowness IS the headroom the SE(2) heuristic must
+    # collapse). Because it is excluded from the default `pytest` run and from CI
+    # (`addopts = -m 'not slow'`), this search-forcing calibration is NOT
+    # auto-verified: if the toy nook geometry (_CX/_CY, hangar dims, or door)
+    # changes, RE-RUN this by hand (`pytest -m slow tests/bench/...`) to confirm
+    # the goal still genuinely requires search (expansions > 0).
     nook = build_toy_nook()
     stats: dict[str, object] = {}
     with fine_grid(), contextlib.suppress(towplanner.NoFeasiblePlanError):

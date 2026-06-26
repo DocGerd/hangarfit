@@ -10,7 +10,7 @@ fk9↔cessna nook vs today's position-only ``grid`` heuristic. Run:
 from __future__ import annotations
 
 import contextlib
-from collections.abc import Iterator
+from collections.abc import Generator
 from dataclasses import dataclass
 
 from hangarfit import towplanner
@@ -23,15 +23,14 @@ _FINE_XY_M = 0.25
 _FINE_DEG = 10.0
 
 # The real Herrenteich fk9↔cessna goal poses define the binding nook geometry.
+# The fk9−cessna relative pose is derived dynamically in build_toy_nook() straight
+# from this layout, so the toy stays faithful even if the catalog is corrected — no
+# hardcoded snapshot to drift.
 _HERRENTEICH_LAYOUT = "examples/herrenteich/layout.yaml"
-
-# The real fk9−cessna relative pose (fk9_placement − cessna_placement, Herrenteich).
-# Preserved in the toy so the mutual-block geometry is faithful.
-_GOAL_REL: tuple[float, float] = (-5.20, 4.65)  # (rel_x_m, rel_y_m)
 
 
 @contextlib.contextmanager
-def fine_grid() -> Iterator[None]:
+def fine_grid() -> Generator[None, None, None]:
     """Run the towplanner at the fine 0.25 m/10° grid, restoring the deployed
     constants afterwards. ``_HEADING_BINS`` is import-time-derived from ``_GRID_DEG``,
     so it must be patched too."""
