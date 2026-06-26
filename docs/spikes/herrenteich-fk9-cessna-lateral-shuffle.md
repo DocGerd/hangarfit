@@ -145,6 +145,54 @@ is tracked alongside #844.
 
 ---
 
+## Parallel-park macro (candidate 2): implemented and **refuted** (2026-06-26)
+
+Candidate 2 above was the first fix attempted. It was implemented (macro geometry + a default-OFF
+injection of macro edges into the Hybrid-A\* loop — both reviewed and **determinism-guard PASS**,
+byte-identical with the flag off) and gated by a PoC before any hardening. The macro was realized as
+the optimal Reeds–Shepp word to a small **laterally-shifted waypoint** (same heading, offset Δ ∈
+{0.5, 1.0} m, left/right). The PoC routes `cessna_140` (parks last) past the parked `fk9_mkii`, own
+gear, at the deployed 0.5 m/15° grid — `plan_fill`-faithful (22-pose entry cone, grid heuristic).
+
+**Gate result — NO-GO.** The macro does **not** route the pair at the deployed grid at any tested
+budget:
+
+| Run | Routed? | Expansions | Wall |
+|---|---|---|---|
+| OFF (setup validation) | no — budget-exhausted (matches #840: never space-exhausts) | ≤32 k | — |
+| ON @ 8 000 | **no** — budget-exhausted | 8 000 | 444 s |
+| ON @ 16 000 | **no** — budget-exhausted | 16 000 | 952 s |
+| ON @ 32 000 | **no** — budget-exhausted | 32 000 | 2 051 s (34 min) |
+
+**Root-cause probes (why it failed):**
+
+- **Macro geometry is sound, not the problem.** Both Herrenteich movers are **R = 0 (pivot-in-place)**,
+  so the macro words are ideal tight parallel-parks — `pivot 90° · drive 0.5 m · pivot back`, **zero
+  forward excursion** (`fwd_span = 0.00 m`). (This refutes the "the optimal RS word is a big forward
+  S-curve that won't fit" worry, which assumed a car-like turn radius.)
+- **Probe — guidance vs resolution (coarse):** tracking min Euclidean dist-to-goal over the coarse ON
+  search, the closest pose ever reached is **3.10 m** from goal at the *wrong x* (9.77 vs goal 12.8).
+  It can't get *near* the goal nook — not "reached the goal but couldn't close." With the obstacle-aware
+  grid geodesic heuristic (which pulls toward the goal around obstacles), this points to a
+  **geometric/resolution** wall, not heuristic mis-guidance.
+- **Probe — resolution + macro salvageability (fine 0.25 m/10°, the witness resolution, with fine macro
+  deltas):** ON @ 40 k reaches **2.50 m** from goal — at the *correct goal-x (12.81)* and near-heading,
+  2.5 m short in y — closer than coarse, but still no route (40 k < the witness's 96 949-exp budget). So
+  **finer resolution makes more progress** (a valid path exists at fine grid = the witness), and the
+  macro did **not** slash the fine-grid cost.
+
+**Conclusion.** #844 is a **fine-resolution search-efficiency wall**: the valid nook maneuver lives at
+sub-coarse resolution and is *expensive to find even at fine grid* (39 min). The macro adds
+**longer-range moves on a lattice, not resolution**, so it cannot represent the sub-grid maneuver — it
+fails at the coarse grid and adds little at the fine grid. It is **not** salvageable for an
+adaptive-grid combo. **The implementation was discarded** (the design provenance is kept at
+`docs/superpowers/specs/2026-06-26-fk9-cessna-parallel-park-macro-design.md` + its plan). **Direction
+pivoted to candidate 3 — #840 learned/guided motion** — which attacks the grounded bottleneck
+(efficiently searching the fine-resolution space) and has a proven teacher (the fine-grid A\* witness).
+A cheap deterministic shortcut (the macro) has now been ruled out, sharpening #840's case.
+
+---
+
 ## Hypotheses tested and discarded (this probe)
 
 | Hypothesis | How tested | Verdict |
