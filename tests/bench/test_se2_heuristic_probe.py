@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import contextlib
+import math
+from collections import defaultdict
 
 import pytest
 
-from bench.se2_heuristic_probe import build_toy_nook, fine_grid
+from bench.se2_heuristic_probe import build_se2_field, build_toy_nook, fine_grid, make_field_h
 from hangarfit import towplanner
-from hangarfit.towplanner import plan_path
+from hangarfit.towplanner import Pose, plan_path
 
 
 @pytest.mark.slow
@@ -47,3 +49,62 @@ def test_toy_nook_goal_is_clear_of_the_parked_obstacle() -> None:
     assert towplanner._motion_clear(
         nook.mover, nook.goal, obstacles, nook.hangar.motion_hangar()
     ), "mover-at-goal conflicts with the parked obstacle — invalid fixture"
+
+
+def test_se2_field_is_heading_aware() -> None:
+    """The SE(2) cost-to-go field must assign different costs to the same (x,y)
+    position at different headings — the core property the position-only ``grid``
+    heuristic lacks.
+
+    The PRIMARY assertion is STRUCTURAL: we inspect the field dict itself and
+    check that at least one spatial cell ``(ix, iy)`` carries ≥2 heading bins
+    with different cost values.  This avoids a fixture-dependent flake: the
+    alternative approach of asserting ``h(rotated_goal) > 0`` would silently
+    pass via the euclidean fallback (which returns 0 at the goal's own x,y) if
+    the rotated pose happens to be unreachable (e.g. a 90° pivot collides with
+    the tucked obstacle).  The structural form is strictly stronger — it
+    directly proves "same position, different heading ⇒ different cost-to-go"
+    across the entire field, not just at one specific pose.
+    """
+    nook = build_toy_nook()
+    r = nook.mover.effective_turn_radius_m()
+    obstacles = towplanner._build_obstacles(nook.placed, mover_id=nook.mover.id)
+    with fine_grid():
+        field = build_se2_field(
+            nook.mover,
+            nook.goal,
+            obstacles,
+            nook.hangar.motion_hangar(),
+            r,
+            mover_on_carts=nook.mover_on_carts,
+        )
+        h = make_field_h(field, nook.goal)
+
+        # Goal cell must be cost 0.
+        assert h(nook.goal) == 0.0
+
+        # Structural heading-awareness: find at least one (ix,iy) group with
+        # ≥2 distinct heading bins that have different cost-to-go values.
+        by_xy: dict[tuple[int, int], list[float]] = defaultdict(list)
+        for (ix, iy, _iheading), cost in field.items():
+            by_xy[(ix, iy)].append(cost)
+        found_heading_sensitive = any(
+            max(costs) > min(costs) for costs in by_xy.values() if len(costs) >= 2
+        )
+        assert found_heading_sensitive, (
+            "SE(2) field is NOT heading-aware: no (x,y) cell has different "
+            "cost-to-go values for different headings"
+        )
+
+        # Rotated-goal check: only assert > 0 when _cell is actually in the
+        # field (if the pose is unreachable, the absence is correct — not a bug).
+        rotated = Pose(nook.goal.x_m, nook.goal.y_m, (nook.goal.heading_deg + 90.0) % 360.0)
+        if towplanner._cell(rotated) in field:
+            assert h(rotated) > 0.0, (
+                "rotated goal pose is in the field but has cost 0 — "
+                "heading is not being discriminated"
+            )
+
+        # Far-away pose absent from the field → euclidean fallback (finite, > 0).
+        far = Pose(nook.goal.x_m + 50.0, nook.goal.y_m, nook.goal.heading_deg)
+        assert math.isfinite(h(far)) and h(far) > 0.0

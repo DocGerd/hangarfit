@@ -10,12 +10,14 @@ fk9↔cessna nook vs today's position-only ``grid`` heuristic. Run:
 from __future__ import annotations
 
 import contextlib
-from collections.abc import Generator
+import heapq
+import math
+from collections.abc import Callable, Generator
 from dataclasses import dataclass
 
 from hangarfit import towplanner
 from hangarfit.loader import load_layout
-from hangarfit.models import Aircraft, Door, Hangar, Layout, MaintenanceBay, Placement
+from hangarfit.models import Aircraft, Door, GroundObject, Hangar, Layout, MaintenanceBay, Placement
 from hangarfit.towplanner import Pose
 
 # Fine-grid resolution for the probe (the witness found the real path at 0.25 m/10°).
@@ -109,6 +111,84 @@ def build_toy_nook() -> ToyNook:
     return ToyNook(
         mover=fk9, entry=entry, goal=goal, hangar=hangar, placed=placed, mover_on_carts=False
     )
+
+
+def build_se2_field(
+    mover: Aircraft | GroundObject,
+    goal: Pose,
+    obstacles: object,  # towplanner._Obstacles (private)
+    motion_hangar: Hangar,
+    r: float,
+    *,
+    mover_on_carts: bool,
+    max_cells: int = 300_000,
+) -> dict[tuple[int, int, int], float]:
+    """Backward-SE(2) Dijkstra cost-to-go field from ``goal`` over the ``_cell``
+    lattice using the real primitive fan.
+
+    Runs a Dijkstra flood **from** the goal pose.  Because the primitive fan is
+    inverse-closed (it contains both forward *and* reverse-gear segments) and
+    the motion costs are gear-agnostic, the forward distance from the goal to
+    any reachable cell equals the backward cost-to-go from that cell to the
+    goal.  Concretely: applying a reverse primitive from pose ``p`` yields the
+    predecessor ``q`` that can reach ``p`` via the corresponding forward
+    primitive at equal cost — so one Dijkstra pass from the goal computes
+    admissible cost-to-go for all reachable ``_cell``-binned poses.
+
+    Cusp penalties are intentionally omitted to keep the field a lower bound
+    (admissible heuristic).  Obstacle-blocked edges are pruned via
+    ``_motion_clear`` over the sampled arc.  The flood is capped at
+    ``max_cells`` to bound memory and time.
+    """
+    field: dict[tuple[int, int, int], float] = {towplanner._cell(goal): 0.0}
+    counter = 0
+    heap: list[tuple[float, int, Pose]] = [(0.0, counter, goal)]
+    prims = towplanner._primitives(r, lateral=mover_on_carts)
+    while heap and len(field) < max_cells:
+        d, _, pose = heapq.heappop(heap)
+        if d > field.get(towplanner._cell(pose), math.inf) + 1e-12:
+            continue  # stale entry
+        for seg in prims:
+            nxt = towplanner._step_pose(pose, seg, r)
+            edge = towplanner.DubinsArc(pose, nxt, r, (seg,))
+            if not all(
+                towplanner._motion_clear(mover, p, obstacles, motion_hangar)
+                for p in edge.sample(
+                    step_m=towplanner._SEARCH_STEP_M,
+                    step_deg=towplanner._SEARCH_STEP_DEG,
+                )
+            ):
+                continue
+            nd = d + towplanner._seg_cost(seg, r)
+            nkey = towplanner._cell(nxt)
+            if nd < field.get(nkey, math.inf) - 1e-9:
+                field[nkey] = nd
+                counter += 1
+                heapq.heappush(heap, (nd, counter, nxt))
+    return field
+
+
+def make_field_h(
+    field: dict[tuple[int, int, int], float],
+    goal: Pose,
+) -> Callable[[Pose], float]:
+    """Return a heuristic function backed by the SE(2) cost-to-go ``field``.
+
+    For poses whose ``_cell`` is present in the field the stored value is
+    returned directly.  For poses outside the flooded region (e.g. the start
+    pose when the flood was capped before reaching it) the fallback is the
+    Euclidean distance to the goal — a valid admissible lower bound that
+    mirrors the ``plan_path`` grid-heuristic fallback so no pose is ever
+    un-expandable.
+    """
+
+    def _h(p: Pose) -> float:
+        v = field.get(towplanner._cell(p))
+        if v is None:
+            return math.hypot(goal.x_m - p.x_m, goal.y_m - p.y_m)
+        return v
+
+    return _h
 
 
 if __name__ == "__main__":
