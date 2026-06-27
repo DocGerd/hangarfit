@@ -1,0 +1,18 @@
+# #550 value test: a high-winger's broad wing sits over the polygon-cockpit
+# (fuselage_front) of an aircraft authored with a `vertices:` outline. Both planes
+# share (x, y) at heading 0; the overflyer wing (z [1.7, 2.0]) is above the
+# fuselage (z [0.3, 1.6]), so D1 makes it a hard `fuselage_front_wing_overlap`.
+# The fleet is supplied as a load_layout(..., fleet=override) so no catalog is needed.
+hangar: ../../data/hangar.yaml
+
+placements:
+  - plane: outline_test
+    x_m: 11.0
+    y_m: 7.0
+    heading_deg: 0.0
+    on_carts: false
+  - plane: overflyer
+    x_m: 11.0
+    y_m: 7.0
+    heading_deg: 0.0
+    on_carts: false

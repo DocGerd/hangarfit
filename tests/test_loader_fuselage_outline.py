@@ -12,14 +12,19 @@ from pathlib import Path
 import pytest
 from shapely.geometry import Polygon
 
+from hangarfit.collisions import check
+from hangarfit.geometry import aircraft_parts_world
 from hangarfit.loader import (
     LoaderError,
     _build_aircraft,
     _build_part,
     _split_fuselage,
     load_fleet,
+    load_layout,
 )
-from hangarfit.models import Part
+from hangarfit.models import Part, Placement
+
+_FIXTURES = Path(__file__).resolve().parent / "fixtures"
 
 
 def _fuselage_outline_dict(**over):
@@ -210,3 +215,60 @@ def test_no_shipped_fuselage_part_is_a_polygon():
         for p in ac.parts:
             if p.kind in ("fuselage_front", "fuselage_aft"):
                 assert p.local_vertices is None, f"{ac.id} {p.kind} became a polygon"
+
+
+# --- Task 4: downstream behavior (det(-1) transform + collision semantics) ---
+
+
+def _overflyer_entry():
+    # A high-winger whose broad wing (z [1.7, 2.0], above the fuselage z [0.3, 1.6])
+    # sits over the outline plane's cockpit (fuselage_front).
+    return {
+        "id": "overflyer",
+        "name": "Overflyer",
+        "wing_position": "high",
+        "gear": "nosewheel",
+        "movement_mode": "cart_eligible",
+        "turn_radius_m": 8.0,
+        "wheels": {"main_offset_x_m": -0.5, "track_m": 2.0, "third_wheel_offset_x_m": 1.5},
+        "parts": [
+            {
+                "kind": "wing",
+                "length_m": 6.0,
+                "width_m": 9.0,
+                "offset_x_m": 1.5,
+                "z_bottom_m": 1.7,
+                "z_top_m": 2.0,
+            },
+            {
+                "kind": "fuselage",
+                "length_m": 6.0,
+                "width_m": 1.2,
+                "offset_x_m": 0.0,
+                "z_bottom_m": 0.3,
+                "z_top_m": 1.6,
+            },
+        ],
+    }
+
+
+def test_clipped_front_flows_through_det_minus_one_transform():
+    ac = _build_aircraft(_outline_entry())
+    pl = Placement(plane_id="outline_test", x_m=10.0, y_m=5.0, heading_deg=37.0, on_carts=False)
+    world = aircraft_parts_world(ac, pl)
+    fronts = [w for w in world if w.kind == "fuselage_front"]
+    assert len(fronts) == 1
+    assert fronts[0].polygon.is_valid and not fronts[0].polygon.is_empty
+
+
+def test_wing_over_polygon_cockpit_conflicts():
+    fleet = {
+        "outline_test": _build_aircraft(_outline_entry()),
+        "overflyer": _build_aircraft(_overflyer_entry()),
+    }
+    layout = load_layout(_FIXTURES / "outline_wing_over_cockpit.yaml", fleet=fleet)
+    result = check(layout)
+    kinds = {c.kind for c in result.conflicts}
+    assert "fuselage_front_wing_overlap" in kinds, (
+        f"expected a cockpit conflict, got {result.conflicts!r}"
+    )
