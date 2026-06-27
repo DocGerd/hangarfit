@@ -222,53 +222,71 @@ read-only and does not touch shipped solver/towplanner code.
 
 ---
 
-## Step-0 result — SE(2) heading-aware heuristic headroom probe (#840, 2026-06-26)
+## Step-0 result — SE(2) heading-aware heuristic headroom probe (#840, 2026-06-26) → **NO-GO**
 
-**Tool:** `bench/se2_heuristic_probe.py` — backward-SE(2) Dijkstra cost-to-go field, injected into
-`plan_path` via the `heuristic_fn` seam (Task 2). Three-way fine-grid (0.25 m/10°) A* comparison on
-the toy nook (real fk9/cessna relative geometry, small 18×14 m arena, budget=16 000).
+**Question (pre-registered, spec §4):** does a heading-aware cost-to-go heuristic collapse the
+fine-grid A\* expansion count enough (GO ≥50×, PARTIAL ≥5×, NO-GO <5×) to make the fk9↔cessna nook
+shippable? **Answer: NO-GO** — a heading-aware heuristic does *not* help; the cost is an intrinsic
+A\* plateau.
 
-**Full verbatim probe output:**
+**Tool:** `bench/se2_heuristic_probe.py` — an exact **backward-SE(2) Dijkstra** cost-to-go field
+(`build_se2_field`), injected into `plan_path` via the additive `heuristic_fn` seam (Task 2) and
+compared against the deployed **position-only** `grid` heuristic at the fine 0.25 m/10° grid.
 
-```
-=== SE(2) heading-aware heuristic — Step-0 headroom probe (#840) ===
-  grid (position-only):  expansions=16000  found=False
-  se2  (heading-aware):  expansions=16000  found=False
-  euclidean (baseline):  expansions=16000  found=False
-  ratio (grid/se2) = 1.0
-  VERDICT: NO-GO  (GO ≥50× · PARTIAL 5–50× · NO-GO <5×; see the spec §4 gate)
+> **A first toy-fixture run was discarded as VACUOUS (the feasibility-first trap).** A tiny 18×14 m
+> synthetic arena wedged the fk9 (9.85 m wingspan, ≈2 m wall clearance), so the backward flood
+> reached only **78 cells** around the goal and never reached the door — the field silently degraded
+> to euclidean and all three heuristics exhausted at 16 000 without finding a route. That tells us
+> nothing about headroom (the toy was near-*infeasible*, not hard). The trustworthy gate below runs
+> on the **real** witness-grounded pair instead.
 
---- confirmatory heuristic-divergence map (same xy, rotating heading) ---
-pose (dx,dy,dhead)      grid_h   se2_h
-  (0,0,    0)            0.00     0.00
-  (0,0,   45)            0.00     0.00
-  (0,0,   90)            0.00     0.00
-  (0,0,  135)            0.00     0.00
-  (0,0,  180)            0.00     0.00
-```
+**Trustworthy gate — the real isolated fk9↔cessna pair** (the exact witness subproblem: cessna parked
+at its Herrenteich goal, fk9 routed to its goal via the door cone, fine 0.25 m/10° grid, own gear):
 
-**Expansion counts:** grid=16 000 (budget-exhausted, not found), se2=16 000 (budget-exhausted, not
-found), euclidean=16 000 (budget-exhausted, not found).
+| heuristic | result |
+|---|---|
+| `grid` (deployed, position-only geodesic) | **FOUND at 96 949 expansions** |
+| `se2` (exact backward-SE(2) Dijkstra, heading-aware) | **FOUND at 108 991 expansions** |
+| ratio `grid / se2` | **0.89×** — se2 is ~12% **worse** ⇒ **NO-GO** |
 
-**Ratio:** 1.0 (both grid and se2 exhausted the full budget without finding a route — no headroom
-demonstrated).
+**Why this is airtight (not a second vacuous result):**
+- **Harness validated:** the `grid` run reproduced the witness's **exact 96 949** expansions, confirming
+  the setup *is* the faithful witness subproblem.
+- **The 150 k-cell field cap is provably not a confound:** the field's max cost-to-go `C_cap = 41.6`
+  exceeds the optimal cost-to-go from the start, `C* ≈ 17.2` (= `h(cone[0])`). A\* only ever queries
+  `h` on states with `g + h ≤ C*`, so every value the search used was ≤ 17.2 < 41.6 — the field held
+  **exact** heading-aware cost-to-go over the *entire* region A\* explores. An uncapped rebuild is
+  mathematically guaranteed to return the identical se2 count.
 
-**VERDICT: NO-GO.**
+**Interpretation — the pre-registered plateau dissent (spec §3.1), confirmed.** A *perfect* admissible
+heuristic losing to a looser one is the textbook signature of an **intrinsic near-C\* A\* plateau**:
+completeness forces expansion of *every* state with `f* ≤ C*`, regardless of heuristic quality. The
+~97 k expansions are the volume of that plateau in the cm-precision R=0 parallel-park, not a
+heading-guidance deficiency. Heading-awareness is **not** the lever.
 
-**Interpretation:** All three heuristics exhausted the 16 000-expansion budget without finding a
-route on the toy nook. The SE(2) cost-to-go field is heading-aware (the structural `test_se2_field_is_heading_aware`
-test confirms different costs at same x,y for different headings), but it does not guide the search
-to a solution any faster than the position-only grid heuristic. The divergence map all-zeros for
-`se2_h` at the goal position indicates the backward Dijkstra flood did not reach those rotated goal
-poses within the cap, and the euclidean fallback (distance to the goal at the same x,y) collapses to
-0 — the map is uninformative at the goal position itself.
+**Consequence — the heuristic class is dead for this nook.**
+- **Deterministic field (spec Step 1):** killed — the exact field, the best an admissible heuristic
+  can be, is already ~12% worse than the deployed one.
+- **Learned heuristic (learned-M1):** killed transitively — a learned `h` can only *approximate* the
+  exact field that already lost, and an ONNX-in-loop `h` would break ADR-0003 byte-identity anyway.
+- **No heuristic-class / search-guidance method survives.** Cracking the nook would require a
+  fundamentally different method (continuous trajectory optimization), a far larger bet (deferred).
+- One bounded caveat noted and not pursued: the field is **cusp-free** (omits direction-reversal
+  penalties) while the nook is cusp-heavy; a 4D cusp-aware field *might* guide marginally better, but
+  the same plateau bound caps the upside — a larger bet, not a smaller one.
 
-The root constraint is the search *depth*: the own-gear parallel-park maneuver requires ~97 000
-expansions at 0.25 m/10° (witness run, 39 min). The SE(2) field provides a better cost-to-go
-estimate than pure Euclidean distance, but not enough to shrink the 97 k-expansion
-needle-in-haystack search into a 16 000-expansion budget. The bottleneck is the depth of the
-required maneuver sequence, not the heuristic's ability to discriminate heading.
+**Disposition (#844 stays OPEN):** the fk9↔cessna pair is recorded as a **known manual-insertion case**
+(see below) — the club hand-shuffles it on own gear, so `on_carts: true` would be unfaithful and
+caching the 39-min witness plan would be brittle/hardcoded ("worst-faithfulness"). Two separable,
+cheaper-than-the-nook follow-ups remain on #844: **(a)** the husky front-cluster entry-**ordering**
+quick win (a pure order-search problem, *not* the dead nook), and **(b)** a parked, clearly-scoped
+**continuous-trajectory-optimization** spike (the only surviving method class; defer).
 
-**Consequence (per spec §4 / the brief's "After Step 0" branch):** The heuristic class is dead for
-this problem. Per-spec §6: fall to the cache-witness or manual-insertion path. Do NOT proceed to
-Step 1 (promoting `build_se2_field` into `towplanner`).
+### Known manual-insertion case — fk9_mkii ↔ cessna_140
+
+The `solve --render-paths` / `view` auto-router cannot route the fk9↔cessna front-door pair, and
+**this is expected, not a bug**: the cm-precision own-gear parallel-park is an intrinsic A\* plateau
+(~97 k expansions / 39 min at the fine grid the maneuver requires), and no search-guidance heuristic
+shrinks it (Step-0 NO-GO above). In real operation the club inserts this pair by **hand-shuffling on
+own gear**, never on dollies. Treat the pair as a hand-placed exception in the all-8 fill until/unless
+a continuous-optimization planner (#844 follow-up b) is built.

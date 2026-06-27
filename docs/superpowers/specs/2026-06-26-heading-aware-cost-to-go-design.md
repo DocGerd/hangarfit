@@ -1,6 +1,14 @@
 # Design spec — heading-aware cost-to-go for the fk9↔cessna nook (deterministic-first)
 
-**Status:** Proposed · **Date:** 2026-06-26 · **Owner:** Patrick Kuhn
+> **⚠ REFUTED (2026-06-27).** The Step-0 headroom probe measured **NO-GO** on the real
+> fk9↔cessna pair: the exact backward-SE(2) heading-aware heuristic found the path in
+> **108 991** expansions vs the deployed position-only heuristic's **96 949** (ratio **0.89×**,
+> i.e. ~12% *worse*; GO needed ≥50×). The ~97 k expansions are an **intrinsic near-C\* A\*
+> plateau**, not a heading-guidance gap (the pre-registered §3.1 dissent, confirmed). **The
+> heuristic class is dead** for this nook — the deterministic field (Step 1) *and* learned-M1.
+> Kept as design provenance. Result: [`docs/spikes/herrenteich-fk9-cessna-lateral-shuffle.md`](../../spikes/herrenteich-fk9-cessna-lateral-shuffle.md) § "Step-0 result".
+
+**Status:** REFUTED (was: Proposed) · **Date:** 2026-06-26 · **Owner:** Patrick Kuhn
 **Issue:** #840 (re-scoped) · **Supersedes:** [`2026-06-25-learned-motion-policy-spike-design.md`](2026-06-25-learned-motion-policy-spike-design.md) (the end-to-end learned-policy framing — its core methods are rejected/deferred here; see §3)
 **Relates to:** [ADR-0003](../../adr/0003-rr-mc-solver-algorithm.md) (determinism contract), [ADR-0028](../../adr/0028-learned-backend-train-to-mastery-resolved-negative.md) (train-to-mastery resolved-negative), [ADR-0010](../../adr/0010-reeds-shepp-motion-model.md) (motion model), the spike record [`docs/spikes/herrenteich-fk9-cessna-lateral-shuffle.md`](../../spikes/herrenteich-fk9-cessna-lateral-shuffle.md) and [`docs/spikes/herrenteich-all8-tow-routing-rootcause.md`](../../spikes/herrenteich-all8-tow-routing-rootcause.md)
 

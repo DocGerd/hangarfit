@@ -1,5 +1,13 @@
 # SE(2) heading-aware heuristic — headroom probe (Step 0) Implementation Plan
 
+> **⚠ REFUTED (2026-06-27) — executed; gate returned NO-GO.** All four tasks were implemented
+> (the toy fixture, the `heuristic_fn` seam, the backward-SE(2) field, the probe driver). The
+> gate ran on the real fk9↔cessna pair and measured **NO-GO** (se2 108 991 vs grid 96 949
+> expansions, 0.89×): the cost is an intrinsic A\* plateau, so the heuristic class is dead.
+> Step 1 (promoting the field into `towplanner`) was **not** built. The seam + the dev-only
+> `bench/se2_heuristic_probe.py` are retained as the reproducible refutation record. Result +
+> reasoning: [`docs/spikes/herrenteich-fk9-cessna-lateral-shuffle.md`](../../spikes/herrenteich-fk9-cessna-lateral-shuffle.md) § "Step-0 result".
+
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
 **Goal:** Measure — for ~1–2 h, no ML — whether a heading-aware SE(2) cost-to-go heuristic collapses Hybrid-A* expansions on the fk9↔cessna nook enough to justify building it (the spec's **Step 0 gate**).

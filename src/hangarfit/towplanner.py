@@ -2532,9 +2532,16 @@ def plan_path(
 
         _h = _euclid_h
 
-    # Dev/test seam (#840): an explicit heuristic_fn overrides the cost-to-go
-    # estimate (used by the SE(2) heading-aware headroom probe). Default None ⇒
-    # the `heuristic` Literal's `_h` above is used unchanged ⇒ byte-identical
+    # Generic dev/test-only cost-to-go injection seam (#840). An explicit
+    # heuristic_fn overrides the `_h` cost-to-go estimate for an experiment that
+    # needs a custom heuristic without monkeypatching this function's internals.
+    # There is intentionally NO production caller: it was added for the #840
+    # heading-aware-heuristic headroom probe (which measured NO-GO — the heuristic
+    # class is dead for the fk9↔cessna nook, see docs/spikes/
+    # herrenteich-fk9-cessna-lateral-shuffle.md), and is retained as a generic seam
+    # for future heuristic experiments (its only consumer is
+    # bench/se2_heuristic_probe.py + tests/test_towplanner_heuristic_fn.py). Default
+    # None ⇒ the `heuristic` Literal's `_h` above is used unchanged ⇒ byte-identical
     # (ADR-0003): the determinism canaries never pass heuristic_fn.
     if heuristic_fn is not None:
         _h = heuristic_fn

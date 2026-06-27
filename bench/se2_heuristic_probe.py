@@ -2,9 +2,22 @@
 
 Not shipped in the wheel (top-level ``bench/``, ``where=["src"]``). Measures whether a
 heading-aware SE(2) cost-to-go heuristic collapses Hybrid-A* expansions on the
-fk9↔cessna nook vs today's position-only ``grid`` heuristic. Run:
+fk9↔cessna nook vs today's position-only ``grid`` heuristic.
 
-    python -m bench.se2_heuristic_probe
+**RESULT (2026-06-27): NO-GO.** The canonical gate (:func:`run_real_pair_gate`, what
+``main`` runs) measured the exact backward-SE(2) heuristic at **108 991** expansions vs
+the deployed position-only heuristic's **96 949** — *worse* (0.89×). The ~97 k expansions
+are an intrinsic near-C\\* A\\* plateau, so no heuristic-class method (deterministic field
+or learned) shrinks them. The heuristic class is dead for this nook; this module is
+retained as the reproducible refutation record. See
+``docs/spikes/herrenteich-fk9-cessna-lateral-shuffle.md`` § "Step-0 result".
+
+    python -m bench.se2_heuristic_probe   # runs the canonical real-pair gate (~45 min)
+
+⚠ :func:`build_toy_nook` / :func:`run_probe` are the **discarded VACUOUS** toy gate (a
+tiny arena wedged the fk9 so the field never reached the door — the feasibility-first
+trap). They are kept only for the fast field-heading-awareness unit test and as the
+cautionary example; the trustworthy verdict comes from :func:`run_real_pair_gate`.
 """
 
 from __future__ import annotations
@@ -14,6 +27,7 @@ import heapq
 import math
 from collections.abc import Callable, Generator
 from dataclasses import dataclass
+from typing import Literal
 
 from hangarfit import towplanner
 from hangarfit.loader import load_layout
@@ -192,6 +206,137 @@ def make_field_h(
     return _h
 
 
+# ── Canonical gate: the REAL isolated fk9↔cessna pair (witness-grounded) ──────
+
+
+@dataclass(frozen=True, slots=True)
+class RealPairResult:
+    exp_grid: int
+    found_grid: bool
+    exp_se2: int
+    found_se2: bool
+    field_cells: int
+    c_cap: float  # max cost-to-go held in the (capped) field
+    c_star: float  # optimal cost-to-go from the start seed (se2 h at the door cone)
+    ratio: float  # grid / se2 (0.0 if se2 not found)
+    verdict: str
+
+
+def build_real_pair_setup() -> tuple[Aircraft, tuple[Pose, ...], Pose, Hangar, Layout, float]:
+    """The REAL isolated fk9↔cessna routing subproblem — the exact witness setup:
+    the cessna parked at its Herrenteich goal as the sole obstacle, the fk9 routed
+    from the door cone to its Herrenteich goal in the real 15.08×31.76 m hangar (the
+    fk9 can actually maneuver here, unlike the cramped toy). Mirrors ``plan_fill``'s
+    per-plane call. Returns ``(mover, cone, goal, hangar, placed, turn_radius)``."""
+    layout = load_layout(_HERRENTEICH_LAYOUT)
+    fleet = dict(layout.fleet)
+    by_id = {p.plane_id: p for p in layout.placements}
+    fk9, cessna = fleet["fk9_mkii"], fleet["cessna_140"]
+    fk9_p, cessna_p = by_id["fk9_mkii"], by_id["cessna_140"]
+    hangar = layout.hangar
+    placed = Layout(
+        fleet={"fk9_mkii": fk9, "cessna_140": cessna},
+        hangar=hangar,
+        placements=(
+            Placement(
+                "cessna_140", cessna_p.x_m, cessna_p.y_m, cessna_p.heading_deg, on_carts=False
+            ),
+        ),
+    )
+    slot = Placement("fk9_mkii", fk9_p.x_m, fk9_p.y_m, fk9_p.heading_deg, on_carts=False)
+    goal = towplanner.Pose.from_placement(slot)
+    cone = towplanner.entry_poses(slot, hangar)
+    return fk9, cone, goal, hangar, placed, fk9.effective_turn_radius_m()
+
+
+def _expansions(stats: dict[str, object]) -> int:
+    """Narrow ``stats["expansions"]`` (typed ``object`` by ``plan_path``'s sink
+    dict) to the int it always is."""
+    n = stats["expansions"]
+    assert isinstance(n, int)
+    return n
+
+
+def _run_real(
+    mover: Aircraft,
+    cone: tuple[Pose, ...],
+    goal: Pose,
+    hangar: Hangar,
+    placed: Layout,
+    budget: int,
+    heuristic: Literal["euclidean", "grid"],
+    h_fn: Callable[[Pose], float] | None,
+) -> tuple[int, bool]:
+    stats: dict[str, object] = {}
+    try:
+        plan_path(
+            mover,
+            cone[0],
+            goal,
+            hangar=hangar,
+            placed=placed,
+            mover_on_carts=False,
+            entries=cone,
+            heuristic=heuristic,
+            heuristic_fn=h_fn,
+            max_expansions=budget,
+            stats=stats,
+        )
+        return _expansions(stats), True
+    except towplanner.NoFeasiblePlanError:
+        return _expansions(stats), False
+
+
+def run_real_pair_gate(budget: int = 150_000, max_cells: int = 150_000) -> RealPairResult:
+    """Canonical, witness-grounded Step-0 gate (what ``main`` runs). Builds the
+    backward-SE(2) field for the real fk9 goal (~10 min), then routes the fk9 past
+    the parked cessna twice — once with the deployed position-only ``grid``
+    heuristic, once with the injected heading-aware SE(2) field — and compares
+    ``stats["expansions"]``. SLOW (~45 min: ~10 min field + two fine-grid searches).
+
+    Records the cap-adequacy check: ``c_cap`` (max cost-to-go held in the capped
+    field) must exceed ``c_star`` (optimal cost-to-go from the start). When it does,
+    A* (which only queries ``h`` on states with ``g + h ≤ C*``) saw EXACT heading-aware
+    cost-to-go over the whole region it explored, so the ``max_cells`` cap is not a
+    confound and an uncapped rebuild would return the identical se2 count.
+
+    The measured result is NO-GO: grid 96 949 vs se2 108 991 (0.89×) — heading-
+    awareness is not the lever; the cost is an intrinsic A* plateau."""
+    mover, cone, goal, hangar, placed, r = build_real_pair_setup()
+    with fine_grid():
+        obstacles = towplanner._build_obstacles(placed, mover_id=mover.id)
+        field = build_se2_field(
+            mover,
+            goal,
+            obstacles,
+            hangar.motion_hangar(),
+            r,
+            mover_on_carts=False,
+            max_cells=max_cells,
+        )
+        h_se2 = make_field_h(field, goal)
+        c_cap = max(field.values())
+        c_star = h_se2(cone[0])  # se2 cost-to-go from the winning door seed
+        exp_se2, found_se2 = _run_real(
+            mover, cone, goal, hangar, placed, budget, "euclidean", h_se2
+        )
+        exp_grid, found_grid = _run_real(mover, cone, goal, hangar, placed, budget, "grid", None)
+    ratio = (exp_grid / exp_se2) if (found_se2 and exp_se2 > 0) else 0.0
+    if found_se2 and ratio >= 50.0:
+        verdict = "GO"
+    elif found_se2 and ratio >= 5.0:
+        verdict = "PARTIAL"
+    else:
+        verdict = "NO-GO"
+    return RealPairResult(
+        exp_grid, found_grid, exp_se2, found_se2, len(field), c_cap, c_star, ratio, verdict
+    )
+
+
+# ── Discarded VACUOUS toy gate (kept for the field heading-awareness unit + as the
+#    cautionary feasibility-first example — see the module docstring) ────────────
+
+
 @dataclass(frozen=True, slots=True)
 class ProbeResult:
     exp_grid: int | None
@@ -204,7 +349,12 @@ class ProbeResult:
     verdict: str
 
 
-def _run_one(nook: ToyNook, budget: int, heuristic: str, h_fn: object) -> tuple[int, bool]:
+def _run_one(
+    nook: ToyNook,
+    budget: int,
+    heuristic: Literal["euclidean", "grid"],
+    h_fn: Callable[[Pose], float] | None,
+) -> tuple[int, bool]:
     stats: dict[str, object] = {}
     try:
         plan_path(
@@ -219,12 +369,17 @@ def _run_one(nook: ToyNook, budget: int, heuristic: str, h_fn: object) -> tuple[
             heuristic_fn=h_fn,
             stats=stats,
         )
-        return int(stats["expansions"]), True  # type: ignore[arg-type]
+        return _expansions(stats), True
     except towplanner.NoFeasiblePlanError:
-        return int(stats["expansions"]), False  # type: ignore[arg-type]
+        return _expansions(stats), False
 
 
 def run_probe(budget: int = 16_000) -> ProbeResult:
+    """⚠ DISCARDED VACUOUS toy gate — kept only for the field heading-awareness unit
+    test and as the cautionary feasibility-first example. The toy 18×14 m arena wedges
+    the fk9's 9.85 m wingspan so the SE(2) field never reaches the door (it floods ~78
+    cells around the goal), making the NO-GO it returns untrustworthy. Use
+    :func:`run_real_pair_gate` for the verdict."""
     nook = build_toy_nook()
     r = nook.mover.effective_turn_radius_m()
     with fine_grid():
@@ -263,43 +418,22 @@ def run_probe(budget: int = 16_000) -> ProbeResult:
     )
 
 
-def _divergence_map(nook: ToyNook, field: dict[tuple[int, int, int], float]) -> str:
-    """Confirmatory: at a few poses near the goal column, show grid-h (position-only)
-    vs se2-h (heading-aware). The mechanism is confirmed if mis-oriented poses get a
-    small grid-h but a large se2-h (grid is blind to the needed pivot)."""
-    h_se2 = make_field_h(field, nook.goal)
-    lines = ["pose (dx,dy,dhead)      grid_h   se2_h"]
-    for dh in (0.0, 45.0, 90.0, 135.0, 180.0):
-        p = Pose(nook.goal.x_m, nook.goal.y_m, (nook.goal.heading_deg + dh) % 360.0)
-        grid_h = math.hypot(nook.goal.x_m - p.x_m, nook.goal.y_m - p.y_m)  # position-only = 0 here
-        lines.append(f"  (0,0,{dh:5.0f})          {grid_h:6.2f}   {h_se2(p):6.2f}")
-    return "\n".join(lines)
-
-
 def main() -> None:
-    result = run_probe()
-    print("=== SE(2) heading-aware heuristic — Step-0 headroom probe (#840) ===")
-    print(f"  grid (position-only):  expansions={result.exp_grid}  found={result.found_grid}")
-    print(f"  se2  (heading-aware):  expansions={result.exp_se2}  found={result.found_se2}")
-    print(f"  euclidean (baseline):  expansions={result.exp_euclid}  found={result.found_euclid}")
-    print(f"  ratio (grid/se2) = {result.ratio:.1f}")
+    """Run the canonical witness-grounded real-pair gate (~45 min) and print the
+    trustworthy verdict. The discarded toy gate (:func:`run_probe`) is intentionally
+    NOT run here — it returned a vacuous NO-GO (see the module docstring)."""
+    print("=== SE(2) heading-aware heuristic — Step-0 gate, REAL fk9↔cessna pair (#840) ===")
+    print("(canonical witness-grounded gate; ~45 min — SE(2) field build + two fine-grid searches)")
+    res = run_real_pair_gate()
+    cap_ok = res.c_cap > res.c_star
     print(
-        f"  VERDICT: {result.verdict}  (GO ≥50× · PARTIAL 5–50× · NO-GO <5×; see the spec §4 gate)"
+        f"  field: {res.field_cells} cells; C_cap={res.c_cap:.1f}  C*={res.c_star:.1f}  "
+        f"(cap is not a confound iff C_cap > C*: {cap_ok})"
     )
-    nook = build_toy_nook()
-    r = nook.mover.effective_turn_radius_m()
-    with fine_grid():
-        obstacles = towplanner._build_obstacles(nook.placed, mover_id=nook.mover.id)
-        field = build_se2_field(
-            nook.mover,
-            nook.goal,
-            obstacles,
-            nook.hangar.motion_hangar(),
-            r,
-            mover_on_carts=nook.mover_on_carts,
-        )
-        print("\n--- confirmatory heuristic-divergence map (same xy, rotating heading) ---")
-        print(_divergence_map(nook, field))
+    print(f"  grid (deployed, position-only): expansions={res.exp_grid}  found={res.found_grid}")
+    print(f"  se2  (exact heading-aware):     expansions={res.exp_se2}  found={res.found_se2}")
+    print(f"  ratio (grid/se2) = {res.ratio:.2f}x")
+    print(f"  VERDICT: {res.verdict}  (GO ≥50× · PARTIAL 5–50× · NO-GO <5×; spec §4 gate)")
 
 
 if __name__ == "__main__":
