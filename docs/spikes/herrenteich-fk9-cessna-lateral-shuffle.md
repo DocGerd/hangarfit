@@ -160,8 +160,13 @@ grid-geometry-locked, stronger than the predicted "budget-bound" — no global-b
 partial-fill* improvement (correct bail blame, more planes in a best-effort render), **not** a routing
 fix, and shipping it touches determinism-sensitive `_place_rest` (binds determinism-guard + the
 `back_first_order` timeline-order divergence in `scene.py`'s whole-fill timeline builder — currently
-`scene.py:298` — + a perf rebaseline). The ship-vs-kill decision for #844a is
-**deferred** pending that cost/benefit call; #844a stays OPEN.
+`scene.py:298` — + a perf rebaseline). **Ship-vs-kill — KILLED (2026-06-27).** Trading the ADR-0003
+byte-identical determinism contract (plus the `scene.py` timeline-order divergence and a perf
+rebaseline) for a diagnostic-only / partial-render gain that does **not** route the all-8 is not worth
+it. The husky-ordering effect is documented here but **not shipped** — no `_place_rest` ordering
+heuristic lands. The architectural answer for the all-8 (lift monotone-fill / continuous trajectory
+optimization) is carried by #667 and the deferred traj-opt bet, not by a candidate-ordering tweak.
+#844 is closed on this basis.
 
 ---
 
@@ -185,8 +190,9 @@ per-plane budget and impractical for `solve`/`view`. The candidates, all `towpla
 A raised per-plane budget alone is **not** a fix (97 k exp / 39 min is far past any shippable wall);
 it must be paired with (1) and/or (2) to cut the cost, not just the cap.
 
-The order-search blocker (husky) is a **separable** efficiency problem for the all-8 charter goal and
-is tracked alongside #844.
+The order-search blocker (husky) is a **separable** efficiency problem for the all-8 charter goal; the
+ordering gate KILLED a standalone `_place_rest` heuristic (see the Husky-ordering gate verdict), so the
+residual order-search work folds into the #667 shuffle-aware relaxation rather than a #844 follow-up.
 
 ---
 
@@ -324,18 +330,22 @@ heading-guidance deficiency. Heading-awareness is **not** the lever.
   penalties) while the nook is cusp-heavy; a 4D cusp-aware field *might* guide marginally better, but
   the same plateau bound caps the upside — a larger bet, not a smaller one.
 
-**Disposition (#844 stays OPEN):** the fk9↔cessna pair is recorded as a **known manual-insertion case**
-(see below) — the club hand-shuffles it on own gear, so `on_carts: true` would be unfaithful and
-caching the 39-min witness plan would be brittle/hardcoded ("worst-faithfulness"). Two separable,
-cheaper-than-the-nook follow-ups remain on #844: **(a)** the husky front-cluster entry-**ordering**
-quick win (a pure order-search problem, *not* the dead nook), and **(b)** a parked, clearly-scoped
-**continuous-trajectory-optimization** spike (the only surviving method class; defer).
+**Disposition (#844 CLOSED 2026-06-27):** the fk9↔cessna pair is recorded as a **known manual-insertion
+case** (see below) — the club hand-shuffles it on own gear, so `on_carts: true` would be unfaithful and
+caching the 39-min witness plan would be brittle/hardcoded ("worst-faithfulness"). Both separable
+follow-ups are now resolved: **(a)** the husky front-cluster entry-**ordering** gate RAN → **KILLED**
+(a genuine pure-ordering effect, but it cannot route the all-8 and is not worth the determinism cost —
+see the Husky-ordering gate verdict above), and **(b)** the parked **continuous-trajectory-optimization**
+Gate 0 returned **NO-GO (dominated)**. The architectural relaxation (lift monotone-fill for dense
+fleets) is tracked by #667; a re-chartered *generalize-to-arbitrary-nooks* continuous-optimization bet
+is the only surviving method class, parked there. #844 itself is exhausted and closed.
 
 > **Follow-up (a):** The witness-first ordering gate (2026-06-27) confirms husky is a pure, separable
 > ordering issue but that fixing it **cannot route the all-8** (the residual fk9↔cessna pair is
 > grid-geometry-locked) — see "Husky-ordering gate (#844a)" above. The effect is genuine and strictly
-> dominates (diagnostic clarity + more planes in partial renders), so the **ship-vs-kill decision is
-> deferred**; #844a stays OPEN.
+> dominates (diagnostic clarity + more planes in partial renders), but it is **KILLED (2026-06-27)** —
+> not worth perturbing the ADR-0003 determinism contract for a diagnostic-only, non-routing gain. The
+> all-8 architectural fix lives in #667; #844 is closed.
 >
 > **Follow-up (b):** Gate 0 (determinism-first pre-check) returned **NO-GO (dominated)** (2026-06-27) — see [`herrenteich-fk9-cessna-trajopt-determinism-precheck.md`](herrenteich-fk9-cessna-trajopt-determinism-precheck.md) ("Verdict (Gate 0)").
 
@@ -346,4 +356,5 @@ The `solve --render-paths` / `view` auto-router cannot route the fk9↔cessna fr
 (~97 k expansions / 39 min at the fine grid the maneuver requires), and no search-guidance heuristic
 shrinks it (Step-0 NO-GO above). In real operation the club inserts this pair by **hand-shuffling on
 own gear**, never on dollies. Treat the pair as a hand-placed exception in the all-8 fill until/unless
-a continuous-optimization planner (#844 follow-up b) is built.
+a continuous-optimization planner (the re-chartered generalize-to-arbitrary-nooks bet, parked under
+#667) is built.

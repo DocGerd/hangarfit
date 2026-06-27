@@ -194,15 +194,20 @@ the "comparison to other options discarded" the brief asked for.
   are clean and reproducible, the fix is shipped with a regression test, and both real layouts stay
   valid. The 5 % is residual model risk (the synthetic hangar is still a placeholder; the wing-band
   height is a tilt *approximation*, defensible but not tape-measured).
-- **Factor 2 (fk9↔cessna front-door corridor): medium and explicitly open.** A feasible monotone
-  fill provably exists (real-world daily use, "a few cm" spacing, 0.05 m tow clearance), but the
-  deployed planner cannot find it: the two real high-wingers mutually block at 0.5 m/15°, and a
-  finer grid — the prime suspect — is too slow for the current Hybrid-A* to settle. This is a
-  **search-efficiency** task (resolution / order / budget), handed to #844 — **not** a claim that
-  the all-8 now routes end-to-end, and **not** evidence of another physics error (both planes are
-  correctly modelled).
+- **Factor 2 (fk9↔cessna front-door corridor): medium; subsequently RESOLVED → NO-GO (#844 closed
+  2026-06-27).** A feasible monotone fill provably exists (real-world daily use, "a few cm" spacing,
+  0.05 m tow clearance), but the deployed planner cannot find it: the two real high-wingers mutually
+  block at 0.5 m/15°, and a finer grid — the prime suspect — is too slow for the current Hybrid-A* to
+  settle. Every follow-up gate returned NO-GO — the heading-aware SE(2) heuristic (#840: ~12% *worse*,
+  an intrinsic near-C\* A\* plateau), the husky-ordering gate (#844a: genuine but insufficient, KILLED),
+  and the continuous-traj-opt Gate 0 (#844b: dominated). The pair is now a **documented
+  manual-insertion case**, and the architectural relaxation (lift monotone fill for dense fleets) is
+  tracked under #667. This was a **search-efficiency** task (resolution / order / budget), **not** a
+  claim that the all-8 routes end-to-end, and **not** evidence of another physics error (both planes
+  are correctly modelled).
 
 **Bottom line:** the use case was blocked by a real, fixable model bug (Factor 1), now fixed and the
-dominant cause. The remaining gap is a single tight front-door maneuvering corridor that the
-deployed grid search can't yet thread — a planner-efficiency problem, scoped to #844 and connected
-to the #840 learned-motion direction, rather than overclaimed as solved.
+dominant cause. The remaining gap is a single tight front-door maneuvering corridor that the deployed
+grid search can't thread — a planner-efficiency problem that proved intractable to every search-side
+fix (all NO-GO; #844 closed 2026-06-27), so the pair is a documented manual-insertion case and the
+dense-fleet relaxation is parked on #667, rather than overclaimed as solved.
