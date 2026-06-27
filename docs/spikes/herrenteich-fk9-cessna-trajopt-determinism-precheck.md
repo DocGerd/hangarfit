@@ -357,3 +357,91 @@ arc[1] start=Pose(x_m=0.4, y_m=1.8, heading_deg=55.0) end=Pose(x_m=-0.3, y_m=1.2
    Net: for the **shippable `MovesPlan`**, a continuous optimizer collapses to *"deterministically realize a word A\* already reaches"* — i.e. either it is **dominated by the existing search**, or (if its speed advantage is banked by storing the found trajectory) it reduces to **find-then-cache = the already-rejected witness-cache** for the fixed Herrenteich pair (the §5 dominance floor; design spec §9 decision 5).
 
 **Plainly:** a discrete-word reduction is **plausible and byte-stable same-machine** (so the *unshippable* band is off the table), but it **does not** add deterministic value over A\* for the shippable artifact and **does not** improve on the baseline's untested cross-machine presumption. The evidence points toward the **§5 NO-GO (dominated)** band — not PASS, not NO-GO (unshippable). Task 4 finalizes the band and severity.
+
+---
+
+## Verdict (Gate 0) — **NO-GO (dominated)**
+
+**Band (exactly one, per spec §5): NO-GO (dominated).** A continuous trajectory
+optimizer for the fk9_mkii↔cessna_140 nook **could** produce a byte-stable
+`MovesPlan` (the *unshippable* band is off the table), but the **only** deterministic
+realization is a Reeds–Shepp word the existing Hybrid-A\* search already reaches — so
+traj-opt's sole differentiator (speed) **cannot bank as a shippable deterministic
+artifact** without collapsing to the already-rejected witness-cache. Gate 0 therefore
+**does not unlock Gate 1 (convergence)**; the XL optimizer build is retired.
+
+### Decisive evidence (each claim traces to Step 0.1 / 0.2 / 0.3)
+
+1. **The bar is cross-machine (Step 0.1).** ADR-0003's binding *wording* promises
+   byte-identity **across machines** for the `max_restarts`-bounded mode any shipping
+   feature would use (`docs/adr/0003-…:380-382, 396-398`), even though the canary net
+   only *tests* same-machine / same-process re-runs (`tests/test_solver_canaries.py`,
+   Step 0.1 Evidence B), and neither the ADR nor `determinism-guard` guards the
+   `libm`/transcendental cross-build ULP hazard (Step 0.1 Evidence C). So a raw
+   iterative-float optimizer output is almost certainly un-shippable; only a
+   **discrete-word reduction** could survive.
+
+2. **The baseline already lives in that reduction — and is itself only *presumptively*
+   cross-machine (Step 0.2).** Today's `MovesPlan` carries **no iterative float**: every
+   `Segment.length_m`/`Pose` value is a closed-form constant or a one-shot
+   `sin`/`cos`/`atan2`/`sqrt`/`acos` evaluation (Step 0.2 Step 1). It is robustly
+   reproducible **same-machine / cross-process** but its **cross-machine** byte-identity
+   is an *untested presumption* resting on `libm` transcendental bit-stability that
+   ADR-0003 never states (Step 0.2 Step 2). The seam an optimizer's output would enter is
+   the `Segment`-tuple of the `DubinsArc` returned by `plan_path` (`towplanner.py:2686`),
+   folded into `Move.path` by `plan_fill` (`:1767`/`:1838`) (Step 0.2 Step 3).
+
+3. **The reduction-escape is mechanically real — but adds nothing deterministically
+   bankable (Step 0.3).** A fabricated own-gear (R = 0, the faithful fk9 motion model —
+   `effective_turn_radius_m() == 0.0`) parallel-park snapped via chained closed-form
+   `plan_reeds_shepp(...)` shots is **`BYTE_IDENTICAL_REPEAT: True`** both same-process
+   and across separate interpreters (incl. `PYTHONHASHSEED=random`), and
+   `path_first_conflict` **consumes and accepts** it exactly as a native arc (Step 0.3
+   Results 1 & 2). This **rules out NO-GO (unshippable)**: a discrete-word reduction
+   exists. **But** (i) the snapped artifact lives in the *exact* finite `Segment`/word
+   vocabulary the existing A\* already searches (the ~97 k-expansion near-C\* plateau,
+   `lateral-shuffle.md`), so re-snapping to a canonical grid **is** the A\*-style
+   discretization — the shippable word is one A\* could also emit; and (ii) the snap
+   inherits the baseline's *presumptively*-cross-machine status unchanged (it still calls
+   `math.atan2` for the pivot angle — Step 0.3 Interpretation §2), so it is no more
+   provably cross-machine than today's Reeds–Shepp emit.
+
+### Why dominated, not PASS or unshippable
+
+The optimizer's only edge over A\* is **speed**. To be ADR-0003-comparable its
+continuous output must be **re-snapped** to the canonical word — which redoes the very
+discretization A\* performs (so the artifact is **A\*-reachable**, the first §5
+dominated clause). The only way to bank the speed is to **store the found trajectory**
+— which is exactly **find-then-cache = the already-rejected witness-cache** for the
+fixed Herrenteich pair (the second §5 dominated clause; spec §9 decision 5). Both
+deterministic realizations are dominated; carrying raw iterative floats fails the
+cross-machine bar (claim 1). No concrete, plausibly-bit-stable path that is *both*
+not-A\*-reachable *and* not-witness-cache exists — so **PASS → Gate 1 is not earned.**
+
+### Disposition
+
+- **The fk9↔cessna corridor remains a documented manual-insertion case.** The auto-router
+  cannot tow-route the front-door pair and that is expected, not a bug; the club hand-shuffles
+  it on own gear (see `herrenteich-fk9-cessna-lateral-shuffle.md` "Known manual-insertion
+  case"). Caching the 39-min witness plan stays rejected (brittle/unfaithful — spec §9
+  decision 5).
+- **No code, no dependency, no `src/` change** was produced by this gate (the Step 0.3 probe
+  is a throwaway script, deleted with the scratchpad — §7).
+- **The all-8 stays a manual-insertion arrangement** regardless of this verdict: the separable
+  husky front-cluster ordering blocker (follow-up **a**) is unresolved (spec §8), so the
+  headline does not change.
+
+### The one surviving value angle (NOT funded by this gate)
+
+The single argument Gate 0 does **not** kill is **generalization**: if continuous
+trajectory optimization were chartered not for *this fixed pair* but for **arbitrary
+tight nooks** the club may meet in future (so "find-then-cache" has no cache to fall
+back to and the dominance floor does not apply), the method could carry value A\* and a
+hand-shuffle cannot. **That bet is not funded here.** It would require an explicit user
+**re-charter** (the current charter is the fixed fk9↔cessna pair, spec §9 decision 1),
+**and** it still faces the unresolved **cross-machine wall** of claim 1 — the snapped
+word is only *presumptively* cross-machine byte-identical, exactly like today's
+baseline, an `libm`-ULP hazard ADR-0003 neither states nor guards. So even a
+re-chartered generalization spike must clear that wall (e.g. by pinning or guarding
+transcendental bit-stability across toolchains) before any optimizer output could ship.
+This gate's NO-GO (dominated) is final for the chartered fk9↔cessna nook.

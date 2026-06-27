@@ -286,6 +286,15 @@ cheaper-than-the-nook follow-ups remain on #844: **(a)** the husky front-cluster
 quick win (a pure order-search problem, *not* the dead nook), and **(b)** a parked, clearly-scoped
 **continuous-trajectory-optimization** spike (the only surviving method class; defer).
 
+> **Follow-up (b) update — Gate 0 returned NO-GO (dominated) (2026-06-27).** A
+> determinism-first pre-check (no optimizer, no `src/` change) found that even a byte-stable
+> continuous-traj-opt solution reduces to a Reeds–Shepp word the existing A\* already searches,
+> so its only edge (speed) can't bank deterministically under ADR-0003 cross-machine — it
+> collapses to either A\*-reachable or the rejected witness-cache. The fk9↔cessna nook stays a
+> manual-insertion case; only a re-chartered *generalization-to-arbitrary-nooks* bet survives,
+> and it still faces the cross-machine `libm`-ULP wall.
+> See [`herrenteich-fk9-cessna-trajopt-determinism-precheck.md`](herrenteich-fk9-cessna-trajopt-determinism-precheck.md) ("Verdict (Gate 0)").
+
 ### Known manual-insertion case — fk9_mkii ↔ cessna_140
 
 The `solve --render-paths` / `view` auto-router cannot route the fk9↔cessna front-door pair, and
