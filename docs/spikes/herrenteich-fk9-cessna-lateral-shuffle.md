@@ -286,6 +286,8 @@ cheaper-than-the-nook follow-ups remain on #844: **(a)** the husky front-cluster
 quick win (a pure order-search problem, *not* the dead nook), and **(b)** a parked, clearly-scoped
 **continuous-trajectory-optimization** spike (the only surviving method class; defer).
 
+> **Follow-up (b):** Gate 0 (determinism-first pre-check) returned **NO-GO (dominated)** (2026-06-27) — see [`herrenteich-fk9-cessna-trajopt-determinism-precheck.md`](herrenteich-fk9-cessna-trajopt-determinism-precheck.md) ("Verdict (Gate 0)").
+
 ### Known manual-insertion case — fk9_mkii ↔ cessna_140
 
 The `solve --render-paths` / `view` auto-router cannot route the fk9↔cessna front-door pair, and
