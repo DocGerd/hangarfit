@@ -473,3 +473,33 @@ def test_today_caddy_egress_clear() -> None:
     layout = load_layout(HERRENTEICH / "layout_today.yaml")
     c = egress_first_conflict(layout, "vw_caddy")
     assert c is None, f"expected the Caddy to have a clear egress; got {c}"
+
+
+# The dolly-borne gliders the club hand-positions: Scheibe Falke (18 m, parks
+# lengthwise on a monowheel dolly) and the folded Stemme S10. Both go in BY HAND,
+# never tow-routed (#667 Rung A / Stage 0).
+HAND_PLACED_GLIDERS = {"scheibe_falke", "stemme_s10"}
+
+
+def test_shipped_layouts_mark_dolly_gliders_hand_placed() -> None:
+    """#667 Rung A (Stage 0): the dolly-borne gliders are marked ``hand_placed`` in
+    the shipped Herrenteich layouts, so the fill planner treats them as fixed
+    keep-outs (path-less at-rest moves) instead of tow-routing them — matching the
+    club's real practice. ``on_carts`` stays True: it is orthogonal (the physical
+    dolly state shown in render vs. *how* the body reached its slot)."""
+    # layout.yaml (all eight, aircraft-only) — both gliders inside, both by hand.
+    layout = load_layout(HERRENTEICH / "layout.yaml")
+    assert {p.plane_id for p in layout.placements if p.hand_placed} == HAND_PLACED_GLIDERS
+    # layout_today.yaml (the real 'today' set) — both gliders inside, both by hand.
+    today = load_layout(HERRENTEICH / "layout_today.yaml")
+    assert {p.plane_id for p in today.placements if p.hand_placed} == HAND_PLACED_GLIDERS
+    # layout_full.yaml — only the Stemme is inside (the Scheibe parks outside here).
+    full = load_layout(HERRENTEICH / "layout_full.yaml")
+    assert {p.plane_id for p in full.placements if p.hand_placed} == {"stemme_s10"}
+    # The dolly state is preserved for rendering on every hand-placed glider.
+    for src in (layout, today, full):
+        for p in src.placements:
+            if p.hand_placed:
+                assert p.on_carts, (
+                    f"{p.plane_id} hand-placed glider should keep on_carts for render"
+                )

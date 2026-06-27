@@ -6,6 +6,18 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- Layout placements may now carry `hand_placed: true` (#667, Rung A): a
+  hand-positioned (dolly-borne) body is treated by the fill planner as a fixed
+  keep-out and emitted as a path-less at-rest move instead of being tow-routed.
+  Activated for the dolly gliders (Scheibe Falke + Stemme S10) in the Herrenteich
+  `layout.yaml` and `layout_today.yaml`, and for the Stemme S10 in
+  `layout_full.yaml` (where the Scheibe parks outside) — matching the club's real
+  practice of hand-positioning the gliders on their dollies. Optional, default
+  `false` — every existing layout stays byte-identical (ADR-0003).
+- Layout placements now reject unknown keys with a clear `LoaderError` instead of
+  silently dropping them (#667), mirroring the ground-object entry allowlist — so
+  a misspelled flag (e.g. `hand_palced`) fails loudly rather than silently
+  inverting intent (a hand-positioned glider getting tow-routed).
 - A `kind: fuselage` part may now carry a `vertices:` outline polygon, which the
   loader clips into area-conserving `fuselage_front`/`fuselage_aft` sub-polygons
   at the wing trailing edge (#550). Capability-only — no fleet behaviour change.

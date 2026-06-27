@@ -44,11 +44,13 @@ placements:
     y_m: 13.98
     heading_deg: 115.0
     on_carts: true          # always_cart (dolly-pivotable, #644)
+    hand_placed: true        # #667 Stage 0: hand-positioned on its dolly, not tow-routed
   - plane: scheibe_falke
     x_m: 5.92
     y_m: 22.15
     heading_deg: 290.0
     on_carts: true          # always_cart
+    hand_placed: true        # #667 Stage 0: hand-positioned on its dolly, not tow-routed
   - plane: zlin_savage
     x_m: 3.13
     y_m: 27.42

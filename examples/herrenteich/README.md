@@ -36,6 +36,16 @@ hangarfit view  examples/herrenteich/scenario_demo.yaml -o demo.html --seed 3
 | `scenario.yaml` | The solver input for the all-eight "everyone home" scenario (does not fully route — see below). |
 | `scenario_demo.yaml` | A 3-aircraft subset that **solves and fully tow-routes** end-to-end in the L-shaped hangar — the working toolchain demo. |
 
+> **Dolly gliders are hand-positioned (#667 Rung A).** As of #667 Stage 0, the
+> dolly-borne gliders are marked `hand_placed: true` in these layouts — the
+> Scheibe Falke + Stemme S10 in `layout.yaml` / `layout_today.yaml`, and the
+> Stemme only in `layout_full.yaml` (the Scheibe parks outside there). The fill
+> planner then treats them as fixed keep-outs and does **not** emit a tow path for
+> them (they go in by hand), so `view` / `solve --render-paths` route only the
+> powered aircraft around them. This is inert to static validity (`hangarfit
+> check` is unaffected). The lone-Stemme own-gear straight-in noted below is still
+> true as a *capability*; the dense shipped layouts just model it on its dolly.
+
 ## Three things this dataset is honest about
 
 **1. The hangar is L-shaped, and since ADR-0018 (#527) the model knows it.**

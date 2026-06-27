@@ -1409,6 +1409,82 @@ placements:
         assert len(layout.placements) == 1
         assert layout.placements[0].plane_id == "foo"
 
+    def test_hand_placed_flag_parsed(self, tmp_path: Path) -> None:
+        """#667 Rung A (Stage 0): load_layout parses the optional per-placement
+        ``hand_placed`` flag (strict-bool like ``on_carts``). A hand-placed body is
+        parked by hand, not tow-routed. (Orthogonality with ``on_carts`` is proven
+        on the real cart-borne gliders in the herrenteich dataset test.)"""
+        self._minimal_fleet_and_hangar(tmp_path)
+        layout_path = _write(
+            tmp_path / "layout.yaml",
+            """
+fleet: fleet.yaml
+hangar: hangar.yaml
+placements:
+  - plane: foo
+    x_m: 5.0
+    y_m: 5.0
+    heading_deg: 0
+    on_carts: false
+    hand_placed: true
+""",
+        )
+        assert load_layout(layout_path).placements[0].hand_placed is True
+
+    def test_hand_placed_defaults_false_when_omitted(self, tmp_path: Path) -> None:
+        """Omitting ``hand_placed`` yields False, so every existing layout loads
+        byte-identically (the inert-path guarantee, ADR-0003)."""
+        self._minimal_fleet_and_hangar(tmp_path)
+        layout_path = _write(
+            tmp_path / "layout.yaml",
+            "fleet: fleet.yaml\nhangar: hangar.yaml\n"
+            "placements:\n  - {plane: foo, x_m: 5.0, y_m: 5.0, heading_deg: 0, on_carts: false}\n",
+        )
+        assert load_layout(layout_path).placements[0].hand_placed is False
+
+    @pytest.mark.parametrize("typo", ["hand_palced", "on_cart", "headingdeg", "bogus"])
+    def test_unknown_placement_key_rejected(self, tmp_path: Path, typo: str) -> None:
+        """A misspelled PLACEMENT key must be REJECTED, not silently dropped
+        (#667 review / silent-failure class #513/#516). The danger is intent-
+        inverting: a typo'd ``hand_placed`` would silently default to False and
+        tow-route a hand-positioned glider. Mirrors the ground-object entry
+        allowlist (``_allowed_go_entry``)."""
+        self._minimal_fleet_and_hangar(tmp_path)
+        entry = f"plane: foo, x_m: 5.0, y_m: 5.0, heading_deg: 0, on_carts: false, {typo}: true"
+        layout_path = _write(
+            tmp_path / "layout.yaml",
+            f"fleet: fleet.yaml\nhangar: hangar.yaml\nplacements:\n  - {{{entry}}}\n",
+        )
+        with pytest.raises(LoaderError, match=r"unknown placement key\(s\)"):
+            load_layout(layout_path)
+
+    def test_all_allowed_placement_keys_load(self, tmp_path: Path) -> None:
+        """Completeness guard: a placement declaring EVERY allowed key loads, so the
+        allowlist can never be too strict. Self-enforcing against
+        ``_ALLOWED_PLACEMENT_KEYS``."""
+        from hangarfit.loader import _ALLOWED_PLACEMENT_KEYS
+
+        self._minimal_fleet_and_hangar(tmp_path)
+        entry = {
+            "plane": "foo",
+            "x_m": 5.0,
+            "y_m": 5.0,
+            "heading_deg": 0,
+            "on_carts": False,
+            "hand_placed": True,
+        }
+        assert set(entry) == _ALLOWED_PLACEMENT_KEYS, (
+            f"fixture must cover the full allowlist; "
+            f"missing={sorted(_ALLOWED_PLACEMENT_KEYS - set(entry))} "
+            f"extra={sorted(set(entry) - _ALLOWED_PLACEMENT_KEYS)}"
+        )
+        layout_path = _write(
+            tmp_path / "layout.yaml",
+            "fleet: fleet.yaml\nhangar: hangar.yaml\nplacements:\n"
+            f"  - {yaml.safe_dump(entry, default_flow_style=True).strip()}\n",
+        )
+        assert load_layout(layout_path).placements[0].hand_placed is True
+
     @pytest.mark.parametrize(
         "typo",
         ["placments", "maintenence", "hangarr", "bogus_field"],
