@@ -10,7 +10,7 @@ import math
 from pathlib import Path
 
 import pytest
-from shapely.geometry import Polygon
+from shapely.geometry import LineString, Polygon
 
 from hangarfit.collisions import check
 from hangarfit.geometry import aircraft_parts_world
@@ -19,6 +19,7 @@ from hangarfit.loader import (
     _build_aircraft,
     _build_part,
     _split_fuselage,
+    _subpart_from_clip,
     load_fleet,
     load_layout,
 )
@@ -152,6 +153,14 @@ def test_clip_rejects_non_x_monotone_outline():
     )
     with pytest.raises(LoaderError, match="single|x-monotone|piece"):
         _split_fuselage(cshape, _wing_at(0.0))
+
+
+def test_subpart_rejects_non_polygon_geometry():
+    # Directly exercise the _subpart_from_clip type guard: a non-Polygon clip
+    # result (empty / LineString / MultiPolygon) is a LoaderError, never a crash.
+    fus = _outline_fuselage()
+    with pytest.raises(LoaderError, match="single non-degenerate|piece"):
+        _subpart_from_clip(fus, "fuselage_front", LineString([(0.0, 0.0), (1.0, 1.0)]), "front")
 
 
 # --- Task 3: integration build, determinism, byte-identical-fleet guard ---

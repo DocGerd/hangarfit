@@ -220,9 +220,11 @@ box-interval split is unchanged and stays the path for every current aircraft
 (byte-identical — no catalog fuselage carries `vertices:`). D1 (the
 `wing × fuselage_front` hard-conflict rule), the conflict-kind taxonomy, and the
 "break derived from the wing chord, not a YAML station" decision are all
-unchanged. The clip is interpolation-only (deterministic, cross-machine-robust),
-re-canonicalized by `Part.__post_init__`, and requires an axis-aligned fuselage
-(`angle_deg = 0`). It enforces "exactly one non-degenerate Polygon per side" —
+unchanged. The clip is interpolation-only (no trig) and re-canonicalized by
+`Part.__post_init__`, so it is deterministic same-machine; cross-machine
+byte-identity stays asserted-not-tested (ADR-0003), and unlike the transform the
+clip adds no libm-transcendental surface (GEOS aside). It requires an
+axis-aligned fuselage (`angle_deg = 0`). It enforces "exactly one non-degenerate Polygon per side" —
 the formal guarantee that the front sub-outline is genuinely the cockpit; a
 non-x-monotone outline that would clip into disconnected nose-side pieces is a
 `LoaderError`. This re-opens D2 additively (a capability; no fleet behaviour

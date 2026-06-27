@@ -1572,10 +1572,11 @@ def _build_planform(
 def _build_vertices(data: Any, index: int) -> tuple[tuple[float, float], ...]:
     """Parse a raw ``vertices:`` ring (part-own centred frame) into Part vertices.
 
-    Each entry is an ``[x, y]`` pair. ``Part.__post_init__`` canonicalizes the
-    ring (ADR-0003) and enforces the bbox subset; this helper only does
-    shape/type validation so a malformed entry is a clear LoaderError rather
-    than a deep TypeError.
+    Each entry is an ``[x, y]`` pair. This helper does **shape/type** validation
+    only (a list of numeric pairs → a clear LoaderError, not a deep TypeError);
+    **ring validity** — vertex count, degeneracy, self-intersection, and the bbox
+    subset — is enforced by ``Part.__post_init__`` / ``_canonicalize_ring``
+    (ADR-0003) and surfaces as a LoaderError at the load boundary.
     """
     if not isinstance(data, list):
         raise LoaderError(f"parts[{index}].vertices must be a list of [x, y] pairs")
@@ -1782,7 +1783,7 @@ def _split_fuselage(fuselage: Part, wing: Part) -> list[Part]:
     Shapely-clips the outline into front/aft **sub-polygons** at the same
     ``x_break``.
 
-    The split is **area-conserving**: both segments inherit the source
+    The **scalar** split is **area-conserving**: both boxes inherit the source
     fuselage's ``width_m``, ``z_bottom_m``, ``z_top_m``, ``angle_deg`` and
     ``offset_y_m``; they abut at ``x_break`` and their union reconstitutes the
     original footprint exactly (no gap, no overlap). Let the source fuselage
@@ -1792,12 +1793,16 @@ def _split_fuselage(fuselage: Part, wing: Part) -> list[Part]:
     - ``fuselage_aft`` spans ``[c − L/2, x_break]`` (tail side),
 
     each with ``offset_x_m`` at the midpoint of its span and ``length_m`` its
-    span width.
+    span width. (The polygon path is also area-conserving, but each sub-polygon
+    gets its own ``width_m``/``offset_y_m`` from its sub-bbox — see
+    :func:`_subpart_from_clip`.)
 
     Raises :class:`LoaderError` if the derived break does not lie strictly
     inside the fuselage span (the wing trailing edge is forward of the nose or
     aft of the tail) — a degenerate split that would produce a zero- or
-    negative-length segment.
+    negative-length segment. (The polygon path raises additionally — angle ≠ 0,
+    break outside the outline x-span, or a non-single-Polygon clip; see
+    :func:`_clip_fuselage_outline`.)
     """
     x_break = _wing_trailing_edge_x(wing)
     if fuselage.local_vertices is not None:
@@ -1851,8 +1856,11 @@ def _clip_fuselage_outline(fuselage: Part, x_break: float) -> list[Part]:
     outline lives in the part's own centred frame; for an axis-aligned fuselage
     that frame is plane-local shifted by ``offset_x_m``, so the part-own clip
     station is ``xs = x_break - offset_x_m``. The half-plane intersection is
-    interpolation-only (deterministic, cross-machine-robust) and area-conserving;
-    each side is re-canonicalized by ``Part.__post_init__``.
+    interpolation-only (no trig) and area-conserving, and each side is
+    re-canonicalized by ``Part.__post_init__``, so the result is deterministic
+    same-machine (the canary regime). Cross-machine byte-identity stays
+    asserted-not-tested like the rest of the pipeline (ADR-0003); unlike the
+    transform the clip adds no libm-transcendental surface (GEOS aside).
     """
     if abs(fuselage.angle_deg) > _FUSELAGE_OUTLINE_ANGLE_TOL_DEG:
         raise LoaderError(
@@ -1882,10 +1890,19 @@ def _clip_fuselage_outline(fuselage: Part, x_break: float) -> list[Part]:
 def _subpart_from_clip(fuselage: Part, kind: PartKind, geom: Any, side_label: str) -> Part:
     """Build one fuselage_front/aft Part from a clipped sub-polygon (#550).
 
-    Enforces "exactly one non-degenerate Polygon" — the formal guarantee that the
-    front sub-outline is genuinely the cockpit. The sub-polygon comes back in the
-    source part's own centred frame; re-express it about its own sub-bbox centre.
+    Requires exactly one connected, non-degenerate ``Polygon`` per side (a
+    ``MultiPolygon`` — e.g. from a non-x-monotone outline — is rejected). A single
+    connected piece per side is what makes the front sub-outline the nose-side
+    cockpit; x-monotonicity of the authored outline is the authoring contract, not
+    a checked invariant. The sub-polygon comes back in the source part's own
+    centred frame; re-express it about its own sub-bbox centre.
+    ``Part.__post_init__`` is the authoritative ring-validity gate (degeneracy,
+    self-intersection, bbox subset); any rejection there is re-raised as an
+    attributed ``LoaderError`` so the clip's error contract is total.
     """
+    # `_RING_MIN_ABS_SIGNED_AREA` is reused here only as a conservative fast-reject
+    # area floor for the obvious empty/sliver case; the precise degeneracy gate is
+    # the Part constructor below (its threshold is on |2·signed-area|, not area).
     if geom.is_empty or geom.geom_type != "Polygon" or geom.area < _RING_MIN_ABS_SIGNED_AREA:
         raise LoaderError(
             f"kind 'fuselage': the outline does not clip into a single non-degenerate "
@@ -1897,17 +1914,23 @@ def _subpart_from_clip(fuselage: Part, kind: PartKind, geom: Any, side_label: st
     ys_ = [y for _, y in coords]
     sub_cx = (min(xs_) + max(xs_)) / 2.0
     sub_cy = (min(ys_) + max(ys_)) / 2.0
-    return Part(
-        kind=kind,
-        length_m=max(xs_) - min(xs_),
-        width_m=max(ys_) - min(ys_),
-        offset_x_m=fuselage.offset_x_m + sub_cx,
-        offset_y_m=fuselage.offset_y_m + sub_cy,
-        angle_deg=fuselage.angle_deg,
-        z_bottom_m=fuselage.z_bottom_m,
-        z_top_m=fuselage.z_top_m,
-        local_vertices=tuple((x - sub_cx, y - sub_cy) for x, y in coords),
-    )
+    try:
+        return Part(
+            kind=kind,
+            length_m=max(xs_) - min(xs_),
+            width_m=max(ys_) - min(ys_),
+            offset_x_m=fuselage.offset_x_m + sub_cx,
+            offset_y_m=fuselage.offset_y_m + sub_cy,
+            angle_deg=fuselage.angle_deg,
+            z_bottom_m=fuselage.z_bottom_m,
+            z_top_m=fuselage.z_top_m,
+            local_vertices=tuple((x - sub_cx, y - sub_cy) for x, y in coords),
+        )
+    except ValueError as e:
+        raise LoaderError(
+            f"kind 'fuselage': the clipped {side_label} sub-polygon at the wing "
+            f"trailing edge is not a valid part ring ({e})"
+        ) from e
 
 
 def _build_placement(data: Any) -> Placement:
