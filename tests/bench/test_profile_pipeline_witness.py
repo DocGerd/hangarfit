@@ -104,6 +104,35 @@ def test_witness_with_hand_placed_body_routes_and_scores() -> None:
     assert result.deterministic is True
 
 
+def test_path_failures_skips_ground_object_mover_moves() -> None:
+    """`_path_failures` must skip a placed-routed-mover's Move, not KeyError.
+
+    `plan_fill` emits a Move for every placed_routed_mover ground object, whose
+    `plane_id` is NOT in the aircraft-only `by_id` map. Movers route last and are
+    not aircraft keep-outs (they live in `ground_object_placements`), so this
+    aircraft-arc re-validation must skip them — re-validating mover arcs is Rung E
+    / #602 work. `herrenteich_today` carries such movers (vw_caddy, glider
+    trailers), so this fires the moment that witness routes (Rung E).
+    """
+    from bench.harness import _path_failures
+    from hangarfit.loader import load_layout
+    from hangarfit.towplanner import Move, MovesPlan, Pose
+
+    layout = load_layout("examples/herrenteich/layout_today.yaml")
+    mover_gp = next(
+        gp
+        for gp in layout.ground_object_placements
+        if layout.ground_objects[gp.plane_id].object_class == "placed_routed_mover"
+    )
+    # A path-less mover Move (the best-effort un-routed mover case) — and the
+    # routed-arc case takes the same by_id lookup, so both are covered by the guard.
+    plan = MovesPlan(
+        target_layout=layout,
+        moves=(Move(mover_gp.plane_id, Pose.from_placement(mover_gp), None),),
+    )
+    assert _path_failures(plan, layout) == []
+
+
 # ── Herrenteich witness regimes are registered + gated ───────────────────────
 
 

@@ -205,13 +205,21 @@ def _path_failures(plan: MovesPlan, target: Layout) -> list[str]:
     placed: list[Placement] = []
     failures: list[str] = []
     for move in plan.moves:
+        if move.plane_id not in by_id:
+            # A placed_routed_mover ground-object move (towplanner.py): its id is
+            # not an aircraft placement. Movers route LAST against the fully-placed
+            # aircraft set and are not aircraft keep-outs (they live in
+            # `ground_object_placements`), so they are out of scope for this
+            # aircraft-arc re-validation — re-validating mover arcs is Rung E / #602
+            # work. Skipping avoids both a KeyError here and corrupting `placed`
+            # (an aircraft-only list) with a ground object.
+            continue
         original = by_id[move.plane_id]
         if move.path is None:
-            # A path-less at-rest move (a #667 hand-placed body, or a #601
-            # deferred mover): no arc to re-validate. It is still a keep-out for
-            # later routed bodies — `plan_fill` seeds `placed` with the
-            # hand-placed slots — so keep the obstacle context faithful by
-            # committing it before the next move.
+            # A path-less at-rest move (a #667 hand-placed aircraft body): no arc
+            # to re-validate. It is still a keep-out for later routed bodies —
+            # `plan_fill` seeds `placed` with the hand-placed slots — so keep the
+            # obstacle context faithful by committing it before the next move.
             placed.append(original)
             continue
         placed_layout = Layout(
