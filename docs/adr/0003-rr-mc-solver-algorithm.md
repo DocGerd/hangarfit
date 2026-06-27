@@ -464,7 +464,7 @@ for the current "Maintenance plane handling" bullet.
 
 ---
 
-### 2026-06-27 — cross-machine reproducibility: a recorded test-coverage gap + `libm` hazard (#844)
+### 2026-06-27 — cross-machine reproducibility: a recorded test-coverage gap + `libm` hazard (issue #844)
 
 The cross-machine reproducibility promised above (a `max_restarts`-bounded run is
 "reproducible across runs **and machines**"; the *Guidance* recommends `max_restarts`
@@ -477,16 +477,18 @@ Step 0.1–0.2).
 
 - **Test-coverage gap.** The `tests/test_solver_canaries.py` determinism canaries — and
   the `determinism-guard`'s empirical twice-and-diff — are **same-machine / same-process**
-  re-run-and-diff. There is no cross-machine golden and no pinned literal carried across
-  hosts; they demonstrate same-machine (and cross-process same-machine) reproducibility,
-  so nothing in the suite would catch a cross-machine-*only* divergence.
-- **`libm` transcendental hazard (tow planner).** A `MovesPlan`'s Reeds–Shepp segment
-  lengths are closed-form (no iterative numerical method) but **transcendental-heavy**:
-  `math.sin/cos/atan2/acos` in `plan_reeds_shepp` and the `_lsl…_lrl` base solvers.
-  IEEE-754 mandates a correctly-rounded `sqrt` and the basic arithmetic ops but **not**
-  these transcendentals, so their last-ULP bits may differ across `libm` builds /
-  platforms. Cross-machine byte-identity of tow plans therefore rests on an unstated
-  assumption that `libm` transcendentals are bit-stable across hosts.
+  re-run-and-diff; `tests/test_solver_parallel.py` adds cross-*process* (still same-machine)
+  byte-identity (#544). None is a cross-*machine* golden, and no pinned literal is carried
+  across hosts — so nothing in the suite would catch a cross-machine-*only* divergence.
+- **`libm` transcendental hazard (tow planner).** A `MovesPlan`'s tow-arc `Segment.length_m`
+  values are closed-form (no iterative numerical method) but **transcendental-heavy**: the
+  Reeds–Shepp shot (`plan_reeds_shepp` → the `_rs_lsl…_rs_lrslr` family in `_RS_BASE_SOLVERS`),
+  the Dubins word solvers (`_lsl…_lrl`, via `plan_dubins`), and the zero-radius cart/own-gear
+  pivots (`_plan_cart`) all derive leg lengths via `math.sin/cos/atan2/acos`. IEEE-754 mandates
+  a correctly-rounded `sqrt` and the basic arithmetic ops but **not** these transcendentals, so
+  their last-ULP bits may differ across `libm` builds / platforms. Cross-machine byte-identity
+  of tow plans therefore rests on an unstated assumption that `libm` transcendentals are
+  bit-stable across hosts.
 
 **Status — a documentation/coverage caveat, not a known live divergence.** No
 cross-machine break has been observed; same-machine reproducibility (the mode the
