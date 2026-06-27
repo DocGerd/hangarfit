@@ -111,7 +111,7 @@ The Step-0 ratio is a **cheap predictor**; Step 1's "routes the real pair under 
 
 - **GO** — (b) collapses expansions by **≳ 50×** vs (a) on the synthetic nook ⇒ heading-awareness is the missing ingredient. Proceed to Step 1 with high confidence.
 - **PARTIAL** (~5×–50×) — heading-awareness helps but may not suffice alone. **Proceed to Step 1, but the efficacy bar (route the real pair < 16 k) is the real arbiter** — do not over-read the synthetic ratio. If Step 1 misses the budget, treat it as an Efficacy kill (§5, kill condition 2), and consider whether a coarse-global / fine-local *adaptive* pass (the runner-up) closes the residual gap before abandoning.
-- **NO-GO** — (b) only **~halves** (≲2×) expansions ⇒ the cost is intrinsic fine-SE(2) plateau volume inside the nook that no heuristic (learned or perfect) can prune. The deterministic field **and** learned M1 are both dead; fall to the kill-branch options (§6).
+- **NO-GO** — (b) cuts expansions by **< 5×** vs (a) (and may even *increase* them) ⇒ the cost is intrinsic fine-SE(2) plateau volume inside the nook that no heuristic (learned or perfect) can prune. The deterministic field **and** learned M1 are both dead; fall to the kill-branch options (§6). *(Measured outcome: 0.89× — se2 came in ~12% **worse** than the deployed heuristic, i.e. deep in NO-GO.)*
 
 ### Step 1 — if GO: build the deterministic heading-aware field (~1 day, no torch/ONNX)
 
@@ -138,7 +138,7 @@ A generalizing heuristic for unseen layouts (the superseded spec's S1/S2 ambitio
 
 **Kill conditions** (any one ends the corresponding track):
 
-1. **Gate kill** — Step-0 probe: the exact backward-SE(2) field cuts expansions only ~2× (not ≳50×) ⇒ the ~97 k is intrinsic plateau volume, not the unguided heading dimension. A learned `h` can never beat the exact field, so the whole heuristic class is dead.
+1. **Gate kill** — Step-0 probe: the exact backward-SE(2) field cuts expansions by < 5× (not ≳50×) ⇒ the ~97 k is intrinsic plateau volume, not the unguided heading dimension. A learned `h` can never beat the exact field, so the whole heuristic class is dead. *(Measured: 0.89× — worse than baseline. Gate kill fired.)*
 2. **Efficacy kill** — Step 1: even with Step-0 headroom, the field does **not** route the isolated real pair under ~16 k expansions ⇒ corridor-confined cost still exceeds the shippable budget.
 3. **Learned-in-loop kill** (already established) — a learned `h` running inside the shipped planner loop cannot preserve ADR-0003 cross-machine byte-identity (onnxruntime float ties). Learned `h` may ship only offline/find-then-cache.
 4. **Redundancy kill** (narrow-scope learned M1) — for the *fixed* Herrenteich scenario the only label source for a learned cost-to-go is the 39-min witness, the same run that already *produces* the deployable path; caching that witness dominates narrow-scope learned M1 with zero ML.

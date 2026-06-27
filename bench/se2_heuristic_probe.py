@@ -295,10 +295,16 @@ def run_real_pair_gate(budget: int = 150_000, max_cells: int = 150_000) -> RealP
     ``stats["expansions"]``. SLOW (~45 min: ~10 min field + two fine-grid searches).
 
     Records the cap-adequacy check: ``c_cap`` (max cost-to-go held in the capped
-    field) must exceed ``c_star`` (optimal cost-to-go from the start). When it does,
-    A* (which only queries ``h`` on states with ``g + h ≤ C*``) saw EXACT heading-aware
-    cost-to-go over the whole region it explored, so the ``max_cells`` cap is not a
-    confound and an uncapped rebuild would return the identical se2 count.
+    field) vs ``c_star`` (= ``h(cone[0])``, an upper bound on the optimal cost-to-go
+    ``C*`` from the start). With ``c_cap > c_star`` the field holds its heading-aware
+    cost-to-go — exact up to the omitted cusp penalties (an admissible lower bound;
+    see ``build_se2_field``) — for every state with cost-to-go ≤ ``C*``, i.e. the bulk
+    of the region A* explores. Beyond the cap ``h`` falls back to euclidean (an
+    under-estimate), which can only admit *more* expansions — so the measured se2
+    count is an upper bound on the uncapped field's, and an uncapped rebuild could
+    only lower it. The verdict is robust either way: that upper bound already loses
+    to ``grid``, and reaching even PARTIAL (≥5×) would need a ~5.6× collapse the
+    intrinsic plateau rules out.
 
     The measured result is NO-GO: grid 96 949 vs se2 108 991 (0.89×) — heading-
     awareness is not the lever; the cost is an intrinsic A* plateau."""
@@ -316,7 +322,7 @@ def run_real_pair_gate(budget: int = 150_000, max_cells: int = 150_000) -> RealP
         )
         h_se2 = make_field_h(field, goal)
         c_cap = max(field.values())
-        c_star = h_se2(cone[0])  # se2 cost-to-go from the winning door seed
+        c_star = h_se2(cone[0])  # se2 cost-to-go from the first door seed (upper bound on C*)
         exp_se2, found_se2 = _run_real(
             mover, cone, goal, hangar, placed, budget, "euclidean", h_se2
         )
@@ -376,10 +382,10 @@ def _run_one(
 
 def run_probe(budget: int = 16_000) -> ProbeResult:
     """⚠ DISCARDED VACUOUS toy gate — kept only for the field heading-awareness unit
-    test and as the cautionary feasibility-first example. The toy 18×14 m arena wedges
-    the fk9's 9.85 m wingspan so the SE(2) field never reaches the door (it floods ~78
-    cells around the goal), making the NO-GO it returns untrustworthy. Use
-    :func:`run_real_pair_gate` for the verdict."""
+    test and as the cautionary feasibility-first example. The toy arena (18 m deep ×
+    14 m wide) wedges the fk9's 9.85 m wingspan so the SE(2) field never reaches the
+    door (it floods ~78 cells around the goal), making the NO-GO it returns
+    untrustworthy. Use :func:`run_real_pair_gate` for the verdict."""
     nook = build_toy_nook()
     r = nook.mover.effective_turn_radius_m()
     with fine_grid():

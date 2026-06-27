@@ -2,7 +2,7 @@
 
 > **⚠ REFUTED (2026-06-27) — executed; gate returned NO-GO.** All four tasks were implemented
 > (the toy fixture, the `heuristic_fn` seam, the backward-SE(2) field, the probe driver). The
-> gate ran on the real fk9↔cessna pair and measured **NO-GO** (se2 108 991 vs grid 96 949
+> gate ran on the real fk9↔cessna pair and measured **NO-GO** (grid 96 949 vs se2 108 991
 > expansions, 0.89×): the cost is an intrinsic A\* plateau, so the heuristic class is dead.
 > Step 1 (promoting the field into `towplanner`) was **not** built. The seam + the dev-only
 > `bench/se2_heuristic_probe.py` are retained as the reproducible refutation record. Result +

@@ -222,7 +222,7 @@ read-only and does not touch shipped solver/towplanner code.
 
 ---
 
-## Step-0 result — SE(2) heading-aware heuristic headroom probe (#840, 2026-06-26) → **NO-GO**
+## Step-0 result — SE(2) heading-aware heuristic headroom probe (#840, initiated 2026-06-26, result 2026-06-27) → **NO-GO**
 
 **Question (pre-registered, spec §4):** does a heading-aware cost-to-go heuristic collapse the
 fine-grid A\* expansion count enough (GO ≥50×, PARTIAL ≥5×, NO-GO <5×) to make the fk9↔cessna nook
@@ -233,8 +233,8 @@ A\* plateau.
 (`build_se2_field`), injected into `plan_path` via the additive `heuristic_fn` seam (Task 2) and
 compared against the deployed **position-only** `grid` heuristic at the fine 0.25 m/10° grid.
 
-> **A first toy-fixture run was discarded as VACUOUS (the feasibility-first trap).** A tiny 18×14 m
-> synthetic arena wedged the fk9 (9.85 m wingspan, ≈2 m wall clearance), so the backward flood
+> **A first toy-fixture run was discarded as VACUOUS (the feasibility-first trap).** A tiny synthetic
+> arena (18 m deep × 14 m wide) wedged the fk9 (9.85 m wingspan, ≈2 m wall clearance), so the backward flood
 > reached only **78 cells** around the goal and never reached the door — the field silently degraded
 > to euclidean and all three heuristics exhausted at 16 000 without finding a route. That tells us
 > nothing about headroom (the toy was near-*infeasible*, not hard). The trustworthy gate below runs
@@ -253,10 +253,14 @@ at its Herrenteich goal, fk9 routed to its goal via the door cone, fine 0.25 m/1
 - **Harness validated:** the `grid` run reproduced the witness's **exact 96 949** expansions, confirming
   the setup *is* the faithful witness subproblem.
 - **The 150 k-cell field cap is provably not a confound:** the field's max cost-to-go `C_cap = 41.6`
-  exceeds the optimal cost-to-go from the start, `C* ≈ 17.2` (= `h(cone[0])`). A\* only ever queries
-  `h` on states with `g + h ≤ C*`, so every value the search used was ≤ 17.2 < 41.6 — the field held
-  **exact** heading-aware cost-to-go over the *entire* region A\* explores. An uncapped rebuild is
-  mathematically guaranteed to return the identical se2 count.
+  exceeds `h(cone[0]) ≈ 17.2` (an upper bound on the optimal cost-to-go `C*` from the start), so the
+  field holds its heading-aware cost-to-go for the bulk of the region A\* explores. Where A\* *does*
+  reach beyond the cap (a positionally-near, maneuver-far pose), `h` falls back to euclidean — an
+  *under*-estimate that can only admit **more** expansions. So 108 991 is an **upper bound** on the
+  uncapped-exact field's count; an uncapped rebuild could only *lower* it, never raise it. The verdict
+  is robust either way: that upper bound already loses to `grid`, and reaching even the **PARTIAL** bar
+  (≥5×) would require an uncapped field to collapse expansions ~5.6× below the measured value — which
+  the intrinsic-plateau argument below rules out.
 
 **Interpretation — the pre-registered plateau dissent (spec §3.1), confirmed.** A *perfect* admissible
 heuristic losing to a looser one is the textbook signature of an **intrinsic near-C\* A\* plateau**:
