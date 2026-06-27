@@ -7,11 +7,18 @@ wing trailing edge (capability-only; the real fleet stays byte-identical). See
 """
 
 import math
+from pathlib import Path
 
 import pytest
 from shapely.geometry import Polygon
 
-from hangarfit.loader import LoaderError, _build_part, _split_fuselage
+from hangarfit.loader import (
+    LoaderError,
+    _build_aircraft,
+    _build_part,
+    _split_fuselage,
+    load_fleet,
+)
 from hangarfit.models import Part
 
 
@@ -140,3 +147,66 @@ def test_clip_rejects_non_x_monotone_outline():
     )
     with pytest.raises(LoaderError, match="single|x-monotone|piece"):
         _split_fuselage(cshape, _wing_at(0.0))
+
+
+# --- Task 3: integration build, determinism, byte-identical-fleet guard ---
+
+
+def _outline_entry():
+    # Minimal aircraft entry with a tapered fuselage outline + a wing whose
+    # trailing edge (offset_x - length/2 = 0.6 - 0.7 = -0.1) lands inside the
+    # fuselage x-span [-3, 3]. Required entry keys: id, name, wing_position,
+    # gear, movement_mode, parts.
+    return {
+        "id": "outline_test",
+        "name": "Outline Test Plane",
+        "wing_position": "high",
+        "gear": "nosewheel",
+        "movement_mode": "cart_eligible",
+        "turn_radius_m": 8.0,
+        "wheels": {"main_offset_x_m": -0.5, "track_m": 2.0, "third_wheel_offset_x_m": 1.5},
+        "parts": [
+            {
+                "kind": "wing",
+                "length_m": 1.4,
+                "width_m": 9.0,
+                "offset_x_m": 0.6,
+                "z_bottom_m": 1.7,
+                "z_top_m": 2.0,
+            },
+            {
+                "kind": "fuselage",
+                "length_m": 6.0,
+                "width_m": 1.2,
+                "offset_x_m": 0.0,
+                "z_bottom_m": 0.3,
+                "z_top_m": 1.6,
+                "vertices": [[3.0, 0.0], [1.0, 0.6], [-3.0, 0.6], [-3.0, -0.6], [1.0, -0.6]],
+            },
+        ],
+    }
+
+
+def test_outline_aircraft_builds_polygon_front_aft():
+    ac = _build_aircraft(_outline_entry())
+    by_kind = {p.kind: p for p in ac.parts}
+    assert by_kind["fuselage_front"].local_vertices is not None
+    assert by_kind["fuselage_aft"].local_vertices is not None
+
+
+def test_outline_build_is_deterministic():
+    a = _build_aircraft(_outline_entry())
+    b = _build_aircraft(_outline_entry())
+    fa = next(p for p in a.parts if p.kind == "fuselage_front")
+    fb = next(p for p in b.parts if p.kind == "fuselage_front")
+    assert fa.local_vertices == fb.local_vertices
+
+
+def test_no_shipped_fuselage_part_is_a_polygon():
+    # byte-identical-fleet guard: every real fleet fuselage stays a scalar box
+    # (the scalar split produces fuselage_front/aft with local_vertices is None).
+    fleet = load_fleet(Path(__file__).resolve().parents[1] / "data" / "fleet.yaml")
+    for ac in fleet.values():
+        for p in ac.parts:
+            if p.kind in ("fuselage_front", "fuselage_aft"):
+                assert p.local_vertices is None, f"{ac.id} {p.kind} became a polygon"
