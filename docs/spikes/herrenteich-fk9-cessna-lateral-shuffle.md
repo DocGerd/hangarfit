@@ -131,18 +131,20 @@ plus an independent fk9↔cessna wall check.
 |---|---|---|
 | `aviat_husky` | **exhausts** (8000, retried 6573) | **routes (2538 exp)** |
 | `wild_thing` | routes (1427) | routes (1294) — still seats after husky |
-| planes that route before the wall | 4 (zlin, scheibe, wild_thing, stemme) | **6** (zlin, scheibe, husky, wild_thing, stemme, cessna) |
+| distinct planes routed (all but the blocker) | 4 (zlin, scheibe, wild_thing, stemme) | **6** (zlin, scheibe, husky, wild_thing, stemme, cessna) |
 | bails on | `aviat_husky` — **false blame** (husky is routable) | `fk9_mkii` — **the genuine wall** |
 | all-8 routed? | no (`global fill budget (16000) exhausted`) | no (`global fill budget (16000) exhausted`) |
 
 **Mechanism.** In the natural order `wild_thing` (deeper, y 16.95) precedes `aviat_husky` (y 16.40),
-so the greedy commits `wild_thing` first, then `husky` cannot route past it (the root-cause doc's
-"purely an order issue"). The #667 backtracking *should* reach husky-early — but the doomed
-`wild_thing`-first subtree's two husky exhaustions (8000 + 6573 = 14.6 k, i.e. 91 % of the 16 k global
-cap) drain the budget **before** the backtrack to husky-early is attempted, so the run bails on
-`aviat_husky`. Forcing
-husky-early seats it for 2538 expansions, `wild_thing` still seats, and the bail relocates to the
-**genuine** fk9↔cessna wall.
+so the greedy commits `wild_thing` first and `husky` then cannot route past it (the root-cause doc's
+husky-ordering finding — husky routes if placed before `wild_thing`, which the husky-early arm now
+directly confirms: `husky ok 2538`). The natural-order run consumes the **entire** 16 k global budget
+on `wild_thing` (1427) plus two `aviat_husky` exhaustions (8000 + 6573 = 14.6 k) and bails on
+`aviat_husky`. Whether the #667 backtracking *would* reach the husky-early order given a larger budget
+is a hypothesis this gate did **not** test (no larger-budget baseline arm was run); what it shows is
+that within the deployed budget the natural order never gets there, while forcing husky-early seats
+husky (2538), still seats `wild_thing` (1294), and relocates the bail to the **genuine** fk9↔cessna
+wall.
 
 **Wall check (independent, one `plan_path` call each, deployed grid + 8 k per-plane cap):** `fk9_mkii`
 vs parked `cessna_140` → **EXHAUSTED (8000)**; `cessna_140` vs parked `fk9_mkii` → **EXHAUSTED (8000)**.
@@ -157,7 +159,8 @@ grid-geometry-locked, stronger than the predicted "budget-bound" — no global-b
 #480/#512 tradeoff) reaches it. So a `_place_rest` ordering heuristic is a *diagnostic-clarity /
 partial-fill* improvement (correct bail blame, more planes in a best-effort render), **not** a routing
 fix, and shipping it touches determinism-sensitive `_place_rest` (binds determinism-guard + the
-`scene.py:298` timeline-order divergence + a perf rebaseline). The ship-vs-kill decision for #844a is
+`back_first_order` timeline-order divergence in `scene.py`'s whole-fill timeline builder — currently
+`scene.py:298` — + a perf rebaseline). The ship-vs-kill decision for #844a is
 **deferred** pending that cost/benefit call; #844a stays OPEN.
 
 ---
