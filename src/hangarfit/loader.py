@@ -41,8 +41,10 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 import yaml
+from shapely.geometry import Polygon, box
 
 from .models import (
+    _RING_MIN_ABS_SIGNED_AREA,
     Aircraft,
     Door,
     GroundObject,
@@ -51,6 +53,7 @@ from .models import (
     MaintenanceBay,
     MoverMotionMode,
     Part,
+    PartKind,
     Placement,
     PlaneConstraint,
     RegionPreference,
@@ -1511,6 +1514,11 @@ _ALLOWED_PART_KEYS = frozenset(
 # "fuselage" itself is never a Part kind reaching _build_part.
 _VERTICES_ALLOWED_KINDS = frozenset({"fuselage_front", "fuselage_aft"})
 
+# A polygon fuselage must be axis-aligned: the clip works in part-own x, which
+# equals plane-local x only when unrotated (#550). Fuselages are angle-0 by
+# construction, so rotation support is YAGNI.
+_FUSELAGE_OUTLINE_ANGLE_TOL_DEG = 1e-9
+
 
 def _build_planform(
     data: Any, span_m: float, length_m: float, index: int
@@ -1784,16 +1792,14 @@ def _split_fuselage(fuselage: Part, wing: Part) -> list[Part]:
     aft of the tail) — a degenerate split that would produce a zero- or
     negative-length segment.
     """
+    x_break = _wing_trailing_edge_x(wing)
     if fuselage.local_vertices is not None:
-        raise LoaderError(
-            "a fuselage part may not carry a polygon footprint (local_vertices); "
-            "polygon footprints are wing-only"
-        )
+        return _clip_fuselage_outline(fuselage, x_break)
+    # --- scalar box-interval path below is UNCHANGED (byte-identical, #550) ---
     c = fuselage.offset_x_m
     half_len = fuselage.length_m / 2.0
     nose_x = c + half_len  # forward tip (+x)
     tail_x = c - half_len  # aft tip (−x)
-    x_break = _wing_trailing_edge_x(wing)
 
     if not (tail_x < x_break < nose_x):
         raise LoaderError(
@@ -1829,6 +1835,72 @@ def _split_fuselage(fuselage: Part, wing: Part) -> list[Part]:
             z_top_m=fuselage.z_top_m,
         ),
     ]
+
+
+def _clip_fuselage_outline(fuselage: Part, x_break: float) -> list[Part]:
+    """Clip a polygon fuselage outline into front/aft sub-polygons at x_break (#550).
+
+    ``x_break`` is the wing trailing edge in plane-local coords (ADR-0012). The
+    outline lives in the part's own centred frame; for an axis-aligned fuselage
+    that frame is plane-local shifted by ``offset_x_m``, so the part-own clip
+    station is ``xs = x_break - offset_x_m``. The half-plane intersection is
+    interpolation-only (deterministic, cross-machine-robust) and area-conserving;
+    each side is re-canonicalized by ``Part.__post_init__``.
+    """
+    if abs(fuselage.angle_deg) > _FUSELAGE_OUTLINE_ANGLE_TOL_DEG:
+        raise LoaderError(
+            f"a polygon fuselage (vertices:) must be axis-aligned (angle_deg = 0); "
+            f"got angle_deg={fuselage.angle_deg:g}"
+        )
+    assert fuselage.local_vertices is not None  # caller guarantees; narrows for mypy
+    xs = x_break - fuselage.offset_x_m
+    outline = Polygon(fuselage.local_vertices)
+    minx, miny, maxx, maxy = outline.bounds
+    if not (minx < xs < maxx):
+        raise LoaderError(
+            f"kind 'fuselage': derived front/aft section break x={x_break:g} "
+            f"(wing trailing edge) must lie strictly inside the fuselage outline "
+            f"x-span; the break must be strictly inside the span. Check the wing "
+            f"offset_x_m / length_m or the fuselage outline."
+        )
+    pad = (maxx - minx) + (maxy - miny) + 1.0  # any margin past the bbox
+    front_geom = outline.intersection(box(xs, miny - pad, maxx + pad, maxy + pad))
+    aft_geom = outline.intersection(box(minx - pad, miny - pad, xs, maxy + pad))
+    return [
+        _subpart_from_clip(fuselage, "fuselage_front", front_geom, "front"),
+        _subpart_from_clip(fuselage, "fuselage_aft", aft_geom, "aft"),
+    ]
+
+
+def _subpart_from_clip(fuselage: Part, kind: PartKind, geom: Any, side_label: str) -> Part:
+    """Build one fuselage_front/aft Part from a clipped sub-polygon (#550).
+
+    Enforces "exactly one non-degenerate Polygon" — the formal guarantee that the
+    front sub-outline is genuinely the cockpit. The sub-polygon comes back in the
+    source part's own centred frame; re-express it about its own sub-bbox centre.
+    """
+    if geom.is_empty or geom.geom_type != "Polygon" or geom.area < _RING_MIN_ABS_SIGNED_AREA:
+        raise LoaderError(
+            f"kind 'fuselage': the outline does not clip into a single non-degenerate "
+            f"{side_label} piece at the wing trailing edge; the outline must be a simple, "
+            f"x-monotone polygon spanning the break (got {geom.geom_type}, area={geom.area:g})."
+        )
+    coords = list(geom.exterior.coords)[:-1]  # drop Shapely's closing duplicate
+    xs_ = [x for x, _ in coords]
+    ys_ = [y for _, y in coords]
+    sub_cx = (min(xs_) + max(xs_)) / 2.0
+    sub_cy = (min(ys_) + max(ys_)) / 2.0
+    return Part(
+        kind=kind,
+        length_m=max(xs_) - min(xs_),
+        width_m=max(ys_) - min(ys_),
+        offset_x_m=fuselage.offset_x_m + sub_cx,
+        offset_y_m=fuselage.offset_y_m + sub_cy,
+        angle_deg=fuselage.angle_deg,
+        z_bottom_m=fuselage.z_bottom_m,
+        z_top_m=fuselage.z_top_m,
+        local_vertices=tuple((x - sub_cx, y - sub_cy) for x, y in coords),
+    )
 
 
 def _build_placement(data: Any) -> Placement:
