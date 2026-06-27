@@ -1,0 +1,29 @@
+# Rung B (#667) regression fixture: a fully-routable layout that ALSO contains a
+# `hand_placed` body — so `plan_fill` emits a path-less at-rest Move for it
+# (Move(plane_id, pose, None)) alongside the routed body's arc.
+#
+# This is a copy of `valid_left_side_nesting.yaml` with the DEEP body `fuji`
+# marked hand-placed (it seeds the fill as a fixed keep-out), so the shallow,
+# near-door `cessna_150` still tow-routes — giving a plan with BOTH a path-less
+# at-rest move (the hand-placed Fuji) and a routed arc. It exists to exercise the
+# bench harness's witness path-validity + determinism digest on a plan that
+# carries a `path is None` move — the case the real Herrenteich witnesses will
+# produce once they route (Rung E), which the all-bailing baseline never reaches
+# today. `hand_placed` is orthogonal to `on_carts` (how it got there vs its
+# physical state), so on_carts stays false.
+
+fleet: ../../data/fleet.yaml
+hangar: ../../data/hangar.yaml
+
+placements:
+  - plane: cessna_150
+    x_m: 9.0
+    y_m: 5.0
+    heading_deg: 0.0
+    on_carts: false
+  - plane: fuji
+    x_m: 5.0
+    y_m: 10.0
+    heading_deg: 90.0
+    on_carts: false
+    hand_placed: true
