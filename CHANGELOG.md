@@ -6,6 +6,13 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- Layout placements may now carry `hand_placed: true` (#667, Rung A): a
+  hand-positioned (dolly-borne) body is treated by the fill planner as a fixed
+  keep-out and emitted as a path-less at-rest move instead of being tow-routed.
+  Activated for the dolly gliders (Scheibe Falke + Stemme S10) in the Herrenteich
+  `layout.yaml`, `layout_today.yaml`, and `layout_full.yaml`, matching the club's
+  real practice of hand-positioning the gliders on their dollies. Optional,
+  default `false` — every existing layout stays byte-identical (ADR-0003).
 - A `kind: fuselage` part may now carry a `vertices:` outline polygon, which the
   loader clips into area-conserving `fuselage_front`/`fuselage_aft` sub-polygons
   at the wing trailing edge (#550). Capability-only — no fleet behaviour change.

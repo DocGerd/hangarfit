@@ -177,6 +177,26 @@ def test_plan_fill_skips_hand_placed_body_and_keeps_it_as_obstacle() -> None:
     )
 
 
+def test_plan_fill_inert_with_no_hand_placed_body() -> None:
+    """#667 Rung A inert-path guarantee (ADR-0003): a layout with NO hand-placed
+    body partitions the whole fleet into the routed set — no body is carried at
+    rest — and re-planning is byte-identical. So activating Stage 0 in some
+    layouts cannot perturb a layout that does not use it."""
+    h = _hangar(width_m=20.0, length_m=30.0)
+    fleet = {"A": _box_plane("A"), "B": _box_plane("B")}
+    target = _layout(
+        fleet,
+        h,
+        _slot("A", x=8.0, y=8.0),
+        _slot("B", x=12.0, y=22.0),
+    )
+    plan = plan_fill(target)
+    # No body is carried at rest: every move is tow-routed (no hand-placed keep-out).
+    assert all(m.path is not None for m in plan.moves)
+    # Re-planning the identical target yields a byte-identical plan.
+    assert plan_fill(target) == plan
+
+
 # ── plan_fill LOOP-logic tests ──────────────────────────────────────────────
 # These pin the back-first scan / swap / bail mechanics in isolation by faking
 # ``plan_path`` — the per-candidate call ``plan_fill`` actually makes. (Earlier

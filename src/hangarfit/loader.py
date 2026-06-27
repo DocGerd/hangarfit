@@ -1946,6 +1946,10 @@ def _build_placement(data: Any) -> Placement:
         y_m=_to_float(data["y_m"], "y_m"),
         heading_deg=_to_float(data["heading_deg"], "heading_deg"),
         on_carts=_to_bool(data.get("on_carts", False), "on_carts"),
+        # #667 Stage 0: a hand-positioned (dolly-borne) body is parked by hand, not
+        # tow-routed. Optional, default False — every existing layout stays
+        # byte-identical (ADR-0003 inert-path guarantee).
+        hand_placed=_to_bool(data.get("hand_placed", False), "hand_placed"),
     )
 
 

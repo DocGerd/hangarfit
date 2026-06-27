@@ -118,11 +118,16 @@ change rather than planner+schema+viewer at once.
   touched (verified against the data): `layout.yaml` (Scheibe + Stemme),
   `layout_today.yaml` (Scheibe + Stemme), `layout_full.yaml` (Stemme only — the
   Scheibe parks outside in that over-capacity what-if).
-- **No production code change** — the mechanism ships (`models.py:820`,
-  `towplanner.py:1640-1652`).
-- **Files.** `examples/herrenteich/layout*.yaml`, a new
-  `tests/fixtures/` hand-placed fixture, `tests/test_towplanner_*.py`,
-  `CHANGELOG.md`.
+- **Production code.** The *planner* mechanism ships (`models.py:820`,
+  `towplanner.py:1640-1652`), but TDD surfaced that the **loader did not parse the
+  `hand_placed` YAML key** — `_build_placement` (`loader.py:1943`) read only
+  `on_carts`. So Rung A adds **one loader line** (`hand_placed=_to_bool(...)`,
+  default False → inert) plus the data + tests. (The spec's earlier "data-only"
+  claim was wrong; the test caught it.)
+- **Files.** `src/hangarfit/loader.py` (one parse line),
+  `examples/herrenteich/layout.yaml`, `layout_today.yaml`, `layout_full.yaml`,
+  `tests/test_loader.py`, `tests/test_towplanner_fill.py`,
+  `tests/test_herrenteich_dataset.py`, `CHANGELOG.md`.
 - **Acceptance.** (1) Byte-identity preserved for any layout with zero
   hand-placed bodies (regression test, double-build + diff). (2) A hand-placed
   body emits a path-less at-rest `Move` and is treated as a keep-out by routed

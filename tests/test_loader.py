@@ -1409,6 +1409,39 @@ placements:
         assert len(layout.placements) == 1
         assert layout.placements[0].plane_id == "foo"
 
+    def test_hand_placed_flag_parsed(self, tmp_path: Path) -> None:
+        """#667 Rung A (Stage 0): load_layout parses the optional per-placement
+        ``hand_placed`` flag (strict-bool like ``on_carts``). A hand-placed body is
+        parked by hand, not tow-routed. (Orthogonality with ``on_carts`` is proven
+        on the real cart-borne gliders in the herrenteich dataset test.)"""
+        self._minimal_fleet_and_hangar(tmp_path)
+        layout_path = _write(
+            tmp_path / "layout.yaml",
+            """
+fleet: fleet.yaml
+hangar: hangar.yaml
+placements:
+  - plane: foo
+    x_m: 5.0
+    y_m: 5.0
+    heading_deg: 0
+    on_carts: false
+    hand_placed: true
+""",
+        )
+        assert load_layout(layout_path).placements[0].hand_placed is True
+
+    def test_hand_placed_defaults_false_when_omitted(self, tmp_path: Path) -> None:
+        """Omitting ``hand_placed`` yields False, so every existing layout loads
+        byte-identically (the inert-path guarantee, ADR-0003)."""
+        self._minimal_fleet_and_hangar(tmp_path)
+        layout_path = _write(
+            tmp_path / "layout.yaml",
+            "fleet: fleet.yaml\nhangar: hangar.yaml\n"
+            "placements:\n  - {plane: foo, x_m: 5.0, y_m: 5.0, heading_deg: 0, on_carts: false}\n",
+        )
+        assert load_layout(layout_path).placements[0].hand_placed is False
+
     @pytest.mark.parametrize(
         "typo",
         ["placments", "maintenence", "hangarr", "bogus_field"],
