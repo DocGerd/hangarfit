@@ -1933,9 +1933,25 @@ def _subpart_from_clip(fuselage: Part, kind: PartKind, geom: Any, side_label: st
         ) from e
 
 
+# Strict per-placement key allowlist (#667 review). An unknown placement key is
+# REJECTED, not silently dropped — mirroring the ground-object entry allowlist
+# (`_allowed_go_entry`) and the #513/#516 silent-failure policy. Critical for
+# `hand_placed`: a silent drop would INVERT intent (default False → a hand-
+# positioned glider gets tow-routed) with no signal to the YAML author.
+_ALLOWED_PLACEMENT_KEYS = frozenset(
+    {"plane", "x_m", "y_m", "heading_deg", "on_carts", "hand_placed"}
+)
+
+
 def _build_placement(data: Any) -> Placement:
     if not isinstance(data, dict):
         raise LoaderError(f"placement must be a mapping, got {type(data).__name__}")
+    unknown = set(data) - _ALLOWED_PLACEMENT_KEYS
+    if unknown:
+        raise LoaderError(
+            f"unknown placement key(s) {sorted(unknown)}; "
+            f"allowed: {sorted(_ALLOWED_PLACEMENT_KEYS)}"
+        )
     required = ("plane", "x_m", "y_m", "heading_deg")
     for key in required:
         if key not in data:

@@ -11,10 +11,12 @@
 `hangarfit` can confirm the full Herrenteich fleet is **statically valid parked**
 (`examples/herrenteich/layout.yaml`, `layout_today.yaml`) but cannot compute a
 door-to-slot **tow fill sequence** for it. The routing ceiling for the L-shaped
-hangar is ~4–7 bodies; the real day is 9 aircraft + ground objects. The real club
-assembles the dense nest by **shuffling** — rolling a parked plane aside to let
-another past, hand-positioning the dolly-borne gliders. The planner models none
-of that.
+hangar is ~4–7 bodies; the real day is 9 aircraft + ground objects (the
+aircraft-only `layout.yaml` parks **all 8** usual occupants; `layout_today.yaml`
+adds the Fuji → **9** aircraft + ground objects — "all-8" below means the
+aircraft-only set). The real club assembles the dense nest by **shuffling** —
+rolling a parked plane aside to let another past, hand-positioning the dolly-borne
+gliders. The planner models none of that.
 
 This was diagnosed across the 2026-06 spikes
 ([`herrenteich-all8-tow-routing-rootcause.md`](../../spikes/herrenteich-all8-tow-routing-rootcause.md),
@@ -24,12 +26,15 @@ This was diagnosed across the 2026-06 spikes
 
 Two pieces #667's body proposes have **already landed** and must not be re-built:
 
-- **Stage 0 *mechanism*.** `Placement.hand_placed: bool = False`
+- **Stage 0 *planner mechanism*.** `Placement.hand_placed: bool = False`
   (`models.py:820`) exists. `_plan_fill` (`towplanner.py:1635-1652`) already
   partitions hand-placed bodies into fixed keep-outs and emits a path-less
-  at-rest `Move(plane_id, pose, None)` for each. The loader rejects the flag on
-  ground objects. **It is not activated in the shipped Herrenteich data** — no
-  layout sets the flag.
+  at-rest `Move(plane_id, pose, None)` for each. The flag is rejected on
+  ground-object placements by the `Layout.__post_init__` invariant
+  (`models.py:1010-1015`; the loader's ground-object entry allowlist also rejects
+  the key on GO YAML entries). **Before Rung A it was not activated in the shipped
+  Herrenteich data** — and the *loader* did not parse the YAML key (see Rung A,
+  §4, which wires both).
 - **Order-search backtracking.** The fill is no longer a one-pass monotonic
   greedy loop: `_place_rest` (`towplanner.py:1665-1749`) is a deterministic
   **backtracking DFS over placement order**, greedy-first. The byte-identity
@@ -119,12 +124,15 @@ change rather than planner+schema+viewer at once.
   `layout_today.yaml` (Scheibe + Stemme), `layout_full.yaml` (Stemme only — the
   Scheibe parks outside in that over-capacity what-if).
 - **Production code.** The *planner* mechanism ships (`models.py:820`,
-  `towplanner.py:1640-1652`), but TDD surfaced that the **loader did not parse the
-  `hand_placed` YAML key** — `_build_placement` (`loader.py:1943`) read only
-  `on_carts`. So Rung A adds **one loader line** (`hand_placed=_to_bool(...)`,
-  default False → inert) plus the data + tests. (The spec's earlier "data-only"
-  claim was wrong; the test caught it.)
-- **Files.** `src/hangarfit/loader.py` (one parse line),
+  `towplanner.py:1640-1652`), but TDD + review surfaced two loader gaps:
+  `_build_placement` (`loader.py:1936`) read only `on_carts` (it never parsed
+  `hand_placed`), and there was **no per-placement key allowlist** — a typo'd
+  flag silently dropped to False, *inverting intent* (a hand-positioned glider
+  would be tow-routed). So Rung A adds (a) the `hand_placed=_to_bool(...)` parse
+  (default False → inert) and (b) `_ALLOWED_PLACEMENT_KEYS` rejecting unknown
+  keys loudly, mirroring the ground-object entry allowlist. (The spec's earlier
+  "data-only" claim was wrong; the tests caught it.)
+- **Files.** `src/hangarfit/loader.py` (parse line + allowlist),
   `examples/herrenteich/layout.yaml`, `layout_today.yaml`, `layout_full.yaml`,
   `tests/test_loader.py`, `tests/test_towplanner_fill.py`,
   `tests/test_herrenteich_dataset.py`, `CHANGELOG.md`.
