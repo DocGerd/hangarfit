@@ -208,3 +208,23 @@ at zero (only a header comment) and the break a single derived value.
   — the operational statement of this decision.
 - Related spec: [`docs/superpowers/specs/2026-05-27-fuselage-parts-split-design.md`](../superpowers/specs/2026-05-27-fuselage-parts-split-design.md).
 - Related issue: [#50](https://github.com/DocGerd/hangarfit/issues/50).
+
+## Amendment (#550, 2026-06-27): polygon fuselage outline → Shapely clip
+
+D2's auto-split now has a second path. When the source `kind: fuselage` part
+carries an outline polygon (the raw `vertices:` YAML key, part-own centred
+frame), the front/aft split is a **Shapely half-plane clip** at the same
+wing-trailing-edge `x_break`, producing two area-conserving **sub-polygons**
+(`fuselage_front` / `fuselage_aft`) instead of two boxes. The scalar
+box-interval split is unchanged and stays the path for every current aircraft
+(byte-identical — no catalog fuselage carries `vertices:`). D1 (the
+`wing × fuselage_front` hard-conflict rule), the conflict-kind taxonomy, and the
+"break derived from the wing chord, not a YAML station" decision are all
+unchanged. The clip is interpolation-only (deterministic, cross-machine-robust),
+re-canonicalized by `Part.__post_init__`, and requires an axis-aligned fuselage
+(`angle_deg = 0`). It enforces "exactly one non-degenerate Polygon per side" —
+the formal guarantee that the front sub-outline is genuinely the cockpit; a
+non-x-monotone outline that would clip into disconnected nose-side pieces is a
+`LoaderError`. This re-opens D2 additively (a capability; no fleet behaviour
+change). See
+[`docs/superpowers/specs/2026-06-27-fuselage-outline-polygon-design.md`](../superpowers/specs/2026-06-27-fuselage-outline-polygon-design.md).

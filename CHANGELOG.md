@@ -4,6 +4,12 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ## [Unreleased]
 
+### Added
+
+- A `kind: fuselage` part may now carry a `vertices:` outline polygon, which the
+  loader clips into area-conserving `fuselage_front`/`fuselage_aft` sub-polygons
+  at the wing trailing edge (#550). Capability-only — no fleet behaviour change.
+
 ### Changed
 
 - **Learned backend (epic #607, #736): dense train-to-mastery is RESOLVED-NEGATIVE — the lever

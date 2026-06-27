@@ -1767,13 +1767,20 @@ def _wing_trailing_edge_x(wing: Part) -> float:
 def _split_fuselage(fuselage: Part, wing: Part) -> list[Part]:
     """Split one full fuselage :class:`Part` into a front/aft pair.
 
-    ``fuselage`` is the already-field-validated full-fuselage box (built from
-    a ``kind: fuselage`` YAML entry under a placeholder kind in
+    ``fuselage`` is the already-field-validated full fuselage (built from a
+    ``kind: fuselage`` YAML entry under a placeholder kind in
     :func:`_build_aircraft`). The break station is derived from the aircraft's
     own ``wing`` part — the wing trailing edge
     ``x_break = wing.offset_x_m − wing.length_m/2`` (:func:`_wing_trailing_edge_x`,
     ADR-0012). There is no ``wing_root_x_m`` YAML field; the break is always
     derived.
+
+    **Two paths (ADR-0012 amendment, #550):** a scalar fuselage (no
+    ``local_vertices``) takes the box-interval split documented below
+    (byte-identical for every catalog aircraft). A polygon fuselage (a raw
+    ``vertices:`` outline) is delegated to :func:`_clip_fuselage_outline`, which
+    Shapely-clips the outline into front/aft **sub-polygons** at the same
+    ``x_break``.
 
     The split is **area-conserving**: both segments inherit the source
     fuselage's ``width_m``, ``z_bottom_m``, ``z_top_m``, ``angle_deg`` and
