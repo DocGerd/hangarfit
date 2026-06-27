@@ -461,3 +461,39 @@ isolation isn't misled by the in-body wording.
 
 See [§5 Building Block View — `solver.py`](../architecture/05-building-block-view.md#solverpy--rr-mc-layout-search)
 for the current "Maintenance plane handling" bullet.
+
+---
+
+### 2026-06-27 — cross-machine reproducibility: a recorded test-coverage gap + `libm` hazard (#844)
+
+The cross-machine reproducibility promised above (a `max_restarts`-bounded run is
+"reproducible across runs **and machines**"; the *Guidance* recommends `max_restarts`
+for "guaranteed cross-machine reproducibility") is **asserted but not *tested*
+cross-machine**, and for tow-path `MovesPlan`s it rests on an **unstated `libm`
+assumption**. Surfaced by the #844 continuous-trajectory-optimization determinism
+pre-check (full analysis:
+[`../spikes/herrenteich-fk9-cessna-trajopt-determinism-precheck.md`](../spikes/herrenteich-fk9-cessna-trajopt-determinism-precheck.md),
+Step 0.1–0.2).
+
+- **Test-coverage gap.** The `tests/test_solver_canaries.py` determinism canaries — and
+  the `determinism-guard`'s empirical twice-and-diff — are **same-machine / same-process**
+  re-run-and-diff. There is no cross-machine golden and no pinned literal carried across
+  hosts; they demonstrate same-machine (and cross-process same-machine) reproducibility,
+  so nothing in the suite would catch a cross-machine-*only* divergence.
+- **`libm` transcendental hazard (tow planner).** A `MovesPlan`'s Reeds–Shepp segment
+  lengths are closed-form (no iterative numerical method) but **transcendental-heavy**:
+  `math.sin/cos/atan2/acos` in `plan_reeds_shepp` and the `_lsl…_lrl` base solvers.
+  IEEE-754 mandates a correctly-rounded `sqrt` and the basic arithmetic ops but **not**
+  these transcendentals, so their last-ULP bits may differ across `libm` builds /
+  platforms. Cross-machine byte-identity of tow plans therefore rests on an unstated
+  assumption that `libm` transcendentals are bit-stable across hosts.
+
+**Status — a documentation/coverage caveat, not a known live divergence.** No
+cross-machine break has been observed; same-machine reproducibility (the mode the
+canaries enforce) is robust. Closing the gap — a cross-machine golden test, or pinning
+transcendentals — is out of scope here and likely costly (CI runs a single
+architecture; IEEE-754 cannot pin `sin`/`cos`/`atan2`/`acos`). Recorded so a downstream
+reader does not over-trust the unqualified "across machines" wording: treat the baseline
+as **robustly same-machine reproducible and only *presumptively* cross-machine.** The
+`Status: Accepted` of this ADR stands; the RR-MC algorithm and the tow planner are
+unchanged by this amendment.
