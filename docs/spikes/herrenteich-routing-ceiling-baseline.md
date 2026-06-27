@@ -15,10 +15,12 @@ The real Herrenteich dense fleet is **statically valid parked** (`hangarfit chec
 but does **not** tow-route within a bounded expansion budget. Routing the known-valid
 witness layouts directly (no solve) via `plan_fill`:
 
-| witness regime | bodies | hand-placed | global cap | routes? | bail | wall (local) |
+| witness regime | aircraft | hand-placed | global cap | routes? | bail | wall (local) |
 |---|---|---|---|---|---|---|
 | `herrenteich_all_eight` | 8 | 2 (Scheibe + Stemme) | 8 000 | **NO** | budget-exhausted, deepest-unplaced `zlin_savage` | ~64.6 s |
 | `herrenteich_today` | 9 (+ Fuji) | 2 | 8 000 | **NO** | budget-exhausted, deepest-unplaced `zlin_savage` | ~65.4 s |
+
+(`n_planes` counts aircraft; `layout_today.yaml` also carries ground objects — Caddy, fuel + glider trailers.)
 
 Measured via `python -m bench.profile_pipeline --regime herrenteich_all_eight --regime herrenteich_today`
 (2026-06-27, local): both report `place_s 0.000`, `routed 0/1`, `valid ok`, `paths ok`, `det ok`, and the
@@ -29,7 +31,7 @@ deterministic (ADR-0003), so it is a stable regression anchor.
 
 ## Why route the witness, not solve
 
-`solve` (RR-MC) provably **cannot reproduce** the dense all-8 nest — `examples/herrenteich/scenario.yaml`'s
+`solve` (RR-MC) **does not reproduce** the dense all-8 nest within budget — `examples/herrenteich/scenario.yaml`'s
 own header records it, and it is the founding observation of the 2026-06 spike series. So a
 *solve-then-route* bench regime would measure **placement-failure**, not the **routing** ceiling
 that move-aside is built to raise — vacuous by the feasibility-witness principle (the #832 lesson:
@@ -48,8 +50,8 @@ husky-gate's "6 routed vs 4") needs the reverse-teardown traversal of **Rung C**
 
 ## The bail is budget-exhaustion, not an early geometric wall
 
-A control: doubling the global cap (8 000 → 16 000, the `solve` default) **doubled the wall-clock**
-(~66 s → ~132 s for the all-8) and bailed on the **same** body (`zlin_savage`). An early *geometric* dead-end
+A control: doubling the global cap (8 000 → 16 000, the `solve` default) **roughly doubled the wall-clock**
+for the all-8 (~65 s → ~130 s; an earlier scout run) and bailed on the **same** body (`zlin_savage`). An early *geometric* dead-end
 would bail in roughly constant time regardless of cap; instead the planner grinds the full budget
 threading the dense nest and then names the deepest body it never reached. So the operative ceiling
 is **expansion budget**: the all-8 fill does not route within any *affordable* budget. (This is

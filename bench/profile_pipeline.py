@@ -110,7 +110,7 @@ _SPEED_CEILING_S: dict[str, float] = {
     # multi-minute all-8 route never runs in CI; the entry documents the bounded
     # wall and arms a manual `--heavy --gate`. The witness layout is routed
     # directly (no solve), so `total_s == routing_s` (placement is 0). Measured
-    # local dev ~66 s (all-8) / ~68 s (today) at the 8000 global cap — both
+    # local dev ~64.6 s (all-8) / ~65.4 s (today) at the 8000 global cap — both
     # EXHAUST the budget and bail (the dense fill does not route; that wall IS the
     # baseline). 150/160 s ≈ 2.3x local (the CI-runner factor seen on other
     # regimes), generous since these never gate in CI.

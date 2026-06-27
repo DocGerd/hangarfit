@@ -2,12 +2,12 @@
 Herrenteich routing-ceiling regimes.
 
 The Herrenteich all-eight is **statically valid** (``hangarfit check`` exits 0)
-but ``solve`` provably cannot reproduce it (``examples/herrenteich/scenario.yaml``
-header), and the dense nest does not fully tow-route (the ``fk9↔cessna`` wall,
-spikes 2026-06). So the routing-ceiling baseline that Rungs C–E are graded
-against must route the *known-valid witness layout* directly — not a solve
-output. This module covers that bench-only ``Regime.layout`` mode and the two
-witness regimes.
+but ``solve`` does not reproduce it within budget (``examples/herrenteich/scenario.yaml``
+header), and the dense nest exhausts the expansion budget without routing
+(consistent with the known ``fk9↔cessna`` corridor cost, spikes 2026-06). So the
+routing-ceiling baseline that Rungs C–E are graded against must route the
+*known-valid witness layout* directly — not a solve output. This module covers
+that bench-only ``Regime.layout`` mode and the two witness regimes.
 
 The witness mechanism is exercised against a small, fast, fully-routable layout
 (``valid_left_side_nesting.yaml``, 2 bodies, ~0.5 s) so the contract is verified
@@ -77,6 +77,31 @@ def test_witness_regime_skips_solve_and_routes_layout() -> None:
 def test_witness_regime_is_deterministic() -> None:
     """Routing the witness twice yields a byte-identical digest (ADR-0003)."""
     assert run_regime(_fast_witness_regime()).deterministic is True
+
+
+def test_witness_with_hand_placed_body_routes_and_scores() -> None:
+    """A fully-routable witness whose plan contains a path-less hand-placed move
+    must still score validity / path-validity / determinism — not crash.
+
+    ``plan_fill`` emits ``Move(plane_id, pose, None)`` for a hand-placed body, so
+    the harness's path-validity (`_path_failures`) and determinism (`_plan_digest`)
+    must skip the ``path is None`` move rather than deref it. The all-bailing
+    Herrenteich baseline never reaches this today, but Rung E (a routed witness)
+    will — both witnesses carry two hand-placed gliders.
+    """
+    result = run_regime(
+        Regime(
+            key="_test_witness_hand_placed",
+            description="fully-routable witness with a hand-placed body",
+            layout=FIXTURES / "valid_left_side_nesting_hand_placed.yaml",
+            n_planes=2,
+            heavy=True,
+        )
+    )
+    assert result.n_routed == 1
+    assert result.layouts_valid is True
+    assert result.paths_valid is True
+    assert result.deterministic is True
 
 
 # ── Herrenteich witness regimes are registered + gated ───────────────────────

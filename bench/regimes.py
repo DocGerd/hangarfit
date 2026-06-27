@@ -50,12 +50,13 @@ class Regime:
     * ``scenario`` — *solve-then-route*: ``solve()`` finds the layout(s), which are
       then tow-routed. The original mode (the solve-feasible regimes).
     * ``layout`` — *route a pre-built WITNESS layout directly*, skipping the solve
-      (#667 Rung B). This is for a statically-valid layout that ``solve`` **cannot
+      (#667 Rung B). This is for a statically-valid layout that ``solve`` **does not
       reproduce** — the real Herrenteich all-8 (``examples/herrenteich/scenario.yaml``
       header): RR-MC won't find the dense nest, so a solve-then-route regime would
       measure placement-failure, not the *routing ceiling*. The witness layout is
       loaded and routed as-is, so ``placement`` is skipped (``placement_s == 0.0``,
-      ``restarts_done == 0``) and ``seed``/``max_restarts``/``spread`` are unused.
+      ``restarts_done == 0``); ``seed``/``max_restarts`` are inert and ``spread``
+      only labels the output row (no spread post-pass runs).
     """
 
     key: str
@@ -190,17 +191,19 @@ REGIMES: tuple[Regime, ...] = (
     # ── #667 Rung B: real-Herrenteich routing-ceiling WITNESS regimes ─────────
     # The objective baseline every later #667 rung (C/D/E) is graded against.
     # These route the KNOWN-VALID hand-authored witness layouts directly (no
-    # solve — `solve` provably cannot reproduce the dense all-8 nest), so they
-    # measure the *routing* ceiling, not placement. `plan_fill` is all-or-nothing
-    # (a full plan or a `NoFeasiblePlanError` naming the deepest unplaceable
-    # body), so the baseline is binary: does the dense fill route? Measured
-    # 2026-06-27: it does NOT — at the 8000 global cap (and at 16000, the solve
-    # default) both witnesses EXHAUST the budget grinding the nest and bail
-    # (deepest-unplaced `zlin_savage`). The cap bounds the un-routable disprove;
-    # 8000 matches `full_nine_spread_on` (~66–68 s local). A partial routed-body
-    # COUNT is Rung C's reverse-teardown probe, not this binary baseline. heavy ⇒
-    # excluded from the default fast `--gate` (the multi-minute route never runs
-    # in CI). Move-aside (Rung E) must flip the verdict to routed.
+    # solve — `solve` does not reproduce the dense all-8 nest within budget), so
+    # they measure the *routing* ceiling, not placement. `plan_fill` is
+    # all-or-nothing (a full plan or a `NoFeasiblePlanError` naming the deepest
+    # unplaceable body), so the baseline is binary: does the dense fill route?
+    # Measured 2026-06-27: it does NOT — at the 8000 global cap both bail
+    # (deepest-unplaced `zlin_savage`); doubling the all-8 to 16000 (the solve
+    # default) doubles its wall and bails on the same body, so the wall is
+    # budget-exhaustion, not an early geometric dead-end. The cap bounds the
+    # un-routable disprove; 8000 matches `full_nine_spread_on`'s global cap (the
+    # witness routes take ~65 s local). A partial routed-body COUNT is Rung C's
+    # reverse-teardown probe, not this binary baseline. heavy ⇒ excluded from the
+    # default fast `--gate` (the multi-minute route never runs in CI). Move-aside
+    # (Rung E) must flip the verdict to routed.
     Regime(
         key="herrenteich_all_eight",
         description="Real Herrenteich all-8 WITNESS layout — #667 routing-ceiling baseline",

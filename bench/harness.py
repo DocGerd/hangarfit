@@ -205,13 +205,21 @@ def _path_failures(plan: MovesPlan, target: Layout) -> list[str]:
     placed: list[Placement] = []
     failures: list[str] = []
     for move in plan.moves:
+        original = by_id[move.plane_id]
+        if move.path is None:
+            # A path-less at-rest move (a #667 hand-placed body, or a #601
+            # deferred mover): no arc to re-validate. It is still a keep-out for
+            # later routed bodies — `plan_fill` seeds `placed` with the
+            # hand-placed slots — so keep the obstacle context faithful by
+            # committing it before the next move.
+            placed.append(original)
+            continue
         placed_layout = Layout(
             fleet=target.fleet,
             hangar=target.hangar,
             placements=tuple(placed),
             maintenance_plane=target.maintenance_plane,
         )
-        original = by_id[move.plane_id]
         conflict = path_first_conflict(
             move.path,
             target.fleet[move.plane_id],
@@ -248,6 +256,12 @@ def _plan_digest(plan: MovesPlan | None) -> str:
     parts: list[str] = []
     for move in plan.moves:
         slot: Pose = move.target_slot
+        if move.path is None:
+            # Path-less at-rest move (#667 hand-placed / #601 deferred): no arc to
+            # digest. Still digest the at-rest slot so a change in the hand-placed
+            # pose is caught as a difference.
+            parts.append(f"{move.plane_id}@{slot.x_m!r},{slot.y_m!r},{slot.heading_deg!r}<at-rest>")
+            continue
         segs = ",".join(f"{s.kind}{s.gear:+d}:{s.length_m!r}" for s in move.path.segments)
         parts.append(
             f"{move.plane_id}@{slot.x_m!r},{slot.y_m!r},{slot.heading_deg!r}"
