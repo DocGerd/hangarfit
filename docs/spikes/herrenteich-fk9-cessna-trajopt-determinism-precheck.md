@@ -160,3 +160,149 @@ builds — which the contract never even guarantees for the *existing* trig-base
 exactly-comparable vocabulary — the same shape as towplanner's existing Reeds–Shepp
 word enumeration), and even that inherits the un-guarded `libm` hazard the gate must
 flag.
+
+---
+
+## Step 0.2 — the deterministic seam in today's pipeline
+
+### Verdict: today's `MovesPlan` is **closed-form-only — no float in it comes from an iterative numerical method** (no Newton/fixed-point/gradient loop) — but it is **transcendental-heavy**, so its cross-machine byte-identity rests on the *exact same* un-guarded `libm` bit-stability assumption Step 0.1 flagged. The baseline is therefore **robustly same-machine and only *presumptively* cross-machine** (cross-machine identity is asserted by the contract but untested, and would break the instant a `libm`/toolchain returns a different ULP from `sin`/`cos`/`atan2`/`sqrt`/`acos`). The seam an optimizer's output would enter is the *segment-length list* of a `DubinsArc` consumed by `plan_fill`'s `Move(... path=arc)` assembly (`towplanner.py:1767`, `:1838`) and validated by `path_first_conflict` (`towplanner.py:1306`).
+
+### Step 1 — the emit path (how arc parameters become a `MovesPlan`)
+
+The byte-identity artifact is the `MovesPlan` (`towplanner.py:261-269`): `target_layout: Layout` plus an ordered `moves: tuple[Move, ...]`. Each `Move` (`:235-258`) is `(plane_id, target_slot: Pose, path: DubinsArc | None)`. **All the geometry floats live inside `path`** — a `DubinsArc` (`:112-133`) whose `segments: tuple[Segment, ...]` is the load-bearing payload; each `Segment` (`:86-109`) carries `(kind, length_m: float, gear)`. So the question "what floats does the `MovesPlan` carry?" reduces to "where do the `Segment.length_m` values and the `Pose` x/y/heading floats come from?"
+
+The emit chain, end to end:
+
+1. **`plan_fill` builds the plan** (`:1519`, assembly at `:1766-1841`). It loops the chosen `(slot, arc, …)` order and appends `Move(slot.plane_id, Pose.from_placement(slot), arc)` (`:1767`), then ground-object movers (`:1838`), and finally returns `MovesPlan(target_layout=target, moves=tuple(moves))` (`:1841`). `plan_fill` itself does no geometry — it concatenates `arc`s and `Pose`s.
+2. **Each `arc` comes from `plan_path`** (`:2418`, called at `:1707`/`:1439` for aircraft, `:1813` for movers). `plan_path` is a Hybrid-A* search whose returned `DubinsArc` is `DubinsArc(arc_start, goal, r, segs)` where `segs = tuple(_reconstruct_segments(node)) + final_arc.segments` (`:2673`, `:2686`) — a **discrete concatenation** of (a) a *prefix* of fixed motion primitives chosen by the search and (b) a *suffix* analytic Reeds–Shepp shot.
+3. **Prefix segment lengths are fixed constants.** `_primitives` (`:1920-1969`) emits `Segment`s whose `length_m` is `_GRID_XY_M = 0.5`, `math.radians(_GRID_DEG)` with `_GRID_DEG = 15.0`, or `max(_GRID_XY_M, turn_radius_m * math.radians(_GRID_DEG))` (`:1951-1968`). These are deterministic arithmetic on module constants and the per-mover `turn_radius_m` — **no transcendental enters the prefix *lengths*** (`math.radians` is exact-ish scaling by π/180, the only "transcendental" being the π constant, identical across builds). The search *selects which* primitives via A* (`best_g`, a `heapq` with a monotonic `counter` tie-break, `:2733-2743`) — an integer/discrete choice, RNG-free.
+4. **Suffix segment lengths come from the closed-form Reeds–Shepp solver.** The analytic shot is `final_arc = plan_reeds_shepp(node.pose, goal, turn_radius_m=r, …)` (`:2668`). Inside `plan_reeds_shepp` (`:922`) the goal is expressed in the start frame using `math.cos/ math.sin` (`:957-960`), then `_rs_solve_normalised` (`:849`) enumerates the closed-form word family. The base solvers `_lsl/_rsr/_lsr/_rsl/_rlr/_lrl` (`:326-383`) compute leg lengths with `math.sin`, `math.cos`, `math.atan2`, `math.sqrt`, and `math.acos`; the result is scaled back to metres as `Segment(e.steering, e.t * r, gear=e.gear)` (`:966`). **These `Segment.length_m` values ARE transcendental-derived** — but each is a *single closed-form evaluation*, never the output of an iteration.
+5. **The `Pose` floats** (`arc.start`, `arc.end`/`target_slot`) come from `Placement` data via `Pose.from_placement` (`:81-83`) and from `_root_pose`/`_step_pose` (`:2073`, `:1972`), which integrate via `DubinsArc.pose_at` (`:139-195`) — again `math.sin/cos` per leg, closed-form, no iteration.
+
+**`path_first_conflict` validates, it does not compute the emitted floats** (`:1306-1383`). It samples the candidate arc (`arc.sample(...)`, `:1344`) and runs `collisions.check` at each pose; it returns a `Conflict | None` and **never mutates the arc**. So validation is downstream of emit and cannot introduce or launder a float into the plan. (In `plan_path` it is the safety-net gate at `:2692-2695` — the arc is *returned unchanged* iff it reports `None`.)
+
+**Conclusion for Step 1:** no float in today's `MovesPlan` originates from an iterative computation. The A* loop *iterates*, but only to make the **discrete** choice of which fixed-length primitives to concatenate; every actual `length_m`/`Pose` float is a closed-form expression (fixed constant, or one-shot trig/sqrt/acos). This is exactly the "discrete-word reduction" shape Step 0.1 predicted would be the *only* plausibly-shippable design — today's planner already lives there.
+
+### Step 2 — honest closed-form determinism assessment
+
+Closed-form ≠ cross-machine-byte-stable. The emitted floats depend on `math.sin`, `math.cos`, `math.atan2`, `math.sqrt`, and `math.acos`:
+
+- `plan_reeds_shepp` frame transform: `math.cos`, `math.sin` (`:957`).
+- RS base solvers: `math.sin/cos` (`:327` etc.), `math.atan2` (`:331`, `:340`, `:350`, `:360`, `:370`, `:381`), `math.sqrt` (`:332`, `:341`, `:349`, `:359`), `math.acos` (`:369`, `:380`).
+- `_dubins_shortest` / `plan_dubins`: `math.hypot`, `math.atan2` (`:412-414`).
+- `DubinsArc.pose_at` integrator (feeds `Pose` floats): `math.cos`, `math.sin` (`:159-191`).
+
+Python's `math.*` are thin wrappers over the platform C `libm`. IEEE-754 pins `+ - * / sqrt` to correctly-rounded results (so `math.sqrt`, plain arithmetic, and `math.hypot` *are* bit-reproducible across conforming builds), **but the standard does not require correctly-rounded `sin`/`cos`/`atan2`/`acos`** — different `libm` implementations (glibc vs musl vs macOS vs the Windows CRT, and even glibc versions) legally differ in the last ULP for these transcendentals. A one-ULP difference in any leg length or pose angle propagates verbatim into `Segment.length_m` / `Pose.heading_deg`, breaking *byte*-identity of the `MovesPlan` across machines.
+
+Two mitigations in the code *reduce* but do **not** eliminate the hazard:
+
+- The **word-selection tie-break** (`:386-390`, `:424`, `:888`) uses a strict `<`, so a *geometrically equal* word ties resolve to a deterministic winner *per machine* — but the comment at `:389-390` is explicit that a ULP cost difference "still resolve[s] deterministically — just to whichever rounded smaller, **not necessarily the earliest-listed**." Across two `libm` builds the *winning word itself* can therefore differ, not merely its float bits — a discrete divergence, not just a last-bit one.
+- `_rs_word_reaches` (`:895-919`) and the `pose_at` endpoint re-integration gate words with a `1e-6` tolerance, catching *gross* sign errors — but `1e-6` is enormous next to a ULP, so it does nothing to enforce bit-identity.
+
+**Therefore:** the baseline `MovesPlan` is **robustly reproducible same-machine / same-process / cross-process** (the existing canaries and `tests/test_solver_parallel.py` demonstrate this — Step 0.1 Evidence B), and the planner is RNG-free by construction (`plan_reeds_shepp` docstring `:931-932`), but its **cross-machine** byte-identity is an **untested presumption** resting on `libm` transcendental bit-stability that neither ADR-0003 nor `determinism-guard` acknowledges (Step 0.1 Evidence C). This is the precise sense in which the same-vs-cross distinction "bites even for today's baseline": *today's shipped Reeds–Shepp `MovesPlan` is not provably cross-machine byte-identical.* An iterative optimizer would not introduce a *new class* of hazard — it would *amplify* the existing one (more transcendental ops, plus genuinely iteration-dependent floats and BLAS/SIMD reduction-order variance), while losing the one property the current design keeps: a **finite, exactly-comparable discrete word vocabulary** as the thing that actually has to match.
+
+### Step 3 — the exact seam (where an optimizer's output would enter)
+
+An optimizer produces a continuous trajectory (a sequence of states / controls). To become a shippable `MovesPlan` under ADR-0003 it must be reduced to the **same artifact the current planner emits**: a `DubinsArc` whose `segments: tuple[Segment, ...]` is the payload, slotted into a `Move`. There are exactly two viable insertion points, both *upstream* of the unchanged assembly/validation:
+
+- **Seam A (drop-in arc replacement) — `plan_path`'s return (`towplanner.py:2686`, returned at `:2705`).** Replace/augment the Hybrid-A* `DubinsArc(arc_start, goal, r, segs)` with an optimizer-derived `DubinsArc`. Everything downstream — `plan_fill`'s `Move(..., path=arc)` (`:1767`/`:1838`) and the `MovesPlan(...)` (`:1841`) — is untouched. The optimizer output **must already be a list of `Segment(kind, length_m, gear)`** at this point.
+- **Seam B (post-hoc reduction) — between an optimizer and `Move` construction.** Run the optimizer outside `plan_path`, then quantise its trajectory onto the existing `Segment` vocabulary before building the `Move`. Functionally the same contract as Seam A.
+
+**What must be deterministic at the seam** (for the `MovesPlan` to clear ADR-0003 cross-machine):
+
+1. **The `Segment.length_m` floats must be bit-identical across machines** — which, per Step 2, means they cannot be raw iterative-optimizer outputs (those depend on convergence path, BLAS reduction order, SIMD/FMA contraction, and transcendental ULPs). They must be reduced to a **finite, exactly-comparable vocabulary** (quantised lengths/angles on a fixed grid, integer-counted), so the emitted plan is a *discrete word* whose equality is exact regardless of how the optimizer arrived at it. Even then, any `sin/cos/atan2` used in the reduction inherits the **un-guarded `libm` hazard** that already shadows the current Reeds–Shepp emit.
+2. **The selection among candidate trajectories must be RNG-free with a total-order tie-break** — mirroring the existing fixed enumeration order + strict-`<` keep-min (`:386-390`, `:418-425`) and the `heapq` monotonic-`counter` tie-break (`:2735-2743`). A near-tie that resolves by float comparison reintroduces the discrete cross-machine divergence Step 2 describes.
+3. **`path_first_conflict` (`:1306`) stays the validity oracle, unchanged** — it must accept the reduced arc exactly as it accepts a Reeds–Shepp arc. Because it only *reads* the arc (samples + `collisions.check`), it imposes no new determinism burden, but it does pin the seam: whatever the optimizer emits has to be a `DubinsArc` that `arc.sample()` (`DubinsArc.sample`, `:197`) can walk — i.e. expressible in the `Segment` `kind ∈ {L,S,R,T}` / `gear ∈ {±1}` / `length_m ≥ 0` vocabulary.
+
+In one line: **the seam is the `Segment`-tuple of the `DubinsArc` returned by `plan_path` (`:2686`) and folded into `Move.path` by `plan_fill` (`:1767`); the optimizer must hand over a *discrete, quantised, exactly-comparable* word there, or its `MovesPlan` cannot be ADR-0003 cross-machine byte-identical.**
+
+### Step 4 — API block (verbatim current signatures, for Task 3)
+
+> Recorded from `src/hangarfit/towplanner.py` at the commit on `feature/844b-trajopt-determinism-precheck`. **Discrepancy with the brief's hints, recorded per instruction:** the brief lists "`MovesPlan.sample` (~:197)", but `MovesPlan` has **no** `sample` method — the sampler at `:197` belongs to **`DubinsArc`**. The byte-identity artifact `MovesPlan` is a plain frozen dataclass (no methods); arc sampling (which Task 3's validation walks) lives on `DubinsArc`, reached via `Move.path`. Both are recorded below so Task 3 calls the real API.
+
+```python
+# Pose — frozen dataclass (towplanner.py:70-83)
+@dataclass(frozen=True, slots=True)
+class Pose:
+    x_m: float
+    y_m: float
+    heading_deg: float
+    @classmethod
+    def from_placement(cls, p: Placement) -> Pose: ...
+
+# Segment — frozen dataclass (towplanner.py:86-109); the seam payload element
+@dataclass(frozen=True, slots=True)
+class Segment:
+    kind: SegmentKind          # Literal["L", "S", "R", "T"]
+    length_m: float            # always >= 0; gear applies the travel direction
+    gear: Literal[1, -1] = 1   # +1 forward (default), -1 reverse
+
+# DubinsArc — frozen dataclass holding the Segment tuple (towplanner.py:112-133)
+@dataclass(frozen=True, slots=True)
+class DubinsArc:
+    start: Pose
+    end: Pose
+    turn_radius_m: float
+    segments: tuple[Segment, ...]
+
+# DubinsArc.sample — the arc sampler (towplanner.py:197); NOTE: lives on DubinsArc, not MovesPlan
+def sample(self, *, step_m: float = 0.05, step_deg: float = 1.0) -> Iterator[Pose]: ...
+
+# Move — one body's entry (towplanner.py:235-258)
+@dataclass(frozen=True, slots=True)
+class Move:
+    plane_id: str
+    target_slot: Pose
+    path: DubinsArc | None     # None == deferred/unrouted (best-effort)
+
+# MovesPlan — the ADR-0003 byte-identity artifact (towplanner.py:261-269); NO methods
+@dataclass(frozen=True, slots=True)
+class MovesPlan:
+    target_layout: Layout
+    moves: tuple[Move, ...]
+
+# plan_reeds_shepp — closed-form fewest-moves RS path (towplanner.py:922-924)
+def plan_reeds_shepp(
+    start: Pose, end: Pose, *, turn_radius_m: float, lateral: bool = False
+) -> DubinsArc: ...
+
+# path_first_conflict — the validity oracle (towplanner.py:1306-1314)
+def path_first_conflict(
+    arc: DubinsArc,
+    mover: Aircraft | GroundObject,
+    *,
+    mover_on_carts: bool,
+    placed: Layout,
+    step_m: float = 0.05,
+    step_deg: float = 1.0,
+) -> Conflict | None: ...
+```
+
+Supporting signatures Task 3 will likely also touch (recorded for completeness):
+
+```python
+# plan_dubins — forward-only closed-form arc (towplanner.py:431)
+def plan_dubins(start: Pose, end: Pose, *, turn_radius_m: float) -> DubinsArc: ...
+
+# plan_path — Hybrid-A* search; SEAM A return site is its DubinsArc (towplanner.py:2418-2431)
+def plan_path(
+    mover: Aircraft | GroundObject,
+    entry: Pose,
+    goal: Pose,
+    *,
+    hangar: Hangar,
+    placed: Layout,
+    mover_on_carts: bool,
+    entries: tuple[Pose, ...] | None = None,
+    max_expansions: int = _MAX_EXPANSIONS,
+    heuristic: Literal["euclidean", "grid"] = "euclidean",
+    heuristic_fn: Callable[[Pose], float] | None = None,
+    stats: dict[str, object] | None = None,
+) -> DubinsArc: ...
+```
+
+### Step 5 — verification (what this section establishes)
+
+- **(a) Deterministic seam, with `file:line`:** the `Segment`-tuple of the `DubinsArc` returned by `plan_path` (`towplanner.py:2686`), folded into `Move.path` by `plan_fill` (`:1767`, `:1838`) and emitted as `MovesPlan` (`:1841`); validated read-only by `path_first_conflict` (`:1306`).
+- **(b) Honest closed-form cross-machine assessment:** today's `MovesPlan` is closed-form-only (no iterative floats) but transcendental-derived (`sin/cos/atan2/sqrt/acos`); IEEE-754 pins `sqrt`/arithmetic/`hypot` but **not** the transcendentals, so the baseline is robustly same-/cross-process **same-machine** and only **presumptively** cross-machine — an untested assumption ADR-0003 never states (ties to Step 0.1 Evidence C).
+- **(c) API block:** real signatures copied verbatim from source with line citations; the brief's "`MovesPlan.sample`" corrected to `DubinsArc.sample` (`:197`) — no placeholders.
