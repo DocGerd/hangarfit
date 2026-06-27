@@ -1,7 +1,9 @@
 # Why the Herrenteich all-8 would not auto-tow-route — root-cause investigation
 
 **Status:** root cause #1 **confirmed and fixed** (#842, PR #843); a second, separable
-factor **characterised** and handed to a follow-up. **Date:** 2026-06-26.
+factor **characterised** and handed to a follow-up (#844) — now **closed NO-GO (2026-06-27)**: a
+documented manual-insertion case, with the dense-fleet relaxation tracked on #667. **Date:**
+2026-06-26 (investigation); 2026-06-27 (Factor-2 closeout).
 
 > The real Airfield Herrenteich hangar parks all eight usual occupants every day, by a
 > *monotone fill* — planes go in one at a time and an already-parked plane is never moved.
@@ -20,7 +22,7 @@ way, and the confidence in each conclusion.
 | | Finding | Status | Confidence |
 |---|---|---|---|
 | **Factor 1** | The Scheibe SF-25 (a real **low-wing** glider) had its 18 m wing modelled in the **high-wing z-layer** (`z[1.9,2.1]`), the same layer as the genuine high-wingers' wings. Towing a high-winger (e.g. `aviat_husky`, wing `z[2.0,2.3]`) past the parked Scheibe then hit a **phantom wing-vs-wing collision** with no real-world counterpart. | **Fixed** — wing re-modelled as a thin band `z[1.72,1.78]` below the high-wing layer (#842, PR #843). | **~95 %** |
-| **Factor 2** | Even with Factor 1 fixed, the **full** all-8 does not auto-route. Narrowed to one pair: `fk9_mkii` and `cessna_140` (both genuine high-wingers) **mutually block** near the door — each space-exhausts against the other at the 0.5 m/15° grid, so no monotone order places both. A finer-grid sweep walled inconclusively (search too slow at the time), making **search resolution** the prime suspect. **Update (#844): confirmed** — a 0.25 m/10° own-gear A\* later **found** a no-carts path (96 949 exp, 39 min), so a feasible own-gear path provably exists and the deployed coarse grid simply can't represent the deep lateral shuffle. See [`herrenteich-fk9-cessna-lateral-shuffle.md`](herrenteich-fk9-cessna-lateral-shuffle.md). | **Characterised**, not solved — handed to #844. A **search-efficiency** problem (now grounded: feasible path exists, too deep/slow at the deployed grid), separable from the fidelity bug; not another physics error. | medium |
+| **Factor 2** | Even with Factor 1 fixed, the **full** all-8 does not auto-route. Narrowed to one pair: `fk9_mkii` and `cessna_140` (both genuine high-wingers) **mutually block** near the door — each space-exhausts against the other at the 0.5 m/15° grid, so no monotone order places both. A finer-grid sweep walled inconclusively (search too slow at the time), making **search resolution** the prime suspect. **Update (#844): confirmed** — a 0.25 m/10° own-gear A\* later **found** a no-carts path (96 949 exp, 39 min), so a feasible own-gear path provably exists and the deployed coarse grid simply can't represent the deep lateral shuffle. See [`herrenteich-fk9-cessna-lateral-shuffle.md`](herrenteich-fk9-cessna-lateral-shuffle.md). | **Characterised**, then **RESOLVED → NO-GO (#844 closed 2026-06-27)** — a **search-efficiency** problem (feasible path exists, too deep/slow at the deployed grid) that no shippable fix closes (#840 / #844a / #844b all NO-GO); now a documented manual-insertion case, dense-fleet relaxation on #667. Separable from the fidelity bug; not another physics error. | medium → high |
 
 The headline: **at least one definite model-fidelity bug made the use case impossible**, and it
 is fixed. A second factor — finding a *feasible monotone order* under the deployed planner —
@@ -199,8 +201,9 @@ the "comparison to other options discarded" the brief asked for.
   0.05 m tow clearance), but the deployed planner cannot find it: the two real high-wingers mutually
   block at 0.5 m/15°, and a finer grid — the prime suspect — is too slow for the current Hybrid-A* to
   settle. Every follow-up gate returned NO-GO — the heading-aware SE(2) heuristic (#840: ~12% *worse*,
-  an intrinsic near-C\* A\* plateau), the husky-ordering gate (#844a: genuine but insufficient, KILLED),
-  and the continuous-traj-opt Gate 0 (#844b: dominated). The pair is now a **documented
+  an intrinsic near-C\* A\* plateau), the husky-ordering gate (#844a: genuine but insufficient — KILLED,
+  the determinism-contract / `scene.py` timeline-order / perf-rebaseline cost outweighing a
+  diagnostic-only, non-routing gain), and the continuous-traj-opt Gate 0 (#844b: dominated). The pair is now a **documented
   manual-insertion case**, and the architectural relaxation (lift monotone fill for dense fleets) is
   tracked under #667. This was a **search-efficiency** task (resolution / order / budget), **not** a
   claim that the all-8 routes end-to-end, and **not** evidence of another physics error (both planes

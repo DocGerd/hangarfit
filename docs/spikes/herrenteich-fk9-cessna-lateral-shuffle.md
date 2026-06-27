@@ -1,7 +1,9 @@
 # Factor 2 (fk9↔cessna front-door corridor): a **search-efficiency** problem — a feasible own-gear path exists, too deep for the deployed grid
 
 **Status:** witness-first feasibility probe — **complete**; #844 reframed from a speculative
-"resolution" suspicion to a **grounded** search problem. **Date:** 2026-06-26. **Issue:** #844.
+"resolution" suspicion to a **grounded** search problem — and now **CLOSED (2026-06-27)**: every
+search-side fix returned NO-GO, so the pair is a documented manual-insertion case and the dense-fleet
+relaxation moves to #667. **Date:** 2026-06-26 (probe); 2026-06-27 (closeout). **Issue:** #844 (closed).
 
 > Follow-up to [`herrenteich-all8-tow-routing-rootcause.md`](herrenteich-all8-tow-routing-rootcause.md).
 > Factor 1 (the Scheibe wing-z miscoding) is fixed (#842, PR #843). Factor 2 is the residual: the two
@@ -18,7 +20,10 @@
 A **feasible own-gear tow path provably exists** — finer-grid A* finds one (no carts) — so #844 is a
 **search-*efficiency*** problem: the deployed 0.5 m/15° grid is too coarse to represent the deep
 pivot+forward shuffle that threads the corridor, and finer grid finds it but **far too slowly to
-ship**. Not a phantom collision, not a fidelity bug, not infeasibility.
+ship**. Not a phantom collision, not a fidelity bug, not infeasibility. **Closeout (2026-06-27):** that
+search-efficiency gap proved intractable to every shippable fix (heading-aware heuristic #840, husky
+ordering #844a, traj-opt Gate 0 #844b — all NO-GO), so **#844 is closed** and the pair is a documented
+manual-insertion case; the architectural relaxation (lift monotone-fill) is tracked on #667.
 
 | # | Finding | Evidence | Confidence |
 |---|---|---|---|
@@ -34,7 +39,8 @@ ship**. Not a phantom collision, not a fidelity bug, not infeasibility.
 crux); the finer-grid own-gear find is the **feasibility witness** (a real no-carts path exists). So
 the fix is a **search-efficiency** improvement that makes the proven-but-deep own-gear shuffle
 findable *fast* — the spike doc's "resolution" hypothesis, now **grounded and vindicated**, with the
-open work being speed, not existence.
+remaining gap being speed, not existence — a gap that (per the 2026-06-27 closeout below) no shippable
+search-side method closes, so #844 is closed and the relaxation is parked on #667.
 
 ---
 
@@ -165,12 +171,20 @@ byte-identical determinism contract (plus the `scene.py` timeline-order divergen
 rebaseline) for a diagnostic-only / partial-render gain that does **not** route the all-8 is not worth
 it. The husky-ordering effect is documented here but **not shipped** — no `_place_rest` ordering
 heuristic lands. The architectural answer for the all-8 (lift monotone-fill / continuous trajectory
-optimization) is carried by #667 and the deferred traj-opt bet, not by a candidate-ordering tweak.
+optimization) is carried by #667 — its **move-aside / lift-monotonic** relaxation (the greedy-first
+order-search backtracking already shipped under #667; the move-aside that resolves these dead-ends is
+the *open* part), which also parks the re-chartered traj-opt bet — not a candidate-ordering tweak.
 #844 is closed on this basis.
 
 ---
 
 ## What this means for #844 (the fix space)
+
+> **Historical (pre-closeout) fix-space exploration.** Candidates 2 and 3 below were subsequently built
+> and **refuted** (see the macro-refutation and SE(2) NO-GO sections); candidate 1 is dominated by the
+> same near-C\* plateau bound (the ~97 k expansions all fall *inside* the corridor that adaptive
+> refinement would still pay for). #844 is **closed** — the surviving direction is the #667
+> lift-monotonic (move-aside) relaxation, not any item in this list.
 
 The faithful fix makes the planner **find the proven-but-deep own-gear shuffle *fast***. A feasible
 path exists (Finding 5) but costs ~97 k expansions / 39 min at 0.25 m — far above the 8000 default
