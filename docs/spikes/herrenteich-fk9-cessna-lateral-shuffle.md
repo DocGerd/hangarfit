@@ -118,6 +118,51 @@ per-plane routing is slow (tens of s each), so the budget funds only a few permu
 the charter all-8 needs both the fk9↔cessna lateral shuffle and a faster/smarter order search.** The
 isolated-pair experiments remain the clean evidence for the scoped Factor-2 linchpin.
 
+### Husky-ordering gate (#844a, 2026-06-27) — isolates the ordering effect from the wall
+
+The #844a follow-up asks whether a smarter `_place_rest` candidate enumeration (seat the constrained
+own-gear husky *before* the carted `wild_thing`) is a cheap, separable win. A witness-first read-only
+probe answers it at the **deployed** grid (0.5 m / 15°) and budgets (per-plane 8 k, global 16 k) — the
+shippable regime, sharper than the 20 k / 80 k run above. It instruments `plan_path` to trace per-plane
+expansions and runs two arms (natural `back_first_order` vs a forced husky-before-`wild_thing` order),
+plus an independent fk9↔cessna wall check.
+
+| | Baseline (natural `back_first_order`) | Husky-early (forced) |
+|---|---|---|
+| `aviat_husky` | **exhausts** (8000, retried 6573) | **routes (2538 exp)** |
+| `wild_thing` | routes (1427) | routes (1294) — still seats after husky |
+| distinct planes routed (all but the blocker) | 4 (zlin, scheibe, wild_thing, stemme) | **6** (zlin, scheibe, husky, wild_thing, stemme, cessna) |
+| bails on | `aviat_husky` — **false blame** (husky is routable) | `fk9_mkii` — **the genuine wall** |
+| all-8 routed? | no (`global fill budget (16000) exhausted`) | no (`global fill budget (16000) exhausted`) |
+
+**Mechanism.** In the natural order `wild_thing` (deeper, y 16.95) precedes `aviat_husky` (y 16.40),
+so the greedy commits `wild_thing` first and `husky` then cannot route past it (the root-cause doc's
+husky-ordering finding — husky routes if placed before `wild_thing`, which the husky-early arm now
+directly confirms: `husky ok 2538`). The natural-order run consumes the **entire** 16 k global budget
+on `wild_thing` (1427) plus two `aviat_husky` exhaustions (8000 + 6573 = 14.6 k) and bails on
+`aviat_husky`. Whether the #667 backtracking *would* reach the husky-early order given a larger budget
+is a hypothesis this gate did **not** test (no larger-budget baseline arm was run); what it shows is
+that within the deployed budget the natural order never gets there, while forcing husky-early seats
+husky (2538), still seats `wild_thing` (1294), and relocates the bail to the **genuine** fk9↔cessna
+wall.
+
+**Wall check (independent, one `plan_path` call each, deployed grid + 8 k per-plane cap):** `fk9_mkii`
+vs parked `cessna_140` → **EXHAUSTED (8000)**; `cessna_140` vs parked `fk9_mkii` → **EXHAUSTED (8000)**.
+Neither routes past the other within the per-plane cap — confirming fk9↔cessna is **grid-geometry-locked**
+at the deployed 0.5 m/15° lattice (consistent with Finding 5 + the #840 Step-0 NO-GO: the coarse grid
+can't represent the parallel-park at *any* budget, not merely the global cap).
+
+**Verdict — husky-ordering is a genuine but *insufficient* effect.** It is provably a pure ordering
+problem (forcing husky-early seats it cleanly and strictly dominates: 6 planes seated vs 4, and the
+bail names the real blocker). But it **cannot route the all-8**: the residual fk9↔cessna pair is
+grid-geometry-locked, stronger than the predicted "budget-bound" — no global-budget bump (the rejected
+#480/#512 tradeoff) reaches it. So a `_place_rest` ordering heuristic is a *diagnostic-clarity /
+partial-fill* improvement (correct bail blame, more planes in a best-effort render), **not** a routing
+fix, and shipping it touches determinism-sensitive `_place_rest` (binds determinism-guard + the
+`back_first_order` timeline-order divergence in `scene.py`'s whole-fill timeline builder — currently
+`scene.py:298` — + a perf rebaseline). The ship-vs-kill decision for #844a is
+**deferred** pending that cost/benefit call; #844a stays OPEN.
+
 ---
 
 ## What this means for #844 (the fix space)
@@ -286,6 +331,12 @@ cheaper-than-the-nook follow-ups remain on #844: **(a)** the husky front-cluster
 quick win (a pure order-search problem, *not* the dead nook), and **(b)** a parked, clearly-scoped
 **continuous-trajectory-optimization** spike (the only surviving method class; defer).
 
+> **Follow-up (a):** The witness-first ordering gate (2026-06-27) confirms husky is a pure, separable
+> ordering issue but that fixing it **cannot route the all-8** (the residual fk9↔cessna pair is
+> grid-geometry-locked) — see "Husky-ordering gate (#844a)" above. The effect is genuine and strictly
+> dominates (diagnostic clarity + more planes in partial renders), so the **ship-vs-kill decision is
+> deferred**; #844a stays OPEN.
+>
 > **Follow-up (b):** Gate 0 (determinism-first pre-check) returned **NO-GO (dominated)** (2026-06-27) — see [`herrenteich-fk9-cessna-trajopt-determinism-precheck.md`](herrenteich-fk9-cessna-trajopt-determinism-precheck.md) ("Verdict (Gate 0)").
 
 ### Known manual-insertion case — fk9_mkii ↔ cessna_140
