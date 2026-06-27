@@ -306,3 +306,54 @@ def plan_path(
 - **(a) Deterministic seam, with `file:line`:** the `Segment`-tuple of the `DubinsArc` returned by `plan_path` (`towplanner.py:2686`), folded into `Move.path` by `plan_fill` (`:1767`, `:1838`) and emitted as `MovesPlan` (`:1841`); validated read-only by `path_first_conflict` (`:1306`).
 - **(b) Honest closed-form cross-machine assessment:** today's `MovesPlan` is closed-form-only (no iterative floats) but transcendental-derived (`sin/cos/atan2/sqrt/acos`); IEEE-754 pins `sqrt`/arithmetic/`hypot` but **not** the transcendentals, so the baseline is robustly same-/cross-process **same-machine** and only **presumptively** cross-machine — an untested assumption ADR-0003 never states (ties to Step 0.1 Evidence C).
 - **(c) API block:** real signatures copied verbatim from source with line citations; the brief's "`MovesPlan.sample`" corrected to `DubinsArc.sample` (`:197`) — no placeholders.
+
+---
+
+## Step 0.3 — reduction / snap experiment
+
+### Verdict: a discrete-word reduction is **mechanically real and byte-stable same-machine** — repeated (and separate-process, incl. `PYTHONHASHSEED=random`) construction of a snapped own-gear trajectory is **byte-identical**, and the read-only validity oracle (`path_first_conflict`, `towplanner.py:1306`) **consumes and accepts** it exactly as it does a native planner arc. So the Step 0.1 *"unshippable — no reduction exists"* failure mode is **ruled out**: a continuous own-gear optimum **does** reduce to the existing finite `Segment` word vocabulary that today's closed-form machinery already realizes. **But** the reduction inherits the baseline's cross-machine status *unchanged* (only *presumptively* cross-machine — same un-guarded `libm` hazard as Step 0.2), and the reduced artifact lives in the *exact* word space the existing A\* already searches, so a continuous optimizer adds nothing *deterministically bankable* over A\* for the shippable `MovesPlan`. The evidence therefore points **away from a clean PASS and toward the §5 NO-GO (dominated) band** (find-then-cache / "A\* already reaches it"), not the NO-GO (unshippable) band — Task 4 assigns the final band.
+
+### The experiment (throwaway script, NOT committed)
+
+A local scratch probe (`gate0_snap_probe.py`, deleted with the scratchpad — not in `bench/` or `tests/`, per §7) using the verified Step 0.2 API:
+
+1. **Fabricated representative own-gear parallel-park.** A short list of `Pose` waypoints with equal start/end heading (90°), a net lateral offset, routed *via a deep cusp* — the shuffle shape the fk9↔cessna nook needs. The fk9 is `tow_pivotable`, so `Aircraft.effective_turn_radius_m()` returns **`0.0`** (confirmed live in the probe) — i.e. **R = 0 is the faithful own-gear motion model** for this exact aircraft, not a stand-in.
+2. **Snap.** Chain closed-form `plan_reeds_shepp(a, b, turn_radius_m=0.0)` (`towplanner.py:922`) shots between consecutive waypoints. At R = 0 this delegates to `_plan_cart` (`:946-947` → `:477`), which emits a pivot–straight–pivot word in the `Segment` vocabulary (`kind ∈ {L,S,R,T}`, `gear ∈ {±1}`, `length_m ≥ 0`; `:86-109`) — the byte-identity payload Step 0.2 named as the seam.
+3. **Serialize + diff.** `repr` of each arc's `start`/`end`/`turn_radius_m` and every `Segment` field (`repr(float)` is round-trip-exact, so this captures the bits). Built **twice** in one process; and built in **two separate interpreters** (one under `PYTHONHASHSEED=random`) and `diff`ed.
+4. **Validity (best-effort).** Loaded the real `fk9_mkii` + `cessna_140` and the real 15.08 × 31.76 m Herrenteich hangar (`load_layout("examples/herrenteich/layout.yaml")`, the same recipe as `bench/se2_heuristic_probe.py:73-79,225-249`); built a *single* snapped own-gear connector (door entry → the real fk9 goal pose) and ran `path_first_conflict` against (a) an empty parked layout and (b) the cessna parked at its Herrenteich goal.
+
+> **Step 1 (cheap witness check, per the brief):** there is **no cached fk9↔cessna witness pose sequence** to reuse — `bench/se2_heuristic_probe.py` re-runs the `plan_path` search at the fine 0.25 m/10° grid each time (it caches no path), and the only `witness*` artifacts under `tests/` are the **ML feasibility-witness *layouts*** (`tests/fixtures/ml/witness_*.yaml`), not a tow trajectory. The 39-min re-run was therefore the *only* way to obtain the real continuous path, and the fabricated representative made it **unnecessary** — the byte-stability property is a property of the *representation + snap*, which the representative exercises in full.
+
+### Result 1 (CORE) — byte-stability: **`BYTE_IDENTICAL_REPEAT: True`**
+
+- **Same-process, repeated construction:** `BYTE_IDENTICAL_REPEAT: True`.
+- **Separate interpreters (same machine), incl. `PYTHONHASHSEED=random`:** `CROSS_PROCESS_BYTE_IDENTICAL: True` — matching the Step 0.2 evidence-class of `tests/test_solver_parallel.py` (cross-process, same machine). No cross-machine claim is made or testable here (single `libm`).
+
+The serialized snap shows the expected cusp — a reverse straight leg at a waypoint join — confirming the parallel-park shape, e.g.:
+
+```
+arc[1] start=Pose(x_m=0.4, y_m=1.8, heading_deg=55.0) end=Pose(x_m=-0.3, y_m=1.2, heading_deg=130.0) r=0.0
+  seg[0] kind=L length_m=0.09776103392965524 gear=1
+  seg[1] kind=S length_m=0.9219544457292888 gear=-1     # <- reverse leg = the cusp
+  seg[2] kind=R length_m=1.4067579729254025 gear=1
+```
+
+### Result 2 (best-effort) — validity oracle consumes the snapped arc
+
+- **`fk9.effective_turn_radius_m()` = `0.0`** (own-gear pivot-in-place — R = 0 is faithful).
+- **Acceptance (empty parked layout):** `path_first_conflict(...)` → **`None`** (accepted). A snapped own-gear `DubinsArc` is a first-class input to the validity oracle — `arc.sample()` walks it and `collisions.check` clears it exactly as for a native Reeds–Shepp arc.
+- **Honest read (cessna parked):** → **`Conflict(kind='wing_wing_overlap', planes=('cessna_140','fk9_mkii'), …)`**. This is **expected and not a determinism finding**: a *naive direct* entry→goal connector clips the parked cessna's wing — which is precisely the nook problem (a direct own-gear shot does not avoid the cessna; that is why the corridor needs the shuffle/search). The point it establishes is that the oracle **reads the snapped arc and returns a faithful verdict**, so a reduced trajectory enters validation on identical terms to the existing planner output.
+
+### Interpretation — reduction-escape vs dominance
+
+**1. Is repeated snap construction byte-identical (same-machine)? Does it validate?** Yes and yes — `BYTE_IDENTICAL_REPEAT: True` (same- and cross-process, incl. hash-randomized), and the snapped arc is accepted by `path_first_conflict` (empty layout → `None`; obstacle case returns a faithful `Conflict`). The snap is deterministic enough same-machine.
+
+**2. Reduction escape — supported, but only to the baseline's degree.** The experiment confirms the Step 0.1 prediction: a continuous own-gear (R = 0) optimum is expressible as a discrete `Segment` word (pivot/straight primitives, `:477`–`:574`) that the *existing* closed-form machinery realizes byte-identically same-machine. A continuous optimizer's role can be absorbed by this deterministic snap — its output need not be carried as raw iterative floats. **However**, the snap is *not* transcendental-free: even the R = 0 own-gear word derives its pivot-angle `length_m` from `math.atan2` (`_plan_cart:517`) (the straight leg uses `math.hypot`, `:501`, which *is* IEEE-correct). So the reduction inherits the **same un-guarded `libm` cross-machine hazard** Step 0.2 documented for the baseline — *no better, no worse*. The reduction escapes the *"raw-float-output"* unshippability, but **not** the cross-machine-bit-stability question Step 0.1's contract wording demands; under that bar the reduced plan is exactly as (un)provable cross-machine as today's shipped Reeds–Shepp `MovesPlan`.
+
+**3. Dominance — this is where the evidence bites.** The reduced artifact lives in the *exact* finite word/primitive vocabulary the existing Hybrid-A\* already searches (`_primitives:1920-1969` + the analytic RS suffix; the ~97 k-expansion near-C\* plateau in `lateral-shuffle.md`). A continuous optimizer's *only* differentiator over A\* is **speed** — and that value **does not bank as a deterministic shippable artifact**, for two reasons the experiment + Step 0.2 make concrete:
+   - To be ADR-0003-comparable the optimizer's continuous output must be **re-snapped to a canonical grid** (Result 1's deterministic word). But snapping a continuous trajectory onto a finite, exactly-comparable vocabulary **is** the A\*-style discretization — so the shippable artifact is a word A\* could also produce; traj-opt adds nothing *to the artifact*, only a (cross-machine-fragile) faster route to it.
+   - The near-tie **word selection** among snapped candidates resolves by a strict-`<`/`min`-keeps-first float comparison (`_plan_cart:573`; RS word tie-break `:386-390`), which Step 0.2 showed can pick a *different winning word* across `libm` builds — so even the *discrete* choice is only presumptively cross-machine.
+
+   Net: for the **shippable `MovesPlan`**, a continuous optimizer collapses to *"deterministically realize a word A\* already reaches"* — i.e. either it is **dominated by the existing search**, or (if its speed advantage is banked by storing the found trajectory) it reduces to **find-then-cache = the already-rejected witness-cache** for the fixed Herrenteich pair (the §5 dominance floor; design spec §9 decision 5).
+
+**Plainly:** a discrete-word reduction is **plausible and byte-stable same-machine** (so the *unshippable* band is off the table), but it **does not** add deterministic value over A\* for the shippable artifact and **does not** improve on the baseline's untested cross-machine presumption. The evidence points toward the **§5 NO-GO (dominated)** band — not PASS, not NO-GO (unshippable). Task 4 finalizes the band and severity.
