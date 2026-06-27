@@ -26,6 +26,7 @@ from typing import Literal
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
 FIXTURES = REPO_ROOT / "tests" / "fixtures"
+HERRENTEICH = REPO_ROOT / "examples" / "herrenteich"
 
 
 @dataclass(frozen=True)
@@ -43,21 +44,44 @@ class Regime:
     ``"auto"`` ⇒ fleet-derived). It enlarges the per-plane tow start set (forward
     + reverse cones × the apron y-samples) and lengthens each path, so it is the
     knob that characterises the apron's routing-cost effect (#499).
+
+    A regime drives **exactly one** of two modes (enforced in ``__post_init__``):
+
+    * ``scenario`` — *solve-then-route*: ``solve()`` finds the layout(s), which are
+      then tow-routed. The original mode (the solve-feasible regimes).
+    * ``layout`` — *route a pre-built WITNESS layout directly*, skipping the solve
+      (#667 Rung B). This is for a statically-valid layout that ``solve`` **cannot
+      reproduce** — the real Herrenteich all-8 (``examples/herrenteich/scenario.yaml``
+      header): RR-MC won't find the dense nest, so a solve-then-route regime would
+      measure placement-failure, not the *routing ceiling*. The witness layout is
+      loaded and routed as-is, so ``placement`` is skipped (``placement_s == 0.0``,
+      ``restarts_done == 0``) and ``seed``/``max_restarts``/``spread`` are unused.
     """
 
     key: str
     description: str
-    scenario: Path
-    seed: int
-    max_restarts: int
-    spread: bool
-    n_planes: int
+    scenario: Path | None = None
+    layout: Path | None = None
+    seed: int = 1
+    max_restarts: int = 0
+    spread: bool = True
+    n_planes: int = 0
     alternatives: int = 1
     tow_heuristic: Literal["euclidean", "grid"] = "grid"
     tow_max_expansions: int | None = None
     tow_max_total_expansions: int | None = None
     heavy: bool = False
     apron_depth: float | Literal["auto"] = 0.0
+
+    def __post_init__(self) -> None:
+        # Exactly one routing source: a typo'd / half-specified regime must fail
+        # loudly here, never silently route nothing (silent-failure guard).
+        if (self.scenario is None) == (self.layout is None):
+            raise ValueError(
+                f"regime {self.key!r}: exactly one of `scenario` or `layout` must "
+                "be set (`scenario` ⇒ solve-then-route; `layout` ⇒ route a "
+                "pre-built witness layout directly)"
+            )
 
 
 REGIMES: tuple[Regime, ...] = (
@@ -161,6 +185,36 @@ REGIMES: tuple[Regime, ...] = (
         n_planes=6,
         tow_max_total_expansions=4000,
         apron_depth=10.0,
+        heavy=True,
+    ),
+    # ── #667 Rung B: real-Herrenteich routing-ceiling WITNESS regimes ─────────
+    # The objective baseline every later #667 rung (C/D/E) is graded against.
+    # These route the KNOWN-VALID hand-authored witness layouts directly (no
+    # solve — `solve` provably cannot reproduce the dense all-8 nest), so they
+    # measure the *routing* ceiling, not placement. `plan_fill` is all-or-nothing
+    # (a full plan or a `NoFeasiblePlanError` naming the deepest unplaceable
+    # body), so the baseline is binary: does the dense fill route? Measured
+    # 2026-06-27: it does NOT — at the 8000 global cap (and at 16000, the solve
+    # default) both witnesses EXHAUST the budget grinding the nest and bail
+    # (deepest-unplaced `zlin_savage`). The cap bounds the un-routable disprove;
+    # 8000 matches `full_nine_spread_on` (~66–68 s local). A partial routed-body
+    # COUNT is Rung C's reverse-teardown probe, not this binary baseline. heavy ⇒
+    # excluded from the default fast `--gate` (the multi-minute route never runs
+    # in CI). Move-aside (Rung E) must flip the verdict to routed.
+    Regime(
+        key="herrenteich_all_eight",
+        description="Real Herrenteich all-8 WITNESS layout — #667 routing-ceiling baseline",
+        layout=HERRENTEICH / "layout.yaml",
+        n_planes=8,
+        tow_max_total_expansions=8000,
+        heavy=True,
+    ),
+    Regime(
+        key="herrenteich_today",
+        description="Real Herrenteich today (all-8 + Fuji = 9) WITNESS — #667 routing baseline",
+        layout=HERRENTEICH / "layout_today.yaml",
+        n_planes=9,
+        tow_max_total_expansions=8000,
         heavy=True,
     ),
 )
