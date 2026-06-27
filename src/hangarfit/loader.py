@@ -1502,8 +1502,14 @@ _ALLOWED_PART_KEYS = frozenset(
         "z_bottom_m",
         "z_top_m",
         "planform",
+        "vertices",
     }
 )
+
+# vertices: is valid only on the fuselage family. A `kind: fuselage` entry is
+# built under the placeholder kind "fuselage_aft" (see _build_aircraft), so
+# "fuselage" itself is never a Part kind reaching _build_part.
+_VERTICES_ALLOWED_KINDS = frozenset({"fuselage_front", "fuselage_aft"})
 
 
 def _build_planform(
@@ -1555,6 +1561,26 @@ def _build_planform(
     )
 
 
+def _build_vertices(data: Any, index: int) -> tuple[tuple[float, float], ...]:
+    """Parse a raw ``vertices:`` ring (part-own centred frame) into Part vertices.
+
+    Each entry is an ``[x, y]`` pair. ``Part.__post_init__`` canonicalizes the
+    ring (ADR-0003) and enforces the bbox subset; this helper only does
+    shape/type validation so a malformed entry is a clear LoaderError rather
+    than a deep TypeError.
+    """
+    if not isinstance(data, list):
+        raise LoaderError(f"parts[{index}].vertices must be a list of [x, y] pairs")
+    ring: list[tuple[float, float]] = []
+    for j, pair in enumerate(data):
+        if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+            raise LoaderError(f"parts[{index}].vertices[{j}] must be an [x, y] pair, got {pair!r}")
+        x = _to_float(pair[0], f"parts[{index}].vertices[{j}][0]")
+        y = _to_float(pair[1], f"parts[{index}].vertices[{j}][1]")
+        ring.append((x, y))
+    return tuple(ring)
+
+
 def _build_part(data: Any, index: int) -> Part:
     if not isinstance(data, dict):
         raise LoaderError(f"parts[{index}] must be a mapping")
@@ -1573,11 +1599,23 @@ def _build_part(data: Any, index: int) -> Part:
             f"parts[{index}]: planform: is only valid on a kind 'wing' part, "
             f"got kind {data['kind']!r}"
         )
+    if "vertices" in data and "planform" in data:
+        raise LoaderError(
+            f"parts[{index}]: 'vertices:' and 'planform:' are mutually exclusive "
+            f"(both author a polygon footprint)"
+        )
+    if "vertices" in data and data["kind"] not in _VERTICES_ALLOWED_KINDS:
+        raise LoaderError(
+            f"parts[{index}]: 'vertices:' is only valid on a fuselage part "
+            f"(authored as kind 'fuselage'), got kind {data['kind']!r}"
+        )
     width_m = _to_float(data["width_m"], f"parts[{index}].width_m")
     length_m = _to_float(data["length_m"], f"parts[{index}].length_m")
     local_vertices = None
     if "planform" in data:
         local_vertices = _build_planform(data["planform"], width_m, length_m, index)
+    elif "vertices" in data:
+        local_vertices = _build_vertices(data["vertices"], index)
     return Part(
         kind=data["kind"],
         length_m=length_m,
