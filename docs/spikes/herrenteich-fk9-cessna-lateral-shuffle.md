@@ -1,7 +1,9 @@
 # Factor 2 (fk9↔cessna front-door corridor): a **search-efficiency** problem — a feasible own-gear path exists, too deep for the deployed grid
 
 **Status:** witness-first feasibility probe — **complete**; #844 reframed from a speculative
-"resolution" suspicion to a **grounded** search problem. **Date:** 2026-06-26. **Issue:** #844.
+"resolution" suspicion to a **grounded** search problem — and now **CLOSED (2026-06-27)**: every
+search-side fix returned NO-GO, so the pair is a documented manual-insertion case and the dense-fleet
+relaxation moves to #667. **Date:** 2026-06-26 (probe); 2026-06-27 (closeout). **Issue:** #844 (closed).
 
 > Follow-up to [`herrenteich-all8-tow-routing-rootcause.md`](herrenteich-all8-tow-routing-rootcause.md).
 > Factor 1 (the Scheibe wing-z miscoding) is fixed (#842, PR #843). Factor 2 is the residual: the two
@@ -18,7 +20,10 @@
 A **feasible own-gear tow path provably exists** — finer-grid A* finds one (no carts) — so #844 is a
 **search-*efficiency*** problem: the deployed 0.5 m/15° grid is too coarse to represent the deep
 pivot+forward shuffle that threads the corridor, and finer grid finds it but **far too slowly to
-ship**. Not a phantom collision, not a fidelity bug, not infeasibility.
+ship**. Not a phantom collision, not a fidelity bug, not infeasibility. **Closeout (2026-06-27):** that
+search-efficiency gap proved intractable to every shippable fix (heading-aware heuristic #840, husky
+ordering #844a, traj-opt Gate 0 #844b — all NO-GO), so **#844 is closed** and the pair is a documented
+manual-insertion case; the architectural relaxation (lift monotone-fill) is tracked on #667.
 
 | # | Finding | Evidence | Confidence |
 |---|---|---|---|
@@ -34,7 +39,8 @@ ship**. Not a phantom collision, not a fidelity bug, not infeasibility.
 crux); the finer-grid own-gear find is the **feasibility witness** (a real no-carts path exists). So
 the fix is a **search-efficiency** improvement that makes the proven-but-deep own-gear shuffle
 findable *fast* — the spike doc's "resolution" hypothesis, now **grounded and vindicated**, with the
-open work being speed, not existence.
+remaining gap being speed, not existence — a gap that (per the 2026-06-27 closeout below) no shippable
+search-side method closes, so #844 is closed and the relaxation is parked on #667.
 
 ---
 
@@ -160,12 +166,25 @@ grid-geometry-locked, stronger than the predicted "budget-bound" — no global-b
 partial-fill* improvement (correct bail blame, more planes in a best-effort render), **not** a routing
 fix, and shipping it touches determinism-sensitive `_place_rest` (binds determinism-guard + the
 `back_first_order` timeline-order divergence in `scene.py`'s whole-fill timeline builder — currently
-`scene.py:298` — + a perf rebaseline). The ship-vs-kill decision for #844a is
-**deferred** pending that cost/benefit call; #844a stays OPEN.
+`scene.py:298` — + a perf rebaseline). **Ship-vs-kill — KILLED (2026-06-27).** Trading the ADR-0003
+byte-identical determinism contract (plus the `scene.py` timeline-order divergence and a perf
+rebaseline) for a diagnostic-only / partial-render gain that does **not** route the all-8 is not worth
+it. The husky-ordering effect is documented here but **not shipped** — no `_place_rest` ordering
+heuristic lands. The architectural answer for the all-8 (lift monotone-fill / continuous trajectory
+optimization) is carried by #667 — its **move-aside / lift-monotonic** relaxation (the greedy-first
+order-search backtracking already shipped under #667; the move-aside that resolves these dead-ends is
+the *open* part), which also parks the re-chartered traj-opt bet — not a candidate-ordering tweak.
+#844 is closed on this basis.
 
 ---
 
 ## What this means for #844 (the fix space)
+
+> **Historical (pre-closeout) fix-space exploration.** Candidates 2 and 3 below were subsequently built
+> and **refuted** (see the macro-refutation and SE(2) NO-GO sections); candidate 1 is dominated by the
+> same near-C\* plateau bound (the ~97 k expansions all fall *inside* the corridor that adaptive
+> refinement would still pay for). #844 is **closed** — the surviving direction is the #667
+> lift-monotonic (move-aside) relaxation, not any item in this list.
 
 The faithful fix makes the planner **find the proven-but-deep own-gear shuffle *fast***. A feasible
 path exists (Finding 5) but costs ~97 k expansions / 39 min at 0.25 m — far above the 8000 default
@@ -185,8 +204,9 @@ per-plane budget and impractical for `solve`/`view`. The candidates, all `towpla
 A raised per-plane budget alone is **not** a fix (97 k exp / 39 min is far past any shippable wall);
 it must be paired with (1) and/or (2) to cut the cost, not just the cap.
 
-The order-search blocker (husky) is a **separable** efficiency problem for the all-8 charter goal and
-is tracked alongside #844.
+The order-search blocker (husky) is a **separable** efficiency problem for the all-8 charter goal; the
+ordering gate KILLED a standalone `_place_rest` heuristic (see the Husky-ordering gate verdict), so the
+residual order-search work folds into the #667 shuffle-aware relaxation rather than a #844 follow-up.
 
 ---
 
@@ -324,18 +344,22 @@ heading-guidance deficiency. Heading-awareness is **not** the lever.
   penalties) while the nook is cusp-heavy; a 4D cusp-aware field *might* guide marginally better, but
   the same plateau bound caps the upside — a larger bet, not a smaller one.
 
-**Disposition (#844 stays OPEN):** the fk9↔cessna pair is recorded as a **known manual-insertion case**
-(see below) — the club hand-shuffles it on own gear, so `on_carts: true` would be unfaithful and
-caching the 39-min witness plan would be brittle/hardcoded ("worst-faithfulness"). Two separable,
-cheaper-than-the-nook follow-ups remain on #844: **(a)** the husky front-cluster entry-**ordering**
-quick win (a pure order-search problem, *not* the dead nook), and **(b)** a parked, clearly-scoped
-**continuous-trajectory-optimization** spike (the only surviving method class; defer).
+**Disposition (#844 CLOSED 2026-06-27):** the fk9↔cessna pair is recorded as a **known manual-insertion
+case** (see below) — the club hand-shuffles it on own gear, so `on_carts: true` would be unfaithful and
+caching the 39-min witness plan would be brittle/hardcoded ("worst-faithfulness"). Both separable
+follow-ups are now resolved: **(a)** the husky front-cluster entry-**ordering** gate RAN → **KILLED**
+(a genuine pure-ordering effect, but it cannot route the all-8 and is not worth the determinism cost —
+see the Husky-ordering gate verdict above), and **(b)** the parked **continuous-trajectory-optimization**
+Gate 0 returned **NO-GO (dominated)**. The architectural relaxation (lift monotone-fill for dense
+fleets) is tracked by #667; a re-chartered *generalize-to-arbitrary-nooks* continuous-optimization bet
+is the only surviving method class, parked there. #844 itself is exhausted and closed.
 
 > **Follow-up (a):** The witness-first ordering gate (2026-06-27) confirms husky is a pure, separable
 > ordering issue but that fixing it **cannot route the all-8** (the residual fk9↔cessna pair is
 > grid-geometry-locked) — see "Husky-ordering gate (#844a)" above. The effect is genuine and strictly
-> dominates (diagnostic clarity + more planes in partial renders), so the **ship-vs-kill decision is
-> deferred**; #844a stays OPEN.
+> dominates (diagnostic clarity + more planes in partial renders), but it is **KILLED (2026-06-27)** —
+> not worth perturbing the ADR-0003 determinism contract for a diagnostic-only, non-routing gain. The
+> all-8 architectural fix lives in #667; #844 is closed.
 >
 > **Follow-up (b):** Gate 0 (determinism-first pre-check) returned **NO-GO (dominated)** (2026-06-27) — see [`herrenteich-fk9-cessna-trajopt-determinism-precheck.md`](herrenteich-fk9-cessna-trajopt-determinism-precheck.md) ("Verdict (Gate 0)").
 
@@ -346,4 +370,5 @@ The `solve --render-paths` / `view` auto-router cannot route the fk9↔cessna fr
 (~97 k expansions / 39 min at the fine grid the maneuver requires), and no search-guidance heuristic
 shrinks it (Step-0 NO-GO above). In real operation the club inserts this pair by **hand-shuffling on
 own gear**, never on dollies. Treat the pair as a hand-placed exception in the all-8 fill until/unless
-a continuous-optimization planner (#844 follow-up b) is built.
+a continuous-optimization planner (the re-chartered generalize-to-arbitrary-nooks bet, parked under
+#667) is built.
