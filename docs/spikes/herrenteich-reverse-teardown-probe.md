@@ -98,8 +98,8 @@ against the *sparser* scene (`ctsl` gone) — and **all five still exhaust the b
    blocker isolated after husky-ordering at a finer analysis ([lateral-shuffle spike](herrenteich-fk9-cessna-lateral-shuffle.md));
    at the **deployed budget**, the whole back-cluster is budget-locked, not just that pair. All five bail
    **`[budget-exhausted]`** — they grind the full 8000 expansions (~96–425 s each) without reaching the
-   door, *not* the early `[space-exhausted]` drain (which bails in <1 s, as every `layout_today` aircraft
-   does — see Limitation). So at the deployed grid a path *may* exist beyond the affordable budget
+   door, *not* the early `[space-exhausted]` drain (which bails in <1 s, as most `layout_today` aircraft
+   do — see Limitation). So at the deployed grid a path *may* exist beyond the affordable budget
    (consistent with the ~97 k near-C\* plateau the `fk9↔cessna` pair alone needs, [#840/#844](herrenteich-fk9-cessna-lateral-shuffle.md)),
    but it is unshippable — finer grid and bigger budget were both refuted NO-GO. The probe tags each
    blocking conflict with its exhaustion mode, so this regime call is read from structured output, not
@@ -122,13 +122,15 @@ may remain a documented manual-insertion case.
 
 The denser "today" witness (`layout_today.yaml`: 9 aircraft + 3 ground objects — VW Caddy, fuel trailer,
 glider trailer) is **not** a clean test under this probe's model. With the routed movers held as **fixed
-obstacles**, the door-congested real arrangement traps **every** aircraft in round 1 (a uniform
-budget-exhausted block), so the probe stalls immediately with all seven in the core. But a faithful
-teardown would remove the door-adjacent Caddy (parked *last*, nearest the door) **first**, not hold it
-fixed — so this verdict conflates ground-object congestion with aircraft locking and is discarded. The
-clean monotone-order verdict is `layout.yaml`'s (no ground objects ⇒ no door-plug confound). Extending the
-probe to tear down routed movers **door-first** before the aircraft is future work (and only *adds*
-reachability, so it cannot turn `layout.yaml`'s STUCK into a CLEAR).
+obstacles**, the door-congested real arrangement blocks **every** aircraft tested in round 1 — and most
+bail almost instantly (~0.2–0.3 s: the open set drains against the congested door, a `[space-exhausted]`
+immediate trap, unlike `layout.yaml`'s uniform ~150 s budget grind; `fuji` is the exception, grinding the
+full budget). Because that conflates ground-object congestion with aircraft locking — a faithful teardown
+would remove the door-adjacent Caddy (parked *last*, nearest the door) **first**, not hold it fixed — the
+run was stopped as confounded and discarded (so its full verdict was never confirmed). The clean
+monotone-order verdict is `layout.yaml`'s (no ground objects ⇒ no door-plug confound). Extending the probe
+to tear down routed movers **door-first** before the aircraft is future work (and only *adds* reachability,
+so it cannot turn `layout.yaml`'s STUCK into a CLEAR).
 
 ## How to reproduce
 

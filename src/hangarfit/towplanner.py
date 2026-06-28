@@ -1583,7 +1583,15 @@ def _aircraft_egress_conflict(
         )
         return None
     except NoFeasiblePlanError as exc:
-        mode = "budget-exhausted" if stats.get("budget_exhausted") else "space-exhausted"
+        # Read BOTH flags rather than inferring space from "not budget": if a future
+        # plan_path refactor ever raised without populating stats, default loudly to
+        # "unknown-exhaustion" instead of silently mislabelling the bail as space.
+        if stats.get("budget_exhausted"):
+            mode = "budget-exhausted"
+        elif stats.get("space_exhausted"):
+            mode = "space-exhausted"
+        else:
+            mode = "unknown-exhaustion"
         return Conflict.single(
             kind="teardown_egress",
             plane=placement.plane_id,

@@ -344,6 +344,20 @@ def test_egress_conflict_detail_flags_exhaustion_mode(monkeypatch) -> None:
     )
     assert c_space is not None and "space-exhausted" in c_space.detail
 
+    # If plan_path ever raised without populating stats, default loudly rather than
+    # silently mislabel the bail as space-exhausted (decoupled from plan_path's
+    # write-stats-before-raise invariant).
+    def fake_no_stats(*args, stats=None, **kwargs):
+        raise tp.NoFeasiblePlanError(
+            "a", Conflict.single(kind="no_feasible_path", plane="a", detail="x")
+        )
+
+    monkeypatch.setattr(tp, "plan_path", fake_no_stats)
+    c_unknown = tp._aircraft_egress_conflict(
+        placement, placed, h, {"a": ac}, heuristic="grid", max_expansions=8000
+    )
+    assert c_unknown is not None and "unknown-exhaustion" in c_unknown.detail
+
 
 # ── Real dense witness (slow integration; excluded from the default set) ──────
 
