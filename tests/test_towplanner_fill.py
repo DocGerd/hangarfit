@@ -318,6 +318,68 @@ def test_plan_fill_backtrack_cap_bounds_the_order_search(
     assert ei.value.conflict is not None and ei.value.conflict.planes[0] == "B"
 
 
+# ── #667 Rung E: move-aside (two-phase order search) ─────────────────────────
+
+
+def _two_plane_mutual_block_layout(apron_depth_m: float = 6.0) -> Layout:
+    """Two planes that MUTUALLY block: neither tow order works (so the non-displacing
+    DFS deadlocks), but a depth-1 move-aside resolves it — exactly the case Rung E
+    targets. ``blocker`` (D) is deep, ``stuck`` (S) shallow."""
+    h = _hangar(width_m=20.0, length_m=30.0, apron_depth_m=apron_depth_m)
+    fleet = {"blocker": _box_plane("blocker"), "stuck": _box_plane("stuck")}
+    return _layout(fleet, h, _slot("blocker", 10.0, 22.0), _slot("stuck", 10.0, 8.0))
+
+
+def _mutual_block_fake_plan_path(mover, entry, goal, *, hangar, placed, mover_on_carts, **kw):  # noqa: ANN001, ANN202
+    """plan_path stand-in for a mutual block. Single-start calls (``entries`` is None)
+    are the displaced body's move-aside legs (to/from the apron) — always feasible.
+    Multi-start (cone) calls apply the block: S (``stuck``) can't route while D
+    (``blocker``) sits at its FINAL slot (y>=0), but CAN once D is on the apron (y<0);
+    D can't route while S is parked. So [D,S] and [S,D] both deadlock, and only moving
+    D aside lets S in."""
+    if kw.get("entries") is None:  # a single-start move-aside leg (D aside / return)
+        return _fake_arc(mover, entry, goal)
+    by_id = {p.plane_id: p for p in placed.placements}
+    if mover.id == "stuck":
+        d = by_id.get("blocker")
+        if d is not None and d.y_m >= 0.0:  # D at its final slot blocks S; D@staging (y<0) doesn't
+            raise _forced_infeasible("stuck")
+    if mover.id == "blocker" and "stuck" in by_id:  # S parked blocks D
+        raise _forced_infeasible("blocker")
+    return _fake_arc(mover, entry, goal)
+
+
+def test_plan_fill_resolves_mutual_block_via_move_aside(monkeypatch: pytest.MonkeyPatch) -> None:
+    target = _two_plane_mutual_block_layout()
+    monkeypatch.setattr(tp, "plan_path", _mutual_block_fake_plan_path)
+    plan = plan_fill(target)
+    legs = {(m.plane_id, m.leg_index) for m in plan.moves if m.path is not None}
+    # D gets its original placement leg (0) + the aside (1) and return (2) legs; S routes (0).
+    assert {("stuck", 0), ("blocker", 0), ("blocker", 1), ("blocker", 2)} <= legs
+    # The shuffle bundle is in execution order: D drives aside, S enters, D returns.
+    order = [(m.plane_id, m.leg_index) for m in plan.moves if m.path is not None]
+    assert order.index(("blocker", 1)) < order.index(("stuck", 0)) < order.index(("blocker", 2))
+
+
+def test_plan_fill_max_displacements_zero_is_inert(monkeypatch: pytest.MonkeyPatch) -> None:
+    # max_displacements=0 disables move-aside → the mutual block bails, naming the stuck body.
+    target = _two_plane_mutual_block_layout()
+    monkeypatch.setattr(tp, "plan_path", _mutual_block_fake_plan_path)
+    with pytest.raises(NoFeasiblePlanError) as exc:
+        plan_fill(target, max_displacements=0)
+    assert exc.value.plane_id == "stuck"  # #668: names the STUCK body, not the displaced one
+
+
+def test_plan_fill_move_aside_skipped_without_apron(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Move-aside relocates a body OUTSIDE the door, so it requires a staging apron.
+    # With apron_depth_m=0 the mutual block cannot be resolved and bails.
+    target = _two_plane_mutual_block_layout(apron_depth_m=0.0)
+    monkeypatch.setattr(tp, "plan_path", _mutual_block_fake_plan_path)
+    with pytest.raises(NoFeasiblePlanError) as exc:
+        plan_fill(target)
+    assert exc.value.plane_id == "stuck"
+
+
 def test_plan_fill_bails_with_structured_error_when_unplannable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
