@@ -296,6 +296,22 @@ class MovesPlan:
             legs.add(m.leg_index)
 
 
+@dataclass(frozen=True, slots=True)
+class _FillStep:
+    """One committed unit of an order-search result (#667 Rung E).
+
+    A normal placement emits a single ``Move`` and commits one ``Placement``. A
+    move-aside emits THREE moves (displaced-aside, stuck-final, displaced-return) and
+    commits ONE placement (the stuck body; the displaced body is already in ``placed``
+    at its final pose). ``apron_fallback_planes`` names committed bodies that towed via
+    the ``y = 0`` door-line fallback despite an apron (the #503 diagnostic). Internal to
+    ``_plan_fill``; never exposed."""
+
+    moves: tuple[Move, ...]
+    committed: tuple[Placement, ...]
+    apron_fallback_planes: tuple[str, ...]
+
+
 # ---------------------------------------------------------------------------
 # Heading-convention adapter (ADR-0002)
 #
@@ -1947,12 +1963,10 @@ def _plan_fill(
     # the first (deepest plane's) routing conflict for that bail message.
     deepest_conflict: Conflict | None = None
 
-    def _place_rest(
-        placed_list: list[Placement], rest: list[Placement]
-    ) -> list[tuple[Placement, DubinsArc, bool]] | None:
-        """Return the chosen (slot, arc, apron_fallback) sequence that places every
-        body in ``rest`` against ``placed_list``, greedy-first with backtracking, or
-        ``None`` if no order does. Raises on global-budget or backtrack-cap exhaustion."""
+    def _place_rest(placed_list: list[Placement], rest: list[Placement]) -> list[_FillStep] | None:
+        """Return the chosen :class:`_FillStep` sequence that places every body in
+        ``rest`` against ``placed_list``, greedy-first with backtracking, or ``None`` if
+        no order does. Raises on global-budget or backtrack-cap exhaustion."""
         nonlocal total_used, deepest_conflict, backtracks_used
         if not rest:
             return []
@@ -2014,7 +2028,12 @@ def _plan_fill(
             apron_fb = stats.get("apron_fallback") is True
             sub = _place_rest(placed_list + [slot], rest[:idx] + rest[idx + 1 :])
             if sub is not None:
-                return [(slot, arc, apron_fb), *sub]
+                step = _FillStep(
+                    moves=(Move(slot.plane_id, Pose.from_placement(slot), arc),),
+                    committed=(slot,),
+                    apron_fallback_planes=(slot.plane_id,) if apron_fb else (),
+                )
+                return [step, *sub]
             # Routed here, but the rest dead-ends downstream → backtrack to the next
             # candidate (the old monotonic loop could not). Bound the total dead-end
             # backtracks so a generous per-plane budget can't fund a runaway order
@@ -2048,21 +2067,22 @@ def _plan_fill(
         # body; on a pure ordering lock it's the deepest (the synthesized fallback).
         raise NoFeasiblePlanError(bail.planes[0], bail)
 
-    for slot, arc, apron_fb in result:
-        moves.append(Move(slot.plane_id, Pose.from_placement(slot), arc))
-        placed.append(slot)
+    for step in result:
+        moves.extend(step.moves)
+        placed.extend(step.committed)
         # #503: record (plan-inert) the planes that towed via the y=0 door-line
         # fallback DESPITE an apron being set — their footprint is too deep for the
         # apron. Committed-move order (deterministic, ADR-0003), only when the
         # caller passed `apron_dropped_out`; the depth is the per-plane FOOTPRINT
         # extent, not the fleet-wide `auto` over-margin. Never read back.
-        if apron_fb and apron_dropped_out is not None:
-            apron_dropped_out.append(
-                ApronShallowDrop(
-                    plane_id=slot.plane_id,
-                    min_depth_m=_plane_fore_aft_length_m(fleet[slot.plane_id]),
+        if apron_dropped_out is not None:
+            for pid in step.apron_fallback_planes:
+                apron_dropped_out.append(
+                    ApronShallowDrop(
+                        plane_id=pid,
+                        min_depth_m=_plane_fore_aft_length_m(fleet[pid]),
+                    )
                 )
-            )
 
     # Ground-object movers (#602): route each placed-routed mover with its own
     # path. id-sorted + appended after the aircraft loop => aircraft moves stay
