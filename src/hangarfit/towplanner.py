@@ -1494,6 +1494,164 @@ def egress_corridors(
     return corridors
 
 
+@dataclass(frozen=True)
+class TeardownProbeResult:
+    """Verdict of :func:`reverse_teardown_probe` (#667 Rung C) — diagnostic only.
+
+    ``cleared`` is True iff a full reverse-teardown order exists (every
+    tow-routable aircraft can be driven out, one at a time, against the bodies
+    still parked) — which, by ADR-0010 reversibility, is exactly the condition
+    that a **monotone fill** order exists. ``order`` is the deterministic
+    extraction order discovered by the greedy peel (id-sorted within each peel
+    round). When ``cleared`` is False, ``stuck`` is the canonical
+    mutually-blocking residual core (id-sorted) and ``blocking`` carries one
+    ``teardown_egress`` :class:`~hangarfit.models.Conflict` per stuck body —
+    why it cannot drive out against the rest of the core. ``stuck`` and
+    ``blocking`` are empty iff ``cleared``."""
+
+    cleared: bool
+    order: tuple[str, ...]
+    stuck: tuple[str, ...]
+    blocking: tuple[Conflict, ...]
+
+
+def _aircraft_egress_conflict(
+    placement: Placement,
+    placed: Layout,
+    hangar: Hangar,
+    fleet: Mapping[str, Aircraft],
+    *,
+    heuristic: Literal["euclidean", "grid"],
+    max_expansions: int,
+) -> Conflict | None:
+    """First conflict blocking aircraft ``placement``'s drive-OUT through the
+    door against ``placed``, else None (the aircraft analogue of
+    :func:`egress_first_conflict`).
+
+    By Reeds-Shepp reversibility (ADR-0010) an egress (slot -> out the door) is
+    feasible iff an entry (door-cone -> slot) path exists against ``placed``, so
+    this routes the aircraft as a mover via :func:`plan_path` against the supplied
+    partial scene (the mover is excluded from ``placed`` by the caller;
+    :func:`path_first_conflict` re-injects it per sample). The mover keeps its
+    parked ``on_carts`` mode. Closed-form, RNG-free => deterministic (ADR-0003).
+    Returns a ``teardown_egress`` :class:`~hangarfit.models.Conflict` when
+    blocked. This is the per-body seam :func:`reverse_teardown_probe` peels on."""
+    plane = fleet[placement.plane_id]
+    cone = entry_poses(placement, hangar)
+    try:
+        plan_path(
+            plane,
+            cone[0],
+            Pose.from_placement(placement),
+            hangar=hangar,
+            placed=placed,
+            mover_on_carts=placement.on_carts,
+            entries=cone,
+            heuristic=heuristic,
+            max_expansions=max_expansions,
+        )
+        return None
+    except NoFeasiblePlanError as exc:
+        return Conflict.single(
+            kind="teardown_egress",
+            plane=placement.plane_id,
+            detail=(
+                f"aircraft {placement.plane_id!r} cannot drive out the door against "
+                f"the remaining parked bodies: {exc.conflict.detail}"
+            ),
+        )
+
+
+def reverse_teardown_probe(
+    target: Layout,
+    *,
+    heuristic: Literal["euclidean", "grid"] = "grid",
+    max_expansions: int | None = None,
+) -> TeardownProbeResult:
+    """Whole-fill reverse-teardown feasibility probe (#667 Rung C). **Read-only
+    diagnostic: no plan output, no data-model change, no production caller** — so
+    every existing plan stays byte-identical (ADR-0003).
+
+    Generalises :func:`egress_first_conflict` (one body, slot -> door) into a
+    whole-fill teardown: greedily extract every **tow-routable aircraft** slot ->
+    door against shrinking partial state, and report whether a full teardown order
+    EXISTS. By ADR-0010 reversibility a teardown order is exactly a **monotone
+    fill** order, so a CLEAR verdict means the Rung-B forward-fill wall is a pure
+    *search-efficiency* limit (a monotone order exists at this grid + budget, the
+    forward planner just can't find it cheaply), while a STUCK verdict identifies
+    the mutually-blocking core that no monotone order can seat — confirming the
+    relocation (move-aside, Rung E) is genuinely needed rather than better search.
+
+    **Modelling.** Only tow-routable aircraft are extracted; hand-placed (dolly)
+    bodies and all ground objects stay as fixed obstacles in every partial state
+    (they go in/out by hand, never towed) — the faithful dual of the Rung-A
+    forward fill, which keeps the same keep-outs and routes the same towable set.
+
+    **Why greedy peel is complete (not a heuristic).** Egress feasibility is
+    *monotone in obstacles*: a body that can drive out past a set of obstacles can
+    drive out past any subset (removing bodies only opens paths). So repeatedly
+    removing *every* currently-egressable body reaches the empty set iff some full
+    teardown order exists, and the residual it stalls at is the unique
+    order-independent mutually-blocking core. (Proof of the contrapositive: if a
+    teardown order existed but the peel stalled at residual R, take the earliest
+    order-body in R; when the order removed it, the still-parked set was a superset
+    of R, so it egressed against a superset of R minus itself — hence also against
+    R minus itself, contradicting the stall.) Determinism: id-sorted iteration +
+    RNG-free closed-form routing at a fixed per-plane budget (ADR-0003).
+
+    ``max_expansions`` overrides the per-plane node-expansion budget (default
+    :data:`_MAX_EXPANSIONS`, the same authoritative full budget
+    :func:`egress_first_conflict` uses — deliberately *not* the globally-capped
+    fill budget)."""
+    budget = _MAX_EXPANSIONS if max_expansions is None else max_expansions
+    # Fixed obstacles present in EVERY partial state (see "Modelling" above).
+    fixed = tuple(p for p in target.placements if p.hand_placed)
+    extractable = {p.plane_id: p for p in target.placements if not p.hand_placed}
+
+    order: list[str] = []
+    remaining = set(extractable)
+    blocking: tuple[Conflict, ...] = ()
+    while remaining:
+        round_conflicts: dict[str, Conflict] = {}
+        egressable: list[str] = []
+        for pid in sorted(remaining):
+            still_parked = tuple(extractable[q] for q in remaining if q != pid)
+            placed = Layout(
+                fleet=target.fleet,
+                hangar=target.hangar,
+                placements=fixed + still_parked,
+                maintenance_plane=target.maintenance_plane,
+                ground_objects=target.ground_objects,
+                ground_object_placements=target.ground_object_placements,
+            )
+            conflict = _aircraft_egress_conflict(
+                extractable[pid],
+                placed,
+                target.hangar,
+                target.fleet,
+                heuristic=heuristic,
+                max_expansions=budget,
+            )
+            if conflict is None:
+                egressable.append(pid)
+            else:
+                round_conflicts[pid] = conflict
+        if not egressable:
+            # No remaining body can leave -> the canonical mutually-blocking core.
+            # Every remaining body failed this round, so round_conflicts is total.
+            blocking = tuple(round_conflicts[pid] for pid in sorted(remaining))
+            break
+        order.extend(egressable)  # egressable is already id-sorted
+        remaining.difference_update(egressable)
+
+    return TeardownProbeResult(
+        cleared=not remaining,
+        order=tuple(order),
+        stuck=tuple(sorted(remaining)),
+        blocking=blocking,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Empty-hangar fill planner + bounded order-retry (spike Q2 / ADR-0007)
 # ---------------------------------------------------------------------------
