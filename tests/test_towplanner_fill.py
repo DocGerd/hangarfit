@@ -78,6 +78,7 @@ def _hangar(
     length_m: float = 30.0,
     door_center: float = 10.0,
     door_width: float = 6.0,
+    apron_depth_m: float = 0.0,
 ) -> Hangar:
     return Hangar(
         length_m=length_m,
@@ -86,11 +87,36 @@ def _hangar(
         maintenance_bay=MaintenanceBay(center_x_m=width_m / 2, width_m=2.0, depth_m=2.0),
         clearance_m=0.5,
         wing_layer_clearance_m=0.3,
+        apron_depth_m=apron_depth_m,
     )
 
 
 def _slot(pid: str, x: float, y: float, h: float = 0.0, on_carts: bool = False) -> Placement:
     return Placement(plane_id=pid, x_m=x, y_m=y, heading_deg=h, on_carts=on_carts)
+
+
+def test_staging_poses_are_apron_out_lateral_deepest_first_nose_out() -> None:
+    # #667 Rung E: where a displaced body parks. Apron-out (y<0), off-to-the-side of
+    # the door (so it doesn't jam the corridor the stuck body enters through), nose-out,
+    # deepest apron pose first (the #844 cross-machine cost-margin lever).
+    h = _hangar(apron_depth_m=6.0)  # door [7, 13] in a width-20 hangar
+    slot = _slot("d", 4.0, 8.0)
+    poses = tp._staging_poses(slot, h)
+    assert poses
+    assert all(p.y_m < 0.0 for p in poses)  # outside the door
+    assert poses[0].y_m == -6.0  # deepest apron first
+    door_lo, door_hi = (
+        h.door.center_x_m - h.door.width_m / 2,
+        h.door.center_x_m + h.door.width_m / 2,
+    )
+    assert any(p.x_m < door_lo or p.x_m > door_hi for p in poses)  # lateral, off the door
+    assert all(135.0 <= p.heading_deg <= 225.0 for p in poses)  # nose-out cone
+    assert tp._staging_poses(slot, h) == poses  # deterministic
+    assert len({(p.x_m, p.y_m, p.heading_deg) for p in poses}) == len(poses)  # dedup
+
+
+def test_staging_poses_empty_without_apron() -> None:
+    assert tp._staging_poses(_slot("d", 4.0, 8.0), _hangar(apron_depth_m=0.0)) == ()
 
 
 def test_entry_pose_is_at_front_pointing_in() -> None:

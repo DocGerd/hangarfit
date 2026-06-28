@@ -1211,6 +1211,55 @@ def entry_pose(target: Placement, hangar: Hangar) -> Pose:
     return Pose(x_m=x, y_m=0.0, heading_deg=0.0)
 
 
+def _staging_poses(target: Placement, hangar: Hangar) -> tuple[Pose, ...]:
+    """Apron-out (y<0) nose-out LATERAL staging candidates for a displaced body
+    (#667 Rung E move-aside).
+
+    Reuses ``entry_poses``' apron y-samples but parks the body OFF TO THE SIDE of the
+    door (x spans the apron width, not just the door opening) so it does not jam the
+    corridor the stuck body must enter through — the real club shuffle rolls a plane
+    laterally aside, not straight out the door. Headings are nose-out
+    (``_REVERSE_CONE_HEADINGS``, ~180°) so the body parks fully outside regardless of
+    its parked heading. Ordered **y-outer (deepest apron first → the #844 cost-margin
+    lever), x-outer (off-to-side first), heading-inner**; the ``seen`` set dedups only,
+    never orders (ADR-0003 tie-break 2). Empty if no apron. Infeasible / out-of-bounds
+    candidates are dropped later by the routing legs (``path_first_conflict``), so no
+    static pre-filter is applied here.
+    """
+    depth = hangar.apron_depth_m
+    if depth <= 0.0:
+        return ()
+    door = hangar.door
+    half = door.width_m / 2.0
+    lo = door.center_x_m - half
+    hi = door.center_x_m + half
+    width = hangar.width_m
+
+    def _clamp(x: float) -> float:
+        return min(max(x, 0.0), width)
+
+    # Lateral x: midpoint of the left apron strip, midpoint of the right strip, then
+    # the door centre as a fallback. Off-to-side first (x-outer) so the body clears the
+    # stuck plane's door swath before a centre pose is tried.
+    x_left = _clamp(lo / 2.0)
+    x_right = _clamp((hi + width) / 2.0)
+    x_centre = _clamp(door.center_x_m)
+    x_samples = (x_left, x_right, x_centre)
+    y_samples = (-depth, -depth / 2.0)  # deepest apron first (#844 margin)
+
+    seen: set[tuple[float, float, float]] = set()
+    poses: list[Pose] = []
+    for y in y_samples:  # outer: deepest apron first
+        for x in x_samples:  # middle: off-to-side first, door-centre last
+            for h in _REVERSE_CONE_HEADINGS:  # inner: nose-out cone
+                key = (x, y, h)
+                if key in seen:
+                    continue
+                seen.add(key)
+                poses.append(Pose(x_m=x, y_m=y, heading_deg=h))
+    return tuple(poses)
+
+
 # ---------------------------------------------------------------------------
 # Sampled collision-during-motion (spike Q4)
 # ---------------------------------------------------------------------------
