@@ -47,10 +47,11 @@ filled one body at a time, and vice-versa.
 
 ## Why greedy peel is the exact oracle (not a heuristic)
 
-Egress feasibility is **monotone in obstacles**: a body that can drive out past a set of obstacles can
-drive out past any *subset* (removing bodies only opens paths). That gives a confluence property —
-repeatedly removing *every* currently-egressable body reaches the empty set **iff** some full teardown
-order exists, and the residual it stalls at is the **unique, order-independent** mutually-blocking core.
+For *ideal* (unbounded) egress feasibility, feasibility is **monotone in obstacles**: a body that can
+drive out past a set of obstacles can drive out past any *subset* (removing bodies only opens paths). That
+gives a confluence property — repeatedly removing *every* currently-egressable body reaches the empty set
+**iff** some full teardown order exists, and the residual it stalls at is the **unique, order-independent**
+mutually-blocking core.
 
 *Proof of the hard direction (contrapositive).* Suppose a teardown order π exists but the peel stalls at
 a non-empty residual R (no body in R can egress against R minus itself). Take the earliest body of π that
@@ -60,10 +61,15 @@ egresses against S minus {b\*} ⊇ R minus {b\*}; egress past a superset of obst
 egress past the subset R minus {b\*} is feasible too — so b\* *can* egress against the core, contradicting
 the stall. ∎
 
-So **CLEAR** is a proof a monotone order exists (at this grid + budget); **STUCK** names the exact core no
-monotone order can seat. Determinism: id-sorted peel + RNG-free closed-form routing at a fixed per-plane
-budget (the full `_MAX_EXPANSIONS = 8000`, the authoritative budget `egress_first_conflict` uses — *not*
-the globally-capped fill budget, so an exhausted fill can never falsely declare a body trapped).
+The probe evaluates feasibility with a *finite* per-plane budget, under which monotonicity is an
+approximation (freeing previously-blocked states can add `f≤C*` nodes to expand and exhaust the cap), so
+the verdict is **planner/budget-relative**: **CLEAR** proves a monotone order exists at this grid + budget;
+**STUCK** names the core no monotone order can seat *at this grid + budget* — apples-to-apples with the
+forward fill (same budget), not an unconditional existence disproof. The per-body `[budget-exhausted]` vs
+`[space-exhausted]` tag (below) distinguishes "might route with a bigger budget" from "wedged at this
+discretization". Determinism: id-sorted peel + RNG-free closed-form routing at a fixed per-plane budget
+(the full `_MAX_EXPANSIONS = 8000`, the authoritative budget `egress_first_conflict` uses — *not* the
+globally-capped fill budget, so an exhausted fill can never falsely declare a body trapped).
 
 ## Modelling choice
 
@@ -90,9 +96,14 @@ against the *sparser* scene (`ctsl` gone) — and **all five still exhaust the b
 2. **The blocking core is broader than the documented `fk9↔cessna` pair** — it is a five-body lock
    (`husky`, `cessna`, `fk9`, `wild_thing`, `zlin`). The `fk9↔cessna` front-door corridor is the *residual*
    blocker isolated after husky-ordering at a finer analysis ([lateral-shuffle spike](herrenteich-fk9-cessna-lateral-shuffle.md));
-   at the **deployed budget**, the whole back-cluster is budget-locked, not just that pair. The bail is
-   uniform budget-exhaustion (`no in-bounds tow path found within 8000 expansions`), the same mechanism
-   Rung-B's forward fill hit.
+   at the **deployed budget**, the whole back-cluster is budget-locked, not just that pair. All five bail
+   **`[budget-exhausted]`** — they grind the full 8000 expansions (~96–425 s each) without reaching the
+   door, *not* the early `[space-exhausted]` drain (which bails in <1 s, as every `layout_today` aircraft
+   does — see Limitation). So at the deployed grid a path *may* exist beyond the affordable budget
+   (consistent with the ~97 k near-C\* plateau the `fk9↔cessna` pair alone needs, [#840/#844](herrenteich-fk9-cessna-lateral-shuffle.md)),
+   but it is unshippable — finer grid and bigger budget were both refuted NO-GO. The probe tags each
+   blocking conflict with its exhaustion mode, so this regime call is read from structured output, not
+   eyeballed timings. This is the same budget-exhaustion mechanism Rung-B's forward fill hit.
 
 3. **Reverse framing adds no reachability.** Because the probe only *removes*, never *relocates*, it has —
    by the monotonicity argument — the *same* ceiling as the forward monotone fill. The stall confirms a
@@ -133,9 +144,11 @@ pytest -m slow tests/test_towplanner_teardown.py
 # the authoritative ~30-min verdict (full 8000 budget), for the record:
 from hangarfit.loader import load_layout
 from hangarfit.towplanner import reverse_teardown_probe
-print(reverse_teardown_probe(load_layout("examples/herrenteich/layout.yaml")))
-# TeardownProbeResult(cleared=False, order=('ctsl',),
-#   stuck=('aviat_husky','cessna_140','fk9_mkii','wild_thing','zlin_savage'), blocking=(...x5))
+r = reverse_teardown_probe(load_layout("examples/herrenteich/layout.yaml"))
+# r.cleared  -> False        (a derived property: True iff r.stuck is empty)
+# r.order    -> ('ctsl',)
+# r.stuck    -> ('aviat_husky','cessna_140','fk9_mkii','wild_thing','zlin_savage')
+# r.blocking -> 5 teardown_egress Conflicts, each detail tagged "[budget-exhausted]"
 ```
 
 The committed `@slow` test caps the per-plane budget (`max_expansions=600`) so the slow lane stays ~1 min;

@@ -1494,25 +1494,47 @@ def egress_corridors(
     return corridors
 
 
-@dataclass(frozen=True)
+@dataclass(frozen=True, slots=True)
 class TeardownProbeResult:
     """Verdict of :func:`reverse_teardown_probe` (#667 Rung C) — diagnostic only.
 
-    ``cleared`` is True iff a full reverse-teardown order exists (every
-    tow-routable aircraft can be driven out, one at a time, against the bodies
-    still parked) — which, by ADR-0010 reversibility, is exactly the condition
-    that a **monotone fill** order exists. ``order`` is the deterministic
-    extraction order discovered by the greedy peel (id-sorted within each peel
-    round). When ``cleared`` is False, ``stuck`` is the canonical
+    ``order`` is the deterministic extraction order discovered by the greedy peel
+    (id-sorted within each peel round). ``stuck`` is the canonical
     mutually-blocking residual core (id-sorted) and ``blocking`` carries one
-    ``teardown_egress`` :class:`~hangarfit.models.Conflict` per stuck body —
-    why it cannot drive out against the rest of the core. ``stuck`` and
-    ``blocking`` are empty iff ``cleared``."""
+    ``teardown_egress`` :class:`~hangarfit.models.Conflict` per stuck body, aligned
+    by position (``blocking[i]`` explains ``stuck[i]``) — why it cannot drive out
+    against the rest of the core. :attr:`cleared` is a derived property (True iff
+    ``stuck`` is empty), so the verdict cannot disagree with the core (mirrors
+    :class:`~hangarfit.models.CheckResult.valid`); a full teardown order exists
+    iff ``cleared``, which by ADR-0010 reversibility is exactly the condition that
+    a **monotone fill** order exists. ``order`` and ``stuck`` partition the
+    tow-routable aircraft (the completeness leg — that they cover the full towable
+    set — is the producer's responsibility, as it needs the input ``Layout``)."""
 
-    cleared: bool
     order: tuple[str, ...]
     stuck: tuple[str, ...]
     blocking: tuple[Conflict, ...]
+
+    def __post_init__(self) -> None:
+        # House style (Conflict / CheckResult validate in __post_init__): pin the
+        # cross-field invariants the producer guarantees so an inconsistent result
+        # cannot be constructed. The partition's *completeness* needs the Layout
+        # and stays the producer's job; disjointness is checkable here.
+        if len(self.blocking) != len(self.stuck):
+            raise ValueError(
+                f"blocking ({len(self.blocking)}) must align 1:1 with stuck ({len(self.stuck)})"
+            )
+        if tuple(c.planes[0] for c in self.blocking) != self.stuck:
+            raise ValueError("blocking[i] must explain stuck[i] (positional alignment)")
+        if not set(self.order).isdisjoint(self.stuck):
+            overlap = set(self.order) & set(self.stuck)
+            raise ValueError(f"order and stuck must be disjoint: {overlap}")
+
+    @property
+    def cleared(self) -> bool:
+        """True iff a full teardown (⇔ monotone fill) order exists — i.e. no body
+        is stuck. Derived from ``stuck`` so it can never disagree with the core."""
+        return not self.stuck
 
 
 def _aircraft_egress_conflict(
@@ -1535,9 +1557,17 @@ def _aircraft_egress_conflict(
     :func:`path_first_conflict` re-injects it per sample). The mover keeps its
     parked ``on_carts`` mode. Closed-form, RNG-free => deterministic (ADR-0003).
     Returns a ``teardown_egress`` :class:`~hangarfit.models.Conflict` when
-    blocked. This is the per-body seam :func:`reverse_teardown_probe` peels on."""
+    blocked. This is the per-body seam :func:`reverse_teardown_probe` peels on.
+
+    The Conflict detail records the bail **mode** — ``[budget-exhausted]`` (hit the
+    expansion cap; a path may exist beyond it — a search-*efficiency* signal) vs
+    ``[space-exhausted]`` (the open set drained; genuinely no path at this
+    discretization — a *lock* signal) — read from :func:`plan_path`'s ``stats``
+    out-param, so a STUCK core can self-certify which regime produced it rather
+    than relying on eyeballed timings."""
     plane = fleet[placement.plane_id]
     cone = entry_poses(placement, hangar)
+    stats: dict[str, object] = {}
     try:
         plan_path(
             plane,
@@ -1549,15 +1579,17 @@ def _aircraft_egress_conflict(
             entries=cone,
             heuristic=heuristic,
             max_expansions=max_expansions,
+            stats=stats,
         )
         return None
     except NoFeasiblePlanError as exc:
+        mode = "budget-exhausted" if stats.get("budget_exhausted") else "space-exhausted"
         return Conflict.single(
             kind="teardown_egress",
             plane=placement.plane_id,
             detail=(
                 f"aircraft {placement.plane_id!r} cannot drive out the door against "
-                f"the remaining parked bodies: {exc.conflict.detail}"
+                f"the remaining parked bodies [{mode}]: {exc.conflict.detail}"
             ),
         )
 
@@ -1579,24 +1611,32 @@ def reverse_teardown_probe(
     fill** order, so a CLEAR verdict means the Rung-B forward-fill wall is a pure
     *search-efficiency* limit (a monotone order exists at this grid + budget, the
     forward planner just can't find it cheaply), while a STUCK verdict identifies
-    the mutually-blocking core that no monotone order can seat — confirming the
-    relocation (move-aside, Rung E) is genuinely needed rather than better search.
+    the mutually-blocking core that no monotone order can seat **at this grid +
+    budget** — pointing at the relocation (move-aside, Rung E) rather than better
+    search (the per-body ``blocking`` conflict's ``[budget-exhausted]`` vs
+    ``[space-exhausted]`` tag says whether a body might still route with a bigger —
+    if unaffordable — budget, or is genuinely wedged at this discretization).
 
     **Modelling.** Only tow-routable aircraft are extracted; hand-placed (dolly)
     bodies and all ground objects stay as fixed obstacles in every partial state
     (they go in/out by hand, never towed) — the faithful dual of the Rung-A
     forward fill, which keeps the same keep-outs and routes the same towable set.
 
-    **Why greedy peel is complete (not a heuristic).** Egress feasibility is
-    *monotone in obstacles*: a body that can drive out past a set of obstacles can
-    drive out past any subset (removing bodies only opens paths). So repeatedly
-    removing *every* currently-egressable body reaches the empty set iff some full
-    teardown order exists, and the residual it stalls at is the unique
-    order-independent mutually-blocking core. (Proof of the contrapositive: if a
-    teardown order existed but the peel stalled at residual R, take the earliest
-    order-body in R; when the order removed it, the still-parked set was a superset
-    of R, so it egressed against a superset of R minus itself — hence also against
-    R minus itself, contradicting the stall.) Determinism: id-sorted iteration +
+    **Why greedy peel is complete (not a heuristic).** For *ideal* (unbounded)
+    egress feasibility, feasibility is *monotone in obstacles*: a body that can
+    drive out past a set of obstacles can drive out past any subset (removing
+    bodies only opens paths). So repeatedly removing *every* currently-egressable
+    body reaches the empty set iff some full teardown order exists, and the residual
+    it stalls at is the unique order-independent mutually-blocking core. (Proof of
+    the contrapositive: if a teardown order existed but the peel stalled at residual
+    R, take the earliest order-body in R; when the order removed it, the
+    still-parked set was a superset of R, so it egressed against a superset of R
+    minus itself — hence also against R minus itself, contradicting the stall.)
+    The probe evaluates feasibility with a *finite* per-plane budget, under which
+    monotonicity is an approximation (freeing states can add ``f<=C*`` nodes and
+    exhaust the cap), so the verdict is planner/budget-relative — "no monotone
+    order findable at this grid + budget", apples-to-apples with the forward fill,
+    not an unconditional existence disproof. Determinism: id-sorted iteration +
     RNG-free closed-form routing at a fixed per-plane budget (ADR-0003).
 
     ``max_expansions`` overrides the per-plane node-expansion budget (default
@@ -1605,7 +1645,8 @@ def reverse_teardown_probe(
     fill budget)."""
     budget = _MAX_EXPANSIONS if max_expansions is None else max_expansions
     # Fixed obstacles present in EVERY partial state (see "Modelling" above).
-    fixed = tuple(p for p in target.placements if p.hand_placed)
+    # id-sorted for the same cross-process determinism reason as still_parked below.
+    fixed = tuple(sorted((p for p in target.placements if p.hand_placed), key=lambda p: p.plane_id))
     extractable = {p.plane_id: p for p in target.placements if not p.hand_placed}
 
     order: list[str] = []
@@ -1648,7 +1689,6 @@ def reverse_teardown_probe(
         remaining.difference_update(egressable)
 
     return TeardownProbeResult(
-        cleared=not remaining,
         order=tuple(order),
         stuck=tuple(sorted(remaining)),
         blocking=blocking,

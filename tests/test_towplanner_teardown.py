@@ -122,7 +122,8 @@ def test_probe_clears_a_roomy_layout() -> None:
 
 
 def test_probe_is_deterministic() -> None:
-    """Same layout -> byte-identical verdict (id-sorted peel, RNG-free routing)."""
+    """Same layout -> equal verdict (value equality via frozen-dataclass __eq__;
+    id-sorted peel + RNG-free routing make the result reproducible)."""
     h = _hangar()
     fleet = {"a": _box_plane("a"), "b": _box_plane("b")}
     target = Layout(
@@ -284,6 +285,66 @@ def test_probe_passes_obstacles_to_the_seam_in_deterministic_order(monkeypatch) 
     assert seen[0] == ("b", "c", "d")
 
 
+# ── Result type invariants + exhaustion-mode diagnostics ─────────────────────
+
+
+def test_result_cleared_is_derived_from_stuck() -> None:
+    """`cleared` is a derived property (no representable illegal state where
+    `cleared` disagrees with `stuck`), mirroring CheckResult.valid."""
+    c = Conflict.single(kind="teardown_egress", plane="a", detail="x")
+    assert TeardownProbeResult(order=("a",), stuck=(), blocking=()).cleared is True
+    assert TeardownProbeResult(order=(), stuck=("a",), blocking=(c,)).cleared is False
+
+
+def test_result_rejects_blocking_stuck_misalignment() -> None:
+    """The result enforces blocking <-> stuck positional alignment at construction
+    (house style: Conflict/CheckResult validate in __post_init__)."""
+    c_a = Conflict.single(kind="teardown_egress", plane="a", detail="x")
+    with pytest.raises(ValueError):  # len mismatch
+        TeardownProbeResult(order=(), stuck=("a",), blocking=())
+    with pytest.raises(ValueError):  # wrong plane in blocking
+        TeardownProbeResult(order=(), stuck=("b",), blocking=(c_a,))
+
+
+def test_result_rejects_order_stuck_overlap() -> None:
+    """order and stuck must be disjoint (a body is either extracted or stuck)."""
+    c = Conflict.single(kind="teardown_egress", plane="a", detail="x")
+    with pytest.raises(ValueError):
+        TeardownProbeResult(order=("a",), stuck=("a",), blocking=(c,))
+
+
+def test_egress_conflict_detail_flags_exhaustion_mode(monkeypatch) -> None:
+    """The teardown_egress conflict detail records WHICH exhaustion mode bailed
+    (budget vs space), so a STUCK core can self-certify search-efficiency (budget)
+    vs a discretization lock (space) from its structured output, not eyeballing."""
+    h = _hangar()
+    ac = _box_plane("a")
+    placement = _slot("a", 6.0, 8.0)
+    placed = Layout(fleet={"a": ac}, hangar=h, placements=())
+
+    def make_fake(*, budget: bool):
+        def fake_plan_path(*args, stats=None, **kwargs):
+            if stats is not None:
+                stats.update(budget_exhausted=budget, space_exhausted=not budget)
+            raise tp.NoFeasiblePlanError(
+                "a", Conflict.single(kind="no_feasible_path", plane="a", detail="x")
+            )
+
+        return fake_plan_path
+
+    monkeypatch.setattr(tp, "plan_path", make_fake(budget=True))
+    c_budget = tp._aircraft_egress_conflict(
+        placement, placed, h, {"a": ac}, heuristic="grid", max_expansions=8000
+    )
+    assert c_budget is not None and "budget-exhausted" in c_budget.detail
+
+    monkeypatch.setattr(tp, "plan_path", make_fake(budget=False))
+    c_space = tp._aircraft_egress_conflict(
+        placement, placed, h, {"a": ac}, heuristic="grid", max_expansions=8000
+    )
+    assert c_space is not None and "space-exhausted" in c_space.detail
+
+
 # ── Real dense witness (slow integration; excluded from the default set) ──────
 
 
@@ -303,10 +364,10 @@ def test_probe_on_herrenteich_witness_partitions_the_towable_fleet() -> None:
 
     result = reverse_teardown_probe(target, max_expansions=600)
 
-    # cleared <=> empty stuck core; order and stuck partition the towable set.
-    assert result.cleared == (result.stuck == ())
-    assert set(result.order).isdisjoint(result.stuck)
+    # The probe ran end-to-end on real dense geometry and `order ∪ stuck` cover the
+    # full towable fleet. This is the partition's *completeness* leg — the one
+    # structural invariant the type can't self-enforce (it needs the input Layout);
+    # `__post_init__` already guarantees disjointness, blocking<->stuck alignment,
+    # and cleared <=> empty-stuck, so asserting those here would be tautological.
+    assert isinstance(result, TeardownProbeResult)
     assert set(result.order) | set(result.stuck) == extractable
-    # one blocking conflict per stuck body, each naming a stuck body.
-    assert len(result.blocking) == len(result.stuck)
-    assert {c.planes[0] for c in result.blocking} == set(result.stuck)
