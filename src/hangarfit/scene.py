@@ -285,6 +285,18 @@ def _timeline(
     segments: list[dict] = []
     t = 0.0
 
+    # #667 Rung E: count routed legs per body. A body with >1 routed leg is a
+    # move-aside shuffle — its legs must animate in GLOBAL execution order
+    # (interleaved with the bodies that route between them), not grouped per body.
+    # Gating the global-order path on a multi-leg body being present keeps every
+    # single-leg plan on the back_first_order path below → byte-identical (ADR-0003).
+    routed_count: dict[str, int] = {}
+    for m in moves_plan.moves:
+        if m.path is not None:
+            routed_count[m.plane_id] = routed_count.get(m.plane_id, 0) + 1
+    multi_leg_present = any(c > 1 for c in routed_count.values())
+    aircraft_ids = {p.plane_id for p in layout.placements}
+
     def _append_segment(body_id: str, *, record_final: bool) -> None:
         nonlocal t
         legs = moves_by_id.get(body_id)
@@ -318,15 +330,40 @@ def _timeline(
                 finals[body_id] = samples[-1]
             t += dur
 
-    # Aircraft drive in first (deepest slot first); then placed-routed movers
-    # (id-sorted, matching _ground_object_blocks) animate after every aircraft is
-    # parked (#651) — the real fill order (plan_fill routes aircraft, then movers).
-    # A mover's resting pose lives in its ground-object block's final_pose /
-    # go_anchors, not in `finals` (aircraft-only), so record_final=False for them.
-    for placement in back_first_order(layout.placements):
-        _append_segment(placement.plane_id, record_final=True)
-    for gp in sorted(layout.ground_object_placements, key=lambda p: p.plane_id):
-        _append_segment(gp.plane_id, record_final=False)
+    def _emit_leg(leg: Move) -> None:
+        # #667 Rung E global-order emitter: one segment for a single routed leg, in the
+        # caller's (moves-tuple = execution) order. Mirrors _append_segment's per-leg
+        # body but does NOT group by plane: a move-aside body's legs interleave with the
+        # bodies routed between them. `leg_index` is emitted only for a multi-leg body
+        # (>1 routed leg); finals records the last leg of each AIRCRAFT (a mover's
+        # resting pose lives in its ground-object block, like record_final=False above).
+        nonlocal t
+        assert leg.path is not None  # caller filters path-None legs
+        samples = _sample_affines(leg.path, max_samples_per_path)
+        dur = min(max(leg.path.length_m / tow_speed_mps, min_seg_s), max_seg_s)
+        seg: dict = {"plane_id": leg.plane_id, "start_s": t, "end_s": t + dur, "samples": samples}
+        if routed_count.get(leg.plane_id, 0) > 1:
+            seg["leg_index"] = leg.leg_index
+        segments.append(seg)
+        if leg.plane_id in aircraft_ids:
+            finals[leg.plane_id] = samples[-1]
+        t += dur
+
+    if multi_leg_present:
+        # A shuffle is present: lay legs in GLOBAL execution order (the producer builds
+        # moves_plan.moves in commitment order: aircraft, then id-sorted movers). The
+        # viewer's affineAt rests a displaced body at its staging pose between its
+        # non-contiguous legs while the stuck body routes past (#667 Rung E).
+        for m in moves_plan.moves:
+            if m.path is not None:
+                _emit_leg(m)
+    else:
+        # No shuffle: aircraft drive in deepest-first, then placed-routed movers
+        # (id-sorted) after every aircraft is parked (#651). Byte-identical to before.
+        for placement in back_first_order(layout.placements):
+            _append_segment(placement.plane_id, record_final=True)
+        for gp in sorted(layout.ground_object_placements, key=lambda p: p.plane_id):
+            _append_segment(gp.plane_id, record_final=False)
 
     return {"total_s": t, "segments": segments}, finals
 
