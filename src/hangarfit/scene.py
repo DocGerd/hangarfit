@@ -272,10 +272,13 @@ def _timeline(
         return {"total_s": 0.0, "segments": []}, finals
 
     # #865 Rung D: GROUP (don't overwrite) — a body may carry multiple legs
-    # (move-aside staging + final, #667 Rung E). dict insertion order preserves the
-    # plan's execution order; legs are emitted in leg_index order below. Today every
-    # body has exactly one leg, so each list is single-element and the output is
-    # byte-identical to the prior `{m.plane_id: m}` form.
+    # (move-aside staging + final, #667 Rung E). `moves_by_id` is a
+    # plane_id -> legs LOOKUP only; its iteration order is never consumed. Body
+    # emission order is driven by `back_first_order` + id-sorted movers (below);
+    # within a body, legs are re-sorted by `leg_index` in `_append_segment`, so the
+    # plan tuple order is NOT relied on. Today every body has exactly one leg, so
+    # each list is single-element and the output is byte-identical to the prior
+    # `{m.plane_id: m}` form.
     moves_by_id: dict[str, list[Move]] = {}
     for m in moves_plan.moves:
         moves_by_id.setdefault(m.plane_id, []).append(m)
@@ -292,6 +295,15 @@ def _timeline(
         # (#197/#602), or for an aircraft a defensive guard (every aircraft is
         # routed). The `leg_index` key is emitted ONLY for a multi-leg body (>1
         # routed leg) — a single-leg body stays byte-identical to before (#865).
+        #
+        # Rung D scope (#667): a body's legs are laid end-to-end HERE (each leg's
+        # `start_s == prev.end_s`), then the next body — so a body is never paused
+        # mid-fill while another routes past. The viewer + scene-v2 state machine
+        # already model that inter-leg "wait at staging" gap (`affineAt`), but no
+        # producer emits it yet; Rung E (move-aside) will lay legs in global
+        # execution order across bodies. Edge (deferred only, no producer today):
+        # a multi-leg body whose non-final leg is `path=None` drops to one routed
+        # leg and serializes as single-leg (no `leg_index`) — revisit in Rung E.
         routed = sorted((m for m in legs if m.path is not None), key=lambda m: m.leg_index)
         multi_leg = len(routed) > 1
         for leg in routed:

@@ -229,6 +229,12 @@ that ignores `leg_index` still animates correctly (segments are already sequenti
 the field is an explicit, robust ordering label. The body's **final** pose is the
 *last* leg's end; a staging pose is **not** in `final_poses` / `placements`.
 
+> **Producer status (Rung D, #667).** The data model + viewer are the *seam* for
+> move-aside: the state machine below (incl. the "waiting at staging" gap row) is
+> fully consumer-ready, but **no producer emits a multi-leg plan yet** — the scene
+> builder lays a body's legs end-to-end with no gap, so the wait row is not reached
+> by any shipped layout. Rung E (move-aside) supplies the first multi-leg producer.
+
 **Viewer state machine** — for a plane with leg list `S` (sorted by `leg_index`) at
 time `t`:
 
