@@ -40,7 +40,7 @@ from pathlib import Path
 from hangarfit.loader import load_fleet, load_hangar
 from hangarfit.models import Scenario, SearchConfig
 from hangarfit.solver import solve
-from hangarfit.towplanner import NoFeasiblePlanError, plan_fill
+from hangarfit.towplanner import MovesPlan, NoFeasiblePlanError, plan_fill
 from ml import geometry_oracle as go
 
 _ROOT = Path(__file__).resolve().parent.parent  # repo root (ml/ sits at the root)
@@ -280,6 +280,16 @@ def sample_population(
 # ── reach predicates (the #695 product-checker predicate, both arms) ─────────
 
 
+def _routed_plane_count(plan: MovesPlan) -> int:
+    """Number of DISTINCT aircraft with at least one routed leg (#667 Rung E).
+
+    Counts planes, not legs: a move-aside plan emits multiple routed legs for one
+    plane (a staging leg + the final leg), so summing routed Moves would over-count
+    and falsely fail the ``== n_total`` reach check. Deferred (``path is None``)
+    legs are excluded, matching the prior semantics."""
+    return len({m.plane_id for m in plan.moves if m.path is not None})
+
+
 def rrmc_reach_multi(
     scenario: Scenario,
     *,
@@ -309,7 +319,7 @@ def rrmc_reach_multi(
             plan = plan_fill(layout, heuristic="grid", max_total_expansions=tow_max_expansions)
         except NoFeasiblePlanError:
             continue
-        if sum(1 for m in plan.moves if m.path is not None) == n_total:
+        if _routed_plane_count(plan) == n_total:
             return True
     return False
 

@@ -120,6 +120,34 @@ def test_rrmcverdict_is_constructible():
     assert v.reached and v.n_routed == 8
 
 
+def test_routed_plane_count_counts_planes_not_legs():
+    # #667 Rung E: a move-aside plan emits MULTIPLE routed legs for one plane
+    # (staging + final), so summing routed Moves over-counts and would falsely fail
+    # the reach check. Count DISTINCT planes with a routed leg; deferred (path=None)
+    # legs are excluded.
+    from hangarfit.towplanner import DubinsArc, Move, MovesPlan, Pose, Segment
+    from ml.benchmark import _routed_plane_count
+
+    def _arc(x: float, y: float) -> DubinsArc:
+        return DubinsArc(
+            start=Pose(0.0, 0.0, 0.0),
+            end=Pose(x, y, 0.0),
+            turn_radius_m=8.0,
+            segments=(Segment("S", (x * x + y * y) ** 0.5),),
+        )
+
+    plan = MovesPlan(
+        target_layout=object(),  # MovesPlan does not validate the layout
+        moves=(
+            Move("a", Pose(0.0, -3.0, 180.0), _arc(0.0, -3.0), leg_index=0),  # staging
+            Move("a", Pose(0.0, 5.0, 0.0), _arc(0.0, 5.0), leg_index=1),  # final
+            Move("b", Pose(1.0, 4.0, 0.0), _arc(1.0, 4.0), leg_index=0),
+            Move("c", Pose(2.0, 4.0, 0.0), None, leg_index=0),  # deferred — excluded
+        ),
+    )
+    assert _routed_plane_count(plan) == 2  # planes a, b — not 3 routed legs, not c
+
+
 _TODAY = BenchScenario(
     name="today",
     scenario_path="examples/herrenteich/scenario_today.yaml",
