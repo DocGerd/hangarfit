@@ -18,6 +18,16 @@ All notable changes to this project are documented here. Format follows [Keep a 
   silently dropping them (#667), mirroring the ground-object entry allowlist — so
   a misspelled flag (e.g. `hand_palced`) fails loudly rather than silently
   inverting intent (a hand-positioned glider getting tow-routed).
+- The tow-plan data model now supports **multi-leg** moves (#667, Rung D): a body
+  may carry more than one `Move` (one per leg) under the same `plane_id`, tagged
+  with an additive `leg_index` (default `0`), and the scene/v2
+  `timeline.segments[]` gains an optional `leg_index` emitted **only** for a
+  multi-leg body. This is the byte-identical seam for the move-aside relocation
+  (Rung E): no producer emits more than one leg yet, so every existing plan,
+  scene, render, and viewer animation is unchanged (ADR-0003). The viewer (2D
+  paths, 3D timeline + floor polylines) draws and animates each leg, resting a
+  body at its staging pose between legs. `SCHEMA` stays `hangarfit.scene/v2`
+  (additive only).
 - A `kind: fuselage` part may now carry a `vertices:` outline polygon, which the
   loader clips into area-conserving `fuselage_front`/`fuselage_aft` sub-polygons
   at the wing trailing edge (#550). Capability-only — no fleet behaviour change.

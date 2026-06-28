@@ -432,22 +432,24 @@ function pathPoints(seg) {
 }
 function addTowPaths(scene, SCENE, BRAND2) {
   const Z_OFFSET = 0.02;
-  const segByPlane = {};
-  for (const s of SCENE.timeline.segments) segByPlane[s.plane_id] = s;
+  const segsByPlane = {};
+  for (const s of SCENE.timeline.segments) (segsByPlane[s.plane_id] ??= []).push(s);
   const lines = [];
   for (const p of SCENE.planes) {
-    const seg = segByPlane[p.id];
-    if (!seg) continue;
-    const pts = pathPoints(seg);
-    if (pts.length < 2) continue;
+    const segs = segsByPlane[p.id];
+    if (!segs) continue;
     const conflicted = SCENE.conflicts.includes(p.id);
     const colour = new THREE8.Color(conflicted ? BRAND2.conflict : p.color);
-    const geom = new THREE8.BufferGeometry().setFromPoints(
-      pts.map(([x, y]) => new THREE8.Vector3(x, y, Z_OFFSET))
-    );
-    const line = new THREE8.Line(geom, new THREE8.LineBasicMaterial({ color: colour }));
-    scene.add(line);
-    lines.push(line);
+    for (const seg of segs) {
+      const pts = pathPoints(seg);
+      if (pts.length < 2) continue;
+      const geom = new THREE8.BufferGeometry().setFromPoints(
+        pts.map(([x, y]) => new THREE8.Vector3(x, y, Z_OFFSET))
+      );
+      const line = new THREE8.Line(geom, new THREE8.LineBasicMaterial({ color: colour }));
+      scene.add(line);
+      lines.push(line);
+    }
   }
   const setVisible = (on) => {
     for (const l of lines) l.visible = on;
@@ -543,16 +545,25 @@ function checkAnchors(scene) {
 
 // src/timeline.ts
 function affineAt(segByPlane, finals, pid, t) {
-  const seg = segByPlane[pid];
-  if (!seg) {
+  const segs = segByPlane[pid];
+  if (!segs || segs.length === 0) {
     const aff = finals[pid];
     return aff ? { vis: true, aff } : { vis: false, aff: null };
   }
-  if (t < seg.start_s) return { vis: false, aff: null };
-  if (t >= seg.end_s) return { vis: true, aff: finals[pid] };
-  const frac = (t - seg.start_s) / (seg.end_s - seg.start_s);
-  const i = Math.round(frac * (seg.samples.length - 1));
-  return { vis: true, aff: seg.samples[i] };
+  if (t < segs[0].start_s) return { vis: false, aff: null };
+  const last = segs[segs.length - 1];
+  if (t >= last.end_s) return { vis: true, aff: finals[pid] };
+  let rest = null;
+  for (const seg of segs) {
+    if (t < seg.start_s) break;
+    if (t < seg.end_s) {
+      const frac = (t - seg.start_s) / (seg.end_s - seg.start_s);
+      const i = Math.round(frac * (seg.samples.length - 1));
+      return { vis: true, aff: seg.samples[i] };
+    }
+    rest = seg.samples[seg.samples.length - 1];
+  }
+  return { vis: true, aff: rest };
 }
 function framePoses(scene, segByPlane, t) {
   const out = {};
@@ -570,7 +581,7 @@ function createTimeline(scene, groups, goGroups = {}) {
   const TOTAL = TL.total_s;
   const hasAnim = TOTAL > 0 && SEGS.length > 0;
   const segByPlane = {};
-  for (const s of SEGS) segByPlane[s.plane_id] = s;
+  for (const s of SEGS) (segByPlane[s.plane_id] ??= []).push(s);
   const active = byId("active");
   const clock = byId("clock");
   const applyTime = (t) => {

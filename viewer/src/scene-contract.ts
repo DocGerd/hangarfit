@@ -89,6 +89,11 @@ export interface SegmentData {
   start_s: number;
   end_s: number;
   samples: Affine[];
+  // #865 Rung D: execution-order index of this leg within its body's tow. Present
+  // ONLY for a multi-leg body (move-aside staging + final, #667 Rung E); a
+  // single-leg body omits it (byte-identical to the pre-Rung-D scene). Absent ⇒
+  // treat as leg 0. Field name matches the Python `leg_index` key (#440 parity).
+  leg_index?: number;
 }
 
 export interface TimelineData {

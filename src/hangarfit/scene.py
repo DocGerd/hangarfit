@@ -24,7 +24,7 @@ from hangarfit.models import CheckResult, Layout, Part, Placement
 from hangarfit.towplanner import back_first_order
 
 if TYPE_CHECKING:
-    from hangarfit.towplanner import DubinsArc, MovesPlan
+    from hangarfit.towplanner import DubinsArc, Move, MovesPlan
 
 SCHEMA = "hangarfit.scene/v2"
 
@@ -271,24 +271,40 @@ def _timeline(
     if moves_plan is None:
         return {"total_s": 0.0, "segments": []}, finals
 
-    move_by_id = {m.plane_id: m for m in moves_plan.moves}
+    # #865 Rung D: GROUP (don't overwrite) — a body may carry multiple legs
+    # (move-aside staging + final, #667 Rung E). dict insertion order preserves the
+    # plan's execution order; legs are emitted in leg_index order below. Today every
+    # body has exactly one leg, so each list is single-element and the output is
+    # byte-identical to the prior `{m.plane_id: m}` form.
+    moves_by_id: dict[str, list[Move]] = {}
+    for m in moves_plan.moves:
+        moves_by_id.setdefault(m.plane_id, []).append(m)
     segments: list[dict] = []
     t = 0.0
 
     def _append_segment(body_id: str, *, record_final: bool) -> None:
         nonlocal t
-        move = move_by_id.get(body_id)
-        if move is None or move.path is None:
-            # No move, or a deferred (path=None) move — the body stays at its final
-            # pose. A deferred path is an un-routable placed-routed mover (#197/#602);
-            # for an aircraft this guard is defensive (every aircraft is routed).
+        legs = moves_by_id.get(body_id)
+        if not legs:
             return
-        samples = _sample_affines(move.path, max_samples_per_path)
-        dur = min(max(move.path.length_m / tow_speed_mps, min_seg_s), max_seg_s)
-        segments.append({"plane_id": body_id, "start_s": t, "end_s": t + dur, "samples": samples})
-        if record_final:
-            finals[body_id] = samples[-1]
-        t += dur
+        # One sequential segment per ROUTED leg, in leg_index order. A deferred
+        # (path=None) leg emits no segment — an un-routable placed-routed mover
+        # (#197/#602), or for an aircraft a defensive guard (every aircraft is
+        # routed). The `leg_index` key is emitted ONLY for a multi-leg body (>1
+        # routed leg) — a single-leg body stays byte-identical to before (#865).
+        routed = sorted((m for m in legs if m.path is not None), key=lambda m: m.leg_index)
+        multi_leg = len(routed) > 1
+        for leg in routed:
+            assert leg.path is not None  # narrowed by the filter above
+            samples = _sample_affines(leg.path, max_samples_per_path)
+            dur = min(max(leg.path.length_m / tow_speed_mps, min_seg_s), max_seg_s)
+            seg: dict = {"plane_id": body_id, "start_s": t, "end_s": t + dur, "samples": samples}
+            if multi_leg:
+                seg["leg_index"] = leg.leg_index
+            segments.append(seg)
+            if record_final:
+                finals[body_id] = samples[-1]
+            t += dur
 
     # Aircraft drive in first (deepest slot first); then placed-routed movers
     # (id-sorted, matching _ground_object_blocks) animate after every aircraft is
