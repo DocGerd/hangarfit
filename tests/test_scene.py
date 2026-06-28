@@ -226,6 +226,44 @@ def test_timeline_sample_count_capped():
         assert len(s["samples"]) <= 20  # hard-clamped to the exact bound
 
 
+def test_timeline_single_leg_segment_omits_leg_index_key():
+    # #865 Rung D byte-identity hinge: a single-leg body (every body today) emits
+    # NO `leg_index` key, so an existing scene serializes byte-identically. The key
+    # appears ONLY to disambiguate a multi-leg body (next test).
+    lay = load_layout(LAYOUT)
+    plan = plan_fill(lay)
+    tl, _ = scene._timeline(lay, plan)
+    assert tl["segments"], "fixture must produce segments"
+    assert all("leg_index" not in s for s in tl["segments"])
+
+
+def test_timeline_multi_leg_emits_one_segment_per_leg_in_leg_order():
+    # #865 Rung D: a body that relocates carries MULTIPLE Move legs (staging, then
+    # final). `_timeline` emits one sequential segment per ROUTED leg, in leg_index
+    # order regardless of tuple order, each tagged with `leg_index`; the body's
+    # final pose is the LAST leg's end (not the staging leg's).
+    from hangarfit.towplanner import Move, MovesPlan
+
+    lay = load_layout(LAYOUT)
+    base = plan_fill(lay)
+    routed = [m for m in base.moves if m.path is not None]
+    a, b = routed[0], routed[1]
+    pid = a.plane_id
+    staging = Move(plane_id=pid, target_slot=b.target_slot, path=b.path, leg_index=0)
+    final = Move(plane_id=pid, target_slot=a.target_slot, path=a.path, leg_index=1)
+    # Tuple order REVERSED on purpose — output must still be leg-index ordered.
+    plan = MovesPlan(target_layout=base.target_layout, moves=(final, staging))
+    tl, finals = scene._timeline(lay, plan)
+
+    segs = [s for s in tl["segments"] if s["plane_id"] == pid]
+    assert len(segs) == 2
+    assert [s["leg_index"] for s in segs] == [0, 1]
+    assert math.isclose(segs[0]["start_s"], 0.0)
+    assert math.isclose(segs[1]["start_s"], segs[0]["end_s"])  # sequential, end-to-end
+    assert finals[pid] == segs[1]["samples"][-1]  # final pose = LAST leg's end
+    assert finals[pid] != segs[0]["samples"][-1]  # not the staging leg's end
+
+
 def test_sample_affines_hard_clamp_is_exact_and_keeps_endpoints():
     # Directly exercise the overshoot branch: max_samples=2 forces the densely
     # sampled path to overshoot, so the clamp must fire — bounding the count
@@ -397,6 +435,28 @@ def _animated_scene() -> dict:
     return scene.build_scene(lay, moves_plan=plan_fill(lay))
 
 
+def _multi_leg_segment() -> dict:
+    """A serialized timeline segment from a MULTI-leg body, which carries the
+    optional ``leg_index`` key (#865 Rung D). The single-leg animated scene omits
+    that key (byte-identity), so it cannot pin the full SegmentData key set."""
+    from hangarfit.towplanner import Move, MovesPlan
+
+    lay = load_layout(LAYOUT)
+    base = plan_fill(lay)
+    routed = [m for m in base.moves if m.path is not None]
+    a, b = routed[0], routed[1]
+    pid = a.plane_id
+    plan = MovesPlan(
+        target_layout=base.target_layout,
+        moves=(
+            Move(plane_id=pid, target_slot=b.target_slot, path=b.path, leg_index=0),
+            Move(plane_id=pid, target_slot=a.target_slot, path=a.path, leg_index=1),
+        ),
+    )
+    sc = scene.build_scene(lay, moves_plan=plan)
+    return next(s for s in sc["timeline"]["segments"] if "leg_index" in s)
+
+
 def test_brand_contract_ts_keys_match_brand_py():
     from hangarfit import brand
 
@@ -418,11 +478,19 @@ def test_scene_contract_ts_nested_keys_match_scene_py():
         "PlaneData": sc["planes"][0],
         "BoxData": sc["planes"][0]["boxes"][0],
         "TimelineData": sc["timeline"],
-        "SegmentData": sc["timeline"]["segments"][0],
+        # SegmentData is pinned separately below against a MULTI-leg segment so the
+        # optional `leg_index` key (#865) is present — the single-leg animated scene
+        # omits it (byte-identity), so segments[0] can't pin the full key set.
         "Readouts": sc["readouts"],
     }
     for interface, obj in cases.items():
         assert _ts_interface_fields("scene-contract.ts", interface) == set(obj), interface
+
+    # SegmentData (#865 Rung D): the optional `leg_index` key only appears on a
+    # multi-leg body, so pin the contract against a multi-leg segment.
+    seg = _multi_leg_segment()
+    assert "leg_index" in seg  # the fixture must actually exercise the optional key
+    assert _ts_interface_fields("scene-contract.ts", "SegmentData") == set(seg)
 
     # StructuralNotchData: the animated scene uses a rectangular hangar, so its
     # structural_notches list is empty — sample a notched hangar block to pin the

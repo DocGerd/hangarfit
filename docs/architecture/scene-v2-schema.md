@@ -193,7 +193,7 @@ self-check as `anchors`; the egress lane is draw-only and not anchored.
 ```jsonc
 {
   "total_s": 24.0,
-  "segments": [                // one per plane, in back_first_order (deepest first)
+  "segments": [                // one per LEG, in back_first_order (deepest first)
     {
       "plane_id": "fk9_mkii",
       "start_s": 0.0,
@@ -202,6 +202,7 @@ self-check as `anchors`; the egress lane is draw-only and not anchored.
         [0.0, 1.0, 9.0, 1.0, 0.0, 0.0],
         // …
       ]
+      // "leg_index": 0        // OPTIONAL (#865) — present ONLY for a multi-leg body
     }
   ]
 }
@@ -212,15 +213,41 @@ Per-plane duration is proportional to path length (`DubinsArc.length_m`) via a t
 speed, clamped to `[min_seg_s, max_seg_s]`. Sample count per path is capped (the
 sampling step is coarsened) to keep the HTML small.
 
-**Viewer state machine** — for a plane with segment `s` at time `t`:
+### Multi-leg bodies (`leg_index`, #865 Rung D)
+
+A body normally has **one** segment (one leg, door → slot). A *move-aside* body
+([#667](https://github.com/DocGerd/hangarfit/issues/667) Rung E) instead drives to a
+transient **staging pose** (leg 0), waits while another body routes past, then drives
+to its final slot (leg 1) — so `segments` may carry **more than one entry per
+`plane_id`**, laid end-to-end in leg order. Each such segment then carries an
+**optional** `leg_index: int` (`0`-based, execution order).
+
+`leg_index` is emitted **only for a multi-leg body** — a single-leg body (every body
+today) omits the key entirely, so an existing scene is **byte-identical** to the
+pre-Rung-D form. The `SCHEMA` stays `hangarfit.scene/v2` (additive only). A consumer
+that ignores `leg_index` still animates correctly (segments are already sequential);
+the field is an explicit, robust ordering label. The body's **final** pose is the
+*last* leg's end; a staging pose is **not** in `final_poses` / `placements`.
+
+> **Producer status (Rung D, #667).** The data model + viewer are the *seam* for
+> move-aside: the state machine below (incl. the "waiting at staging" gap row) is
+> fully consumer-ready, but **no producer emits a multi-leg plan yet** — the scene
+> builder lays a body's legs end-to-end with no gap, so the wait row is not reached
+> by any shipped layout. Rung E (move-aside) supplies the first multi-leg producer.
+
+**Viewer state machine** — for a plane with leg list `S` (sorted by `leg_index`) at
+time `t`:
 
 | Condition | State | Affine |
 |---|---|---|
-| `t < s.start_s` | hidden (still outside) | — |
-| `s.start_s ≤ t < s.end_s` | animating | `s.samples[round(frac·(n−1))]` |
-| `t ≥ s.end_s` | parked | `final_poses[plane_id]` |
+| `t < S[0].start_s` | hidden (still outside) | — |
+| `S[k].start_s ≤ t < S[k].end_s` | animating leg `k` | `S[k].samples[round(frac·(n−1))]` |
+| `S[k].end_s ≤ t < S[k+1].start_s` | waiting at staging | `S[k].samples[−1]` |
+| `t ≥ S[−1].end_s` | parked | `final_poses[plane_id]` |
 
-A plane with **no** segment (static scene) is always shown at `final_poses`.
+For a single-leg body these collapse to the original hidden → animating → parked
+transitions. A plane with **no** segment (static scene) is always shown at
+`final_poses`.
 
 ### Static / un-routable layouts
 

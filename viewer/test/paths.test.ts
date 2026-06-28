@@ -155,3 +155,21 @@ test('addTowPaths: one line per routable plane; conflicted line uses BRAND.confl
   setVisible(true);
   assert.ok(lines.every((l) => l.visible === true), 'setVisible(true) shows every line again');
 });
+
+test('addTowPaths: a multi-leg plane (#865) draws one line PER leg, all in the plane colour', () => {
+  // A move-aside body (#667 Rung E) has a staging leg AND a final leg for the
+  // SAME plane_id. Both legs are drawn (so the whole shuffle route is visible),
+  // each in the plane's own hue — the leg list must not be collapsed to one line.
+  const mover = plane({ id: 'mover', color: '#1f77b4' });
+  const staging: SegmentData = { plane_id: 'mover', start_s: 0, end_s: 2, samples: [[1, 0, 5, 0, 1, 0], [1, 0, 7, 0, 1, 3]], leg_index: 0 };
+  const final: SegmentData = { plane_id: 'mover', start_s: 4, end_s: 6, samples: [[1, 0, 7, 0, 1, 3], [1, 0, 9, 0, 1, 6]], leg_index: 1 };
+  const SCENE = makeScene([mover], [], [staging, final]);
+
+  const scene = new THREE.Scene();
+  const { lines } = addTowPaths(scene, SCENE, BRAND);
+
+  assert.equal(lines.length, 2, 'both legs of the multi-leg plane get a line');
+  const colourOf = (l: THREE.Line): string =>
+    '#' + (l.material as THREE.LineBasicMaterial).color.getHexString();
+  assert.ok(lines.every((l) => colourOf(l) === mover.color.toLowerCase()), 'every leg uses the plane colour');
+});

@@ -252,10 +252,19 @@ class Move:
     # #602 routes). A routed aircraft (or, post-#602, a routed mover) always has a
     # DubinsArc here. See the class docstring for the full contract.
     path: DubinsArc | None
+    # #865 Rung D: the execution-order index of this leg within its body's tow.
+    # A single-leg move (every body today) keeps the default ``0``; a future
+    # move-aside relocation (#667 Rung E) emits a staging leg (``leg_index=0``)
+    # then the final leg (``leg_index=1``) for the SAME ``plane_id``. The field is
+    # ADDITIVE and trailing-defaulted, so every existing positional/keyword
+    # ``Move(...)`` constructor and serialization is byte-identical to before.
+    leg_index: int = 0
 
     def __post_init__(self) -> None:
         if not self.plane_id:
             raise ValueError("Move.plane_id must be non-empty")
+        if self.leg_index < 0:
+            raise ValueError(f"Move.leg_index must be >= 0, got {self.leg_index}")
 
 
 @dataclass(frozen=True, slots=True)
