@@ -253,6 +253,37 @@ def test_probe_peel_order_is_id_sorted_within_a_round(monkeypatch) -> None:
     assert result.order == ("a", "b", "c")
 
 
+def test_probe_passes_obstacles_to_the_seam_in_deterministic_order(monkeypatch) -> None:
+    """The still-parked obstacles handed to the egress seam must be id-sorted, not
+    set-iteration order: iterating a set of plane-id strings varies with
+    PYTHONHASHSEED across processes, which would make the blocking-conflict details
+    non-byte-identical (ADR-0003). Layout order is deliberately non-sorted so the
+    contract is observable."""
+    h = _hangar()
+    fleet = {k: _box_plane(k) for k in ("d", "a", "c", "b")}
+    target = Layout(
+        fleet=fleet,
+        hangar=h,
+        placements=(
+            _slot("d", 14.0, 20.0),
+            _slot("a", 6.0, 8.0),
+            _slot("c", 10.0, 14.0),
+            _slot("b", 8.0, 10.0),
+        ),
+    )
+    seen: list[tuple[str, ...]] = []
+
+    def fake(placement, placed, hangar, fleet, *, heuristic, max_expansions):
+        seen.append(tuple(p.plane_id for p in placed.placements))
+        return None  # everyone clear -> one round, one check per body
+
+    monkeypatch.setattr(tp, "_aircraft_egress_conflict", fake)
+    reverse_teardown_probe(target)
+
+    # First body checked is the id-min ("a"); its obstacles are the rest, id-sorted.
+    assert seen[0] == ("b", "c", "d")
+
+
 # ── Real dense witness (slow integration; excluded from the default set) ──────
 
 

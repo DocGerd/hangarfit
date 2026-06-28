@@ -1615,7 +1615,10 @@ def reverse_teardown_probe(
         round_conflicts: dict[str, Conflict] = {}
         egressable: list[str] = []
         for pid in sorted(remaining):
-            still_parked = tuple(extractable[q] for q in remaining if q != pid)
+            # id-sorted (NOT set-iteration order): a set of plane-id strings
+            # iterates in PYTHONHASHSEED-dependent order across processes, which
+            # would make the blocking-conflict details non-byte-identical (ADR-0003).
+            still_parked = tuple(extractable[q] for q in sorted(remaining) if q != pid)
             placed = Layout(
                 fleet=target.fleet,
                 hangar=target.hangar,
