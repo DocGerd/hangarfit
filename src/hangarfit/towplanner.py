@@ -277,6 +277,24 @@ class MovesPlan:
     target_layout: Layout
     moves: tuple[Move, ...]
 
+    def __post_init__(self) -> None:
+        # #667 Rung E (type-design F1): a plane's ROUTED legs must carry distinct
+        # leg_index values so scene._timeline's `sorted(..., key=leg_index)` order is
+        # well-defined. Deferred (path=None) legs are exempt — build_moves_plan
+        # (ml/infer.py) and placed-routed movers legitimately emit a routed leg and a
+        # deferred leg both at leg_index=0; mover/deferred target_slots also need not
+        # be in `placements`, so NO target_slot membership check is added.
+        seen_routed: dict[str, set[int]] = {}
+        for m in self.moves:
+            if m.path is None:
+                continue
+            legs = seen_routed.setdefault(m.plane_id, set())
+            if m.leg_index in legs:
+                raise ValueError(
+                    f"MovesPlan: plane {m.plane_id!r} has duplicate routed leg_index {m.leg_index}"
+                )
+            legs.add(m.leg_index)
+
 
 # ---------------------------------------------------------------------------
 # Heading-convention adapter (ADR-0002)
