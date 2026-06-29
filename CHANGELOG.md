@@ -45,7 +45,6 @@ All notable changes to this project are documented here. Format follows [Keep a 
   loader clips into area-conserving `fuselage_front`/`fuselage_aft` sub-polygons
   at the wing trailing edge (#550). Capability-only — no fleet behaviour change.
 
-
 - **Learned backend (#827, epic #607): opt-in `--relative-encoder` ego-centric observation encoder
   (ADR-0028 re-open trigger #2).** Augments object pose tokens with four SE(2) ego-relative
   coordinates (`fwd, right, sinΔθ, cosΔθ` in the active object's body frame); `TOKEN_DIM` 24→28 and
