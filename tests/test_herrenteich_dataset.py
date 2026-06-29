@@ -224,8 +224,9 @@ def test_demo_scenario_is_a_solvable_subset() -> None:
     assert len(scn.fleet_in) == 3
     # Pin max_restarts (not budget_s) for load-independence; budget_s high so the
     # restart count is the sole gate even on a slow runner (cf. #531).
+    # right-sized for CI (#881): 3 restarts suffice for this 3-plane demo (probed; was 6).
     result = solve(
-        scn, seed=3, budget_s=120.0, search=SearchConfig(max_restarts=6), plan_paths=False
+        scn, seed=3, budget_s=120.0, search=SearchConfig(max_restarts=3), plan_paths=False
     )
     assert result.layouts and len(result.layouts[0].placements) == 3
     assert collisions.check(result.layouts[0]).valid

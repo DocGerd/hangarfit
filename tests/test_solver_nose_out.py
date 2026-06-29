@@ -116,12 +116,14 @@ def _load_roomy_three() -> Scenario:
 
 
 def test_solve_reports_nose_out_flips_per_layout_and_prefers_out() -> None:
+    # right-sized for CI (#881): the roomy-three scenario places at restart 0, so a
+    # few restarts suffice to find a layout AND exercise the flip (probed; was 30).
     r = solve(
         _load_roomy_three(),
         budget_s=1000.0,
         alternatives=1,
         seed=1,
-        search=SearchConfig(max_restarts=30, nose_out=True),
+        search=SearchConfig(max_restarts=5, nose_out=True),
         plan_paths=False,
     )
     assert r.layouts
@@ -135,14 +137,18 @@ def test_nose_out_on_is_byte_identical_for_same_seed() -> None:
     """RNG-free ⇒ two ``nose_out=True`` solves are byte-identical (strictly
     stronger than ``spread``, which only guarantees this when off). Bound on
     ``max_restarts`` (NOT ``budget_s``) so it is load-independent (ADR-0003)."""
-    cfg = SearchConfig(max_restarts=10, nose_out=True)
+    # right-sized for CI (#881): determinism is max_restarts-scoped, so byte-identity
+    # holds at any restart count (was 10).
+    cfg = SearchConfig(max_restarts=3, nose_out=True)
     r1 = solve(
         _load_roomy_three(), budget_s=1000.0, alternatives=1, seed=42, search=cfg, plan_paths=False
     )
     r2 = solve(
         _load_roomy_three(), budget_s=1000.0, alternatives=1, seed=42, search=cfg, plan_paths=False
     )
-    assert len(r1.layouts) == len(r2.layouts)
+    # Guard against a vacuous pass: an empty pool would make len==len and the zip
+    # body both no-ops, so the byte-identity check must first see a real layout (#881).
+    assert r1.layouts and len(r1.layouts) == len(r2.layouts)
     for la, lb in zip(r1.layouts, r2.layouts, strict=True):
         assert la.placements == lb.placements
     assert r1.diagnostics.nose_out_flips == r2.diagnostics.nose_out_flips
@@ -152,13 +158,17 @@ def test_nose_out_off_is_byte_identical_to_pre_feature() -> None:
     """``nose_out=False`` never calls ``_nose_out`` ⇒ the RNG stream and selected
     layout are byte-identical to the pre-feature solver (the opt-out contract,
     mirroring ``spread=False``)."""
-    cfg = SearchConfig(max_restarts=10, nose_out=False)
+    # right-sized for CI (#881): determinism is max_restarts-scoped (any count; was 10).
+    cfg = SearchConfig(max_restarts=3, nose_out=False)
     r1 = solve(
         _load_roomy_three(), budget_s=1000.0, alternatives=1, seed=42, search=cfg, plan_paths=False
     )
     r2 = solve(
         _load_roomy_three(), budget_s=1000.0, alternatives=1, seed=42, search=cfg, plan_paths=False
     )
+    # Guard against a vacuous pass: an empty pool would make the zip a no-op and the
+    # flips check trivially true, so require a real layout first (#881).
+    assert r1.layouts
     for la, lb in zip(r1.layouts, r2.layouts, strict=True):
         assert la.placements == lb.placements
     assert (
