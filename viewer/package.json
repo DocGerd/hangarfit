@@ -12,7 +12,7 @@
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
-    "@types/node": "26.0.0",
+    "@types/node": "26.0.1",
     "@types/three": "0.160.0",
     "esbuild": "0.28.1",
     "eslint": "10.6.0",
