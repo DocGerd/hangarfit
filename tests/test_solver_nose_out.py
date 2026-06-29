@@ -146,7 +146,9 @@ def test_nose_out_on_is_byte_identical_for_same_seed() -> None:
     r2 = solve(
         _load_roomy_three(), budget_s=1000.0, alternatives=1, seed=42, search=cfg, plan_paths=False
     )
-    assert len(r1.layouts) == len(r2.layouts)
+    # Guard against a vacuous pass: an empty pool would make len==len and the zip
+    # body both no-ops, so the byte-identity check must first see a real layout (#881).
+    assert r1.layouts and len(r1.layouts) == len(r2.layouts)
     for la, lb in zip(r1.layouts, r2.layouts, strict=True):
         assert la.placements == lb.placements
     assert r1.diagnostics.nose_out_flips == r2.diagnostics.nose_out_flips
@@ -164,6 +166,9 @@ def test_nose_out_off_is_byte_identical_to_pre_feature() -> None:
     r2 = solve(
         _load_roomy_three(), budget_s=1000.0, alternatives=1, seed=42, search=cfg, plan_paths=False
     )
+    # Guard against a vacuous pass: an empty pool would make the zip a no-op and the
+    # flips check trivially true, so require a real layout first (#881).
+    assert r1.layouts
     for la, lb in zip(r1.layouts, r2.layouts, strict=True):
         assert la.placements == lb.placements
     assert (
