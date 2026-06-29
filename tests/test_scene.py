@@ -296,6 +296,34 @@ def test_timeline_interleaves_multi_leg_in_global_execution_order():
     assert finals[d_id] == segs[3]["samples"][-1]  # D parks at its return-leg end (its slot)
 
 
+def test_timeline_multi_leg_skips_deferred_path_none_move():
+    # #667 Rung E: a multi-leg plan that ALSO carries a deferred (path=None) move — e.g. a
+    # hand-placed glider parked alongside a move-aside shuffle — emits NO segment for the
+    # deferred body (its `path is None` short-circuits the global-order emit loop), while
+    # the shuffle still interleaves. Covers the path=None branch of the multi-leg timeline.
+    from hangarfit.towplanner import Move, MovesPlan
+
+    lay = load_layout(LAYOUT)
+    base = plan_fill(lay)
+    routed = [m for m in base.moves if m.path is not None]
+    d_id, s_id = routed[0].plane_id, routed[1].plane_id
+    d_final, d_aside, s_route = routed[0], routed[1], routed[1]
+    plan = MovesPlan(
+        target_layout=base.target_layout,
+        moves=(
+            Move(plane_id=d_id, target_slot=d_final.target_slot, path=d_final.path, leg_index=0),
+            Move(plane_id=d_id, target_slot=d_aside.target_slot, path=d_aside.path, leg_index=1),
+            Move(plane_id=s_id, target_slot=s_route.target_slot, path=s_route.path, leg_index=0),
+            Move(plane_id=d_id, target_slot=d_final.target_slot, path=d_final.path, leg_index=2),
+            # deferred body: present at rest, never routed (mirrors a hand-placed glider)
+            Move(plane_id="deferred", target_slot=d_final.target_slot, path=None, leg_index=0),
+        ),
+    )
+    tl, _ = scene._timeline(lay, plan)
+    assert all(s["plane_id"] != "deferred" for s in tl["segments"])  # path=None emits nothing
+    assert [s["plane_id"] for s in tl["segments"]] == [d_id, d_id, s_id, d_id]  # shuffle intact
+
+
 def test_sample_affines_hard_clamp_is_exact_and_keeps_endpoints():
     # Directly exercise the overshoot branch: max_samples=2 forces the densely
     # sampled path to overshoot, so the clamp must fire — bounding the count

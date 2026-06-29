@@ -1272,7 +1272,11 @@ def _staging_poses(target: Placement, hangar: Hangar) -> tuple[Pose, ...]:
         for x in x_samples:  # middle: off-to-side first, door-centre last
             for h in _REVERSE_CONE_HEADINGS:  # inner: nose-out cone
                 key = (x, y, h)
-                if key in seen:
+                # Defensive dedup: the three x-samples coincide only for a degenerate door
+                # centred on/past a wall (where _clamp coalesces them) — never for a valid
+                # door, so this skip is unreachable in practice. The no-duplicate
+                # post-condition is asserted by test_staging_poses_are_apron_out_*.
+                if key in seen:  # pragma: no cover - x-samples never collide for a valid door
                     continue
                 seen.add(key)
                 poses.append(Pose(x_m=x, y_m=y, heading_deg=h))
