@@ -15,47 +15,29 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  test:
-    name: test (Python ${{ matrix.python-version }})
+  # ─────────────────────────────────────────────────────────────────────────
+  # Required test suite, fanned out for wall-clock (#877).
+  #
+  # The single `test (Python 3.12)` job that used to run the whole suite under
+  # coverage on ONE runner (~26 min) is split into parallel jobs whose results
+  # are aggregated by the `test` GATE below:
+  #   * `static`          — ruff + ruff-format + mypy (once)
+  #   * `test-shard` (×3) — the non-slow, non-serial suite, sharded by recorded
+  #                         duration (pytest-split) and run WITHOUT coverage
+  #   * `serial-canaries` — the @serial wall-clock determinism canaries,
+  #                         single-process, OUTSIDE the xdist pool
+  #   * `test`            — the aggregator gate; keeps the exact required-check
+  #                         name so branch protection needs no change (#880)
+  #   * `coverage`        — NON-required; the Codecov signal, off the critical
+  #                         path (#879)
+  # ─────────────────────────────────────────────────────────────────────────
+
+  static:
+    name: static checks (ruff + mypy)
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.12"]
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
-
-      - name: Set up Python ${{ matrix.python-version }}
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
-        with:
-          python-version: ${{ matrix.python-version }}
-          cache: pip
-          cache-dependency-path: |
-            pyproject.toml
-            requirements-dev.txt
-            requirements-build.txt
-
-      - name: Install dev deps (hash-pinned)
-        run: pip install --require-hashes -r requirements-dev.txt
-
-      - name: Install build toolchain (hash-pinned)
-        # Hash-pinned setuptools/wheel for the --no-build-isolation
-        # editable install below, closing the residual PEP-517 gap (#162)
-        # where pip's isolated build env re-fetched the build-system
-        # requires from PyPI unpinned. packaging is constrained (via
-        # `-c requirements-dev.txt` inside requirements-build.in) to the
-        # dev-lockfile version, so this install introduces no version skew
-        # with the dev deps above.
-        run: pip install --require-hashes -r requirements-build.txt
-
-      - name: Install project (editable, no deps)
-        # MUST run after the build-toolchain install above:
-        # --no-build-isolation reuses the hash-verified host setuptools/
-        # wheel from that step instead of letting pip spin up an isolated
-        # build env that re-fetches them unpinned. Reordering or dropping
-        # that step makes this one fail with an opaque PEP-517 backend
-        # error.
-        run: pip install -e . --no-deps --no-build-isolation
+      - uses: ./.github/actions/setup-python-env
 
       - name: Lint with ruff
         # bench/ is the dev-only solve→tow profiling harness (#381): not shipped
@@ -68,23 +50,86 @@ jobs:
       - name: Type-check with mypy
         run: mypy src/hangarfit
 
-      - name: Run tests
-        # Two-pass split (#492). Pass 1 parallelizes the bulk of the suite
-        # across CPU cores with pytest-xdist (`-n auto`) for the CI speedup
-        # (~3× at 4 workers per spike #476). Pass 2 runs the `serial`-marked
-        # wall-clock determinism canaries OUTSIDE the xdist pool, single-process:
-        # they run solve() twice in-process under a `budget_s` deadline and
-        # would flake under sibling-worker CPU starvation (`xdist_group` /
-        # `--dist loadgroup` is insufficient — it co-locates a group on one
-        # worker but does not stop the others saturating the CPU). Both
-        # selectors are strict subsets of `not slow` (`@slow` wins over
-        # `@serial`: a hypothetical slow+serial test stays excluded in CI,
-        # matching the addopts default), and they are mutually disjoint, so
-        # every non-slow test runs in exactly one pass — none dropped, none
-        # double-counted. The `-m "not slow"` default in pyproject.toml's
-        # addopts is overridden here by each pass's explicit `-m`.
-        # `--cov-append` on the second pass merges into the first pass's
-        # coverage.xml, so the Codecov upload below gets COMBINED coverage.
+  test-shard:
+    name: test-shard (${{ matrix.group }} of 3)
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        group: [1, 2, 3]
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      - uses: ./.github/actions/setup-python-env
+
+      - name: Run test shard ${{ matrix.group }}/3 (no coverage)
+        # Required path runs WITHOUT --cov (#879): coverage is produced by the
+        # separate, non-required `coverage` job below, off the merge-critical
+        # path. pytest-split balances the three shards by recorded per-test
+        # duration (the committed `.test_durations`) so each runner does ~equal
+        # wall-clock; `-n auto` then parallelizes within the runner. `@serial` is
+        # excluded here and run single-process in `serial-canaries` (the
+        # determinism contract — see that job).
+        run: pytest -n auto -m "not slow and not serial" --splits 3 --group ${{ matrix.group }}
+
+  serial-canaries:
+    name: serial canaries (determinism)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      - uses: ./.github/actions/setup-python-env
+
+      - name: Run @serial wall-clock determinism canaries (single-process)
+        # The `serial`-marked canaries run solve() twice in-process under a
+        # wall-clock budget and MUST stay OUTSIDE the pytest-xdist pool
+        # (pyproject.toml `serial` marker; docs/dev/test-flakes-and-ci-gotchas.md
+        # §1): under sibling-worker CPU starvation the two in-process solves can
+        # complete different restart counts within the same budget and DIVERGE.
+        # A dedicated unloaded runner also de-flakes them. No `-n` here — single
+        # process by design.
+        run: pytest -m "serial and not slow"
+
+  test:
+    # The aggregator GATE. Named exactly `test (Python 3.12)` so the existing
+    # branch-protection required check keeps reporting with ZERO config change
+    # while the work fans out across `static`, `test-shard` (×3) and
+    # `serial-canaries` (#880). `if: always()` + the explicit result check makes
+    # this go RED (not "skipped") when any upstream job fails, so a failure still
+    # blocks merge. This job does no test work itself — it is the single required
+    # status check that summarizes the fan-out.
+    name: test (Python 3.12)
+    needs: [static, test-shard, serial-canaries]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Require all test jobs to have passed
+        run: |
+          echo "static=${{ needs.static.result }} test-shard=${{ needs.test-shard.result }} serial-canaries=${{ needs.serial-canaries.result }}"
+          if [ "${{ needs.static.result }}" != "success" ] \
+             || [ "${{ needs.test-shard.result }}" != "success" ] \
+             || [ "${{ needs.serial-canaries.result }}" != "success" ]; then
+            echo "::error::a required test job did not succeed — see the per-job results above"
+            exit 1
+          fi
+
+  coverage:
+    # NON-required (NOT in branch protection): produces the Codecov signal off
+    # the merge-critical path (#879). `codecov/patch` is already non-required, so
+    # the merge gate never waits on this. Runs the SAME two-pass split as the old
+    # combined job (bulk + serial via --cov-append) so combined coverage
+    # semantics — including branch coverage (`branch = true` in pyproject.toml) —
+    # are exactly the signal we had before, just no longer on the critical path.
+    #
+    # NB: COVERAGE_CORE=sysmon is deliberately NOT used — coverage 7.14.x cannot
+    # measure *branch* coverage under sys.monitoring (it silently falls back to
+    # the C tracer), and we keep branch coverage on. Revisit if a future coverage
+    # release adds branch support under sys.monitoring (see #878).
+    name: coverage (Codecov, non-required)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      - uses: ./.github/actions/setup-python-env
+
+      - name: Run tests with coverage (two-pass; bulk + serial via --cov-append)
         run: |
           pytest -n auto -m "not slow and not serial" --cov=hangarfit --cov-report=xml
           pytest -m "serial and not slow" --cov=hangarfit --cov-append --cov-report=xml --cov-report=term-missing
