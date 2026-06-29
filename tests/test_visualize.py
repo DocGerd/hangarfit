@@ -598,15 +598,18 @@ class TestDrawTowPaths:
     """
 
     @staticmethod
-    def _vertical_move(plane_id: str, x0: float, y0: float, length: float):
+    def _vertical_move(plane_id: str, x0: float, y0: float, length: float, leg_index: int = 0):
         """A trivial straight (S-leg) move from (x0,y0) heading +y, so the
-        sampled polyline is the vertical segment (x0, y0)→(x0, y0+length)."""
+        sampled polyline is the vertical segment (x0, y0)→(x0, y0+length).
+
+        ``leg_index`` (default 0) lets a test give one plane several distinct legs
+        (the multi-leg model), which the routed-leg-uniqueness invariant requires."""
         from hangarfit.towplanner import DubinsArc, Move, Pose, Segment
 
         start = Pose(x_m=x0, y_m=y0, heading_deg=0.0)
         end = Pose(x_m=x0, y_m=y0 + length, heading_deg=0.0)
         arc = DubinsArc(start=start, end=end, turn_radius_m=1.0, segments=(Segment("S", length),))
-        return Move(plane_id=plane_id, target_slot=end, path=arc)
+        return Move(plane_id=plane_id, target_slot=end, path=arc, leg_index=leg_index)
 
     def _plan(self, *moves):
         from hangarfit.towplanner import MovesPlan
@@ -637,12 +640,13 @@ class TestDrawTowPaths:
         assert len(set(colours)) == 2, f"distinct planes must get distinct colours, got {colours}"
 
     def test_same_plane_keeps_one_colour(self) -> None:
-        # "one colour per plane": two moves for the same plane id share a colour.
+        # "one colour per plane": two routed LEGS of the same plane id (a move-aside
+        # body carries multiple legs, distinct leg_index) share a colour.
         from hangarfit.visualize import _draw_tow_paths
 
         plan = self._plan(
-            self._vertical_move("a", 0.0, 0.0, 5.0),
-            self._vertical_move("a", 1.0, 0.0, 3.0),
+            self._vertical_move("a", 0.0, 0.0, 5.0, leg_index=0),
+            self._vertical_move("a", 1.0, 0.0, 3.0, leg_index=1),
         )
         ax = MagicMock()
         _draw_tow_paths(ax, plan)
