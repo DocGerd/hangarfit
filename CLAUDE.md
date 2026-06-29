@@ -203,8 +203,8 @@ pytest -m slow
 pytest -m ""
 
 # The safe local mirror of the test gate: the #492 two-pass split (~3.5× vs a
-# plain serial `pytest`; #624). Since #877 CI additionally SHARDS the bulk pass
-# across runners (pytest-split), but `make test` stays the local pre-push equivalent.
+# plain serial `pytest`; #624). Since #877, CI additionally SHARDS the bulk pass
+# across runners (pytest-split); `make test` stays the local pre-push equivalent.
 # A bare `pytest -n auto` is UNSAFE — it re-flakes the @serial wall-clock
 # canaries (rationale: docs/dev/test-flakes-and-ci-gotchas.md §1):
 make test        # two-pass split: parallel bulk + serial canaries (the safe mirror)
@@ -240,16 +240,19 @@ pip-compile --generate-hashes --no-strip-extras --extra dev -o requirements-dev.
 
 # CI: GitHub Actions runs the test suite on Python 3.12 for PRs into
 # develop/main (see .github/workflows/ci.yml). Since #877 the old single
-# `test (Python 3.12)` job is FANNED OUT for wall-clock (~26 min -> ~8 min):
+# `test (Python 3.12)` job is FANNED OUT for wall-clock (~26 min -> ~8 min, now
+# bench-`correctness`-bound; the #883 shards ran ~5-6 min each):
 #   * static             — ruff + ruff-format + mypy (once)
 #   * test-shard (1..3)  — the non-slow, non-serial suite, balanced by the
 #                          committed `.test_durations` via pytest-split, run
 #                          WITHOUT coverage
 #   * serial-canaries    — the @serial wall-clock canaries, single-process,
 #                          OUTSIDE the xdist pool (the determinism contract)
-#   * test (Python 3.12) — a no-op GATE that `needs:` the three above; it keeps
-#                          the exact required-check NAME, so branch protection is
-#                          unchanged
+#   * test (Python 3.12) — a GATE (runs no tests itself) that `needs:` the three
+#                          above and fails RED if any fails (`if: always()` + an
+#                          explicit result check, so it is never silently skipped);
+#                          it keeps the exact required-check NAME, so branch
+#                          protection is unchanged
 #   * coverage           — a SEPARATE, NON-required job (today's two-pass C-tracer
 #                          branch coverage + Codecov), off the merge-critical path
 # The shared hash-pinned PEP-517 install (dev deps from `requirements-dev.txt` +
