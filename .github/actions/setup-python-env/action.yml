@@ -1,0 +1,50 @@
+name: Set up Python + hangarfit (hash-pinned)
+description: >-
+  Set up the single supported Python (3.12, ADR-0009) with a pip cache, then
+  install the hash-pinned dev deps, the hash-pinned build toolchain, and the
+  project itself editable. The single source of truth for the subtle PEP-517
+  install ordering (#162) shared by every CI job that imports hangarfit — keeping
+  it here means the ordering rationale lives in ONE place instead of being copied
+  across the static, test-shard, serial-canaries and coverage jobs.
+
+inputs:
+  python-version:
+    description: The Python interpreter to set up (the only supported version is 3.12).
+    required: false
+    default: "3.12"
+
+runs:
+  using: composite
+  steps:
+    - name: Set up Python ${{ inputs.python-version }}
+      uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+      with:
+        python-version: ${{ inputs.python-version }}
+        cache: pip
+        cache-dependency-path: |
+          pyproject.toml
+          requirements-dev.txt
+          requirements-build.txt
+
+    - name: Install dev deps (hash-pinned)
+      shell: bash
+      run: pip install --require-hashes -r requirements-dev.txt
+
+    - name: Install build toolchain (hash-pinned)
+      # Hash-pinned setuptools/wheel for the --no-build-isolation editable
+      # install below, closing the residual PEP-517 gap (#162) where pip's
+      # isolated build env re-fetched the build-system requires from PyPI
+      # unpinned. packaging is constrained (via `-c requirements-dev.txt` inside
+      # requirements-build.in) to the dev-lockfile version, so this install
+      # introduces no version skew with the dev deps above.
+      shell: bash
+      run: pip install --require-hashes -r requirements-build.txt
+
+    - name: Install project (editable, no deps)
+      # MUST run after the build-toolchain install above: --no-build-isolation
+      # reuses the hash-verified host setuptools/wheel from that step instead of
+      # letting pip spin up an isolated build env that re-fetches them unpinned.
+      # Reordering or dropping that step makes this one fail with an opaque
+      # PEP-517 backend error.
+      shell: bash
+      run: pip install -e . --no-deps --no-build-isolation
