@@ -297,46 +297,13 @@ def _timeline(
     multi_leg_present = any(c > 1 for c in routed_count.values())
     aircraft_ids = {p.plane_id for p in layout.placements}
 
-    def _append_segment(body_id: str, *, record_final: bool) -> None:
-        nonlocal t
-        legs = moves_by_id.get(body_id)
-        if not legs:
-            return
-        # One sequential segment per ROUTED leg, in leg_index order. A deferred
-        # (path=None) leg emits no segment — an un-routable placed-routed mover
-        # (#197/#602), or for an aircraft a defensive guard (every aircraft is
-        # routed). The `leg_index` key is emitted ONLY for a multi-leg body (>1
-        # routed leg) — a single-leg body stays byte-identical to before (#865).
-        #
-        # Rung D scope (#667): a body's legs are laid end-to-end HERE (each leg's
-        # `start_s == prev.end_s`), then the next body — so a body is never paused
-        # mid-fill while another routes past. The viewer + scene-v2 state machine
-        # already model that inter-leg "wait at staging" gap (`affineAt`), but no
-        # producer emits it yet; Rung E (move-aside) will lay legs in global
-        # execution order across bodies. Edge (deferred only, no producer today):
-        # a multi-leg body whose non-final leg is `path=None` drops to one routed
-        # leg and serializes as single-leg (no `leg_index`) — revisit in Rung E.
-        routed = sorted((m for m in legs if m.path is not None), key=lambda m: m.leg_index)
-        multi_leg = len(routed) > 1
-        for leg in routed:
-            assert leg.path is not None  # narrowed by the filter above
-            samples = _sample_affines(leg.path, max_samples_per_path)
-            dur = min(max(leg.path.length_m / tow_speed_mps, min_seg_s), max_seg_s)
-            seg: dict = {"plane_id": body_id, "start_s": t, "end_s": t + dur, "samples": samples}
-            if multi_leg:
-                seg["leg_index"] = leg.leg_index
-            segments.append(seg)
-            if record_final:
-                finals[body_id] = samples[-1]
-            t += dur
-
-    def _emit_leg(leg: Move) -> None:
-        # #667 Rung E global-order emitter: one segment for a single routed leg, in the
-        # caller's (moves-tuple = execution) order. Mirrors _append_segment's per-leg
-        # body but does NOT group by plane: a move-aside body's legs interleave with the
-        # bodies routed between them. `leg_index` is emitted only for a multi-leg body
-        # (>1 routed leg); finals records the last leg of each AIRCRAFT (a mover's
-        # resting pose lives in its ground-object block, like record_final=False above).
+    def _emit_segment(leg: Move, *, record_final: bool) -> None:
+        # Single source of truth for one timeline segment of a single ROUTED leg
+        # (shared by the per-body and the global-execution-order paths so the segment
+        # shape can never desync). The `leg_index` key is emitted ONLY for a multi-leg
+        # body (routed_count > 1) — a single-leg body stays byte-identical to before
+        # (#865). `record_final` records the body's last-sample pose in `finals`
+        # (aircraft only; a mover's resting pose lives in its ground-object block).
         nonlocal t
         assert leg.path is not None  # caller filters path-None legs
         samples = _sample_affines(leg.path, max_samples_per_path)
@@ -345,18 +312,32 @@ def _timeline(
         if routed_count.get(leg.plane_id, 0) > 1:
             seg["leg_index"] = leg.leg_index
         segments.append(seg)
-        if leg.plane_id in aircraft_ids:
+        if record_final:
             finals[leg.plane_id] = samples[-1]
         t += dur
 
+    def _append_segment(body_id: str, *, record_final: bool) -> None:
+        # Per-body path: emit one sequential segment per ROUTED leg of `body_id`, laid
+        # end-to-end in leg_index order (a deferred path=None leg emits nothing — an
+        # un-routable mover #197/#602, or a defensive guard for an aircraft). A body's
+        # legs are laid end-to-end here, then the next body. Used only when NO multi-leg
+        # body is present, so this reproduces the pre-Rung-E byte-identical timeline.
+        legs = moves_by_id.get(body_id)
+        if not legs:
+            return
+        for leg in sorted((m for m in legs if m.path is not None), key=lambda m: m.leg_index):
+            _emit_segment(leg, record_final=record_final)
+
     if multi_leg_present:
         # A shuffle is present: lay legs in GLOBAL execution order (the producer builds
-        # moves_plan.moves in commitment order: aircraft, then id-sorted movers). The
+        # moves_plan.moves in commitment order: aircraft, then id-sorted movers), so a
+        # move-aside body's legs interleave with the bodies routed between them. The
         # viewer's affineAt rests a displaced body at its staging pose between its
-        # non-contiguous legs while the stuck body routes past (#667 Rung E).
+        # non-contiguous legs while the stuck body routes past (#667 Rung E). finals
+        # records aircraft only (a mover's resting pose lives in its ground-object block).
         for m in moves_plan.moves:
             if m.path is not None:
-                _emit_leg(m)
+                _emit_segment(m, record_final=m.plane_id in aircraft_ids)
     else:
         # No shuffle: aircraft drive in deepest-first, then placed-routed movers
         # (id-sorted) after every aircraft is parked (#651). Byte-identical to before.

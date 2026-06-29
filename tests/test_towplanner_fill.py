@@ -505,12 +505,21 @@ def test_move_aside_inert_on_routable_real_fill_and_byte_identical() -> None:
 
 
 @pytest.mark.slow
-def test_move_aside_real_geometry_unresolvable_block_runs_phase2_and_bails() -> None:
+def test_move_aside_real_geometry_unresolvable_block_runs_phase2_and_bails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
     # The ONLY coverage that runs the phase-2 move-aside on REAL geometry (real
     # _staging_poses + real plan_path return legs, not monkeypatched). A tight two-wide
     # block plus a third body deadlocks phase 1 within budget, so phase 2 runs the real
     # shuffle search; depth-1 move-aside cannot resolve this symmetric block (see the
     # spike), so it bails with a structured NoFeasiblePlanError rather than crashing.
+    #
+    # The per-plane cap (max_expansions) is kept low so failed routes fail fast and
+    # phase 1 *completes* the order search (returns None) rather than raising on the
+    # global budget — only then does phase 2 run. We SPY on _staging_poses (delegating
+    # to the real impl) and assert it was invoked, so the test fails loudly if a future
+    # change ever lets phase 1 budget-raise and skip phase 2 (PR #869 review) instead of
+    # passing vacuously on a phase-1 bail (which would also satisfy `pytest.raises`).
     h = _hangar(width_m=12.0, length_m=16.0, door_center=6.0, door_width=6.0, apron_depth_m=8.0)
     fleet = {k: _wide_plane(k) for k in ("A", "B", "C")}
     target = _layout(
@@ -520,8 +529,19 @@ def test_move_aside_real_geometry_unresolvable_block_runs_phase2_and_bails() -> 
         _slot("B", 8.5, 10.0),
         _slot("C", 6.0, 5.0),
     )
+    staging_calls = {"n": 0}
+    real_staging = tp._staging_poses
+
+    def _spy_staging(*args: object, **kwargs: object) -> object:
+        staging_calls["n"] += 1
+        return real_staging(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(tp, "_staging_poses", _spy_staging)
     with pytest.raises(NoFeasiblePlanError):
-        plan_fill(target, max_total_expansions=5000)
+        plan_fill(target, max_expansions=300, max_total_expansions=3000)
+    assert staging_calls["n"] > 0, (
+        "phase 2 move-aside must execute (not be skipped by a phase-1 raise)"
+    )
 
 
 def test_plan_fill_bails_with_structured_error_when_unplannable(

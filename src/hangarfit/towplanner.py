@@ -279,8 +279,11 @@ class MovesPlan:
 
     def __post_init__(self) -> None:
         # #667 Rung E (type-design F1): a plane's ROUTED legs must carry distinct
-        # leg_index values so scene._timeline's `sorted(..., key=leg_index)` order is
-        # well-defined. Deferred (path=None) legs are exempt — build_moves_plan
+        # leg_index values so each leg is unambiguously identifiable per body — the
+        # scene/v2 `timeline.segments[].leg_index` and the viewer's per-body
+        # `segByPlane[pid]` leg array key on it, and it backstops the move-aside
+        # producer's hardcoded leg_index 0/1/2 (a body is displaced at most once per
+        # DFS path). Deferred (path=None) legs are exempt — build_moves_plan
         # (ml/infer.py) and placed-routed movers legitimately emit a routed leg and a
         # deferred leg both at leg_index=0; mover/deferred target_slots also need not
         # be in `placements`, so NO target_slot membership check is added.
@@ -2238,11 +2241,15 @@ def _plan_fill(
     # backtrack-cap exhaustion (propagates → no phase 2, so an un-routable fill's
     # disprove cost stays 1×). Returns None only on an IN-BUDGET deadlock.
     result = _place_rest(placed, ordered, allow_displace=False)
-    if result is None:
+    if result is None and disp_cap > 0 and hangar.apron_depth_m > 0.0:
         # Phase 2 (#667 Rung E): the whole-fill order search deadlocked within budget
         # — enable move-aside with a FRESH expansion budget. Reached only here, so any
         # layout phase 1 solves is byte-identical (ADR-0003). Phase 2 runs only after a
-        # cheap phase-1 deadlock, bounding worst-case disprove cost.
+        # cheap phase-1 deadlock, bounding worst-case disprove cost. Skip it entirely
+        # when move-aside CANNOT engage (no apron, or displacement cap 0): _try_move_aside
+        # would be a guaranteed no-op, so re-running the order search is pure waste — and
+        # this keeps the no-apron / disp-0 disprove genuinely same-speed as pre-Rung-E
+        # (it bails on phase 1's deepest_conflict, identical to the re-captured one).
         total_used = 0
         backtracks_used = 0
         deepest_conflict = None
