@@ -28,6 +28,18 @@ All notable changes to this project are documented here. Format follows [Keep a 
   (timeline + floor polylines) animates each leg, resting a body at its staging
   pose between legs; the 2D PNG renderer already draws each leg unchanged.
   `SCHEMA` stays `hangarfit.scene/v2` (additive only).
+- The tow-path fill planner can now resolve a tow-order deadlock by temporarily
+  relocating an already-parked aircraft to an apron-out staging pose, routing the
+  stuck aircraft past it, and returning it — **"move-aside"** (#667, Rung E),
+  emitting a valid multi-leg plan (and a faithfully interleaved `view` animation)
+  where no monotone fill order exists. It engages automatically whenever a staging
+  apron is set (`--apron-depth` / hangar `apron_depth_m > 0`) and only after the
+  non-displacing search deadlocks within budget, so a layout that doesn't need a
+  shuffle is byte-identical to before (ADR-0003). The relocation is bounded
+  depth-1 and globally capped, and it adds reachability only for in-budget cyclic
+  blocks — it does not, on its own, crack the budget-bound dense Herrenteich all-8
+  (the corridor there exhausts the affordable expansion budget before any shuffle;
+  see the routing-ceiling spike).
 - A `kind: fuselage` part may now carry a `vertices:` outline polygon, which the
   loader clips into area-conserving `fuselage_front`/`fuselage_aft` sub-polygons
   at the wing trailing edge (#550). Capability-only — no fleet behaviour change.

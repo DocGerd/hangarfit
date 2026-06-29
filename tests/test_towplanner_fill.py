@@ -78,6 +78,7 @@ def _hangar(
     length_m: float = 30.0,
     door_center: float = 10.0,
     door_width: float = 6.0,
+    apron_depth_m: float = 0.0,
 ) -> Hangar:
     return Hangar(
         length_m=length_m,
@@ -86,11 +87,36 @@ def _hangar(
         maintenance_bay=MaintenanceBay(center_x_m=width_m / 2, width_m=2.0, depth_m=2.0),
         clearance_m=0.5,
         wing_layer_clearance_m=0.3,
+        apron_depth_m=apron_depth_m,
     )
 
 
 def _slot(pid: str, x: float, y: float, h: float = 0.0, on_carts: bool = False) -> Placement:
     return Placement(plane_id=pid, x_m=x, y_m=y, heading_deg=h, on_carts=on_carts)
+
+
+def test_staging_poses_are_apron_out_lateral_deepest_first_nose_out() -> None:
+    # #667 Rung E: where a displaced body parks. Apron-out (y<0), off-to-the-side of
+    # the door (so it doesn't jam the corridor the stuck body enters through), nose-out,
+    # deepest apron pose first (the #844 cross-machine cost-margin lever).
+    h = _hangar(apron_depth_m=6.0)  # door [7, 13] in a width-20 hangar
+    slot = _slot("d", 4.0, 8.0)
+    poses = tp._staging_poses(slot, h)
+    assert poses
+    assert all(p.y_m < 0.0 for p in poses)  # outside the door
+    assert poses[0].y_m == -6.0  # deepest apron first
+    door_lo, door_hi = (
+        h.door.center_x_m - h.door.width_m / 2,
+        h.door.center_x_m + h.door.width_m / 2,
+    )
+    assert any(p.x_m < door_lo or p.x_m > door_hi for p in poses)  # lateral, off the door
+    assert all(135.0 <= p.heading_deg <= 225.0 for p in poses)  # nose-out cone
+    assert tp._staging_poses(slot, h) == poses  # deterministic
+    assert len({(p.x_m, p.y_m, p.heading_deg) for p in poses}) == len(poses)  # dedup
+
+
+def test_staging_poses_empty_without_apron() -> None:
+    assert tp._staging_poses(_slot("d", 4.0, 8.0), _hangar(apron_depth_m=0.0)) == ()
 
 
 def test_entry_pose_is_at_front_pointing_in() -> None:
@@ -290,6 +316,415 @@ def test_plan_fill_backtrack_cap_bounds_the_order_search(
     # not the already-placed deepest plane, and preserve a real conflict (#668 review).
     assert ei.value.plane_id == "B"
     assert ei.value.conflict is not None and ei.value.conflict.planes[0] == "B"
+
+
+# ── #667 Rung E: move-aside (two-phase order search) ─────────────────────────
+
+
+def _two_plane_mutual_block_layout(apron_depth_m: float = 6.0) -> Layout:
+    """Two planes that MUTUALLY block: neither tow order works (so the non-displacing
+    DFS deadlocks), but a depth-1 move-aside resolves it — exactly the case Rung E
+    targets. ``blocker`` (D) is deep, ``stuck`` (S) shallow."""
+    h = _hangar(width_m=20.0, length_m=30.0, apron_depth_m=apron_depth_m)
+    fleet = {"blocker": _box_plane("blocker"), "stuck": _box_plane("stuck")}
+    return _layout(fleet, h, _slot("blocker", 10.0, 22.0), _slot("stuck", 10.0, 8.0))
+
+
+def _mutual_block_cone(mover, placed) -> None:  # noqa: ANN001
+    """The phase-1 cone block shared by the move-aside fakes: D (``blocker``) at its
+    FINAL slot (y>=0) blocks S (``stuck``) — but D@staging (y<0) does not; S parked
+    blocks D. So [D,S] and [S,D] both deadlock and only moving D aside lets S in."""
+    by_id = {p.plane_id: p for p in placed.placements}
+    d = by_id.get("blocker")
+    if mover.id == "stuck" and d is not None and d.y_m >= 0.0:
+        raise _forced_infeasible("stuck")
+    if mover.id == "blocker" and "stuck" in by_id:
+        raise _forced_infeasible("blocker")
+
+
+def _mutual_block_fake_plan_path(mover, entry, goal, *, hangar, placed, mover_on_carts, **kw):  # noqa: ANN001, ANN202
+    """plan_path stand-in for a mutual block. Single-start calls (``entries`` is None)
+    are the displaced body's move-aside legs (to/from the apron) — always feasible.
+    Multi-start (cone) calls apply :func:`_mutual_block_cone`."""
+    if kw.get("entries") is None:  # a single-start move-aside leg (D aside / return)
+        return _fake_arc(mover, entry, goal)
+    _mutual_block_cone(mover, placed)
+    return _fake_arc(mover, entry, goal)
+
+
+def test_plan_fill_resolves_mutual_block_via_move_aside(monkeypatch: pytest.MonkeyPatch) -> None:
+    target = _two_plane_mutual_block_layout()
+    monkeypatch.setattr(tp, "plan_path", _mutual_block_fake_plan_path)
+    plan = plan_fill(target)
+    legs = {(m.plane_id, m.leg_index) for m in plan.moves if m.path is not None}
+    # D gets its original placement leg (0) + the aside (1) and return (2) legs; S routes (0).
+    assert {("stuck", 0), ("blocker", 0), ("blocker", 1), ("blocker", 2)} <= legs
+    # The shuffle bundle is in execution order: D drives aside, S enters, D returns.
+    order = [(m.plane_id, m.leg_index) for m in plan.moves if m.path is not None]
+    assert order.index(("blocker", 1)) < order.index(("stuck", 0)) < order.index(("blocker", 2))
+
+
+def test_plan_fill_max_displacements_zero_is_inert(monkeypatch: pytest.MonkeyPatch) -> None:
+    # max_displacements=0 disables move-aside → the mutual block bails, naming the stuck body.
+    target = _two_plane_mutual_block_layout()
+    monkeypatch.setattr(tp, "plan_path", _mutual_block_fake_plan_path)
+    with pytest.raises(NoFeasiblePlanError) as exc:
+        plan_fill(target, max_displacements=0)
+    assert exc.value.plane_id == "stuck"  # #668: names the STUCK body, not the displaced one
+
+
+def test_plan_fill_move_aside_skipped_without_apron(monkeypatch: pytest.MonkeyPatch) -> None:
+    # Move-aside relocates a body OUTSIDE the door, so it requires a staging apron.
+    # With apron_depth_m=0 the mutual block cannot be resolved and bails.
+    target = _two_plane_mutual_block_layout(apron_depth_m=0.0)
+    monkeypatch.setattr(tp, "plan_path", _mutual_block_fake_plan_path)
+    with pytest.raises(NoFeasiblePlanError) as exc:
+        plan_fill(target)
+    assert exc.value.plane_id == "stuck"
+
+
+# The move-aside happy path (a shuffle that commits) is covered above; the rest of
+# the two-phase core is its failure/edge branches. These exercise them FAST with a
+# monkeypatched plan_path (no real geometry search), so the move-aside logic is fully
+# covered without leaning on the one @slow real-geometry integration test.
+
+
+def test_move_aside_skips_to_next_staging_when_aside_leg_infeasible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Aside leg (D -> deepest-apron staging) infeasible: _route swallows it and the
+    # loop tries the next staging pose, which routes -> the shuffle still resolves.
+    target = _two_plane_mutual_block_layout()
+
+    def fake(mover, entry, goal, *, hangar, placed, mover_on_carts, **kw):  # noqa: ANN001, ANN202
+        if kw.get("entries") is None:  # move-aside leg
+            if goal.y_m == -hangar.apron_depth_m:  # aside to the DEEPEST apron pose fails
+                raise _forced_infeasible(mover.id)
+            return _fake_arc(mover, entry, goal)
+        _mutual_block_cone(mover, placed)
+        return _fake_arc(mover, entry, goal)
+
+    monkeypatch.setattr(tp, "plan_path", fake)
+    legs = {(m.plane_id, m.leg_index) for m in plan_fill(target).moves if m.path is not None}
+    assert {("stuck", 0), ("blocker", 1), ("blocker", 2)} <= legs  # resolved via a shallower pose
+
+
+def test_move_aside_bails_when_every_aside_leg_infeasible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # No staging pose admits the aside leg: every attempt is skipped and the order
+    # search exhausts move-aside, so the whole fill bails with a structured error.
+    target = _two_plane_mutual_block_layout()
+
+    def fake(mover, entry, goal, *, hangar, placed, mover_on_carts, **kw):  # noqa: ANN001, ANN202
+        if kw.get("entries") is None:  # every move-aside leg infeasible
+            raise _forced_infeasible(mover.id)
+        _mutual_block_cone(mover, placed)
+        return _fake_arc(mover, entry, goal)
+
+    monkeypatch.setattr(tp, "plan_path", fake)
+    with pytest.raises(NoFeasiblePlanError):
+        plan_fill(target)
+
+
+def test_move_aside_continues_when_stuck_body_still_blocked_at_staging(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # S can't route even with D on the apron: the S-leg failure is charged and the
+    # loop moves on; with no staging that admits S, the fill bails.
+    target = _two_plane_mutual_block_layout()
+
+    def fake(mover, entry, goal, *, hangar, placed, mover_on_carts, **kw):  # noqa: ANN001, ANN202
+        if kw.get("entries") is None:  # D's aside/return legs feasible
+            return _fake_arc(mover, entry, goal)
+        if mover.id == "stuck":  # S never routes via the cone, even with D aside
+            raise _forced_infeasible("stuck")
+        _mutual_block_cone(mover, placed)
+        return _fake_arc(mover, entry, goal)
+
+    monkeypatch.setattr(tp, "plan_path", fake)
+    with pytest.raises(NoFeasiblePlanError):
+        plan_fill(target)
+
+
+def test_move_aside_skips_to_next_staging_when_return_leg_infeasible(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Return leg (deepest staging -> D's slot, against S@final) infeasible: skip to the
+    # next staging pose, whose return routes -> the shuffle resolves.
+    target = _two_plane_mutual_block_layout()
+
+    def fake(mover, entry, goal, *, hangar, placed, mover_on_carts, **kw):  # noqa: ANN001, ANN202
+        if kw.get("entries") is None:  # move-aside leg
+            if goal.y_m >= 0.0 and entry.y_m == -hangar.apron_depth_m:  # return from DEEPEST fails
+                raise _forced_infeasible(mover.id)
+            return _fake_arc(mover, entry, goal)
+        _mutual_block_cone(mover, placed)
+        return _fake_arc(mover, entry, goal)
+
+    monkeypatch.setattr(tp, "plan_path", fake)
+    legs = {(m.plane_id, m.leg_index) for m in plan_fill(target).moves if m.path is not None}
+    assert {("stuck", 0), ("blocker", 1), ("blocker", 2)} <= legs
+
+
+def test_move_aside_bails_when_aside_leg_exhausts_global_budget(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The aside leg alone drains the global expansion budget: the post-aside budget
+    # check trips and move-aside abandons the shuffle (it never wastes the S leg).
+    target = _two_plane_mutual_block_layout()
+
+    def fake(mover, entry, goal, *, hangar, placed, mover_on_carts, **kw):  # noqa: ANN001, ANN202
+        if kw.get("entries") is None:  # move-aside legs are charged a huge cost
+            kw["stats"]["expansions"] = 10_000
+            return _fake_arc(mover, entry, goal)
+        _mutual_block_cone(mover, placed)  # phase-1 cone calls charge nothing
+        return _fake_arc(mover, entry, goal)
+
+    monkeypatch.setattr(tp, "plan_path", fake)
+    with pytest.raises(NoFeasiblePlanError):
+        plan_fill(target, max_total_expansions=100)
+
+
+def test_move_aside_bails_when_budget_drains_before_return_leg(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # Aside is cheap (passes the post-aside check) but S drains the budget, so the
+    # return leg's _route sees no budget at entry and returns None -> the loop skips on,
+    # and every later _route also short-circuits on the drained budget -> the fill bails.
+    target = _two_plane_mutual_block_layout()
+
+    def fake(mover, entry, goal, *, hangar, placed, mover_on_carts, **kw):  # noqa: ANN001, ANN202
+        if kw.get("entries") is None:  # aside/return: free
+            kw["stats"]["expansions"] = 0
+            return _fake_arc(mover, entry, goal)
+        if any(p.y_m < 0.0 for p in placed.placements):  # phase-2 S leg (D parked on the apron)
+            kw["stats"]["expansions"] = 10_000  # S succeeds but drains the global budget
+            return _fake_arc(mover, entry, goal)
+        _mutual_block_cone(mover, placed)  # phase-1 cone calls charge nothing
+        return _fake_arc(mover, entry, goal)
+
+    monkeypatch.setattr(tp, "plan_path", fake)
+    with pytest.raises(NoFeasiblePlanError):
+        plan_fill(target, max_total_expansions=100)
+
+
+def test_move_aside_records_apron_fallback_for_committed_stuck_body(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # When S commits via the y=0 door-line fallback (apron_fallback set on its leg) the
+    # diagnostics out-param records it — in committed-move order, plan-inert.
+    target = _two_plane_mutual_block_layout()
+
+    def fake(mover, entry, goal, *, hangar, placed, mover_on_carts, **kw):  # noqa: ANN001, ANN202
+        if kw.get("entries") is None:
+            return _fake_arc(mover, entry, goal)
+        if any(p.y_m < 0.0 for p in placed.placements):  # phase-2 S leg
+            kw["stats"]["apron_fallback"] = True
+            return _fake_arc(mover, entry, goal)
+        _mutual_block_cone(mover, placed)
+        return _fake_arc(mover, entry, goal)
+
+    monkeypatch.setattr(tp, "plan_path", fake)
+    drops: list[tp.ApronShallowDrop] = []
+    plan = plan_fill(target, apron_dropped_out=drops)
+    assert {(m.plane_id, m.leg_index) for m in plan.moves if m.path is not None} >= {("stuck", 0)}
+    assert [d.plane_id for d in drops] == ["stuck"]  # the committed stuck body, recorded
+
+
+def _three_plane_all_block_layout(apron_depth_m: float = 6.0) -> Layout:
+    """Three planes that each block every other at its FINAL slot, so only one places
+    before the fill deadlocks. Used to exercise the displacement cap + per-path undo."""
+    h = _hangar(width_m=20.0, length_m=30.0, apron_depth_m=apron_depth_m)
+    fleet = {k: _box_plane(k) for k in ("p1", "p2", "p3")}
+    return _layout(
+        fleet, h, _slot("p1", 10.0, 24.0), _slot("p2", 10.0, 16.0), _slot("p3", 10.0, 8.0)
+    )
+
+
+def test_move_aside_respects_displacement_cap_and_undoes_failed_path(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # max_displacements=1: the first shuffle commits, but the remaining body needs a
+    # SECOND displacement which the cap forbids -> the recursion fails, the committed
+    # body is undone (counter stays), the next staging hits the cap guard, and the fill
+    # bails. Drives the cap entry-guard, the commit-time cap check, and the undo path.
+    target = _three_plane_all_block_layout()
+
+    def fake(mover, entry, goal, *, hangar, placed, mover_on_carts, **kw):  # noqa: ANN001, ANN202
+        if kw.get("entries") is None:  # move-aside legs feasible
+            return _fake_arc(mover, entry, goal)
+        if any(p.plane_id != mover.id and p.y_m >= 0.0 for p in placed.placements):
+            raise _forced_infeasible(mover.id)  # any plane parked at a final slot blocks the rest
+        return _fake_arc(mover, entry, goal)
+
+    monkeypatch.setattr(tp, "plan_path", fake)
+    with pytest.raises(NoFeasiblePlanError):
+        plan_fill(target, max_displacements=1, max_backtracks=2000)
+
+
+def _assert_plan_legs_valid(plan: MovesPlan, target: Layout) -> None:
+    """Every routed leg is collision-free against the world state at its execution time.
+
+    Replays ``plan.moves`` in tuple (= execution) order against a live ``{plane_id:
+    Pose}`` map seeded empty; each routed leg is checked with the exact ``path_first_
+    conflict`` oracle against the bodies parked *before* it (plus any fixed obstacles).
+    A staging leg's ``target_slot`` (y<0, apron) is transient — only the motion oracle
+    applies to it, and it updates the live map so a later leg sees the body at staging.
+    Aircraft-only fixture scope; the apron the planner used rides on ``target.hangar``.
+    """
+    from hangarfit.towplanner import path_first_conflict
+
+    fleet = target.fleet
+    on_carts = {p.plane_id: p.on_carts for p in target.placements}
+    fixed = tuple(
+        gp
+        for gp in target.ground_object_placements
+        if target.ground_objects[gp.plane_id].object_class == "fixed_obstacle"
+    )
+    current: dict[str, Pose] = {}
+    for m in plan.moves:
+        if m.path is None:  # hand-placed / deferred: a parked obstacle, no motion
+            current[m.plane_id] = m.target_slot
+            continue
+        others = tuple(
+            Placement(pid, pose.x_m, pose.y_m, pose.heading_deg, on_carts.get(pid, False))
+            for pid, pose in current.items()
+            if pid != m.plane_id
+        )
+        obstacles = Layout(
+            fleet=fleet,
+            hangar=target.hangar,
+            placements=others,
+            maintenance_plane=target.maintenance_plane,
+            ground_objects=target.ground_objects,
+            ground_object_placements=fixed,
+        )
+        assert (
+            path_first_conflict(
+                m.path,
+                fleet[m.plane_id],
+                mover_on_carts=on_carts.get(m.plane_id, False),
+                placed=obstacles,
+            )
+            is None
+        ), f"leg {m.plane_id} #{m.leg_index} collides at execution time"
+        current[m.plane_id] = m.target_slot
+
+
+def test_assert_plan_legs_valid_accepts_a_clean_real_plan() -> None:
+    # The multi-leg validity validator: replay every routed leg against the world state
+    # at its execution time. A clean, real (single-leg) plan must pass.
+    h = _hangar(width_m=20.0, length_m=30.0)
+    fleet = {"A": _box_plane("A"), "B": _box_plane("B")}
+    target = _layout(fleet, h, _slot("A", 6.0, 8.0), _slot("B", 14.0, 22.0))
+    _assert_plan_legs_valid(plan_fill(target), target)  # must not raise
+
+
+def test_assert_plan_legs_valid_rejects_a_leg_that_collides_at_execution_time() -> None:
+    # Forge a leg that drives the shallow plane onto the deep plane's parked pose
+    # (reusing the deep plane's own valid path): validating it against the deep plane
+    # already in the live pose map must raise — proving the validator actually checks.
+    h = _hangar(width_m=20.0, length_m=30.0)
+    fleet = {"A": _box_plane("A"), "B": _box_plane("B")}
+    target = _layout(fleet, h, _slot("A", 6.0, 8.0), _slot("B", 14.0, 22.0))
+    plan = plan_fill(target)  # back_first_order → [B (deep), A (shallow)]
+    deep = next(m for m in plan.moves if m.plane_id == "B")
+    forged = tp.Move("A", deep.target_slot, deep.path, leg_index=0)  # A drives to B's pose
+    bad = MovesPlan(target_layout=target, moves=(deep, forged))
+    with pytest.raises(AssertionError, match="collides at execution time"):
+        _assert_plan_legs_valid(bad, target)
+
+
+def _wide_plane(plane_id: str, *, span_m: float = 4.5, turn_radius_m: float = 5.0) -> Aircraft:
+    """A wide-wing own-gear plane: wide enough to mutually block in a tight hangar,
+    narrow enough to clear a ~6 m door. Used by the real-geometry move-aside tests."""
+    return Aircraft(
+        id=plane_id,
+        name=f"Wide {plane_id}",
+        wing_position="high",
+        gear="tailwheel",
+        movement_mode="always_own_gear",
+        turn_radius_m=turn_radius_m,
+        measured=False,
+        parts=(
+            Part(
+                "wing",
+                length_m=1.2,
+                width_m=span_m,
+                offset_x_m=0.0,
+                offset_y_m=0.0,
+                angle_deg=0.0,
+                z_bottom_m=1.8,
+                z_top_m=2.1,
+            ),
+            Part(
+                "fuselage_aft",
+                length_m=3.0,
+                width_m=1.0,
+                offset_x_m=0.0,
+                offset_y_m=0.0,
+                angle_deg=0.0,
+                z_bottom_m=0.0,
+                z_top_m=2.1,
+            ),
+        ),
+        wheels=_TAIL_WHEELS,
+    )
+
+
+def test_move_aside_inert_on_routable_real_fill_and_byte_identical() -> None:
+    # On a REAL fill the non-displacing search already routes, move-aside never fires:
+    # every leg is single (leg_index 0), the plan is leg-valid by the exact oracle, and
+    # a second solve is byte-identical. The apron is set so the two-phase path is
+    # REACHABLE but goes unused — i.e. phase 1 alone seats everyone (ADR-0003).
+    h = _hangar(width_m=20.0, length_m=30.0, apron_depth_m=8.0)
+    fleet = {"A": _box_plane("A"), "B": _box_plane("B")}
+    target = _layout(fleet, h, _slot("A", 6.0, 8.0), _slot("B", 14.0, 22.0))
+    plan = plan_fill(target)
+    assert all(m.leg_index == 0 for m in plan.moves)  # no shuffle: phase 1 sufficed
+    _assert_plan_legs_valid(plan, target)
+    assert plan_fill(target) == plan  # byte-identical double-solve
+
+
+@pytest.mark.slow
+def test_move_aside_real_geometry_unresolvable_block_runs_phase2_and_bails(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The ONLY coverage that runs the phase-2 move-aside on REAL geometry (real
+    # _staging_poses + real plan_path return legs, not monkeypatched). A tight two-wide
+    # block plus a third body deadlocks phase 1 within budget, so phase 2 runs the real
+    # shuffle search; depth-1 move-aside cannot resolve this symmetric block (see the
+    # spike), so it bails with a structured NoFeasiblePlanError rather than crashing.
+    #
+    # The per-plane cap (max_expansions) is kept low so failed routes fail fast and
+    # phase 1 *completes* the order search (returns None) rather than raising on the
+    # global budget — only then does phase 2 run. We SPY on _staging_poses (delegating
+    # to the real impl) and assert it was invoked, so the test fails loudly if a future
+    # change ever lets phase 1 budget-raise and skip phase 2 (PR #869 review) instead of
+    # passing vacuously on a phase-1 bail (which would also satisfy `pytest.raises`).
+    h = _hangar(width_m=12.0, length_m=16.0, door_center=6.0, door_width=6.0, apron_depth_m=8.0)
+    fleet = {k: _wide_plane(k) for k in ("A", "B", "C")}
+    target = _layout(
+        fleet,
+        h,
+        _slot("A", 3.5, 10.0),
+        _slot("B", 8.5, 10.0),
+        _slot("C", 6.0, 5.0),
+    )
+    staging_calls = {"n": 0}
+    real_staging = tp._staging_poses
+
+    def _spy_staging(*args: object, **kwargs: object) -> object:
+        staging_calls["n"] += 1
+        return real_staging(*args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(tp, "_staging_poses", _spy_staging)
+    with pytest.raises(NoFeasiblePlanError):
+        plan_fill(target, max_expansions=300, max_total_expansions=3000)
+    assert staging_calls["n"] > 0, (
+        "phase 2 move-aside must execute (not be skipped by a phase-1 raise)"
+    )
 
 
 def test_plan_fill_bails_with_structured_error_when_unplannable(

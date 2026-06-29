@@ -237,11 +237,11 @@ def test_timeline_single_leg_segment_omits_leg_index_key():
     assert all("leg_index" not in s for s in tl["segments"])
 
 
-def test_timeline_multi_leg_emits_one_segment_per_leg_in_leg_order():
-    # #865 Rung D: a body that relocates carries MULTIPLE Move legs (staging, then
-    # final). `_timeline` emits one sequential segment per ROUTED leg, in leg_index
-    # order regardless of tuple order, each tagged with `leg_index`; the body's
-    # final pose is the LAST leg's end (not the staging leg's).
+def test_timeline_multi_leg_emits_one_segment_per_leg_in_execution_order():
+    # #865 Rung D + #667 Rung E: a body that relocates carries MULTIPLE Move legs
+    # (staging, then final). `_timeline` emits one segment per ROUTED leg in EXECUTION
+    # (moves-tuple) order — the order the producer commits them — each tagged with
+    # `leg_index`; the body's final pose is the LAST leg's end (not the staging leg's).
     from hangarfit.towplanner import Move, MovesPlan
 
     lay = load_layout(LAYOUT)
@@ -251,8 +251,8 @@ def test_timeline_multi_leg_emits_one_segment_per_leg_in_leg_order():
     pid = a.plane_id
     staging = Move(plane_id=pid, target_slot=b.target_slot, path=b.path, leg_index=0)
     final = Move(plane_id=pid, target_slot=a.target_slot, path=a.path, leg_index=1)
-    # Tuple order REVERSED on purpose — output must still be leg-index ordered.
-    plan = MovesPlan(target_layout=base.target_layout, moves=(final, staging))
+    # Producer emits legs in execution order (staging, then final).
+    plan = MovesPlan(target_layout=base.target_layout, moves=(staging, final))
     tl, finals = scene._timeline(lay, plan)
 
     segs = [s for s in tl["segments"] if s["plane_id"] == pid]
@@ -260,8 +260,68 @@ def test_timeline_multi_leg_emits_one_segment_per_leg_in_leg_order():
     assert [s["leg_index"] for s in segs] == [0, 1]
     assert math.isclose(segs[0]["start_s"], 0.0)
     assert math.isclose(segs[1]["start_s"], segs[0]["end_s"])  # sequential, end-to-end
-    assert finals[pid] == segs[1]["samples"][-1]  # final pose = LAST leg's end
-    assert finals[pid] != segs[0]["samples"][-1]  # not the staging leg's end
+    assert finals[pid] == segs[1]["samples"][-1]  # final pose = last (final) leg, not staging
+
+
+def test_timeline_interleaves_multi_leg_in_global_execution_order():
+    # #667 Rung E: a move-aside is INTERLEAVED — D drives in (leg0), drives aside
+    # (leg1), S enters (leg0), D returns (leg2). The timeline must follow the
+    # moves-tuple execution order, NOT group D's three legs then S. Single-leg S
+    # carries no leg_index key; D (multi-leg) does. D's final pose is its last (return)
+    # leg, so it parks at its slot — not the apron — in the static scene.
+    from hangarfit.towplanner import Move, MovesPlan
+
+    lay = load_layout(LAYOUT)
+    base = plan_fill(lay)
+    routed = [m for m in base.moves if m.path is not None]
+    d_id, s_id = routed[0].plane_id, routed[1].plane_id
+    assert d_id != s_id
+    d_final, d_aside, s_route = routed[0], routed[1], routed[1]
+    plan = MovesPlan(
+        target_layout=base.target_layout,
+        moves=(
+            Move(plane_id=d_id, target_slot=d_final.target_slot, path=d_final.path, leg_index=0),
+            Move(plane_id=d_id, target_slot=d_aside.target_slot, path=d_aside.path, leg_index=1),
+            Move(plane_id=s_id, target_slot=s_route.target_slot, path=s_route.path, leg_index=0),
+            Move(plane_id=d_id, target_slot=d_final.target_slot, path=d_final.path, leg_index=2),
+        ),
+    )
+    tl, finals = scene._timeline(lay, plan)
+    segs = tl["segments"]
+    assert [s["plane_id"] for s in segs] == [d_id, d_id, s_id, d_id]  # interleaved, not grouped
+    assert [s["leg_index"] for s in segs if s["plane_id"] == d_id] == [0, 1, 2]  # D multi-leg
+    assert all("leg_index" not in s for s in segs if s["plane_id"] == s_id)  # S single-leg
+    for prev, nxt in zip(segs, segs[1:], strict=False):
+        assert math.isclose(nxt["start_s"], prev["end_s"])  # contiguous global clock
+    assert finals[d_id] == segs[3]["samples"][-1]  # D parks at its return-leg end (its slot)
+
+
+def test_timeline_multi_leg_skips_deferred_path_none_move():
+    # #667 Rung E: a multi-leg plan that ALSO carries a deferred (path=None) move — e.g. a
+    # hand-placed glider parked alongside a move-aside shuffle — emits NO segment for the
+    # deferred body (its `path is None` short-circuits the global-order emit loop), while
+    # the shuffle still interleaves. Covers the path=None branch of the multi-leg timeline.
+    from hangarfit.towplanner import Move, MovesPlan
+
+    lay = load_layout(LAYOUT)
+    base = plan_fill(lay)
+    routed = [m for m in base.moves if m.path is not None]
+    d_id, s_id = routed[0].plane_id, routed[1].plane_id
+    d_final, d_aside, s_route = routed[0], routed[1], routed[1]
+    plan = MovesPlan(
+        target_layout=base.target_layout,
+        moves=(
+            Move(plane_id=d_id, target_slot=d_final.target_slot, path=d_final.path, leg_index=0),
+            Move(plane_id=d_id, target_slot=d_aside.target_slot, path=d_aside.path, leg_index=1),
+            Move(plane_id=s_id, target_slot=s_route.target_slot, path=s_route.path, leg_index=0),
+            Move(plane_id=d_id, target_slot=d_final.target_slot, path=d_final.path, leg_index=2),
+            # deferred body: present at rest, never routed (mirrors a hand-placed glider)
+            Move(plane_id="deferred", target_slot=d_final.target_slot, path=None, leg_index=0),
+        ),
+    )
+    tl, _ = scene._timeline(lay, plan)
+    assert all(s["plane_id"] != "deferred" for s in tl["segments"])  # path=None emits nothing
+    assert [s["plane_id"] for s in tl["segments"]] == [d_id, d_id, s_id, d_id]  # shuffle intact
 
 
 def test_sample_affines_hard_clamp_is_exact_and_keeps_endpoints():

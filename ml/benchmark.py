@@ -18,7 +18,7 @@ from typing import Literal
 from hangarfit.loader import load_layout, load_scenario
 from hangarfit.models import Layout, SearchConfig, SolveStatus
 from hangarfit.solver import solve
-from hangarfit.towplanner import NoFeasiblePlanError, plan_fill
+from hangarfit.towplanner import MovesPlan, NoFeasiblePlanError, plan_fill
 from ml import geometry_oracle as go
 from ml.env import HangarFitEnv
 from ml.types import Action, DifficultyConfig, StepInfo
@@ -265,6 +265,16 @@ def score_episode(env: HangarFitEnv, actions: Sequence[Action]) -> ReachVerdict:
 _BASELINE_PATH = _ROOT / "tests/fixtures/ml/bench_baseline.json"
 
 
+def _routed_plane_count(plan: MovesPlan) -> int:
+    """Number of DISTINCT aircraft with at least one routed leg (#667 Rung E).
+
+    Counts planes, not legs: a move-aside plan emits multiple routed legs for one
+    plane (a staging leg + the final leg), so summing routed Moves would over-count
+    and falsely fail the ``== n_total`` reach check. Deferred (``path is None``)
+    legs are excluded, matching the prior semantics."""
+    return len({m.plane_id for m in plan.moves if m.path is not None})
+
+
 def rrmc_reach(scenario: BenchScenario) -> RrmcVerdict:
     """Run the RR-MC -> tow pipeline on `scenario` at its pinned budget and apply the SAME
     valid+routable predicate as the policy side (_layout_valid, the product checker). OFFLINE/
@@ -296,7 +306,7 @@ def rrmc_reach(scenario: BenchScenario) -> RrmcVerdict:
         plan = plan_fill(layout, heuristic="grid", max_total_expansions=scenario.tow_max_expansions)
     except NoFeasiblePlanError:
         return RrmcVerdict(reached=False, n_routed=0, n_total=n_total, status="unroutable")
-    n_routed = sum(1 for m in plan.moves if m.path is not None)
+    n_routed = _routed_plane_count(plan)
     return RrmcVerdict(
         reached=(n_routed == n_total), n_routed=n_routed, n_total=n_total, status=result.status
     )

@@ -84,3 +84,50 @@ set only) never grinds the multi-minute route. Their `_SPEED_CEILING_S` entries 
 - **Does not:** touch the wall. Rung B is pure measurement (bench-only; no `src/hangarfit/` change).
   Raising the ceiling is Rung E (move-aside), and even then the `fk9↔cessna` cm-scale parallel-park
   may remain a documented manual-insertion case (spec §2 honest caveat).
+
+## Rung E (move-aside): re-baseline — the wall is unmoved on the budget-bound all-8
+
+Rung E adds **move-aside**: when the non-displacing fill search deadlocks *within budget*, a
+second phase temporarily relocates a parked aircraft to an apron-out staging pose, routes the stuck
+aircraft past it, and returns it — a depth-1, apron-gated relocation emitting a valid multi-leg plan
+(byte-identical when no shuffle is needed; ADR-0003). Re-running the all-8 witness route (the same
+direct `plan_fill`, budget 8000) **with** `apron_depth=auto` (which is what *enables* move-aside)
+vs **without**:
+
+| run | result | bail body | reason | wall-clock |
+|---|---|---|---|---|
+| no apron (Rung B) | **BAILS** | `zlin_savage` | global fill budget (8000) exhausted | ~70 s |
+| `apron=auto` (Rung E) | **BAILS** | `zlin_savage` | global fill budget (8000) exhausted | ~114 s |
+
+**The ceiling is unmoved: same body, same budget-exhaustion reason.** The bail message is the
+budget *raise* (`...budget (8000) exhausted`), not the in-budget `no feasible tow order`
+deadlock — so **phase 1 raises before phase 2 ever runs**, and move-aside never engages on the
+dense all-8. This is the predicted behaviour: the all-8 corridor is *budget-bound* (it grinds the
+full cap threading the nest, see "the bail is budget-exhaustion" above), and move-aside only adds
+reachability for an **in-budget** deadlock (a cyclic block the search *disproves* cheaply). The
+`zlin_savage`/`fk9↔cessna` parallel-park stays a documented manual-insertion case.
+
+The ~70 s → ~114 s rise (≈1.6×) is **the apron's own routing cost** (#499: the apron-out forward
++ reverse cones × the y-samples enlarge each route's start set), **not** Rung E's two-phase change:
+because phase 1 raises, the two-phase driver's `if result is None` block is never reached, so the
+move-aside path is provably inert on this regime. Without an apron, Rung E is byte-identical and
+same-speed (move-aside is gated off when `apron_depth_m <= 0`).
+
+**Perf gate (no regression).** The fast `--gate` set is unchanged (correctness + determinism `ok`
+on every fast regime; `roomy_three_apron` ≈ 27 s, on par with its non-apron sibling
+`roomy_three_spread_on`). The phase-2-sensitive heavy disprove `tight_six_apron` likewise bails at
+phase-1 budget exhaustion (`budget (4000) exhausted`, ~80 s, `det ok`) — phase 2 never runs, so the
+two-phase change adds no cost there either. (Reproduce the all-8 re-baseline by routing
+`examples/herrenteich/layout.yaml` via `plan_fill(..., max_total_expansions=8000)` with
+`load_layout(..., apron_depth="auto")` vs `None`.)
+
+**Why no small fixture proves the *capability*.** A targeted search of ~480 synthetic 2–3 plane
+configs found **zero** move-aside resolutions. In a monotone fill any plane can be placed first into
+an empty hangar, so a *small* deadlock is necessarily a symmetric mutual block — and the displaced
+body's return leg is then blocked for the very same reason the stuck body was, so depth-1 move-aside
+cannot resolve it. Move-aside adds reachability only for **larger cyclic cores** (the ≥5-body core
+the Rung C reverse-teardown probe found), which a unit fixture can't capture. Rung E's capability is
+therefore exercised by the real phase-2 *execution* on real geometry (the `@slow`
+`test_move_aside_real_geometry_unresolvable_block_runs_phase2_and_bails`: the real `_staging_poses`
++ `plan_path` return legs run and bail cleanly) plus the control-flow unit tests
+(`tests/test_towplanner_fill.py`); it is **not** a guaranteed all-8 route.
