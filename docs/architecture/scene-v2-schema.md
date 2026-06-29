@@ -193,7 +193,7 @@ self-check as `anchors`; the egress lane is draw-only and not anchored.
 ```jsonc
 {
   "total_s": 24.0,
-  "segments": [                // one per LEG, in back_first_order (deepest first)
+  "segments": [                // one per LEG; back_first_order — or global execution order for a move-aside body
     {
       "plane_id": "fk9_mkii",
       "start_s": 0.0,
@@ -208,8 +208,9 @@ self-check as `anchors`; the egress lane is draw-only and not anchored.
 }
 ```
 
-Built from each `MovesPlan` move's `DubinsArc.sample()` over `back_first_order`.
-Per-plane duration is proportional to path length (`DubinsArc.length_m`) via a tow
+Built from each `MovesPlan` move's `DubinsArc.sample()` over `back_first_order` (a
+move-aside body's legs are instead laid in **global execution order** — see *Multi-leg
+bodies* below). Per-plane duration is proportional to path length (`DubinsArc.length_m`) via a tow
 speed, clamped to `[min_seg_s, max_seg_s]`. Sample count per path is capped (the
 sampling step is coarsened) to keep the HTML small.
 
@@ -222,8 +223,8 @@ to its final slot (leg 1) — so `segments` may carry **more than one entry per
 `plane_id`**, laid end-to-end in leg order. Each such segment then carries an
 **optional** `leg_index: int` (`0`-based, execution order).
 
-`leg_index` is emitted **only for a multi-leg body** — a single-leg body (every body
-today) omits the key entirely, so an existing scene is **byte-identical** to the
+`leg_index` is emitted **only for a multi-leg body** — a single-leg body (every body in a plan that needs no
+move-aside; no default-shipped layout triggers one) omits the key entirely, so an existing scene is **byte-identical** to the
 pre-Rung-D form. The `SCHEMA` stays `hangarfit.scene/v2` (additive only). A consumer
 that ignores `leg_index` still animates correctly (segments are already sequential);
 the field is an explicit, robust ordering label. The body's **final** pose is the

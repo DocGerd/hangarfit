@@ -97,7 +97,7 @@ and ground-object rendering (#606) have all shipped; **reliably packing this den
 12-body set is beyond the deterministic search** — both `layout_today.yaml` and
 `layout_full.yaml` are offline-search arrangements of the real composition, and the
 joint dense-placement+routing problem remains an open hard problem. The dedicated
-#667 shuffle-aware tow-routing program (Rungs A–E, all merged 2026-06-29) shipped
+#667 shuffle-aware tow-routing program (Rungs A–E, all merged by 2026-06-29) shipped
 move-aside repair as a byte-identical capability seam (Rung E, #869), but as
 measured it does **not** crack the dense all-8: that fill stays budget-bound (it
 bails on `zlin_savage` at the 8000-expansion cap, so phase-1 search raises before
