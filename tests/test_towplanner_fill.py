@@ -380,6 +380,150 @@ def test_plan_fill_move_aside_skipped_without_apron(monkeypatch: pytest.MonkeyPa
     assert exc.value.plane_id == "stuck"
 
 
+def _assert_plan_legs_valid(plan: MovesPlan, target: Layout) -> None:
+    """Every routed leg is collision-free against the world state at its execution time.
+
+    Replays ``plan.moves`` in tuple (= execution) order against a live ``{plane_id:
+    Pose}`` map seeded empty; each routed leg is checked with the exact ``path_first_
+    conflict`` oracle against the bodies parked *before* it (plus any fixed obstacles).
+    A staging leg's ``target_slot`` (y<0, apron) is transient — only the motion oracle
+    applies to it, and it updates the live map so a later leg sees the body at staging.
+    Aircraft-only fixture scope; the apron the planner used rides on ``target.hangar``.
+    """
+    from hangarfit.towplanner import path_first_conflict
+
+    fleet = target.fleet
+    on_carts = {p.plane_id: p.on_carts for p in target.placements}
+    fixed = tuple(
+        gp
+        for gp in target.ground_object_placements
+        if target.ground_objects[gp.plane_id].object_class == "fixed_obstacle"
+    )
+    current: dict[str, Pose] = {}
+    for m in plan.moves:
+        if m.path is None:  # hand-placed / deferred: a parked obstacle, no motion
+            current[m.plane_id] = m.target_slot
+            continue
+        others = tuple(
+            Placement(pid, pose.x_m, pose.y_m, pose.heading_deg, on_carts.get(pid, False))
+            for pid, pose in current.items()
+            if pid != m.plane_id
+        )
+        obstacles = Layout(
+            fleet=fleet,
+            hangar=target.hangar,
+            placements=others,
+            maintenance_plane=target.maintenance_plane,
+            ground_objects=target.ground_objects,
+            ground_object_placements=fixed,
+        )
+        assert (
+            path_first_conflict(
+                m.path,
+                fleet[m.plane_id],
+                mover_on_carts=on_carts.get(m.plane_id, False),
+                placed=obstacles,
+            )
+            is None
+        ), f"leg {m.plane_id} #{m.leg_index} collides at execution time"
+        current[m.plane_id] = m.target_slot
+
+
+def test_assert_plan_legs_valid_accepts_a_clean_real_plan() -> None:
+    # The multi-leg validity validator: replay every routed leg against the world state
+    # at its execution time. A clean, real (single-leg) plan must pass.
+    h = _hangar(width_m=20.0, length_m=30.0)
+    fleet = {"A": _box_plane("A"), "B": _box_plane("B")}
+    target = _layout(fleet, h, _slot("A", 6.0, 8.0), _slot("B", 14.0, 22.0))
+    _assert_plan_legs_valid(plan_fill(target), target)  # must not raise
+
+
+def test_assert_plan_legs_valid_rejects_a_leg_that_collides_at_execution_time() -> None:
+    # Forge a leg that drives the shallow plane onto the deep plane's parked pose
+    # (reusing the deep plane's own valid path): validating it against the deep plane
+    # already in the live pose map must raise — proving the validator actually checks.
+    h = _hangar(width_m=20.0, length_m=30.0)
+    fleet = {"A": _box_plane("A"), "B": _box_plane("B")}
+    target = _layout(fleet, h, _slot("A", 6.0, 8.0), _slot("B", 14.0, 22.0))
+    plan = plan_fill(target)  # back_first_order → [B (deep), A (shallow)]
+    deep = next(m for m in plan.moves if m.plane_id == "B")
+    forged = tp.Move("A", deep.target_slot, deep.path, leg_index=0)  # A drives to B's pose
+    bad = MovesPlan(target_layout=target, moves=(deep, forged))
+    with pytest.raises(AssertionError, match="collides at execution time"):
+        _assert_plan_legs_valid(bad, target)
+
+
+def _wide_plane(plane_id: str, *, span_m: float = 4.5, turn_radius_m: float = 5.0) -> Aircraft:
+    """A wide-wing own-gear plane: wide enough to mutually block in a tight hangar,
+    narrow enough to clear a ~6 m door. Used by the real-geometry move-aside tests."""
+    return Aircraft(
+        id=plane_id,
+        name=f"Wide {plane_id}",
+        wing_position="high",
+        gear="tailwheel",
+        movement_mode="always_own_gear",
+        turn_radius_m=turn_radius_m,
+        measured=False,
+        parts=(
+            Part(
+                "wing",
+                length_m=1.2,
+                width_m=span_m,
+                offset_x_m=0.0,
+                offset_y_m=0.0,
+                angle_deg=0.0,
+                z_bottom_m=1.8,
+                z_top_m=2.1,
+            ),
+            Part(
+                "fuselage_aft",
+                length_m=3.0,
+                width_m=1.0,
+                offset_x_m=0.0,
+                offset_y_m=0.0,
+                angle_deg=0.0,
+                z_bottom_m=0.0,
+                z_top_m=2.1,
+            ),
+        ),
+        wheels=_TAIL_WHEELS,
+    )
+
+
+def test_move_aside_inert_on_routable_real_fill_and_byte_identical() -> None:
+    # On a REAL fill the non-displacing search already routes, move-aside never fires:
+    # every leg is single (leg_index 0), the plan is leg-valid by the exact oracle, and
+    # a second solve is byte-identical. The apron is set so the two-phase path is
+    # REACHABLE but goes unused — i.e. phase 1 alone seats everyone (ADR-0003).
+    h = _hangar(width_m=20.0, length_m=30.0, apron_depth_m=8.0)
+    fleet = {"A": _box_plane("A"), "B": _box_plane("B")}
+    target = _layout(fleet, h, _slot("A", 6.0, 8.0), _slot("B", 14.0, 22.0))
+    plan = plan_fill(target)
+    assert all(m.leg_index == 0 for m in plan.moves)  # no shuffle: phase 1 sufficed
+    _assert_plan_legs_valid(plan, target)
+    assert plan_fill(target) == plan  # byte-identical double-solve
+
+
+@pytest.mark.slow
+def test_move_aside_real_geometry_unresolvable_block_runs_phase2_and_bails() -> None:
+    # The ONLY coverage that runs the phase-2 move-aside on REAL geometry (real
+    # _staging_poses + real plan_path return legs, not monkeypatched). A tight two-wide
+    # block plus a third body deadlocks phase 1 within budget, so phase 2 runs the real
+    # shuffle search; depth-1 move-aside cannot resolve this symmetric block (see the
+    # spike), so it bails with a structured NoFeasiblePlanError rather than crashing.
+    h = _hangar(width_m=12.0, length_m=16.0, door_center=6.0, door_width=6.0, apron_depth_m=8.0)
+    fleet = {k: _wide_plane(k) for k in ("A", "B", "C")}
+    target = _layout(
+        fleet,
+        h,
+        _slot("A", 3.5, 10.0),
+        _slot("B", 8.5, 10.0),
+        _slot("C", 6.0, 5.0),
+    )
+    with pytest.raises(NoFeasiblePlanError):
+        plan_fill(target, max_total_expansions=5000)
+
+
 def test_plan_fill_bails_with_structured_error_when_unplannable(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
