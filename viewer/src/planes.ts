@@ -67,7 +67,7 @@ export function boxMesh(b: BoxData, colour: THREE.Color): THREE.Mesh {
 /** Build every plane's affine Group (boxes + gear + label/nose), add it to the
  * scene, and build the legend chips with safe DOM methods. Returns the per-plane
  * groups (driven by the timeline) and the toggle arrays. */
-export function addPlanes(scene: THREE.Scene, SCENE: SceneV2, BRAND: BrandTokens): PlanesBundle {
+export function addPlanes(scene: THREE.Object3D, SCENE: SceneV2, BRAND: BrandTokens): PlanesBundle {
   const CONFLICT = BRAND.conflict; // '#RRGGBB' string → new THREE.Color(CONFLICT)
   const groups: Record<string, THREE.Group> = {};
   const labelMeshes: THREE.Sprite[] = [];

@@ -39,7 +39,7 @@ It also renders a top-down PNG so a human can sanity-check the result by eye.
 - No general weighted / multi-objective optimization — the only *user-supplied* soft input is a per-plane `priority` weight ([#441](https://github.com/DocGerd/hangarfit/issues/441)) that biases the built-in inter-plane spread; pins, `force_on_carts`, and the maintenance-plane assignment remain the only inputs that can make a layout invalid. On top of `priority` the solver applies several built-in soft spatial preferences — inter-plane spread ([ADR-0008](docs/adr/0008-inter-plane-spread-soft-preference.md), default-on, toggleable with `--no-spread`), a back-of-hangar fill bias that keeps the door-side approach corridors clear ([ADR-0008 §Amendments, #320](docs/adr/0008-inter-plane-spread-soft-preference.md), default-on, toggleable with `--no-back-fill`), and a soft right/left region preference that biases placed movers (e.g. glider trailers) toward a chosen hangar wall ([#604](https://github.com/DocGerd/hangarfit/issues/604), surfaced as `region_alignment` in `solve` output) — but none of these ever overrides a hard constraint.
 - No interactive editing GUI, server, or web app — the Phase 4 `hangarfit view` 3D viewer is a **read-only**, self-contained HTML *artifact* (like the PNG), not a live frontend you author layouts in.
 - No handling of late arrivals as a live event stream.
-- Multi-plane *rearrangement* (move planes around an already-occupied hangar). The tow planner only handles **empty-hangar fill** — every plane enters once. Rearrangement is planner v2+ territory.
+- General multi-plane *rearrangement* (freely moving planes around an already-occupied hangar). The tow planner does **empty-hangar fill**; its one bounded exception is the depth-1 *move-aside* repair (#667 Rung E), which may temporarily relocate a single already-parked plane to a staging pose and return it so a later plane can route. It does **not** route the dense full-Herrenteich fill (still out of reach), and open-ended rearrangement / TAMP remains planner v2+ territory.
 
 These boundaries are deliberate.
 
@@ -119,6 +119,10 @@ hangarfit solve scenario.yaml --budget 5
 
 # Plan + overlay each plane's tow path on the rendered PNG (Phase 3a/b)
 hangarfit solve scenario.yaml --render out.png --render-paths
+
+# Stage the tow from outside the door (apron slide-in); this also arms the
+# move-aside deadlock repair (#667). `auto` ≈ max plane length + max turn radius.
+hangarfit solve scenario.yaml --render out.png --render-paths --apron-depth auto
 ```
 
 A scenario YAML carries `fleet:` / `hangar:` refs plus a `fleet_in:` list (which planes are present), an optional `maintenance:` block (which plane is in the back bay), an optional `ground_objects:` list (fixed obstacles plus solver-placed cars and trailers), an optional `constraints:` mapping (per-plane pins, `force_on_carts` locks, or a soft `priority` weight), and an optional soft `door_order:` list (a preferred door-proximity order among the placed bodies). See `tests/fixtures/solve_*.yaml` for the pin and `force_on_carts` kinds, `tests/fixtures/scenario_region_demo*.yaml` for `ground_objects`, and `tests/fixtures/scenario_door_order.yaml` for `door_order`.
@@ -145,12 +149,17 @@ hangarfit view tests/fixtures/valid_left_side_nesting.yaml -o layout3d.html
 # Solve a scenario, then view the result with its tow animation.
 hangarfit view --solve tests/fixtures/scenario_minimal.yaml -o solved3d.html
 
+# Solve for N diverse alternatives and compare them in ONE viewer: a switcher
+# (dropdown / ←→ keys, shared camera) flips between solutions, with per-solution
+# metrics (min gap, planes moved vs #1, tow-routability). Requires --solve.
+hangarfit view --solve tests/fixtures/scenario_minimal.yaml -o compare3d.html --alternatives 3
+
 # Static 3D only (skip tow planning), or overlay collision conflicts.
 hangarfit view examples/layouts/example.yaml -o static3d.html --no-animate
 hangarfit view some_invalid_layout.yaml -o conflicts3d.html --check --no-animate
 ```
 
-Layout mode best-effort tow-plans for the animation; a layout the planner can't route degrades to a static 3D scene with a stderr note. By default the viewer applies a small deterministic global tow-expansion cap, so an un-routable layout (e.g. the default `examples/layouts/example.yaml`) falls back to the static render in a few seconds rather than grinding through the full disprove budget — a fixed expansion count, **not** a wall-clock deadline ([ADR-0003](docs/adr/0003-rr-mc-solver-algorithm.md)); `--tow-max-expansions` overrides it. The viewer is built from a documented `hangarfit.scene/v2` JSON contract (the seam between the Python core and any renderer) and a pinned, vendored copy of Three.js; the transform stays in Python (per-frame affine matrices), so the viewer never re-derives the determinant-−1 map. See [ADR-0017](docs/adr/0017-3d-viewer-architecture.md) and the schema reference [`docs/architecture/scene-v2-schema.md`](docs/architecture/scene-v2-schema.md).
+Layout mode best-effort tow-plans for the animation; a layout the planner can't route degrades to a static 3D scene with a stderr note. By default the viewer applies a small deterministic global tow-expansion cap, so an un-routable layout (e.g. the default `examples/layouts/example.yaml`) falls back to the static render in a few seconds rather than grinding through the full disprove budget — a fixed expansion count, **not** a wall-clock deadline ([ADR-0003](docs/adr/0003-rr-mc-solver-algorithm.md)); `--tow-max-expansions` overrides it. The viewer is built from a documented `hangarfit.scene/v2` JSON contract (the seam between the Python core and any renderer) and a pinned, vendored copy of Three.js; the transform stays in Python (per-frame affine matrices), so the viewer never re-derives the determinant-−1 map. `--solve --alternatives N` carries up to N diverse solutions in one HTML and lets you flip between them with a shared camera (a *switcher*, not split panes — the camera holds still so the planes that moved between solutions pop out), each annotated with its min inter-plane gap, planes-moved-vs-#1, and tow-routability; the multi-solution container is a viewer-HTML wrapper layered over N independent, byte-identical scene/v2 docs, so the schema itself is unchanged. See [ADR-0017](docs/adr/0017-3d-viewer-architecture.md) and the schema reference [`docs/architecture/scene-v2-schema.md`](docs/architecture/scene-v2-schema.md).
 
 ### JSON schemas
 

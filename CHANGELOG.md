@@ -10,6 +10,199 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Fixed
 
+## [0.17.0] — 2026-06-29
+
+### Added
+
+- Layout placements may now carry `hand_placed: true` (#667, Rung A): a
+  hand-positioned (dolly-borne) body is treated by the fill planner as a fixed
+  keep-out and emitted as a path-less at-rest move instead of being tow-routed.
+  Activated for the dolly gliders (Scheibe Falke + Stemme S10) in the Herrenteich
+  `layout.yaml` and `layout_today.yaml`, and for the Stemme S10 in
+  `layout_full.yaml` (where the Scheibe parks outside) — matching the club's real
+  practice of hand-positioning the gliders on their dollies. Optional, default
+  `false` — every existing layout stays byte-identical (ADR-0003).
+- Layout placements now reject unknown keys with a clear `LoaderError` instead of
+  silently dropping them (#667), mirroring the ground-object entry allowlist — so
+  a misspelled flag (e.g. `hand_palced`) fails loudly rather than silently
+  inverting intent (a hand-positioned glider getting tow-routed).
+- The tow-plan data model now supports **multi-leg** moves (#667 / #865, Rung D):
+  a body may carry more than one `Move` (one per leg) under the same `plane_id`,
+  tagged with an additive `leg_index` (default `0`), and the scene/v2
+  `timeline.segments[]` gains an optional `leg_index` emitted **only** for a
+  multi-leg body. This is the byte-identical seam for the move-aside relocation
+  (Rung E, the next entry): only a move-aside shuffle emits more than one leg, so
+  every plan that needs no shuffle — and its scene, render, and viewer animation —
+  is unchanged (ADR-0003). The 3D viewer
+  (timeline + floor polylines) animates each leg, resting a body at its staging
+  pose between legs; the 2D PNG renderer already draws each leg unchanged.
+  `SCHEMA` stays `hangarfit.scene/v2` (additive only).
+- The tow-path fill planner can now resolve a tow-order deadlock by temporarily
+  relocating an already-parked aircraft to an apron-out staging pose, routing the
+  stuck aircraft past it, and returning it — **"move-aside"** (#667, Rung E),
+  emitting a valid multi-leg plan (and a faithfully interleaved `view` animation)
+  where no monotone fill order exists. It engages automatically whenever a staging
+  apron is set (`--apron-depth` / hangar `apron_depth_m > 0`) and only after the
+  non-displacing search deadlocks within budget, so a layout that doesn't need a
+  shuffle is byte-identical to before (ADR-0003). The relocation is bounded
+  depth-1 and globally capped, and it adds reachability only for in-budget cyclic
+  blocks — it does not, on its own, crack the budget-bound dense Herrenteich all-8
+  (the corridor there exhausts the affordable expansion budget before any shuffle;
+  see the routing-ceiling spike).
+- A `kind: fuselage` part may now carry a `vertices:` outline polygon, which the
+  loader clips into area-conserving `fuselage_front`/`fuselage_aft` sub-polygons
+  at the wing trailing edge (#550). Capability-only — no fleet behaviour change.
+
+- **Learned backend (#827, epic #607): opt-in `--relative-encoder` ego-centric observation encoder
+  (ADR-0028 re-open trigger #2).** Augments object pose tokens with four SE(2) ego-relative
+  coordinates (`fwd, right, sinΔθ, cosΔθ` in the active object's body frame); `TOKEN_DIM` 24→28 and
+  `SCHEMA_VERSION` 1→2 when on, default off = byte-identical. The encoder's frame is derived from the
+  policy architecture so the token width and `token_proj` can never disagree. Dev/CI-only (`ml/`),
+  not shipped in the wheel. The `trio-notch` ladder gate result is recorded separately once run.
+- **Learned backend (#821, epic #607): backplay reverse-curriculum lever (`--backplay-trio-notch`)
+  for the dense `trio-notch` plateau (#736), plus a held-out `witness_notch_B` generalization probe.**
+  The fifth #736 lever after four refutations (#736 anchor, #809 representation, #812 economics,
+  #815 entropy floor) — and the only one that shifts the **start-state distribution** (ρ₀) rather
+  than reward/representation/exploration (Ng–Harada–Russell proves potential-based shaping cannot
+  move the argmax, which is why those failed). `--backplay-trio-notch` (curriculum-only) inserts an
+  opt-in ladder of `trio-notch-backplay-{50,75,100}` sub-rungs before `trio-notch`: each pre-parks
+  the **k=N−1 prefix** of a committed 3-object notch witness (`tests/fixtures/ml/witness_notch.yaml`)
+  and spawns the single driven object a fraction φ∼U(0, φ_cap) along the corridor from its witness
+  park-pose (φ=0, near-solved) **out to the door** (φ=1); the φ_cap ceiling anneals 0.5→1.0 across
+  the contiguous sub-rungs, promoted on the **same** windowed `valid_placed` gate (the reverse
+  curriculum *is* the rung sequence — no per-iteration anneal code). This collapses the diagnosed
+  cold-start coverage minimum (validly park one, abandon two) by starting near the dense solution
+  and receding. The env **never snaps or auto-parks** — it only moves *where* the episode begins;
+  the corridor spawn is taken only when collision-free (deterministic admissibility check) else it
+  falls back to the door. The held-out `witness_notch_B.yaml` (a second geometrically-distinct valid
+  notch packing, shipped via #822) is the witness-absent transfer-evaluation variant that hardens
+  the pre-registered gate against near-witness overfit. Default-neutral: `--backplay-trio-notch`
+  absent ⇒ `DEFAULT_LADDER` byte-identical (φ=None ⇒ byte-identical door spawn); the flag fails
+  loud under `--schedule trivial`, `backplay_phi_cap` and `anchor_prob` are mutually exclusive, and
+  every witness k-prefix is product-checker valid (`collisions.check` + Caddy egress). The
+  per-iteration `--metrics-out` JSONL surfaces the rung's `phi_cap` (the gate's confound watch).
+  `ml/` is dev/CI-only (never shipped in the wheel).
+- **Learned backend (#812, epic #607): per-commitment economics reward lever (`--r-valid-progress`).**
+  A banked marginal valid-coverage credit that targets the dense `trio-notch` plateau (#736), where the
+  policy validly parks one freebie aircraft then *abstains* on the rest because the marginal 2nd/3rd
+  commitment's expected value is negative — the **economics** argmax the spatial-token representation
+  lever (#809) was refuted as unable to move. `step_reward` gains one term
+  `r_valid_progress * max(0, valid_park_count − 1)`, paid **only on a Park where the whole layout is
+  valid** (the product checker) and scaled by the marginal valid-object count beyond the freebie — so
+  the 2nd validly-placed object banks the weight and the 3rd twice it. Banked per-step (it survives GAE
+  while the #714 terminal-validity flag collapses) and gated on `park_valid`, so an invalid pile pays
+  exactly 0. Default `0.0` ⇒ **byte-identical**. `ml/` is dev/CI-only (never shipped in the wheel).
+- **Learned backend (#809, epic #607): opt-in spatial-token cross-attention policy (`--spatial-tokens`).**
+  Replaces the spatially-blind global-average-pool — which collapsed the CNN occupancy feature map
+  to a single vector broadcast to every object token, so the policy knew *how full* the hangar was
+  but never *where* the free gaps were (the dense trio-notch plateau lever, #736). With
+  `--spatial-tokens` the CNN feature map becomes per-cell **spatial tokens** (fixed sin/cos 2D
+  positional encoding) that the object tokens **cross-attend** to, plus a spatial summary fed to the
+  critic. Default off ⇒ **byte-identical** to the prior net (zero new parameters; a deliberate
+  new-architecture re-baseline when on, persisted in the checkpoint's `policy_kwargs`). `ml/` is
+  dev/CI-only (never shipped in the wheel).
+- **Learned backend (#711, epic #607): statistical reach-rate harness (`python -m ml.reach_rate`).**
+  Lifts the #695 reach benchmark from a 4-row binary existence table to a reproducible
+  reach-**rate** over a **sampled population**: reach-rate ± **Wilson** CI per scenario-kind,
+  for both **multi-alternative RR-MC** (`rrmc_reach_multi` solves for N alternatives and counts
+  reached if *any* is valid + fully routable — strictly stronger than the #695 `alternatives=1`
+  best-spread-only check) and a trained policy (`--policy`, multi-sample stochastic rollouts for
+  variance). Both arms judge reach by the same product-checker predicate (`geometry_oracle.layout_valid`
+  + routable-by-construction, #694), never the env oracle. `sample_population` draws fleet-subset
+  fill scenarios deterministic in `seed`. Per the issue's cost caveat, the RR-MC arm defaults to a
+  small population at a modest restart budget (a large baseline is meant to be recorded once and
+  frozen, mirroring the `bench_baseline.json` freeze). The RR-MC + stats arms are torch-free;
+  `--policy` needs `[train]`. `ml/` is dev/CI-only (never shipped in the wheel).
+- **Compare multiple solver alternatives in the 3D viewer (`view --solve --alternatives N`, #666).**
+  `hangarfit view --solve --alternatives N -o out.html` solves for up to N diverse layouts and
+  builds **one** self-contained offline HTML carrying all of them, with a **switcher** (a
+  dropdown plus ←/→ keys) that flips between solutions in a shared, fixed camera — so the aircraft
+  that moved between alternatives visibly pop — and a per-solution metrics readout (min inter-plane
+  gap, planes moved vs solution #1 and average shift, tow-routability), mirroring the numbers
+  `solve` already narrates. When fewer than N diverse solutions exist it carries what there is and
+  labels "Found n of N"; with a single solution it falls through to the ordinary single-scene
+  render (no compare chrome). `--alternatives` requires `--solve` (a hand-authored layout is a
+  single arrangement) and
+  exits 2 otherwise. The multi-solution container is a viewer-HTML-level `<script id="solutions">`
+  blob (`hangarfit.viewer-compare/v1`) layered **over** N independent `scene/v2` docs — not a
+  scene/v2 schema change — so `scene.build_scene` (and its byte-determinism + the scene-contract
+  key-parity guard) is untouched and each carried scene is byte-identical to a standalone render
+  (ADR-0003). New pure switcher logic (`viewer/src/compare.ts`) is node-unit-tested; the switch
+  path re-runs the transform self-check per solution (headless-verified).
+- **Learned backend (#736, epic #607): witness-anchored notch-trio curriculum rung
+  (`--anchor-trio-notch`) — the 3-object joint-discovery scaffold on the real notch hangar.**
+  A diagnostic of the stalled notch trio (`valid_placed`~0.25 on both seeds) found not a
+  place-nothing collapse but a **coverage minimum**: the policy validly parks **one** aircraft
+  and abandons the other two, because a 2nd/3rd commitment risks the hard collision penalty.
+  Since `examples/herrenteich/layout.yaml` is a *valid 8-object witness on that exact hangar*,
+  the trio physically fits — the wall is cold-start joint discovery, not capacity.
+  `--anchor-trio-notch` (curriculum-only) inserts an opt-in `trio-notch-anchored` rung before
+  `trio-notch` that **pre-parks a k=1 prefix of a committed 3-object notch witness**
+  (`tests/fixtures/ml/witness_notch.yaml`) and drives the other two in — the trio analogue of the
+  #712 `--seed-anchor` box scaffold. The pool is pinned to the witness's objects (so
+  `max_objects` equals the witness count, validated pre-flight). Default-neutral:
+  `--anchor-trio-notch` absent ⇒ `DEFAULT_LADDER` byte-identical; the flag fails loud under
+  `--schedule trivial`. The witness's every k-prefix is product-checker valid (`collisions.check`
+  + Caddy egress) at the rung's 0.05 m and the file's 0.10 m clearance. `ml/` is dev/CI-only
+  (never shipped in the wheel).
+
+### Changed
+
+- **Learned backend (epic #607, #736): dense train-to-mastery is RESOLVED-NEGATIVE — the lever
+  program is stopped and the backend is scoped to the shipped inference seam (#706).** New
+  [ADR-0028](docs/adr/0028-learned-backend-train-to-mastery-resolved-negative.md) records the
+  decision; `ml/README.md` and arc42 §5 carry the honest scope. Five gate-run levers (one per
+  lever class: #794 start-state scaffold, #809 representation, #812 reward economics, #815
+  exploration, #821 reverse-curriculum) each KILLed at the same `valid_placed ≈ 0.333`
+  place-one-then-abstain fixed point; a pre-registered measure-first probe then converted those
+  into a single **measured** root cause — φ=1 cold-start completion `vp = 0.000` (confirmed on
+  both backplay *and* non-backplay control checkpoints), a valid-triple manifold ≈ 2e-3 that is
+  FLAT across clearance, and the fact that the deterministic RR-MC solver already reaches
+  `trio-notch` (so it was a curriculum stepping-stone, never a charter target). The wall is
+  cold-start drive-and-pack of the marginal object into a sparse, clearance-invariant slot; only
+  a ρ₀ lever that *trains* that distribution could move it, and the measured capability is zero.
+  ADR-0028 carries the falsifiable **re-open gate** (reach-rate beats RR-MC witness-absent, or a
+  relative-coordinate encoder lands, or a re-charter to completion) and the **do-not-reattempt**
+  list. No behavior change: the inference seam, the determinism contract ([ADR-0027](docs/adr/0027-learned-backend-determinism-scope.md)),
+  and `ml/`'s dev/CI-only status are untouched.
+- **Learned backend (#835, epic #607): the #832 trigger-#1 reach-rate verdict is RETRACTED — it
+  tested an infeasible population.** PR #832 merged a "trigger #1 **NOT MET**" reading (RR-MC `0/9`,
+  policies `0/108`) whose "witness-absent" stratum was selected by RR-MC reach ≈ 0 on
+  **over-capacity** fleet subsets of the tight 18 m hangar that **cannot fit the full fleet** —
+  where RR-MC reaches 0 because the layout is **infeasible**, not missed, so a policy reaching 0 is
+  **vacuous** (testing the impossible, not a dominance failure). A valid witness-absent kind needs a
+  **feasibility witness**: a valid layout *proven to exist* (hand-authored like
+  `examples/herrenteich/layout.yaml`, or a big-budget `solve` result) that the fair-budget deployed
+  RR-MC misses. `ml/README.md` + [ADR-0028](docs/adr/0028-learned-backend-train-to-mastery-resolved-negative.md)
+  now restate trigger #1 as **runnable but not yet validly executed**; `ml.reach_rate`'s
+  `witness_absent_kinds` / `dominance_verdict` docstrings + CLI output carry the
+  necessary-but-not-sufficient feasibility caveat (gate boolean logic unchanged). A rung-by-rung
+  audit confirms every **training** rung is feasible (`trio-notch` / `trio-box` RR-MC reach **1.000**
+  at `k=3`; the committed `witness_box` / `witness_notch` fixtures), so the lever KILLs (all measured
+  on the feasible `trio-notch`) and ADR-0028's decision **stand**. `CLAUDE.md` gains a
+  feasibility-first ML-eval guard. Docs + a dev/CI-only caveat; no behavior change (`ml/` never
+  ships in the wheel).
+
+### Fixed
+
+- **Herrenteich fleet fidelity (#842): the Scheibe SF-25's low-wing was modelled in the high-wing
+  layer, manufacturing a phantom tow-time collision.** The SF-25 is a real LOW-wing motor glider,
+  but its 18 m wing carried `z[1.9,2.1]` — the SAME vertical layer as the genuine high-wingers'
+  wings (e.g. `aviat_husky`, `z[2.0,2.3]`). A high-winger towed past the parked Scheibe then hit a
+  wing-vs-wing collision the parts-model would never see in reality (a high wing simply overhangs a
+  low one), making the real, valid all-8 `examples/herrenteich/layout.yaml` un-tow-routable. The wing
+  is now a thin raised keep-out band `z[1.72,1.78]` — centred at 1.75 m in the narrow corridor between
+  the fuselages it overhangs and the high-wing layer, with a 0.22 m gap on each side: the floor clears
+  the 1.5 m fuselage tops and the ceiling sits below `aviat_husky`'s 2.0 m wing so high-wingers overhang
+  it. The thin centred band clears the wing-layer clearance under BOTH hangars that share this catalog
+  entry — herrenteich's 0.15 m and the synthetic `data/hangar.yaml`'s 0.20 m (a band exactly on the
+  0.20 m boundary would false-conflict on float: `1.70 - 1.50 == 0.19999…96 < 0.20`). Both bundled
+  layouts (`layout.yaml`, the dense `layout_today.yaml`) stay statically valid; a new
+  `test_scheibe_wing_sits_below_the_high_wing_layer` pins the z-layering invariant (which is
+  static-validity-neutral, so the existing layout tests alone would not catch a regression). Render
+  colour is unchanged (`wing_position: high` still selects it; collision z-layering reads the explicit
+  part z-values, not this label).
+
 ## [0.16.0] — 2026-06-22
 
 ### Added
@@ -1491,7 +1684,8 @@ First Phase 1 cut — substrate for arranging the flying club fleet in a stack-s
 - Apache-2.0 license, public-audience README, CI matrix (Python 3.11 + 3.12), branch protection on develop + main (#13, #14, #15, #16).
 - Strut-aware golden tests + all-9-planes fixture using larger test-only hangar to accommodate strut-bracing geometry on placeholder dimensions (#5).
 
-[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/DocGerd/hangarfit/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/DocGerd/hangarfit/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/DocGerd/hangarfit/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/DocGerd/hangarfit/compare/v0.13.0...v0.14.0

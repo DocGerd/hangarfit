@@ -37,6 +37,7 @@ from ml.curriculum import (
     EpisodeStat,
     PromotionPolicy,
     Stage,
+    _completion_stage,
     format_iter_log,
     history_metric_records,
     make_episode_sampler,
@@ -49,6 +50,8 @@ from ml.curriculum import (
     with_pair_anchored_rung,
     with_promotion_overrides,
     with_solo_box_rung,
+    with_trio_notch_anchored_rung,
+    with_trio_notch_backplay_rung,
 )
 from ml.encoding import EncoderConfig, encode, static_block
 from ml.env import HangarFitEnv
@@ -61,6 +64,7 @@ from ml.ppo import (
     VecRolloutBuffer,
     entropy_coef_at,
     factored_logprob_entropy,
+    iter_entropy_coef,
     ppo_update,
     sample_action,
 )
@@ -121,8 +125,17 @@ def collect_rollout(
     """Drive the env single-stream for `rollout_len` steps; return the buffer and the
     per-completed-episode stats (competency + reward sum). On each episode boundary,
     `sample_request()` (when given) returns an EpisodeStart that picks the next episode's
-    object subset and optional seed_anchor_k; None keeps the env's fixed requested set
-    (the 4a trivial path).
+    object subset and optional seed_anchor_k / backplay_phi; None keeps the env's fixed
+    requested set (the 4a trivial path).
+
+    The FIRST episode of each rollout starts from the env's construction defaults (the bare
+    `env.reset()` below) — `sample_request()` is consulted only from the first episode boundary
+    on. So a per-episode start override (requested_ids, seed_anchor_k, AND the #821 backplay
+    phi) is applied from episode 1, not episode 0; this is a deliberate, long-standing property
+    kept for byte-identity (threading the start into the initial reset would add an rng draw and
+    shift every existing rung's stream). The vectorized path (`collect_rollout_vec` →
+    `_EnvWorker.reset`) applies the start from episode 0, so the GPU gate's vec runs exercise
+    the backplay shift on every episode.
 
     `pose_cache` (#733, default-on) opens a per-step `pose_cache_scope` spanning the
     encode + env.step so the shapely parts are built once across the encoder and the
@@ -171,6 +184,7 @@ def collect_rollout(
                 obs = env.reset(
                     requested_ids=start.requested_ids if start else None,
                     seed_anchor_k=start.seed_anchor_k if start else None,
+                    backplay_phi=start.backplay_phi if start else None,
                 )
             else:
                 obs = nxt
@@ -293,6 +307,9 @@ def train(
     enc = encoder or EncoderConfig()
     env = build_trivial_env(seed, weights=weights)
     policy = HangarFitPolicy(**(policy_kwargs or {})).to(torch.device(device))
+    # #827: the encoder's ego-frame is DERIVED from the policy architecture so the token width
+    # and the policy's token_proj input can never disagree.
+    enc = replace(enc, ego_centric=bool((policy_kwargs or {}).get("relative_encoder", False)))
     optimizer = torch.optim.Adam(policy.parameters(), lr=cfg.lr)
     normalizer = ReturnNormalizer(eps=cfg.return_norm_eps) if cfg.normalize_returns else None
     history: list[float] = []
@@ -344,6 +361,26 @@ def _clone_policy(policy: HangarFitPolicy) -> HangarFitPolicy:
     ``deepcopy`` clones onto the same device; the copy is used only for
     ``torch.no_grad()`` forward passes in :func:`collect_rollout_vec`."""
     return copy.deepcopy(policy)
+
+
+def _iter_train_metrics(
+    metrics: dict[str, float],
+    it_cfg: PPOConfig,
+    *,
+    backplay_phi_cap: float | None = None,
+) -> dict[str, float]:
+    """#816: the per-iteration training telemetry recorded alongside each iteration for the
+    --metrics-out JSONL — ``epochs_run`` (the target_kl-bounded epoch count, which a higher
+    --entropy-floor can collapse toward 1) and ``entropy_coef`` (the applied coef, confirming
+    a frontier-rung floor actually bit). #821: on a backplay rung, also surface its fixed
+    ``phi_cap`` ceiling so the gate's confound watch ("a WIN must coincide with phi_cap
+    annealed to ~1.0") reads it numerically without parsing the stage name; absent (no key) on
+    every non-backplay rung, so their telemetry stays byte-identical to the pre-#821 dict. Pure;
+    consumed by ``CurriculumHistory.record``."""
+    out = {"epochs_run": metrics["epochs_run"], "entropy_coef": it_cfg.entropy_coef}
+    if backplay_phi_cap is not None:
+        out["phi_cap"] = backplay_phi_cap
+    return out
 
 
 def _rung_stop_reason(
@@ -468,6 +505,10 @@ def train_curriculum(
         policy = HangarFitPolicy(**saved_policy_kwargs).to(dev)
         optimizer = torch.optim.Adam(policy.parameters(), lr=cfg.lr)
         normalizer = ReturnNormalizer(eps=cfg.return_norm_eps) if cfg.normalize_returns else None
+    # #827: derive the encoder's ego-frame from the (post-load authoritative) architecture, so the
+    # token width and the policy's token_proj can never disagree, and a loaded ego checkpoint
+    # auto-uses an ego encoder regardless of whether --relative-encoder was re-passed.
+    enc = replace(enc, ego_centric=bool(saved_policy_kwargs.get("relative_encoder", False)))
     completed_set = set(completed_stages)
     history = CurriculumHistory()
     for stage_index, stage in enumerate(sched.stages):
@@ -499,21 +540,20 @@ def train_curriculum(
             for it in range(ceiling):
                 # Per-rung entropy schedule: `it` resets to 0 each stage, so each rung
                 # re-warms from entropy_coef_start (the intended high→low warmup per rung).
-                it_cfg = replace(
-                    cfg,
-                    entropy_coef=entropy_coef_at(
-                        it,
-                        base=cfg.entropy_coef,
-                        start=cfg.entropy_coef_start,
-                        end=cfg.entropy_coef_end,
-                        anneal_iters=cfg.entropy_anneal_iters,
-                    ),
-                )
+                # #815: floored UP to cfg.entropy_floor on frontier rungs only (inert OFF).
+                it_cfg = replace(cfg, entropy_coef=iter_entropy_coef(cfg, it, stage.name))
                 buf, ep_stats = collect_rollout(
                     env, policy, enc, rollout_len, sample_request=next_request
                 )
-                ppo_update(policy, optimizer, buf, it_cfg, normalizer=normalizer)
-                history.record(stage.name, it, ep_stats)
+                metrics = ppo_update(policy, optimizer, buf, it_cfg, normalizer=normalizer)
+                history.record(
+                    stage.name,
+                    it,
+                    ep_stats,
+                    train_metrics=_iter_train_metrics(
+                        metrics, it_cfg, backplay_phi_cap=stage.difficulty.backplay_phi_cap
+                    ),
+                )
                 if log:
                     print(format_iter_log(stage.name, it, ep_stats), flush=True)
                 reason = _rung_stop_reason(promo_history, ep_stats, pol, auto_budget)
@@ -543,17 +583,12 @@ def train_curriculum(
             rung_static_block = static_block(env.hangar, enc)
             with vec_cm as vec:
 
-                def _it_cfg(it: int) -> PPOConfig:
-                    return replace(
-                        cfg,
-                        entropy_coef=entropy_coef_at(
-                            it,
-                            base=cfg.entropy_coef,
-                            start=cfg.entropy_coef_start,
-                            end=cfg.entropy_coef_end,
-                            anneal_iters=cfg.entropy_anneal_iters,
-                        ),
-                    )
+                def _it_cfg(it: int, _stage_name: str = stage.name) -> PPOConfig:
+                    # #815: anneal then frontier-rung-gated entropy floor (inert OFF).
+                    # stage.name is captured as a def-time default arg (the standard B023
+                    # fix): the closure binds THIS stage's name at definition, not by late
+                    # lookup of the loop variable — correct regardless of call-site timing.
+                    return replace(cfg, entropy_coef=iter_entropy_coef(cfg, it, _stage_name))
 
                 if pipeline_update:
                     # #755 (Wave 4, opt-in, NON-deterministic): overlap the next
@@ -589,7 +624,6 @@ def train_curriculum(
                             else:
                                 buf_vec, ep_stats = pending.result()
                                 pending = None
-                            history.record(stage.name, it, ep_stats)
                             # Evaluate the stop gate BEFORE launching the next rollout (and
                             # before this update) so a stop suppresses the otherwise-wasted
                             # speculative rollout. Equivalent to the sequential branch's
@@ -607,8 +641,23 @@ def train_curriculum(
                                     rollout_len,
                                     static_block=rung_static_block,
                                 )
-                            ppo_update(
-                                policy, optimizer, buf_vec, _it_cfg(it), normalizer=normalizer
+                            it_cfg = _it_cfg(it)
+                            metrics = ppo_update(
+                                policy, optimizer, buf_vec, it_cfg, normalizer=normalizer
+                            )
+                            # #816: record AFTER the update so this iteration's epochs_run is
+                            # captured. record does not feed _rung_stop_reason (which already
+                            # ran above off ep_stats), so moving it is behavior-neutral for
+                            # promotion; this opt-in pipeline path is non-deterministic anyway.
+                            history.record(
+                                stage.name,
+                                it,
+                                ep_stats,
+                                train_metrics=_iter_train_metrics(
+                                    metrics,
+                                    it_cfg,
+                                    backplay_phi_cap=stage.difficulty.backplay_phi_cap,
+                                ),
                             )
                             if log:
                                 print(format_iter_log(stage.name, it, ep_stats), flush=True)
@@ -640,8 +689,17 @@ def train_curriculum(
                         buf_vec, ep_stats = collect_rollout_vec(
                             vec, policy, enc, rollout_len, static_block=rung_static_block
                         )
-                        ppo_update(policy, optimizer, buf_vec, it_cfg, normalizer=normalizer)
-                        history.record(stage.name, it, ep_stats)
+                        metrics = ppo_update(
+                            policy, optimizer, buf_vec, it_cfg, normalizer=normalizer
+                        )
+                        history.record(
+                            stage.name,
+                            it,
+                            ep_stats,
+                            train_metrics=_iter_train_metrics(
+                                metrics, it_cfg, backplay_phi_cap=stage.difficulty.backplay_phi_cap
+                            ),
+                        )
                         if log:
                             print(format_iter_log(stage.name, it, ep_stats), flush=True)
                         reason = _rung_stop_reason(promo_history, ep_stats, pol, auto_budget)
@@ -741,6 +799,12 @@ def resolve_n_envs(value: str) -> int:
     return n
 
 
+def _comma_split_rungs(value: str) -> tuple[str, ...]:
+    """argparse type for --frontier-rungs: a comma-separated rung-name list → tuple,
+    whitespace-stripped, empties dropped. #815."""
+    return tuple(part.strip() for part in value.split(",") if part.strip())
+
+
 def build_argparser() -> argparse.ArgumentParser:
     p = argparse.ArgumentParser(
         description="Train the cold-joint policy (trivial stage or curriculum)."
@@ -837,6 +901,23 @@ def build_argparser() -> argparse.ArgumentParser:
         help="attention heads (None = HangarFitPolicy default, 4)",
     )
     p.add_argument(
+        "--spatial-tokens",
+        action="store_true",
+        help="opt-in spatial-token cross-attention policy (#809): object tokens attend to "
+        "free-space cells instead of one global-pool summary. Default off = byte-identical net "
+        "(a deliberate new-architecture re-baseline when on; the flag is persisted in the "
+        "checkpoint's policy_kwargs)",
+    )
+    p.add_argument(
+        "--relative-encoder",
+        action="store_true",
+        help="opt-in ego-centric augment encoder (#827, ADR-0028 re-open trigger #2): each "
+        "object's pose is ALSO written in the active object's SE(2) body frame (4 extra token "
+        "cols). Default off = byte-identical (TOKEN_DIM 24, schema 1); a deliberate "
+        "representation re-baseline when on (TOKEN_DIM 28, schema 2); persisted in the "
+        "checkpoint's policy_kwargs",
+    )
+    p.add_argument(
         "--epochs",
         type=int,
         default=PPOConfig().epochs,
@@ -894,6 +975,24 @@ def build_argparser() -> argparse.ArgumentParser:
         "and pair-box.",
     )
     p.add_argument(
+        "--anchor-trio-notch",
+        action="store_true",
+        help="curriculum: insert the opt-in #736 'trio-notch-anchored' rung before trio-notch "
+        "(1 of 3 notch-witness objects pre-parked at a committed pose, the other two driven "
+        "in), scaffolding 3-object joint discovery on the real notch hangar to break the "
+        "cold-start coverage minimum (place one, abandon two) before the empty-start trio-notch",
+    )
+    p.add_argument(
+        "--backplay-trio-notch",
+        action="store_true",
+        help="curriculum: insert the opt-in #821 backplay (reverse-curriculum) sub-rung ladder "
+        "before trio-notch — the k=N-1 notch-witness prefix pre-parked and the single driven "
+        "object spawned a fraction phi~U(0,phi_cap) along the corridor from its witness pose "
+        "(near-solved) out to the door, with phi_cap annealing 0.5->1.0 across the sub-rungs. "
+        "Shifts the start-state distribution to break the cold-start coverage minimum before "
+        "the empty-start trio-notch (the #736 frontier lever)",
+    )
+    p.add_argument(
         "--stop-after-rung",
         type=str,
         default=None,
@@ -902,6 +1001,16 @@ def build_argparser() -> argparse.ArgumentParser:
         "(byte-identical). The #722 sweep lever: stop after pair-box so a resumed cell does "
         "not grind on into trio-*. Applied after the --solo-box-rung/--seed-anchor/"
         "--mixed-anchor grafts, so a name they introduce (pair-mixed) is valid.",
+    )
+    p.add_argument(
+        "--completion-probe",
+        choices=["notch", "roomy"],
+        default=None,
+        help="ADR-0028 trigger-#3 diagnostic: train ONLY a single door-spawn completion rung "
+        "(pre-park 2 of a 3-object witness, drive the last in from the door at phi=1) on the "
+        "chosen manifold arm — 'notch' (tight, the measured 0.000 wall) or 'roomy' (fat slot). "
+        "Overrides the ladder with one rung from a fresh policy; default None = unchanged "
+        "(byte-identical).",
     )
     p.add_argument(
         "--r-valid-park",
@@ -939,6 +1048,14 @@ def build_argparser() -> argparse.ArgumentParser:
         "off the place-nothing pole); paid once per episode, 0 = off (byte-identical); #720 L5",
     )
     p.add_argument(
+        "--r-valid-progress",
+        type=float,
+        default=0.0,
+        help="banked per-valid-Park credit scaled by the marginal valid-object count beyond the "
+        "freebie (r_valid_progress*max(0, n-1) on a Park where the whole layout is valid); 0 = off "
+        "(byte-identical); the #812 per-commitment economics lever",
+    )
+    p.add_argument(
         "--validity-conditional-terminal",
         action="store_true",
         help="terminal credits the VALID placed fraction (invalid layout -> 0), so an "
@@ -966,6 +1083,21 @@ def build_argparser() -> argparse.ArgumentParser:
         type=int,
         default=0,
         help="number of iterations over which to anneal entropy_coef (0 = no schedule)",
+    )
+    p.add_argument(
+        "--entropy-floor",
+        type=float,
+        default=None,
+        help="#815: clamp the annealed entropy coef UP to this on --frontier-rungs only "
+        "(a frontier-scoped exploration floor that holds the high-entropy basin-discovery "
+        "regime). Requires --frontier-rungs and --schedule curriculum.",
+    )
+    p.add_argument(
+        "--frontier-rungs",
+        type=_comma_split_rungs,
+        default=(),
+        help="comma-separated curriculum rung names the --entropy-floor applies to "
+        "(e.g. trio-notch-anchored,trio-notch); empty default => floor inert.",
     )
     p.add_argument(
         "--normalize-returns",
@@ -1062,16 +1194,84 @@ def build_argparser() -> argparse.ArgumentParser:
     return p
 
 
+def build_schedule(args: argparse.Namespace) -> list[Stage]:
+    """Map parsed CLI args → the ordered list of curriculum Stages to train.
+
+    Delegates to ``_build_curriculum_schedule`` so the ladder logic — including the
+    ``--completion-probe`` short-circuit — lives in exactly one place and the runtime
+    path cannot diverge from tests."""
+    return list(_build_curriculum_schedule(args).stages)
+
+
+def _build_curriculum_schedule(args: argparse.Namespace) -> CurriculumSchedule:
+    """Build the full ``CurriculumSchedule`` (stages + promotion policy) from parsed args.
+    Used by ``main()`` for ``train_curriculum``; ``build_schedule`` delegates here so the
+    two cannot diverge.
+
+    ADR-0028 trigger-#3: when ``--completion-probe`` is set, short-circuits to a single
+    completion rung (taking precedence over all other ladder flags). Promotion-policy
+    overrides (``--max-iters-per-stage`` etc.) are applied to the single-stage schedule so
+    the probe respects iteration controls. Default ``None`` → behaviour byte-identical to
+    before (the short-circuit is an added early-return branch only)."""
+    # ADR-0028 trigger-#3: one rung, fresh policy, overrides everything else.
+    if args.completion_probe is not None:
+        single = CurriculumSchedule(
+            stages=(_completion_stage(args.completion_probe),), policy=PromotionPolicy()
+        )
+        single = replace(
+            single,
+            policy=with_promotion_overrides(
+                single.policy,
+                metric=args.promotion_metric,
+                threshold=args.promotion_threshold,
+                max_iters=args.max_iters_per_stage,
+                window=args.promotion_window,
+            ),
+        )
+        return single
+    sched = CurriculumSchedule.default()
+    sched = replace(
+        sched,
+        policy=with_promotion_overrides(
+            sched.policy,
+            metric=args.promotion_metric,
+            threshold=args.promotion_threshold,
+            max_iters=args.max_iters_per_stage,
+            window=args.promotion_window,
+        ),
+    )
+    if args.solo_box_rung:
+        sched = with_solo_box_rung(sched)
+    if args.seed_anchor:
+        sched = with_pair_anchored_rung(sched)
+    if args.mixed_anchor:
+        sched = with_mixed_anchor_rung(sched)
+    if args.anchor_trio_notch:
+        sched = with_trio_notch_anchored_rung(sched)
+    if args.backplay_trio_notch:
+        sched = with_trio_notch_backplay_rung(sched)
+    # Truncate LAST, after the grafts, so a name they introduce (pair-mixed) is in scope.
+    if args.stop_after_rung is not None:
+        sched = truncate_after_rung(sched, args.stop_after_rung)
+    return sched
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     parser = build_argparser()
     args = parser.parse_args(argv)
     if args.device == "cuda" and not torch.cuda.is_available():
         parser.error("--device cuda requested but torch.cuda.is_available() is False")
+    if args.relative_encoder and args.save_onnx:
+        parser.error(
+            "--save-onnx is not yet supported with --relative-encoder; torch-free ONNX "
+            "inference for the ego-centric encoder is a deferred #827 follow-up"
+        )
     weights = RewardWeights(
         w_col=args.w_col,
         r_valid_park=args.r_valid_park,
         valid_park_grade_scale=args.valid_park_grade_scale,
         r_first_valid=args.r_first_valid,
+        r_valid_progress=args.r_valid_progress,
         dense_slot_potential=args.dense_slot_potential,
         r_unplaced_penalty=args.r_unplaced_penalty,
         validity_conditional_terminal=args.validity_conditional_terminal,
@@ -1084,6 +1284,8 @@ def main(argv: Sequence[str] | None = None) -> None:
             ("d_model", args.d_model),
             ("n_layers", args.n_layers),
             ("n_heads", args.n_heads),
+            ("spatial_tokens", True if args.spatial_tokens else None),
+            ("relative_encoder", True if args.relative_encoder else None),
         )
         if v is not None
     } or None
@@ -1094,6 +1296,8 @@ def main(argv: Sequence[str] | None = None) -> None:
         entropy_coef_start=args.entropy_start,
         entropy_coef_end=args.entropy_end,
         entropy_anneal_iters=args.entropy_anneal_iters,
+        entropy_floor=args.entropy_floor,
+        entropy_floor_rungs=args.frontier_rungs,
         normalize_returns=args.normalize_returns,
         reward_clip=args.reward_clip,
         value_clip_eps=args.value_clip_eps,
@@ -1115,8 +1319,17 @@ def main(argv: Sequence[str] | None = None) -> None:
             parser.error("--seed-anchor requires --schedule curriculum")
         if args.mixed_anchor:
             parser.error("--mixed-anchor requires --schedule curriculum")
+        if args.anchor_trio_notch:
+            parser.error("--anchor-trio-notch requires --schedule curriculum")
+        if args.backplay_trio_notch:
+            parser.error("--backplay-trio-notch requires --schedule curriculum")
         if args.stop_after_rung is not None:
             parser.error("--stop-after-rung requires --schedule curriculum")
+        if args.entropy_floor is not None or args.frontier_rungs:
+            # The entropy floor is rung-scoped; the trivial path has no rungs.
+            parser.error("--entropy-floor/--frontier-rungs require --schedule curriculum")
+        if args.completion_probe is not None:
+            parser.error("--completion-probe requires --schedule curriculum")
         if args.auto_budget or args.auto_budget_max_iters is not None:
             parser.error("--auto-budget/--auto-budget-max-iters require --schedule curriculum")
         if args.n_envs > 1:  # resolve_n_envs floors at 1, so >1 is the only over-floor case
@@ -1136,26 +1349,16 @@ def main(argv: Sequence[str] | None = None) -> None:
             device=args.device,
         )
     else:
-        sched = CurriculumSchedule.default()
-        sched = replace(
-            sched,
-            policy=with_promotion_overrides(
-                sched.policy,
-                metric=args.promotion_metric,
-                threshold=args.promotion_threshold,
-                max_iters=args.max_iters_per_stage,
-                window=args.promotion_window,
-            ),
-        )
-        if args.solo_box_rung:
-            sched = with_solo_box_rung(sched)
-        if args.seed_anchor:
-            sched = with_pair_anchored_rung(sched)
-        if args.mixed_anchor:
-            sched = with_mixed_anchor_rung(sched)
-        # Truncate LAST, after the grafts, so a name they introduce (pair-mixed) is in scope.
-        if args.stop_after_rung is not None:
-            sched = truncate_after_rung(sched, args.stop_after_rung)
+        # #815: a floor with no rung to apply it to is a misconfiguration (the floor would
+        # be inert) — fail LOUD rather than silently no-op a typed flag.
+        if args.entropy_floor is not None and not args.frontier_rungs:
+            parser.error("--entropy-floor requires --frontier-rungs")
+        # The floor RAISES the entropy coef; a non-positive value can never raise a
+        # (non-negative) coef, so it is silently inert. Reject it loud (the off state is the
+        # absent flag, not 0/negative).
+        if args.entropy_floor is not None and args.entropy_floor <= 0:
+            parser.error("--entropy-floor must be > 0")
+        sched = _build_curriculum_schedule(args)
         # #734/#743: build the slope-aware controller only when --auto-budget is set; None keeps
         # the fixed per-rung cap (byte-identical default). Each per-knob override (max-iters /
         # min-iters / min-level) is inert without the switch, so fail LOUD rather than silently

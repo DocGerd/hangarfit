@@ -36,6 +36,16 @@ hangarfit view  examples/herrenteich/scenario_demo.yaml -o demo.html --seed 3
 | `scenario.yaml` | The solver input for the all-eight "everyone home" scenario (does not fully route — see below). |
 | `scenario_demo.yaml` | A 3-aircraft subset that **solves and fully tow-routes** end-to-end in the L-shaped hangar — the working toolchain demo. |
 
+> **Dolly gliders are hand-positioned (#667 Rung A).** As of #667 Stage 0, the
+> dolly-borne gliders are marked `hand_placed: true` in these layouts — the
+> Scheibe Falke + Stemme S10 in `layout.yaml` / `layout_today.yaml`, and the
+> Stemme only in `layout_full.yaml` (the Scheibe parks outside there). The fill
+> planner then treats them as fixed keep-outs and does **not** emit a tow path for
+> them (they go in by hand), so `view` / `solve --render-paths` route only the
+> powered aircraft around them. This is inert to static validity (`hangarfit
+> check` is unaffected). The lone-Stemme own-gear straight-in noted below is still
+> true as a *capability*; the dense shipped layouts just model it on its dolly.
+
 ## Three things this dataset is honest about
 
 **1. The hangar is L-shaped, and since ADR-0018 (#527) the model knows it.**
@@ -86,7 +96,13 @@ full-height wall. Mover tow-routing (#602), the Caddy clear-egress gate (#603/#6
 and ground-object rendering (#606) have all shipped; **reliably packing this dense a
 12-body set is beyond the deterministic search** — both `layout_today.yaml` and
 `layout_full.yaml` are offline-search arrangements of the real composition, and the
-joint dense-placement+routing problem remains the open hard problem (#607).
+joint dense-placement+routing problem remains an open hard problem. The dedicated
+#667 shuffle-aware tow-routing program (Rungs A–E, all merged by 2026-06-29) shipped
+move-aside repair as a byte-identical capability seam (Rung E, #869), but as
+measured it does **not** crack the dense all-8: that fill stays budget-bound (it
+bails on `zlin_savage` at the 8000-expansion cap, so phase-1 search raises before
+move-aside can engage), so the dense all-8 route stays out of reach and the
+`fk9_mkii`↔`cessna_140` pair remains a documented manual-insertion case.
 
 ## Notable aircraft
 
@@ -105,7 +121,8 @@ joint dense-placement+routing problem remains the open hard problem (#607).
   the door by ~2 m; a lone Stemme routes in through the door **on its own gear**
   (probed: 1-segment straight-in). The dolly (`always_cart` in `fleet.yaml`) is for
   maneuvering it within the *dense multi-plane* fill, not a width limit — that
-  joint placement+routing difficulty is tracked on #607, not a folded-span error.
+  joint placement+routing difficulty is tracked on #607 (and the #667 shuffle-aware
+  tow-routing program, Rungs A–E now merged), not a folded-span error.
 
 > All fleet dimensions carry `measured: false` — the envelope is published spec
 > and the part-level dimensions are 3-view/TCDS-**sourced** but not on-site

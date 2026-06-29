@@ -367,7 +367,12 @@ torch `[train]` stack used to *produce* the weights). **Determinism:** the learn
 the ADR-0003 byte-identical contract — `collisions.check` (plus `towplanner`)
 remains the sole arbiter of validity and routability ([ADR-0027](../adr/0027-learned-backend-determinism-scope.md)).
 Only this seam ships in the wheel; the inference implementation (`ml.infer`) and
-the RL training stack live in `ml/`, present in source checkouts only.
+the RL training stack live in `ml/`, present in source checkouts only. **Scope:**
+the seam is the chartered, shipped deliverable; *train-to-mastery* on the dense
+`trio-notch` rung is **resolved-negative** (a measured cold-start drive-and-pack
+wall — see [ADR-0028](../adr/0028-learned-backend-train-to-mastery-resolved-negative.md)
+and [`ml/README.md`](../../ml/README.md)), so a bare install reporting the backend
+unavailable is the expected steady state until a re-open trigger fires.
 
 ### `towplanner.py` — tow-path planning
 
@@ -377,7 +382,13 @@ collision-free entry **order** (deepest slot first) and a per-plane
 **path** from the door-cone entry pose to the target slot, returning a
 `MovesPlan` (a tuple of `Move`s, each carrying a `DubinsArc` — the
 historical container name; its segments now carry a `gear`). Scope is
-the **empty-hangar fill** case — every plane enters once (ADR-0007).
+the **empty-hangar fill** case — every plane normally enters once (ADR-0007).
+The one exception is the apron-gated phase-2 **move-aside** repair (#667 Rung E,
+#869): on an in-budget phase-1 deadlock it temporarily relocates an already-parked
+body to an apron-out staging pose and back (a multi-leg `MovesPlan`) so a stuck
+body can route past it — engaged only with `apron_depth_m > 0` and a positive
+displacement cap, so the default plan is byte-identical to pre-Rung-E (ADR-0003)
+and the budget-bound dense all-8 never reaches it.
 
 - **Single motion model — Reeds–Shepp** ([ADR-0010](../adr/0010-reeds-shepp-motion-model.md),
   [#261](https://github.com/DocGerd/hangarfit/issues/261)): every plane is
@@ -482,8 +493,10 @@ Its defining job is to **own the geometry**: it precomputes the plane-local→wo
 transform (the determinant −1 map, [ADR-0002](../adr/0002-determinant-minus-one-transform.md))
 as per-frame affine matrices and emits `aircraft_parts_world` oracle corners as
 `anchors`, so the viewer applies matrices and does no transform math. It also
-builds the whole-fill timeline (one segment per plane in `back_first_order`, laid
-end-to-end, sampled from each tow `DubinsArc`). Pure and deterministic — same
+builds the whole-fill timeline (normally one segment per plane in `back_first_order`,
+laid end-to-end, sampled from each tow `DubinsArc`; a move-aside body (#667 Rung E)
+instead carries multiple legs laid in **global execution order**, resting at its
+staging pose between the bodies routed past it). Pure and deterministic — same
 input ⇒ byte-identical scene. Schema: [`scene-v2-schema.md`](scene-v2-schema.md);
 rationale: [ADR-0017](../adr/0017-3d-viewer-architecture.md).
 

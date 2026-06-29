@@ -252,10 +252,19 @@ class Move:
     # #602 routes). A routed aircraft (or, post-#602, a routed mover) always has a
     # DubinsArc here. See the class docstring for the full contract.
     path: DubinsArc | None
+    # #865 Rung D: the execution-order index of this leg within its body's tow.
+    # A single-leg move (every body today) keeps the default ``0``; a future
+    # move-aside relocation (#667 Rung E) emits a staging leg (``leg_index=0``)
+    # then the final leg (``leg_index=1``) for the SAME ``plane_id``. The field is
+    # ADDITIVE and trailing-defaulted, so every existing positional/keyword
+    # ``Move(...)`` constructor and serialization is byte-identical to before.
+    leg_index: int = 0
 
     def __post_init__(self) -> None:
         if not self.plane_id:
             raise ValueError("Move.plane_id must be non-empty")
+        if self.leg_index < 0:
+            raise ValueError(f"Move.leg_index must be >= 0, got {self.leg_index}")
 
 
 @dataclass(frozen=True, slots=True)
@@ -267,6 +276,43 @@ class MovesPlan:
 
     target_layout: Layout
     moves: tuple[Move, ...]
+
+    def __post_init__(self) -> None:
+        # #667 Rung E (type-design F1): a plane's ROUTED legs must carry distinct
+        # leg_index values so each leg is unambiguously identifiable per body — the
+        # scene/v2 `timeline.segments[].leg_index` and the viewer's per-body
+        # `segByPlane[pid]` leg array key on it, and it backstops the move-aside
+        # producer's hardcoded leg_index 0/1/2 (a body is displaced at most once per
+        # DFS path). Deferred (path=None) legs are exempt — build_moves_plan
+        # (ml/infer.py) and placed-routed movers legitimately emit a routed leg and a
+        # deferred leg both at leg_index=0; mover/deferred target_slots also need not
+        # be in `placements`, so NO target_slot membership check is added.
+        seen_routed: dict[str, set[int]] = {}
+        for m in self.moves:
+            if m.path is None:
+                continue
+            legs = seen_routed.setdefault(m.plane_id, set())
+            if m.leg_index in legs:
+                raise ValueError(
+                    f"MovesPlan: plane {m.plane_id!r} has duplicate routed leg_index {m.leg_index}"
+                )
+            legs.add(m.leg_index)
+
+
+@dataclass(frozen=True, slots=True)
+class _FillStep:
+    """One committed unit of an order-search result (#667 Rung E).
+
+    A normal placement emits a single ``Move`` and commits one ``Placement``. A
+    move-aside emits THREE moves (displaced-aside, stuck-final, displaced-return) and
+    commits ONE placement (the stuck body; the displaced body is already in ``placed``
+    at its final pose). ``apron_fallback_planes`` names committed bodies that towed via
+    the ``y = 0`` door-line fallback despite an apron (the #503 diagnostic). Internal to
+    ``_plan_fill``; never exposed."""
+
+    moves: tuple[Move, ...]
+    committed: tuple[Placement, ...]
+    apron_fallback_planes: tuple[str, ...]
 
 
 # ---------------------------------------------------------------------------
@@ -1184,6 +1230,59 @@ def entry_pose(target: Placement, hangar: Hangar) -> Pose:
     return Pose(x_m=x, y_m=0.0, heading_deg=0.0)
 
 
+def _staging_poses(target: Placement, hangar: Hangar) -> tuple[Pose, ...]:
+    """Apron-out (y<0) nose-out LATERAL staging candidates for a displaced body
+    (#667 Rung E move-aside).
+
+    Reuses ``entry_poses``' apron y-samples but parks the body OFF TO THE SIDE of the
+    door (x spans the apron width, not just the door opening) so it does not jam the
+    corridor the stuck body must enter through — the real club shuffle rolls a plane
+    laterally aside, not straight out the door. Headings are nose-out
+    (``_REVERSE_CONE_HEADINGS``, ~180°) so the body parks fully outside regardless of
+    its parked heading. Ordered **y-outer (deepest apron first → the #844 cost-margin
+    lever), x-outer (off-to-side first), heading-inner**; the ``seen`` set dedups only,
+    never orders (ADR-0003 tie-break 2). Empty if no apron. Infeasible / out-of-bounds
+    candidates are dropped later by the routing legs (``path_first_conflict``), so no
+    static pre-filter is applied here.
+    """
+    depth = hangar.apron_depth_m
+    if depth <= 0.0:
+        return ()
+    door = hangar.door
+    half = door.width_m / 2.0
+    lo = door.center_x_m - half
+    hi = door.center_x_m + half
+    width = hangar.width_m
+
+    def _clamp(x: float) -> float:
+        return min(max(x, 0.0), width)
+
+    # Lateral x: midpoint of the left apron strip, midpoint of the right strip, then
+    # the door centre as a fallback. Off-to-side first (x-outer) so the body clears the
+    # stuck plane's door swath before a centre pose is tried.
+    x_left = _clamp(lo / 2.0)
+    x_right = _clamp((hi + width) / 2.0)
+    x_centre = _clamp(door.center_x_m)
+    x_samples = (x_left, x_right, x_centre)
+    y_samples = (-depth, -depth / 2.0)  # deepest apron first (#844 margin)
+
+    seen: set[tuple[float, float, float]] = set()
+    poses: list[Pose] = []
+    for y in y_samples:  # outer: deepest apron first
+        for x in x_samples:  # middle: off-to-side first, door-centre last
+            for h in _REVERSE_CONE_HEADINGS:  # inner: nose-out cone
+                key = (x, y, h)
+                # Defensive dedup: the three x-samples coincide only for a degenerate door
+                # centred on/past a wall (where _clamp coalesces them) — never for a valid
+                # door, so this skip is unreachable in practice. The no-duplicate
+                # post-condition is asserted by test_staging_poses_are_apron_out_*.
+                if key in seen:  # pragma: no cover - x-samples never collide for a valid door
+                    continue
+                seen.add(key)
+                poses.append(Pose(x_m=x, y_m=y, heading_deg=h))
+    return tuple(poses)
+
+
 # ---------------------------------------------------------------------------
 # Sampled collision-during-motion (spike Q4)
 # ---------------------------------------------------------------------------
@@ -1494,6 +1593,215 @@ def egress_corridors(
     return corridors
 
 
+@dataclass(frozen=True, slots=True)
+class TeardownProbeResult:
+    """Verdict of :func:`reverse_teardown_probe` (#667 Rung C) — diagnostic only.
+
+    ``order`` is the deterministic extraction order discovered by the greedy peel
+    (id-sorted within each peel round). ``stuck`` is the canonical
+    mutually-blocking residual core (id-sorted) and ``blocking`` carries one
+    ``teardown_egress`` :class:`~hangarfit.models.Conflict` per stuck body, aligned
+    by position (``blocking[i]`` explains ``stuck[i]``) — why it cannot drive out
+    against the rest of the core. :attr:`cleared` is a derived property (True iff
+    ``stuck`` is empty), so the verdict cannot disagree with the core (mirrors
+    :class:`~hangarfit.models.CheckResult.valid`); a full teardown order exists
+    iff ``cleared``, which by ADR-0010 reversibility is exactly the condition that
+    a **monotone fill** order exists. ``order`` and ``stuck`` partition the
+    tow-routable aircraft (the completeness leg — that they cover the full towable
+    set — is the producer's responsibility, as it needs the input ``Layout``)."""
+
+    order: tuple[str, ...]
+    stuck: tuple[str, ...]
+    blocking: tuple[Conflict, ...]
+
+    def __post_init__(self) -> None:
+        # House style (Conflict / CheckResult validate in __post_init__): pin the
+        # cross-field invariants the producer guarantees so an inconsistent result
+        # cannot be constructed. The partition's *completeness* needs the Layout
+        # and stays the producer's job; disjointness is checkable here.
+        if len(self.blocking) != len(self.stuck):
+            raise ValueError(
+                f"blocking ({len(self.blocking)}) must align 1:1 with stuck ({len(self.stuck)})"
+            )
+        if tuple(c.planes[0] for c in self.blocking) != self.stuck:
+            raise ValueError("blocking[i] must explain stuck[i] (positional alignment)")
+        if not set(self.order).isdisjoint(self.stuck):
+            overlap = set(self.order) & set(self.stuck)
+            raise ValueError(f"order and stuck must be disjoint: {overlap}")
+
+    @property
+    def cleared(self) -> bool:
+        """True iff a full teardown (⇔ monotone fill) order exists — i.e. no body
+        is stuck. Derived from ``stuck`` so it can never disagree with the core."""
+        return not self.stuck
+
+
+def _aircraft_egress_conflict(
+    placement: Placement,
+    placed: Layout,
+    hangar: Hangar,
+    fleet: Mapping[str, Aircraft],
+    *,
+    heuristic: Literal["euclidean", "grid"],
+    max_expansions: int,
+) -> Conflict | None:
+    """First conflict blocking aircraft ``placement``'s drive-OUT through the
+    door against ``placed``, else None (the aircraft analogue of
+    :func:`egress_first_conflict`).
+
+    By Reeds-Shepp reversibility (ADR-0010) an egress (slot -> out the door) is
+    feasible iff an entry (door-cone -> slot) path exists against ``placed``, so
+    this routes the aircraft as a mover via :func:`plan_path` against the supplied
+    partial scene (the mover is excluded from ``placed`` by the caller;
+    :func:`path_first_conflict` re-injects it per sample). The mover keeps its
+    parked ``on_carts`` mode. Closed-form, RNG-free => deterministic (ADR-0003).
+    Returns a ``teardown_egress`` :class:`~hangarfit.models.Conflict` when
+    blocked. This is the per-body seam :func:`reverse_teardown_probe` peels on.
+
+    The Conflict detail records the bail **mode** — ``[budget-exhausted]`` (hit the
+    expansion cap; a path may exist beyond it — a search-*efficiency* signal) vs
+    ``[space-exhausted]`` (the open set drained; genuinely no path at this
+    discretization — a *lock* signal) — read from :func:`plan_path`'s ``stats``
+    out-param, so a STUCK core can self-certify which regime produced it rather
+    than relying on eyeballed timings."""
+    plane = fleet[placement.plane_id]
+    cone = entry_poses(placement, hangar)
+    stats: dict[str, object] = {}
+    try:
+        plan_path(
+            plane,
+            cone[0],
+            Pose.from_placement(placement),
+            hangar=hangar,
+            placed=placed,
+            mover_on_carts=placement.on_carts,
+            entries=cone,
+            heuristic=heuristic,
+            max_expansions=max_expansions,
+            stats=stats,
+        )
+        return None
+    except NoFeasiblePlanError as exc:
+        # Read BOTH flags rather than inferring space from "not budget": if a future
+        # plan_path refactor ever raised without populating stats, default loudly to
+        # "unknown-exhaustion" instead of silently mislabelling the bail as space.
+        if stats.get("budget_exhausted"):
+            mode = "budget-exhausted"
+        elif stats.get("space_exhausted"):
+            mode = "space-exhausted"
+        else:
+            mode = "unknown-exhaustion"
+        return Conflict.single(
+            kind="teardown_egress",
+            plane=placement.plane_id,
+            detail=(
+                f"aircraft {placement.plane_id!r} cannot drive out the door against "
+                f"the remaining parked bodies [{mode}]: {exc.conflict.detail}"
+            ),
+        )
+
+
+def reverse_teardown_probe(
+    target: Layout,
+    *,
+    heuristic: Literal["euclidean", "grid"] = "grid",
+    max_expansions: int | None = None,
+) -> TeardownProbeResult:
+    """Whole-fill reverse-teardown feasibility probe (#667 Rung C). **Read-only
+    diagnostic: no plan output, no data-model change, no production caller** — so
+    every existing plan stays byte-identical (ADR-0003).
+
+    Generalises :func:`egress_first_conflict` (one body, slot -> door) into a
+    whole-fill teardown: greedily extract every **tow-routable aircraft** slot ->
+    door against shrinking partial state, and report whether a full teardown order
+    EXISTS. By ADR-0010 reversibility a teardown order is exactly a **monotone
+    fill** order, so a CLEAR verdict means the Rung-B forward-fill wall is a pure
+    *search-efficiency* limit (a monotone order exists at this grid + budget, the
+    forward planner just can't find it cheaply), while a STUCK verdict identifies
+    the mutually-blocking core that no monotone order can seat **at this grid +
+    budget** — pointing at the relocation (move-aside, Rung E) rather than better
+    search (the per-body ``blocking`` conflict's ``[budget-exhausted]`` vs
+    ``[space-exhausted]`` tag says whether a body might still route with a bigger —
+    if unaffordable — budget, or is genuinely wedged at this discretization).
+
+    **Modelling.** Only tow-routable aircraft are extracted; hand-placed (dolly)
+    bodies and all ground objects stay as fixed obstacles in every partial state
+    (they go in/out by hand, never towed) — the faithful dual of the Rung-A
+    forward fill, which keeps the same keep-outs and routes the same towable set.
+
+    **Why greedy peel is complete (not a heuristic).** For *ideal* (unbounded)
+    egress feasibility, feasibility is *monotone in obstacles*: a body that can
+    drive out past a set of obstacles can drive out past any subset (removing
+    bodies only opens paths). So repeatedly removing *every* currently-egressable
+    body reaches the empty set iff some full teardown order exists, and the residual
+    it stalls at is the unique order-independent mutually-blocking core. (Proof of
+    the contrapositive: if a teardown order existed but the peel stalled at residual
+    R, take the earliest order-body in R; when the order removed it, the
+    still-parked set was a superset of R, so it egressed against a superset of R
+    minus itself — hence also against R minus itself, contradicting the stall.)
+    The probe evaluates feasibility with a *finite* per-plane budget, under which
+    monotonicity is an approximation (freeing states can add ``f<=C*`` nodes and
+    exhaust the cap), so the verdict is planner/budget-relative — "no monotone
+    order findable at this grid + budget", apples-to-apples with the forward fill,
+    not an unconditional existence disproof. Determinism: id-sorted iteration +
+    RNG-free closed-form routing at a fixed per-plane budget (ADR-0003).
+
+    ``max_expansions`` overrides the per-plane node-expansion budget (default
+    :data:`_MAX_EXPANSIONS`, the same authoritative full budget
+    :func:`egress_first_conflict` uses — deliberately *not* the globally-capped
+    fill budget)."""
+    budget = _MAX_EXPANSIONS if max_expansions is None else max_expansions
+    # Fixed obstacles present in EVERY partial state (see "Modelling" above).
+    # id-sorted for the same cross-process determinism reason as still_parked below.
+    fixed = tuple(sorted((p for p in target.placements if p.hand_placed), key=lambda p: p.plane_id))
+    extractable = {p.plane_id: p for p in target.placements if not p.hand_placed}
+
+    order: list[str] = []
+    remaining = set(extractable)
+    blocking: tuple[Conflict, ...] = ()
+    while remaining:
+        round_conflicts: dict[str, Conflict] = {}
+        egressable: list[str] = []
+        for pid in sorted(remaining):
+            # id-sorted (NOT set-iteration order): a set of plane-id strings
+            # iterates in PYTHONHASHSEED-dependent order across processes, which
+            # would make the blocking-conflict details non-byte-identical (ADR-0003).
+            still_parked = tuple(extractable[q] for q in sorted(remaining) if q != pid)
+            placed = Layout(
+                fleet=target.fleet,
+                hangar=target.hangar,
+                placements=fixed + still_parked,
+                maintenance_plane=target.maintenance_plane,
+                ground_objects=target.ground_objects,
+                ground_object_placements=target.ground_object_placements,
+            )
+            conflict = _aircraft_egress_conflict(
+                extractable[pid],
+                placed,
+                target.hangar,
+                target.fleet,
+                heuristic=heuristic,
+                max_expansions=budget,
+            )
+            if conflict is None:
+                egressable.append(pid)
+            else:
+                round_conflicts[pid] = conflict
+        if not egressable:
+            # No remaining body can leave -> the canonical mutually-blocking core.
+            # Every remaining body failed this round, so round_conflicts is total.
+            blocking = tuple(round_conflicts[pid] for pid in sorted(remaining))
+            break
+        order.extend(egressable)  # egressable is already id-sorted
+        remaining.difference_update(egressable)
+
+    return TeardownProbeResult(
+        order=tuple(order),
+        stuck=tuple(sorted(remaining)),
+        blocking=blocking,
+    )
+
+
 # ---------------------------------------------------------------------------
 # Empty-hangar fill planner + bounded order-retry (spike Q2 / ADR-0007)
 # ---------------------------------------------------------------------------
@@ -1523,6 +1831,7 @@ def plan_fill(
     max_expansions: int | None = None,
     max_total_expansions: int | None = None,
     max_backtracks: int | None = None,
+    max_displacements: int | None = None,
     apron_dropped_out: list[ApronShallowDrop] | None = None,
     unroutable_movers: list[str] | None = None,
 ) -> MovesPlan:
@@ -1592,8 +1901,18 @@ def plan_fill(
     budget can't fund a runaway order search on an un-routable fill. Deterministic
     (ADR-0003): the order, the Hybrid-A* primitive fan, the cone grid, and the
     candidate scan are all RNG-free, so a given ``target`` always yields the same
-    :class:`MovesPlan`. (A truly cyclic lock — no order routes — still bails; the
-    move-aside that resolves those is tracked on #667.)
+    :class:`MovesPlan`.
+
+    Since #667 Rung E, a mutual block that **no** placement order resolves triggers a
+    second phase: if the byte-identical phase-1 DFS deadlocks within budget, the search
+    re-runs with **move-aside** enabled — it temporarily relocates a parked body to an
+    apron-out staging pose so the stuck body can route, then returns it, emitting a
+    multi-leg plan (``Move.leg_index``). ``max_displacements`` (``None`` ⇒ the module
+    ``_MAX_FILL_DISPLACEMENTS``) caps committed displacements; ``0`` disables move-aside
+    (byte-identical to pre-Rung-E). Move-aside requires a staging apron
+    (``hangar.apron_depth_m > 0``); without one it is skipped. Phase 2 runs only after a
+    phase-1 deadlock and gets a fresh expansion budget, so a layout solvable without a
+    shuffle is byte-identical and never pays for move-aside.
     """
     # #626: memoize body world-parts for the WHOLE fill. The static obstacle field
     # is rebuilt by every plan_path's _build_obstacles, and the greedy scan re-routes
@@ -1609,6 +1928,7 @@ def plan_fill(
             max_expansions=max_expansions,
             max_total_expansions=max_total_expansions,
             max_backtracks=max_backtracks,
+            max_displacements=max_displacements,
             apron_dropped_out=apron_dropped_out,
             unroutable_movers=unroutable_movers,
         )
@@ -1621,6 +1941,7 @@ def _plan_fill(
     max_expansions: int | None = None,
     max_total_expansions: int | None = None,
     max_backtracks: int | None = None,
+    max_displacements: int | None = None,
     apron_dropped_out: list[ApronShallowDrop] | None = None,
     unroutable_movers: list[str] | None = None,
 ) -> MovesPlan:
@@ -1628,8 +1949,11 @@ def _plan_fill(
     budget = _MAX_EXPANSIONS if max_expansions is None else max_expansions
     total_budget = _MAX_FILL_EXPANSIONS if max_total_expansions is None else max_total_expansions
     bt_cap = _MAX_FILL_BACKTRACKS if max_backtracks is None else max_backtracks
+    disp_cap = _MAX_FILL_DISPLACEMENTS if max_displacements is None else max_displacements
     total_used = 0
     backtracks_used = 0
+    displacements_used = 0  # #667 Rung E: monotonic global counter (never decremented)
+    displaced_planes: set[str] = set()  # per-path membership — never iterated for order
     fleet = target.fleet
     hangar = target.hangar
     # #667 Stage 0: HAND-POSITIONED bodies (dolly-borne gliders) are parked by
@@ -1663,11 +1987,13 @@ def _plan_fill(
     deepest_conflict: Conflict | None = None
 
     def _place_rest(
-        placed_list: list[Placement], rest: list[Placement]
-    ) -> list[tuple[Placement, DubinsArc, bool]] | None:
-        """Return the chosen (slot, arc, apron_fallback) sequence that places every
-        body in ``rest`` against ``placed_list``, greedy-first with backtracking, or
-        ``None`` if no order does. Raises on global-budget or backtrack-cap exhaustion."""
+        placed_list: list[Placement], rest: list[Placement], allow_displace: bool = False
+    ) -> list[_FillStep] | None:
+        """Return the chosen :class:`_FillStep` sequence that places every body in
+        ``rest`` against ``placed_list``, greedy-first with backtracking, or ``None`` if
+        no order does. Raises on global-budget or backtrack-cap exhaustion. When
+        ``allow_displace`` (phase 2, #667 Rung E), a level that exhausts its
+        non-displacing candidates tries a move-aside before returning ``None``."""
         nonlocal total_used, deepest_conflict, backtracks_used
         if not rest:
             return []
@@ -1727,9 +2053,16 @@ def _plan_fill(
             exp = stats.get("expansions", 0)
             total_used += exp if isinstance(exp, int) else 0
             apron_fb = stats.get("apron_fallback") is True
-            sub = _place_rest(placed_list + [slot], rest[:idx] + rest[idx + 1 :])
+            sub = _place_rest(
+                placed_list + [slot], rest[:idx] + rest[idx + 1 :], allow_displace=allow_displace
+            )
             if sub is not None:
-                return [(slot, arc, apron_fb), *sub]
+                step = _FillStep(
+                    moves=(Move(slot.plane_id, Pose.from_placement(slot), arc),),
+                    committed=(slot,),
+                    apron_fallback_planes=(slot.plane_id,) if apron_fb else (),
+                )
+                return [step, *sub]
             # Routed here, but the rest dead-ends downstream → backtrack to the next
             # candidate (the old monotonic loop could not). Bound the total dead-end
             # backtracks so a generous per-plane budget can't fund a runaway order
@@ -1746,13 +2079,188 @@ def _plan_fill(
                     detail=f"order-search backtracking cap ({bt_cap}) exceeded",
                 )
                 raise NoFeasiblePlanError(bail.planes[0], bail)
+        if allow_displace:
+            ms = _try_move_aside(placed_list, rest)
+            if ms is not None:
+                return ms
         return None
 
-    result = _place_rest(placed, ordered)
+    def _try_move_aside(
+        placed_list: list[Placement], rest: list[Placement]
+    ) -> list[_FillStep] | None:
+        """Depth-1 move-aside (#667 Rung E), phase 2 only. For the deepest stuck body
+        S, displace a committed body D (deepest-first, never hand-placed, never twice
+        per DFS path) to an apron-out lateral staging pose, route S past D@staging,
+        return D to its slot, then recurse. First feasible (S, D, staging) in
+        deterministic order wins. Requires ``hangar.apron_depth_m > 0`` (it relocates a
+        body OUTSIDE the door). Depth is structurally 1: a shuffle's legs are direct
+        ``plan_path`` calls, never a nested order search."""
+        nonlocal total_used, displacements_used
+        if displacements_used >= disp_cap or hangar.apron_depth_m <= 0.0:
+            return None
+
+        def _layout_of(placements: list[Placement]) -> Layout:
+            # All legs use the SCENARIO `hangar` (which carries the apron): plan_path's
+            # path_first_conflict derives motion bounds from placed.hangar, so a y<0
+            # staging sweep is only apron-exempt when placed.hangar.apron_depth_m > 0.
+            return Layout(
+                fleet=fleet,
+                hangar=hangar,
+                placements=tuple(placements),
+                maintenance_plane=target.maintenance_plane,
+                ground_objects=target.ground_objects,
+                ground_object_placements=fixed_obstacle_placements,
+            )
+
+        def _route(
+            mover: Aircraft, start: Pose, goal: Pose, *, placed_obs: Layout, on_carts: bool
+        ) -> DubinsArc | None:
+            # Single-start plan_path wrapper (entries omitted ⇒ None): charges
+            # expansions to total_used on success OR failure; returns the arc or None.
+            # Never touches deepest_conflict (the main loop's capture is the #668
+            # actionable reason).
+            nonlocal total_used
+            remaining = total_budget - total_used
+            if remaining <= 0:
+                return None
+            stats: dict[str, object] = {}
+            try:
+                arc = plan_path(
+                    mover,
+                    start,
+                    goal,
+                    hangar=hangar,
+                    placed=placed_obs,
+                    mover_on_carts=on_carts,
+                    heuristic=heuristic,
+                    max_expansions=min(budget, remaining),
+                    stats=stats,
+                )
+            except NoFeasiblePlanError:
+                exp = stats.get("expansions", 0)
+                total_used += exp if isinstance(exp, int) else 0
+                return None
+            exp = stats.get("expansions", 0)
+            total_used += exp if isinstance(exp, int) else 0
+            return arc
+
+        for s_slot in rest:  # back_first_order: deepest stuck body first
+            displaceable = back_first_order(
+                tuple(
+                    p
+                    for p in placed_list
+                    if not p.hand_placed and p.plane_id not in displaced_planes
+                )
+            )
+            for d_slot in displaceable:
+                without_d = [p for p in placed_list if p.plane_id != d_slot.plane_id]
+                d_aircraft = fleet[d_slot.plane_id]
+                for staging in _staging_poses(d_slot, hangar):
+                    # Leg 1 — D: final -> staging (others parked, S not yet in).
+                    aside = _route(
+                        d_aircraft,
+                        Pose.from_placement(d_slot),
+                        staging,
+                        placed_obs=_layout_of(without_d),
+                        on_carts=d_slot.on_carts,
+                    )
+                    if aside is None:
+                        continue
+                    remaining = total_budget - total_used
+                    if remaining <= 0:
+                        return None
+                    d_at_staging = Placement(
+                        d_slot.plane_id,
+                        staging.x_m,
+                        staging.y_m,
+                        staging.heading_deg,
+                        d_slot.on_carts,
+                        d_slot.hand_placed,
+                    )
+                    # S: door -> final, against others + D@staging (multi-start cone).
+                    s_cone = entry_poses(s_slot, hangar)
+                    s_stats: dict[str, object] = {}
+                    try:
+                        s_arc = plan_path(
+                            fleet[s_slot.plane_id],
+                            s_cone[0],
+                            Pose.from_placement(s_slot),
+                            hangar=hangar,
+                            placed=_layout_of([*without_d, d_at_staging]),
+                            mover_on_carts=s_slot.on_carts,
+                            entries=s_cone,
+                            heuristic=heuristic,
+                            max_expansions=min(budget, remaining),
+                            stats=s_stats,
+                        )
+                    except NoFeasiblePlanError:
+                        exp = s_stats.get("expansions", 0)
+                        total_used += exp if isinstance(exp, int) else 0
+                        continue
+                    exp = s_stats.get("expansions", 0)
+                    total_used += exp if isinstance(exp, int) else 0
+                    s_apron_fb = s_stats.get("apron_fallback") is True
+                    # Leg 2 — D: staging -> final, against others + S@final.
+                    ret = _route(
+                        d_aircraft,
+                        staging,
+                        Pose.from_placement(d_slot),
+                        placed_obs=_layout_of([*without_d, s_slot]),
+                        on_carts=d_slot.on_carts,
+                    )
+                    if ret is None:
+                        continue
+                    # All three legs feasible — commit and recurse for the rest.
+                    if displacements_used >= disp_cap:
+                        return None
+                    displacements_used += 1
+                    displaced_planes.add(d_slot.plane_id)
+                    new_rest = [p for p in rest if p.plane_id != s_slot.plane_id]
+                    sub = _place_rest(placed_list + [s_slot], new_rest, allow_displace=True)
+                    if sub is not None:
+                        step = _FillStep(
+                            moves=(
+                                Move(d_slot.plane_id, staging, aside, leg_index=1),
+                                Move(
+                                    s_slot.plane_id,
+                                    Pose.from_placement(s_slot),
+                                    s_arc,
+                                    leg_index=0,
+                                ),
+                                Move(
+                                    d_slot.plane_id,
+                                    Pose.from_placement(d_slot),
+                                    ret,
+                                    leg_index=2,
+                                ),
+                            ),
+                            committed=(s_slot,),
+                            apron_fallback_planes=(s_slot.plane_id,) if s_apron_fb else (),
+                        )
+                        return [step, *sub]
+                    displaced_planes.discard(d_slot.plane_id)  # per-path undo; counter stays
+        return None
+
+    # Phase 1: today's non-displacing DFS, byte-identical. May RAISE on budget /
+    # backtrack-cap exhaustion (propagates → no phase 2, so an un-routable fill's
+    # disprove cost stays 1×). Returns None only on an IN-BUDGET deadlock.
+    result = _place_rest(placed, ordered, allow_displace=False)
+    if result is None and disp_cap > 0 and hangar.apron_depth_m > 0.0:
+        # Phase 2 (#667 Rung E): the whole-fill order search deadlocked within budget
+        # — enable move-aside with a FRESH expansion budget. Reached only here, so any
+        # layout phase 1 solves is byte-identical (ADR-0003). Phase 2 runs only after a
+        # cheap phase-1 deadlock, bounding worst-case disprove cost. Skip it entirely
+        # when move-aside CANNOT engage (no apron, or displacement cap 0): _try_move_aside
+        # would be a guaranteed no-op, so re-running the order search is pure waste — and
+        # this keeps the no-apron / disp-0 disprove genuinely same-speed as pre-Rung-E
+        # (it bails on phase 1's deepest_conflict, identical to the re-captured one).
+        total_used = 0
+        backtracks_used = 0
+        deepest_conflict = None
+        result = _place_rest(placed, ordered, allow_displace=True)
     if result is None:
-        # No placement order seats every body (a true lock — needs the Stage 1
-        # move-aside, still to come) or every candidate conflicts. Name the
-        # deepest body and carry its conflict (matches the old monotonic bail).
+        # No order seats every body, with or without move-aside. Name the deepest
+        # body and carry its conflict (matches the old monotonic bail).
         bail = deepest_conflict or Conflict.single(
             kind="no_feasible_path",
             plane=ordered[0].plane_id,
@@ -1763,21 +2271,22 @@ def _plan_fill(
         # body; on a pure ordering lock it's the deepest (the synthesized fallback).
         raise NoFeasiblePlanError(bail.planes[0], bail)
 
-    for slot, arc, apron_fb in result:
-        moves.append(Move(slot.plane_id, Pose.from_placement(slot), arc))
-        placed.append(slot)
+    for step in result:
+        moves.extend(step.moves)
+        placed.extend(step.committed)
         # #503: record (plan-inert) the planes that towed via the y=0 door-line
         # fallback DESPITE an apron being set — their footprint is too deep for the
         # apron. Committed-move order (deterministic, ADR-0003), only when the
         # caller passed `apron_dropped_out`; the depth is the per-plane FOOTPRINT
         # extent, not the fleet-wide `auto` over-margin. Never read back.
-        if apron_fb and apron_dropped_out is not None:
-            apron_dropped_out.append(
-                ApronShallowDrop(
-                    plane_id=slot.plane_id,
-                    min_depth_m=_plane_fore_aft_length_m(fleet[slot.plane_id]),
+        if apron_dropped_out is not None:
+            for pid in step.apron_fallback_planes:
+                apron_dropped_out.append(
+                    ApronShallowDrop(
+                        plane_id=pid,
+                        min_depth_m=_plane_fore_aft_length_m(fleet[pid]),
+                    )
                 )
-            )
 
     # Ground-object movers (#602): route each placed-routed mover with its own
     # path. id-sorted + appended after the aircraft loop => aircraft moves stay
@@ -1904,6 +2413,17 @@ _MAX_FILL_BACKTRACKS = 2000  # GLOBAL cap on order-search dead-end backtracks (#
 # of the per-plane budget. Inert for the greedy-success path (0 backtracks ⇒
 # byte-identical, ADR-0003) and far above any legitimate small reorder; it only
 # bounds a pathological/un-routable order search. Overridable via ``max_backtracks``.
+
+_MAX_FILL_DISPLACEMENTS = 16  # GLOBAL cap on committed move-aside recursions (#667 Rung E).
+# Move-aside relocates a parked body so a stuck body can route, then restores it. Each
+# (S, D, staging) combo whose three legs all route and which RECURSES counts once
+# (whether or not it ultimately succeeds): a MONOTONIC, non-decremented global ceiling
+# that terminates the phase-2 search independent of the per-plane expansion budget.
+# Per-path cycle-safety + clean leg_index come from the `displaced_planes` membership set
+# (a body is displaced at most once per DFS path); depth is structurally 1 (a shuffle's
+# legs are direct plan_path calls, never a nested order search). 0 ⇒ move-aside disabled
+# (byte-identical to pre-Rung-E). Overridable via the ``max_displacements`` param.
+
 # Sampling resolution for the FAST in-search `_motion_clear` validity checks
 # (edges + the analytic-shot screen). Coarser than the exact oracle's default
 # (0.05 m / 1°) to keep the search tractable: the worst case is a plane that can
@@ -2426,6 +2946,7 @@ def plan_path(
     entries: tuple[Pose, ...] | None = None,
     max_expansions: int = _MAX_EXPANSIONS,
     heuristic: Literal["euclidean", "grid"] = "euclidean",
+    heuristic_fn: Callable[[Pose], float] | None = None,
     stats: dict[str, object] | None = None,
 ) -> DubinsArc:
     """Deterministic Hybrid-A* tow path from ``entry`` (or ``entries``) to ``goal``.
@@ -2479,6 +3000,9 @@ def plan_path(
     and the exact-oracle safety net are untouched, so a ``"grid"`` path is just
     as exact-oracle-clean as a ``"euclidean"`` one. Both modes are deterministic
     (ADR-0003): the grid Dijkstra is RNG-free with a monotonic-counter tie-break.
+    ``heuristic_fn``, when not ``None``, overrides the cost-to-go callable
+    selected by ``heuristic`` — intended for dev/test probes only (#840); passing
+    ``None`` (the default) is byte-identical to omitting the parameter (ADR-0003).
 
     ``stats`` is an optional out-parameter (diagnostics only; ``None`` ⇒ no-op,
     no behaviour change): on return/raise it is populated with ``expansions``,
@@ -2509,19 +3033,38 @@ def plan_path(
     # the obstacle-aware free-space geodesic field, falling back to Euclidean on
     # any cell outside the field (blocked / off-grid). The default branch's
     # expression is unchanged so the determinism canaries stay byte-identical.
+    _h: Callable[[Pose], float]
     if heuristic == "grid":
         _field = _build_grid_heuristic(goal, obstacles, hangar)
 
-        def _h(p: Pose) -> float:
+        def _grid_h(p: Pose) -> float:
             cell = (round(p.x_m / _GRID_XY_M), round(p.y_m / _GRID_XY_M))
             g = _field.get(cell)
             if g is None:
                 return math.hypot(goal.x_m - p.x_m, goal.y_m - p.y_m)
             return g
+
+        _h = _grid_h
     else:
 
-        def _h(p: Pose) -> float:
+        def _euclid_h(p: Pose) -> float:
             return math.hypot(goal.x_m - p.x_m, goal.y_m - p.y_m)
+
+        _h = _euclid_h
+
+    # Generic dev/test-only cost-to-go injection seam (#840). An explicit
+    # heuristic_fn overrides the `_h` cost-to-go estimate for an experiment that
+    # needs a custom heuristic without monkeypatching this function's internals.
+    # There is intentionally NO production caller: it was added for the #840
+    # heading-aware-heuristic headroom probe (which measured NO-GO — the heuristic
+    # class is dead for the fk9↔cessna nook, see docs/spikes/
+    # herrenteich-fk9-cessna-lateral-shuffle.md), and is retained as a generic seam
+    # for future heuristic experiments (its only consumer is
+    # bench/se2_heuristic_probe.py + tests/test_towplanner_heuristic_fn.py). Default
+    # None ⇒ the `heuristic` Literal's `_h` above is used unchanged ⇒ byte-identical
+    # (ADR-0003): the determinism canaries never pass heuristic_fn.
+    if heuristic_fn is not None:
+        _h = heuristic_fn
 
     counter = 0
 

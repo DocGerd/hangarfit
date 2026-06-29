@@ -41,8 +41,10 @@ from pathlib import Path
 from typing import Any, Literal, cast
 
 import yaml
+from shapely.geometry import Polygon, box
 
 from .models import (
+    _RING_MIN_ABS_SIGNED_AREA,
     Aircraft,
     Door,
     GroundObject,
@@ -51,6 +53,7 @@ from .models import (
     MaintenanceBay,
     MoverMotionMode,
     Part,
+    PartKind,
     Placement,
     PlaneConstraint,
     RegionPreference,
@@ -1502,8 +1505,19 @@ _ALLOWED_PART_KEYS = frozenset(
         "z_bottom_m",
         "z_top_m",
         "planform",
+        "vertices",
     }
 )
+
+# vertices: is valid only on the fuselage family. A `kind: fuselage` entry is
+# built under the placeholder kind "fuselage_aft" (see _build_aircraft), so
+# "fuselage" itself is never a Part kind reaching _build_part.
+_VERTICES_ALLOWED_KINDS = frozenset({"fuselage_front", "fuselage_aft"})
+
+# A polygon fuselage must be axis-aligned: the clip works in part-own x, which
+# equals plane-local x only when unrotated (#550). Fuselages are angle-0 by
+# construction, so rotation support is YAGNI.
+_FUSELAGE_OUTLINE_ANGLE_TOL_DEG = 1e-9
 
 
 def _build_planform(
@@ -1555,6 +1569,27 @@ def _build_planform(
     )
 
 
+def _build_vertices(data: Any, index: int) -> tuple[tuple[float, float], ...]:
+    """Parse a raw ``vertices:`` ring (part-own centred frame) into Part vertices.
+
+    Each entry is an ``[x, y]`` pair. This helper does **shape/type** validation
+    only (a list of numeric pairs → a clear LoaderError, not a deep TypeError);
+    **ring validity** — vertex count, degeneracy, self-intersection, and the bbox
+    subset — is enforced by ``Part.__post_init__`` / ``_canonicalize_ring``
+    (ADR-0003) and surfaces as a LoaderError at the load boundary.
+    """
+    if not isinstance(data, list):
+        raise LoaderError(f"parts[{index}].vertices must be a list of [x, y] pairs")
+    ring: list[tuple[float, float]] = []
+    for j, pair in enumerate(data):
+        if not isinstance(pair, (list, tuple)) or len(pair) != 2:
+            raise LoaderError(f"parts[{index}].vertices[{j}] must be an [x, y] pair, got {pair!r}")
+        x = _to_float(pair[0], f"parts[{index}].vertices[{j}][0]")
+        y = _to_float(pair[1], f"parts[{index}].vertices[{j}][1]")
+        ring.append((x, y))
+    return tuple(ring)
+
+
 def _build_part(data: Any, index: int) -> Part:
     if not isinstance(data, dict):
         raise LoaderError(f"parts[{index}] must be a mapping")
@@ -1573,11 +1608,23 @@ def _build_part(data: Any, index: int) -> Part:
             f"parts[{index}]: planform: is only valid on a kind 'wing' part, "
             f"got kind {data['kind']!r}"
         )
+    if "vertices" in data and "planform" in data:
+        raise LoaderError(
+            f"parts[{index}]: 'vertices:' and 'planform:' are mutually exclusive "
+            f"(both author a polygon footprint)"
+        )
+    if "vertices" in data and data["kind"] not in _VERTICES_ALLOWED_KINDS:
+        raise LoaderError(
+            f"parts[{index}]: 'vertices:' is only valid on a fuselage part "
+            f"(authored as kind 'fuselage'), got kind {data['kind']!r}"
+        )
     width_m = _to_float(data["width_m"], f"parts[{index}].width_m")
     length_m = _to_float(data["length_m"], f"parts[{index}].length_m")
     local_vertices = None
     if "planform" in data:
         local_vertices = _build_planform(data["planform"], width_m, length_m, index)
+    elif "vertices" in data:
+        local_vertices = _build_vertices(data["vertices"], index)
     return Part(
         kind=data["kind"],
         length_m=length_m,
@@ -1721,15 +1768,22 @@ def _wing_trailing_edge_x(wing: Part) -> float:
 def _split_fuselage(fuselage: Part, wing: Part) -> list[Part]:
     """Split one full fuselage :class:`Part` into a front/aft pair.
 
-    ``fuselage`` is the already-field-validated full-fuselage box (built from
-    a ``kind: fuselage`` YAML entry under a placeholder kind in
+    ``fuselage`` is the already-field-validated full fuselage (built from a
+    ``kind: fuselage`` YAML entry under a placeholder kind in
     :func:`_build_aircraft`). The break station is derived from the aircraft's
     own ``wing`` part — the wing trailing edge
     ``x_break = wing.offset_x_m − wing.length_m/2`` (:func:`_wing_trailing_edge_x`,
     ADR-0012). There is no ``wing_root_x_m`` YAML field; the break is always
     derived.
 
-    The split is **area-conserving**: both segments inherit the source
+    **Two paths (ADR-0012 amendment, #550):** a scalar fuselage (no
+    ``local_vertices``) takes the box-interval split documented below
+    (byte-identical for every catalog aircraft). A polygon fuselage (a raw
+    ``vertices:`` outline) is delegated to :func:`_clip_fuselage_outline`, which
+    Shapely-clips the outline into front/aft **sub-polygons** at the same
+    ``x_break``.
+
+    The **scalar** split is **area-conserving**: both boxes inherit the source
     fuselage's ``width_m``, ``z_bottom_m``, ``z_top_m``, ``angle_deg`` and
     ``offset_y_m``; they abut at ``x_break`` and their union reconstitutes the
     original footprint exactly (no gap, no overlap). Let the source fuselage
@@ -1739,23 +1793,25 @@ def _split_fuselage(fuselage: Part, wing: Part) -> list[Part]:
     - ``fuselage_aft`` spans ``[c − L/2, x_break]`` (tail side),
 
     each with ``offset_x_m`` at the midpoint of its span and ``length_m`` its
-    span width.
+    span width. (The polygon path is also area-conserving, but each sub-polygon
+    gets its own ``width_m``/``offset_y_m`` from its sub-bbox — see
+    :func:`_subpart_from_clip`.)
 
     Raises :class:`LoaderError` if the derived break does not lie strictly
     inside the fuselage span (the wing trailing edge is forward of the nose or
     aft of the tail) — a degenerate split that would produce a zero- or
-    negative-length segment.
+    negative-length segment. (The polygon path raises additionally — angle ≠ 0,
+    break outside the outline x-span, or a non-single-Polygon clip; see
+    :func:`_clip_fuselage_outline`.)
     """
+    x_break = _wing_trailing_edge_x(wing)
     if fuselage.local_vertices is not None:
-        raise LoaderError(
-            "a fuselage part may not carry a polygon footprint (local_vertices); "
-            "polygon footprints are wing-only"
-        )
+        return _clip_fuselage_outline(fuselage, x_break)
+    # --- scalar box-interval path below is UNCHANGED (byte-identical, #550) ---
     c = fuselage.offset_x_m
     half_len = fuselage.length_m / 2.0
     nose_x = c + half_len  # forward tip (+x)
     tail_x = c - half_len  # aft tip (−x)
-    x_break = _wing_trailing_edge_x(wing)
 
     if not (tail_x < x_break < nose_x):
         raise LoaderError(
@@ -1793,9 +1849,109 @@ def _split_fuselage(fuselage: Part, wing: Part) -> list[Part]:
     ]
 
 
+def _clip_fuselage_outline(fuselage: Part, x_break: float) -> list[Part]:
+    """Clip a polygon fuselage outline into front/aft sub-polygons at x_break (#550).
+
+    ``x_break`` is the wing trailing edge in plane-local coords (ADR-0012). The
+    outline lives in the part's own centred frame; for an axis-aligned fuselage
+    that frame is plane-local shifted by ``offset_x_m``, so the part-own clip
+    station is ``xs = x_break - offset_x_m``. The half-plane intersection is
+    interpolation-only (no trig) and area-conserving, and each side is
+    re-canonicalized by ``Part.__post_init__``, so the result is deterministic
+    same-machine (the canary regime). Cross-machine byte-identity stays
+    asserted-not-tested like the rest of the pipeline (ADR-0003); unlike the
+    transform the clip adds no libm-transcendental surface (GEOS aside).
+    """
+    if abs(fuselage.angle_deg) > _FUSELAGE_OUTLINE_ANGLE_TOL_DEG:
+        raise LoaderError(
+            f"a polygon fuselage (vertices:) must be axis-aligned (angle_deg = 0); "
+            f"got angle_deg={fuselage.angle_deg:g}"
+        )
+    assert fuselage.local_vertices is not None  # caller guarantees; narrows for mypy
+    xs = x_break - fuselage.offset_x_m
+    outline = Polygon(fuselage.local_vertices)
+    minx, miny, maxx, maxy = outline.bounds
+    if not (minx < xs < maxx):
+        raise LoaderError(
+            f"kind 'fuselage': derived front/aft section break x={x_break:g} "
+            f"(wing trailing edge) must lie strictly inside the fuselage outline "
+            f"x-span; the break must be strictly inside the span. Check the wing "
+            f"offset_x_m / length_m or the fuselage outline."
+        )
+    pad = (maxx - minx) + (maxy - miny) + 1.0  # any margin past the bbox
+    front_geom = outline.intersection(box(xs, miny - pad, maxx + pad, maxy + pad))
+    aft_geom = outline.intersection(box(minx - pad, miny - pad, xs, maxy + pad))
+    return [
+        _subpart_from_clip(fuselage, "fuselage_front", front_geom, "front"),
+        _subpart_from_clip(fuselage, "fuselage_aft", aft_geom, "aft"),
+    ]
+
+
+def _subpart_from_clip(fuselage: Part, kind: PartKind, geom: Any, side_label: str) -> Part:
+    """Build one fuselage_front/aft Part from a clipped sub-polygon (#550).
+
+    Requires exactly one connected, non-degenerate ``Polygon`` per side (a
+    ``MultiPolygon`` — e.g. from a non-x-monotone outline — is rejected). A single
+    connected piece per side is what makes the front sub-outline the nose-side
+    cockpit; x-monotonicity of the authored outline is the authoring contract, not
+    a checked invariant. The sub-polygon comes back in the source part's own
+    centred frame; re-express it about its own sub-bbox centre.
+    ``Part.__post_init__`` is the authoritative ring-validity gate (degeneracy,
+    self-intersection, bbox subset); any rejection there is re-raised as an
+    attributed ``LoaderError`` so the clip's error contract is total.
+    """
+    # `_RING_MIN_ABS_SIGNED_AREA` is reused here only as a conservative fast-reject
+    # area floor for the obvious empty/sliver case; the precise degeneracy gate is
+    # the Part constructor below (its threshold is on |2·signed-area|, not area).
+    if geom.is_empty or geom.geom_type != "Polygon" or geom.area < _RING_MIN_ABS_SIGNED_AREA:
+        raise LoaderError(
+            f"kind 'fuselage': the outline does not clip into a single non-degenerate "
+            f"{side_label} piece at the wing trailing edge; the outline must be a simple, "
+            f"x-monotone polygon spanning the break (got {geom.geom_type}, area={geom.area:g})."
+        )
+    coords = list(geom.exterior.coords)[:-1]  # drop Shapely's closing duplicate
+    xs_ = [x for x, _ in coords]
+    ys_ = [y for _, y in coords]
+    sub_cx = (min(xs_) + max(xs_)) / 2.0
+    sub_cy = (min(ys_) + max(ys_)) / 2.0
+    try:
+        return Part(
+            kind=kind,
+            length_m=max(xs_) - min(xs_),
+            width_m=max(ys_) - min(ys_),
+            offset_x_m=fuselage.offset_x_m + sub_cx,
+            offset_y_m=fuselage.offset_y_m + sub_cy,
+            angle_deg=fuselage.angle_deg,
+            z_bottom_m=fuselage.z_bottom_m,
+            z_top_m=fuselage.z_top_m,
+            local_vertices=tuple((x - sub_cx, y - sub_cy) for x, y in coords),
+        )
+    except ValueError as e:
+        raise LoaderError(
+            f"kind 'fuselage': the clipped {side_label} sub-polygon at the wing "
+            f"trailing edge is not a valid part ring ({e})"
+        ) from e
+
+
+# Strict per-placement key allowlist (#667 review). An unknown placement key is
+# REJECTED, not silently dropped — mirroring the ground-object entry allowlist
+# (`_allowed_go_entry`) and the #513/#516 silent-failure policy. Critical for
+# `hand_placed`: a silent drop would INVERT intent (default False → a hand-
+# positioned glider gets tow-routed) with no signal to the YAML author.
+_ALLOWED_PLACEMENT_KEYS = frozenset(
+    {"plane", "x_m", "y_m", "heading_deg", "on_carts", "hand_placed"}
+)
+
+
 def _build_placement(data: Any) -> Placement:
     if not isinstance(data, dict):
         raise LoaderError(f"placement must be a mapping, got {type(data).__name__}")
+    unknown = set(data) - _ALLOWED_PLACEMENT_KEYS
+    if unknown:
+        raise LoaderError(
+            f"unknown placement key(s) {sorted(unknown)}; "
+            f"allowed: {sorted(_ALLOWED_PLACEMENT_KEYS)}"
+        )
     required = ("plane", "x_m", "y_m", "heading_deg")
     for key in required:
         if key not in data:
@@ -1806,6 +1962,10 @@ def _build_placement(data: Any) -> Placement:
         y_m=_to_float(data["y_m"], "y_m"),
         heading_deg=_to_float(data["heading_deg"], "heading_deg"),
         on_carts=_to_bool(data.get("on_carts", False), "on_carts"),
+        # #667 Stage 0: a hand-positioned (dolly-borne) body is parked by hand, not
+        # tow-routed. Optional, default False — every existing layout stays
+        # byte-identical (ADR-0003 inert-path guarantee).
+        hand_placed=_to_bool(data.get("hand_placed", False), "hand_placed"),
     )
 
 

@@ -28,7 +28,7 @@ export interface GroundObjectsBundle {
  * its final_pose, add it to the scene, and append a legend chip. Returns the
  * groups so the timeline can drive movers per frame (#651); a fixed obstacle just
  * stays at its pose. A GO-free scene builds nothing and is inert (no legend rows). */
-export function addGroundObjects(scene: THREE.Scene, SCENE: SceneV2): GroundObjectsBundle {
+export function addGroundObjects(scene: THREE.Object3D, SCENE: SceneV2): GroundObjectsBundle {
   const groups: Record<string, THREE.Group> = {};
   const legend = byId('legend');
 

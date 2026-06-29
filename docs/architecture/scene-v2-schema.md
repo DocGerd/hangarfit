@@ -193,7 +193,7 @@ self-check as `anchors`; the egress lane is draw-only and not anchored.
 ```jsonc
 {
   "total_s": 24.0,
-  "segments": [                // one per plane, in back_first_order (deepest first)
+  "segments": [                // one per LEG; back_first_order — or global execution order for a move-aside body
     {
       "plane_id": "fk9_mkii",
       "start_s": 0.0,
@@ -202,25 +202,59 @@ self-check as `anchors`; the egress lane is draw-only and not anchored.
         [0.0, 1.0, 9.0, 1.0, 0.0, 0.0],
         // …
       ]
+      // "leg_index": 0        // OPTIONAL (#865) — present ONLY for a multi-leg body
     }
   ]
 }
 ```
 
-Built from each `MovesPlan` move's `DubinsArc.sample()` over `back_first_order`.
-Per-plane duration is proportional to path length (`DubinsArc.length_m`) via a tow
+Built from each `MovesPlan` move's `DubinsArc.sample()` over `back_first_order` (a
+move-aside body's legs are instead laid in **global execution order** — see *Multi-leg
+bodies* below). Per-plane duration is proportional to path length (`DubinsArc.length_m`) via a tow
 speed, clamped to `[min_seg_s, max_seg_s]`. Sample count per path is capped (the
 sampling step is coarsened) to keep the HTML small.
 
-**Viewer state machine** — for a plane with segment `s` at time `t`:
+### Multi-leg bodies (`leg_index`, #865 Rung D)
+
+A body normally has **one** segment (one leg, door → slot). A *move-aside* body
+([#667](https://github.com/DocGerd/hangarfit/issues/667) Rung E) instead drives to a
+transient **staging pose** (leg 0), waits while another body routes past, then drives
+to its final slot (leg 1) — so `segments` may carry **more than one entry per
+`plane_id`**, laid end-to-end in leg order. Each such segment then carries an
+**optional** `leg_index: int` (`0`-based, execution order).
+
+`leg_index` is emitted **only for a multi-leg body** — a single-leg body (every body in a plan that needs no
+move-aside; no default-shipped layout triggers one) omits the key entirely, so an existing scene is **byte-identical** to the
+pre-Rung-D form. The `SCHEMA` stays `hangarfit.scene/v2` (additive only). A consumer
+that ignores `leg_index` still animates correctly (segments are already sequential);
+the field is an explicit, robust ordering label. The body's **final** pose is the
+*last* leg's end; a staging pose is **not** in `final_poses` / `placements`.
+
+> **Producer status (Rung E, #667 / shipped via #869).** Move-aside is the first
+> multi-leg producer: `towplanner.plan_fill`'s phase-2 move-aside emits a displaced
+> body's staging + return legs, and `scene._timeline` lays a shuffle's legs in
+> **global execution order**, so the "waiting at staging" gap row is reachable. It
+> is a **byte-identical capability seam** (ADR-0003) — phase-2 move-aside engages
+> only on an in-budget phase-1 deadlock with `apron_depth_m > 0` and a positive
+> displacement cap, so the default (no-apron) path still emits single-leg bodies
+> exactly as before. The dense Herrenteich all-8 is budget-bound (it bails at the
+> global expansion cap before phase 2 engages), so no *default-shipped* layout
+> exercises the multi-leg path today; the fk9_mkii↔cessna_140 pair stays a
+> documented manual-insertion case.
+
+**Viewer state machine** — for a plane with leg list `S` (sorted by `leg_index`) at
+time `t`:
 
 | Condition | State | Affine |
 |---|---|---|
-| `t < s.start_s` | hidden (still outside) | — |
-| `s.start_s ≤ t < s.end_s` | animating | `s.samples[round(frac·(n−1))]` |
-| `t ≥ s.end_s` | parked | `final_poses[plane_id]` |
+| `t < S[0].start_s` | hidden (still outside) | — |
+| `S[k].start_s ≤ t < S[k].end_s` | animating leg `k` | `S[k].samples[round(frac·(n−1))]` |
+| `S[k].end_s ≤ t < S[k+1].start_s` | waiting at staging | `S[k].samples[−1]` |
+| `t ≥ S[−1].end_s` | parked | `final_poses[plane_id]` |
 
-A plane with **no** segment (static scene) is always shown at `final_poses`.
+For a single-leg body these collapse to the original hidden → animating → parked
+transitions. A plane with **no** segment (static scene) is always shown at
+`final_poses`.
 
 ### Static / un-routable layouts
 
@@ -239,3 +273,36 @@ part, `::test_build_scene_v2_byte_deterministic_with_polygon`). A polygon box's
 `vertices` come straight from the load-time-canonicalized `Part.local_vertices`
 (CCW, lex-min start — ADR-0024), so two equivalent author orderings produce a
 byte-identical scene.
+
+## The multi-solution compare container (NOT part of scene/v2)
+
+`hangarfit view --solve --alternatives N` (#666) carries several solver
+alternatives in **one** offline HTML so a human can switch between them. This is a
+**viewer-HTML-level wrapper, deliberately layered _over_ N independent scene/v2
+documents — it is not part of this schema.** It rides in a separate
+`<script type="application/json" id="solutions">` blob (the single-scene viewer keeps
+its `id="scene"` blob), with shape:
+
+```jsonc
+{
+  "schema": "hangarfit.viewer-compare/v1",
+  "count_requested": 3,        // the --alternatives N the user asked for
+  "count_found": 2,            // diverse solutions actually found ("Found n of N")
+  "solutions": [
+    { "label": "#1",
+      "scene": { /* a full, standalone hangarfit.scene/v2 doc */ },
+      "summary": { "min_gap_m": 1.23, "planes_moved_vs_first": 0,
+                   "mean_shift_m": 0.0, "routable": true } },
+    // …
+  ]
+}
+```
+
+Keeping the container out of scene/v2 is deliberate: `scene.build_scene` (and its
+byte-determinism + the `scene-contract.ts` key-parity guard) stay untouched, and each
+carried `scene` is **byte-identical** to a standalone single-solution render of that
+layout (ADR-0003) — the container is purely additive. The `summary` numbers are the
+same compare metrics `solve` narrates (`cli._placement_delta`, the diagnostics
+`min_pairwise_gap_m`). The viewer reads this blob into the `CompareManifest` interface
+(`viewer/src/scene-contract.ts`), which — being viewer-only — is **not** checked against
+any Python key set.

@@ -51,6 +51,24 @@ Keys: `cell_m`, `origin_x_m`, `origin_y_m`, `grid_h`, `grid_w`, `steps_this_obje
 `steps_total` (integers stored as floats). For debugging / un-normalization. Returned as
 an immutable `MappingProxyType`; writing to any key raises `TypeError`.
 
+## Schema 2 — ego-centric augment (`--relative-encoder`, opt-in; #827)
+With `EncoderConfig.ego_centric` (CLI `--relative-encoder`), each token is **augmented** to
+width **28** and `schema_version` is stamped **2**. Cols 0–23 are written identically to schema 1
+(the absolute pose stays in 18–21); four columns are appended:
+
+| cols | feature |
+|---|---|
+| 24–25 | active-frame position `[fwd, right]` of this object relative to the active object, ÷ `pos_ref_m` |
+| 26–27 | active-frame relative heading `[sinΔθ, cosΔθ]` |
+
+The frame is the active object's SE(2) body frame — basis `forward=(sinθ_a, cosθ_a)`,
+`right=(cosθ_a, −sinθ_a)`, the compass-convention (det −1) frame that matches the kinematic
+integrator. The active object's own ego cols are `(0, 0, 0, 1)`; unplaced objects' ego cols are
+zero. The encoding is invariant under proper rigid scene motions (SE(2)). Default off =
+byte-identical to schema 1. See [ADR-0028](../adr/0028-learned-backend-train-to-mastery-resolved-negative.md)
+(re-open trigger #2) and `docs/superpowers/specs/2026-06-24-relative-encoder-ego-centric-design.md`.
+
 ## Versioning
 Adding/reordering channels or token columns, or wiring the reserved slots, bumps
-`SCHEMA_VERSION`. Validity-only across machines; bit-identical within a build.
+`SCHEMA_VERSION`. Validity-only across machines; bit-identical within a build. The opt-in
+ego-centric augment stamps `SCHEMA_VERSION_EGO = 2` (default off stays `1`, byte-identical).

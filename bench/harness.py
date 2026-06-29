@@ -38,7 +38,7 @@ import time
 from dataclasses import dataclass, field
 
 from hangarfit.collisions import check as check_layout
-from hangarfit.loader import load_scenario
+from hangarfit.loader import load_layout, load_scenario
 from hangarfit.models import Layout, Placement, Scenario, SolveResult
 from hangarfit.solver import SearchConfig, solve
 from hangarfit.towplanner import (
@@ -127,8 +127,21 @@ def load_regime_scenario(regime: Regime) -> Scenario:
     ``0`` passes ``apron_depth=None`` so the no-apron regimes keep the original
     load path (and their numbers) byte-identical.
     """
+    assert regime.scenario is not None, f"{regime.key}: not a solve regime (no scenario)"
     apron = regime.apron_depth if regime.apron_depth else None
     return load_scenario(regime.scenario, apron_depth=apron)
+
+
+def load_regime_layout(regime: Regime) -> Layout:
+    """Load a WITNESS regime's pre-built layout (#667 Rung B).
+
+    Relative ``fleet:`` / ``hangar:`` refs resolve against the layout file's own
+    directory; a non-zero ``apron_depth`` is applied identically to the solve
+    path. The layout is routed as-is — no solve runs.
+    """
+    assert regime.layout is not None, f"{regime.key}: not a witness regime (no layout)"
+    apron = regime.apron_depth if regime.apron_depth else None
+    return load_layout(regime.layout, apron_depth=apron)
 
 
 def _search_config(regime: Regime) -> SearchConfig:
@@ -158,11 +171,15 @@ def _route_layout(regime: Regime, layout: Layout) -> RouteOutcome:
             max_total_expansions=regime.tow_max_total_expansions,
         )
     except NoFeasiblePlanError as exc:
+        # Name the deepest unplaceable body AND the conflict detail — the detail
+        # distinguishes a genuine geometric wall from a global-budget-exhaustion
+        # bail (both report kind ``no_feasible_path``), which the #667 routing
+        # ceiling baseline needs to interpret the wall honestly.
         return RouteOutcome(
             routed=False,
             routing_s=time.perf_counter() - start,
             plan=None,
-            note=f"un-routable ({exc.conflict.kind})",
+            note=f"un-routable: {exc.plane_id} ({exc.conflict.kind}: {exc.conflict.detail})",
         )
     return RouteOutcome(routed=True, routing_s=time.perf_counter() - start, plan=plan)
 
@@ -188,13 +205,29 @@ def _path_failures(plan: MovesPlan, target: Layout) -> list[str]:
     placed: list[Placement] = []
     failures: list[str] = []
     for move in plan.moves:
+        if move.plane_id not in by_id:
+            # A placed_routed_mover ground-object move (towplanner.py): its id is
+            # not an aircraft placement. Movers route LAST against the fully-placed
+            # aircraft set and are not aircraft keep-outs (they live in
+            # `ground_object_placements`), so they are out of scope for this
+            # aircraft-arc re-validation — re-validating mover arcs is Rung E / #602
+            # work. Skipping avoids both a KeyError here and corrupting `placed`
+            # (an aircraft-only list) with a ground object.
+            continue
+        original = by_id[move.plane_id]
+        if move.path is None:
+            # A path-less at-rest move (a #667 hand-placed aircraft body): no arc
+            # to re-validate. It is still a keep-out for later routed bodies —
+            # `plan_fill` seeds `placed` with the hand-placed slots — so keep the
+            # obstacle context faithful by committing it before the next move.
+            placed.append(original)
+            continue
         placed_layout = Layout(
             fleet=target.fleet,
             hangar=target.hangar,
             placements=tuple(placed),
             maintenance_plane=target.maintenance_plane,
         )
-        original = by_id[move.plane_id]
         conflict = path_first_conflict(
             move.path,
             target.fleet[move.plane_id],
@@ -231,6 +264,12 @@ def _plan_digest(plan: MovesPlan | None) -> str:
     parts: list[str] = []
     for move in plan.moves:
         slot: Pose = move.target_slot
+        if move.path is None:
+            # Path-less at-rest move (#667 hand-placed / #601 deferred): no arc to
+            # digest. Still digest the at-rest slot so a change in the hand-placed
+            # pose is caught as a difference.
+            parts.append(f"{move.plane_id}@{slot.x_m!r},{slot.y_m!r},{slot.heading_deg!r}<at-rest>")
+            continue
         segs = ",".join(f"{s.kind}{s.gear:+d}:{s.length_m!r}" for s in move.path.segments)
         parts.append(
             f"{move.plane_id}@{slot.x_m!r},{slot.y_m!r},{slot.heading_deg!r}"
@@ -248,8 +287,60 @@ def _result_digest(result: SolveResult, plans: list[MovesPlan | None]) -> str:
 # ── top-level run ───────────────────────────────────────────────────────────
 
 
+def _route_digest(outcome: RouteOutcome) -> str:
+    """Determinism key for a single witness route (#667 Rung B).
+
+    Excludes the wall-clock ``routing_s`` (which varies run-to-run); includes the
+    bail note so a *different* deepest-unplaceable body across two routes — which
+    would leave both plans ``None`` and so escape ``_plan_digest`` alone — is
+    still caught as non-deterministic.
+    """
+    return f"{outcome.routed}|{outcome.note}|{_plan_digest(outcome.plan)}"
+
+
+def _run_witness_regime(regime: Regime) -> RegimeResult:
+    """Route a pre-built WITNESS layout directly — no solve (#667 Rung B).
+
+    The real Herrenteich all-8 is statically valid but ``solve`` cannot reproduce
+    it, so its *routing* ceiling is measured by routing the known-valid witness
+    layout via ``plan_fill``. Placement is skipped entirely (``placement_s == 0.0``,
+    ``restarts_done == 0``); validity / path-validity / determinism are computed on
+    the single witness layout exactly as the solve path computes them.
+    """
+    layout = load_regime_layout(regime)
+
+    outcome = _route_layout(regime, layout)
+    notes: list[str] = [outcome.note] if outcome.note else []
+
+    layouts_valid = _layout_score(layout) == (0, 0.0)
+    path_fails = _path_failures(outcome.plan, layout) if outcome.plan is not None else []
+    if path_fails:
+        notes.append("path failures: " + ", ".join(path_fails))
+
+    # Determinism: a second identical route must produce the same digest (ADR-0003).
+    deterministic = _route_digest(_route_layout(regime, layout)) == _route_digest(outcome)
+
+    return RegimeResult(
+        key=regime.key,
+        n_planes=regime.n_planes,
+        spread=regime.spread,
+        restarts_done=0,
+        placement_s=0.0,
+        routing_s=outcome.routing_s,
+        n_layouts=1,
+        n_routed=1 if outcome.routed else 0,
+        layouts_valid=layouts_valid,
+        paths_valid=not path_fails,
+        deterministic=deterministic,
+        status="witness",
+        notes=notes,
+    )
+
+
 def run_regime(regime: Regime) -> RegimeResult:
     """Measure one regime end-to-end: timing + the three correctness verdicts."""
+    if regime.layout is not None:
+        return _run_witness_regime(regime)
     scenario = load_regime_scenario(regime)
 
     start = time.perf_counter()
@@ -326,11 +417,15 @@ def profile_routing(regime: Regime) -> tuple[float, list[tuple[str, float, int]]
 
     Returns (total_routing_seconds, stage_buckets, pstats_top_text).
     """
-    scenario = load_regime_scenario(regime)
-    result = _solve_placement(regime, scenario)
-    if not result.layouts:
-        return (0.0, [], "(no layout to route)")
-    layout = result.layouts[0]
+    if regime.layout is not None:
+        # #667 Rung B: witness regimes route a pre-built layout directly (no solve).
+        layout = load_regime_layout(regime)
+    else:
+        scenario = load_regime_scenario(regime)
+        result = _solve_placement(regime, scenario)
+        if not result.layouts:
+            return (0.0, [], "(no layout to route)")
+        layout = result.layouts[0]
 
     profiler = cProfile.Profile()
     start = time.perf_counter()
@@ -357,6 +452,9 @@ def profile_routing(regime: Regime) -> tuple[float, list[tuple[str, float, int]]
 
 def profile_placement(regime: Regime) -> tuple[float, list[tuple[str, float, int]], str]:
     """cProfile the placement solve (no tow planning)."""
+    if regime.layout is not None:
+        # #667 Rung B: a witness regime has no placement phase.
+        return (0.0, [], "(witness regime: placement skipped — no solve)")
     scenario = load_regime_scenario(regime)
     profiler = cProfile.Profile()
     start = time.perf_counter()

@@ -93,6 +93,13 @@ class DifficultyConfig:
     # episodes in the training mix. None => fixed-k rung (use seed_anchor_k as-is) =>
     # byte-identical to the pre-change env. anchor_prob is P(k = seed_anchor_k) per episode.
     anchor_prob: float | None = None
+    # #821 backplay reverse-curriculum: when set (0..1), each episode draws phi ~ U(0, this)
+    # from the curriculum's seeded stream and the env spawns the DRIVEN object a fraction phi
+    # along the corridor from its witness park-pose (phi=0, near-solved) out to the door
+    # (phi=1). Combined with a seed_anchor_k = N-1 prefix this shows the valid dense terminal
+    # first and recedes. None => inert (no override) => byte-identical to the door-spawn env.
+    # This is the difficulty CEILING; the per-episode draw is made by the curriculum sampler.
+    backplay_phi_cap: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -136,6 +143,13 @@ class RewardWeights:
     # validity-blind, invisible at N=1 where fraction is 0/1). Validity = the same whole-layout
     # product checker (collisions.check + Caddy egress) that drives the valid_placed gate.
     validity_conditional_terminal: bool = False
+    # Banked per-valid-Park credit, scaled by the marginal valid-object count beyond the freebie:
+    # pays r_valid_progress * max(0, valid_park_count - 1) on a Park where the WHOLE layout is
+    # valid (valid_park_count = # driven-in objects). 0.0 -> term identically 0 -> byte-identical.
+    # The 1st valid object pays 0 (r_first_valid owns the breakthrough), the 2nd pays
+    # r_valid_progress, the 3rd 2x. Banked per-step so it survives GAE while the #714 terminal
+    # flag collapses; gated on park_valid so an invalid pile never pays. (#812)
+    r_valid_progress: float = 0.0
 
 
 @dataclass(frozen=True, slots=True)

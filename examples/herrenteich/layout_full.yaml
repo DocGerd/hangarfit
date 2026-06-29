@@ -75,6 +75,7 @@ placements:
     y_m: 19.89
     heading_deg: 296.9
     on_carts: true          # always_cart (dolly-pivotable in the hangar, #644)
+    hand_placed: true        # #667 Stage 0: hand-positioned on its dolly, not tow-routed
   - plane: cessna_140
     x_m: 1.8
     y_m: 22.82

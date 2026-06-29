@@ -9,7 +9,13 @@ import pytest
 
 from hangarfit.loader import load_fleet, load_hangar, load_layout
 from ml import geometry_oracle as go
-from ml.curriculum import DEFAULT_LADDER, CurriculumSchedule, Stage, with_pair_anchored_rung
+from ml.curriculum import (
+    DEFAULT_LADDER,
+    CurriculumSchedule,
+    Stage,
+    with_pair_anchored_rung,
+    with_trio_notch_anchored_rung,
+)
 from ml.stage_builder import build_stage_env, effective_fleet_ids
 from ml.types import DifficultyConfig
 
@@ -138,6 +144,184 @@ def test_witness_box_has_margin_at_strict_clearance():
     # Robustness: the witness is valid even at the file's strict 0.3 m clearance, so it has
     # real geometric margin at the rung's lenient 0.05 m (not a borderline wing-graze).
     assert go.layout_valid(_load_witness_box(clearance_m=0.3))
+
+
+# ---------------------------------------------------------------------------
+# #736 — the committed notch witness layout (trio-notch-anchored scaffold rung)
+# ---------------------------------------------------------------------------
+
+_WITNESS_NOTCH = "tests/fixtures/ml/witness_notch.yaml"
+
+
+def _load_witness_notch(clearance_m: float = 0.05):
+    """Load the committed notch witness layout against the trio-notch-anchored rung's REAL
+    notch hangar (clearance override) + notch fleet — the same hangar/fleet the rung trains on."""
+    hangar = dataclasses.replace(
+        load_hangar("examples/herrenteich/hangar.yaml"), clearance_m=clearance_m, apron_depth_m=8.0
+    )
+    fleet = load_fleet("examples/herrenteich/fleet.yaml")
+    return load_layout(_WITNESS_NOTCH, fleet=fleet, hangar=hangar)
+
+
+def test_witness_notch_is_a_valid_three_object_layout():
+    # The committed witness is a valid 3-object layout on the real notch hangar under the rung's
+    # 0.05 m clearance — validated by the PRODUCT checker (collisions.check + Caddy egress), no
+    # solver. max_objects must equal this object count (stage_builder pins the pool to it).
+    lay = _load_witness_notch()
+    assert len(lay.placements) == 3
+    assert go.layout_valid(lay)
+
+
+def test_witness_notch_every_prefix_is_valid():
+    # The seed-anchor correctness property: a k-prefix of a valid witness is itself valid
+    # (removing objects cannot create overlap/intrusion/egress conflicts), so any anchored
+    # subset is a guaranteed-valid partial start with no per-reset validity search.
+    lay = _load_witness_notch()
+    for k in range(len(lay.placements) + 1):
+        prefix = dataclasses.replace(lay, placements=lay.placements[:k])
+        assert go.layout_valid(prefix), f"witness prefix k={k} is invalid"
+
+
+def test_witness_notch_every_single_anchor_is_valid():
+    # The env anchors the first k=1 object of a SEEDED PERMUTATION, so ANY single object of the
+    # trio can be the pre-parked one. Each must be individually valid (in-bounds, no notch
+    # intrusion), not just the layout-order prefix.
+    lay = _load_witness_notch()
+    for i in range(len(lay.placements)):
+        single = dataclasses.replace(lay, placements=(lay.placements[i],))
+        assert go.layout_valid(single), f"single anchor #{i} ({lay.placements[i].plane_id}) invalid"
+
+
+def test_witness_notch_has_margin_at_file_clearance():
+    # Robustness: valid at the herrenteich file's stricter 0.10 m clearance too, so the trio has
+    # real geometric margin at the rung's lenient 0.05 m (not a borderline graze).
+    assert go.layout_valid(_load_witness_notch(clearance_m=0.10))
+
+
+def test_committed_trio_notch_anchored_rung_builds_and_resets_from_a_valid_partial():
+    # End-to-end on the REAL rung: the committed trio-notch-anchored rung's witness path resolves
+    # against the real notch hangar and its env starts from a valid 1-object partial. Catches
+    # drift between the rung's anchor_layout_path and the witness fixture, and confirms the
+    # max_objects==witness-count contract holds for the wired rung.
+    sched = with_trio_notch_anchored_rung(CurriculumSchedule.default())
+    rung = next(s for s in sched.stages if s.name == "trio-notch-anchored")
+    env = build_stage_env(rung)
+    assert len(env._anchor_by_id) == 3  # all three witness objects known
+    assert set(env._anchor_by_id) == set(env.requested_ids)  # pool pinned to the witness set
+    assert env.difficulty.seed_anchor_k == 1
+    env.reset(requested_ids=env.requested_ids)
+    assert len(env._parked) == 1  # k=1 prefix pre-parked, two left to drive
+    assert env._layout_valid()  # the partial start is collision-free
+
+
+# ---------------------------------------------------------------------------
+# #821 — the held-out SECOND notch witness (backplay-seed generalization probe)
+# ---------------------------------------------------------------------------
+
+_WITNESS_NOTCH_B = "tests/fixtures/ml/witness_notch_B.yaml"
+
+
+def _load_witness_notch_b(clearance_m: float = 0.05):
+    """Load the held-out second notch witness against the SAME real notch hangar + fleet the
+    trio-notch rungs train on — so it is a drop-in alternative backplay/transfer seed geometry."""
+    hangar = dataclasses.replace(
+        load_hangar("examples/herrenteich/hangar.yaml"), clearance_m=clearance_m, apron_depth_m=8.0
+    )
+    fleet = load_fleet("examples/herrenteich/fleet.yaml")
+    return load_layout(_WITNESS_NOTCH_B, fleet=fleet, hangar=hangar)
+
+
+def test_witness_notch_b_is_a_valid_three_object_layout():
+    # The held-out witness is itself a valid 3-object layout on the real notch hangar under the
+    # rung's 0.05 m clearance — PRODUCT checker (collisions.check + Caddy egress), no solver.
+    lay = _load_witness_notch_b()
+    assert len(lay.placements) == 3
+    assert go.layout_valid(lay)
+
+
+def test_witness_notch_b_every_prefix_is_valid():
+    # Same seed-anchor correctness property as witness_notch: every k-prefix is valid, so the
+    # held-out witness is a drop-in alternative anchor/backplay seed with no per-reset search.
+    lay = _load_witness_notch_b()
+    for k in range(len(lay.placements) + 1):
+        prefix = dataclasses.replace(lay, placements=lay.placements[:k])
+        assert go.layout_valid(prefix), f"witness_B prefix k={k} is invalid"
+
+
+def test_witness_notch_b_every_single_anchor_is_valid():
+    # Any single object of the held-out trio may be the seeded anchor — each must be valid alone.
+    lay = _load_witness_notch_b()
+    for i in range(len(lay.placements)):
+        single = dataclasses.replace(lay, placements=(lay.placements[i],))
+        assert go.layout_valid(single), (
+            f"witness_B single anchor #{i} ({lay.placements[i].plane_id}) invalid"
+        )
+
+
+def test_witness_notch_b_has_robust_margin():
+    # Robustness: valid not just at the file's 0.10 m but well past it (the fixture was selected
+    # for margin up to 0.50 m), so it is a solid, non-borderline held-out geometry.
+    assert go.layout_valid(_load_witness_notch_b(clearance_m=0.10))
+    assert go.layout_valid(_load_witness_notch_b(clearance_m=0.50))
+
+
+def test_witness_notch_b_is_a_genuine_held_out_of_witness_notch():
+    # The held-out property (#821): SAME trio, GEOMETRICALLY DISTINCT arrangement — so a policy
+    # that memorized the witness_notch absolute coordinates cannot satisfy witness_B. Every object
+    # is relocated (>= 5 m planar) and every heading differs between the two witnesses.
+    a = {p.plane_id: p for p in _load_witness_notch().placements}
+    b = {p.plane_id: p for p in _load_witness_notch_b().placements}
+    assert set(a) == set(b), "held-out witness must use the SAME trio (isolates memorization)"
+    for pid in a:
+        disp = ((a[pid].x_m - b[pid].x_m) ** 2 + (a[pid].y_m - b[pid].y_m) ** 2) ** 0.5
+        assert disp >= 5.0, f"{pid} moved only {disp:.2f} m — not geometrically distinct enough"
+        assert a[pid].heading_deg != b[pid].heading_deg, f"{pid} heading unchanged — too similar"
+
+
+# ---------------------------------------------------------------------------
+# ADR-0028 trigger-#3 — the roomy completion witness (paired probe, roomy arm)
+# ---------------------------------------------------------------------------
+
+_WITNESS_ROOMY = "tests/fixtures/ml/witness_roomy.yaml"
+
+
+def _load_witness_roomy(clearance_m: float = 0.3):
+    """Load the committed roomy witness against the roomy completion rung's hangar
+    (test_hangar_large, clearance override) + the shared central ``data/fleet.yaml`` fleet — the
+    same hangar/fleet the completion-roomy probe trains on (ADR-0028 trigger-#3 paired probe)."""
+    hangar = dataclasses.replace(
+        load_hangar("tests/fixtures/test_hangar_large.yaml"),
+        clearance_m=clearance_m,
+        apron_depth_m=8.0,
+    )
+    fleet = load_fleet("data/fleet.yaml")
+    return load_layout(_WITNESS_ROOMY, fleet=fleet, hangar=hangar)
+
+
+def test_witness_roomy_is_a_valid_three_object_layout():
+    lay = _load_witness_roomy()
+    assert len(lay.placements) == 3
+    assert go.layout_valid(lay)
+
+
+def test_witness_roomy_every_prefix_is_valid():
+    lay = _load_witness_roomy()
+    for k in range(len(lay.placements) + 1):
+        prefix = dataclasses.replace(lay, placements=lay.placements[:k])
+        assert go.layout_valid(prefix), f"roomy witness prefix k={k} is invalid"
+
+
+def test_witness_roomy_every_single_anchor_is_valid():
+    lay = _load_witness_roomy()
+    for i in range(len(lay.placements)):
+        single = dataclasses.replace(lay, placements=(lay.placements[i],))
+        assert go.layout_valid(single), f"single anchor #{i} ({lay.placements[i].plane_id}) invalid"
+
+
+def test_witness_roomy_has_margin_at_stricter_clearance():
+    # Roomy slack: still valid at a stricter 0.5 m clearance, so the trio has real geometric
+    # margin at the rung's 0.3 m (the fat-slot manifold is not a borderline graze).
+    assert go.layout_valid(_load_witness_roomy(clearance_m=0.5))
 
 
 # ---------------------------------------------------------------------------

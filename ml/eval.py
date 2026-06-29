@@ -45,7 +45,9 @@ def policy_reach(
     predicate (spec §4): valid (product checker `_layout_valid` on the terminal layout) +
     routable-by-construction (no swept intrusion on any leg). Raises NotImplementedError for
     fixed-obstacle scenarios (deferred to 4c-ii)."""
-    enc = encoder or EncoderConfig()
+    # #827: the encoder's ego-frame follows the policy's own architecture (single source of
+    # truth), so an ego policy gets 28-wide ego tokens instead of a 24-vs-28 shape crash.
+    enc = encoder or EncoderConfig(ego_centric=getattr(policy, "relative_encoder", False))
     env = build_scenario_env(scenario)  # raises on fixed-obstacle scenarios
     bodies = {**env.fleet, **env.ground_objects}
     policy.eval()

@@ -3,6 +3,94 @@
 Dev/CI-only, never shipped in the wheel. Sub-project #1: the cold-joint RL
 environment + reward (`HangarFitEnv`), reusing `hangarfit`'s geometry oracle.
 
+## Status — dense train-to-mastery is RESOLVED-NEGATIVE (#736, [ADR-0028](../docs/adr/0028-learned-backend-train-to-mastery-resolved-negative.md))
+
+The **inference seam ships** (#706, verifier-gated, `solve --backend learned`). The
+**dense train-to-mastery** goal — having a PPO policy *construct* a valid dense packing of
+the frontier `trio-notch` rung — is **resolved-negative and the lever program is stopped.**
+Six gate-run levers, spanning every lever class (the representation axis was probed twice —
+#810 spatial pooling and #827 ego-centric coordinate frame), each KILLed at the same
+`valid_placed ≈ 0.333` "place-one-validly-then-abstain" fixed point:
+
+| Lever | Class | Verdict |
+|---|---|---|
+| #794 `--anchor-trio-notch` | start-state scaffold | vp 0.333, no transfer |
+| #810 `--spatial-tokens` | representation (spatial pooling) | vp 0.333 = control exactly |
+| #813 `--r-valid-progress` | reward economics | argmax moved → invalid **piling** |
+| #817 `--entropy-floor` | exploration | inert, vp 0.333 = control |
+| #823 `--backplay-trio-notch` | start-state distribution (ρ₀) | transfer 0.000; scaffold-only 0.63–0.69 |
+| #827 `--relative-encoder` | representation (coordinate frame) | vp 0.353/0.332 PILING ≈ control 0.317/0.316 |
+| **ADR-0028 trigger-#3** | **completion paired-witness probe** | **RAN → NO-GO: notch & roomy both marginal 0.000 (2-of-3 abandon floor)** |
+
+(The empty-start `trio-notch` *baseline* sat slightly lower at `valid_placed ≈ 0.25` — the
+coverage-minimum number quoted in the lever recipes below; the *levered* runs converge to the
+1-of-3 = `0.333` place-one fixed point. Same failure mode, two measurement contexts.)
+
+**Completion paired-witness probe: ADR-0028 trigger-#3 → NO-GO (#837, 2026-06-25).** The third
+re-open diagnostic — a **paired-witness A/B** on the completion skill (door-spawn φ=1, pre-park
+k=2 of 3, NO backplay knob), testing whether **manifold width** is the barrier: tight Herrenteich
+notch (conditional last-slot ~0.064) vs roomy 25×30 m `witness_roomy.yaml` (~0.278, ~4.3× wider) —
+**ran** (4 cells = 2 arms × 2 seeds, identical config except the witness; 200 iters, CPU single-env).
+Both arms read marginal completion `max(0, 3·valid_placed − 2)` against a pre-registered 2/3 floor;
+**GO** would have needed roomy marginal ≥ 0.30 (both seeds) with notch ≈ 0. **Result: marginal
+`0.0000` on all four cells** — windowed-final `valid_placed` notch `0.661/0.662`, roomy
+`0.667/0.667`; every cell converged to the **2-of-3 abandonment floor** (keep the two valid
+pre-parked, abandon the marginal third; reward-positive stable attractor, both seeds). The fat
+roomy slot abandons the marginal object **exactly like** the tight notch → the wall is
+**drive-binding (cold-start drive-and-pack), not slot-geometry**; the geometry confound is closed
+and the resolved-negative result **generalizes across manifold width**. Trigger-#3 is therefore
+**spent — it confirms the decision** rather than re-opening it (two of the three re-open triggers
+are now negative-confirming; only trigger #1, feasibility-witnessed reach-rate, stays open). See
+[ADR-0028](../docs/adr/0028-learned-backend-train-to-mastery-resolved-negative.md) for the charter
+details and the re-open gate.
+
+A **pre-registered measure-first probe** (`basin_mc.py` + `phi_eval.py` + `phi_eval_control.py`
++ `probe-verdict.md`, gitignored gate-run scratch; torch-light, through the product checker;
+independently reproduced by a multi-agent verification pass) then adjudicated the two
+never-measured numbers the diagnosis rested on:
+
+- **φ=1 cold-start completion `vp = 0.000`** — with two of three notch aircraft pre-parked at a
+  valid witness prefix and the third spawned **at the door**, the policy cannot drive-and-pack
+  it (`0.000` on the backplay checkpoint **and** on both non-backplay control checkpoints; φ=0
+  spawn-at-its-own-valid-pose positive control = `1.000`). The earlier "0.63–0.69 placement is
+  learnable" was a φ-mixture average dominated by near-witness episodes.
+- **Valid-triple manifold ≈ 2e-3, FLAT across clearance** (0.10→0.30 m, +200%) while
+  `P(valid pair) ≈ 0.107` — valid 3-packings are sparse isolated points a clearance relax does
+  **not** widen. (The `2e-3` is a uniform-over-bbox *lower bound*; the load-bearing claim is the
+  sampler-independent *flatness* across clearance.)
+- **RR-MC already solves `trio-notch`** (~30 s, 4/4 seeds) — so it is a curriculum
+  *stepping-stone*, not a charter target (the chartered dense target is all-8, strictly harder).
+
+**Diagnosis:** the binding wall is **cold-start drive-and-pack of the marginal object** into a
+sparse, clearance-invariant valid slot. Reward / representation / exploration-temperature levers
+reweight already-reachable outcomes (Ng–Harada–Russell); only a ρ₀ lever that *trains* the
+cold-start completion distribution could move it, and that capability is measured `0.000`. See
+**[ADR-0028](../docs/adr/0028-learned-backend-train-to-mastery-resolved-negative.md)** for the
+decision, the **re-open gate**, and the **do-not-reattempt** list — ADR-0028 is the authority
+for these figures and this section is the operational mirror. The lever recipes below are
+retained for reproducibility and any future re-open; do **not** re-run a refuted axis on the
+notch.
+
+**Resolved — re-open trigger #2 (#827), KILL.** The opt-in `--relative-encoder` lever implemented
+ADR-0028's one structurally-untested axis: an **ego-centric augment** encoder that *also* writes
+each object's pose in the active object's SE(2) body frame (the other five KILLed levers ran on the
+**absolute** world-coordinate encoder — `ml/encoding.py`). `TOKEN_DIM` 24→28 and `SCHEMA_VERSION`
+1→2 when on; default off = byte-identical. The two-seed GPU `trio-notch` ladder gate (#829,
+2026-06-25) **KILLed it**: `trio-notch-anchored` windowed-final `valid_placed` = **0.353 / 0.332**
+(both PILING) vs the OFF control's **0.317 / 0.316** — the same 0.333 coverage-minimum ceiling,
+both well below the 0.45 WIN line; transfer `trio-notch` ≈ 0 on both arms. Two graders agree
+(`analyze.py` + `ml.gate`); all three pre-registered confounds pass (OFF reproduces baseline,
+`epochs_run` parity, exactly one flag — engagement checkpoint-proven, `token_proj` input 28 vs 24,
+`relative_encoder` True vs None); a 4-lens adversarial verification panel returned **0/4 refuters**
+(seed1's absolute single-iteration max over all 45 iters is `0.3333`, so a both-seeds win is
+*physically impossible* under any window). One honest nuance the panel surfaced: the encoder **does**
+reproducibly lift the *upstream* generic `trio-box` rung (+0.15–0.24 vp both seeds — richer
+coordinates help generic multi-box packing), but that gain does **not** transfer to the notch
+drive-and-pack wall. So representation/coordinate-frame is confirmed *not* the bottleneck (ADR-0028's
+diagnosis stands), and re-open trigger #2 is **resolved-negative** — the encoder stays opt-in infra;
+do **not** re-run it on the notch. Design spec:
+`docs/superpowers/specs/2026-06-24-relative-encoder-ego-centric-design.md`.
+
 ## Run the tests
     pytest tests/ml/
 
@@ -17,6 +105,11 @@ environment + reward (`HangarFitEnv`), reusing `hangarfit`'s geometry oracle.
   above) across the frozen reach-not-beat benchmark set and print the
   side-by-side both-rates table against the recorded RR-MC baseline (needs the
   `[train]` extra / torch).
+- `python -m ml.reach_rate [--policy P]` — the **statistical reach-rate harness**
+  (#711): sample a population of fill scenarios and report **reach-rate ± Wilson CI**
+  per scenario-kind for multi-alternative RR-MC and (with `--policy P`) a trained
+  policy. The RR-MC arm is torch-free; `--policy` needs `[train]`. See "Statistical
+  reach-rate (#711)" below for the methodology + budget.
 
 ### Vectorized training (#708)
 
@@ -71,6 +164,104 @@ oracle — the single shared `layout_valid` oracle is now used by both the env
 reward and `ml/eval` (the prior over-enforcement of the inert maintenance bay
 was fixed in 4c-ii, #694). Fixed-obstacle pre-placements from
 `Scenario.fixed_obstacle_placements` are honoured by the env since 4c-ii (#693).
+
+## Statistical reach-rate (#711)
+
+`ml/benchmark.py` + `ml/eval.py` answer a **binary** question on **4 frozen** scenarios:
+"does RR-MC / the policy reach *these*?" `ml/reach_rate.py` lifts that to a **rate** over a
+**sampled population**: reach-rate ± **Wilson** CI per scenario-kind, for both arms. Both
+arms judge reach by the **same** predicate the bench uses — the product checker
+(`geometry_oracle.layout_valid` = `collisions.check` + Caddy egress, #694) **and**
+routable-by-construction (`plan_fill` gives every placeable body a real tow path) — never
+the env oracle's parked-score validity.
+
+- **Population (v1):** `sample_population` draws fill scenarios that vary the **fleet subset**
+  (`k ∈ [k_min, k_max]` aircraft from a pool) on a fixed roomy hangar, deterministic in `seed`.
+  Varying hangar geometry / GO placements (the issue's other axes) is a documented extension.
+- **`--distinct` (avoid pseudo-replication):** by default the sampler draws each subset
+  independently, so it can repeat one. RR-MC reach is **deterministic** per subset, so a repeated
+  subset is **not** an independent trial — counting it inflates `n` and tightens the Wilson CI for
+  free. `--distinct` draws guaranteed-distinct subsets and **caps** the population at the available
+  distinct count (printing `[distinct: capped from N to M …]`). Capping triggers whenever the
+  request exceeds the available distinct count — most acute at high `k` relative to the pool, where
+  the distinct space is tiny (e.g. `C(9, 8) = 9`). Default off → byte-identical.
+- **Multi-alternative RR-MC:** `rrmc_reach_multi` solves for `--alternatives N` and counts
+  RR-MC-reached if **any** candidate is valid + fully routable — strictly stronger than
+  `benchmark.rrmc_reach` (`alternatives=1`, best-spread only). Load-bearing the moment the
+  solver yields valid-but-**un**routable dense layouts.
+- **Multi-sample policy:** `policy_reach_count` rolls the policy out `--samples M` times per
+  scenario (stochastic, seeded per sample) so its rate carries variance for the CI.
+- **Wilson CI** (not normal-approx) because a reach-rate sits at the 0/1 extremes, where the
+  normal interval gives negative / zero-width bounds.
+
+```bash
+# RR-MC reach-rate over a small sampled population (torch-free).
+python -m ml.reach_rate --scenarios 8 --k-min 2 --k-max 4 --alternatives 4 --max-restarts 16
+# …plus the policy arm from a trained checkpoint (needs [train]).
+python -m ml.reach_rate --scenarios 8 --policy model.pt --samples 16
+```
+
+**Budget (the issue's cost caveat).** RR-MC reach is the expensive arm (a `solve` + `plan_fill`
+per scenario, ≈10 s/restart on dense anchors — 200 restarts was "unrunnable", ≈30–50 min/anchor).
+So the harness defaults to a **small** population at a **modest** restart budget, and a
+large-population RR-MC baseline is meant to be recorded once and **frozen** (mirroring the
+`bench_baseline.json` freeze, spec D4); pre-register the population `seed` + budgets before
+measuring so the policy-vs-RR-MC comparison can't go circular. The policy arm is cheap (rollouts,
+no solver), so it affords a larger population × more samples.
+
+### The trigger-#1 dominance gate (#831 — runnable, but not yet validly executed)
+
+[ADR-0028](../docs/adr/0028-learned-backend-train-to-mastery-resolved-negative.md)'s **re-open
+trigger #1** is the masquerade-proof charter test: *a future policy's dense-notch reach-rate
+(Wilson CI) **exceeds RR-MC's** on a **witness-absent** scenario-kind*. The harness above measures
+both arms; `#831` encodes the **decision** so it's a runnable verdict, not a human eyeballing two
+tables:
+
+- `witness_absent_kinds(rrmc, tau)` — the kinds whose RR-MC reach-rate Wilson `ci_hi <= tau`.
+  ⚠ **Necessary, not sufficient.** "RR-MC reach ≈ 0" has two causes: it *missed* a valid layout
+  that **exists** (the chartered ground), **or** **no valid layout exists** — the kind is
+  **infeasible**. This function cannot tell them apart, so a kind it returns is chartered ground
+  **only once an independent feasibility witness** (a valid layout *proven to exist*) is exhibited
+  for it. A policy "win" anywhere RR-MC already reaches is not a win; a policy "loss" on an
+  *infeasible* kind is **vacuous** — there is nothing to reach.
+- `dominance_verdict(rrmc, policy, tau)` — the trigger-#1 predicate as one boolean. It requires
+  Wilson-CI **non-overlap** (`policy.ci_lo > rrmc.ci_hi`), so a policy that merely *matches* RR-MC
+  by sampling luck cannot trip it; it reports `exercised` (was there an RR-MC-misses kind at all?)
+  separately from `reopen`. **`exercised` does not certify feasibility** — it only means some kind
+  had RR-MC `ci_hi <= tau`. Feed it a **feasibility-witnessed** population, or its negative is the
+  infeasible-masquerade below.
+
+```bash
+# A VALID trigger-#1 population is FEASIBILITY-WITNESSED: every scenario carries a valid layout
+# PROVEN to exist (hand-authored like the all-8 examples/herrenteich/layout.yaml that `hangarfit
+# check` accepts yet RR-MC cannot find, or one a big-budget `solve` returns) that the fair-budget
+# DEPLOYED RR-MC misses. Building that population is future work (#835), so the
+# <…>/K/TAU placeholders below are intentionally unfilled — this is the SHAPE of a
+# valid invocation, not a runnable command (no witnessed fixture exists yet).
+python -m ml.reach_rate --hangar <feasibility-witnessed-hangar> \
+  --k-min K --k-max K --distinct --alternatives 4 --max-restarts 16 \
+  --policy model.pt --samples 12 --witness-absent-tau TAU
+#
+# ⚠ ANTI-PATTERN — do NOT do this; it produced the retracted #832 result. Selecting the
+# "witness-absent" stratum as over-capacity fleet subsets of a hangar that cannot fit them
+# (e.g. k8 on the tight 18 m hangar) makes RR-MC reach 0 because the layout is INFEASIBLE — no
+# witness exists — so the policy reaching 0 is vacuous, not a dominance failure.
+```
+
+**Status (2026-06-25): retracted, not yet validly executed (#835).** The one execution to date
+(#831/#832) selected its "witness-absent" `k8` / `k4` strata by RR-MC reach ≈ 0 on **over-capacity**
+fleet subsets of the tight 18 m hangar — which **cannot fit the full fleet** (CLAUDE.md,
+"Placeholder hangar can't fit the full fleet"). There RR-MC reaches 0 because the layout is
+**infeasible**, not missed: no valid layout exists, so no policy could reach one, and the `0/9`
+RR-MC / `0/108` policy → "**NOT MET**" reading is **vacuous and is retracted**. Selecting an eval
+population by "the baseline failed" structurally selects for impossibility (the #832 lesson). A
+*valid* trigger-#1 run needs the **feasibility-witnessed** population described above and is future
+work; until then **trigger #1 is open and untested**. ADR-0028's decision does not depend on it —
+it rests on the feasibility-grounded cold-start probe (φ=1 `vp = 0.000`), not on this retracted
+reach-rate verdict. (A rung-by-rung feasibility audit — #835 — separately confirms every *training*
+rung is feasible: `trio-notch` / `trio-box` RR-MC reach **1.000** at `k=3`, plus the committed
+`witness_box` / `witness_notch` fixtures, so the lever KILLs above, all measured on feasible rungs,
+stand.)
 
 ## Training knobs (4c-ii)
 
@@ -141,11 +332,12 @@ per-step active-overlap gradient) and, being potential-based shaping, is **polic
 | `--solo-box-rung` | off | Insert an opt-in `solo-box` rung (1 object, **whole fleet**) after `trivial` so single-object competency transfers before the 2-object jump (#714). Curriculum-only. |
 | `--seed-anchor` | off | Insert an opt-in `pair-anchored` rung **before** `pair-box`: one of its 2 objects is pre-parked at a committed-witness pose (`seed_anchor_k=1`) and the agent only drives the other in — scaffolding 2-object joint discovery with a valid 1-object start (#712). Curriculum-only. |
 | `--mixed-anchor` | off | Insert an opt-in `pair-mixed` rung **before** `pair-box`: each episode randomly starts anchored (k=1) or empty (k=0) with probability `anchor_prob=0.5`, drawn from the curriculum's seeded stream. Keeps empty-start episodes in the training mix so the policy does not collapse to the place-nothing pole on the empty-start `pair-box`. Pair with `--seed-anchor` so `pair-mixed` lands between `pair-anchored` and `pair-box` (not required — `--mixed-anchor` alone inserts it directly before `pair-box`). Curriculum-only. (#712 follow-up) |
+| `--anchor-trio-notch` | off | Insert an opt-in `trio-notch-anchored` rung **before** `trio-notch`: 1 of its 3 notch-witness objects is pre-parked at a committed pose (`seed_anchor_k=1`) and the agent drives the other two in — the trio analogue of `--seed-anchor`, on the **real notch hangar**. Targets the diagnosed cold-start *coverage minimum* (the policy validly parks one aircraft then abandons the other two, vp~0.25 on both notch seeds). Curriculum-only. (#736) |
 | `--stop-after-rung NAME` | off | Truncate the ladder after `NAME` (that rung is the last trained; every rung after it is dropped). Applied **after** the graft flags above, so a name they introduce (`pair-mixed`) is valid. The #722 sweep lever: `--stop-after-rung pair-box` lets a resumed cell stop cleanly instead of grinding on into `trio-*`. Unknown rung → loud `ValueError`. Curriculum-only; absent ⇒ byte-identical. |
 | `--promotion-metric` / `--promotion-threshold` / `--promotion-window` | schedule policy (`valid_placed` / `0.9` / `3`) | Competency-gate overrides. A rung promotes when the mean of the last `--promotion-window` **iterations'** honest per-rollout `--promotion-metric` (the same `valid_placed` the `--metrics-out` JSONL and `ml.gate` report) clears `--promotion-threshold`. `--promotion-window` counts **iterations**, not episodes — the #742 fix: the gate previously thresholded only the last ~20 *episodes* of the latest rollout (a `deque(maxlen=window)` tail), a noisy estimator that false-promoted `by competency` on a lucky autocorrelated streak while the honest per-iteration mean was well below threshold. Curriculum-only. |
 | `--auto-budget` (+ `--auto-budget-max-iters N` ⌀1000, `--auto-budget-min-iters N` ⌀30, `--auto-budget-min-level L` ⌀0.05) | off | Slope-aware per-rung budget (#734): replace the fixed `--max-iters-per-stage` cap with a closed loop — a Theil–Sen slope over the **honest per-iteration** promotion-metric series (the same `valid_placed` the gate reads, #742) **extends** the rung while it climbs and **stops early** on a plateau (or the ceiling `N`). The `--auto-budget-min-level` **floor-guard** (#743) refuses to plateau-stop while the recent level is below `L` — a flat-at-floor *warmup* is not convergence, and slope alone cannot tell the two apart (both ~0); `0` disables it. Raise `--auto-budget-min-iters` for a hard rung with a long pre-climb. Distinct from the manual `--stop-after-rung`. Curriculum-only; absent ⇒ the fixed cap, byte-identical. |
 
-`--load`/`--checkpoint-out`/`--metrics-out`/`--promotion-*`/`--solo-box-rung`/`--seed-anchor`/`--mixed-anchor`/`--stop-after-rung`/`--auto-budget`
+`--load`/`--checkpoint-out`/`--metrics-out`/`--promotion-*`/`--solo-box-rung`/`--seed-anchor`/`--mixed-anchor`/`--anchor-trio-notch`/`--stop-after-rung`/`--auto-budget`
 are curriculum-only (fail loud under `--schedule trivial`). The resume checkpoint
 (`ml/checkpoint.py`) is distinct from `--save` (a bare `state_dict` for the ONNX/`ml.eval`
 consumer) and loads with `weights_only=True`.
@@ -395,6 +587,323 @@ little: committing objects invalidly, *not* a win — distrust any apparent prog
 **WIN = `trio-box` mastered on BOTH seeds.** A clean two-seed `place-nothing` is a valid negative
 (the four-lever ladder does *not* generalize to N=3 → pose-scaffold). A `piling` verdict means the
 ladder is unstable at N=3 and needs the economics re-tuned before re-gating.
+
+### Trio-notch-anchored gate recipe (#736 — break the notch cold-start coverage minimum)
+
+The notch trio is the real frontier: on the **real** Herrenteich notch hangar, the empty-start
+`trio-notch` rung stalls at `valid_placed`~0.25 on **both** seeds — not place-nothing, not
+piling, but a **coverage minimum**: the policy validly parks **one** aircraft (`valid_rate`~0.9)
+and abandons the other two, because a 2nd/3rd commitment risks the hard `w_col`/`w_oob` penalty
+(diagnosed from `metrics-notch-s0/s1.jsonl`). `trio-box` itself proves the trio is learnable
+(seed-0 reached 0.93), and `examples/herrenteich/layout.yaml` is a *valid 8-object witness on
+that exact hangar* — so the trio physically fits; the wall is joint multi-body discovery from a
+cold start. `--anchor-trio-notch` inserts a `trio-notch-anchored` rung before `trio-notch`: it
+pre-parks 1 of 3 notch-witness objects (k=1) and the agent drives the other two in, converting
+the cliff into a ramp (the trio analogue of the #712 `--seed-anchor` scaffold that reached 0.94
+on the box).
+
+```bash
+# Two seeds. The #730 trio-box economics, plus --anchor-trio-notch (the new scaffold rung).
+# Stop after the scaffold + its un-anchored successor so the run answers the transfer question
+# without grinding into trio-notch-strict.
+python -u -m ml.train --schedule curriculum --device cuda --n-envs 16 \
+  --rollout-len 512 --auto-budget --auto-budget-max-iters 120 --auto-budget-min-level 0.1 \
+  --promotion-metric valid_placed --promotion-threshold 0.9 \
+  --r-valid-park 30.0 --r-unplaced-penalty 25.0 --dense-slot-potential \
+  --w-col 20.0 --valid-park-grade-scale 4.0 --r-first-valid 15.0 \
+  --entropy-start 0.05 --entropy-end 0.005 --entropy-anneal-iters 40 \
+  --normalize-returns --validity-conditional-terminal \
+  --solo-box-rung --seed-anchor --mixed-anchor --anchor-trio-notch \
+  --stop-after-rung trio-notch \
+  --metrics-out metrics-notch-anchored-s0.jsonl --checkpoint-out ck-notch-anchored-s0.pt --seed 0
+# …then --seed 1 with the s1 file names.
+```
+
+**Pre-registered kill-criteria** (both seeds, honest `valid_placed` gate, window=iterations per
+#742/#743):
+- **WIN:** the `trio-notch-anchored` rung reaches `valid_placed ≥ 0.9` AND the follow-on
+  *un-anchored* `trio-notch` climbs materially above the measured **0.34 ceiling** (target ≥ 0.6)
+  on **both** seeds — i.e. the scaffold *transfers*, it does not just memorize the anchor.
+- **KILL:** by the rung's iteration budget either (a) the anchored rung itself stalls < 0.9, or
+  (b) it masters anchored but un-anchored `trio-notch` stays ≤ ~0.34 on either seed. Either
+  refutes the lever for this rung; fall back to the Section-A representation knobs (aux-heads /
+  critic-pretrain), which target a *different* failure mode (representation/variance, not the
+  discovery cliff). Grade with `python -m ml.gate metrics-notch-anchored-s*.jsonl --rung
+  trio-notch-anchored` (and `--rung trio-notch` for transfer).
+
+The witness is `tests/fixtures/ml/witness_notch.yaml` (a committed valid 3-object subset of the
+real notch layout; every k-prefix is validated by
+`tests/ml/test_stage_builder.py::test_witness_notch_*`).
+
+**Result (2026-06-23 two-seed run) — KILL, lever refuted.** The `trio-notch-anchored` rung
+plateaued at **peak vp 0.333 on both seeds** (well below 0.9), in the *two faces* of the coverage
+minimum: seed-0 converged to **place-nothing-new** (`fp=0.333, vr=1.000` — keeps only the freebie
+k=1 anchor, drives in nothing), seed-1 to **piling** (`fp≈0.8, vr≈0.3` — drives objects in but
+invalidly). The downstream un-anchored `trio-notch` then **collapsed to vp≈0.000** on both seeds
+(no transfer). The sharpened diagnosis: a *valid 1-object start does not teach the policy to add a
+commitment* — so the notch wall is **not** cold-start joint discovery (which this scaffold
+addresses) but the **marginal-commitment economics** (place-nothing-new vs invalid-pile). Per the
+pre-registration, the next lever is the Section-A representation knobs (aux-heads / critic-pretrain)
+or harder per-commitment economics — **not** more start-state scaffolding. The rung itself stays as
+opt-in, default-neutral infrastructure for a future combined attempt.
+
+### Spatial-token representation A/B (#809/#810 — does richer spatial vision break the notch plateau?)
+
+The #736 KILL pre-registered the **Section-A representation knobs** as the next lever, on the theory
+that the policy's `AdaptiveAvgPool2d(1)` global-average-pools the occupancy raster and is therefore
+*spatially blind* on dense packing (it sees "how full" but not "where the gaps are"). `--spatial-tokens`
+(#810) tests that directly: it replaces the single pooled summary with object tokens that **cross-attend
+to per-cell free-space tokens**. The A/B is the **#736 notch recipe above with `--spatial-tokens` added**
+(toggle only the architecture; default-off is byte-identical), trained full-ladder-from-scratch — the new
+net cannot `--load` a global-pool checkpoint (architecture mismatch), so it re-climbs every rung.
+
+```bash
+# Identical to the trio-notch-anchored recipe above, plus --spatial-tokens (the only change).
+python -u -m ml.train --schedule curriculum --device cuda --n-envs 16 \
+  --rollout-len 512 --auto-budget --auto-budget-max-iters 120 --auto-budget-min-level 0.1 \
+  --promotion-metric valid_placed --promotion-threshold 0.9 \
+  --r-valid-park 30.0 --r-unplaced-penalty 25.0 --dense-slot-potential \
+  --w-col 20.0 --valid-park-grade-scale 4.0 --r-first-valid 15.0 \
+  --entropy-start 0.05 --entropy-end 0.005 --entropy-anneal-iters 40 \
+  --normalize-returns --validity-conditional-terminal \
+  --solo-box-rung --seed-anchor --mixed-anchor --anchor-trio-notch \
+  --stop-after-rung trio-notch --spatial-tokens \
+  --metrics-out metrics-notch-spatial-s0.jsonl --checkpoint-out ck-notch-spatial-s0.pt --seed 0
+```
+
+**Result (2026-06-23 seed-0 run) — KILL, lever refuted.** The spatial-token net climbs the lower ladder
+normally (trivial 0.95 / solo-box 0.93 / pair-anchored 0.97 / pair-mixed 0.92 promote by competency;
+pair-box peak 0.84 by budget-plateau) but then lands on the **identical frontier plateau as global-pool**:
+
+| Rung | Spatial-token (seed 0) | Global-pool control |
+|---|---|---|
+| `trio-box` | peak vp **0.31** — coverage-minimum (`valid_rate≈0.97 × fraction≈0.32`, park-one-abandon-two) | n/a — `trio-box 0.93` was the *fixed-cap-300* #730 recipe, not this auto-budget-120 ladder; the same-recipe control value is undocumented |
+| `trio-notch-anchored` | vp **0.333** exactly (`valid_rate 1.000 × fraction 0.333` = place-nothing-new fixed point) | **0.333** |
+| `trio-notch` (transfer) | ~**0.000** (place-nothing) | ~0.000 |
+
+The frontier rung converged to vp **0.333 — the same value as the documented control** — and sat there
+flat: it reached the *place-nothing-new economic fixed point*, **not** a budget-truncated climb. (Seed-0
+only; unlike the #736 two-seed gate a confirming seed-1 was not run — the place-nothing-new plateau is a
+*deterministic economic attractor* and the control reached 0.333 on **both** seeds, so a seed flip is
+implausible.) A representation change **cannot move a reward-economics argmax**, so this **deconfounds
+spatial-blindness from the notch wall**: the **marginal-commitment economics** diagnosis stands (the cost
+of a 2nd/3rd commitment, not the policy's spatial vision, is the bottleneck). The 1 m-tap (48×24, double
+the default 24×12 raster) escalation pre-registered in #810 was **not** tried — pointless against an
+economic fixed point. `--spatial-tokens` remains opt-in, default-neutral infrastructure; **do not re-run
+it on the notch.** The next lever is **per-commitment economics** (the marginal cost/credit of adding the
+2nd/3rd object). This A/B refutes the *spatial-blindness* sub-hypothesis specifically — the #736 fork's
+other representation knobs (aux-heads / critic-pretrain) target representation *variance* and were not
+tested here.
+
+### Per-commitment economics A/B (#812/#813 — does a marginal valid-coverage carrot break the notch plateau?)
+
+The #810 spatial-token KILL re-pointed the next lever at **per-commitment economics** (a representation
+change cannot move a reward-economics argmax, so the marginal cost/credit of adding the 2nd/3rd object is
+the thing to perturb). `--r-valid-progress R` (#812, PR #813) is that lever — a **banked marginal
+valid-coverage credit** `R·max(0, valid_park_count − 1)` added to `step_reward` **only on a Park that passes
+the `park_valid` product checker** (whole layout valid). The 1st valid park pays 0 (`--r-first-valid` owns
+the breakthrough), the 2nd pays `1·R`, the 3rd `2·R`; it is **pile-safe by construction** (an invalid Park
+fails the gate, so piling pays 0) and **default-neutral** (`0.0` ⇒ byte-identical). The A/B is the **#736
+trio-notch-anchored recipe above with `--r-valid-progress 8.0` added** (on top of `--valid-park-grade-scale
+4.0`; one knob changed, full-ladder auto-budget-120 from scratch — the exact #736/#810-KILL control
+protocol), two seeds via `ml.sweep`.
+
+```bash
+# Identical to the trio-notch-anchored recipe above, plus --r-valid-progress 8.0 (the only change),
+# run as a two-seed sweep. (Stage 1 of the pre-registered {6,8,12} magnitude sweep.)
+python -u -m ml.sweep --seeds 0,1 --out-dir sweep-rvp8 --tag rvp8 --max-concurrency 2 -- \
+  --schedule curriculum --device cuda --n-envs 16 --rollout-len 512 \
+  --auto-budget --auto-budget-max-iters 120 --auto-budget-min-level 0.1 \
+  --promotion-metric valid_placed --promotion-threshold 0.9 \
+  --r-valid-park 30.0 --r-unplaced-penalty 25.0 --dense-slot-potential \
+  --w-col 20.0 --valid-park-grade-scale 4.0 --r-first-valid 15.0 --r-valid-progress 8.0 \
+  --entropy-start 0.05 --entropy-end 0.005 --entropy-anneal-iters 40 \
+  --normalize-returns --validity-conditional-terminal \
+  --solo-box-rung --seed-anchor --mixed-anchor --anchor-trio-notch --stop-after-rung trio-notch
+```
+
+**Result (2026-06-23 two-seed run) — KILL, but the *first lever to move the argmax* (and it moved it the
+wrong way).** The lower ladder stays clean (the carrot is near-neutral below the frontier — trivial→pair all
+promote 0.92–0.97 on both seeds), so the frontier read is trustworthy. The decisive `trio-notch-anchored`
+rung and its un-anchored transfer:
+
+| Rung | rvp=8 seed 0 | rvp=8 seed 1 | Control (#736, no lever) |
+|---|---|---|---|
+| `trio-notch-anchored` | **PILING** — peak vp 0.451 → final 0.273 (`fraction_placed`→0.978) | **PILING** — peak vp 0.330 → final 0.095 (`fraction_placed`→1.000) | **flat 0.333** (s0 place-nothing-new, s1 pile) |
+| `trio-notch` (transfer) | ~0.000 (place-nothing) | ~0.000 (pile) | ~0.000 |
+
+Unlike the #736 and #810 KILLs — which both froze at exactly the **0.333 place-nothing-new economic fixed
+point** — the carrot **escaped abstention**: `fraction_placed` jumped 0.333 → 0.978 / 1.000, proving the
+notch bottleneck is *partly* economics and that a reward term **can** move this argmax. But it moved it the
+**wrong way**: it lured the policy out of the safe valid-anchor-only state (vp 0.333 — which the control
+*held on seed 0*; control seed 1 was already piling) into **invalid piling** (vp 0.27 / 0.10, *below*
+control), and the valid-multi-park basin it briefly
+found (peak 0.451 at iter ~19, high entropy) **decayed as entropy annealed** — found in exploration, lost
+under exploitation. The carrot is **pile-safe**, so it is not *causing* the piling; escaping the abstention
+pole merely dropped the policy into the *other* pre-existing failure basin (invalid-pile) rather than the
+valid-mastery one.
+
+**Sharpened diagnosis — a valid dense-pose DISCOVERY / basin-stability wall, not abstention economics.**
+A pile-safe carrot can only *reward* valid multi-park, never *teach* it; with the policy unable to reliably
+find the tight valid 3rd pose, the carrot just over-rotates it toward commitment it executes invalidly. This
+is the **second independent refutation** (after #810's spatial-representation refutation) converging on
+discovery. **The pre-registered `--r-valid-progress` `{6,8,12}` magnitude sweep (Stage 1 ran 8 here) and the
+deferred *convex-stick adjunct* — a proposed super-linear `unplaced_penalty_exponent` term (NOT yet
+implemented; not a shipped flag) that would penalize a residual *abstain* floor — are both contraindicated:**
+a bigger pile-safe carrot (`{12}`) amplifies the harmful temptation without adding pull on a piling policy,
+and a stiffer penalty on *unplaced* objects adds *more* pressure to commit — the wrong target, since the
+failure is placed-but-invalid (piling), not unplaced (abstention). The next lever therefore targets
+**discovery / basin stability** (the chosen direction), **not** more economics — candidate mechanisms (the
+specific one TBD): a pose-curriculum that anneals the notch anchor k = 2→1→0 (a valid 2-object start so the
+policy need only discover the single tight 3rd pose) and/or a higher entropy floor on the frontier rungs so
+the valid basin consolidates instead of decaying. The lever stays merged as opt-in, default-neutral
+infrastructure (`r_valid_progress=0.0` ⇒ byte-identical) for a future combined attempt.
+
+### Frontier entropy-floor A/B (#815 — does holding entropy high on the frontier rungs consolidate the valid basin?)
+
+The #812 carrot-KILL re-pointed the next lever at **discovery / basin stability**, and that section named
+this candidate explicitly: *"a higher entropy floor on the frontier rungs so the valid basin consolidates
+instead of decaying."* `--entropy-floor F --frontier-rungs trio-notch-anchored,trio-notch` (#815, PR #817) is
+that lever — it clamps the **per-rung-annealed** `entropy_coef` **up** to `F` on the named rungs only, so the
+frontier stays in the high-entropy regime, testing whether #812's *transient* touch of the valid 2–3-object
+basin (peak vp 0.451 — carrot-assisted, `r_valid_progress=8`, and since decayed) consolidates instead of
+decaying once entropy is held up; the mastered lower ladder anneals normally. Default-off ⇒ byte-identical (4c-ii). The
+A/B is the **#736 trio-notch-anchored recipe with `--entropy-floor 0.02 --frontier-rungs
+trio-notch-anchored,trio-notch` added** (the only change), two seeds via `ml.sweep`, against a same-session
+fresh control. The #816 instrumentation (PR #818) persists the applied `entropy_coef` + `epochs_run` per-iter
+to the `--metrics-out` JSONL (the recipe below carries no `--metrics-out` because `ml.sweep` injects a distinct
+per-cell `--metrics-out`/`--checkpoint-out`) so the confound below is checkable.
+
+```bash
+# +floor arm — identical to the control protocol plus the two lever flags (the only change).
+python -u -m ml.sweep --seeds 0,1 --out-dir sweep-floor --tag floor --max-concurrency 1 -- \
+  --schedule curriculum --device cuda --n-envs 16 --rollout-len 512 \
+  --auto-budget --auto-budget-max-iters 120 --auto-budget-min-level 0.1 \
+  --promotion-metric valid_placed --promotion-threshold 0.9 \
+  --r-valid-park 30.0 --r-unplaced-penalty 25.0 --dense-slot-potential \
+  --w-col 20.0 --valid-park-grade-scale 4.0 --r-first-valid 15.0 \
+  --entropy-start 0.05 --entropy-end 0.005 --entropy-anneal-iters 40 \
+  --normalize-returns --validity-conditional-terminal \
+  --solo-box-rung --seed-anchor --mixed-anchor --anchor-trio-notch --stop-after-rung trio-notch \
+  --entropy-floor 0.02 --frontier-rungs trio-notch-anchored,trio-notch
+```
+
+**Result (2026-06-24 two-seed run) — KILL, the floor is inert (floor ≈ control).** Lower ladder clean on both
+arms (trivial→pair-mixed all mastered 0.91–0.99), so the frontier read is trustworthy. Windowed-final vp
+(last-10-iter mean) on the decisive rungs:
+
+| Rung | floor seed 0 | floor seed 1 | control seed 0 | control seed 1 |
+|---|---|---|---|---|
+| `trio-notch-anchored` | 0.331 PILING | 0.281 PILING | 0.333 PILING | 0.213 PILING |
+| `trio-notch` (transfer) | 0.000 place-nothing | 0.000 place-nothing | 0.000 place-nothing | 0.000 place-nothing |
+
+The floor changed **nothing** on the frontier: every cell capped at the same **place-one-anchor fixed point
+(windowed-final vp ≤ 0.333, all graded PILING)** and collapsed to place-nothing on transfer, whether
+`entropy_coef` was clamped at 0.02 (floor) or left to anneal toward 0.005–0.016 (control). The control anneal
+is **per-rung**, so it only reaches the 0.005 end when a rung runs the full 40 iters: **seed 0 is the
+maximal-contrast cell** (control fully annealed to 0.005 — a 4× lower entropy than the floor's 0.02) and there
+the floor was *exactly* inert (0.331 vs 0.333), confirmed per-iter in the #816 JSONL. Unlike #812's carrot —
+which at least *moved* the argmax — the floor never even reached #812's transient 0.451 basin (peak vp 0.333).
+
+**#816 confound cleared — refuted, not merely absent.** The feared mechanism was *floor → higher approx-KL →
+the `--target-kl 0.03` epoch loop early-stops → `epochs_run`→1 → starved consolidation*. The JSONL shows the
+opposite: `epochs_run` averaged 3.26–3.34 on the **floor** arm vs 3.19–3.24 on **control** (target 4,
+KL-gated; min 1 only on isolated KL-spike iters, never a systematic collapse). The floor ran with *at least as
+many* consolidation epochs as control, so the KILL cannot be an epoch-starvation artifact — no
+`--no-target-kl` retune is needed.
+
+**Diagnosis (4th refuted #736 lever — the original #736 anchor lever, then #810, #812, #815).** Undirected
+exploration cannot *steer* toward the valid basin. Holding
+entropy high merely widens the search symmetrically: it changed the *texture* of failure without changing the
+*outcome* — the floor arm actually logged **fewer** hard-piling iters (8–9 vs control's 11–19; higher entropy
+traded some piling for abstention) yet valid placement never rose above the vp-0.333 cap. Finding the
+invalid-pile / abstain region more readily is not finding the valid one. This is the **third independent
+refutation converging on discovery** (after #810's representation refutation and #812's economics refutation):
+the valid dense 3rd-pose must be **shown** (imitation / witness-graft), not *encouraged* (entropy) or
+*rewarded* (carrot). The surviving pre-registered discovery levers are **witness-imitation / DAgger** (graft
+the committed 3-object notch witness into the training distribution so the policy learns the valid
+configuration by imitation) and the **k = 2→1→0 pose-anneal localizer** (a valid 2-object start so the policy
+need only discover the single tight 3rd pose). `--entropy-floor` stays merged as opt-in, default-neutral
+infrastructure (`entropy_floor=None` ⇒ byte-identical). **Do not re-run the entropy floor on the notch.**
+
+### Backplay reverse-curriculum A/B (#821 — does starting the driven object near its solution break the notch by changing ρ₀?)
+
+The #815 entropy-floor KILL was the **third independent refutation converging on discovery** (after #810
+representation and #812 economics): the valid dense 3rd-pose must be *reachable*, not merely *encouraged* or
+*rewarded*. An adversarial imitation design panel (2026-06-24) then made the decisive observation: there is
+exactly **one** notch witness geometry and the encoder writes **absolute** world coordinates (`ml/encoding.py`),
+so every "imitate into the weights" candidate (BC / DAgger / demo-augmented / goal-token) can satisfy its WIN by
+**memorizing the witness coordinates** — an oracle-masquerade. **Reverse-curriculum / backplay** is the only
+candidate structurally immune (its scored transfer rung is witness-*absent*) and the only lever that touches
+**C1 — ρ₀, the reachable-state distribution** (Ng–Harada–Russell proves potential-based reward shaping cannot;
+representation and exploration temperature cannot either). `--backplay-trio-notch` (#821) inserts
+`trio-notch-backplay-{50,75,100}` sub-rungs before `trio-notch`: it pre-parks the k=N−1 witness prefix and spawns
+the **driven** object a fraction φ along a straight corridor from its witness park-pose (φ=0, near-solved) out to
+the normal apron/door spawn (φ=1), with `phi_cap` annealing 0.5→0.75→1.0 gated on the same windowed
+`valid_placed` competency the promotion gate reads. The env never snaps or auto-parks — backplay only changes
+*where the episode begins*; the agent still drives and rotates the object in itself. Default-off ⇒ byte-identical
+(4c-ii). The A/B is the **#736 trio-notch-anchored recipe + `--backplay-trio-notch` only** (entropy-floor OFF),
+two seeds via `ml.sweep`, against a same-session fresh control.
+
+```bash
+# +backplay arm — identical to the #736 control protocol plus the one lever flag (the only change).
+python -u -m ml.sweep --seeds 0,1 --out-dir sweep-backplay --tag bp --max-concurrency 1 -- \
+  --schedule curriculum --device cuda --n-envs 16 --rollout-len 512 \
+  --auto-budget --auto-budget-max-iters 120 --auto-budget-min-level 0.1 \
+  --promotion-metric valid_placed --promotion-threshold 0.9 \
+  --r-valid-park 30.0 --r-unplaced-penalty 25.0 --dense-slot-potential \
+  --w-col 20.0 --valid-park-grade-scale 4.0 --r-first-valid 15.0 \
+  --entropy-start 0.05 --entropy-end 0.005 --entropy-anneal-iters 40 \
+  --normalize-returns --validity-conditional-terminal \
+  --solo-box-rung --seed-anchor --mixed-anchor --anchor-trio-notch --backplay-trio-notch \
+  --stop-after-rung trio-notch
+```
+
+**Result (2026-06-24 two-seed run) — KILL, but the most informative negative in five levers: it deconfounds the
+wall.** Lower ladder mastered ~0.92–0.96 on both arms (frontier read trustworthy). Windowed-final vp (last-10-iter
+mean) on the decisive rungs, `ml.gate`-cross-confirmed (all four transfer cells exit 1, never competent):
+
+| Rung | bp seed 0 | bp seed 1 | control seed 0 | control seed 1 |
+|---|---|---|---|---|
+| `trio-notch-backplay-50` (φ=0.5) | 0.635 | 0.694 | — | — |
+| `trio-notch-backplay-75` (φ=0.75) | 0.686 | 0.681 | — | — |
+| `trio-notch-backplay-100` (φ=1.0) | 0.629 | 0.660 | — | — |
+| `trio-notch` (transfer, empty-start) | **0.000** | **0.000** | 0.000 | 0.000 |
+
+`phi_cap` annealed 0.5/0.75/1.0 on both seeds → the **confound-watch is satisfied**: the WIN precondition (solving
+from φ=1.0, the true apron/door spawn) was genuinely met *on the scaffold*. So the KILL is the pre-registered
+clause (b) in pure form — **the backplay rung reaches ≥ 0.6 but the empty-start transfer collapses** (here to
+0.000, below even the 0.333 abstention floor).
+
+**Why this KILL is the most valuable: it deconfounds the notch wall.** For the first time in five levers a
+treatment **broke the vp-0.333 attractor** — backplay sustained vp ~0.63–0.69 on *both* seeds *even at* φ=1.0
+(the driven object spawned at the normal apron/door, the other two pre-parked). That proves **valid multi-object
+placement in the real notch is learnable** — it is NOT a spatial-representation limit (#810), reward-economics
+limit (#812), or exploration-temperature limit (#815). The single unlearned skill is **empty-start multi-object
+sequencing / discovery**: backplay always pre-parks k=N−1, so it only ever trains "complete a nearly-finished
+layout (add the last piece)" — a categorically different skill from "construct a valid dense layout from an empty
+hangar," and the empty-start observation distribution never appears in training. This is an *interpretable* KILL
+(issue #821's pre-registered open-risk B — near-φ solve without back-chain), **not** a masquerade: the
+witness-absent transfer rung did exactly its job. `--backplay-trio-notch` stays merged as opt-in,
+default-neutral infrastructure (`backplay_phi_cap=None` ⇒ byte-identical); the held-out `witness_notch_B` (#822)
+hardening eval was moot (no WIN to harden) and remains a reusable asset.
+
+**Direction (open — strategy-level reassessment).** Per-object placement is now *proven* learnable, so a further
+lever must target empty-start sequencing specifically — candidates: an **empty-start coverage k-anneal** (explicit
+drive-2-from-empty then drive-3-from-empty rungs, k:2→1→0 — the surviving #815 fork-B, now much better-motivated)
+or **multi-object backplay** (anneal the pre-park count k→0 so the proven near-solution-spawn mechanism trains
+from empty). ~~A strategic alternative is to **reframe toward completion**: hangarfit's on-demand-exception use case
+rarely starts from an empty hangar (it fits the displaced last 1–2 planes into a mostly-set layout), which is
+exactly the completion skill backplay already delivers (~65% valid).~~ **Superseded — RESOLVED-NEGATIVE
+(#837, see the Status section at the top).** Genuine cold-start completion is not achieved on either manifold,
+by two independent measurements: the measure-first probe already showed true φ=1 completion is `0.000` (the
+"~65%" was a φ-mixture average dominated by near-witness episodes — see Status), and the ADR-0028 trigger-#3
+completion paired-witness probe — training pure door-spawn completion (φ=1, pre-park k=2, drive the marginal
+object) directly, read through the floor-aware **marginal** metric `max(0, 3·valid_placed − 2)` — converges
+only to the **2-of-3 abandonment floor** (marginal `0.000` on both the tight notch and a ~4.3×-wider roomy
+slot; `valid_placed ≈ 0.667`). So re-charter-to-completion is **closed, not an open direction**. **Contraindicated / do-not-reattempt:**
+witness-imitation / DAgger (oracle-masquerade, panel-rejected), the pile-safe carrot (#812), the entropy floor
+(#815), and spatial representation (#810).
 
 ### Concurrent sweep runner (#749 — run the two/three-seed gate in one launch)
 

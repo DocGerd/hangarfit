@@ -44,6 +44,37 @@ def test_trivial_train_still_runs_with_new_return_type():
     assert len(history) == 1
 
 
+def test_spatial_tokens_ppo_smoke_trains_without_nan():
+    # A handful of PPO iterations on the trivial rung with the ON architecture (#809) must run
+    # and return finite rewards — proves the spatial path trains end-to-end (rollout + GAE +
+    # update) with no NaN and no terminal-forward crash.
+    history = train(
+        seed=0,
+        iterations=2,
+        rollout_len=32,
+        policy_kwargs={"spatial_tokens": True, "d_model": 32, "n_layers": 1, "n_heads": 2},
+    )
+    assert len(history) == 2
+    # finite (no NaN/inf): r == r rejects NaN; the magnitude bound rejects inf.
+    assert all(isinstance(r, float) and r == r and abs(r) < 1e9 for r in history)
+
+
+def test_relative_encoder_ppo_smoke_trains_without_nan():
+    # A handful of PPO iterations on the trivial rung with the ego encoder (#827) must run and
+    # return finite rewards — proves the train()-derived 28-wide ego tokens are consumed by the
+    # relative_encoder policy end-to-end (rollout + GAE + update), no NaN, no shape crash. The
+    # encoder's ego_centric is DERIVED from policy_kwargs, so passing only the policy kwarg here
+    # exercises the derivation in train().
+    history = train(
+        seed=0,
+        iterations=2,
+        rollout_len=32,
+        policy_kwargs={"relative_encoder": True, "d_model": 32, "n_layers": 1, "n_heads": 2},
+    )
+    assert len(history) == 2
+    assert all(isinstance(r, float) and r == r and abs(r) < 1e9 for r in history)
+
+
 from ml.curriculum import (  # noqa: E402
     CurriculumSchedule,
     DifficultyConfig,
@@ -78,6 +109,9 @@ def test_train_curriculum_is_deterministic():
     h2 = train_curriculum(seed=0, schedule=sched, rollout_len=16)
     assert h1.promotions == h2.promotions
     assert h1.iterations == h2.iterations
+    # #816: the parallel telemetry is also deterministic (epochs_run is target_kl-driven but
+    # reproducible on the fixed-seed serial path; entropy_coef is a pure computed value).
+    assert h1.iter_train_metrics == h2.iter_train_metrics
 
 
 def test_train_curriculum_promotes_by_competency_then_advances():
@@ -111,7 +145,13 @@ def test_train_curriculum_competency_reads_honest_per_iteration_mean_not_episode
     monkeypatch.setattr(
         train_mod,
         "ppo_update",
-        lambda *a, **k: {"policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0, "loss": 0.0},
+        lambda *a, **k: {
+            "policy_loss": 0.0,
+            "value_loss": 0.0,
+            "entropy": 0.0,
+            "loss": 0.0,
+            "epochs_run": 1.0,
+        },
     )
 
     sched = CurriculumSchedule.default()
@@ -149,7 +189,13 @@ def test_auto_budget_floor_guard_blocks_premature_stop_in_loop(monkeypatch, min_
     monkeypatch.setattr(
         train_mod,
         "ppo_update",
-        lambda *a, **k: {"policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0, "loss": 0.0},
+        lambda *a, **k: {
+            "policy_loss": 0.0,
+            "value_loss": 0.0,
+            "entropy": 0.0,
+            "loss": 0.0,
+            "epochs_run": 1.0,
+        },
     )
 
     sched = CurriculumSchedule.default()
@@ -258,6 +304,11 @@ def test_argparser_vec_start_method_defaults_to_spawn():
         parser.parse_args(["--vec-start-method", "bogus"])
 
 
+def test_argparser_relative_encoder_flag():
+    assert build_argparser().parse_args([]).relative_encoder is False
+    assert build_argparser().parse_args(["--relative-encoder"]).relative_encoder is True
+
+
 def test_argparser_n_envs_auto_resolves_to_positive_int(monkeypatch):
     import ml.train as t
 
@@ -316,7 +367,13 @@ def test_entropy_schedule_rewarms_per_stage_in_train_curriculum(monkeypatch):
 
     def recorder(policy, optimizer, buf, config, *, normalizer=None):
         recorded.append(config.entropy_coef)
-        return {"policy_loss": 0.0, "value_loss": 0.0, "entropy": 0.0, "loss": 0.0}
+        return {
+            "policy_loss": 0.0,
+            "value_loss": 0.0,
+            "entropy": 0.0,
+            "loss": 0.0,
+            "epochs_run": 1.0,
+        }
 
     def empty_rollout(env, policy, enc, rollout_len, *, sample_request=None):
         return RolloutBuffer(), []  # no completed episodes -> never promotes by competency
@@ -1474,3 +1531,359 @@ def test_main_no_flags_l5_neutral_l4_default_on(monkeypatch):
     assert ppo.reward_clip == 50.0
     assert ppo.value_clip_eps == 0.2
     assert ppo.target_kl == 0.03
+
+
+def test_r_valid_progress_flag_defaults_neutral():
+    # #812: the per-commitment economics knob defaults 0.0 (byte-identical) and parses a value.
+    parser = build_argparser()
+    assert parser.parse_args([]).r_valid_progress == 0.0
+    assert parser.parse_args(["--r-valid-progress", "8.0"]).r_valid_progress == 8.0
+
+
+def test_main_threads_r_valid_progress_into_weights(monkeypatch):
+    # #812: --r-valid-progress flows all the way into the RewardWeights used for training.
+    w = _capture_main(monkeypatch, ["--r-valid-progress", "8.0"])["weights"]
+    assert w.r_valid_progress == 8.0
+
+
+# ---------------------------------------------------------------------------
+# #815 entropy floor on frontier rungs — flags default-neutral, comma-split rung
+# list, LOUD guards (floor requires rungs; both are curriculum-only), and the
+# flags thread into the PPOConfig handed to train_curriculum.
+# ---------------------------------------------------------------------------
+
+
+def test_entropy_floor_flags_default_off():
+    a = build_argparser().parse_args([])
+    assert a.entropy_floor is None
+    assert a.frontier_rungs == ()
+
+
+def test_frontier_rungs_comma_split_strips_whitespace():
+    a = build_argparser().parse_args(["--frontier-rungs", "trio-notch-anchored, trio-notch"])
+    assert a.frontier_rungs == ("trio-notch-anchored", "trio-notch")
+
+
+def test_entropy_floor_requires_frontier_rungs():
+    # A floor with no rung to apply it to is a misconfiguration — fail LOUD.
+    import ml.train as train_mod
+
+    with pytest.raises(SystemExit):
+        train_mod.main(["--schedule", "curriculum", "--entropy-floor", "0.02"])
+
+
+def test_entropy_floor_flags_require_curriculum():
+    # The floor is rung-scoped; the trivial path has no rungs. Fail LOUD, not silent-ignore.
+    import ml.train as train_mod
+
+    with pytest.raises(SystemExit):
+        train_mod.main(
+            ["--schedule", "trivial", "--entropy-floor", "0.02", "--frontier-rungs", "x"]
+        )
+    with pytest.raises(SystemExit):
+        train_mod.main(["--schedule", "trivial", "--frontier-rungs", "x"])
+
+
+def test_main_threads_entropy_floor_into_ppo(monkeypatch):
+    cfg = _capture_main(
+        monkeypatch,
+        ["--entropy-floor", "0.02", "--frontier-rungs", "trio-notch-anchored,trio-notch"],
+    )["ppo"]
+    assert cfg.entropy_floor == 0.02
+    assert cfg.entropy_floor_rungs == ("trio-notch-anchored", "trio-notch")
+
+
+@pytest.mark.parametrize("n_envs", [1, 2])
+def test_entropy_floor_applies_only_on_frontier_rung_in_train_curriculum(monkeypatch, n_envs):
+    # BEHAVIORAL: prove the floor reaches the entropy_coef ppo_update actually receives, on
+    # the frontier rung ONLY. Parametrized over BOTH curriculum call-sites: the serial
+    # n_envs==1 inline path AND the vectorized n_envs>1 `_it_cfg` closure (vec_backend=sync,
+    # in-process). Recorder/empty-rollout stubs so the per-stage loop runs its full max_iters
+    # with no real torch training. _tiny_schedule stages are "t0" (non-frontier) and "t1"
+    # (the frontier rung); the floor must raise only t1's below-floor late-anneal iterations.
+    import ml.train as train_mod
+    from ml.ppo import PPOConfig, RolloutBuffer, VecRolloutBuffer
+
+    recorded: list[float] = []
+
+    def recorder(policy, optimizer, buf, config, *, normalizer=None):
+        recorded.append(config.entropy_coef)
+        return {
+            "policy_loss": 0.0,
+            "value_loss": 0.0,
+            "entropy": 0.0,
+            "loss": 0.0,
+            "epochs_run": 1.0,
+        }
+
+    def empty_rollout(env, policy, enc, rollout_len, *, sample_request=None):
+        return RolloutBuffer(), []  # no completed episodes -> never promotes by competency
+
+    def empty_rollout_vec(vec, policy, enc, rollout_len, *, static_block=None):
+        return VecRolloutBuffer(num_envs=n_envs), []  # never read (ppo_update is stubbed)
+
+    monkeypatch.setattr(train_mod, "ppo_update", recorder)
+    monkeypatch.setattr(train_mod, "collect_rollout", empty_rollout)
+    monkeypatch.setattr(train_mod, "collect_rollout_vec", empty_rollout_vec)
+
+    max_iters = 3
+    sched = _tiny_schedule(threshold=2.0)  # zero episodes -> every rung caps at max_iters
+    sched = CurriculumSchedule(
+        stages=sched.stages, policy=replace(sched.policy, max_iters=max_iters)
+    )
+    # anneal: it=0->0.05, it=1->0.0275, it>=2->0.005 (below the 0.02 floor at the tail).
+    cfg = PPOConfig(
+        entropy_coef_start=0.05,
+        entropy_coef_end=0.005,
+        entropy_anneal_iters=2,
+        entropy_floor=0.02,
+        entropy_floor_rungs=("t1",),  # frontier = the SECOND rung only
+    )
+    train_curriculum(
+        seed=0, schedule=sched, rollout_len=8, ppo=cfg, n_envs=n_envs, vec_backend="sync"
+    )
+
+    assert len(recorded) == 2 * max_iters
+    t0 = recorded[:max_iters]  # non-frontier: bare anneal, NOT floored
+    t1 = recorded[max_iters:]  # frontier: floored UP where the anneal dips below 0.02
+    assert t0 == pytest.approx([0.05, 0.0275, 0.005])
+    assert t1 == pytest.approx([0.05, 0.0275, 0.02])  # tail raised 0.005 -> 0.02
+
+
+def test_entropy_floor_must_be_positive():
+    # The floor RAISES the coef; a non-positive value is silently inert -> fail LOUD.
+    import ml.train as train_mod
+
+    for bad in ("0", "-0.5"):
+        with pytest.raises(SystemExit):
+            train_mod.main(
+                ["--schedule", "curriculum", "--entropy-floor", bad, "--frontier-rungs", "t1"]
+            )
+
+
+def test_frontier_rungs_without_floor_is_accepted_and_inert(monkeypatch):
+    # The asymmetric-but-valid combo: rungs set, floor omitted. Accepted (no guard) and
+    # inert — entropy_floor stays None, so iter_entropy_coef is pure passthrough regardless
+    # of rung membership (the None-floor branch dominates rung membership).
+    from ml.ppo import entropy_coef_at, iter_entropy_coef
+
+    cfg = _capture_main(monkeypatch, ["--frontier-rungs", "t1"])["ppo"]
+    assert cfg.entropy_floor is None
+    assert cfg.entropy_floor_rungs == ("t1",)
+    cfg2 = replace(cfg, entropy_coef_start=0.05, entropy_coef_end=0.005, entropy_anneal_iters=2)
+    for it in range(5):
+        bare = entropy_coef_at(it, base=cfg2.entropy_coef, start=0.05, end=0.005, anneal_iters=2)
+        assert iter_entropy_coef(cfg2, it, "t1") == bare  # frontier rung, but floor None -> bare
+
+
+@pytest.mark.parametrize(
+    "raw,expected",
+    [
+        ("a,b,", ("a", "b")),  # trailing comma dropped
+        ("a,,b", ("a", "b")),  # empty interior token dropped
+        ("a", ("a",)),  # single value
+        ("  ,  ", ()),  # all-whitespace -> empty (the load-bearing strip+filter)
+        ("trio-notch-anchored, trio-notch", ("trio-notch-anchored", "trio-notch")),
+    ],
+)
+def test_comma_split_rungs_edge_cases(raw, expected):
+    from ml.train import _comma_split_rungs
+
+    assert _comma_split_rungs(raw) == expected
+
+
+# ---------------------------------------------------------------------------
+# #816 frontier-gate instrumentation — epochs_run + applied entropy_coef land
+# in the --metrics-out JSONL (the #815 gate's target_kl confound watch needs them).
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize("n_envs", [1, 2])
+def test_curriculum_jsonl_carries_epochs_run_and_entropy_coef(n_envs):
+    # Real (tiny) curriculum run over BOTH the serial (n_envs==1) and vectorized
+    # (n_envs>1) call-sites: every per-iteration metrics record must carry epochs_run
+    # (>=1, the target_kl epoch count) and the applied entropy_coef (default 0.01).
+    from ml.curriculum import history_metric_records
+
+    sched = _tiny_schedule(threshold=2.0)  # caps at max_iters
+    sched = CurriculumSchedule(stages=sched.stages, policy=replace(sched.policy, max_iters=2))
+    h = train_curriculum(seed=0, schedule=sched, rollout_len=16, n_envs=n_envs, vec_backend="sync")
+    recs = history_metric_records(h)
+    assert recs  # non-vacuous
+    for r in recs:
+        assert isinstance(r["epochs_run"], float) and r["epochs_run"] >= 1.0
+        assert r["entropy_coef"] == pytest.approx(0.01)  # PPOConfig default, no anneal
+
+
+def test_jsonl_entropy_coef_is_the_applied_floored_value_not_the_base(monkeypatch):
+    # The decisive #816 x #815 test: the JSONL must carry the APPLIED per-iteration coef
+    # (it_cfg.entropy_coef, post-anneal + post-floor) — not the base cfg.entropy_coef. Stubs
+    # ppo_update (returning epochs_run) + empty rollouts so the loop caps; then reads the
+    # entropy_coef straight out of history_metric_records. t1 is the frontier rung: its tail
+    # anneal (0.005) must show FLOORED to 0.02 in the JSONL, while t0 shows the bare anneal.
+    import ml.train as train_mod
+    from ml.curriculum import history_metric_records
+    from ml.ppo import PPOConfig, RolloutBuffer
+
+    def stub_update(policy, optimizer, buf, config, *, normalizer=None):
+        return {
+            "policy_loss": 0.0,
+            "value_loss": 0.0,
+            "entropy": 0.0,
+            "loss": 0.0,
+            "epochs_run": 1.0,
+        }
+
+    def empty_rollout(env, policy, enc, rollout_len, *, sample_request=None):
+        return RolloutBuffer(), []
+
+    monkeypatch.setattr(train_mod, "ppo_update", stub_update)
+    monkeypatch.setattr(train_mod, "collect_rollout", empty_rollout)
+
+    sched = _tiny_schedule(threshold=2.0)
+    sched = CurriculumSchedule(stages=sched.stages, policy=replace(sched.policy, max_iters=3))
+    cfg = PPOConfig(
+        entropy_coef_start=0.05,
+        entropy_coef_end=0.005,
+        entropy_anneal_iters=2,
+        entropy_floor=0.02,
+        entropy_floor_rungs=("t1",),
+    )
+    recs = history_metric_records(train_curriculum(seed=0, schedule=sched, rollout_len=8, ppo=cfg))
+    t0 = [r["entropy_coef"] for r in recs if r["stage"] == "t0"]
+    t1 = [r["entropy_coef"] for r in recs if r["stage"] == "t1"]
+    assert t0 == pytest.approx([0.05, 0.0275, 0.005])  # non-frontier: bare anneal in the JSONL
+    assert t1 == pytest.approx([0.05, 0.0275, 0.02])  # frontier: FLOORED applied value, not 0.005
+
+
+# ---------------------------------------------------------------------------
+# #821 — backplay reverse-curriculum: the --backplay-trio-notch CLI graft + guard,
+#        and the phi_cap surfaced into the #816 per-iteration JSONL telemetry
+# ---------------------------------------------------------------------------
+
+
+def test_main_backplay_trio_notch_requires_curriculum_schedule(monkeypatch):
+    # --backplay-trio-notch is curriculum-only (the trivial path has no rungs); with --schedule
+    # trivial it must fail LOUD and BEFORE any training, never silently drop the typed flag.
+    import ml.train as train_mod
+
+    ran = {"train": False}
+
+    def guard(**kw):
+        ran["train"] = True
+        return []
+
+    monkeypatch.setattr(train_mod, "train", guard)
+    with pytest.raises(SystemExit):
+        train_mod.main(["--schedule", "trivial", "--backplay-trio-notch"])
+    assert ran["train"] is False
+
+
+def test_main_backplay_trio_notch_grafts_sub_rungs_into_schedule(monkeypatch):
+    # The flag inserts the backplay sub-rung ladder immediately before the empty-start trio-notch.
+    import ml.train as train_mod
+    from ml.curriculum import CurriculumHistory
+
+    captured: dict = {}
+
+    def fake(*, schedule, **kw):
+        captured["schedule"] = schedule
+        return CurriculumHistory()
+
+    monkeypatch.setattr(train_mod, "train_curriculum", fake)
+    train_mod.main(["--schedule", "curriculum", "--backplay-trio-notch"])
+    names = [s.name for s in captured["schedule"].stages]
+    assert any("backplay" in n for n in names)
+    i = names.index("trio-notch")
+    assert "backplay" in names[i - 1]  # sub-rungs land right before the empty-start rung
+
+
+def test_main_no_backplay_flag_keeps_default_ladder(monkeypatch):
+    # default-neutral: without --backplay-trio-notch the schedule carries no backplay rung.
+    import ml.train as train_mod
+    from ml.curriculum import CurriculumHistory
+
+    captured: dict = {}
+
+    def fake(*, schedule, **kw):
+        captured["schedule"] = schedule
+        return CurriculumHistory()
+
+    monkeypatch.setattr(train_mod, "train_curriculum", fake)
+    train_mod.main(["--schedule", "curriculum"])
+    assert all("backplay" not in s.name for s in captured["schedule"].stages)
+
+
+def test_iter_train_metrics_logs_phi_cap_only_for_backplay_rungs():
+    # #816/#821: a backplay rung surfaces its fixed phi_cap ceiling for the gate's confound
+    # watch ("a WIN must coincide with phi_cap annealed to ~1.0"). A non-backplay rung adds NO
+    # phi_cap key, so its per-iteration JSONL telemetry stays byte-identical to the pre-#821 dict.
+    from ml.ppo import PPOConfig
+    from ml.train import _iter_train_metrics
+
+    metrics = {"epochs_run": 3.0}
+    cfg = PPOConfig()
+    plain = _iter_train_metrics(metrics, cfg)
+    assert "phi_cap" not in plain
+    bp = _iter_train_metrics(metrics, cfg, backplay_phi_cap=0.75)
+    assert bp["phi_cap"] == pytest.approx(0.75)
+
+
+def test_completion_probe_flag_builds_single_completion_rung():
+    # ADR-0028 trigger-#3: --completion-probe produces EXACTLY one stage on the RUNTIME path
+    # (_build_curriculum_schedule, which main() calls) — not just on the helper used by tests.
+    from ml.train import _build_curriculum_schedule, build_argparser, build_schedule
+
+    args = build_argparser().parse_args(["--completion-probe", "roomy"])
+    # Pin on the runtime path so a future divergence between the helper and main() fails here.
+    stages = _build_curriculum_schedule(args).stages
+    assert [s.name for s in stages] == ["completion-roomy"]
+    # build_schedule must agree (it delegates to _build_curriculum_schedule).
+    assert [s.name for s in build_schedule(args)] == ["completion-roomy"]
+
+
+def test_completion_probe_notch_builds_notch_rung():
+    # --completion-probe notch → the tight-arm stage, both on the runtime path and via the helper.
+    from ml.train import _build_curriculum_schedule, build_argparser, build_schedule
+
+    args = build_argparser().parse_args(["--completion-probe", "notch"])
+    stages = _build_curriculum_schedule(args).stages
+    assert [s.name for s in stages] == ["completion-notch"]
+    assert [s.name for s in build_schedule(args)] == ["completion-notch"]
+
+
+def test_completion_probe_honors_max_iters_per_stage():
+    # --max-iters-per-stage must be applied to the single completion-probe schedule so that
+    # e.g. `--completion-probe roomy --max-iters-per-stage 200` caps the probe run.
+    from ml.train import _build_curriculum_schedule, build_argparser
+
+    args = build_argparser().parse_args(
+        ["--completion-probe", "roomy", "--max-iters-per-stage", "200"]
+    )
+    sched = _build_curriculum_schedule(args)
+    assert sched.policy.max_iters == 200
+
+
+def test_no_completion_probe_is_default_neutral():
+    # ADR-0028 / 4c-ii default-neutrality: absent --completion-probe, the schedule is the
+    # concrete DEFAULT_LADDER — no completion rung injected, byte-identical to pre-flag.
+    from ml.train import _build_curriculum_schedule, build_argparser, build_schedule
+
+    args = build_argparser().parse_args(["--schedule", "curriculum"])
+    # Pin on the runtime path.
+    stages = _build_curriculum_schedule(args).stages
+    rung_names = [s.name for s in stages]
+    # Must match the actual DEFAULT_LADDER exactly (no injection).
+    assert rung_names == ["trivial", "pair-box", "trio-box", "trio-notch", "trio-notch-strict"]
+    # Must contain no completion rung regardless of value.
+    assert all(s.name not in ("completion-notch", "completion-roomy") for s in stages)
+    # build_schedule must agree.
+    assert [s.name for s in build_schedule(args)] == rung_names
+
+
+def test_completion_probe_trivial_schedule_errors():
+    # --completion-probe + --schedule trivial must error LOUD, not silently train the full ladder.
+    from ml.train import main
+
+    with pytest.raises(SystemExit):
+        main(["--schedule", "trivial", "--completion-probe", "roomy"])

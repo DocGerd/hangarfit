@@ -6,7 +6,7 @@ env builder lives in ml/stage_builder.py; the torch training loop in ml/train.py
 from __future__ import annotations
 
 import random
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field, replace
 from functools import partial
 from typing import Literal
@@ -228,12 +228,16 @@ def format_iter_log(stage_name: str, it: int, ep_stats: Sequence[EpisodeStat]) -
 
 def history_metric_records(history: CurriculumHistory) -> list[dict[str, object]]:
     """One JSONL-ready record per recorded training iteration: ``stage``, ``iter`` index,
-    and the ``episode_metrics`` over that iteration's completed episodes. Pure over the
-    history — the #710 per-rung ``valid_placed`` learning curve the CLI dumps via
-    ``--metrics-out``."""
+    the ``episode_metrics`` over that iteration's completed episodes, and (#816) any
+    per-iteration training telemetry recorded alongside it (``epochs_run``, the applied
+    ``entropy_coef``). Pure over the history — the #710 per-rung ``valid_placed`` learning
+    curve the CLI dumps via ``--metrics-out``. Index-guards ``iter_train_metrics`` so a
+    history built without it (pre-#816 or hand-constructed) merges an empty telemetry dict
+    rather than raising — additive: no new keys when no train_metrics were recorded."""
+    tm = history.iter_train_metrics
     return [
-        {"stage": stage, "iter": it, **episode_metrics(ep_stats)}
-        for stage, it, ep_stats in history.iterations
+        {"stage": stage, "iter": it, **episode_metrics(ep_stats), **(tm[i] if i < len(tm) else {})}
+        for i, (stage, it, ep_stats) in enumerate(history.iterations)
     ]
 
 
@@ -260,10 +264,13 @@ def sample_request(pool: Sequence[str], n: int, rng: random.Random) -> tuple[str
 class EpisodeStart:
     """Per-episode start spec produced by the sampler, consumed by env.reset. ``seed_anchor_k``
     None => the env uses ``difficulty.seed_anchor_k`` (plain rung); an int => per-episode
-    override (the #712 mixed-start rung's seeded k draw)."""
+    override (the #712 mixed-start rung's seeded k draw). ``backplay_phi`` None => no spawn
+    override (byte-identical door spawn); a float in [0, 1] => the #821 backplay corridor
+    fraction for the driven object (0 = its witness park-pose, 1 = the door)."""
 
     requested_ids: tuple[str, ...]
     seed_anchor_k: int | None = None
+    backplay_phi: float | None = None
 
 
 def plain_start(pool: Sequence[str], n: int, rng: random.Random) -> EpisodeStart:
@@ -290,21 +297,44 @@ def sample_mixed_start(
     return EpisodeStart(ids, k)
 
 
+def sample_backplay_start(
+    pool: Sequence[str],
+    n: int,
+    rng: random.Random,
+    *,
+    phi_cap: float,
+) -> EpisodeStart:
+    """A #821 backplay reverse-curriculum episode: draw the requested ids, THEN draw the corridor
+    fraction phi ~ U(0, ``phi_cap``) from the SAME rng (FIXED draw order: ids then phi), so Sync
+    and Subproc workers sharing one stream stay byte-identical. ``seed_anchor_k`` is left None (the
+    rung's fixed N-1 prefix is the env default, not a per-episode draw); the env spawns the single
+    driven object a fraction phi along the corridor from its witness park-pose (phi=0, near-solved)
+    out to the door (phi=1)."""
+    ids = sample_request(pool, n, rng)
+    phi = rng.uniform(0.0, phi_cap)
+    return EpisodeStart(ids, None, phi)
+
+
 def make_episode_sampler(
     stage: Stage, pool: Sequence[str], n: int, rng: random.Random
 ) -> Callable[[], EpisodeStart]:
-    """Build this stage's per-episode start sampler. A mixed-start rung (anchor_prob set)
-    gets ``sample_mixed_start`` (seeded per-episode k draw); every other rung gets
-    ``plain_start`` (byte-identical id draw, k left to the env default). Both bind pool/n/rng
-    by value via partial (no late-binding closure trap)."""
-    ap = stage.difficulty.anchor_prob
+    """Build this stage's per-episode start sampler. A backplay rung (backplay_phi_cap set) gets
+    ``sample_backplay_start`` (seeded per-episode phi draw); a mixed-start rung (anchor_prob set)
+    gets ``sample_mixed_start`` (seeded per-episode k draw); every other rung gets ``plain_start``
+    (byte-identical id draw, k/phi left to the env default). The backplay and mixed knobs are
+    mutually exclusive (validate_ladder enforces it). All bind pool/n/rng by value via partial
+    (no late-binding closure trap)."""
+    diff = stage.difficulty
+    if diff.backplay_phi_cap is not None:
+        return partial(sample_backplay_start, pool, n, rng, phi_cap=diff.backplay_phi_cap)
+    ap = diff.anchor_prob
     if ap is not None:
         return partial(
             sample_mixed_start,
             pool,
             n,
             rng,
-            seed_anchor_k=stage.difficulty.seed_anchor_k,
+            seed_anchor_k=diff.seed_anchor_k,
             anchor_prob=ap,
         )
     return partial(plain_start, pool, n, rng)
@@ -381,6 +411,34 @@ def validate_ladder(ladder: Sequence[Stage], *, encoder_max_objects: int) -> Non
                     f"stage {s.name!r}: a mixed-start rung (anchor_prob set) needs "
                     f"max_objects >= 2 (room for both a k=1 and a k=0 draw), got {n}"
                 )
+        # #821 backplay rung: phi_cap must be a real corridor fraction in (0, 1] (0 = degenerate
+        # always-witness, no corridor; >1 extrapolates past the door), needs a witness for the
+        # corridor terminals + the pre-parked prefix, and is mutually exclusive with the mixed-start
+        # k draw (each sampler owns ONE fixed rng draw order — sharing one stage desyncs them).
+        cap = s.difficulty.backplay_phi_cap
+        if cap is not None:
+            if not (0.0 < cap <= 1.0):
+                raise ValueError(f"stage {s.name!r}: backplay_phi_cap must be in (0, 1], got {cap}")
+            if s.anchor_layout_path is None:
+                raise ValueError(
+                    f"stage {s.name!r}: a backplay rung (backplay_phi_cap set) needs an "
+                    f"anchor_layout_path (the witness the driven corridor recedes from)"
+                )
+            if ap is not None:
+                raise ValueError(
+                    f"stage {s.name!r}: backplay_phi_cap and anchor_prob are mutually exclusive "
+                    f"(each owns one fixed per-episode rng draw order)"
+                )
+            # Backplay pre-parks the k=N-1 prefix so EXACTLY ONE object is driven via the corridor:
+            # _backplay_phi persists across the per-object _spawn calls, so a smaller k (>1 driven)
+            # would silently backplay-spawn EVERY driven object — not the single-driven reverse
+            # curriculum the lever (and every docstring) specifies. Enforce it pre-flight.
+            if s.difficulty.seed_anchor_k != n - 1:
+                raise ValueError(
+                    f"stage {s.name!r}: a backplay rung must pre-park the k=N-1 prefix "
+                    f"(seed_anchor_k == max_objects - 1 == {n - 1}) so exactly one object is "
+                    f"driven, got seed_anchor_k={s.difficulty.seed_anchor_k}"
+                )
 
 
 @dataclass(slots=True)
@@ -392,9 +450,23 @@ class CurriculumHistory:
 
     iterations: list[tuple[str, int, tuple[EpisodeStat, ...]]] = field(default_factory=list)
     promotions: list[tuple[str, int, str]] = field(default_factory=list)
+    # #816: per-iteration training telemetry (e.g. epochs_run, the applied entropy_coef),
+    # appended in lockstep with ``iterations`` by ``record``. Kept in a PARALLEL list rather
+    # than widening the ``iterations`` 3-tuple, so every existing ``iterations``-tuple unpacker
+    # and the determinism canary (which compares ``iterations``) are untouched. Empty dict when
+    # a record carries no train_metrics, so the two lists stay index-aligned.
+    iter_train_metrics: list[dict[str, float]] = field(default_factory=list)
 
-    def record(self, stage_name: str, it: int, ep_stats: Sequence[EpisodeStat]) -> None:
+    def record(
+        self,
+        stage_name: str,
+        it: int,
+        ep_stats: Sequence[EpisodeStat],
+        *,
+        train_metrics: Mapping[str, float] | None = None,
+    ) -> None:
         self.iterations.append((stage_name, it, tuple(ep_stats)))
+        self.iter_train_metrics.append(dict(train_metrics or {}))
 
     def note_promotion(self, stage_name: str, it: int, *, by: str) -> None:
         self.promotions.append((stage_name, it, by))
@@ -418,9 +490,58 @@ _BOX_FLEET = "data/fleet.yaml"
 _WITNESS_BOX = "tests/fixtures/ml/witness_box.yaml"
 _NOTCH_HANGAR = "examples/herrenteich/hangar.yaml"
 _NOTCH_FLEET = "examples/herrenteich/fleet.yaml"
+# Committed seed-anchor witness for the #736 notch trio rung (trio-notch-anchored). A valid
+# 3-object layout on the real notch hangar (a subset of examples/herrenteich/layout.yaml); the
+# anchored rung pre-parks a k-prefix of it. Dev/CI-only fixture, validated by
+# tests/ml/test_stage_builder.py::test_witness_notch_*.
+_WITNESS_NOTCH = "tests/fixtures/ml/witness_notch.yaml"
 _LENIENT_CLEARANCE = (
     0.05  # below the herrenteich file value (0.10) so the clearance ramp truly tightens
 )
+
+# ADR-0028 trigger-#3 completion paired-witness probe (opt-in via --completion-probe; NOT in any
+# default ladder, so absent the flag the env is byte-identical). The ROOMY arm's hangar/fleet:
+_ROOMY_HANGAR = "tests/fixtures/test_hangar_large.yaml"
+_ROOMY_FLEET = "data/fleet.yaml"
+# Committed roomy completion witness (a valid 3-object fill on the 25x30 test hangar). Validity
+# pinned by tests/ml/test_stage_builder.py::test_witness_roomy_*.
+_WITNESS_ROOMY = "tests/fixtures/ml/witness_roomy.yaml"
+_ROOMY_CLEARANCE = 0.3  # explicit clearance for the roomy arm (matches test_hangar_large.yaml;
+# keep in sync if that file changes)
+
+
+def _completion_stage(witness: str) -> Stage:
+    """A single door-spawn COMPLETION rung for the ADR-0028 trigger-#3 paired probe: pre-park
+    k=N-1=2 of a valid 3-object witness and drive the LAST object in from the door (phi=1, NO
+    backplay knob). ``witness`` selects the manifold arm — 'notch' (tight Herrenteich notch,
+    conditional last-slot ~0.064, the measured 0.000 wall) or 'roomy' (the fat 25x30 hangar,
+    ~0.278). The arms differ ONLY in hangar/fleet/witness/clearance; manifold width is the
+    controlled variable. Opt-in (built only by --completion-probe); no default ladder includes
+    it, so the env stays byte-identical when the flag is absent."""
+    if witness == "notch":
+        return Stage(
+            name="completion-notch",
+            difficulty=DifficultyConfig(
+                max_objects=3, seed_anchor_k=2, per_object_step_budget=80, total_step_budget=80
+            ),
+            hangar_path=_NOTCH_HANGAR,
+            fleet_path=_NOTCH_FLEET,
+            anchor_layout_path=_WITNESS_NOTCH,
+            clearance_m=_LENIENT_CLEARANCE,
+        )
+    if witness == "roomy":
+        return Stage(
+            name="completion-roomy",
+            difficulty=DifficultyConfig(
+                max_objects=3, seed_anchor_k=2, per_object_step_budget=80, total_step_budget=80
+            ),
+            hangar_path=_ROOMY_HANGAR,
+            fleet_path=_ROOMY_FLEET,
+            anchor_layout_path=_WITNESS_ROOMY,
+            clearance_m=_ROOMY_CLEARANCE,
+        )
+    raise ValueError(f"_completion_stage: unknown witness {witness!r} (expected 'notch'|'roomy')")
+
 
 # Opt-in #714 rung (wired via with_solo_box_rung / --solo-box-rung), NOT part of DEFAULT_LADDER.
 # max_objects=1 like trivial, but the WHOLE-fleet pool (fleet_ids omitted) instead of trivial's
@@ -449,6 +570,65 @@ _PAIR_ANCHORED_STAGE = Stage(
     fleet_path=_BOX_FLEET,
     anchor_layout_path=_WITNESS_BOX,
     clearance_m=_LENIENT_CLEARANCE,
+)
+
+# Opt-in #736 rung (wired via with_trio_notch_anchored_rung / --anchor-trio-notch), NOT in
+# DEFAULT_LADDER. Three objects on the REAL notch hangar, but ONE is pre-parked at a committed
+# notch-witness pose (seed_anchor_k=1) and the agent drives the other two in — the trio analogue
+# of pair-anchored (#712). It targets the diagnosed cold-start coverage minimum on the notch
+# (the policy validly parks ONE aircraft then abandons the other two, vp~0.25 on both seeds),
+# scaffolding 3-object joint discovery with a valid 1-object start before the empty-start
+# trio-notch (k=0). The pool IS the witness's 3 objects (anchor_layout_path set => stage_builder
+# pins it, and max_objects must equal the witness object count), so the per-episode seeded
+# permutation makes k=1 a seeded-random single-object anchor. Two objects are driven, so the
+# budget sits between pair-anchored's (drive 1) and trio-notch's (drive 3).
+_TRIO_NOTCH_ANCHORED_STAGE = Stage(
+    name="trio-notch-anchored",
+    difficulty=DifficultyConfig(
+        max_objects=3, seed_anchor_k=1, per_object_step_budget=80, total_step_budget=180
+    ),
+    hangar_path=_NOTCH_HANGAR,
+    fleet_path=_NOTCH_FLEET,
+    anchor_layout_path=_WITNESS_NOTCH,
+    clearance_m=_LENIENT_CLEARANCE,
+)
+
+# Opt-in #821 reverse-curriculum (Backplay) sub-rungs (wired via with_trio_notch_backplay_rung /
+# --backplay-trio-notch), NOT in DEFAULT_LADDER. The three notch-witness objects with the k=N-1=2
+# prefix pre-parked and the SINGLE remaining (driven) object spawned a fraction phi ~ U(0, phi_cap)
+# along the corridor from its witness park-pose (phi=0, near-solved) out to the door (phi=1). Each
+# sub-rung is a FIXED phi_cap; the ceiling anneals 0.5 -> 1.0 across the ladder, promoted on the
+# SAME windowed valid_placed competency gate (no per-iteration anneal code — the reverse curriculum
+# IS the rung sequence). The final phi_cap=1.0 sub-rung must solve from the true door, so a WIN
+# that reaches it rules out near-witness overfit (the issue-#821 confound watch). It targets the
+# diagnosed cold-start coverage minimum on the notch by collapsing the tight-3rd-pose discovery
+# horizon to ~0 and growing it back — the only lever class that shifts rho_0 (the start-state
+# distribution) rather than reward/representation/exploration. The pool IS the witness's 3 objects
+# (anchor_layout_path set => stage_builder pins it); ONE object is driven, so per_object == total
+# (the drive-one budget structure of pair-anchored) at trio-notch's per-object magnitude (80), NOT
+# pair-anchored's 60/60. Inserted before the empty-start trio-notch.
+_BACKPLAY_PHI_CEILINGS: tuple[float, ...] = (0.5, 0.75, 1.0)
+
+
+def _trio_notch_backplay_stage(phi_cap: float) -> Stage:
+    return Stage(
+        name=f"trio-notch-backplay-{int(round(phi_cap * 100))}",
+        difficulty=DifficultyConfig(
+            max_objects=3,
+            seed_anchor_k=2,
+            backplay_phi_cap=phi_cap,
+            per_object_step_budget=80,
+            total_step_budget=80,
+        ),
+        hangar_path=_NOTCH_HANGAR,
+        fleet_path=_NOTCH_FLEET,
+        anchor_layout_path=_WITNESS_NOTCH,
+        clearance_m=_LENIENT_CLEARANCE,
+    )
+
+
+_TRIO_NOTCH_BACKPLAY_STAGES: tuple[Stage, ...] = tuple(
+    _trio_notch_backplay_stage(cap) for cap in _BACKPLAY_PHI_CEILINGS
 )
 
 DEFAULT_LADDER: tuple[Stage, ...] = (
@@ -553,6 +733,49 @@ def with_pair_anchored_rung(schedule: CurriculumSchedule) -> CurriculumSchedule:
             "with_pair_anchored_rung: schedule has no 'pair-box' rung to insert before"
         ) from None
     return replace(schedule, stages=stages[:before] + (_PAIR_ANCHORED_STAGE,) + stages[before:])
+
+
+def with_trio_notch_anchored_rung(schedule: CurriculumSchedule) -> CurriculumSchedule:
+    """Return ``schedule`` with the opt-in ``trio-notch-anchored`` rung inserted immediately
+    BEFORE the ``trio-notch`` rung — the #736 ``--anchor-trio-notch`` lever. It pre-parks 1 of
+    its 3 notch-witness objects at a committed pose (k=1) and the agent drives the other two in,
+    scaffolding 3-object joint discovery on the real notch hangar before the empty-start
+    trio-notch (k=0). Directly targets the diagnosed cold-start coverage minimum (the policy
+    validly parks one aircraft then abandons the other two, vp~0.25 on both seeds — the trio
+    analogue of the #712 pair-anchored scaffold that reached 0.94 on the box). Only the ladder
+    changes (the promotion policy is preserved); the default ladder is left untouched, so
+    default runs stay byte-identical (this is opt-in)."""
+    stages = schedule.stages
+    try:
+        before = next(i for i, s in enumerate(stages) if s.name == "trio-notch")
+    except StopIteration:
+        raise ValueError(
+            "with_trio_notch_anchored_rung: schedule has no 'trio-notch' rung to insert before"
+        ) from None
+    return replace(
+        schedule, stages=stages[:before] + (_TRIO_NOTCH_ANCHORED_STAGE,) + stages[before:]
+    )
+
+
+def with_trio_notch_backplay_rung(schedule: CurriculumSchedule) -> CurriculumSchedule:
+    """Return ``schedule`` with the opt-in #821 backplay (reverse-curriculum) sub-rung ladder
+    inserted immediately BEFORE the ``trio-notch`` rung — the ``--backplay-trio-notch`` lever. It
+    pre-parks the k=N-1=2 notch-witness prefix and spawns the single driven object a fraction
+    phi ~ U(0, phi_cap) along the corridor from its witness park-pose (phi=0, near-solved) out to
+    the door (phi=1); the phi_cap ceiling anneals 0.5 -> 1.0 across the contiguous sub-rungs,
+    promoted on the SAME competency gate. This collapses the diagnosed cold-start coverage minimum
+    (place one, abandon two) by starting near the dense solution and receding to the true door —
+    the only #736 lever that shifts the start-state distribution rather than reward/representation/
+    exploration. Only the ladder changes (the promotion policy is preserved); the default ladder is
+    left untouched, so default runs stay byte-identical (this is opt-in)."""
+    stages = schedule.stages
+    try:
+        before = next(i for i, s in enumerate(stages) if s.name == "trio-notch")
+    except StopIteration:
+        raise ValueError(
+            "with_trio_notch_backplay_rung: schedule has no 'trio-notch' rung to insert before"
+        ) from None
+    return replace(schedule, stages=stages[:before] + _TRIO_NOTCH_BACKPLAY_STAGES + stages[before:])
 
 
 def with_mixed_anchor_rung(schedule: CurriculumSchedule) -> CurriculumSchedule:

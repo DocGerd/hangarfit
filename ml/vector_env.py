@@ -77,6 +77,7 @@ class _EnvWorker:
             obs = self._env.reset(
                 requested_ids=start.requested_ids if start else None,
                 seed_anchor_k=start.seed_anchor_k if start else None,
+                backplay_phi=start.backplay_phi if start else None,
             )
             return self._encode(obs)
 
@@ -107,6 +108,7 @@ class _EnvWorker:
                 sem = self._env.reset(
                     requested_ids=start.requested_ids if start else None,
                     seed_anchor_k=start.seed_anchor_k if start else None,
+                    backplay_phi=start.backplay_phi if start else None,
                 )
             return self._encode(sem), reward, done, info, ep
 

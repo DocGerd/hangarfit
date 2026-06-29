@@ -92,6 +92,83 @@ def test_move_rejects_empty_plane_id():
         )
 
 
+def _straight_arc(x: float, y: float) -> DubinsArc:
+    return DubinsArc(
+        start=Pose(0.0, 0.0, 0.0),
+        end=Pose(x, y, 0.0),
+        turn_radius_m=8.0,
+        segments=(Segment("S", math.hypot(x, y)),),
+    )
+
+
+def test_move_defaults_leg_index_zero():
+    # #865 Rung D: leg_index is an ADDITIVE trailing field — every existing
+    # positional/keyword constructor keeps working and defaults to leg 0, so a
+    # single-leg plan is byte-identical to before.
+    move = Move(plane_id="DG-ABC", target_slot=Pose(1.0, 2.0, 0.0), path=_straight_arc(1.0, 2.0))
+    assert move.leg_index == 0
+
+
+def test_move_accepts_explicit_leg_index():
+    move = Move(
+        plane_id="DG-ABC",
+        target_slot=Pose(1.0, 2.0, 0.0),
+        path=_straight_arc(1.0, 2.0),
+        leg_index=1,
+    )
+    assert move.leg_index == 1
+
+
+def test_move_rejects_negative_leg_index():
+    with pytest.raises(ValueError):
+        Move(
+            plane_id="DG-ABC",
+            target_slot=Pose(1.0, 2.0, 0.0),
+            path=_straight_arc(1.0, 2.0),
+            leg_index=-1,
+        )
+
+
+def test_movesplan_allows_multiple_legs_per_plane():
+    # #865 Rung D: a single plane_id may carry MULTIPLE Move entries (one per leg,
+    # in execution order) — the move-aside staging leg followed by the final leg.
+    staging = Move(
+        plane_id="DG-ABC",
+        target_slot=Pose(5.0, 1.0, 0.0),
+        path=_straight_arc(5.0, 1.0),
+        leg_index=0,
+    )
+    final = Move(
+        plane_id="DG-ABC",
+        target_slot=Pose(1.0, 2.0, 0.0),
+        path=_straight_arc(1.0, 2.0),
+        leg_index=1,
+    )
+    plan = MovesPlan(target_layout=object(), moves=(staging, final))
+    same_plane = [m for m in plan.moves if m.plane_id == "DG-ABC"]
+    assert [m.leg_index for m in same_plane] == [0, 1]
+
+
+def test_movesplan_rejects_duplicate_routed_leg_index_for_a_plane():
+    # #667 Rung E (type-design F1): two ROUTED legs of one plane sharing a leg_index
+    # make scene._timeline's `sorted(..., key=leg_index)` order ill-defined, so it is
+    # rejected at construction.
+    a = Move("fk9", Pose(0.0, 5.0, 0.0), _straight_arc(0.0, 5.0), leg_index=0)
+    b = Move("fk9", Pose(1.0, 6.0, 0.0), _straight_arc(1.0, 6.0), leg_index=0)
+    with pytest.raises(ValueError, match="leg_index"):
+        MovesPlan(target_layout=object(), moves=(a, b))
+
+
+def test_movesplan_allows_routed_plus_deferred_same_leg_index():
+    # #667 Rung E (F1): a routed leg + a DEFERRED (path=None) leg of one plane may
+    # share leg_index=0 — build_moves_plan (ml/infer.py) and placed-routed movers do
+    # exactly this. Only routed legs are checked for uniqueness.
+    routed = Move("fuji", Pose(0.0, 5.0, 0.0), _straight_arc(0.0, 5.0), leg_index=0)
+    deferred = Move("fuji", Pose(0.0, 5.0, 0.0), None, leg_index=0)
+    plan = MovesPlan(target_layout=object(), moves=(routed, deferred))
+    assert len(plan.moves) == 2
+
+
 def test_movesplan_construction_roundtrip():
     layout = object()  # placeholder; Move/MovesPlan do not validate layout in Wave 1
     move = Move(

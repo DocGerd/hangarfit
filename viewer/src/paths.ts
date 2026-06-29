@@ -39,25 +39,30 @@ export interface TowPaths {
  * gets no line — there is no route to draw. Lines sit a hair above the floor
  * (z = `Z_OFFSET`) so they don't z-fight the floor plane or the grid, and below
  * the parked planes' bellies. Returns the lines + a visibility toggle. */
-export function addTowPaths(scene: THREE.Scene, SCENE: SceneV2, BRAND: BrandTokens): TowPaths {
+export function addTowPaths(scene: THREE.Object3D, SCENE: SceneV2, BRAND: BrandTokens): TowPaths {
   const Z_OFFSET = 0.02; // just above the floor (grid sits at 0.003); under any belly
-  const segByPlane: Record<string, SegmentData> = {};
-  for (const s of SCENE.timeline.segments) segByPlane[s.plane_id] = s;
+  // #865 Rung D: group legs per plane (don't overwrite) so a move-aside body
+  // (#667 Rung E) draws BOTH its staging and final legs. Single-leg bodies (every
+  // body today) yield single-element lists → one line, byte-identical to before.
+  const segsByPlane: Record<string, SegmentData[]> = {};
+  for (const s of SCENE.timeline.segments) (segsByPlane[s.plane_id] ??= []).push(s);
 
   const lines: THREE.Line[] = [];
   for (const p of SCENE.planes) {
-    const seg = segByPlane[p.id];
-    if (!seg) continue; // static plane: no tow route to draw
-    const pts = pathPoints(seg);
-    if (pts.length < 2) continue; // a single point is not a line
+    const segs = segsByPlane[p.id];
+    if (!segs) continue; // static plane: no tow route to draw
     const conflicted = SCENE.conflicts.includes(p.id);
     const colour = new THREE.Color(conflicted ? BRAND.conflict : p.color);
-    const geom = new THREE.BufferGeometry().setFromPoints(
-      pts.map(([x, y]) => new THREE.Vector3(x, y, Z_OFFSET)),
-    );
-    const line = new THREE.Line(geom, new THREE.LineBasicMaterial({ color: colour }));
-    scene.add(line);
-    lines.push(line);
+    for (const seg of segs) {
+      const pts = pathPoints(seg);
+      if (pts.length < 2) continue; // a single point is not a line
+      const geom = new THREE.BufferGeometry().setFromPoints(
+        pts.map(([x, y]) => new THREE.Vector3(x, y, Z_OFFSET)),
+      );
+      const line = new THREE.Line(geom, new THREE.LineBasicMaterial({ color: colour }));
+      scene.add(line);
+      lines.push(line);
+    }
   }
 
   const setVisible = (on: boolean): void => {

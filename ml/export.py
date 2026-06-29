@@ -70,6 +70,12 @@ def export_onnx(
     """Trace ``policy``'s forward to an ONNX file at ``path``. Pass ``example`` (an
     ``ObservationTensors``) to trace real shapes, else a default-config dummy is used.
     Batch ``B`` and token count ``N`` are dynamic axes."""
+    if example is None and getattr(policy, "relative_encoder", False):
+        raise ValueError(
+            "export_onnx: a relative_encoder (ego-centric, 28-wide) policy needs a real ego "
+            "`example`; the default 24-wide dummy would mis-trace into a shape crash. Torch-free "
+            "ONNX inference for --relative-encoder is a deferred #827 follow-up."
+        )
     # The legacy TorchScript ONNX exporter leaves the module in train() mode on return,
     # which would silently re-activate the encoder dropout for any later forward the caller
     # makes on this policy. Capture and restore the original mode so export has no side

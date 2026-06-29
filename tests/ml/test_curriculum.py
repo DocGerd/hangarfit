@@ -9,9 +9,12 @@ import pytest
 from ml.curriculum import (
     _BOX_FLEET,
     _BOX_HANGAR,
+    _NOTCH_FLEET,
+    _NOTCH_HANGAR,
     _PAIR_MIXED_STAGE,
     _SOLO_BOX_STAGE,
     _WITNESS_BOX,
+    _WITNESS_NOTCH,
     DEFAULT_LADDER,
     CurriculumHistory,
     CurriculumSchedule,
@@ -24,6 +27,7 @@ from ml.curriculum import (
     history_metric_records,
     make_episode_sampler,
     plain_start,
+    sample_backplay_start,
     sample_mixed_start,
     sample_request,
     should_promote,
@@ -34,6 +38,8 @@ from ml.curriculum import (
     with_pair_anchored_rung,
     with_promotion_overrides,
     with_solo_box_rung,
+    with_trio_notch_anchored_rung,
+    with_trio_notch_backplay_rung,
 )
 from ml.encoding import EncoderConfig
 from ml.types import DifficultyConfig
@@ -150,6 +156,50 @@ def test_curriculum_history_records_and_notes():
     h.note_promotion("s0", 3, by="competency")
     assert h.iterations == [("s0", 0, (EpisodeStat(0.5, False, -1.0),))]
     assert h.promotions == [("s0", 3, "competency")]
+
+
+def test_history_records_train_metrics_surfaced_in_jsonl():
+    # #816: per-iteration training telemetry (epochs_run + applied entropy_coef) is stored in
+    # the parallel iter_train_metrics list (the 3-tuple iterations shape is UNCHANGED) and
+    # merged into the --metrics-out JSONL record.
+    h = CurriculumHistory()
+    h.record(
+        "s0",
+        0,
+        [EpisodeStat(0.5, True, 1.0)],
+        train_metrics={"epochs_run": 3.0, "entropy_coef": 0.02},
+    )
+    assert h.iterations == [("s0", 0, (EpisodeStat(0.5, True, 1.0),))]  # shape unchanged
+    assert h.iter_train_metrics == [{"epochs_run": 3.0, "entropy_coef": 0.02}]
+    rec = history_metric_records(h)[0]
+    assert rec["epochs_run"] == 3.0
+    assert rec["entropy_coef"] == 0.02
+    assert rec["stage"] == "s0" and rec["iter"] == 0
+
+
+def test_history_metric_records_default_neutral_without_train_metrics():
+    # A record with no train_metrics (every pre-#816 call site) adds NO new JSONL keys —
+    # the parallel list gets an empty dict so it stays in lockstep with iterations.
+    h = CurriculumHistory()
+    h.record("s0", 0, [EpisodeStat(0.5, True, 1.0)])
+    assert h.iter_train_metrics == [{}]
+    rec = history_metric_records(h)[0]
+    assert "epochs_run" not in rec and "entropy_coef" not in rec
+
+
+def test_history_metric_records_index_guards_short_train_metrics():
+    # Defensive (documented back-compat): a hand-built / pre-#816-deserialized history whose
+    # iter_train_metrics is SHORTER than iterations merges an empty telemetry dict for the
+    # unguarded tail rather than raising IndexError. record() keeps them in lockstep, so this
+    # branch is only reachable by direct construction — pin it so a refactor can't drop it.
+    h = CurriculumHistory()
+    h.iterations.append(("s0", 0, ()))
+    h.iterations.append(("s0", 1, ()))
+    h.iter_train_metrics = [{"epochs_run": 2.0}]  # one short of iterations
+    recs = history_metric_records(h)
+    assert len(recs) == 2
+    assert recs[0]["epochs_run"] == 2.0
+    assert "epochs_run" not in recs[1]  # index-guarded tail -> empty, no IndexError
 
 
 def test_curriculum_schedule_default_is_the_committed_ladder():
@@ -451,6 +501,63 @@ def test_seed_anchor_composes_with_solo_box_rung():
     assert names[:4] == ["trivial", "solo-box", "pair-anchored", "pair-box"]
 
 
+# #736 — the opt-in witness-anchored notch trio rung (trio-notch-anchored)
+
+
+def test_default_ladder_has_no_trio_notch_anchored_rung():
+    # Byte-identity guard: trio-notch-anchored is opt-in; the default ladder is unchanged.
+    assert all(s.name != "trio-notch-anchored" for s in DEFAULT_LADDER)
+
+
+def test_with_trio_notch_anchored_rung_inserts_before_trio_notch():
+    sched = with_trio_notch_anchored_rung(CurriculumSchedule.default())
+    names = [s.name for s in sched.stages]
+    i = names.index("trio-notch")
+    assert names[i - 1] == "trio-notch-anchored"
+
+
+def test_trio_notch_anchored_rung_is_three_object_k1_on_the_notch_with_a_witness():
+    sched = with_trio_notch_anchored_rung(CurriculumSchedule.default())
+    rung = next(s for s in sched.stages if s.name == "trio-notch-anchored")
+    assert rung.difficulty.max_objects == 3  # three objects in the set...
+    assert rung.difficulty.seed_anchor_k == 1  # ...one pre-parked, two driven in
+    assert rung.anchor_layout_path is not None  # the committed notch witness layout
+    # Scaffolds the SAME real notch hangar as the empty-start trio-notch it precedes.
+    trio_notch = next(s for s in sched.stages if s.name == "trio-notch")
+    assert rung.hangar_path == trio_notch.hangar_path
+    assert rung.clearance_m == trio_notch.clearance_m  # same lenient 0.05 clearance
+
+
+def test_with_trio_notch_anchored_rung_preserves_policy_and_validates():
+    base = CurriculumSchedule.default()
+    sched = with_trio_notch_anchored_rung(base)
+    assert sched.policy == base.policy  # only the ladder changes, not the promotion gate
+    validate_ladder(sched.stages, encoder_max_objects=EncoderConfig().max_objects)  # no raise
+
+
+def test_with_trio_notch_anchored_rung_does_not_mutate_the_default_ladder():
+    with_trio_notch_anchored_rung(CurriculumSchedule.default())
+    assert all(s.name != "trio-notch-anchored" for s in DEFAULT_LADDER)  # default still pristine
+
+
+def test_with_trio_notch_anchored_rung_raises_without_trio_notch():
+    no_trio_notch = CurriculumSchedule(
+        stages=tuple(s for s in DEFAULT_LADDER if s.name != "trio-notch"),
+        policy=PromotionPolicy(),
+    )
+    with pytest.raises(ValueError, match="trio-notch"):
+        with_trio_notch_anchored_rung(no_trio_notch)
+
+
+def test_trio_notch_anchored_composes_with_pair_anchored_rung():
+    # The anchor levers stack independently: pair-anchored before pair-box, trio-notch-anchored
+    # before trio-notch — and the default ladder stays pristine under both grafts.
+    sched = with_trio_notch_anchored_rung(with_pair_anchored_rung(CurriculumSchedule.default()))
+    names = [s.name for s in sched.stages]
+    assert names.index("pair-anchored") < names.index("pair-box")
+    assert names.index("trio-notch-anchored") == names.index("trio-notch") - 1
+
+
 def _anchored_test_stage(*, max_objects: int, seed_anchor_k: int) -> Stage:
     return Stage(
         name="bad",
@@ -714,3 +821,216 @@ def test_truncate_after_rung_at_trio_box_is_the_gate_sweep_shape():
     trio = truncated.stages[-1]
     assert trio.name == "trio-box"
     assert trio.difficulty.max_objects == 3  # the ≥2-object rung the four-lever ladder must clear
+
+
+# ---------------------------------------------------------------------------
+# #821 — backplay reverse-curriculum: EpisodeStart.backplay_phi, the
+#        sample_backplay_start sampler, and the trio-notch-backplay sub-rung ladder
+# ---------------------------------------------------------------------------
+
+
+def test_episode_start_backplay_phi_defaults_none():
+    # Byte-identity: a plain/mixed EpisodeStart carries no backplay corridor fraction.
+    assert EpisodeStart(("fuji",)).backplay_phi is None
+    assert EpisodeStart(("fuji",), 1).backplay_phi is None
+
+
+def test_sample_backplay_start_draws_phi_in_range_and_leaves_k_to_env():
+    rng = random.Random(0)
+    s = sample_backplay_start(("a", "b", "c"), 3, rng, phi_cap=0.5)
+    assert isinstance(s, EpisodeStart)
+    assert set(s.requested_ids) == {"a", "b", "c"}
+    # seed_anchor_k is left None (the rung's fixed N-1 prefix is the env default, not a draw).
+    assert s.seed_anchor_k is None
+    assert s.backplay_phi is not None and 0.0 <= s.backplay_phi <= 0.5
+
+
+def test_sample_backplay_start_is_deterministic_for_equal_rngs():
+    pool = ("a", "b", "c")
+    a = sample_backplay_start(pool, 3, random.Random(7), phi_cap=1.0)
+    b = sample_backplay_start(pool, 3, random.Random(7), phi_cap=1.0)
+    assert a == b  # same seed -> identical ids AND phi
+
+
+def test_sample_backplay_start_draw_order_is_ids_then_phi():
+    # The FIXED draw order (ids via sample_request, THEN one uniform phi draw) is what keeps
+    # Sync and Subproc workers sharing one rng stream byte-identical. Reproduce it manually.
+    pool = ("a", "b", "c")
+    got = sample_backplay_start(pool, 3, random.Random(3), phi_cap=0.8)
+    ref = random.Random(3)
+    ref_ids = sample_request(pool, 3, ref)
+    ref_phi = ref.uniform(0.0, 0.8)
+    assert got.requested_ids == ref_ids
+    assert got.backplay_phi == ref_phi
+
+
+def test_sample_backplay_start_phi_spans_the_corridor():
+    # phi is a genuine U(0, cap) draw: over many episodes it spreads across the corridor
+    # (near-witness AND near-door starts), not pinned to one end.
+    rng = random.Random(123)
+    phis = [
+        phi
+        for _ in range(2000)
+        if (phi := sample_backplay_start(("a", "b", "c"), 3, rng, phi_cap=1.0).backplay_phi)
+        is not None
+    ]
+    assert len(phis) == 2000  # every backplay draw carries a phi
+    assert min(phis) < 0.1  # near-witness (near-solved) starts present
+    assert max(phis) > 0.9  # near-door starts present
+    assert 0.45 <= sum(phis) / len(phis) <= 0.55  # mean ~0.5 of U(0,1)
+
+
+def _backplay_stage(
+    cap: float = 0.5, *, anchor_path: str | None = _WITNESS_NOTCH, anchor_prob: float | None = None
+) -> Stage:
+    return Stage(
+        name="trio-notch-backplay",
+        difficulty=DifficultyConfig(
+            max_objects=3, seed_anchor_k=2, backplay_phi_cap=cap, anchor_prob=anchor_prob
+        ),
+        hangar_path=_NOTCH_HANGAR,
+        fleet_path=_NOTCH_FLEET,
+        anchor_layout_path=anchor_path,
+    )
+
+
+def test_make_episode_sampler_backplay_for_a_backplay_stage():
+    # A stage carrying backplay_phi_cap gets the backplay sampler: every draw carries a phi.
+    sampler = make_episode_sampler(_backplay_stage(0.5), ("a", "b", "c"), 3, random.Random(5))
+    s = sampler()
+    assert s.backplay_phi is not None and 0.0 <= s.backplay_phi <= 0.5
+    assert s.seed_anchor_k is None  # k stays the env default (the rung's fixed N-1 prefix)
+
+
+def test_default_ladder_has_no_backplay_rung():
+    # Byte-identity guard: every backplay sub-rung is opt-in; the default ladder is unchanged.
+    assert all("backplay" not in s.name for s in DEFAULT_LADDER)
+
+
+def test_with_trio_notch_backplay_rung_inserts_sub_rungs_before_trio_notch():
+    sched = with_trio_notch_backplay_rung(CurriculumSchedule.default())
+    names = [s.name for s in sched.stages]
+    i = names.index("trio-notch")
+    inserted = [n for n in names if "backplay" in n]
+    assert inserted  # at least one backplay sub-rung is grafted
+    # the sub-rungs sit immediately before the empty-start trio-notch, contiguous and in order
+    assert names[i - len(inserted) : i] == inserted
+
+
+def test_backplay_sub_rungs_are_three_object_k2_with_ascending_phi_to_one():
+    sched = with_trio_notch_backplay_rung(CurriculumSchedule.default())
+    rungs = [s for s in sched.stages if "backplay" in s.name]
+    caps = [c for s in rungs if (c := s.difficulty.backplay_phi_cap) is not None]
+    assert len(caps) == len(rungs)  # every backplay sub-rung carries a phi_cap
+    assert caps == sorted(caps)  # the reverse-curriculum anneal grows the hardest start
+    assert caps[-1] == 1.0  # the final sub-rung solves from the true door (confound-watch target)
+    for s in rungs:
+        assert s.difficulty.max_objects == 3
+        assert s.difficulty.seed_anchor_k == 2  # N-1 prefix pre-parked, ONE driven via backplay
+        assert s.anchor_layout_path is not None  # the committed notch witness layout
+
+
+def test_backplay_sub_rungs_scaffold_the_same_notch_as_trio_notch():
+    sched = with_trio_notch_backplay_rung(CurriculumSchedule.default())
+    trio_notch = next(s for s in sched.stages if s.name == "trio-notch")
+    for s in (st for st in sched.stages if "backplay" in st.name):
+        assert s.hangar_path == trio_notch.hangar_path
+        assert s.clearance_m == trio_notch.clearance_m  # same lenient 0.05 clearance
+
+
+def test_with_trio_notch_backplay_rung_preserves_policy_and_validates():
+    base = CurriculumSchedule.default()
+    sched = with_trio_notch_backplay_rung(base)
+    assert sched.policy == base.policy  # only the ladder changes, not the promotion gate
+    validate_ladder(sched.stages, encoder_max_objects=EncoderConfig().max_objects)  # no raise
+
+
+def test_with_trio_notch_backplay_rung_does_not_mutate_the_default_ladder():
+    with_trio_notch_backplay_rung(CurriculumSchedule.default())
+    assert all("backplay" not in s.name for s in DEFAULT_LADDER)  # default still pristine
+
+
+def test_with_trio_notch_backplay_rung_raises_without_trio_notch():
+    no_trio_notch = CurriculumSchedule(
+        stages=tuple(s for s in DEFAULT_LADDER if s.name != "trio-notch"),
+        policy=PromotionPolicy(),
+    )
+    with pytest.raises(ValueError, match="trio-notch"):
+        with_trio_notch_backplay_rung(no_trio_notch)
+
+
+def test_validate_ladder_accepts_valid_backplay_rung():
+    validate_ladder([_backplay_stage(0.5)], encoder_max_objects=8)  # no raise
+
+
+@pytest.mark.parametrize("cap", [0.0, -0.1, 1.1])
+def test_validate_ladder_rejects_backplay_phi_cap_out_of_range(cap):
+    with pytest.raises(ValueError, match="backplay_phi_cap"):
+        validate_ladder([_backplay_stage(cap)], encoder_max_objects=8)
+
+
+def test_validate_ladder_rejects_backplay_rung_without_witness():
+    with pytest.raises(ValueError, match="anchor_layout_path"):
+        validate_ladder([_backplay_stage(0.5, anchor_path=None)], encoder_max_objects=8)
+
+
+def test_validate_ladder_rejects_backplay_combined_with_anchor_prob():
+    # The two start-state samplers are mutually exclusive (each owns one fixed rng draw order).
+    with pytest.raises(ValueError, match="backplay_phi_cap"):
+        validate_ladder([_backplay_stage(0.5, anchor_prob=0.5)], encoder_max_objects=8)
+
+
+def test_validate_ladder_rejects_backplay_rung_with_wrong_prefix_k():
+    # Backplay must pre-park the k=N-1 prefix so EXACTLY ONE object is driven via the corridor —
+    # _backplay_phi persists across spawns, so k<N-1 (>1 driven) would backplay every driven object.
+    bad = Stage(
+        name="trio-notch-backplay",
+        difficulty=DifficultyConfig(max_objects=3, seed_anchor_k=1, backplay_phi_cap=0.5),
+        hangar_path=_NOTCH_HANGAR,
+        fleet_path=_NOTCH_FLEET,
+        anchor_layout_path=_WITNESS_NOTCH,
+    )
+    with pytest.raises(ValueError, match="k=N-1"):
+        validate_ladder([bad], encoder_max_objects=8)
+
+
+# ---------------------------------------------------------------------------
+# ADR-0028 trigger-#3 — _completion_stage builder (paired-witness probe)
+# ---------------------------------------------------------------------------
+
+
+def test_completion_stage_notch_is_door_spawn_drive_one():
+    from ml.curriculum import _completion_stage
+
+    s = _completion_stage("notch")
+    assert s.name == "completion-notch"
+    assert s.difficulty.max_objects == 3
+    assert s.difficulty.seed_anchor_k == 2  # pre-park 2, drive 1
+    assert s.difficulty.backplay_phi_cap is None  # door spawn (phi=1), no backplay mixture
+    assert s.difficulty.anchor_prob is None  # fixed-k, not mixed-start
+    assert s.anchor_layout_path == "tests/fixtures/ml/witness_notch.yaml"
+    assert s.hangar_path == "examples/herrenteich/hangar.yaml"
+    assert s.clearance_m == 0.05
+
+
+def test_completion_stage_roomy_uses_large_hangar_and_roomy_witness():
+    from ml.curriculum import _completion_stage
+
+    s = _completion_stage("roomy")
+    assert s.name == "completion-roomy"
+    assert s.difficulty.max_objects == 3
+    assert s.difficulty.seed_anchor_k == 2
+    assert s.difficulty.backplay_phi_cap is None
+    assert s.anchor_layout_path == "tests/fixtures/ml/witness_roomy.yaml"
+    assert s.hangar_path == "tests/fixtures/test_hangar_large.yaml"
+    assert s.fleet_path == "data/fleet.yaml"
+    assert s.clearance_m == 0.3
+
+
+def test_completion_stage_rejects_unknown_witness():
+    import pytest
+
+    from ml.curriculum import _completion_stage
+
+    with pytest.raises(ValueError):
+        _completion_stage("bogus")
