@@ -5,7 +5,7 @@ description: >-
   project itself editable. The single source of truth for the subtle PEP-517
   install ordering (#162) shared by every CI job that imports hangarfit — keeping
   it here means the ordering rationale lives in ONE place instead of being copied
-  across the sharded test / serial / coverage jobs.
+  across the static, test-shard, serial-canaries and coverage jobs.
 
 inputs:
   python-version:

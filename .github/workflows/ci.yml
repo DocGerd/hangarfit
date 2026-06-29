@@ -69,6 +69,17 @@ jobs:
         # wall-clock; `-n auto` then parallelizes within the runner. `@serial` is
         # excluded here and run single-process in `serial-canaries` (the
         # determinism contract — see that job).
+        #
+        # `.test_durations` is generated with `--ignore=tests/ml` on purpose: a
+        # dev box usually has torch (the [train] extra), so a bare regen would
+        # record the *torch* ml tests' real (large) durations — but those tests
+        # `importorskip`-SKIP in CI (CI installs only [dev], no torch), so feeding
+        # those durations to the splitter would skew the split toward a phantom
+        # heavy shard. The torch-free ml units that DO run in CI simply fall back
+        # to pytest-split's average estimate, which keeps the shards balanced in
+        # practice (the #883 CI run came out 5m37 / 5m58 / 4m43). Regenerate when
+        # balance drifts:
+        #   pytest -n auto -m "not slow and not serial" --ignore=tests/ml --store-durations
         run: pytest -n auto -m "not slow and not serial" --splits 3 --group ${{ matrix.group }}
 
   serial-canaries:
@@ -119,10 +130,13 @@ jobs:
     # semantics — including branch coverage (`branch = true` in pyproject.toml) —
     # are exactly the signal we had before, just no longer on the critical path.
     #
-    # NB: COVERAGE_CORE=sysmon is deliberately NOT used — coverage 7.14.x cannot
-    # measure *branch* coverage under sys.monitoring (it silently falls back to
-    # the C tracer), and we keep branch coverage on. Revisit if a future coverage
-    # release adds branch support under sys.monitoring (see #878).
+    # NB: COVERAGE_CORE=sysmon is deliberately NOT used. We keep branch coverage
+    # on (`branch = true` in pyproject.toml), and sys.monitoring branch coverage
+    # requires Python 3.14+ (coverage added it in 7.7.0). On our Python 3.12
+    # (the single supported interpreter, ADR-0009) coverage warns and falls back
+    # to the default C tracer, so sysmon would buy nothing here. Revisit when the
+    # project moves to Python 3.14+ — NOT on a coverage upgrade (branch+sysmon
+    # support already exists upstream). See #878.
     name: coverage (Codecov, non-required)
     runs-on: ubuntu-latest
     steps:
