@@ -202,7 +202,9 @@ pytest -m slow
 # Or run everything regardless of marker
 pytest -m ""
 
-# Mirror CI's #492 two-pass split locally (~3.5× vs a plain serial `pytest`; #624).
+# The safe local mirror of the test gate: the #492 two-pass split (~3.5× vs a
+# plain serial `pytest`; #624). Since #877 CI additionally SHARDS the bulk pass
+# across runners (pytest-split), but `make test` stays the local pre-push equivalent.
 # A bare `pytest -n auto` is UNSAFE — it re-flakes the @serial wall-clock
 # canaries (rationale: docs/dev/test-flakes-and-ci-gotchas.md §1):
 make test        # two-pass split: parallel bulk + serial canaries (the safe mirror)
@@ -236,18 +238,37 @@ mypy src/hangarfit/
 # regenerated from pyproject.toml after editing [project] deps or the dev extra):
 pip-compile --generate-hashes --no-strip-extras --extra dev -o requirements-dev.txt pyproject.toml
 
-# CI: GitHub Actions runs `pytest` on Python 3.12 for PRs into
-# develop/main (see .github/workflows/ci.yml). CI installs dev deps
-# from the hash-pinned `requirements-dev.txt` with `--require-hashes`,
-# the build toolchain from `requirements-build.txt` likewise, then
-# installs the project itself in editable mode with `--no-deps
-# --no-build-isolation` (reusing the hash-verified host setuptools/wheel
-# instead of an unpinned isolated build env). No pytest coverage threshold
-# (no --cov-fail-under); Codecov posts a `codecov/patch` status flagging patch
-# coverage on each PR, but it is NOT a required check on `develop` (required =
-# test 3.12 + the three lockfile-drift jobs + Analyze + `bench correctness`, added
-# by #564), so a red patch status
-# reports but does not by itself block merge (see the @slow gotcha above).
+# CI: GitHub Actions runs the test suite on Python 3.12 for PRs into
+# develop/main (see .github/workflows/ci.yml). Since #877 the old single
+# `test (Python 3.12)` job is FANNED OUT for wall-clock (~26 min -> ~8 min):
+#   * static             — ruff + ruff-format + mypy (once)
+#   * test-shard (1..3)  — the non-slow, non-serial suite, balanced by the
+#                          committed `.test_durations` via pytest-split, run
+#                          WITHOUT coverage
+#   * serial-canaries    — the @serial wall-clock canaries, single-process,
+#                          OUTSIDE the xdist pool (the determinism contract)
+#   * test (Python 3.12) — a no-op GATE that `needs:` the three above; it keeps
+#                          the exact required-check NAME, so branch protection is
+#                          unchanged
+#   * coverage           — a SEPARATE, NON-required job (today's two-pass C-tracer
+#                          branch coverage + Codecov), off the merge-critical path
+# The shared hash-pinned PEP-517 install (dev deps from `requirements-dev.txt` +
+# build toolchain from `requirements-build.txt`, both `--require-hashes`, then
+# editable `--no-deps --no-build-isolation` reusing the hash-verified host
+# setuptools/wheel) lives in the composite action `.github/actions/setup-python-env`.
+# No pytest coverage threshold (no --cov-fail-under); Codecov posts a
+# `codecov/patch` status on each PR, but it is NOT required on `develop` (required =
+# `test (Python 3.12)` [the gate] + the three lockfile-drift jobs + Analyze +
+# `bench correctness`), so a red patch reports but does not by itself block merge
+# (see the @slow gotcha above).
+#
+# pytest-split balances the shards from the committed `.test_durations`. That file
+# goes STALE when a test's run-time changes — REGENERATE after right-sizing a heavy
+# test (else the shards mis-balance):
+#   pytest -n auto -m "not slow and not serial" --ignore=tests/ml --store-durations
+# (`--ignore=tests/ml` is deliberate: dev boxes have torch, so the torch ml tests
+# would record large durations but `importorskip`-SKIP in CI -> a phantom-heavy
+# shard; the torch-free ml tests fall back to pytest-split's average estimate.)
 
 # Phase 1 acceptance smoke test
 hangarfit check examples/layouts/example.yaml --render out.png
