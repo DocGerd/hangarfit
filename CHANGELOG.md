@@ -45,44 +45,6 @@ All notable changes to this project are documented here. Format follows [Keep a 
   loader clips into area-conserving `fuselage_front`/`fuselage_aft` sub-polygons
   at the wing trailing edge (#550). Capability-only — no fleet behaviour change.
 
-### Changed
-
-- **Learned backend (epic #607, #736): dense train-to-mastery is RESOLVED-NEGATIVE — the lever
-  program is stopped and the backend is scoped to the shipped inference seam (#706).** New
-  [ADR-0028](docs/adr/0028-learned-backend-train-to-mastery-resolved-negative.md) records the
-  decision; `ml/README.md` and arc42 §5 carry the honest scope. Five gate-run levers (one per
-  lever class: #794 start-state scaffold, #809 representation, #812 reward economics, #815
-  exploration, #821 reverse-curriculum) each KILLed at the same `valid_placed ≈ 0.333`
-  place-one-then-abstain fixed point; a pre-registered measure-first probe then converted those
-  into a single **measured** root cause — φ=1 cold-start completion `vp = 0.000` (confirmed on
-  both backplay *and* non-backplay control checkpoints), a valid-triple manifold ≈ 2e-3 that is
-  FLAT across clearance, and the fact that the deterministic RR-MC solver already reaches
-  `trio-notch` (so it was a curriculum stepping-stone, never a charter target). The wall is
-  cold-start drive-and-pack of the marginal object into a sparse, clearance-invariant slot; only
-  a ρ₀ lever that *trains* that distribution could move it, and the measured capability is zero.
-  ADR-0028 carries the falsifiable **re-open gate** (reach-rate beats RR-MC witness-absent, or a
-  relative-coordinate encoder lands, or a re-charter to completion) and the **do-not-reattempt**
-  list. No behavior change: the inference seam, the determinism contract ([ADR-0027](docs/adr/0027-learned-backend-determinism-scope.md)),
-  and `ml/`'s dev/CI-only status are untouched.
-- **Learned backend (#835, epic #607): the #832 trigger-#1 reach-rate verdict is RETRACTED — it
-  tested an infeasible population.** PR #832 merged a "trigger #1 **NOT MET**" reading (RR-MC `0/9`,
-  policies `0/108`) whose "witness-absent" stratum was selected by RR-MC reach ≈ 0 on
-  **over-capacity** fleet subsets of the tight 18 m hangar that **cannot fit the full fleet** —
-  where RR-MC reaches 0 because the layout is **infeasible**, not missed, so a policy reaching 0 is
-  **vacuous** (testing the impossible, not a dominance failure). A valid witness-absent kind needs a
-  **feasibility witness**: a valid layout *proven to exist* (hand-authored like
-  `examples/herrenteich/layout.yaml`, or a big-budget `solve` result) that the fair-budget deployed
-  RR-MC misses. `ml/README.md` + [ADR-0028](docs/adr/0028-learned-backend-train-to-mastery-resolved-negative.md)
-  now restate trigger #1 as **runnable but not yet validly executed**; `ml.reach_rate`'s
-  `witness_absent_kinds` / `dominance_verdict` docstrings + CLI output carry the
-  necessary-but-not-sufficient feasibility caveat (gate boolean logic unchanged). A rung-by-rung
-  audit confirms every **training** rung is feasible (`trio-notch` / `trio-box` RR-MC reach **1.000**
-  at `k=3`; the committed `witness_box` / `witness_notch` fixtures), so the lever KILLs (all measured
-  on the feasible `trio-notch`) and ADR-0028's decision **stand**. `CLAUDE.md` gains a
-  feasibility-first ML-eval guard. Docs + a dev/CI-only caveat; no behavior change (`ml/` never
-  ships in the wheel).
-
-### Added
 
 - **Learned backend (#827, epic #607): opt-in `--relative-encoder` ego-centric observation encoder
   (ADR-0028 re-open trigger #2).** Augments object pose tokens with four SE(2) ego-relative
@@ -178,6 +140,41 @@ All notable changes to this project are documented here. Format follows [Keep a 
   (never shipped in the wheel).
 
 ### Changed
+
+- **Learned backend (epic #607, #736): dense train-to-mastery is RESOLVED-NEGATIVE — the lever
+  program is stopped and the backend is scoped to the shipped inference seam (#706).** New
+  [ADR-0028](docs/adr/0028-learned-backend-train-to-mastery-resolved-negative.md) records the
+  decision; `ml/README.md` and arc42 §5 carry the honest scope. Five gate-run levers (one per
+  lever class: #794 start-state scaffold, #809 representation, #812 reward economics, #815
+  exploration, #821 reverse-curriculum) each KILLed at the same `valid_placed ≈ 0.333`
+  place-one-then-abstain fixed point; a pre-registered measure-first probe then converted those
+  into a single **measured** root cause — φ=1 cold-start completion `vp = 0.000` (confirmed on
+  both backplay *and* non-backplay control checkpoints), a valid-triple manifold ≈ 2e-3 that is
+  FLAT across clearance, and the fact that the deterministic RR-MC solver already reaches
+  `trio-notch` (so it was a curriculum stepping-stone, never a charter target). The wall is
+  cold-start drive-and-pack of the marginal object into a sparse, clearance-invariant slot; only
+  a ρ₀ lever that *trains* that distribution could move it, and the measured capability is zero.
+  ADR-0028 carries the falsifiable **re-open gate** (reach-rate beats RR-MC witness-absent, or a
+  relative-coordinate encoder lands, or a re-charter to completion) and the **do-not-reattempt**
+  list. No behavior change: the inference seam, the determinism contract ([ADR-0027](docs/adr/0027-learned-backend-determinism-scope.md)),
+  and `ml/`'s dev/CI-only status are untouched.
+- **Learned backend (#835, epic #607): the #832 trigger-#1 reach-rate verdict is RETRACTED — it
+  tested an infeasible population.** PR #832 merged a "trigger #1 **NOT MET**" reading (RR-MC `0/9`,
+  policies `0/108`) whose "witness-absent" stratum was selected by RR-MC reach ≈ 0 on
+  **over-capacity** fleet subsets of the tight 18 m hangar that **cannot fit the full fleet** —
+  where RR-MC reaches 0 because the layout is **infeasible**, not missed, so a policy reaching 0 is
+  **vacuous** (testing the impossible, not a dominance failure). A valid witness-absent kind needs a
+  **feasibility witness**: a valid layout *proven to exist* (hand-authored like
+  `examples/herrenteich/layout.yaml`, or a big-budget `solve` result) that the fair-budget deployed
+  RR-MC misses. `ml/README.md` + [ADR-0028](docs/adr/0028-learned-backend-train-to-mastery-resolved-negative.md)
+  now restate trigger #1 as **runnable but not yet validly executed**; `ml.reach_rate`'s
+  `witness_absent_kinds` / `dominance_verdict` docstrings + CLI output carry the
+  necessary-but-not-sufficient feasibility caveat (gate boolean logic unchanged). A rung-by-rung
+  audit confirms every **training** rung is feasible (`trio-notch` / `trio-box` RR-MC reach **1.000**
+  at `k=3`; the committed `witness_box` / `witness_notch` fixtures), so the lever KILLs (all measured
+  on the feasible `trio-notch`) and ADR-0028's decision **stand**. `CLAUDE.md` gains a
+  feasibility-first ML-eval guard. Docs + a dev/CI-only caveat; no behavior change (`ml/` never
+  ships in the wheel).
 
 ### Fixed
 
