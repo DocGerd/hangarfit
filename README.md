@@ -119,6 +119,10 @@ hangarfit solve scenario.yaml --budget 5
 
 # Plan + overlay each plane's tow path on the rendered PNG (Phase 3a/b)
 hangarfit solve scenario.yaml --render out.png --render-paths
+
+# Stage the tow from outside the door (apron slide-in); this also arms the
+# move-aside deadlock repair (#667). `auto` ≈ max plane length + max turn radius.
+hangarfit solve scenario.yaml --render out.png --render-paths --apron-depth auto
 ```
 
 A scenario YAML carries `fleet:` / `hangar:` refs plus a `fleet_in:` list (which planes are present), an optional `maintenance:` block (which plane is in the back bay), an optional `ground_objects:` list (fixed obstacles plus solver-placed cars and trailers), an optional `constraints:` mapping (per-plane pins, `force_on_carts` locks, or a soft `priority` weight), and an optional soft `door_order:` list (a preferred door-proximity order among the placed bodies). See `tests/fixtures/solve_*.yaml` for the pin and `force_on_carts` kinds, `tests/fixtures/scenario_region_demo*.yaml` for `ground_objects`, and `tests/fixtures/scenario_door_order.yaml` for `door_order`.

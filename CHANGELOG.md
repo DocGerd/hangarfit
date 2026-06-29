@@ -6,6 +6,14 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [0.17.0] — 2026-06-29
+
+### Added
+
 - Layout placements may now carry `hand_placed: true` (#667, Rung A): a
   hand-positioned (dolly-borne) body is treated by the fill planner as a fixed
   keep-out and emitted as a path-less at-rest move instead of being tow-routed.
@@ -1676,7 +1684,8 @@ First Phase 1 cut — substrate for arranging the flying club fleet in a stack-s
 - Apache-2.0 license, public-audience README, CI matrix (Python 3.11 + 3.12), branch protection on develop + main (#13, #14, #15, #16).
 - Strut-aware golden tests + all-9-planes fixture using larger test-only hangar to accommodate strut-bracing geometry on placeholder dimensions (#5).
 
-[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.16.0...HEAD
+[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.17.0...HEAD
+[0.17.0]: https://github.com/DocGerd/hangarfit/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/DocGerd/hangarfit/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/DocGerd/hangarfit/compare/v0.14.0...v0.15.0
 [0.14.0]: https://github.com/DocGerd/hangarfit/compare/v0.13.0...v0.14.0
