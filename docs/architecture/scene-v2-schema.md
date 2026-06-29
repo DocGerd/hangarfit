@@ -193,7 +193,7 @@ self-check as `anchors`; the egress lane is draw-only and not anchored.
 ```jsonc
 {
   "total_s": 24.0,
-  "segments": [                // one per LEG, in back_first_order (deepest first)
+  "segments": [                // one per LEG; back_first_order — or global execution order for a move-aside body
     {
       "plane_id": "fk9_mkii",
       "start_s": 0.0,
@@ -208,8 +208,9 @@ self-check as `anchors`; the egress lane is draw-only and not anchored.
 }
 ```
 
-Built from each `MovesPlan` move's `DubinsArc.sample()` over `back_first_order`.
-Per-plane duration is proportional to path length (`DubinsArc.length_m`) via a tow
+Built from each `MovesPlan` move's `DubinsArc.sample()` over `back_first_order` (a
+move-aside body's legs are instead laid in **global execution order** — see *Multi-leg
+bodies* below). Per-plane duration is proportional to path length (`DubinsArc.length_m`) via a tow
 speed, clamped to `[min_seg_s, max_seg_s]`. Sample count per path is capped (the
 sampling step is coarsened) to keep the HTML small.
 
@@ -222,18 +223,24 @@ to its final slot (leg 1) — so `segments` may carry **more than one entry per
 `plane_id`**, laid end-to-end in leg order. Each such segment then carries an
 **optional** `leg_index: int` (`0`-based, execution order).
 
-`leg_index` is emitted **only for a multi-leg body** — a single-leg body (every body
-today) omits the key entirely, so an existing scene is **byte-identical** to the
+`leg_index` is emitted **only for a multi-leg body** — a single-leg body (every body in a plan that needs no
+move-aside; no default-shipped layout triggers one) omits the key entirely, so an existing scene is **byte-identical** to the
 pre-Rung-D form. The `SCHEMA` stays `hangarfit.scene/v2` (additive only). A consumer
 that ignores `leg_index` still animates correctly (segments are already sequential);
 the field is an explicit, robust ordering label. The body's **final** pose is the
 *last* leg's end; a staging pose is **not** in `final_poses` / `placements`.
 
-> **Producer status (Rung D, #667).** The data model + viewer are the *seam* for
-> move-aside: the state machine below (incl. the "waiting at staging" gap row) is
-> fully consumer-ready, but **no producer emits a multi-leg plan yet** — the scene
-> builder lays a body's legs end-to-end with no gap, so the wait row is not reached
-> by any shipped layout. Rung E (move-aside) supplies the first multi-leg producer.
+> **Producer status (Rung E, #667 / shipped via #869).** Move-aside is the first
+> multi-leg producer: `towplanner.plan_fill`'s phase-2 move-aside emits a displaced
+> body's staging + return legs, and `scene._timeline` lays a shuffle's legs in
+> **global execution order**, so the "waiting at staging" gap row is reachable. It
+> is a **byte-identical capability seam** (ADR-0003) — phase-2 move-aside engages
+> only on an in-budget phase-1 deadlock with `apron_depth_m > 0` and a positive
+> displacement cap, so the default (no-apron) path still emits single-leg bodies
+> exactly as before. The dense Herrenteich all-8 is budget-bound (it bails at the
+> global expansion cap before phase 2 engages), so no *default-shipped* layout
+> exercises the multi-leg path today; the fk9_mkii↔cessna_140 pair stays a
+> documented manual-insertion case.
 
 **Viewer state machine** — for a plane with leg list `S` (sorted by `leg_index`) at
 time `t`:

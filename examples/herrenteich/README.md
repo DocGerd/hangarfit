@@ -96,7 +96,13 @@ full-height wall. Mover tow-routing (#602), the Caddy clear-egress gate (#603/#6
 and ground-object rendering (#606) have all shipped; **reliably packing this dense a
 12-body set is beyond the deterministic search** — both `layout_today.yaml` and
 `layout_full.yaml` are offline-search arrangements of the real composition, and the
-joint dense-placement+routing problem remains the open hard problem (#607).
+joint dense-placement+routing problem remains an open hard problem. The dedicated
+#667 shuffle-aware tow-routing program (Rungs A–E, all merged by 2026-06-29) shipped
+move-aside repair as a byte-identical capability seam (Rung E, #869), but as
+measured it does **not** crack the dense all-8: that fill stays budget-bound (it
+bails on `zlin_savage` at the 8000-expansion cap, so phase-1 search raises before
+move-aside can engage), so the dense all-8 route stays out of reach and the
+`fk9_mkii`↔`cessna_140` pair remains a documented manual-insertion case.
 
 ## Notable aircraft
 
@@ -115,7 +121,8 @@ joint dense-placement+routing problem remains the open hard problem (#607).
   the door by ~2 m; a lone Stemme routes in through the door **on its own gear**
   (probed: 1-segment straight-in). The dolly (`always_cart` in `fleet.yaml`) is for
   maneuvering it within the *dense multi-plane* fill, not a width limit — that
-  joint placement+routing difficulty is tracked on #607, not a folded-span error.
+  joint placement+routing difficulty is tracked on #607 (and the #667 shuffle-aware
+  tow-routing program, Rungs A–E now merged), not a folded-span error.
 
 > All fleet dimensions carry `measured: false` — the envelope is published spec
 > and the part-level dimensions are 3-view/TCDS-**sourced** but not on-site

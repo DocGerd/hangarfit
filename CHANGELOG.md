@@ -23,8 +23,9 @@ All notable changes to this project are documented here. Format follows [Keep a 
   tagged with an additive `leg_index` (default `0`), and the scene/v2
   `timeline.segments[]` gains an optional `leg_index` emitted **only** for a
   multi-leg body. This is the byte-identical seam for the move-aside relocation
-  (Rung E): no producer emits more than one leg yet, so every existing plan,
-  scene, render, and viewer animation is unchanged (ADR-0003). The 3D viewer
+  (Rung E, the next entry): only a move-aside shuffle emits more than one leg, so
+  every plan that needs no shuffle — and its scene, render, and viewer animation —
+  is unchanged (ADR-0003). The 3D viewer
   (timeline + floor polylines) animates each leg, resting a body at its staging
   pose between legs; the 2D PNG renderer already draws each leg unchanged.
   `SCHEMA` stays `hangarfit.scene/v2` (additive only).
