@@ -745,7 +745,19 @@ function mountEditor(opts) {
   const ray = new THREE11.Raycaster();
   const ndc = new THREE11.Vector2();
   const idByObject = /* @__PURE__ */ new Map();
-  for (const [id, g] of Object.entries(opts.groups)) g.traverse((o) => idByObject.set(o, id));
+  const targets = [];
+  for (const [id, g] of Object.entries(opts.groups)) {
+    g.traverse((o) => {
+      idByObject.set(o, id);
+      const mesh = o;
+      const m = mesh.material;
+      if (m && !Array.isArray(m) && m.emissive) {
+        const cloned = m.clone();
+        mesh.material = cloned;
+        targets.push({ id, mat: cloned, orig: cloned.emissive.getHex() });
+      }
+    });
+  }
   const el = opts.renderer.domElement;
   function pick(ev) {
     const r = el.getBoundingClientRect();
@@ -773,13 +785,8 @@ function mountEditor(opts) {
     renderReadout();
   });
   function applyHighlight() {
-    for (const [id, g] of Object.entries(opts.groups)) {
-      const on = isSelected(intent, id);
-      g.traverse((o) => {
-        const mesh = o;
-        const mat = mesh.material;
-        if (mat && mat.emissive) mat.emissive.setHex(on ? 0 : 5579264);
-      });
+    for (const t of targets) {
+      t.mat.emissive.setHex(isSelected(intent, t.id) ? t.orig : 5579264);
     }
   }
   function renderReadout() {

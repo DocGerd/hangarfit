@@ -22,7 +22,23 @@ export function mountEditor(opts: {
   const ray = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
   const idByObject = new Map<THREE.Object3D, string>();
-  for (const [id, g] of Object.entries(opts.groups)) g.traverse((o) => idByObject.set(o, id));
+  // Per-mesh highlight targets: clone each emissive material so the editor's highlight
+  // mutation is isolated (gear/pallet materials are SHARED across planes upstream — mutating
+  // the shared instance would bleed the highlight onto every plane). Capture the original
+  // emissive so a selected plane restores its real look instead of being forced to black.
+  const targets: { id: string; mat: THREE.MeshStandardMaterial; orig: number }[] = [];
+  for (const [id, g] of Object.entries(opts.groups)) {
+    g.traverse((o) => {
+      idByObject.set(o, id);
+      const mesh = o as THREE.Mesh;
+      const m = mesh.material;
+      if (m && !Array.isArray(m) && (m as THREE.MeshStandardMaterial).emissive) {
+        const cloned = (m as THREE.MeshStandardMaterial).clone();
+        mesh.material = cloned;
+        targets.push({ id, mat: cloned, orig: cloned.emissive.getHex() });
+      }
+    });
+  }
   const el = opts.renderer.domElement;
 
   function pick(ev: PointerEvent): string | null {
@@ -55,14 +71,9 @@ export function mountEditor(opts: {
   });
 
   function applyHighlight(): void {
-    // Deselected planes glow amber ("excluded from fleet"); selected keep the default look.
-    for (const [id, g] of Object.entries(opts.groups)) {
-      const on = isSelected(intent, id);
-      g.traverse((o) => {
-        const mesh = o as THREE.Mesh;
-        const mat = mesh.material as THREE.MeshStandardMaterial | undefined;
-        if (mat && mat.emissive) mat.emissive.setHex(on ? 0x000000 : 0x552200);
-      });
+    // Selected planes keep their original emissive; deselected planes glow amber ("excluded").
+    for (const t of targets) {
+      t.mat.emissive.setHex(isSelected(intent, t.id) ? t.orig : 0x552200);
     }
   }
 
