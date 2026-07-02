@@ -180,9 +180,9 @@ recover from `scene/v2` is supplied by Python via `EditorContext`.
 
 ## Compliance
 
-The mechanisms below land with **Chunks 1–3** of #442 (this ADR ships in Chunk 0,
-ahead of the code it governs); `render_viewer` and the `scene/v2` byte-identity
-guards it anchors on already exist today.
+The mechanisms below shipped across **Chunks 1–3** of #442 (this ADR was written
+in Chunk 0, ahead of the code it governs); `render_viewer` and the `scene/v2`
+byte-identity guards it anchors on predate them.
 
 - **Grep-able hard rule**: no file under `viewer/src/interaction/` imports
   `affine.ts` or `anchors.ts` (also stated in `interaction/README.md` and the
