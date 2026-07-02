@@ -738,10 +738,72 @@ function toggleSelection(intent, id) {
   }
   return { selectedPlaneIds, priorities, mustPositions };
 }
+function setPriority(intent, id, priority) {
+  const priorities = { ...intent.priorities };
+  if (priority === null) delete priorities[id];
+  else priorities[id] = priority;
+  return { ...intent, priorities };
+}
+function pinAtCurrent(intent, id, ctx) {
+  const c = ctx.currentPoses[id];
+  if (!c) return intent;
+  const mp = { x: c.x_m, y: c.y_m, heading: c.heading_deg, onCarts: c.on_carts };
+  return { ...intent, mustPositions: { ...intent.mustPositions, [id]: mp } };
+}
+function unpin(intent, id) {
+  const mustPositions = { ...intent.mustPositions };
+  delete mustPositions[id];
+  return { ...intent, mustPositions };
+}
+function setPinField(intent, id, field, value) {
+  const cur = intent.mustPositions[id];
+  if (!cur) return intent;
+  return { ...intent, mustPositions: { ...intent.mustPositions, [id]: { ...cur, [field]: value } } };
+}
+function setOnCarts(intent, id, onCarts) {
+  const cur = intent.mustPositions[id];
+  if (!cur) return intent;
+  return { ...intent, mustPositions: { ...intent.mustPositions, [id]: { ...cur, onCarts } } };
+}
+
+// src/interaction/export.ts
+function num(n) {
+  const r = Math.round(n * 1e4) / 1e4;
+  return Number.isInteger(r) ? `${r}.0` : `${r}`;
+}
+function intentToScenarioYaml(intent, ctx) {
+  const selected = [...intent.selectedPlaneIds].sort();
+  const fleetIn = [...new Set(ctx.maintenance ? [...selected, ctx.maintenance.plane] : selected)].sort();
+  const lines = [];
+  lines.push(`fleet: ${ctx.fleet}`);
+  lines.push(`hangar: ${ctx.hangar}`);
+  lines.push(`fleet_in: [${fleetIn.join(", ")}]`);
+  if (ctx.maintenance) {
+    lines.push("maintenance:");
+    lines.push(`  plane: ${ctx.maintenance.plane}`);
+  }
+  const constrained = selected.filter((id) => intent.mustPositions[id] || intent.priorities[id] !== void 0);
+  if (constrained.length) {
+    lines.push("constraints:");
+    for (const id of constrained) {
+      lines.push(`  ${id}:`);
+      const mp = intent.mustPositions[id];
+      if (mp) {
+        lines.push(
+          `    pin: { x_m: ${num(mp.x)}, y_m: ${num(mp.y)}, heading_deg: ${num(mp.heading)}, on_carts: ${mp.onCarts} }`
+        );
+      }
+      const p = intent.priorities[id];
+      if (p !== void 0) lines.push(`    priority: ${num(p)}`);
+    }
+  }
+  return lines.join("\n") + "\n";
+}
 
 // src/interaction/editor.ts
 function mountEditor(opts) {
   let intent = initialIntent(opts.ctx);
+  let focusedId = null;
   const ray = new THREE11.Raycaster();
   const ndc = new THREE11.Vector2();
   const idByObject = /* @__PURE__ */ new Map();
@@ -781,8 +843,10 @@ function mountEditor(opts) {
     const id = pick(ev);
     if (!id) return;
     intent = toggleSelection(intent, id);
+    focusedId = isSelected(intent, id) ? id : null;
     applyHighlight();
     renderReadout();
+    syncControls();
   });
   function applyHighlight() {
     for (const t of targets) {
@@ -793,8 +857,85 @@ function mountEditor(opts) {
     const readout = document.getElementById("sel-readout");
     if (readout) readout.textContent = `selected: ${[...intent.selectedPlaneIds].sort().join(", ")}`;
   }
+  const prio = byId("prio");
+  const pinToggle = byId("pin-toggle");
+  const cartsToggle = byId("carts-toggle");
+  const exportBtn = byId("export");
+  const pinFields = document.createElement("div");
+  pinFields.id = "pin-fields";
+  pinFields.hidden = true;
+  function mkPinInput(label, field) {
+    const wrap = document.createElement("label");
+    wrap.textContent = `${label} `;
+    const inp = document.createElement("input");
+    inp.type = "number";
+    inp.step = "0.1";
+    inp.addEventListener("input", () => {
+      if (focusedId && inp.value !== "") intent = setPinField(intent, focusedId, field, Number(inp.value));
+    });
+    wrap.appendChild(inp);
+    pinFields.appendChild(wrap);
+    return inp;
+  }
+  const xIn = mkPinInput("x_m", "x");
+  const yIn = mkPinInput("y_m", "y");
+  const hIn = mkPinInput("heading_deg", "heading");
+  exportBtn.parentElement?.insertBefore(pinFields, exportBtn);
+  function syncControls() {
+    const id = focusedId;
+    const active = id !== null && isSelected(intent, id);
+    prio.disabled = !active;
+    pinToggle.disabled = !active;
+    if (!active || id === null) {
+      prio.value = "";
+      pinToggle.checked = false;
+      pinFields.hidden = true;
+      cartsToggle.disabled = true;
+      cartsToggle.checked = false;
+    } else {
+      const p = intent.priorities[id];
+      prio.value = p !== void 0 ? String(p) : "";
+      const mp = intent.mustPositions[id];
+      pinToggle.checked = mp !== void 0;
+      pinFields.hidden = mp === void 0;
+      if (mp) {
+        xIn.value = String(mp.x);
+        yIn.value = String(mp.y);
+        hIn.value = String(mp.heading);
+        cartsToggle.disabled = !opts.ctx.cartEligible[id];
+        cartsToggle.checked = mp.onCarts;
+      } else {
+        cartsToggle.disabled = true;
+        cartsToggle.checked = false;
+      }
+    }
+    exportBtn.disabled = intent.selectedPlaneIds.length === 0;
+  }
+  prio.addEventListener("input", () => {
+    if (!focusedId) return;
+    intent = setPriority(intent, focusedId, prio.value === "" ? null : Math.max(0, Number(prio.value)));
+  });
+  pinToggle.addEventListener("change", () => {
+    if (!focusedId) return;
+    intent = pinToggle.checked ? pinAtCurrent(intent, focusedId, opts.ctx) : unpin(intent, focusedId);
+    syncControls();
+  });
+  cartsToggle.addEventListener("change", () => {
+    if (!focusedId) return;
+    intent = setOnCarts(intent, focusedId, cartsToggle.checked);
+  });
+  exportBtn.addEventListener("click", () => {
+    const yaml = intentToScenarioYaml(intent, opts.ctx);
+    const blob = new Blob([yaml], { type: "text/yaml" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = "scenario.edited.yaml";
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
   applyHighlight();
   renderReadout();
+  syncControls();
   return { getIntent: () => intent };
 }
 

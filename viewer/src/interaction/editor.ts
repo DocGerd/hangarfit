@@ -1,11 +1,23 @@
 // viewer/src/interaction/editor.ts — the impure raycaster-selection edge (#442
-// Chunk 2). Mounted only when `view --edit` injects an `#editor-context` blob
-// (main.ts gates the call); dormant otherwise. Per the interaction/README's one
-// hard rule, this module may import `three` but must NEVER import `affine.ts`
-// or `anchors.ts` — it never re-derives geometry, only reads the already-built
+// Chunk 2) plus the intent-capture controls + Scenario-YAML export (Chunk 3).
+// Mounted only when `view --edit` injects an `#editor-context` blob (main.ts
+// gates the call); dormant otherwise. Per the interaction/README's one hard
+// rule, this module may import `three` but must NEVER import `affine.ts` or
+// `anchors.ts` — it never re-derives geometry, only reads the already-built
 // plane Groups the Python-owned transform placed.
 import * as THREE from 'three';
-import { initialIntent, toggleSelection, isSelected } from './selection.ts';
+import {
+  initialIntent,
+  toggleSelection,
+  isSelected,
+  setPriority,
+  pinAtCurrent,
+  unpin,
+  setPinField,
+  setOnCarts,
+} from './selection.ts';
+import { intentToScenarioYaml } from './export.ts';
+import { byId } from '../dom.ts';
 import type { Intent, EditorContext } from './intent-contract.ts';
 
 export interface EditorHandle {
@@ -19,6 +31,9 @@ export function mountEditor(opts: {
   ctx: EditorContext;
 }): EditorHandle {
   let intent = initialIntent(opts.ctx);
+  // The last-selected plane. The HUD controls (priority/pin/on_carts) always
+  // act on this plane; deselecting it (or nothing being selected) disables them.
+  let focusedId: string | null = null;
   const ray = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
   const idByObject = new Map<THREE.Object3D, string>();
@@ -66,8 +81,10 @@ export function mountEditor(opts: {
     const id = pick(ev);
     if (!id) return;
     intent = toggleSelection(intent, id);
+    focusedId = isSelected(intent, id) ? id : null;
     applyHighlight();
     renderReadout();
+    syncControls();
   });
 
   function applyHighlight(): void {
@@ -82,7 +99,91 @@ export function mountEditor(opts: {
     if (readout) readout.textContent = `selected: ${[...intent.selectedPlaneIds].sort().join(', ')}`;
   }
 
+  // --- Intent-capture controls (priority / pin / on_carts) + export --------
+  const prio = byId<HTMLInputElement>('prio');
+  const pinToggle = byId<HTMLInputElement>('pin-toggle');
+  const cartsToggle = byId<HTMLInputElement>('carts-toggle');
+  const exportBtn = byId<HTMLButtonElement>('export');
+
+  // Dynamic x/y/heading pin fields — `_HUD_EDIT` (viewer.py) does not carry
+  // these, so build them here and hide them until the focused plane is pinned.
+  const pinFields = document.createElement('div');
+  pinFields.id = 'pin-fields';
+  pinFields.hidden = true;
+  function mkPinInput(label: string, field: 'x' | 'y' | 'heading'): HTMLInputElement {
+    const wrap = document.createElement('label');
+    wrap.textContent = `${label} `;
+    const inp = document.createElement('input');
+    inp.type = 'number';
+    inp.step = '0.1';
+    inp.addEventListener('input', () => {
+      if (focusedId && inp.value !== '') intent = setPinField(intent, focusedId, field, Number(inp.value));
+    });
+    wrap.appendChild(inp);
+    pinFields.appendChild(wrap);
+    return inp;
+  }
+  const xIn = mkPinInput('x_m', 'x');
+  const yIn = mkPinInput('y_m', 'y');
+  const hIn = mkPinInput('heading_deg', 'heading');
+  exportBtn.parentElement?.insertBefore(pinFields, exportBtn);
+
+  function syncControls(): void {
+    const id = focusedId;
+    const active = id !== null && isSelected(intent, id);
+    prio.disabled = !active;
+    pinToggle.disabled = !active;
+    if (!active || id === null) {
+      prio.value = '';
+      pinToggle.checked = false;
+      pinFields.hidden = true;
+      cartsToggle.disabled = true;
+      cartsToggle.checked = false;
+    } else {
+      const p = intent.priorities[id];
+      prio.value = p !== undefined ? String(p) : '';
+      const mp = intent.mustPositions[id];
+      pinToggle.checked = mp !== undefined;
+      pinFields.hidden = mp === undefined;
+      if (mp) {
+        xIn.value = String(mp.x);
+        yIn.value = String(mp.y);
+        hIn.value = String(mp.heading);
+        cartsToggle.disabled = !opts.ctx.cartEligible[id];
+        cartsToggle.checked = mp.onCarts;
+      } else {
+        cartsToggle.disabled = true;
+        cartsToggle.checked = false;
+      }
+    }
+    exportBtn.disabled = intent.selectedPlaneIds.length === 0;
+  }
+
+  prio.addEventListener('input', () => {
+    if (!focusedId) return;
+    intent = setPriority(intent, focusedId, prio.value === '' ? null : Math.max(0, Number(prio.value)));
+  });
+  pinToggle.addEventListener('change', () => {
+    if (!focusedId) return;
+    intent = pinToggle.checked ? pinAtCurrent(intent, focusedId, opts.ctx) : unpin(intent, focusedId);
+    syncControls();
+  });
+  cartsToggle.addEventListener('change', () => {
+    if (!focusedId) return;
+    intent = setOnCarts(intent, focusedId, cartsToggle.checked);
+  });
+  exportBtn.addEventListener('click', () => {
+    const yaml = intentToScenarioYaml(intent, opts.ctx);
+    const blob = new Blob([yaml], { type: 'text/yaml' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = 'scenario.edited.yaml';
+    a.click();
+    URL.revokeObjectURL(a.href);
+  });
+
   applyHighlight();
   renderReadout();
+  syncControls();
   return { getIntent: () => intent };
 }
