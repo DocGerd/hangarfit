@@ -1,8 +1,10 @@
 # ADR-0029: The interactive editor captures a pinned pose by copying Python-emitted scalars and exports a full `Scenario` YAML — the browser never composes a transform
 
-- **Status:** Proposed
-  <!-- Proposed at PR-open; Accepted at PR-merge. Records the intent-artifact
-       contract + the ADR-0002 carve-out that Chunks 1–3 of #442 build on. -->
+- **Status:** Accepted
+  <!-- Proposed at PR-open; Accepted with the v0.18.0 delivery of #442 (Chunks
+       1–3 shipped the `interaction/` module this ADR governs). Records the
+       intent-artifact contract + the ADR-0002 carve-out that Chunks 1–3 of
+       #442 build on. -->
 
 - **Date:** 2026-07-02
 - **Deciders:** Patrick Kuhn (DocGerd)

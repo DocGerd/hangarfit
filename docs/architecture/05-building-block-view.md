@@ -535,6 +535,26 @@ it never touches the scene's geometry contract:
   `metrics.PLACEHOLDER_BANNER`); when `scene.readouts` is present (valid layouts
   only) it shows the tightest plan-view gap and smallest wing-over-tail clearance.
 
+**`viewer/src/interaction/` — the placement-editor seam (#442, ADR-0029).** The
+`interaction/` directory [ADR-0020](../adr/0020-viewer-typescript-architecture.md)
+reserved is now active behind `hangarfit view --edit`: `viewer.py` additionally
+injects an `editor-context` blob (`hangarfit.editor-context/v1`, layered over an
+untouched `scene/v2` document, same pattern as the `viewer-compare/v1` wrapper)
+carrying each plane's current pose as plain scalars, and `main.ts` mounts the
+editor only when that blob is present (non-`--edit` renders emit no `#editor-context`
+and stay byte-identical to today). The module is split by purity: `intent-contract.ts`
+(the `Intent`/`EditorContext` type mirror), `selection.ts` (pure selection-state —
+toggle fleet membership, set priority, pin-at-current-pose as a scalar copy of
+`currentPoses[id]`) and `export.ts` (pure `(Intent, EditorContext) → Scenario`-YAML
+serializer, enforcing the ADR-0029 invariants — `fleet_in` = selection ∪ maintenance,
+`priority` omitted when unset, `pin` carries all of `x_m`/`y_m`/`heading_deg`/`on_carts`)
+are node-unit-tested with no THREE/DOM dependency; `editor.ts` is the impure edge —
+the raycaster selection hit-test, highlight, HUD controls, and the "Export scenario
+YAML" `Blob`+`<a download>`. Per [ADR-0002](../adr/0002-determinant-minus-one-transform.md),
+no file under `interaction/` imports `affine.ts` or `anchors.ts`: a pin is a scalar
+copy of Python-computed geometry, never a browser-composed transform, so the
+determinant −1 sign-flip trap cannot recur here by construction.
+
 ### `metrics.py` — read-only render annotations
 
 Pure functions over a `Layout` that annotate (never gate) renders: whether any

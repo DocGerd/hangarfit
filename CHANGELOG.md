@@ -6,6 +6,8 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+- **Interactive placement editor** — `hangarfit view --solve --edit` turns the 3D viewer into an intent-capture front end: select which planes are in the fleet, set soft priorities and hard pin-at-current-pose must-positions, and export a loader-valid `Scenario` YAML that `hangarfit solve` re-runs. (#442)
+
 ### Changed
 
 - The dev/CI `bench` profiling harness gained a `--jobs N|auto` flag that runs the

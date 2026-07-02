@@ -320,6 +320,12 @@ google-chrome --headless=new --use-gl=angle --use-angle=swiftshader \
 # `#compare` and reading `#banner`.hidden (the viewer exposes state via the DOM).
 hangarfit view tests/fixtures/scenario_minimal.yaml --solve --alternatives 3 -o compare.html
 
+# v0.18.0 interactive placement editor (#442): view --edit turns the viewer into an
+# intent-capture surface — select planes (fleet_in), set priorities, pin at current pose,
+# then "Export scenario YAML" downloads a loader-valid Scenario that `solve` re-runs.
+# Requires --solve; rejects --alternatives. Editor code ships dormant unless --edit is set.
+hangarfit view tests/fixtures/scenario_minimal.yaml --solve --edit -o edit.html
+
 # #412 staging apron (ADR-0021): with apron_depth_m > 0 each tow path starts
 # OUTSIDE the door (y<0) and slides in. Set it on the hangar.yaml or override
 # per run with --apron-depth N|auto (auto = ~max plane length + max turn radius)

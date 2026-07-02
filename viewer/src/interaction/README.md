@@ -6,16 +6,16 @@ Stage 2 of the roadmap in [ADR-0020](../../../docs/adr/0020-viewer-typescript-ar
 Its contract is recorded in
 [ADR-0029](../../../docs/adr/0029-editor-intent-artifact-contract.md).
 
-**The seam is now activated** — its contract is recorded (ADR-0029) and its
-modules land across #442; at this exact commit the directory is still
-README-only (esbuild bundles nothing, `viewer.js` byte-unchanged).
+**The seam is now activated and shipped** — its contract is recorded (ADR-0029)
+and its modules landed across #442 Chunks 1–3 (below).
 [ADR-0020](../../../docs/adr/0020-viewer-typescript-architecture.md) reserved this
-directory (previously inert — README-only); ADR-0029 activates it. The modules
-below land across #442 in
-small, independently reviewable chunks — the bundle stays byte-identical until a
-module is actually imported by `main.ts` (the `viewer-build-drift` guard tracks
-that hand-off), so Chunk 1's pure modules ship with an **unchanged** `viewer.js`
-and only Chunk 2's `main.ts` wiring rebuilds it.
+directory (previously inert — README-only); ADR-0029 activates it, and `main.ts`
+mounts `editor.ts` whenever the Python-emitted `#editor-context` blob is present
+(`hangarfit view --edit`). The modules landed in small, independently reviewable
+chunks — the bundle stayed byte-identical until a module was actually imported by
+`main.ts` (the `viewer-build-drift` guard tracked that hand-off), so Chunk 1's
+pure modules shipped with an **unchanged** `viewer.js` and only Chunk 2's
+`main.ts` wiring rebuilt it.
 
 ## What the editor does
 
