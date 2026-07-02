@@ -16,6 +16,7 @@ from importlib import resources
 from pathlib import Path
 
 from hangarfit import brand, metrics
+from hangarfit.models import Layout
 
 _ASSETS = "hangarfit._viewer_assets"
 _THREE = "hangarfit._viewer_assets.three"
@@ -63,6 +64,14 @@ def _embed_brand() -> str:
 # scene-contract.ts key-parity guard) stay untouched. The viewer reads it from a
 # separate ``<script id="solutions">`` blob instead of the single-mode ``#scene``.
 _COMPARE_SCHEMA = "hangarfit.viewer-compare/v1"
+
+# The editor-context blob (#442/ADR-0029). Additive alongside the existing
+# ``#scene`` blob (unlike the compare container above, which replaces it): the
+# edit-mode viewer keeps the byte-identical ``#scene`` doc and reads a SECOND
+# ``<script id="editor-context">`` blob for the intent-artifact state the
+# interactive editor needs (current poses, cart eligibility, fleet/hangar refs
+# for the eventual export). Deliberately NOT part of the scene/v2 schema.
+_EDITOR_CONTEXT_SCHEMA = "hangarfit.editor-context/v1"
 
 
 def _assemble_html(*, extra_head: str, hud_html: str, data_scripts: str) -> str:
@@ -114,6 +123,58 @@ def render_viewer(scene: dict, output_path: Path | str) -> None:
     :func:`hangarfit.scene.build_scene`."""
     data = f'<script type="application/json" id="scene">{_embed_json(scene)}</script>\n'
     html = _assemble_html(extra_head="", hud_html=_HUD, data_scripts=data)
+    Path(output_path).write_text(html, encoding="utf-8")
+
+
+def build_editor_context(
+    *,
+    fleet_ref: str,
+    hangar_ref: str,
+    maintenance_plane: str | None,
+    layout: Layout,
+    cart_eligible: dict[str, bool],
+) -> dict:
+    """Build the ``hangarfit.editor-context/v1`` blob for :func:`render_edit_viewer`
+    (#442/ADR-0029).
+
+    ``fleet_ref``/``hangar_ref`` are the raw authored ``fleet:``/``hangar:`` YAML
+    reference strings (the editor's eventual scenario-YAML export re-emits them
+    verbatim; ``Layout`` itself does not retain them). ``currentPoses`` is a
+    scalar copy of each placement's pose fields, keyed by ``plane_id``, sourced
+    from ``layout.placements`` (a ``tuple[Placement, ...]`` — ``Layout`` is not
+    itself iterable). ``cart_eligible`` records, per plane, whether it may ever
+    be placed ``on_carts=True`` (``movement_mode != "always_own_gear"``) — the
+    caller computes this from the fleet since it depends on ``Aircraft`` data
+    the context blob otherwise doesn't carry."""
+    return {
+        "schema": _EDITOR_CONTEXT_SCHEMA,
+        "fleet": fleet_ref,
+        "hangar": hangar_ref,
+        "maintenance": {"plane": maintenance_plane} if maintenance_plane else None,
+        "currentPoses": {
+            p.plane_id: {
+                "x_m": p.x_m,
+                "y_m": p.y_m,
+                "heading_deg": p.heading_deg,
+                "on_carts": p.on_carts,
+            }
+            for p in layout.placements
+        },
+        "cartEligible": dict(cart_eligible),
+    }
+
+
+def render_edit_viewer(scene: dict, context: dict, output_path: Path | str) -> None:
+    """Like :func:`render_viewer`, plus an additive ``#editor-context`` blob and
+    the edit HUD. The ``#scene`` bytes are byte-identical to ``render_viewer``
+    (ADR-0003) — the first line below is verbatim the same as in
+    ``render_viewer``, so nothing about the scene emission changes; the editor
+    context is a second, separate ``<script>`` blob."""
+    data = (
+        f'<script type="application/json" id="scene">{_embed_json(scene)}</script>\n'
+        f'<script type="application/json" id="editor-context">{_embed_json(context)}</script>\n'
+    )
+    html = _assemble_html(extra_head="", hud_html=_HUD_EDIT, data_scripts=data)
     Path(output_path).write_text(html, encoding="utf-8")
 
 
@@ -205,6 +266,17 @@ _HUD = (
     '<label><input id="paths" type="checkbox" checked> paths</label>'
     '<span id="readouts"></span>'
     '<span id="legend"></span>'
+)
+# #442 edit HUD: the standard HUD plus an editor panel (selection readout, priority
+# field, pin/on-carts toggles, export button). Additive — authored as _HUD plus an
+# appended <div>, not a string-hack of _HUD, so single-mode HUD bytes are untouched.
+# Only Task 6 (Chunk 3) wires these controls up; Task 4 just ships the DOM shape.
+_HUD_EDIT = _HUD + (
+    '<div id="editor"><div id="sel-readout"></div>'
+    '<label>priority <input id="prio" type="number" min="0" step="0.5"></label>'
+    '<label><input id="pin-toggle" type="checkbox"> pin here</label>'
+    '<label><input id="carts-toggle" type="checkbox"> on carts</label>'
+    '<button id="export">Export scenario YAML</button></div>'
 )
 # #666 compare HUD: a solution switcher (dropdown, also ←/→ keys) prepended to the
 # standard HUD, plus a per-solution metrics readout. The <select> ships empty —

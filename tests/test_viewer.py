@@ -353,6 +353,54 @@ def test_compare_inlines_committed_bundle(tmp_path):
     assert src in _compare_html(tmp_path)
 
 
+# ── #442/#898: the editor-context blob + edit render path ──────────────────
+
+
+def test_render_edit_viewer_keeps_scene_bytes_and_adds_editor_context(tmp_path):
+    lay = load_layout(LAYOUT)
+    sc = scene.build_scene(lay, moves_plan=plan_fill(lay))
+    ctx = viewer.build_editor_context(
+        fleet_ref="data/fleet.yaml",
+        hangar_ref="data/hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+        cart_eligible={p.plane_id: False for p in lay.placements},
+    )
+    edit = tmp_path / "edit.html"
+    plain = tmp_path / "plain.html"
+    viewer.render_edit_viewer(sc, ctx, edit)
+    viewer.render_viewer(sc, plain)
+    e = edit.read_text(encoding="utf-8")
+    p = plain.read_text(encoding="utf-8")
+    assert 'id="editor-context"' in e
+    assert 'id="editor-context"' not in p
+    grab = lambda s: re.search(r'id="scene">(.*?)</script>', s, re.S).group(1)  # noqa: E731
+    assert grab(e) == grab(p)  # #scene bytes identical across modes
+
+
+def test_build_editor_context_shape():
+    lay = load_layout(LAYOUT)
+    ctx = viewer.build_editor_context(
+        fleet_ref="data/fleet.yaml",
+        hangar_ref="data/hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+        cart_eligible={
+            p.plane_id: (lay.fleet[p.plane_id].movement_mode != "always_own_gear")
+            for p in lay.placements
+        },
+    )
+    assert ctx["schema"] == "hangarfit.editor-context/v1"
+    assert ctx["fleet"] == "data/fleet.yaml"
+    pid = lay.placements[0].plane_id
+    assert set(ctx["currentPoses"][pid]) == {"x_m", "y_m", "heading_deg", "on_carts"}
+    assert (
+        (ctx["maintenance"] == {"plane": lay.maintenance_plane})
+        if lay.maintenance_plane
+        else (ctx["maintenance"] is None)
+    )
+
+
 def test_brand_module_exports():
     # The single token source (#419) exposes the palettes, status inks, and the
     # 3D viewer token object the BRAND blob is built from.
