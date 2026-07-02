@@ -515,6 +515,11 @@ def build_parser() -> argparse.ArgumentParser:
             "seconds instead of grinding through the full disprove budget."
         ),
     )
+    view.add_argument(
+        "--edit",
+        action="store_true",
+        help="Emit the interactive placement editor (requires --solve; rejects --alternatives).",
+    )
 
     return parser
 
@@ -1144,6 +1149,27 @@ def _resolve_fleet_hangar_refs(args: argparse.Namespace) -> tuple[str, str]:
     return str(fleet_abs), str(hangar_abs)
 
 
+def _raw_scenario_refs(args: argparse.Namespace) -> tuple[str, str]:
+    """Read the raw ``fleet:``/``hangar:`` ref strings from a ``view`` scenario file
+    (verbatim, override-aware) for the editor-context blob echoed into the export.
+
+    Unlike :func:`_resolve_fleet_hangar_refs` (used by ``solve --render-paths`` to
+    write a location-independent layout YAML), this keeps the strings exactly as
+    authored — no path resolution — since the editor's eventual scenario-YAML
+    export re-emits them verbatim next to the original scenario file. It also
+    reads ``args.input`` (the ``view`` subparser's positional), not
+    ``args.scenario`` (``solve``'s), so the two helpers can't be merged without a
+    rename.
+    """
+    import yaml
+
+    with open(args.input, encoding="utf-8") as f:
+        raw = yaml.safe_load(f)
+    fleet = str(args.fleet) if args.fleet is not None else str(raw.get("fleet", ""))
+    hangar = str(args.hangar) if args.hangar is not None else str(raw.get("hangar", ""))
+    return fleet, hangar
+
+
 def _write_yamls(
     layouts: tuple[Layout, ...],
     pattern: str,
@@ -1329,6 +1355,18 @@ def cmd_view(args: argparse.Namespace) -> int:
     if args.alternatives < 1:
         print("error: view --alternatives must be >= 1.", file=sys.stderr)
         return 2
+    # #442 the editor exports a Scenario (fleet_in/constraints/maintenance), which
+    # only a solved layout carries meaningfully; a hand-authored layout YAML has no
+    # scenario shape to round-trip. It also can't be reconciled with the #666
+    # multi-solution compare container (a different render path entirely, and one
+    # solution to edit doesn't compose with N to switch between) — reject both
+    # up front, before the solve/compare dispatch below.
+    if args.edit and not args.solve:
+        print("error: --edit requires --solve (the editor exports a Scenario).", file=sys.stderr)
+        return 2
+    if args.edit and args.alternatives > 1:
+        print("error: --edit cannot be combined with --alternatives.", file=sys.stderr)
+        return 2
     try:
         fleet_override = load_fleet(args.fleet) if args.fleet is not None else None
         hangar_override = (
@@ -1469,7 +1507,22 @@ def cmd_view(args: argparse.Namespace) -> int:
         layout, moves_plan=moves_plan, check_result=check_result, egress_paths=egress_paths
     )
     try:
-        viewer.render_viewer(scene, args.output)
+        if args.edit:
+            fleet_ref, hangar_ref = _raw_scenario_refs(args)
+            cart_eligible = {
+                p.plane_id: layout.fleet[p.plane_id].movement_mode != "always_own_gear"
+                for p in layout.placements
+            }
+            ctx = viewer.build_editor_context(
+                fleet_ref=fleet_ref,
+                hangar_ref=hangar_ref,
+                maintenance_plane=layout.maintenance_plane,
+                layout=layout,
+                cart_eligible=cart_eligible,
+            )
+            viewer.render_edit_viewer(scene, ctx, args.output)
+        else:
+            viewer.render_viewer(scene, args.output)
     except OSError as e:
         print(f"error: could not write {args.output}: {e}", file=sys.stderr)
         return 2
