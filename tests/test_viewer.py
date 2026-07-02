@@ -378,6 +378,25 @@ def test_render_edit_viewer_keeps_scene_bytes_and_adds_editor_context(tmp_path):
     assert grab(e) == grab(p)  # #scene bytes identical across modes
 
 
+def test_render_edit_viewer_hud_has_editor_controls(tmp_path):
+    # #442 Chunk 3 wires these control IDs to _HUD_EDIT; guard against a
+    # silent rename in the HUD markup breaking that future hookup.
+    lay = load_layout(LAYOUT)
+    sc = scene.build_scene(lay, moves_plan=plan_fill(lay))
+    ctx = viewer.build_editor_context(
+        fleet_ref="data/fleet.yaml",
+        hangar_ref="data/hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+        cart_eligible={p.plane_id: False for p in lay.placements},
+    )
+    out = tmp_path / "edit.html"
+    viewer.render_edit_viewer(sc, ctx, out)
+    html = out.read_text(encoding="utf-8")
+    for control_id in ("sel-readout", "prio", "pin-toggle", "carts-toggle", "export"):
+        assert f'id="{control_id}"' in html, f"missing editor control #{control_id}"
+
+
 def test_build_editor_context_shape():
     lay = load_layout(LAYOUT)
     ctx = viewer.build_editor_context(
