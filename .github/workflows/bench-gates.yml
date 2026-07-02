@@ -130,4 +130,13 @@ jobs:
         # DETERMINISM failure; speed is reported in the table but never enforced
         # (profile_pipeline.py main()'s default-path return). This is the
         # merge-blocking signal once added to the required set.
-        run: python -m bench.profile_pipeline
+        #
+        # `--jobs auto` (#885): fan the fast regimes across the runner's cores.
+        # Each regime's verdicts are computed inside its own `run_regime` (the
+        # determinism double-run is within-process), so they are schedule-
+        # independent — parallelism cuts this required check's wall from ~8 min
+        # toward ~max-regime (~3.5 min) with NO loss of depth and NO speed-ceiling
+        # rebaseline. The speed-enforcing `bench-gates` job above deliberately does
+        # NOT pass `--jobs` (concurrent per-regime timing would inflate the
+        # ceilings), so it stays serial.
+        run: python -m bench.profile_pipeline --jobs auto
