@@ -1,15 +1,13 @@
 # ADR-0020: The viewer is a typed, modular TypeScript application built by a dev-only toolchain; the Python-owned transform is retained
 
 - **Status:** Accepted
-  <!-- Accepted at merge of the #439 port. Supersedes ADR-0017's
-       "No build toolchain" / thin-renderer sub-decision (see below). The
-       reserved `interaction/` editor seam is now ACTIVE — its contract is
-       recorded in [ADR-0029](0029-editor-intent-artifact-contract.md) and
-       implemented across #442 (Stage 2 interactive placement editor). -->
-
-  <!-- Housekeeping (2026-07-02, #442 Chunk 0): flipped Proposed → Accepted;
-       the toolchain and viewer port shipped (#437–#441), so the Proposed
-       status was stale. -->
+  <!-- Decision effective when the toolchain + viewer port shipped (#437–#441);
+       the status FIELD was flipped Proposed → Accepted on 2026-07-02 in #442
+       Chunk 0 (it had been left stale at Proposed after the port merged).
+       Supersedes ADR-0017's "No build toolchain" / thin-renderer sub-decision
+       (see below). The reserved `interaction/` editor seam is now ACTIVE — its
+       contract is recorded in [ADR-0029](0029-editor-intent-artifact-contract.md)
+       and implemented across #442 (Stage 2 interactive placement editor). -->
 
 - **Date:** 2026-06-04
 - **Deciders:** Patrick Kuhn (DocGerd)

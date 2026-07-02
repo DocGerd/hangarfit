@@ -1,4 +1,4 @@
-# `interaction/` — the editor extension seam (active, #442)
+# `interaction/` — the editor extension seam (activated by #442)
 
 This directory is the **extension seam** for the interactive plane-placement
 editor (`hangarfit view --edit`, epic [#442](https://github.com/DocGerd/hangarfit/issues/442),
@@ -6,10 +6,12 @@ Stage 2 of the roadmap in [ADR-0020](../../../docs/adr/0020-viewer-typescript-ar
 Its contract is recorded in
 [ADR-0029](../../../docs/adr/0029-editor-intent-artifact-contract.md).
 
-**The seam is now active.** [ADR-0020](../../../docs/adr/0020-viewer-typescript-architecture.md)
-reserved this directory (previously inert — README-only, so esbuild bundled
-nothing and the committed `src/hangarfit/_viewer_assets/viewer.js` was
-byte-unchanged); ADR-0029 activates it. The modules below land across #442 in
+**The seam is now activated** — its contract is recorded (ADR-0029) and its
+modules land across #442; at this exact commit the directory is still
+README-only (esbuild bundles nothing, `viewer.js` byte-unchanged).
+[ADR-0020](../../../docs/adr/0020-viewer-typescript-architecture.md) reserved this
+directory (previously inert — README-only); ADR-0029 activates it. The modules
+below land across #442 in
 small, independently reviewable chunks — the bundle stays byte-identical until a
 module is actually imported by `main.ts` (the `viewer-build-drift` guard tracks
 that hand-off), so Chunk 1's pure modules ship with an **unchanged** `viewer.js`

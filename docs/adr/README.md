@@ -106,4 +106,4 @@ manual workflow above is canonical.
 | 0026 | [Caddy hard-door egress — clear-egress routability gate](0026-caddy-hard-door-egress.md) | Accepted |
 | 0027 | [Learned-backend determinism scope — verifier strict, proposer weaker (amends [ADR-0003](0003-rr-mc-solver-algorithm.md))](0027-learned-backend-determinism-scope.md) | Proposed |
 | 0028 | [Learned-backend dense train-to-mastery — resolved-negative; scope to the shipped inference seam](0028-learned-backend-train-to-mastery-resolved-negative.md) | Accepted |
-| 0029 | [The interactive editor pins a pose by copying Python-emitted scalars and exports a full `Scenario` YAML — the browser never composes a transform](0029-editor-intent-artifact-contract.md) | Proposed |
+| 0029 | [The interactive editor captures a pinned pose by copying Python-emitted scalars and exports a full `Scenario` YAML — the browser never composes a transform](0029-editor-intent-artifact-contract.md) | Proposed |
