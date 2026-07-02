@@ -81,3 +81,12 @@ test('functions are pure (no input mutation)', () => {
   pinAtCurrent(i0, 'husky', CTX);
   assert.equal(JSON.stringify(i0), snapshot);
 });
+
+test('pin-editing functions do not mutate their input', () => {
+  const pinned = pinAtCurrent(initialIntent(CTX), 'husky', CTX);
+  const snapshot = JSON.stringify(pinned);
+  unpin(pinned, 'husky');
+  setPinField(pinned, 'husky', 'x', 99);
+  setOnCarts(pinned, 'husky', true);
+  assert.equal(JSON.stringify(pinned), snapshot);
+});

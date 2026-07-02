@@ -44,3 +44,15 @@ test('no maintenance block when ctx.maintenance is null', () => {
   const y = intentToScenarioYaml(initialIntent(CTX), { ...CTX, maintenance: null });
   assert.doesNotMatch(y, /maintenance:/);
 });
+
+test('a plane can carry both a pin and a priority', () => {
+  let i = initialIntent(CTX);
+  i = pinAtCurrent(i, 'husky', CTX);
+  i = setPriority(i, 'husky', 2);
+  const y = intentToScenarioYaml(i, CTX);
+  // both sub-keys appear under the same constraint entry, pin before priority
+  assert.match(
+    y,
+    /^ {2}husky:\n {4}pin: \{ x_m: 2.1, y_m: 14.3, heading_deg: 0.0, on_carts: false \}\n {4}priority: 2.0$/m,
+  );
+});
