@@ -97,7 +97,7 @@ manual workflow above is canonical.
 | 0017 | [3D viewer — `scene/v1` JSON seam → self-contained offline Three.js HTML, transform owned by Python](0017-3d-viewer-architecture.md) | Accepted (build-toolchain / thin-renderer decision superseded by [ADR-0020](0020-viewer-typescript-architecture.md)) |
 | 0018 | [Model the non-rectangular hangar footprint — list of keep-out rects + derived Shapely floor polygon for containment](0018-non-rectangular-hangar-footprint.md) | Accepted |
 | 0019 | [Brand tokens live in one Python module (`brand.py`), injected into the viewer as a canonical BRAND blob](0019-brand-tokens-single-source.md) | Proposed |
-| 0020 | [The viewer is a typed, modular TypeScript application built by a dev-only toolchain; the Python-owned transform is retained](0020-viewer-typescript-architecture.md) | Proposed |
+| 0020 | [The viewer is a typed, modular TypeScript application built by a dev-only toolchain; the Python-owned transform is retained](0020-viewer-typescript-architecture.md) | Accepted |
 | 0021 | [Tow-planner staging apron — a bounded entry-staging start-region in front of the door; rearrangement holding-area deferred](0021-tow-planner-staging-apron.md) | Proposed |
 | 0022 | [Nose-out parked heading — RNG-free 180° flip post-pass (default on), plus the `tow_pivotable` towing-motion flag](0022-nose-out-parked-heading.md) | Accepted |
 | 0023 | [Model the empennage as explicit tail surfaces so a vertical fin in the wing layer can block wing-over-tail nesting](0023-empennage-tail-surfaces.md) | Accepted |
@@ -106,3 +106,4 @@ manual workflow above is canonical.
 | 0026 | [Caddy hard-door egress — clear-egress routability gate](0026-caddy-hard-door-egress.md) | Accepted |
 | 0027 | [Learned-backend determinism scope — verifier strict, proposer weaker (amends [ADR-0003](0003-rr-mc-solver-algorithm.md))](0027-learned-backend-determinism-scope.md) | Proposed |
 | 0028 | [Learned-backend dense train-to-mastery — resolved-negative; scope to the shipped inference seam](0028-learned-backend-train-to-mastery-resolved-negative.md) | Accepted |
+| 0029 | [The interactive editor pins a pose by copying Python-emitted scalars and exports a full `Scenario` YAML — the browser never composes a transform](0029-editor-intent-artifact-contract.md) | Proposed |
