@@ -142,10 +142,11 @@ def build_editor_context(
     verbatim; ``Layout`` itself does not retain them). ``currentPoses`` is a
     scalar copy of each placement's pose fields, keyed by ``plane_id``, sourced
     from ``layout.placements`` (a ``tuple[Placement, ...]`` — ``Layout`` is not
-    itself iterable). ``cart_eligible`` records, per plane, whether it may ever
-    be placed ``on_carts=True`` (``movement_mode != "always_own_gear"``) — the
-    caller computes this from the fleet since it depends on ``Aircraft`` data
-    the context blob otherwise doesn't carry."""
+    itself iterable). ``cart_eligible`` records, per plane, whether the editor
+    may let the user TOGGLE ``on_carts`` — only ``cart_eligible`` planes have a
+    free choice; ``always_cart``/``always_own_gear`` are locked to their single
+    legal value. The caller computes this from the fleet since it depends on
+    ``Aircraft`` data the context blob otherwise doesn't carry."""
     return {
         "schema": _EDITOR_CONTEXT_SCHEMA,
         "fleet": fleet_ref,

@@ -449,3 +449,51 @@ def test_brand_module_exports():
         "labelConflictChip",
     ):
         assert key in tokens
+
+
+def test_editor_export_shape_loads_via_load_scenario(tmp_path):
+    # #442 Chunk 3: the authoritative guard that the editor's exported
+    # scenario-YAML shape (intentToScenarioYaml in export.ts) is loader-valid.
+    # Mirrors tests/fixtures/scenario_with_pin.yaml's proven-valid shape (real
+    # catalog ids, maintenance plane included in fleet_in) extended with a
+    # `priority` constraint sub-key.
+    from pathlib import Path
+
+    from hangarfit.loader import load_scenario
+
+    repo = Path(__file__).resolve().parents[1]  # tests/ -> repo root
+    fleet, hangar = repo / "data" / "fleet.yaml", repo / "data" / "hangar.yaml"
+    yaml = (
+        f"fleet: {fleet}\n"
+        f"hangar: {hangar}\n"
+        "fleet_in: [aviat_husky, ctsl, fuji]\n"  # maintenance plane fuji IS in fleet_in
+        "maintenance:\n  plane: fuji\n"
+        "constraints:\n"
+        "  aviat_husky:\n"
+        "    pin: { x_m: 2.1, y_m: 14.3, heading_deg: 0.0, on_carts: false }\n"
+        "  ctsl:\n"
+        "    priority: 3.0\n"
+    )
+    p = tmp_path / "edited.yaml"
+    p.write_text(yaml)
+    sc = load_scenario(p)
+    assert "fuji" in sc.fleet_in  # maintenance ∈ fleet_in invariant
+    assert sc.constraints["aviat_husky"].pin is not None
+    assert sc.constraints["ctsl"].priority == 3.0
+
+
+def test_build_editor_context_excludes_maintenance_from_current_poses():
+    # By Layout invariant the maintenance plane never appears in
+    # layout.placements, so build_editor_context's currentPoses (sourced from
+    # layout.placements) must not carry it either.
+    lay = load_layout("examples/layouts/example.yaml")
+    assert lay.maintenance_plane is not None  # guard: fixture actually has one
+    ctx = viewer.build_editor_context(
+        fleet_ref="data/fleet.yaml",
+        hangar_ref="data/hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+        cart_eligible={p.plane_id: False for p in lay.placements},
+    )
+    assert lay.maintenance_plane not in ctx["currentPoses"]
+    assert ctx["maintenance"] == {"plane": lay.maintenance_plane}

@@ -6,16 +6,16 @@ Stage 2 of the roadmap in [ADR-0020](../../../docs/adr/0020-viewer-typescript-ar
 Its contract is recorded in
 [ADR-0029](../../../docs/adr/0029-editor-intent-artifact-contract.md).
 
-**The seam is now activated** — its contract is recorded (ADR-0029) and its
-modules land across #442; at this exact commit the directory is still
-README-only (esbuild bundles nothing, `viewer.js` byte-unchanged).
+**The seam is now activated and shipped** — its contract is recorded (ADR-0029)
+and its modules landed across #442 Chunks 1–3 (below).
 [ADR-0020](../../../docs/adr/0020-viewer-typescript-architecture.md) reserved this
-directory (previously inert — README-only); ADR-0029 activates it. The modules
-below land across #442 in
-small, independently reviewable chunks — the bundle stays byte-identical until a
-module is actually imported by `main.ts` (the `viewer-build-drift` guard tracks
-that hand-off), so Chunk 1's pure modules ship with an **unchanged** `viewer.js`
-and only Chunk 2's `main.ts` wiring rebuilds it.
+directory (previously inert — README-only); ADR-0029 activates it, and `main.ts`
+mounts `editor.ts` whenever the Python-emitted `#editor-context` blob is present
+(`hangarfit view --edit`). The modules landed in small, independently reviewable
+chunks — the bundle stayed byte-identical until a module was actually imported by
+`main.ts` (the `viewer-build-drift` guard tracked that hand-off), so Chunk 1's
+pure modules shipped with an **unchanged** `viewer.js` and only Chunk 2's
+`main.ts` wiring rebuilt it.
 
 ## What the editor does
 
@@ -34,7 +34,7 @@ instead of a file. **Python stays the solver authority in every stage.**
 | `intent-contract.ts` | types | `Intent`, `MustPosition`, `CurrentPose`, `EditorContext` — the typed mirror of the exported artifact. | Chunk 1 |
 | `selection.ts` | **pure** | Selection-state machine (toggle/priority/pin-at-current/edit); pose lookup reads `EditorContext.currentPoses` scalars. No THREE/DOM, no affine math. | Chunk 1 |
 | `export.ts` | **pure** | `(Intent, EditorContext) → Scenario-YAML string`; enforces the ADR-0029 serializer invariants. No THREE/DOM. | Chunk 1 |
-| `editor.ts` | impure edge | THREE.Raycaster over `planes` groups, selection highlight, `controls.enabled` gating, HUD wiring, `Blob` + `<a download>` export. Reads `scene-contract.ts`. | Chunks 2–3 |
+| `editor.ts` | impure edge | THREE.Raycaster over `planes` groups, selection highlight, a click-vs-drag pointer-move threshold, HUD control wiring, `Blob` + `<a download>` export. | Chunks 2–3 |
 
 The `Intent` the browser builds mirrors `Scenario.constraints`:
 
