@@ -34,7 +34,7 @@ instead of a file. **Python stays the solver authority in every stage.**
 | `intent-contract.ts` | types | `Intent`, `MustPosition`, `CurrentPose`, `EditorContext` — the typed mirror of the exported artifact. | Chunk 1 |
 | `selection.ts` | **pure** | Selection-state machine (toggle/priority/pin-at-current/edit); pose lookup reads `EditorContext.currentPoses` scalars. No THREE/DOM, no affine math. | Chunk 1 |
 | `export.ts` | **pure** | `(Intent, EditorContext) → Scenario-YAML string`; enforces the ADR-0029 serializer invariants. No THREE/DOM. | Chunk 1 |
-| `editor.ts` | impure edge | THREE.Raycaster over `planes` groups, selection highlight, `controls.enabled` gating, HUD wiring, `Blob` + `<a download>` export. Reads `scene-contract.ts`. | Chunks 2–3 |
+| `editor.ts` | impure edge | THREE.Raycaster over `planes` groups, selection highlight, a click-vs-drag pointer-move threshold, HUD control wiring, `Blob` + `<a download>` export. | Chunks 2–3 |
 
 The `Intent` the browser builds mirrors `Scenario.constraints`:
 

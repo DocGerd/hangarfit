@@ -175,8 +175,9 @@ recover from `scene/v2` is supplied by Python via `EditorContext`.
   document — the same pattern as the `viewer-compare/v1` wrapper
   ([ADR-0017](0017-3d-viewer-architecture.md), #666). It is **not** a `scene/v2`
   schema change, so `scene.build_scene()` and its key-parity guard are untouched.
-- Prior intent is **not echoed** on re-open (the editor starts blank); the user's
-  intent persists in the exported YAML. Echoing it is deferred future work.
+- Prior intent is **not echoed** on re-open (the editor starts with the current
+  fleet selected and no saved priorities/pins); the user's intent persists in
+  the exported YAML. Echoing it is deferred future work.
 
 ## Compliance
 
