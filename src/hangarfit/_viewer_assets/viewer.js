@@ -1,5 +1,5 @@
 // src/main.ts
-import * as THREE11 from "three";
+import * as THREE12 from "three";
 
 // src/dom.ts
 function byId(id) {
@@ -717,6 +717,87 @@ function foundLabel(m) {
   return `${m.count_found} solution${m.count_found === 1 ? "" : "s"}`;
 }
 
+// src/interaction/editor.ts
+import * as THREE11 from "three";
+
+// src/interaction/selection.ts
+function initialIntent(ctx) {
+  return { selectedPlaneIds: Object.keys(ctx.currentPoses).sort(), priorities: {}, mustPositions: {} };
+}
+function isSelected(intent, id) {
+  return intent.selectedPlaneIds.includes(id);
+}
+function toggleSelection(intent, id) {
+  const selected = isSelected(intent, id);
+  const selectedPlaneIds = selected ? intent.selectedPlaneIds.filter((x) => x !== id) : [...intent.selectedPlaneIds, id].sort();
+  const priorities = { ...intent.priorities };
+  const mustPositions = { ...intent.mustPositions };
+  if (selected) {
+    delete priorities[id];
+    delete mustPositions[id];
+  }
+  return { selectedPlaneIds, priorities, mustPositions };
+}
+
+// src/interaction/editor.ts
+function mountEditor(opts) {
+  let intent = initialIntent(opts.ctx);
+  const ray = new THREE11.Raycaster();
+  const ndc = new THREE11.Vector2();
+  const idByObject = /* @__PURE__ */ new Map();
+  const targets = [];
+  for (const [id, g] of Object.entries(opts.groups)) {
+    g.traverse((o) => {
+      idByObject.set(o, id);
+      const mesh = o;
+      const m = mesh.material;
+      if (m && !Array.isArray(m) && m.emissive) {
+        const cloned = m.clone();
+        mesh.material = cloned;
+        targets.push({ id, mat: cloned, orig: cloned.emissive.getHex() });
+      }
+    });
+  }
+  const el = opts.renderer.domElement;
+  function pick(ev) {
+    const r = el.getBoundingClientRect();
+    ndc.set((ev.clientX - r.left) / r.width * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
+    ray.setFromCamera(ndc, opts.cam);
+    const hits = ray.intersectObjects(Object.values(opts.groups), true);
+    for (const h of hits) {
+      const id = idByObject.get(h.object);
+      if (id) return id;
+    }
+    return null;
+  }
+  let downX = 0;
+  let downY = 0;
+  el.addEventListener("pointerdown", (ev) => {
+    downX = ev.clientX;
+    downY = ev.clientY;
+  });
+  el.addEventListener("pointerup", (ev) => {
+    if (Math.hypot(ev.clientX - downX, ev.clientY - downY) > 6) return;
+    const id = pick(ev);
+    if (!id) return;
+    intent = toggleSelection(intent, id);
+    applyHighlight();
+    renderReadout();
+  });
+  function applyHighlight() {
+    for (const t of targets) {
+      t.mat.emissive.setHex(isSelected(intent, t.id) ? t.orig : 5579264);
+    }
+  }
+  function renderReadout() {
+    const readout = document.getElementById("sel-readout");
+    if (readout) readout.textContent = `selected: ${[...intent.selectedPlaneIds].sort().join(", ")}`;
+  }
+  applyHighlight();
+  renderReadout();
+  return { getIntent: () => intent };
+}
+
 // src/main.ts
 function setReadouts(scene) {
   byId("placeholder").hidden = !scene.placeholder;
@@ -726,7 +807,7 @@ function setReadouts(scene) {
 }
 function buildWorld(scene, data, brand) {
   byId("legend").textContent = "";
-  const group = new THREE11.Group();
+  const group = new THREE12.Group();
   scene.add(group);
   const { groups, labelMeshes, noseMeshes } = addPlanes(group, data, brand);
   const { groups: goGroups } = addGroundObjects(group, data);
@@ -745,7 +826,7 @@ function buildWorld(scene, data, brand) {
     banner("TRANSFORM CHECK ERRORED: " + e.message + " — do not trust this render.");
   }
   const timeline = createTimeline(data, groups, goGroups);
-  return { group, labelMeshes, noseMeshes, setPathsVisible, timeline };
+  return { group, groups, labelMeshes, noseMeshes, setPathsVisible, timeline };
 }
 function wireToggles(wallMeshes, getWorld) {
   const wallsToggle = byId("walls");
@@ -800,6 +881,11 @@ function bootSingle(data, brand) {
     scene: stage.scene,
     cam: stage.cam
   });
+  const ctxEl = document.getElementById("editor-context");
+  if (ctxEl?.textContent) {
+    const ctx = JSON.parse(ctxEl.textContent);
+    mountEditor({ groups: world.groups, renderer: stage.renderer, cam: stage.cam, ctx });
+  }
 }
 function startCompare(manifest, brand) {
   const solutions = manifest.solutions;

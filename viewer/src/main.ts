@@ -23,13 +23,17 @@ import { checkAnchors } from './anchors.ts';
 import { createTimeline, type Timeline } from './timeline.ts';
 import { startHud } from './hud.ts';
 import { wrapIndex, clampIndex, optionLabels, formatSummary, foundLabel } from './compare.ts';
+import { mountEditor } from './interaction/editor.ts';
 import type { BrandTokens } from './brand-contract.ts';
 import type { CompareManifest, SceneV2 } from './scene-contract.ts';
+import type { EditorContext } from './interaction/intent-contract.ts';
 
 // One solution's dynamic content: the meshes (under one toggleable Group) + its
-// timeline + the label/nose/paths handles the HUD toggles drive.
+// timeline + the label/nose/paths handles the HUD toggles drive, plus the raw
+// per-plane groups (#442) so an `--edit` boot can hand them to the raycaster.
 interface World {
   group: THREE.Group;
+  groups: Record<string, THREE.Group>;
   labelMeshes: THREE.Sprite[];
   noseMeshes: THREE.Mesh[];
   setPathsVisible: (on: boolean) => void;
@@ -85,7 +89,7 @@ function buildWorld(scene: THREE.Scene, data: SceneV2, brand: BrandTokens): Worl
   // Movers (#651) animate from the same timeline as planes, so their Groups are passed
   // alongside the plane Groups (both returned per-id by the add* builders above).
   const timeline = createTimeline(data, groups, goGroups);
-  return { group, labelMeshes, noseMeshes, setPathsVisible, timeline };
+  return { group, groups, labelMeshes, noseMeshes, setPathsVisible, timeline };
 }
 
 // Wire the HUD visibility toggles. `walls` drives the shared hangar; `labels`/`paths`
@@ -154,6 +158,15 @@ function bootSingle(data: SceneV2, brand: BrandTokens): void {
     scene: stage.scene,
     cam: stage.cam,
   });
+
+  // #442: dormant unless `view --edit` injected the `#editor-context` blob (never
+  // emitted by the plain `render_viewer` path) — mirrors the `#solutions` gate
+  // above via the nullable `document.getElementById` (byId THROWS on absence).
+  const ctxEl = document.getElementById('editor-context');
+  if (ctxEl?.textContent) {
+    const ctx = JSON.parse(ctxEl.textContent) as EditorContext;
+    mountEditor({ groups: world.groups, renderer: stage.renderer, cam: stage.cam, ctx });
+  }
 }
 
 function startCompare(manifest: CompareManifest, brand: BrandTokens): void {

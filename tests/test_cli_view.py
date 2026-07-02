@@ -406,3 +406,50 @@ def test_view_solve_single_alternative_uses_single_render(tmp_path):
     html = out.read_text(encoding="utf-8")
     assert 'id="scene"' in html
     assert 'id="solutions"' not in html
+
+
+def test_view_edit_requires_solve(tmp_path, capsys):
+    # --edit exports a Scenario, so it only makes sense on a solved layout — a
+    # hand-authored layout YAML has no fleet_in/constraints to round-trip.
+    rc = main(["view", SCENARIO, "--edit", "-o", str(tmp_path / "o.html")])
+    assert rc == 2
+    assert "--edit requires --solve" in capsys.readouterr().err
+
+
+def test_view_edit_rejects_alternatives(tmp_path, capsys):
+    rc = main(
+        [
+            "view",
+            "--solve",
+            SCENARIO,
+            "--edit",
+            "--alternatives",
+            "3",
+            "-o",
+            str(tmp_path / "o.html"),
+        ]
+    )
+    assert rc == 2
+    assert "--edit cannot be combined with --alternatives" in capsys.readouterr().err
+
+
+def test_view_edit_emits_editor_html(tmp_path):
+    out = tmp_path / "o.html"
+    rc = main(
+        [
+            "view",
+            "--solve",
+            SCENARIO,
+            "--edit",
+            "-o",
+            str(out),
+            "--seed",
+            "1",
+            "--budget",
+            "5",
+        ]
+    )
+    assert rc == 0
+    html = out.read_text(encoding="utf-8")
+    assert 'id="editor-context"' in html
+    assert 'id="scene"' in html
