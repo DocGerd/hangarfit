@@ -1,8 +1,13 @@
 # ADR-0020: The viewer is a typed, modular TypeScript application built by a dev-only toolchain; the Python-owned transform is retained
 
-- **Status:** Proposed
-  <!-- Proposed at PR-open; Accepted at PR-merge. Supersedes ADR-0017's
-       "No build toolchain" / thin-renderer sub-decision (see below). -->
+- **Status:** Accepted
+  <!-- Decision effective when the toolchain + viewer port shipped (#437–#441);
+       the status FIELD was flipped Proposed → Accepted on 2026-07-02 in #442
+       Chunk 0 (it had been left stale at Proposed after the port merged).
+       Supersedes ADR-0017's "No build toolchain" / thin-renderer sub-decision
+       (see below). The reserved `interaction/` editor seam is now ACTIVE — its
+       contract is recorded in [ADR-0029](0029-editor-intent-artifact-contract.md)
+       and implemented across #442 (Stage 2 interactive placement editor). -->
 
 - **Date:** 2026-06-04
 - **Deciders:** Patrick Kuhn (DocGerd)
@@ -221,12 +226,15 @@ language pytest cannot exercise — the precise hazard ADR-0002/0017 guard again
   build-toolchain sub-decision this supersedes), [ADR-0002](0002-determinant-minus-one-transform.md)
   (the transform retained in Python), [ADR-0019](0019-brand-tokens-single-source.md) (the
   BRAND blob the typed `brand-contract.ts` mirrors), [ADR-0003](0003-rr-mc-solver-algorithm.md)
-  (the determinism spirit the build-drift guard extends).
+  (the determinism spirit the build-drift guard extends),
+  [ADR-0029](0029-editor-intent-artifact-contract.md) (the intent-artifact contract that
+  activates the `interaction/` seam reserved here).
 - Related specs: [`docs/superpowers/specs/2026-06-04-viewer-typescript-architecture-design.md`](../superpowers/specs/2026-06-04-viewer-typescript-architecture-design.md);
   schema reference [`docs/architecture/scene-v2-schema.md`](../architecture/scene-v2-schema.md).
 - Related issues / PRs: #436 (epic), #437 (toolchain), #438 (CI), #439 (port), #440
   (typed contract + interaction seam), #441 (Python `priority` groundwork), #442
-  (deferred interactive editor — Stage 2 round-trip), #444 (deferred JSON-Schema
+  (interactive editor — Stage 2 round-trip, now ACTIVE; contract in
+  [ADR-0029](0029-editor-intent-artifact-contract.md)), #444 (deferred JSON-Schema
   single-source spike), #445 (deferred Stage 3: viewer-as-full-frontend via `hangarfit
   serve` — own ADR); follows #423, subsumes #433.
 - External references: [esbuild](https://esbuild.github.io/) (reproducible builds,
