@@ -88,6 +88,39 @@ def test_single_regime_short_circuits_to_serial() -> None:
     assert result.layouts_valid and result.paths_valid and result.deterministic
 
 
+def test_available_cpus_is_positive() -> None:
+    assert pp._available_cpus() >= 1
+
+
+def test_pool_break_falls_back_to_serial(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+) -> None:
+    """A ``BrokenProcessPool`` (worker died — an infra hiccup, NOT a verdict
+    failure) on the required correctness gate falls back to the trusted serial
+    path rather than blocking every merge: same regimes, correct verdicts, note
+    on stderr. A genuine verdict failure is a different exception and still
+    propagates (covered by the fail-loud contract, verified separately)."""
+    from concurrent.futures.process import BrokenProcessPool
+
+    class _BrokenPool:
+        def __init__(self, *a: object, **k: object) -> None: ...
+        def __enter__(self) -> _BrokenPool:
+            return self
+
+        def __exit__(self, *a: object) -> bool:
+            return False
+
+        def map(self, *a: object, **k: object) -> object:
+            raise BrokenProcessPool("simulated worker death")
+
+    monkeypatch.setattr(pp, "ProcessPoolExecutor", _BrokenPool)
+    results = pp._run_regimes([_witness("_b_a"), _witness("_b_b")], jobs=2)
+
+    assert [r.key for r in results] == ["_b_a", "_b_b"]
+    assert all(r.layouts_valid and r.paths_valid and r.deterministic for r in results)
+    assert "falling back to serial" in capsys.readouterr().err
+
+
 # ── --gate always runs serial ────────────────────────────────────────────────
 
 

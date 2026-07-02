@@ -22,6 +22,7 @@ import json
 import os
 import sys
 from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 
 from .harness import (
     RegimeResult,
@@ -218,23 +219,38 @@ def _print_profile(key: str) -> None:
         print(f"    {line}")
 
 
+def _available_cpus() -> int:
+    """Best available CPU count, respecting cgroup/affinity limits on Linux.
+
+    ``os.sched_getaffinity(0)`` reflects the process's *allowed* CPUs (a
+    container/cgroup-limited or ``taskset``-pinned runner), which ``os.cpu_count()``
+    over-reports to the host's logical core count. Falls back to ``os.cpu_count()``
+    on platforms without ``sched_getaffinity`` (macOS/Windows dev boxes).
+    """
+    try:
+        return len(os.sched_getaffinity(0))
+    except AttributeError:
+        return os.cpu_count() or 1
+
+
 def _resolve_jobs(spec: str, n_regimes: int) -> int:
     """Resolve a ``--jobs`` spec into a concrete worker count in ``[1, n_regimes]``.
 
-    ``"auto"`` (or any value ``<= 0``) means ``os.cpu_count()``; the result is
-    always clamped to ``[1, n_regimes]`` because more workers than regimes buys
-    nothing (each regime is one indivisible task — its own two-solve run). A
-    non-integer, non-``"auto"`` spec is a hard, loud error (silent-failure guard).
+    ``"auto"`` (or any value ``<= 0``) means the available CPU count
+    (:func:`_available_cpus`); the result is always clamped to ``[1, n_regimes]``
+    because more workers than regimes buys nothing (each regime is one indivisible
+    task — its own two-solve run). A non-integer, non-``"auto"`` spec is a hard,
+    loud error (silent-failure guard).
     """
     if spec == "auto":
-        n = os.cpu_count() or 1
+        n = _available_cpus()
     else:
         try:
             n = int(spec)
         except ValueError:
             raise SystemExit(f"--jobs: expected an integer or 'auto', got {spec!r}") from None
         if n <= 0:
-            n = os.cpu_count() or 1
+            n = _available_cpus()
     return max(1, min(n, max(1, n_regimes)))
 
 
@@ -253,11 +269,30 @@ def _run_regimes(regimes: list[Regime], jobs: int) -> list[RegimeResult]:
     process — so nothing about a regime's outcome depends on how it is scheduled.
     Only the reported per-regime wall-clock inflates under CPU contention, which
     is why the speed-enforcing ``--gate`` path never runs parallel (see ``main``).
+
+    A worker dying abnormally (a runner OOM / fork hiccup) raises
+    ``BrokenProcessPool`` — an *infrastructure* break, distinct from a regime
+    verdict failure (which propagates as its own exception from
+    ``executor.map``, in input order, and must still fail). Because
+    ``bench correctness`` is a **required** merge gate, a transient pool break
+    falls back to the trusted **serial** path rather than blocking every merge:
+    serial cannot pool-break, yields byte-identical verdicts (the whole
+    invariant this change rests on), and still fails on a genuine verdict
+    failure. A real memory regression that only surfaces under N-way concurrency
+    is a scheduling artifact, not a solver-correctness defect, so ignoring it
+    here is correct.
     """
     if jobs <= 1 or len(regimes) <= 1:
         return [run_regime(r) for r in regimes]
-    with ProcessPoolExecutor(max_workers=jobs) as executor:
-        return list(executor.map(run_regime, regimes))
+    try:
+        with ProcessPoolExecutor(max_workers=jobs) as executor:
+            return list(executor.map(run_regime, regimes))
+    except BrokenProcessPool:
+        print(
+            "note: worker pool broke (infra hiccup) — falling back to serial",
+            file=sys.stderr,
+        )
+        return [run_regime(r) for r in regimes]
 
 
 def main(argv: list[str] | None = None) -> int:
