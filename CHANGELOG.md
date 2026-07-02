@@ -8,6 +8,19 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Changed
 
+- The dev/CI `bench` profiling harness gained a `--jobs N|auto` flag that runs the
+  benchmark regimes across worker processes (#885). The **required** `bench
+  correctness` CI check now runs the fast regimes in parallel (`--jobs auto`),
+  cutting its wall-clock from ~8 min toward ~max-regime (~3.5 min). This is a
+  pure scheduling change: each regime's validity / path-validity / determinism
+  verdicts are computed **inside** its own `run_regime` (the determinism
+  double-run stays within a single worker process), so they are
+  schedule-independent — no search depth is lost and no speed-ceiling
+  re-baseline is needed. The speed-enforcing `bench gates` job deliberately
+  stays serial (concurrent per-regime timing would inflate the `_SPEED_CEILING_S`
+  ceilings). Default `--jobs 1` reproduces the historic serial run byte-for-byte
+  (ADR-0003 determinism contract untouched).
+
 ### Fixed
 
 ## [0.17.0] — 2026-06-29

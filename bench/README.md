@@ -18,6 +18,7 @@ python -m bench.profile_pipeline --heavy         # + 9-plane fill and tight plac
 python -m bench.profile_pipeline --profile       # + cProfile stage attribution
 python -m bench.profile_pipeline --regime trivial_single --profile
 python -m bench.profile_pipeline --json          # machine-readable
+python -m bench.profile_pipeline --jobs auto     # fan regimes across worker processes
 ```
 
 Exit code is **non-zero** if any regime fails an invariant — the seed of the F6
@@ -62,6 +63,17 @@ re-check.
   feasible fills route at the default budgets, and the un-routable disprove rises
   only modestly — no budget re-tune needed. See the
   [profiling spike §6](../docs/spikes/solve-tow-profiling.md).
+
+* **`--jobs N|auto` (#885).** Each regime's verdicts are computed *inside* its own
+  `run_regime` (the determinism double-run is within one worker process), so they
+  are schedule-independent — the regimes can run across worker processes with
+  byte-identical verdicts and order (`ProcessPoolExecutor.map` preserves order),
+  cutting the wall from `sum(regimes)` to `~max(regime)`. Default `--jobs 1` is
+  the historic serial run byte-for-byte. The **required** `bench correctness` CI
+  job runs `--jobs auto`; the speed-enforcing `bench gates` job stays serial
+  because concurrent execution inflates each regime's wall-clock and would trip
+  the `_SPEED_CEILING_S` ceilings (`--jobs` is ignored under `--gate`, with a
+  note).
 
 The regimes themselves are defined in [`regimes.py`](regimes.py); they reference
 committed `tests/fixtures/*.yaml` scenarios so the harness has no private data.
