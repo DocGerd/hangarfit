@@ -87,6 +87,13 @@ default "entry per PR" rule still holds for one-at-a-time delivery. GitHub merge
 banner right after a merge/push clears on recompute — `mergeable=MERGEABLE` (and
 `git merge-base --is-ancestor origin/develop <branch>`) is authoritative;
 `mergeStateStatus=BLOCKED` just means required CI is still pending, not a conflict.
+Reading CI state: `gh pr checks <n>` output is **tab-separated** and many check names
+carry spaces/parens — the #877 fan-out (`test-shard (1 of 3)`, `serial canaries
+(determinism)`) plus the separate `bench correctness (…)` check (#564) — so
+whitespace-split `awk`/`grep` mangles them; use `awk -F'\t'` or
+`gh api repos/DocGerd/hangarfit/commits/<sha>/check-runs`. The required
+`test (Python 3.12)` **gate** appears only once its `static`/`test-shard`/`serial-canaries`
+deps finish, so a just-pushed PR shows the shards `pending` with no gate line yet (normal).
 (Mis-based already? `gh api -X PATCH repos/DocGerd/hangarfit/pulls/<n> -f base=develop`,
 then close+reopen the PR to trigger CI.) Wire the stack's order as native issue
 deps: `gh api -X POST repos/DocGerd/hangarfit/issues/<n>/dependencies/blocked_by -F issue_id=<numeric id>`.
