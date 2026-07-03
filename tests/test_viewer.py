@@ -377,6 +377,40 @@ def test_render_edit_viewer_keeps_scene_bytes_and_adds_editor_context(tmp_path):
     assert grab(e) == grab(p)  # #scene bytes identical across modes
 
 
+def test_build_edit_html_matches_render_edit_viewer_bytes(tmp_path):
+    # #445: build_edit_html (string) with no serve_config must be byte-identical to
+    # the file render_edit_viewer writes — the offline path is unchanged (ADR-0003).
+    lay = load_layout(LAYOUT)
+    sc = scene.build_scene(lay, moves_plan=plan_fill(lay))
+    ctx = viewer.build_editor_context(
+        fleet_ref="data/fleet.yaml",
+        hangar_ref="data/hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+    )
+    out = tmp_path / "edit.html"
+    viewer.render_edit_viewer(sc, ctx, out)
+    assert viewer.build_edit_html(sc, ctx) == out.read_text(encoding="utf-8")
+
+
+def test_build_edit_html_serve_config_adds_blob_only_when_given():
+    # #445: the serve-config blob appears ONLY when serve_config is passed (never
+    # in the offline export), and is additive over the unchanged scene/context.
+    lay = load_layout(LAYOUT)
+    sc = scene.build_scene(lay, moves_plan=plan_fill(lay))
+    ctx = viewer.build_editor_context(
+        fleet_ref="data/fleet.yaml",
+        hangar_ref="data/hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+    )
+    without = viewer.build_edit_html(sc, ctx)
+    assert 'id="serve-config"' not in without
+    with_cfg = viewer.build_edit_html(sc, ctx, serve_config={"schema": "hangarfit.serve-config/v1"})
+    assert 'id="serve-config"' in with_cfg
+    assert 'id="editor-context"' in with_cfg and 'id="scene"' in with_cfg
+
+
 def test_render_edit_viewer_hud_has_editor_controls(tmp_path):
     # #442 Chunk 3 wires these control IDs to _HUD_EDIT; guard against a
     # silent rename in the HUD markup breaking that future hookup.

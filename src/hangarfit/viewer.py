@@ -73,6 +73,12 @@ _COMPARE_SCHEMA = "hangarfit.viewer-compare/v1"
 # for the eventual export). Deliberately NOT part of the scene/v2 schema.
 _EDITOR_CONTEXT_SCHEMA = "hangarfit.editor-context/v1"
 
+# The serve-config blob (#445). Present ONLY when `hangarfit serve` renders the
+# shell — never in the offline file export — so the client can tell it is running
+# under the local backend and light up the (otherwise dormant) Calculate button.
+# A viewer-HTML-level marker like #solutions / #editor-context, NOT a scene/v2 change.
+_SERVE_CONFIG_SCHEMA = "hangarfit.serve-config/v1"
+
 
 def _assemble_html(*, extra_head: str, hud_html: str, data_scripts: str) -> str:
     """Assemble the shared self-contained viewer HTML skeleton.
@@ -200,18 +206,31 @@ def build_editor_context(
     }
 
 
-def render_edit_viewer(scene: dict, context: dict, output_path: Path | str) -> None:
-    """Like :func:`render_viewer`, plus an additive ``#editor-context`` blob and
-    the edit HUD. The ``#scene`` bytes are byte-identical to ``render_viewer``
-    (ADR-0003) — the first line below is verbatim the same as in
-    ``render_viewer``, so nothing about the scene emission changes; the editor
-    context is a second, separate ``<script>`` blob."""
+def build_edit_html(scene: dict, context: dict, *, serve_config: dict | None = None) -> str:
+    """Return the interactive-editor viewer HTML as a string.
+
+    The ``#scene`` bytes are byte-identical to :func:`render_viewer` (ADR-0003);
+    the editor context is a second, separate ``<script>`` blob. ``serve_config`` —
+    when given — appends a third ``#serve-config`` blob so the client knows it runs
+    under ``hangarfit serve`` (#445) and lights up the live Calculate button. With
+    ``serve_config=None`` the output is byte-identical to the offline file
+    :func:`render_edit_viewer` writes."""
     data = (
         f'<script type="application/json" id="scene">{_embed_json(scene)}</script>\n'
         f'<script type="application/json" id="editor-context">{_embed_json(context)}</script>\n'
     )
-    html = _assemble_html(extra_head="", hud_html=_HUD_EDIT, data_scripts=data)
-    Path(output_path).write_text(html, encoding="utf-8")
+    if serve_config is not None:
+        data += (
+            f'<script type="application/json" id="serve-config">'
+            f"{_embed_json(serve_config)}</script>\n"
+        )
+    return _assemble_html(extra_head="", hud_html=_HUD_EDIT, data_scripts=data)
+
+
+def render_edit_viewer(scene: dict, context: dict, output_path: Path | str) -> None:
+    """Like :func:`render_viewer`, plus an additive ``#editor-context`` blob and
+    the edit HUD. Writes the byte-identical offline artifact (no ``serve-config``)."""
+    Path(output_path).write_text(build_edit_html(scene, context), encoding="utf-8")
 
 
 def render_compare_viewer(
