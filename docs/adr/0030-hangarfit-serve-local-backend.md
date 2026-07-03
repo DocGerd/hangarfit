@@ -33,7 +33,9 @@ Add a `hangarfit serve <scenario>` subcommand: a **stdlib `http.server`** bound 
 **`127.0.0.1`** exposing
 
 - `GET /` — the inlined interactive-editor viewer (the initial solved scene), and
-- `POST /solve` — body = an exported `Scenario` YAML → a `scene/v2` JSON document.
+- `POST /solve` — body = an exported `Scenario` YAML → a JSON `{scene, editorContext}`
+  document (the refreshed editor-context re-bases the editor's "pin at current pose"
+  on the new solved poses, which the browser must not derive itself — ADR-0002).
 
 It reuses `load_scenario → solve → build_scene` verbatim; the POST body is resolved
 via a temp file written in the seed scenario's directory, so a served solve is
@@ -46,7 +48,7 @@ byte-identically `hangarfit solve <exported.yaml>`.
   solving never leaves the one runtime. The browser only ever *consumes* a
   Python-emitted scene.
 - **Loopback-only, no `--host`.** A LAN/remote bind is a deliberate non-feature.
-- **Threat model:** a `Host`-header allowlist (`127.0.0.1` / `localhost`) is the
+- **Threat model:** a `Host`-header allowlist (`127.0.0.1` / `localhost` / `::1`) is the
   DNS-rebinding guard (a page resolving `evil.com → 127.0.0.1` still sends
   `Host: evil.com`); YAML input safety is inherited from the loader's
   `yaml.safe_load` + scenario-key allowlist; `/solve`'s blast radius is one

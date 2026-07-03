@@ -45,15 +45,34 @@ def test_get_root_serves_inlined_edit_viewer(live_server: int) -> None:
     assert 'id="scene"' in body and 'id="editor-context"' in body and 'id="serve-config"' in body
 
 
-def test_post_solve_returns_scene_v2(live_server: int) -> None:
+def test_post_solve_returns_scene_and_refreshed_editor_context(live_server: int) -> None:
     yaml_body = _FIXTURE.read_text(encoding="utf-8")
     c = _conn(live_server)
     c.request("POST", "/solve", body=yaml_body.encode("utf-8"))
     resp = c.getresponse()
     doc = json.loads(resp.read().decode("utf-8"))
     assert resp.status == 200
-    assert doc["schema"].startswith("hangarfit.scene/")  # a valid scene/v2 doc
-    assert "hangar" in doc and "planes" in doc
+    # {scene, editorContext}: the scene is a valid scene/v2 doc; the refreshed
+    # editor-context lets the client re-base "pin at current pose" on the new poses.
+    scene = doc["scene"]
+    assert scene["schema"].startswith("hangarfit.scene/")
+    assert "hangar" in scene and "planes" in scene
+    ctx = doc["editorContext"]
+    assert ctx["schema"] == "hangarfit.editor-context/v1"
+    assert ctx["currentPoses"]  # non-empty: the solved layout's poses
+
+
+def test_post_solve_malformed_content_length_is_400(live_server: int) -> None:
+    # Malformed request FRAMING (a non-integer Content-Length) must be an actionable
+    # 400, never a dropped connection with no HTTP response.
+    c = _conn(live_server)
+    c.putrequest("POST", "/solve")
+    c.putheader("Content-Length", "not-a-number")
+    c.endheaders()
+    resp = c.getresponse()
+    doc = json.loads(resp.read().decode("utf-8"))
+    assert resp.status == 400
+    assert "error" in doc
 
 
 def test_non_loopback_host_is_rejected(live_server: int) -> None:

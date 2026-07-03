@@ -77,8 +77,12 @@ adapter.
   plus the `serve-config` flag). The page opens already showing a solved layout.
 - **`POST /solve`** — request body is the editor's exported **Scenario YAML** (the same artifact the
   offline "Export scenario YAML" button downloads). The server resolves it against the seed scenario's
-  directory context, runs the identical `solve` pipeline, and returns `build_scene(...)` as a
-  `scene/v2` JSON document (`Content-Type: application/json`). The client swaps the scene in place.
+  directory context, runs the identical `solve` pipeline, and returns a JSON
+  `{ "scene": <scene/v2>, "editorContext": <editor-context/v1> }` document (`Content-Type:
+  application/json`). The client swaps the scene in place **and** re-mounts the editor on the
+  refreshed context. *(Review refinement: the response carries the refreshed editor-context, not the
+  bare scene, so the editor's "pin at current pose" re-bases on the new solved poses — the browser
+  must not derive them itself, ADR-0002.)*
 - **Errors:** a `LoaderError`/validation failure or an unsolvable scenario returns a `4xx`/`5xx` with a
   short JSON `{ "error": "…" }` body (not a stack trace); the client surfaces it inline without
   discarding the current render.

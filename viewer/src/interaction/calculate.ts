@@ -5,13 +5,13 @@
 import { banner, byId, clearBanner } from '../dom.ts';
 import { intentToScenarioYaml } from './export.ts';
 import { solveRequestInit } from '../serve-contract.ts';
+import type { SolveResponse } from '../serve-contract.ts';
 import type { Intent, EditorContext } from './intent-contract.ts';
-import type { SceneV2 } from '../scene-contract.ts';
 
 export function mountCalculate(opts: {
   getIntent: () => Intent;
   ctx: EditorContext;
-  reRender: (scene: SceneV2) => void;
+  reRender: (resp: SolveResponse) => void;
 }): void {
   const btn = document.createElement('button');
   btn.id = 'calculate';
@@ -36,7 +36,7 @@ export function mountCalculate(opts: {
         banner('Calculate failed: ' + msg);
         return;
       }
-      opts.reRender((await resp.json()) as SceneV2);
+      opts.reRender((await resp.json()) as SolveResponse);
     } catch (e) {
       banner('Calculate failed: ' + (e as Error).message);
     } finally {

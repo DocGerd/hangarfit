@@ -180,23 +180,30 @@ function bootSingle(data: SceneV2, brand: BrandTokens): void {
       mountCalculate({
         getIntent: () => editor.getIntent(),
         ctx,
-        reRender: (next) => {
+        reRender: (resp) => {
           const preserved = editor.getIntent();
-          editor.dispose();
-          clearBanner();
-          stage.scene.remove(world.group);
-          disposeWorld(world.group);
-          world = buildWorld(stage.scene, next, brand);
-          applyToggleState(world);
-          setReadouts(next);
-          hud.setActiveTimeline(world.timeline);
-          editor = mountEditor({
-            groups: world.groups,
+          clearBanner(); // drop any prior Calculate's banner before the fresh anchor check
+          // Build the new world + editor FIRST; tear the old ones down only once
+          // BOTH succeed, so a throw on a 200 scene leaves the current render intact
+          // (rather than a disposed world with the button re-enabled).
+          const nextWorld = buildWorld(stage.scene, resp.scene, brand);
+          const nextEditor = mountEditor({
+            groups: nextWorld.groups,
             renderer: stage.renderer,
             cam: stage.cam,
-            ctx,
+            // The server-refreshed editor-context re-bases "pin at current pose" on
+            // the new solved poses (the browser must not derive them — ADR-0002).
+            ctx: resp.editorContext,
             initialIntent: preserved,
           });
+          editor.dispose();
+          stage.scene.remove(world.group);
+          disposeWorld(world.group);
+          world = nextWorld;
+          editor = nextEditor;
+          applyToggleState(world);
+          setReadouts(resp.scene);
+          hud.setActiveTimeline(world.timeline);
         },
       });
     }

@@ -1634,7 +1634,7 @@ def cmd_serve(args: argparse.Namespace) -> int:
         print(f"error: {e}", file=sys.stderr)
         return 2
     except OSError as e:  # e.g. the port is already in use
-        print(f"error: could not start server: {e}", file=sys.stderr)
+        print(f"error: could not start server: {e} (try a different --port)", file=sys.stderr)
         return 2
     return 0
 

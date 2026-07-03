@@ -38,6 +38,7 @@ flowchart TD
     server --> solver
     server --> scene
     server --> viewer
+    server --> models
 
     loader --> models
 
@@ -572,7 +573,10 @@ result live. The module is **pure transport** over the existing pipeline — it 
 solver, geometry, or transform logic. A stdlib `http.server` bound to `127.0.0.1`
 exposes `GET /` (the inlined editor via `viewer.build_edit_html` with a `serve-config`
 blob) and `POST /solve` (an exported scenario → `load_scenario → solve → build_scene`
-→ a `scene/v2` JSON doc). The POST body is resolved through a temp file written in the
+→ a JSON `{scene, editorContext}` doc — the refreshed editor-context re-bases the
+editor's "pin at current pose" on the new solved poses, since the browser must not
+derive them). It imports `loader`, `solver`, `scene`, `viewer`, and `models`
+(`SearchConfig`). The POST body is resolved through a temp file written in the
 seed scenario's directory, so a served solve is byte-identically
 `hangarfit solve <exported.yaml>`. Because solving never leaves the one Python
 runtime, the determinant −1 transform ([ADR-0002](../adr/0002-determinant-minus-one-transform.md))

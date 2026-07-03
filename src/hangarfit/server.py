@@ -18,6 +18,7 @@ import json
 import os
 import sys
 import tempfile
+import traceback
 import webbrowser
 from dataclasses import dataclass
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -104,10 +105,17 @@ def build_seed(
     )
 
 
-def _solve_scene(seed: SeedContext, scenario_yaml: str) -> dict:
+def _solve_scene(seed: SeedContext, scenario_yaml: str) -> tuple[dict, dict]:
     """Write the posted YAML to a temp file in the seed dir (so relative
-    ``fleet:``/``hangar:`` refs resolve identically), solve, and return a scene/v2
-    dict. Raises :class:`LoaderError` on an invalid/unsolvable scenario."""
+    ``fleet:``/``hangar:`` refs resolve identically), solve, and return
+    ``(scene/v2, editor-context)``. Raises :class:`LoaderError` on an
+    invalid/unsolvable scenario.
+
+    The editor-context is refreshed from the *new* layout so the client can
+    re-base "pin at current pose" on the solved poses — the browser must not
+    derive them (that is the forbidden determinant-−1 inversion, ADR-0002).
+    ``fleet``/``hangar`` refs are stable across solves (same scenario), so the
+    seed's are reused."""
     fd, tmp_path = tempfile.mkstemp(suffix=".yaml", dir=seed.scenario_dir)
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as f:
@@ -116,7 +124,15 @@ def _solve_scene(seed: SeedContext, scenario_yaml: str) -> dict:
         result = solve(scenario, **seed.solve_kwargs)
         if not result.layouts:
             raise LoaderError(f"no valid layout found (status={result.status})")
-        return scene_mod.build_scene(result.layouts[0])
+        layout = result.layouts[0]
+        scene = scene_mod.build_scene(layout)
+        ctx = viewer.build_editor_context(
+            fleet_ref=seed.initial_ctx["fleet"],
+            hangar_ref=seed.initial_ctx["hangar"],
+            maintenance_plane=layout.maintenance_plane,
+            layout=layout,
+        )
+        return scene, ctx
     finally:
         Path(tmp_path).unlink(missing_ok=True)
 
@@ -133,7 +149,8 @@ class _Handler(BaseHTTPRequestHandler):
 
     def _host_ok(self) -> bool:
         host = self.headers.get("Host", "")
-        name = host.rsplit(":", 1)[0].strip("[]")  # drop :port, unwrap [::1]
+        # drop :port, unwrap [::1], case-fold (a missing/empty Host fails closed)
+        name = host.rsplit(":", 1)[0].strip("[]").lower()
         return name in _LOOPBACK_HOSTS
 
     def _send_json(self, status: int, payload: dict) -> None:
@@ -171,18 +188,26 @@ class _Handler(BaseHTTPRequestHandler):
         if self.path != "/solve":
             self._send_json(404, {"error": "not found"})
             return
-        length = int(self.headers.get("Content-Length", "0"))
-        body = self.rfile.read(length).decode("utf-8")
         try:
-            scene = _solve_scene(self._seed, body)
+            length = int(self.headers.get("Content-Length", "0"))
+            if length < 0:
+                raise ValueError("negative Content-Length")
+            body = self.rfile.read(length).decode("utf-8")
+        except (ValueError, UnicodeDecodeError) as e:
+            # Malformed request framing (bad Content-Length / non-UTF-8 body): an
+            # actionable 400, never a dropped connection + stderr traceback.
+            self._send_json(400, {"error": f"bad request body: {e}"})
+            return
+        try:
+            scene, ctx = _solve_scene(self._seed, body)
         except LoaderError as e:
             self._send_json(422, {"error": str(e)})
             return
-        except Exception as e:  # unexpected: log server-side, return a generic 500
-            print(f"serve: unexpected error on /solve: {e!r}", file=sys.stderr)
+        except Exception:  # unexpected: log the stack server-side, generic 500 out
+            traceback.print_exc(file=sys.stderr)
             self._send_json(500, {"error": "internal error"})
             return
-        self._send_json(200, scene)
+        self._send_json(200, {"scene": scene, "editorContext": ctx})
 
 
 def make_server(
