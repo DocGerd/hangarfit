@@ -1,8 +1,9 @@
 # Interactive placement editor → full-frontend redesign — design
 
-**Status:** DRAFT — proposal pending user approval. Two direction decisions are open (see
-[§10 Open decisions](#10-open-decisions)). No GitHub issues filed yet; this doc is the umbrella
-from which they will be derived once the direction is chosen.
+**Status:** Accepted direction (*Full vision, sequenced*). Issues **#907–#912** are filed under
+milestone v0.19.0 (#39) and the `later` track (see [§8](#8-decomposition-into-issues-filed)); the
+remaining open items in [§10](#10-open-decisions) are *implementation* choices. This doc is the
+umbrella spec for that issue set.
 
 **Date:** 2026-07-03
 **Author:** Claude (brainstorming session, grounded by four parallel code/web investigations)
@@ -10,6 +11,7 @@ from which they will be derived once the direction is chosen.
 **Related:** #442 (Stage-2 editor, shipped) · #445 (Stage-3 `hangarfit serve`, deferred tracking) ·
 #444 (scene/v2 JSON-Schema single-source, deferred) · #904 (editor click-to-focus fast-follow) ·
 #441 (Python `priority`) · #614 (`door_order`) · ADR-0002 · ADR-0017 · ADR-0025 · ADR-0029 · ADR-0003
+**Filed issues:** #907 (C1) · #908 (C2) · #909 (B) · #910 (A1) · #911 (D) · #912 (A2) — under epic #436
 
 ---
 
@@ -61,8 +63,11 @@ There are **two unrelated "priority" mechanisms**:
 field. "Rank-1 closest to the door" is **not** expressible today (all door logic is relative and
 post-hoc). Achieving "rank-1 *actively pulled* to the door" needs **one new absolute door-distance
 soft term** keyed on the rank-1 (or rank-weighted) body's `y_m`, ADR-0003-safe **iff** gated
-inert-when-unset (the exact pattern `door_order` already uses). A length-1 `door_order` is currently
-a no-op, so the absolute term is what makes a single "#1" meaningful.
+inert-when-unset (the same gating `door_order` uses). The *insertion point* differs, though:
+`door_order` is an integer post-hoc **selection** tiebreak that never steers placement, so the closer
+analog for an *active* door pull is `_back_bias_energy` (`solver.py:~1326`), a float `exp` positional
+bias — and a float term inherits the cross-machine libm caveat the spread energy already carries.
+A length-1 `door_order` is currently a no-op, so the absolute term is what makes a single "#1" meaningful.
 
 ### 2.2 Palette / catalog & cart override (capabilities A, B)
 - Today the editor's selectable universe = **solved planes only**: `initialIntent` =
@@ -71,8 +76,9 @@ a no-op, so the absolute term is what makes a single "#1" meaningful.
 - The full catalog **is** enumerable Python-side (`load_fleet`/`load_ground_objects` build
   `dict[str,Aircraft]` / `dict[str,GroundObject]` from `data/catalog/*.yaml` + `data/fleet.yaml`
   before the editor context is built), but is **not piped into the JS blob** —
-  `build_editor_context` (`viewer.py:129-165`) emits only `currentPoses` + `cartEligible` for placed
-  planes. **Gap to fill:** add a `catalog` field built from `layout.fleet` (full dict) +
+  `build_editor_context` (`viewer.py:129-165`) emits, per placed plane, only pose + cart-eligibility
+  (`currentPoses` + `cartEligible`), plus scalar `schema`/`fleet`/`hangar`/`maintenance` refs — but **no
+  enumerated catalog of unplaced items**. **Gap to fill:** add a `catalog` field built from `layout.fleet` (full dict) +
   `layout.ground_objects`.
 - Cart states come from `Aircraft.movement_mode ∈ {always_cart, always_own_gear, cart_eligible}`
   (`models.py:31,340`); `is_cart_eligible` (`models.py:390-392`) is what gates the toggle
@@ -90,19 +96,24 @@ a no-op, so the absolute term is what makes a single "#1" meaningful.
 - The viewer pins **three r160** (`viewer/package.json` `"three":"0.160.0"`). **TransformControls**
   is the right primitive (DragControls doesn't rotate and drags in a camera-facing plane, not the
   floor):
-  - Reposition: `setMode('translate')`, `showY=false` → drag confined to the XZ ground plane; it
-    does the 2D-pointer→3D-floor raycast **internally** (no hand-rolled raycaster).
-  - Heading: `setMode('rotate')`, `showX=false; showZ=false` → single yaw ring.
+  - Reposition: `setMode('translate')`, `showZ=false` → drag confined to the **XY** ground plane
+    (this viewer is **Z-up**: `camera.up=(0,0,1)`, floor = world XY, yaw = rotation about Z; ADR-0017:104-107);
+    it does the 2D-pointer→3D-floor raycast **internally** (no hand-rolled raycaster).
+  - Heading: `setMode('rotate')`, `showX=false; showY=false` → single yaw (Z-axis) ring.
   - Coordinate `OrbitControls` via the official `'dragging-changed'` → `orbit.enabled = !value` hook.
-  - r160 caveat: add the gizmo with `scene.add(control)` — `getHelper()` is r169+.
+  - r160 caveat: add the gizmo with `scene.add(control)` — `getHelper()` is r169+. (These three r160
+    facts — the show-flag axes, the internal floor raycast, and `scene.add(control)` vs `getHelper()` —
+    are pinned to `three` r160; re-verify against the pinned version when D/serve is built, since the CI
+    skew-guard bumps `three`/`@types/three`/the test devDep in lockstep.)
 - The pose→scenario math is **trivial and self-inverse**: `_pose_affine` emits `[s, c, x_m, c, -s,
   y_m]` with linear part `M=[[s,c],[c,-s]]`, `det=-1` (`scene.py:132-139`). `M` is a **reflection ⇒
   `M⁻¹=M`** (its own inverse). The viewer builds the scene in hangarfit meters (`ADR-0017:104-107`),
   so world == hangar coords: a plane dragged so its origin lands on floor hit `(wx,wy)` gives
   `x_m=wx, y_m=wy` directly; heading = `degrees(atan2(a,b))`. ~20 lines.
 - **BUT** authoring that inverse in JS is forbidden by **policy**, not blocked by difficulty:
-  ADR-0029:128-133 / :41-43 — "No `interaction/` module may compose, invert, or re-derive the
-  determinant-−1 transform" (ADR-0002). Its failure mode is the signature sign-flip: a mirror-imaged
+  ADR-0029:41-43 — "No `interaction/` module may compose, invert, or re-derive the
+  determinant-−1 transform" (ADR-0002); the drag-specific failure mode + escape hatch are the separate
+  passage at :128-133. Its failure mode is the signature sign-flip: a mirror-imaged
   render at non-axis-aligned headings, invisible to the Python `test_geometry` canary because it's in
   the one language CI can't exercise, and `checkAnchors()` only guards the **forward** transform.
 - **Recorded escape hatch (ADR-0029:132-133):** return drag "behind a design that keeps the
@@ -137,7 +148,8 @@ server"). Alternatives to record and reject/defer there:
   determinism runtime.
 - Localhost security: loopback-only bind, no auth surface, no external origin.
 
-Capabilities **A/B/C do not need the backend** and can ship incrementally on the offline editor.
+Capabilities **B/C — and the *selection* core of A (A1) — do not need the backend** and can ship
+incrementally on the offline editor; A's "see the placed result" and mover-drag (A2) do need it (E).
 
 ---
 
@@ -150,21 +162,24 @@ Each unit below has one purpose and a defined interface, consistent with the exi
 - **Editor UI:** a drag-to-order list ("door proximity: #1 nearest → …"); items not in the list are
   unranked. Enforces uniqueness by construction (a list). Reuses the existing selection set.
 - **Export:** emit `door_order: [id, …]` in the exported scenario (new key in `export.ts`, alongside
-  `fleet_in`/`maintenance`/`constraints`). Uniqueness + partial-set already validated by the loader
-  (`models.py:1401-1407`).
+  `fleet_in`/`maintenance`/`constraints`). Uniqueness + placeable-membership are enforced in
+  `Scenario.__post_init__` (`models.py:1401-1407`); partial sets are permitted by construction (no
+  completeness check).
 - **Solver (optional, for "actively pulled to door"):** add one **absolute door-distance soft term**
-  keyed on the rank-weighted `y_m`, gated **inert-when-unset** so all existing plans stay
-  byte-identical (ADR-0003). This touches the solver's scoring surface ⇒ **`determinism-guard`
-  review required**. Ships as its own issue; the UI/export can land first and rely on the existing
-  relative tiebreak until then.
+  keyed on the rank-weighted `y_m` — modelled on `_back_bias_energy` (`solver.py:~1326`, a float `exp`
+  positional bias, *not* door_order's integer selection tiebreak), gated **inert-when-unset** so all
+  existing plans stay byte-identical (ADR-0003; mind the cross-machine libm caveat for a float term).
+  This touches the solver's scoring surface ⇒ **`determinism-guard` review required**. Ships as its own
+  issue; the UI/export can land first and rely on the existing relative tiebreak until then.
 - **Editor-context:** emit `door` geometry (already in scene/v2) so the UI can show which edge is the
   door.
 
 ### 4.2 (B) Per-item cart override — *backend-free*
 - `cart_eligible` toggle already works. For a **locked** plane (`always_own_gear`/`always_cart`),
-  add an explicit "override cart mode" affordance whose export emits a **fleet-manifest override**
-  (`{ref: catalog/<id>.yaml, movement_mode: …}`) — loader-supported (`loader.py:161`), but new to the
-  export path. Keep the default path (no override) byte-identical.
+  add an explicit "override cart mode" affordance. The override lives in a fleet **manifest file**
+  (`{ref: catalog/<id>.yaml, movement_mode: …}`, `loader.py:161`), **not** the scenario — the exported
+  scenario only references a fleet by path. So this export must emit/modify a **second file** (a fleet
+  manifest), not just the scenario. Keep the default path (no override) byte-identical.
 - **Decision to confirm:** is overriding a *locked* plane's mode actually wanted, or only the
   `cart_eligible` on/off that already works? (The demo scenario only exercises the latter.)
 
@@ -182,8 +197,9 @@ Each unit below has one purpose and a defined interface, consistent with the exi
   optional `pin` to a `placed_routed_mover` scenario entry, mirroring `constraints[id].pin`.
 
 ### 4.4 (D) Drag-to-fix-position — *needs backend*
-- **Client:** `TransformControls` per §2.3 (translate w/ `showY=false`; rotate w/ yaw ring only;
-  `dragging-changed`→orbit toggle; `scene.add(control)` for r160). New `interaction/manipulate.ts`.
+- **Client:** `TransformControls` per §2.3 (translate w/ `showZ=false` for the Z-up floor; rotate w/
+  the yaw Z-ring only, `showX=false; showY=false`; `dragging-changed`→orbit toggle; `scene.add(control)`
+  for r160). New `interaction/manipulate.ts`.
 - **Transform boundary:** the client **never** inverts the transform. On drag-end it sends the
   **pose as intent** (the dragged object's world position + yaw, as opaque numbers) to the server;
   Python maps them back to `(x_m,y_m,heading_deg)` using the tested `geometry`/`scene` code and
@@ -245,9 +261,10 @@ is the single contract between UI and server, serialized by the existing `export
   valid `scene/v2` doc; a headless viewer smoke that `fetch`es and passes `checkAnchors` (swiftshader,
   as in the existing view smoke).
 
-## 8. Decomposition into issues (proposed)
+## 8. Decomposition into issues (filed)
 
-Under epic #436. Order reflects the **"Full vision, sequenced"** recommendation.
+Filed under epic #436; order reflects the **"Full vision, sequenced"** direction. Filed numbers:
+C1 = #907, C2 = #908, B = #909, A1 = #910, D = #911, A2 = #912.
 
 1. **C1 — Ranked-priority UI + `door_order` export** (backend-free). Editor list + `export.ts` +
    loader round-trip test.
@@ -263,7 +280,8 @@ Under epic #436. Order reflects the **"Full vision, sequenced"** recommendation.
 8. **#904** — fold the existing click-to-focus fast-follow into the manipulate/selection rework.
 
 The **"Serve backend first"** direction reorders to 5 → 6 → 4/7 → 1/2/3. The **"Backend-free only"**
-direction ships 1,2,3, a selection-only 4, and explicitly defers 5/6/7.
+direction ships 1,2,3, a selection-only 4, and explicitly defers 5/6/7. In **every** ordering, #904
+(item 8) rides along with the manipulate/selection rework (D).
 
 ## 9. Non-goals / YAGNI
 
