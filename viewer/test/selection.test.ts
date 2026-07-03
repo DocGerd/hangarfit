@@ -131,6 +131,27 @@ test('moveInDoorOrder reorders by index', () => {
   assert.deepEqual(i.doorOrder, ['ctsl', 'husky']);
 });
 
+test('moveInDoorOrder: forward moves on a 3-element order splice correctly', () => {
+  // A 3-plane context: the remove-then-insert splice seam (a forward move
+  // inserts AFTER the removal shifts the array) only shows up with ≥3 items.
+  const CTX3: EditorContext = {
+    fleet: 'f', hangar: 'h', maintenance: null,
+    currentPoses: {
+      a: { x_m: 0, y_m: 0, heading_deg: 0, on_carts: false },
+      b: { x_m: 1, y_m: 1, heading_deg: 0, on_carts: false },
+      c: { x_m: 2, y_m: 2, heading_deg: 0, on_carts: false },
+    },
+    cartEligible: { a: false, b: false, c: false },
+  };
+  let i = initialIntent(CTX3);
+  i = addToDoorOrder(i, 'a');
+  i = addToDoorOrder(i, 'b');
+  i = addToDoorOrder(i, 'c'); // [a, b, c]
+  assert.deepEqual(moveInDoorOrder(i, 0, 2).doorOrder, ['b', 'c', 'a']); // a → end (forward)
+  assert.deepEqual(moveInDoorOrder(i, 0, 1).doorOrder, ['b', 'a', 'c']); // a → one forward
+  assert.deepEqual(moveInDoorOrder(i, 2, 0).doorOrder, ['c', 'a', 'b']); // c → front (backward)
+});
+
 test('moveInDoorOrder is a no-op for out-of-range or identical indices', () => {
   const i = addToDoorOrder(initialIntent(CTX), 'husky');
   assert.deepEqual(moveInDoorOrder(i, 0, 5).doorOrder, ['husky']);
@@ -142,6 +163,14 @@ test('deselecting a ranked plane also un-ranks it', () => {
   let i = addToDoorOrder(initialIntent(CTX), 'husky');
   i = toggleSelection(i, 'husky');
   assert.deepEqual(i.doorOrder, []);
+});
+
+test('reselecting a deselected plane does not restore its rank', () => {
+  let i = addToDoorOrder(initialIntent(CTX), 'husky'); // [husky]
+  i = toggleSelection(i, 'husky');                     // deselect → un-ranks
+  i = toggleSelection(i, 'husky');                     // reselect
+  assert.ok(isSelected(i, 'husky'));
+  assert.deepEqual(i.doorOrder, []); // rank is NOT restored — the user must re-rank
 });
 
 test('door-order ops do not mutate their input', () => {

@@ -162,8 +162,9 @@ def build_editor_context(
             for p in layout.placements
         },
         "cartEligible": dict(cart_eligible),
-        # The door edge (already in scene/v2) so the door-proximity ranking UI
-        # (#907) can orient its "#1 nearest the door" list.
+        # The door edge (already in scene/v2), so the door-proximity ranking UI
+        # (#907) can show the user which wall — and where along it — the door is
+        # (rendered as a hint in the ranking panel by editor.ts).
         "door": {
             "center_x_m": layout.hangar.door.center_x_m,
             "width_m": layout.hangar.door.width_m,
@@ -250,6 +251,11 @@ _CSS = (
     f"#clock,#active,#readouts,.sw{{font-family:{brand.FONT_MONO};"
     f'font-feature-settings:"tnum" 1,"zero" 1}}'
     f"#readouts{{color:{brand.READOUTS_TEXT};font-variant-numeric:tabular-nums}}"
+    # #907 door-edge hint in the ranking panel: muted mono (it shows a
+    # coordinate span), spaced off the panel title. Editor-only markup, so this
+    # rule is inert in single/compare mode.
+    f"#door-hint{{margin:0 8px;font-family:{brand.FONT_MONO};"
+    f"color:{brand.READOUTS_TEXT};font-variant-numeric:tabular-nums}}"
     "#legend{display:flex;gap:8px;flex-wrap:wrap}"
     ".sw{display:inline-flex;align-items:center;gap:4px}"
     ".sw i{width:11px;height:11px;border-radius:2px;display:inline-block}"
@@ -285,9 +291,11 @@ _HUD_EDIT = _HUD + (
     '<label><input id="carts-toggle" type="checkbox"> on carts</label>'
     # #907 door-proximity ranking: an ordered list (#1 nearest the door), items
     # draggable to reorder; "＋ rank selected" appends the focused plane. The
-    # list is filled/wired by editor.ts; empty markup here keeps it inert until
-    # a plane is ranked.
+    # list + the door-edge hint are filled/wired by editor.ts (the hint reads
+    # the editor-context `door` field); empty markup here keeps it inert until a
+    # plane is ranked.
     '<div id="door-order"><span id="door-order-title">door proximity (#1 nearest)</span>'
+    '<span id="door-hint"></span>'
     '<button id="rank-add" type="button">＋ rank selected</button>'
     '<ol id="door-order-list"></ol></div>'
     '<button id="export">Export scenario YAML</button></div>'

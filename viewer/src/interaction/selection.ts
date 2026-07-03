@@ -75,7 +75,8 @@ export function removeFromDoorOrder(intent: Intent, id: string): Intent {
 }
 
 /** Move the plane at index ``from`` to index ``to`` in the door order. No-op for
- * out-of-range or identical indices (the drag layer clamps to valid slots). */
+ * out-of-range or identical indices — callers pass indices derived from existing
+ * list positions (always in range), so the bounds guard is purely defensive. */
 export function moveInDoorOrder(intent: Intent, from: number, to: number): Intent {
   const n = intent.doorOrder.length;
   if (from < 0 || from >= n || to < 0 || to >= n || from === to) return intent;

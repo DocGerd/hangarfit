@@ -80,3 +80,12 @@ test('door_order never contains a deselected plane', () => {
   const y = intentToScenarioYaml(i, CTX);
   assert.match(y, /^door_order: \[husky\]$/m);
 });
+
+test('export defensively drops a door_order id that is not in the selection', () => {
+  // toggleSelection normally keeps doorOrder ⊆ selection, so this desynced state
+  // is unreachable through the pure API — construct it directly to exercise the
+  // export's own `selected.includes` guard (the serialization safety net).
+  const i = { ...initialIntent(CTX), doorOrder: ['ctsl', 'ghost'] };
+  const y = intentToScenarioYaml(i, CTX);
+  assert.match(y, /^door_order: \[ctsl\]$/m); // 'ghost' (unselected) is filtered out
+});

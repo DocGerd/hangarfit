@@ -110,6 +110,16 @@ export function mountEditor(opts: {
   const exportBtn = byId<HTMLButtonElement>('export');
   const rankAdd = byId<HTMLButtonElement>('rank-add');
   const doorList = byId<HTMLOListElement>('door-order-list');
+  // Show which wall — and where along it — the door is, from the editor-context
+  // door edge (#907). The door is the front wall (y=0, the coordinate
+  // convention); center_x_m ± width_m/2 is a 1-D span along it (pure display
+  // arithmetic — no geometry transform, so ADR-0002 is untouched).
+  const doorHint = byId<HTMLSpanElement>('door-hint');
+  const door = opts.ctx.door;
+  if (door) {
+    const half = door.width_m / 2;
+    doorHint.textContent = `door: front wall, x ${(door.center_x_m - half).toFixed(1)}–${(door.center_x_m + half).toFixed(1)} m`;
+  }
 
   // Dynamic x/y/heading pin fields — `_HUD_EDIT` (viewer.py) does not carry
   // these, so build them here and hide them until the focused plane is pinned.

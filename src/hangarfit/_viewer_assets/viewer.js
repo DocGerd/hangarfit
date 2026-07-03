@@ -888,6 +888,12 @@ function mountEditor(opts) {
   const exportBtn = byId("export");
   const rankAdd = byId("rank-add");
   const doorList = byId("door-order-list");
+  const doorHint = byId("door-hint");
+  const door = opts.ctx.door;
+  if (door) {
+    const half = door.width_m / 2;
+    doorHint.textContent = `door: front wall, x ${(door.center_x_m - half).toFixed(1)}–${(door.center_x_m + half).toFixed(1)} m`;
+  }
   const pinFields = document.createElement("div");
   pinFields.id = "pin-fields";
   pinFields.hidden = true;

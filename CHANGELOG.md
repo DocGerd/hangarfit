@@ -7,7 +7,7 @@ All notable changes to this project are documented here. Format follows [Keep a 
 ### Added
 
 - **Interactive placement editor** — `hangarfit view --solve --edit` turns the 3D viewer into an intent-capture front end: select which planes are in the fleet, set soft priorities and hard pin-at-current-pose must-positions, and export a loader-valid `Scenario` YAML that `hangarfit solve` re-runs. (#442)
-- **Editor door-proximity ranking** — the `--edit` editor gained a drag-to-order "door proximity" list (#1 nearest the door → …): rank an exclusive, partial subset of the selected planes and the exported scenario carries a top-level `door_order: [id, …]` (#614) that `hangarfit solve` honours. The editor-context now also surfaces the door edge so the list can orient itself. No ranking set ⇒ the export is byte-identical (ADR-0003). (#907)
+- **Editor door-proximity ranking** — the `--edit` editor gained a drag-to-order "door proximity" list (#1 nearest the door → …): rank an exclusive, partial subset of the selected planes and the exported scenario carries a top-level `door_order: [id, …]` (#614) that `hangarfit solve` honours. The ranking panel also shows a door-edge hint (which wall, and where along it) from the editor-context. No ranking set ⇒ the export is byte-identical (ADR-0003). (#907)
 
 ### Changed
 

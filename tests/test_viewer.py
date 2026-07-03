@@ -535,7 +535,7 @@ def test_render_edit_viewer_hud_has_door_order_controls(tmp_path):
     out = tmp_path / "edit.html"
     viewer.render_edit_viewer(sc, ctx, out)
     html = out.read_text(encoding="utf-8")
-    for control_id in ("door-order-list", "rank-add"):
+    for control_id in ("door-order-list", "rank-add", "door-hint"):
         assert f'id="{control_id}"' in html, f"missing editor control #{control_id}"
 
 

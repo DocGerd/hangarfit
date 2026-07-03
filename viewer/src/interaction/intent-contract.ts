@@ -16,7 +16,8 @@ export interface EditorContext {
   maintenance: { plane: string } | null;
   currentPoses: Record<string, CurrentPose>;
   cartEligible: Record<string, boolean>;
-  // The door edge (scene/v2 hangar geometry) so the ranking UI can orient the
-  // "#1 nearest the door" list. Absent on older editor-context blobs.
+  // The door edge (scene/v2 hangar geometry), rendered as a hint in the ranking
+  // panel so the user sees which wall the door is on and where along it. Absent
+  // on older editor-context blobs.
   door?: { center_x_m: number; width_m: number };
 }
