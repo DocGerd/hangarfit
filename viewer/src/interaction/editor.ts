@@ -27,6 +27,10 @@ import type { Intent, EditorContext } from './intent-contract.ts';
 
 export interface EditorHandle {
   getIntent(): Intent;
+  // Detach every listener this mount added and remove the DOM it injected, so a
+  // #445 serve re-mount (after a Calculate world-swap) cannot double-fire or
+  // orphan the injected pin-fields div.
+  dispose(): void;
 }
 
 export function mountEditor(opts: {
@@ -34,8 +38,17 @@ export function mountEditor(opts: {
   renderer: THREE.WebGLRenderer;
   cam: THREE.Camera;
   ctx: EditorContext;
+  // #445: seed a re-mount with the user's current intent (default: derived fresh
+  // from ctx) so a Calculate swap preserves their selection/priorities/pins.
+  initialIntent?: Intent;
 }): EditorHandle {
-  let intent = initialIntent(opts.ctx);
+  let intent = opts.initialIntent ?? initialIntent(opts.ctx);
+  // #445: listeners on persistent elements (the canvas + HUD controls) are added
+  // with this signal so dispose() detaches them cleanly on a re-mount. Listeners
+  // on the door/palette list rows are self-cleaning — the next render clears
+  // their container — so they are left off the signal.
+  const ac = new AbortController();
+  const sig = { signal: ac.signal };
   // The last-selected plane. The HUD controls (priority/pin/on_carts) always
   // act on this plane; deselecting it (or nothing being selected) disables them.
   let focusedId: string | null = null;
@@ -77,22 +90,30 @@ export function mountEditor(opts: {
   // the camera (a drag) never toggles selection.
   let downX = 0;
   let downY = 0;
-  el.addEventListener('pointerdown', (ev: PointerEvent) => {
-    downX = ev.clientX;
-    downY = ev.clientY;
-  });
-  el.addEventListener('pointerup', (ev: PointerEvent) => {
-    if (Math.hypot(ev.clientX - downX, ev.clientY - downY) > 6) return; // a drag, not a click
-    const id = pick(ev);
-    if (!id) return;
-    intent = toggleSelection(intent, id);
-    focusedId = isSelected(intent, id) ? id : null;
-    applyHighlight();
-    renderReadout();
-    syncControls();
-    renderDoorOrder(); // deselect un-ranks; focus change updates the add-button state
-    renderPalette(); // reflect the selection change in the palette checkboxes
-  });
+  el.addEventListener(
+    'pointerdown',
+    (ev: PointerEvent) => {
+      downX = ev.clientX;
+      downY = ev.clientY;
+    },
+    sig,
+  );
+  el.addEventListener(
+    'pointerup',
+    (ev: PointerEvent) => {
+      if (Math.hypot(ev.clientX - downX, ev.clientY - downY) > 6) return; // a drag, not a click
+      const id = pick(ev);
+      if (!id) return;
+      intent = toggleSelection(intent, id);
+      focusedId = isSelected(intent, id) ? id : null;
+      applyHighlight();
+      renderReadout();
+      syncControls();
+      renderDoorOrder(); // deselect un-ranks; focus change updates the add-button state
+      renderPalette(); // reflect the selection change in the palette checkboxes
+    },
+    sig,
+  );
 
   function applyHighlight(): void {
     // Selected planes keep their original emissive; deselected planes glow amber ("excluded").
@@ -212,43 +233,63 @@ export function mountEditor(opts: {
     exportBtn.disabled = intent.selectedPlaneIds.length === 0;
   }
 
-  prio.addEventListener('input', () => {
-    if (!focusedId) return;
-    intent = setPriority(intent, focusedId, prio.value === '' ? null : Math.max(0, Number(prio.value)));
-  });
-  pinToggle.addEventListener('change', () => {
-    if (!focusedId) return;
-    intent = pinToggle.checked ? pinAtCurrent(intent, focusedId, opts.ctx) : unpin(intent, focusedId);
-    syncControls();
-  });
-  cartsToggle.addEventListener('change', () => {
-    if (!focusedId) return;
-    intent = setOnCarts(intent, focusedId, cartsToggle.checked);
-  });
-  cartMode.addEventListener('change', () => {
-    const id = focusedId;
-    if (id === null) return;
-    // Picking the plane's base mode clears the override (byte path unchanged);
-    // any other mode sets it.
-    const m = cartMode.value;
-    intent = setCartModeOverride(intent, id, m === baseMode(id) ? null : m);
-    // Keep a pin's on_carts consistent with the (possibly new) forced mode, so
-    // the exported scenario is never a contradiction the loader would reject.
-    if (intent.mustPositions[id]) {
-      if (m === 'always_cart') intent = setOnCarts(intent, id, true);
-      else if (m === 'always_own_gear') intent = setOnCarts(intent, id, false);
-    }
-    syncControls();
-  });
-  exportBtn.addEventListener('click', () => {
-    const yaml = intentToScenarioYaml(intent, opts.ctx);
-    const blob = new Blob([yaml], { type: 'text/yaml' });
-    const a = document.createElement('a');
-    a.href = URL.createObjectURL(blob);
-    a.download = 'scenario.edited.yaml';
-    a.click();
-    URL.revokeObjectURL(a.href);
-  });
+  prio.addEventListener(
+    'input',
+    () => {
+      if (!focusedId) return;
+      intent = setPriority(intent, focusedId, prio.value === '' ? null : Math.max(0, Number(prio.value)));
+    },
+    sig,
+  );
+  pinToggle.addEventListener(
+    'change',
+    () => {
+      if (!focusedId) return;
+      intent = pinToggle.checked ? pinAtCurrent(intent, focusedId, opts.ctx) : unpin(intent, focusedId);
+      syncControls();
+    },
+    sig,
+  );
+  cartsToggle.addEventListener(
+    'change',
+    () => {
+      if (!focusedId) return;
+      intent = setOnCarts(intent, focusedId, cartsToggle.checked);
+    },
+    sig,
+  );
+  cartMode.addEventListener(
+    'change',
+    () => {
+      const id = focusedId;
+      if (id === null) return;
+      // Picking the plane's base mode clears the override (byte path unchanged);
+      // any other mode sets it.
+      const m = cartMode.value;
+      intent = setCartModeOverride(intent, id, m === baseMode(id) ? null : m);
+      // Keep a pin's on_carts consistent with the (possibly new) forced mode, so
+      // the exported scenario is never a contradiction the loader would reject.
+      if (intent.mustPositions[id]) {
+        if (m === 'always_cart') intent = setOnCarts(intent, id, true);
+        else if (m === 'always_own_gear') intent = setOnCarts(intent, id, false);
+      }
+      syncControls();
+    },
+    sig,
+  );
+  exportBtn.addEventListener(
+    'click',
+    () => {
+      const yaml = intentToScenarioYaml(intent, opts.ctx);
+      const blob = new Blob([yaml], { type: 'text/yaml' });
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(blob);
+      a.download = 'scenario.edited.yaml';
+      a.click();
+      URL.revokeObjectURL(a.href);
+    },
+    sig,
+  );
 
   // --- Door-proximity ranking list (#907) ---------------------------------
   // Rebuild the ordered list from intent.doorOrder. Each <li> is drag-reorderable
@@ -288,11 +329,15 @@ export function mountEditor(opts: {
     );
   }
 
-  rankAdd.addEventListener('click', () => {
-    if (!focusedId) return;
-    intent = addToDoorOrder(intent, focusedId);
-    renderDoorOrder();
-  });
+  rankAdd.addEventListener(
+    'click',
+    () => {
+      if (!focusedId) return;
+      intent = addToDoorOrder(intent, focusedId);
+      renderDoorOrder();
+    },
+    sig,
+  );
 
   // --- Catalog palette (#910): add aircraft / movers from an empty hangar ----
   // Rebuild the list from the editor-context `catalog`. Each row is a checkbox:
@@ -348,5 +393,13 @@ export function mountEditor(opts: {
   syncControls();
   renderDoorOrder();
   renderPalette();
-  return { getIntent: () => intent };
+  return {
+    getIntent: () => intent,
+    // #445: abort the persistent-element listeners and remove the injected
+    // pin-fields div so a re-mount after a Calculate swap starts clean.
+    dispose: () => {
+      ac.abort();
+      pinFields.remove();
+    },
+  };
 }

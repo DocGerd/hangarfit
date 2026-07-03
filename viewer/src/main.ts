@@ -24,6 +24,8 @@ import { createTimeline, type Timeline } from './timeline.ts';
 import { startHud } from './hud.ts';
 import { wrapIndex, clampIndex, optionLabels, formatSummary, foundLabel } from './compare.ts';
 import { mountEditor } from './interaction/editor.ts';
+import { mountCalculate } from './interaction/calculate.ts';
+import { parseServeConfig } from './serve-contract.ts';
 import type { BrandTokens } from './brand-contract.ts';
 import type { CompareManifest, SceneV2 } from './scene-contract.ts';
 import type { EditorContext } from './interaction/intent-contract.ts';
@@ -148,9 +150,10 @@ function setupStage(
 function bootSingle(data: SceneV2, brand: BrandTokens): void {
   setReadouts(data);
   const stage = setupStage(data.hangar, brand);
-  const world = buildWorld(stage.scene, data, brand);
+  // `world`/`hud` are mutable so a #445 serve Calculate can swap the world in place.
+  let world = buildWorld(stage.scene, data, brand);
   wireToggles(stage.wallMeshes, () => world);
-  startHud({
+  const hud = startHud({
     timeline: world.timeline,
     home: stage.home,
     controls: stage.controls,
@@ -165,7 +168,38 @@ function bootSingle(data: SceneV2, brand: BrandTokens): void {
   const ctxEl = document.getElementById('editor-context');
   if (ctxEl?.textContent) {
     const ctx = JSON.parse(ctxEl.textContent) as EditorContext;
-    mountEditor({ groups: world.groups, renderer: stage.renderer, cam: stage.cam, ctx });
+    let editor = mountEditor({ groups: world.groups, renderer: stage.renderer, cam: stage.cam, ctx });
+
+    // #445 serve: a `#serve-config` blob (present ONLY when `hangarfit serve`
+    // renders the shell, never in the offline export) lights up the Calculate
+    // button. A successful solve swaps the world in place (mirroring the #666
+    // compare `mount`) and re-mounts the editor on the fresh groups with the
+    // user's intent preserved so they can iterate.
+    const serveCfg = parseServeConfig(document.getElementById('serve-config')?.textContent);
+    if (serveCfg) {
+      mountCalculate({
+        getIntent: () => editor.getIntent(),
+        ctx,
+        reRender: (next) => {
+          const preserved = editor.getIntent();
+          editor.dispose();
+          clearBanner();
+          stage.scene.remove(world.group);
+          disposeWorld(world.group);
+          world = buildWorld(stage.scene, next, brand);
+          applyToggleState(world);
+          setReadouts(next);
+          hud.setActiveTimeline(world.timeline);
+          editor = mountEditor({
+            groups: world.groups,
+            renderer: stage.renderer,
+            cam: stage.cam,
+            ctx,
+            initialIntent: preserved,
+          });
+        },
+      });
+    }
   }
 }
 

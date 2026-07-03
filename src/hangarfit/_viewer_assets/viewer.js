@@ -861,7 +861,9 @@ function intentToScenarioYaml(intent, ctx) {
 
 // src/interaction/editor.ts
 function mountEditor(opts) {
-  let intent = initialIntent(opts.ctx);
+  let intent = opts.initialIntent ?? initialIntent(opts.ctx);
+  const ac = new AbortController();
+  const sig = { signal: ac.signal };
   let focusedId = null;
   const ray = new THREE11.Raycaster();
   const ndc = new THREE11.Vector2();
@@ -893,22 +895,30 @@ function mountEditor(opts) {
   }
   let downX = 0;
   let downY = 0;
-  el.addEventListener("pointerdown", (ev) => {
-    downX = ev.clientX;
-    downY = ev.clientY;
-  });
-  el.addEventListener("pointerup", (ev) => {
-    if (Math.hypot(ev.clientX - downX, ev.clientY - downY) > 6) return;
-    const id = pick(ev);
-    if (!id) return;
-    intent = toggleSelection(intent, id);
-    focusedId = isSelected(intent, id) ? id : null;
-    applyHighlight();
-    renderReadout();
-    syncControls();
-    renderDoorOrder();
-    renderPalette();
-  });
+  el.addEventListener(
+    "pointerdown",
+    (ev) => {
+      downX = ev.clientX;
+      downY = ev.clientY;
+    },
+    sig
+  );
+  el.addEventListener(
+    "pointerup",
+    (ev) => {
+      if (Math.hypot(ev.clientX - downX, ev.clientY - downY) > 6) return;
+      const id = pick(ev);
+      if (!id) return;
+      intent = toggleSelection(intent, id);
+      focusedId = isSelected(intent, id) ? id : null;
+      applyHighlight();
+      renderReadout();
+      syncControls();
+      renderDoorOrder();
+      renderPalette();
+    },
+    sig
+  );
   function applyHighlight() {
     for (const t of targets) {
       t.mat.emissive.setHex(isSelected(intent, t.id) ? t.orig : 5579264);
@@ -1001,39 +1011,59 @@ function mountEditor(opts) {
     }
     exportBtn.disabled = intent.selectedPlaneIds.length === 0;
   }
-  prio.addEventListener("input", () => {
-    if (!focusedId) return;
-    intent = setPriority(intent, focusedId, prio.value === "" ? null : Math.max(0, Number(prio.value)));
-  });
-  pinToggle.addEventListener("change", () => {
-    if (!focusedId) return;
-    intent = pinToggle.checked ? pinAtCurrent(intent, focusedId, opts.ctx) : unpin(intent, focusedId);
-    syncControls();
-  });
-  cartsToggle.addEventListener("change", () => {
-    if (!focusedId) return;
-    intent = setOnCarts(intent, focusedId, cartsToggle.checked);
-  });
-  cartMode.addEventListener("change", () => {
-    const id = focusedId;
-    if (id === null) return;
-    const m = cartMode.value;
-    intent = setCartModeOverride(intent, id, m === baseMode(id) ? null : m);
-    if (intent.mustPositions[id]) {
-      if (m === "always_cart") intent = setOnCarts(intent, id, true);
-      else if (m === "always_own_gear") intent = setOnCarts(intent, id, false);
-    }
-    syncControls();
-  });
-  exportBtn.addEventListener("click", () => {
-    const yaml = intentToScenarioYaml(intent, opts.ctx);
-    const blob = new Blob([yaml], { type: "text/yaml" });
-    const a = document.createElement("a");
-    a.href = URL.createObjectURL(blob);
-    a.download = "scenario.edited.yaml";
-    a.click();
-    URL.revokeObjectURL(a.href);
-  });
+  prio.addEventListener(
+    "input",
+    () => {
+      if (!focusedId) return;
+      intent = setPriority(intent, focusedId, prio.value === "" ? null : Math.max(0, Number(prio.value)));
+    },
+    sig
+  );
+  pinToggle.addEventListener(
+    "change",
+    () => {
+      if (!focusedId) return;
+      intent = pinToggle.checked ? pinAtCurrent(intent, focusedId, opts.ctx) : unpin(intent, focusedId);
+      syncControls();
+    },
+    sig
+  );
+  cartsToggle.addEventListener(
+    "change",
+    () => {
+      if (!focusedId) return;
+      intent = setOnCarts(intent, focusedId, cartsToggle.checked);
+    },
+    sig
+  );
+  cartMode.addEventListener(
+    "change",
+    () => {
+      const id = focusedId;
+      if (id === null) return;
+      const m = cartMode.value;
+      intent = setCartModeOverride(intent, id, m === baseMode(id) ? null : m);
+      if (intent.mustPositions[id]) {
+        if (m === "always_cart") intent = setOnCarts(intent, id, true);
+        else if (m === "always_own_gear") intent = setOnCarts(intent, id, false);
+      }
+      syncControls();
+    },
+    sig
+  );
+  exportBtn.addEventListener(
+    "click",
+    () => {
+      const yaml = intentToScenarioYaml(intent, opts.ctx);
+      const blob = new Blob([yaml], { type: "text/yaml" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "scenario.edited.yaml";
+      a.click();
+      URL.revokeObjectURL(a.href);
+    },
+    sig
+  );
   function renderDoorOrder() {
     doorList.textContent = "";
     intent.doorOrder.forEach((id, index) => {
@@ -1064,11 +1094,15 @@ function mountEditor(opts) {
     });
     rankAdd.disabled = !(focusedId !== null && isSelected(intent, focusedId) && !intent.doorOrder.includes(focusedId));
   }
-  rankAdd.addEventListener("click", () => {
-    if (!focusedId) return;
-    intent = addToDoorOrder(intent, focusedId);
-    renderDoorOrder();
-  });
+  rankAdd.addEventListener(
+    "click",
+    () => {
+      if (!focusedId) return;
+      intent = addToDoorOrder(intent, focusedId);
+      renderDoorOrder();
+    },
+    sig
+  );
   const KIND_LABEL = {
     aircraft: "aircraft",
     placed_routed_mover: "mover",
@@ -1113,7 +1147,57 @@ function mountEditor(opts) {
   syncControls();
   renderDoorOrder();
   renderPalette();
-  return { getIntent: () => intent };
+  return {
+    getIntent: () => intent,
+    // #445: abort the persistent-element listeners and remove the injected
+    // pin-fields div so a re-mount after a Calculate swap starts clean.
+    dispose: () => {
+      ac.abort();
+      pinFields.remove();
+    }
+  };
+}
+
+// src/serve-contract.ts
+function parseServeConfig(text) {
+  if (!text) return null;
+  return JSON.parse(text);
+}
+function solveRequestInit(yaml) {
+  return { method: "POST", headers: { "Content-Type": "application/x-yaml" }, body: yaml };
+}
+
+// src/interaction/calculate.ts
+function mountCalculate(opts) {
+  const btn = document.createElement("button");
+  btn.id = "calculate";
+  btn.type = "button";
+  btn.textContent = "Calculate";
+  const exportBtn = byId("export");
+  exportBtn.parentElement?.insertBefore(btn, exportBtn);
+  async function run() {
+    btn.disabled = true;
+    clearBanner();
+    try {
+      const yaml = intentToScenarioYaml(opts.getIntent(), opts.ctx);
+      const resp = await fetch("/solve", solveRequestInit(yaml));
+      if (!resp.ok) {
+        let msg = `${resp.status}`;
+        try {
+          msg = JSON.parse(await resp.text()).error ?? msg;
+        } catch {
+        }
+        banner("Calculate failed: " + msg);
+        return;
+      }
+      opts.reRender(await resp.json());
+    } catch (e) {
+      banner("Calculate failed: " + e.message);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+  btn.addEventListener("click", () => void run());
 }
 
 // src/main.ts
@@ -1189,9 +1273,9 @@ function setupStage(hangar, brand) {
 function bootSingle(data, brand) {
   setReadouts(data);
   const stage = setupStage(data.hangar, brand);
-  const world = buildWorld(stage.scene, data, brand);
+  let world = buildWorld(stage.scene, data, brand);
   wireToggles(stage.wallMeshes, () => world);
-  startHud({
+  const hud = startHud({
     timeline: world.timeline,
     home: stage.home,
     controls: stage.controls,
@@ -1202,7 +1286,32 @@ function bootSingle(data, brand) {
   const ctxEl = document.getElementById("editor-context");
   if (ctxEl?.textContent) {
     const ctx = JSON.parse(ctxEl.textContent);
-    mountEditor({ groups: world.groups, renderer: stage.renderer, cam: stage.cam, ctx });
+    let editor = mountEditor({ groups: world.groups, renderer: stage.renderer, cam: stage.cam, ctx });
+    const serveCfg = parseServeConfig(document.getElementById("serve-config")?.textContent);
+    if (serveCfg) {
+      mountCalculate({
+        getIntent: () => editor.getIntent(),
+        ctx,
+        reRender: (next) => {
+          const preserved = editor.getIntent();
+          editor.dispose();
+          clearBanner();
+          stage.scene.remove(world.group);
+          disposeWorld(world.group);
+          world = buildWorld(stage.scene, next, brand);
+          applyToggleState(world);
+          setReadouts(next);
+          hud.setActiveTimeline(world.timeline);
+          editor = mountEditor({
+            groups: world.groups,
+            renderer: stage.renderer,
+            cam: stage.cam,
+            ctx,
+            initialIntent: preserved
+          });
+        }
+      });
+    }
   }
 }
 function startCompare(manifest, brand) {
