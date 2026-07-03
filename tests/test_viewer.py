@@ -560,3 +560,95 @@ def test_editor_export_with_door_order_loads_via_load_scenario(tmp_path):
     p.write_text(yaml)
     sc = load_scenario(p)
     assert sc.door_order == ("ctsl", "aviat_husky")
+
+
+# ── #910: catalog palette (add planes & objects from an empty hangar) ───────
+
+
+def test_build_editor_context_includes_catalog():
+    # #910: the editor-context carries a `catalog` enumerating the FULL fleet
+    # (every aircraft, not just the placed ones) plus every ground object, so the
+    # palette can add items to an empty hangar. Each entry is {name, kind}; kind
+    # is "aircraft" for planes and the GroundObject.object_class for objects.
+    lay = load_layout("examples/herrenteich/layout_full.yaml")
+    ctx = viewer.build_editor_context(
+        fleet_ref="fleet.yaml",
+        hangar_ref="hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+        cart_eligible={p.plane_id: False for p in lay.placements},
+    )
+    cat = ctx["catalog"]
+    # Exactly the fleet ∪ ground objects (disjoint id namespaces), independent of
+    # what got placed — this is what makes "start from an empty hangar" work.
+    assert set(cat) == set(lay.fleet) | set(lay.ground_objects)
+    for aid, ac in lay.fleet.items():
+        assert cat[aid] == {"name": ac.name, "kind": "aircraft"}
+    for gid, go in lay.ground_objects.items():
+        assert cat[gid] == {"name": go.name, "kind": go.object_class}
+    # A known mover carries an addable kind; a known fixed obstacle does not.
+    assert cat["glider_trailer_1"]["kind"] == "placed_routed_mover"
+    assert cat["maul_fuel_trailer"]["kind"] == "fixed_obstacle"
+
+
+def test_build_editor_context_catalog_excludes_maintenance_plane():
+    # The maintenance occupant sits in the bay, not the hangar, so it must not
+    # appear in the "add to hangar" palette (mirroring its exclusion from
+    # currentPoses). Otherwise the user could focus it and attach a solver-inert
+    # priority / door_order rank to a plane that is always set aside.
+    lay = load_layout("examples/layouts/example.yaml")
+    assert lay.maintenance_plane is not None  # guard: fixture actually has one
+    ctx = viewer.build_editor_context(
+        fleet_ref="data/fleet.yaml",
+        hangar_ref="data/hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+        cart_eligible={p.plane_id: False for p in lay.placements},
+    )
+    assert lay.maintenance_plane not in ctx["catalog"]
+    # the rest of the fleet is still enumerated
+    assert any(v["kind"] == "aircraft" for v in ctx["catalog"].values())
+
+
+def test_render_edit_viewer_hud_has_palette_controls(tmp_path):
+    # #910 wires the catalog palette DOM; guard the control IDs editor.ts fills
+    # against a silent HUD rename.
+    lay = load_layout(LAYOUT)
+    sc = scene.build_scene(lay, moves_plan=plan_fill(lay))
+    ctx = viewer.build_editor_context(
+        fleet_ref="data/fleet.yaml",
+        hangar_ref="data/hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+        cart_eligible={p.plane_id: False for p in lay.placements},
+    )
+    out = tmp_path / "edit.html"
+    viewer.render_edit_viewer(sc, ctx, out)
+    html = out.read_text(encoding="utf-8")
+    for control_id in ("palette", "palette-list"):
+        assert f'id="{control_id}"' in html, f"missing editor control #{control_id}"
+
+
+def test_editor_export_with_ground_objects_loads_via_load_scenario(tmp_path):
+    # #910: the editor emits palette-added MOVERS as bare-id `ground_objects:`
+    # entries (the loader treats a bare id as a placed_routed_mover the solver
+    # places). Prove that shape is loader-valid and round-trips onto
+    # Scenario.ground_objects. Uses the region-demo manifest (which defines the
+    # glider-trailer movers); data/fleet.yaml has no ground objects.
+    from pathlib import Path
+
+    from hangarfit.loader import load_scenario
+
+    repo = Path(__file__).resolve().parents[1]
+    fleet = repo / "tests" / "fixtures" / "fleet_region_demo.yaml"
+    hangar = repo / "tests" / "fixtures" / "hangar_region_demo.yaml"
+    yaml = (
+        f"fleet: {fleet}\n"
+        f"hangar: {hangar}\n"
+        "fleet_in: [fuji, cessna_150]\n"
+        "ground_objects: [glider_trailer_1]\n"
+    )
+    p = tmp_path / "edited.yaml"
+    p.write_text(yaml)
+    sc = load_scenario(p)
+    assert "glider_trailer_1" in sc.ground_objects

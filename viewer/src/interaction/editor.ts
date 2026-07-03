@@ -18,6 +18,7 @@ import {
   addToDoorOrder,
   removeFromDoorOrder,
   moveInDoorOrder,
+  toggleGroundObject,
 } from './selection.ts';
 import { intentToScenarioYaml } from './export.ts';
 import { byId } from '../dom.ts';
@@ -89,6 +90,7 @@ export function mountEditor(opts: {
     renderReadout();
     syncControls();
     renderDoorOrder(); // deselect un-ranks; focus change updates the add-button state
+    renderPalette(); // reflect the selection change in the palette checkboxes
   });
 
   function applyHighlight(): void {
@@ -110,6 +112,7 @@ export function mountEditor(opts: {
   const exportBtn = byId<HTMLButtonElement>('export');
   const rankAdd = byId<HTMLButtonElement>('rank-add');
   const doorList = byId<HTMLOListElement>('door-order-list');
+  const paletteList = byId<HTMLUListElement>('palette-list');
   // Show which wall — and where along it — the door is, from the editor-context
   // door edge (#907). The door is the front wall (y=0, the coordinate
   // convention); center_x_m ± width_m/2 is a 1-D span along it (pure display
@@ -147,8 +150,12 @@ export function mountEditor(opts: {
   function syncControls(): void {
     const id = focusedId;
     const active = id !== null && isSelected(intent, id);
+    // A palette-added plane (#910) has no currentPose, so "pin at current pose"
+    // is meaningless for it — keep priority (pose-free) live but disable the pin
+    // toggle rather than leave it enabled-but-inert (pinAtCurrent no-ops there).
+    const hasPose = id !== null && id in opts.ctx.currentPoses;
     prio.disabled = !active;
-    pinToggle.disabled = !active;
+    pinToggle.disabled = !active || !hasPose;
     if (!active || id === null) {
       prio.value = '';
       pinToggle.checked = false;
@@ -242,9 +249,59 @@ export function mountEditor(opts: {
     renderDoorOrder();
   });
 
+  // --- Catalog palette (#910): add aircraft / movers from an empty hangar ----
+  // Rebuild the list from the editor-context `catalog`. Each row is a checkbox:
+  // an aircraft toggles the selection (→ fleet_in); a mover toggles a
+  // ground_objects entry the solver places. A fixed_obstacle is shown disabled —
+  // it needs an authored pose the offline editor can't produce (drag/serve).
+  // Sorted by id for a stable list. An aircraft added here has no rendered Group
+  // and no currentPose, so it can't be highlighted or pinned offline (only
+  // soft-constrained — priority and door-order) — that "see the placed result"
+  // gap closes with the serve epic.
+  const KIND_LABEL: Record<string, string> = {
+    aircraft: 'aircraft',
+    placed_routed_mover: 'mover',
+    fixed_obstacle: 'fixed',
+  };
+  function renderPalette(): void {
+    const catalog = opts.ctx.catalog ?? {};
+    paletteList.textContent = '';
+    for (const id of Object.keys(catalog).sort()) {
+      const { name, kind } = catalog[id];
+      const isAircraft = kind === 'aircraft';
+      const isMover = kind === 'placed_routed_mover';
+      const box = document.createElement('input');
+      box.type = 'checkbox';
+      box.checked = isAircraft ? isSelected(intent, id) : intent.groundObjectIds.includes(id);
+      box.disabled = !(isAircraft || isMover); // a fixed obstacle needs a pose
+      box.addEventListener('change', () => {
+        if (isAircraft) {
+          intent = toggleSelection(intent, id);
+          focusedId = isSelected(intent, id) ? id : focusedId === id ? null : focusedId;
+          applyHighlight();
+          renderReadout();
+          syncControls();
+          renderDoorOrder();
+        } else if (isMover) {
+          intent = toggleGroundObject(intent, id);
+        }
+        renderPalette();
+      });
+      const badge = document.createElement('span');
+      badge.className = 'kind';
+      badge.textContent = KIND_LABEL[kind] ?? kind;
+      const label = document.createElement('label');
+      label.append(box, document.createTextNode(` ${name} `), badge);
+      const li = document.createElement('li');
+      li.appendChild(label);
+      paletteList.appendChild(li);
+    }
+  }
+
   applyHighlight();
   renderReadout();
   syncControls();
   renderDoorOrder();
+  renderPalette();
   return { getIntent: () => intent };
 }
