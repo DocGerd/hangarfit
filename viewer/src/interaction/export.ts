@@ -18,6 +18,12 @@ export function intentToScenarioYaml(intent: Intent, ctx: EditorContext): string
   lines.push(`fleet_in: [${fleetIn.join(', ')}]`);
   if (ctx.maintenance) { lines.push('maintenance:'); lines.push(`  plane: ${ctx.maintenance.plane}`); }
 
+  // Door-proximity ranking → Scenario.door_order (#614). Only rank selected
+  // planes (a deselect already un-ranks; filter defensively). Emitted only when
+  // non-empty, so an editor with no ranking exports a byte-identical scenario.
+  const ranked = intent.doorOrder.filter((id) => selected.includes(id));
+  if (ranked.length) lines.push(`door_order: [${ranked.join(', ')}]`);
+
   // Only selected planes may carry constraints (never the maintenance plane).
   const constrained = selected.filter((id) => intent.mustPositions[id] || intent.priorities[id] !== undefined);
   if (constrained.length) {

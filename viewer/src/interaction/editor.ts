@@ -15,6 +15,9 @@ import {
   unpin,
   setPinField,
   setOnCarts,
+  addToDoorOrder,
+  removeFromDoorOrder,
+  moveInDoorOrder,
 } from './selection.ts';
 import { intentToScenarioYaml } from './export.ts';
 import { byId } from '../dom.ts';
@@ -85,6 +88,7 @@ export function mountEditor(opts: {
     applyHighlight();
     renderReadout();
     syncControls();
+    renderDoorOrder(); // deselect un-ranks; focus change updates the add-button state
   });
 
   function applyHighlight(): void {
@@ -104,6 +108,8 @@ export function mountEditor(opts: {
   const pinToggle = byId<HTMLInputElement>('pin-toggle');
   const cartsToggle = byId<HTMLInputElement>('carts-toggle');
   const exportBtn = byId<HTMLButtonElement>('export');
+  const rankAdd = byId<HTMLButtonElement>('rank-add');
+  const doorList = byId<HTMLOListElement>('door-order-list');
 
   // Dynamic x/y/heading pin fields — `_HUD_EDIT` (viewer.py) does not carry
   // these, so build them here and hide them until the focused plane is pinned.
@@ -182,8 +188,53 @@ export function mountEditor(opts: {
     URL.revokeObjectURL(a.href);
   });
 
+  // --- Door-proximity ranking list (#907) ---------------------------------
+  // Rebuild the ordered list from intent.doorOrder. Each <li> is drag-reorderable
+  // (HTML5 DnD → moveInDoorOrder by index) and carries a × to unrank. The "＋ rank
+  // selected" button appends the focused plane; it enables only when the focused
+  // plane is selected and not already ranked.
+  function renderDoorOrder(): void {
+    doorList.textContent = '';
+    intent.doorOrder.forEach((id, index) => {
+      const li = document.createElement('li');
+      li.draggable = true;
+      const label = document.createElement('span');
+      label.textContent = id;
+      const rm = document.createElement('button');
+      rm.type = 'button';
+      rm.textContent = '×';
+      rm.title = `unrank ${id}`;
+      rm.addEventListener('click', () => {
+        intent = removeFromDoorOrder(intent, id);
+        renderDoorOrder();
+      });
+      li.append(label, rm);
+      li.addEventListener('dragstart', (ev) => ev.dataTransfer?.setData('text/plain', String(index)));
+      li.addEventListener('dragover', (ev) => ev.preventDefault()); // permit a drop here
+      li.addEventListener('drop', (ev) => {
+        ev.preventDefault();
+        const from = Number(ev.dataTransfer?.getData('text/plain'));
+        if (Number.isInteger(from)) {
+          intent = moveInDoorOrder(intent, from, index);
+          renderDoorOrder();
+        }
+      });
+      doorList.appendChild(li);
+    });
+    rankAdd.disabled = !(
+      focusedId !== null && isSelected(intent, focusedId) && !intent.doorOrder.includes(focusedId)
+    );
+  }
+
+  rankAdd.addEventListener('click', () => {
+    if (!focusedId) return;
+    intent = addToDoorOrder(intent, focusedId);
+    renderDoorOrder();
+  });
+
   applyHighlight();
   renderReadout();
   syncControls();
+  renderDoorOrder();
   return { getIntent: () => intent };
 }

@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import {
   initialIntent, isSelected, toggleSelection, setPriority,
   pinAtCurrent, unpin, setPinField, setOnCarts,
+  addToDoorOrder, removeFromDoorOrder, moveInDoorOrder,
 } from '../src/interaction/selection.ts';
 import type { EditorContext } from '../src/interaction/intent-contract.ts';
 
@@ -89,4 +90,65 @@ test('pin-editing functions do not mutate their input', () => {
   setPinField(pinned, 'husky', 'x', 99);
   setOnCarts(pinned, 'husky', true);
   assert.equal(JSON.stringify(pinned), snapshot);
+});
+
+// --- #907 door-proximity ranking (door_order) ---------------------------------
+
+test('initialIntent starts with an empty doorOrder', () => {
+  assert.deepEqual(initialIntent(CTX).doorOrder, []);
+});
+
+test('addToDoorOrder appends selected, unranked planes in call order', () => {
+  let i = addToDoorOrder(initialIntent(CTX), 'husky');
+  assert.deepEqual(i.doorOrder, ['husky']);
+  i = addToDoorOrder(i, 'ctsl');
+  assert.deepEqual(i.doorOrder, ['husky', 'ctsl']); // #1 nearest the door = first
+});
+
+test('addToDoorOrder never duplicates an already-ranked plane', () => {
+  let i = addToDoorOrder(initialIntent(CTX), 'husky');
+  i = addToDoorOrder(i, 'husky');
+  assert.deepEqual(i.doorOrder, ['husky']);
+});
+
+test('addToDoorOrder ignores an unselected plane', () => {
+  let i = toggleSelection(initialIntent(CTX), 'husky'); // drop husky from the set
+  i = addToDoorOrder(i, 'husky');
+  assert.deepEqual(i.doorOrder, []); // can't rank a plane that isn't in the layout
+});
+
+test('removeFromDoorOrder drops one plane, keeping the rest ordered', () => {
+  let i = addToDoorOrder(initialIntent(CTX), 'husky');
+  i = addToDoorOrder(i, 'ctsl');
+  i = removeFromDoorOrder(i, 'husky');
+  assert.deepEqual(i.doorOrder, ['ctsl']);
+});
+
+test('moveInDoorOrder reorders by index', () => {
+  let i = addToDoorOrder(initialIntent(CTX), 'husky');
+  i = addToDoorOrder(i, 'ctsl'); // [husky, ctsl]
+  i = moveInDoorOrder(i, 1, 0);  // pull ctsl to #1
+  assert.deepEqual(i.doorOrder, ['ctsl', 'husky']);
+});
+
+test('moveInDoorOrder is a no-op for out-of-range or identical indices', () => {
+  const i = addToDoorOrder(initialIntent(CTX), 'husky');
+  assert.deepEqual(moveInDoorOrder(i, 0, 5).doorOrder, ['husky']);
+  assert.deepEqual(moveInDoorOrder(i, -1, 0).doorOrder, ['husky']);
+  assert.deepEqual(moveInDoorOrder(i, 0, 0).doorOrder, ['husky']);
+});
+
+test('deselecting a ranked plane also un-ranks it', () => {
+  let i = addToDoorOrder(initialIntent(CTX), 'husky');
+  i = toggleSelection(i, 'husky');
+  assert.deepEqual(i.doorOrder, []);
+});
+
+test('door-order ops do not mutate their input', () => {
+  const base = addToDoorOrder(initialIntent(CTX), 'husky');
+  const snapshot = JSON.stringify(base);
+  addToDoorOrder(base, 'ctsl');
+  removeFromDoorOrder(base, 'husky');
+  moveInDoorOrder(base, 0, 0);
+  assert.equal(JSON.stringify(base), snapshot);
 });

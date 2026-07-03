@@ -497,3 +497,66 @@ def test_build_editor_context_excludes_maintenance_from_current_poses():
     )
     assert lay.maintenance_plane not in ctx["currentPoses"]
     assert ctx["maintenance"] == {"plane": lay.maintenance_plane}
+
+
+# ── #907: door-proximity ranking (door_order) ──────────────────────────────
+
+
+def test_build_editor_context_includes_door_geometry():
+    # #907: the editor-context carries the door edge so the ranking UI can
+    # orient "#1 nearest the door". Sourced from layout.hangar.door (already in
+    # scene/v2), no signature change.
+    lay = load_layout(LAYOUT)
+    ctx = viewer.build_editor_context(
+        fleet_ref="data/fleet.yaml",
+        hangar_ref="data/hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+        cart_eligible={p.plane_id: False for p in lay.placements},
+    )
+    assert ctx["door"] == {
+        "center_x_m": lay.hangar.door.center_x_m,
+        "width_m": lay.hangar.door.width_m,
+    }
+
+
+def test_render_edit_viewer_hud_has_door_order_controls(tmp_path):
+    # #907 wires the door-proximity list DOM; guard the control IDs the editor
+    # hooks up (the ordered list + the "rank selected" affordance).
+    lay = load_layout(LAYOUT)
+    sc = scene.build_scene(lay, moves_plan=plan_fill(lay))
+    ctx = viewer.build_editor_context(
+        fleet_ref="data/fleet.yaml",
+        hangar_ref="data/hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+        cart_eligible={p.plane_id: False for p in lay.placements},
+    )
+    out = tmp_path / "edit.html"
+    viewer.render_edit_viewer(sc, ctx, out)
+    html = out.read_text(encoding="utf-8")
+    for control_id in ("door-order-list", "rank-add"):
+        assert f'id="{control_id}"' in html, f"missing editor control #{control_id}"
+
+
+def test_editor_export_with_door_order_loads_via_load_scenario(tmp_path):
+    # #907: the editor emits a top-level `door_order: [id, …]` (rank order,
+    # #1 nearest the door). Prove that shape is loader-valid and round-trips
+    # onto Scenario.door_order (#614).
+    from pathlib import Path
+
+    from hangarfit.loader import load_scenario
+
+    repo = Path(__file__).resolve().parents[1]
+    fleet, hangar = repo / "data" / "fleet.yaml", repo / "data" / "hangar.yaml"
+    yaml = (
+        f"fleet: {fleet}\n"
+        f"hangar: {hangar}\n"
+        "fleet_in: [aviat_husky, ctsl, fuji]\n"
+        "maintenance:\n  plane: fuji\n"
+        "door_order: [ctsl, aviat_husky]\n"
+    )
+    p = tmp_path / "edited.yaml"
+    p.write_text(yaml)
+    sc = load_scenario(p)
+    assert sc.door_order == ("ctsl", "aviat_husky")

@@ -722,7 +722,12 @@ import * as THREE11 from "three";
 
 // src/interaction/selection.ts
 function initialIntent(ctx) {
-  return { selectedPlaneIds: Object.keys(ctx.currentPoses).sort(), priorities: {}, mustPositions: {} };
+  return {
+    selectedPlaneIds: Object.keys(ctx.currentPoses).sort(),
+    priorities: {},
+    mustPositions: {},
+    doorOrder: []
+  };
 }
 function isSelected(intent, id) {
   return intent.selectedPlaneIds.includes(id);
@@ -732,11 +737,12 @@ function toggleSelection(intent, id) {
   const selectedPlaneIds = selected ? intent.selectedPlaneIds.filter((x) => x !== id) : [...intent.selectedPlaneIds, id].sort();
   const priorities = { ...intent.priorities };
   const mustPositions = { ...intent.mustPositions };
+  const doorOrder = selected ? intent.doorOrder.filter((x) => x !== id) : intent.doorOrder;
   if (selected) {
     delete priorities[id];
     delete mustPositions[id];
   }
-  return { selectedPlaneIds, priorities, mustPositions };
+  return { selectedPlaneIds, priorities, mustPositions, doorOrder };
 }
 function setPriority(intent, id, priority) {
   const priorities = { ...intent.priorities };
@@ -765,6 +771,22 @@ function setOnCarts(intent, id, onCarts) {
   if (!cur) return intent;
   return { ...intent, mustPositions: { ...intent.mustPositions, [id]: { ...cur, onCarts } } };
 }
+function addToDoorOrder(intent, id) {
+  if (!isSelected(intent, id) || intent.doorOrder.includes(id)) return intent;
+  return { ...intent, doorOrder: [...intent.doorOrder, id] };
+}
+function removeFromDoorOrder(intent, id) {
+  if (!intent.doorOrder.includes(id)) return intent;
+  return { ...intent, doorOrder: intent.doorOrder.filter((x) => x !== id) };
+}
+function moveInDoorOrder(intent, from, to) {
+  const n = intent.doorOrder.length;
+  if (from < 0 || from >= n || to < 0 || to >= n || from === to) return intent;
+  const doorOrder = [...intent.doorOrder];
+  const [item] = doorOrder.splice(from, 1);
+  doorOrder.splice(to, 0, item);
+  return { ...intent, doorOrder };
+}
 
 // src/interaction/export.ts
 function num(n) {
@@ -782,6 +804,8 @@ function intentToScenarioYaml(intent, ctx) {
     lines.push("maintenance:");
     lines.push(`  plane: ${ctx.maintenance.plane}`);
   }
+  const ranked = intent.doorOrder.filter((id) => selected.includes(id));
+  if (ranked.length) lines.push(`door_order: [${ranked.join(", ")}]`);
   const constrained = selected.filter((id) => intent.mustPositions[id] || intent.priorities[id] !== void 0);
   if (constrained.length) {
     lines.push("constraints:");
@@ -847,6 +871,7 @@ function mountEditor(opts) {
     applyHighlight();
     renderReadout();
     syncControls();
+    renderDoorOrder();
   });
   function applyHighlight() {
     for (const t of targets) {
@@ -861,6 +886,8 @@ function mountEditor(opts) {
   const pinToggle = byId("pin-toggle");
   const cartsToggle = byId("carts-toggle");
   const exportBtn = byId("export");
+  const rankAdd = byId("rank-add");
+  const doorList = byId("door-order-list");
   const pinFields = document.createElement("div");
   pinFields.id = "pin-fields";
   pinFields.hidden = true;
@@ -933,9 +960,45 @@ function mountEditor(opts) {
     a.click();
     URL.revokeObjectURL(a.href);
   });
+  function renderDoorOrder() {
+    doorList.textContent = "";
+    intent.doorOrder.forEach((id, index) => {
+      const li = document.createElement("li");
+      li.draggable = true;
+      const label = document.createElement("span");
+      label.textContent = id;
+      const rm = document.createElement("button");
+      rm.type = "button";
+      rm.textContent = "×";
+      rm.title = `unrank ${id}`;
+      rm.addEventListener("click", () => {
+        intent = removeFromDoorOrder(intent, id);
+        renderDoorOrder();
+      });
+      li.append(label, rm);
+      li.addEventListener("dragstart", (ev) => ev.dataTransfer?.setData("text/plain", String(index)));
+      li.addEventListener("dragover", (ev) => ev.preventDefault());
+      li.addEventListener("drop", (ev) => {
+        ev.preventDefault();
+        const from = Number(ev.dataTransfer?.getData("text/plain"));
+        if (Number.isInteger(from)) {
+          intent = moveInDoorOrder(intent, from, index);
+          renderDoorOrder();
+        }
+      });
+      doorList.appendChild(li);
+    });
+    rankAdd.disabled = !(focusedId !== null && isSelected(intent, focusedId) && !intent.doorOrder.includes(focusedId));
+  }
+  rankAdd.addEventListener("click", () => {
+    if (!focusedId) return;
+    intent = addToDoorOrder(intent, focusedId);
+    renderDoorOrder();
+  });
   applyHighlight();
   renderReadout();
   syncControls();
+  renderDoorOrder();
   return { getIntent: () => intent };
 }
 

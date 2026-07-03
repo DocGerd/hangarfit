@@ -162,6 +162,12 @@ def build_editor_context(
             for p in layout.placements
         },
         "cartEligible": dict(cart_eligible),
+        # The door edge (already in scene/v2) so the door-proximity ranking UI
+        # (#907) can orient its "#1 nearest the door" list.
+        "door": {
+            "center_x_m": layout.hangar.door.center_x_m,
+            "width_m": layout.hangar.door.width_m,
+        },
     }
 
 
@@ -277,6 +283,13 @@ _HUD_EDIT = _HUD + (
     '<label>priority <input id="prio" type="number" min="0" step="0.5"></label>'
     '<label><input id="pin-toggle" type="checkbox"> pin here</label>'
     '<label><input id="carts-toggle" type="checkbox"> on carts</label>'
+    # #907 door-proximity ranking: an ordered list (#1 nearest the door), items
+    # draggable to reorder; "＋ rank selected" appends the focused plane. The
+    # list is filled/wired by editor.ts; empty markup here keeps it inert until
+    # a plane is ranked.
+    '<div id="door-order"><span id="door-order-title">door proximity (#1 nearest)</span>'
+    '<button id="rank-add" type="button">＋ rank selected</button>'
+    '<ol id="door-order-list"></ol></div>'
     '<button id="export">Export scenario YAML</button></div>'
 )
 # #666 compare HUD: a solution switcher (dropdown, also ←/→ keys) prepended to the
