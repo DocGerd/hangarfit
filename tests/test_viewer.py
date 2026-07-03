@@ -591,6 +591,25 @@ def test_build_editor_context_includes_catalog():
     assert cat["maul_fuel_trailer"]["kind"] == "fixed_obstacle"
 
 
+def test_build_editor_context_catalog_excludes_maintenance_plane():
+    # The maintenance occupant sits in the bay, not the hangar, so it must not
+    # appear in the "add to hangar" palette (mirroring its exclusion from
+    # currentPoses). Otherwise the user could focus it and attach a solver-inert
+    # priority / door_order rank to a plane that is always set aside.
+    lay = load_layout("examples/layouts/example.yaml")
+    assert lay.maintenance_plane is not None  # guard: fixture actually has one
+    ctx = viewer.build_editor_context(
+        fleet_ref="data/fleet.yaml",
+        hangar_ref="data/hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+        cart_eligible={p.plane_id: False for p in lay.placements},
+    )
+    assert lay.maintenance_plane not in ctx["catalog"]
+    # the rest of the fleet is still enumerated
+    assert any(v["kind"] == "aircraft" for v in ctx["catalog"].values())
+
+
 def test_render_edit_viewer_hud_has_palette_controls(tmp_path):
     # #910 wires the catalog palette DOM; guard the control IDs editor.ts fills
     # against a silent HUD rename.

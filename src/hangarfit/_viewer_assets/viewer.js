@@ -932,8 +932,9 @@ function mountEditor(opts) {
   function syncControls() {
     const id = focusedId;
     const active = id !== null && isSelected(intent, id);
+    const hasPose = id !== null && id in opts.ctx.currentPoses;
     prio.disabled = !active;
-    pinToggle.disabled = !active;
+    pinToggle.disabled = !active || !hasPose;
     if (!active || id === null) {
       prio.value = "";
       pinToggle.checked = false;

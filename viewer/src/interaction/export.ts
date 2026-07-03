@@ -27,7 +27,7 @@ export function intentToScenarioYaml(intent: Intent, ctx: EditorContext): string
   // Palette-added ground objects → Scenario.ground_objects (#910). A bare id is
   // a placed_routed_mover the solver places (loader #601/#604); a fixed_obstacle
   // needs an authored pose the offline editor can't produce, so filter to movers
-  // via the catalog (defensive — the palette never offers fixed obstacles).
+  // via the catalog (defensive — the palette never lets a fixed obstacle be added).
   // Emitted only when non-empty, so an editor with no additions is byte-identical.
   const movers = [...intent.groundObjectIds]
     .filter((id) => ctx.catalog?.[id]?.kind === 'placed_routed_mover')

@@ -150,8 +150,12 @@ export function mountEditor(opts: {
   function syncControls(): void {
     const id = focusedId;
     const active = id !== null && isSelected(intent, id);
+    // A palette-added plane (#910) has no currentPose, so "pin at current pose"
+    // is meaningless for it — keep priority (pose-free) live but disable the pin
+    // toggle rather than leave it enabled-but-inert (pinAtCurrent no-ops there).
+    const hasPose = id !== null && id in opts.ctx.currentPoses;
     prio.disabled = !active;
-    pinToggle.disabled = !active;
+    pinToggle.disabled = !active || !hasPose;
     if (!active || id === null) {
       prio.value = '';
       pinToggle.checked = false;
@@ -252,7 +256,8 @@ export function mountEditor(opts: {
   // it needs an authored pose the offline editor can't produce (drag/serve).
   // Sorted by id for a stable list. An aircraft added here has no rendered Group
   // and no currentPose, so it can't be highlighted or pinned offline (only
-  // prioritised) — that "see the placed result" gap closes with the serve epic.
+  // soft-constrained — priority and door-order) — that "see the placed result"
+  // gap closes with the serve epic.
   const KIND_LABEL: Record<string, string> = {
     aircraft: 'aircraft',
     placed_routed_mover: 'mover',

@@ -529,6 +529,27 @@ def test_scene_contract_ts_top_level_keys_match_scene_py():
     assert _ts_interface_fields("scene-contract.ts", "SceneV2") == set(_animated_scene())
 
 
+def test_editor_context_ts_keys_match_build_editor_context():
+    # #910: the editor-context blob (hangarfit.editor-context/v1) is mirrored by
+    # hand in intent-contract.ts's EditorContext — there is no JSON-Schema single
+    # source (spike #444). Guard the key set the way #440 guards scene-contract:
+    # the TS interface must declare every emitted key except the meta ``schema``
+    # tag (which the TS parser doesn't type). Catches Python↔TS drift on this
+    # accreting blob (``door`` in #907, ``catalog`` in #910).
+    from hangarfit import viewer
+
+    lay = load_layout(LAYOUT)
+    ctx = viewer.build_editor_context(
+        fleet_ref="data/fleet.yaml",
+        hangar_ref="data/hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+        cart_eligible={p.plane_id: False for p in lay.placements},
+    )
+    ts_fields = _ts_interface_fields("interaction/intent-contract.ts", "EditorContext")
+    assert ts_fields == set(ctx) - {"schema"}
+
+
 def test_scene_contract_ts_nested_keys_match_scene_py():
     sc = _animated_scene()
     cases = {

@@ -171,14 +171,23 @@ def build_editor_context(
         },
         # The full catalog for the "add from an empty hangar" palette (#910):
         # EVERY fleet aircraft (not just the placed ones, which is all
-        # currentPoses carries) plus every ground object, so the user can start
-        # from nothing and pick what goes in. ``kind`` is "aircraft" for planes
+        # currentPoses carries) plus every ground object the layout carries
+        # (``layout.ground_objects`` — for a scenario, the subset its
+        # ``ground_objects:`` block references), so the user can start from
+        # nothing and pick what goes in. ``kind`` is "aircraft" for planes
         # and the GroundObject.object_class ("fixed_obstacle" |
         # "placed_routed_mover") for objects — the editor gates what the palette
-        # can add offline (aircraft + movers) on it. Fleet and ground-object ids
-        # are disjoint, so the merged map has no collisions.
+        # can add offline (aircraft + movers) on it. The maintenance occupant is
+        # excluded: it sits in the bay, not the hangar (mirroring its exclusion
+        # from currentPoses), so it must not be an "add to hangar" candidate.
+        # Fleet and ground-object ids are disjoint, so the merged map has no
+        # collisions.
         "catalog": {
-            **{aid: {"name": ac.name, "kind": "aircraft"} for aid, ac in layout.fleet.items()},
+            **{
+                aid: {"name": ac.name, "kind": "aircraft"}
+                for aid, ac in layout.fleet.items()
+                if aid != maintenance_plane
+            },
             **{
                 gid: {"name": go.name, "kind": go.object_class}
                 for gid, go in layout.ground_objects.items()
