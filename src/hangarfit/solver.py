@@ -1360,8 +1360,10 @@ def _door_bias_energy(placements: Mapping[str, Placement], scenario: Scenario) -
     steering the relative :func:`_door_order_deviation` tiebreak never supplies —
     it is provably inert for a lone ``#1``).
 
-    Only ``door_order[0]`` is steered (rank1_only); ranks 2..N are left to the
-    relative selection tiebreak. Returns ``0.0`` when ``door_order`` is falsy
+    Only ``door_order[0]`` gains this absolute steering (rank1_only) — *on top of*
+    the relative :func:`_door_order_deviation` selection tiebreak, which still ranks
+    every placed ``door_order`` body (``#1`` included); ranks 2..N get only that
+    relative tiebreak. Returns ``0.0`` when ``door_order`` is falsy
     (``None`` or the loader-permitted empty ``()``) or the rank-1 body is not
     placed (e.g. a maintenance-away plane) — skipped exactly like
     :func:`_back_bias_energy` / :func:`_region_energy` / :func:`_door_order_deviation`.
@@ -1611,10 +1613,11 @@ def _spread(
     if not movable or (
         len(placements) < 2 and not back_fill and not region_active and not door_active
     ):
-        # Nothing to optimize: no movable target, or <2 planes with neither the
-        # back-fill nor the region bias active (inter-plane energy is identically
-        # 0.0). With back-fill OR a region preference active a lone body is still
-        # pulled toward its wall, so we do NOT bail there.
+        # Nothing to optimize: no movable target, or <2 planes with none of the
+        # back-fill, region, nor door bias active (inter-plane energy is identically
+        # 0.0). With any of those active a lone body is still pulled — toward its
+        # wall (back-fill/region) or toward the door (#908 door-bias) — so we do
+        # NOT bail there.
         return placements
 
     def _energy(
@@ -1623,11 +1626,12 @@ def _spread(
         gap_cache: dict[tuple[str, str], float] | None = None,
         moved: str | None = None,
     ) -> float:
-        # Spread repulsion, plus the #320 back-of-hangar bias when active. The
-        # back-bias re-ranks candidates *within* this hill-climb; basin selection
-        # stays min-gap-primary (ADR-0008 amended). gap_cache/moved memoize the
-        # unchanged-pair distances within one iteration (#455, byte-identical);
-        # the back-bias is a per-plane sum (no pairs) so it is always re-summed.
+        # Spread repulsion, plus (each when active) the #320 back-of-hangar bias
+        # (with the #908 rank-1 exemption), the #604 region bias, and the #908
+        # door-attraction bias. These re-rank candidates *within* this hill-climb;
+        # basin selection stays min-gap-primary (ADR-0008 amended). gap_cache/moved
+        # memoize the unchanged-pair distances within one iteration (#455,
+        # byte-identical); the per-plane bias sums (no pairs) are always re-summed.
         e = _inter_plane_energy(trial, scenario, scale, gap_cache=gap_cache, moved=moved)
         if back_fill:
             e += search.back_bias_weight * _back_bias_energy(trial, scenario, exclude=door_rank1)
