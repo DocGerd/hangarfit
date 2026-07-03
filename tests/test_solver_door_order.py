@@ -21,6 +21,7 @@ from hangarfit.models import (
     SearchConfig,
 )
 from hangarfit.solver import (
+    _door_bias_energy,
     _door_order_deviation,
     _empty_layout,
     _select_spread_diverse,
@@ -181,3 +182,98 @@ def test_solve_door_order_active_deterministic():
     a = solve(s, search=cfg, seed=0, budget_s=120.0, plan_paths=False)
     b = solve(s, search=cfg, seed=0, budget_s=120.0, plan_paths=False)
     assert _key(a.layouts) == _key(b.layouts)
+
+
+# --- _door_bias_energy absolute-attraction term (#908) ---------------------
+
+
+def test_door_bias_energy_unset_is_zero():
+    s = _scenario()  # door_order is None
+    assert _door_bias_energy({"a": _pl("a", 5.0)}, s) == 0.0  # inert ⇒ byte-identical
+
+
+def test_door_bias_energy_empty_order_is_zero():
+    s = _scenario(door_order=())
+    assert _door_bias_energy({"a": _pl("a", 5.0)}, s) == 0.0
+
+
+def test_door_bias_energy_rank1_absent_is_zero():
+    s = _scenario(door_order=("a", "b"))
+    assert _door_bias_energy({"b": _pl("b", 5.0)}, s) == 0.0  # rank-1 'a' not placed
+
+
+def test_door_bias_energy_is_rank1_y_over_length():
+    s = _scenario(door_order=("a", "b"))  # only rank-1 'a' matters
+    # length_m = 40.0 (see _hangar); a at y=10 ⇒ 10/40 = 0.25, independent of 'b'.
+    assert _door_bias_energy({"a": _pl("a", 10.0), "b": _pl("b", 2.0)}, s) == 0.25
+
+
+def test_door_bias_energy_minimized_at_the_door():
+    s = _scenario(door_order=("a",))
+    near = _door_bias_energy({"a": _pl("a", 1.0)}, s)
+    far = _door_bias_energy({"a": _pl("a", 30.0)}, s)
+    assert near < far  # smaller y (nearer the door at y=0) ⇒ lower energy
+
+
+def test_back_bias_energy_exclude_skips_one_id():
+    from hangarfit.solver import _back_bias_energy
+
+    s = _scenario()  # length_m = 40.0
+    pls = {"a": _pl("a", 10.0), "b": _pl("b", 30.0)}
+    # default: Σ (40−y)/40 = (30/40) + (10/40) = 1.0
+    assert _back_bias_energy(pls, s) == 1.0
+    # exclude 'a' ⇒ only 'b': (40−30)/40 = 0.25
+    assert _back_bias_energy(pls, s, exclude="a") == 0.25
+    # excluding an absent id is a no-op
+    assert _back_bias_energy(pls, s, exclude="zzz") == 1.0
+
+
+def _rank1_y(res, pid="a"):
+    lay = res.layouts[0]
+    return next(p.y_m for p in lay.placements if p.plane_id == pid)
+
+
+def test_door_bias_makes_the_ranked_plane_the_door_nearest():
+    # Under door-bias, whichever plane is #1 parks (tied-)nearest the door — it
+    # steers the RELATIVE outcome, not a fixed corner. (Roomy 40x40 hangar.)
+    def ranked_is_door_nearest(order: tuple[str, ...], who: str) -> bool:
+        s = _scenario(door_order=order)
+        cfg = SearchConfig(max_restarts=4, spread=True, door_bias_weight=2.0)
+        lay = solve(s, search=cfg, seed=0, budget_s=120.0, plan_paths=False).layouts[0]
+        ys = {p.plane_id: p.y_m for p in lay.placements}
+        return all(ys[who] <= y for y in ys.values())
+
+    assert ranked_is_door_nearest(("a",), "a")
+    assert ranked_is_door_nearest(("b",), "b")
+
+
+def test_solve_door_bias_active_deterministic():
+    # The steering path (door_bias_weight>0 + door_order) is double-solve identical —
+    # today's determinism canaries never exercise door_order at all.
+    s = _scenario(door_order=("a",))
+    cfg = SearchConfig(max_restarts=4, spread=True, door_bias_weight=1.0)
+    a = solve(s, search=cfg, seed=0, budget_s=120.0, plan_paths=False)
+    b = solve(s, search=cfg, seed=0, budget_s=120.0, plan_paths=False)
+    assert _key(a.layouts) == _key(b.layouts)
+
+
+def test_solve_door_bias_default_is_byte_identical_to_weight_zero():
+    # door_order set but weight 0 (the SearchConfig default) ⇒ NO steering ⇒
+    # identical to a run that never mentioned door-bias.
+    s = _scenario(door_order=("a",))
+    default_cfg = SearchConfig(max_restarts=4, spread=True)
+    explicit_zero = SearchConfig(max_restarts=4, spread=True, door_bias_weight=0.0)
+    a = solve(s, search=default_cfg, seed=0, budget_s=120.0, plan_paths=False)
+    b = solve(s, search=explicit_zero, seed=0, budget_s=120.0, plan_paths=False)
+    assert _key(a.layouts) == _key(b.layouts)
+
+
+def test_door_bias_overcomes_back_fill_for_rank1():
+    # With back-fill ON (pulls everyone deep), the rank-1 exemption + door-bias
+    # still land 'a' nearer the door than with door-bias off.
+    s = _scenario(door_order=("a",))
+    off = SearchConfig(max_restarts=4, spread=True, back_bias_weight=1.0)
+    on = SearchConfig(max_restarts=4, spread=True, back_bias_weight=1.0, door_bias_weight=1.0)
+    y_off = _rank1_y(solve(s, search=off, seed=0, budget_s=120.0, plan_paths=False))
+    y_on = _rank1_y(solve(s, search=on, seed=0, budget_s=120.0, plan_paths=False))
+    assert y_on < y_off

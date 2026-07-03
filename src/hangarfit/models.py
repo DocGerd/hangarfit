@@ -1870,6 +1870,24 @@ class SearchConfig:
     ``spread_stall_restarts``) stays the only kind of opt-out sentinel in this
     dataclass; see ``max_restarts``."""
 
+    door_bias_weight: float = 0.0
+    """Strength of the absolute door-attraction bias folded into the spread
+    post-pass (#908, ADR-0008 amendment). ``0.0`` (default) ⇒ no door steering —
+    byte-identical to the pre-#908 solver (ADR-0003); the term is not even
+    summed. When ``> 0`` AND ``scenario.door_order`` is set, the spread hill-climb
+    additionally minimizes ``D = y_{door_order[0]} / hangar.length_m``, pulling
+    the rank-1 (door-nearest) plane toward the door at ``y = 0``; the ``<2 planes``
+    no-op guard is relaxed so a lone ``#1`` is still pulled. Only the rank-1 body
+    is steered (rank1_only) — ranks 2..N keep the relative ``door_order`` selection
+    tiebreak (:func:`solver._door_order_deviation`). While active, the rank-1 id is
+    EXEMPTED from the back-of-hangar fill bias (:func:`solver._back_bias_energy`)
+    so its own deep-pull does not cancel the doorward pull. Same
+    dimensionless-weight semantics as ``back_bias_weight`` (``~1.0`` operating
+    point); ``0.0`` is the exact identity of ``weight · D``, so — like
+    ``back_bias_weight`` — it is ``float = 0.0`` not ``float | None``. No effect
+    when ``spread=False`` (the bias lives in the spread post-pass). The CLI
+    auto-arms it when ``door_order`` is set (``--no-door-bias`` opts out)."""
+
     spread_stall_restarts: int | None = None
     """(F7 / #404) Opt-in early-exit for the spread-ON restart loop. ``None``
     (default) preserves the run-to-budget collect-every-basin behaviour, so the
@@ -1969,6 +1987,11 @@ class SearchConfig:
             raise ValueError(
                 f"SearchConfig.back_bias_weight must be >= 0 "
                 f"(0 disables the back-of-hangar fill bias), got {self.back_bias_weight}"
+            )
+        if self.door_bias_weight < 0.0:
+            raise ValueError(
+                f"SearchConfig.door_bias_weight must be >= 0 "
+                f"(0 disables the absolute door-attraction bias), got {self.door_bias_weight}"
             )
         if self.spread_stall_restarts is not None and self.spread_stall_restarts < 1:
             raise ValueError(

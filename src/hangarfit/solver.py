@@ -1324,7 +1324,9 @@ def _inter_plane_energy(
     return energy
 
 
-def _back_bias_energy(placements: dict[str, Placement], scenario: Scenario) -> float:
+def _back_bias_energy(
+    placements: dict[str, Placement], scenario: Scenario, *, exclude: str | None = None
+) -> float:
     """Back-of-hangar fill bias ``B = Σ (length_m − y_p) / length_m`` (#320).
 
     Minimized when planes park deep (large ``y``, toward the back wall at
@@ -1333,13 +1335,49 @@ def _back_bias_energy(placements: dict[str, Placement], scenario: Scenario) -> f
     single ``back_bias_weight`` reads consistently across hangar sizes. Summed
     over ALL placements — pinned planes add a constant offset that cannot change
     the per-target argmin. RNG-free. See ADR-0008 (amended) and #320.
+
+    ``exclude`` (default ``None``) drops one plane id from the sum — used by the
+    #908 door-bias to exempt the rank-1 door-seeker from the deep-pull while it is
+    steered toward the door; ``None`` sums every placement (byte-identical to the
+    pre-#908 signature, ADR-0003).
     """
     length = scenario.hangar.length_m
     # Iterate in sorted plane-id order (mirrors _inter_plane_energy /
     # _spread_quality) so this float sum is order-stable even if a future
     # refactor ever builds the placements dict from an unordered source — an
     # ADR-0003 hardening; the dict is currently fleet_in-ordered already.
-    return sum((length - placements[pid].y_m) / length for pid in sorted(placements))
+    return sum(
+        (length - placements[pid].y_m) / length for pid in sorted(placements) if pid != exclude
+    )
+
+
+def _door_bias_energy(placements: Mapping[str, Placement], scenario: Scenario) -> float:
+    """Absolute door-attraction bias ``D = y_{rank1} / length_m`` (#908).
+
+    The sign-flipped mirror of :func:`_back_bias_energy`: minimized when the
+    rank-1 ``door_order`` body sits AT the door (``y = 0``), so the spread
+    hill-climb actively pulls the top-priority plane doorward (the absolute
+    steering the relative :func:`_door_order_deviation` tiebreak never supplies —
+    it is provably inert for a lone ``#1``).
+
+    Only ``door_order[0]`` gains this absolute steering (rank1_only) — *on top of*
+    the relative :func:`_door_order_deviation` selection tiebreak, which still ranks
+    every placed ``door_order`` body (``#1`` included); ranks 2..N get only that
+    relative tiebreak. Returns ``0.0`` when ``door_order`` is falsy
+    (``None`` or the loader-permitted empty ``()``) or the rank-1 body is not
+    placed (e.g. a maintenance-away plane) — skipped exactly like
+    :func:`_back_bias_energy` / :func:`_region_energy` / :func:`_door_order_deviation`.
+    Division-only (no ``exp``) ⇒ cross-machine byte-safe. RNG-free. The
+    ``door_bias_weight`` multiplier is applied at the ``_spread._energy`` call
+    site (mirrors ``back_bias_weight * _back_bias_energy``).
+    """
+    order = scenario.door_order
+    if not order:
+        return 0.0
+    rank1 = order[0]
+    if rank1 not in placements:
+        return 0.0
+    return placements[rank1].y_m / scenario.hangar.length_m
 
 
 def _region_energy(placements: Mapping[str, Placement], scenario: Scenario) -> float:
@@ -1566,11 +1604,20 @@ def _spread(
     movable = sorted(pid for pid in placements if pid not in pinned_planes)
     back_fill = search.back_bias_weight > 0.0
     region_active = bool(scenario.region_preferences)
-    if not movable or (len(placements) < 2 and not back_fill and not region_active):
-        # Nothing to optimize: no movable target, or <2 planes with neither the
-        # back-fill nor the region bias active (inter-plane energy is identically
-        # 0.0). With back-fill OR a region preference active a lone body is still
-        # pulled toward its wall, so we do NOT bail there.
+    # #908 absolute door-attraction: pull only the rank-1 door_order body toward
+    # the door, and exempt it from the back-fill deep-pull so the two don't cancel
+    # (rank1_only). door_rank1 is None (⇒ door_active False) unless armed.
+    door_order = scenario.door_order
+    door_rank1 = door_order[0] if door_order and search.door_bias_weight > 0.0 else None
+    door_active = door_rank1 is not None
+    if not movable or (
+        len(placements) < 2 and not back_fill and not region_active and not door_active
+    ):
+        # Nothing to optimize: no movable target, or <2 planes with none of the
+        # back-fill, region, nor door bias active (inter-plane energy is identically
+        # 0.0). With any of those active a lone body is still pulled — toward its
+        # wall (back-fill/region) or toward the door (#908 door-bias) — so we do
+        # NOT bail there.
         return placements
 
     def _energy(
@@ -1579,16 +1626,19 @@ def _spread(
         gap_cache: dict[tuple[str, str], float] | None = None,
         moved: str | None = None,
     ) -> float:
-        # Spread repulsion, plus the #320 back-of-hangar bias when active. The
-        # back-bias re-ranks candidates *within* this hill-climb; basin selection
-        # stays min-gap-primary (ADR-0008 amended). gap_cache/moved memoize the
-        # unchanged-pair distances within one iteration (#455, byte-identical);
-        # the back-bias is a per-plane sum (no pairs) so it is always re-summed.
+        # Spread repulsion, plus (each when active) the #320 back-of-hangar bias
+        # (with the #908 rank-1 exemption), the #604 region bias, and the #908
+        # door-attraction bias. These re-rank candidates *within* this hill-climb;
+        # basin selection stays min-gap-primary (ADR-0008 amended). gap_cache/moved
+        # memoize the unchanged-pair distances within one iteration (#455,
+        # byte-identical); the per-plane bias sums (no pairs) are always re-summed.
         e = _inter_plane_energy(trial, scenario, scale, gap_cache=gap_cache, moved=moved)
         if back_fill:
-            e += search.back_bias_weight * _back_bias_energy(trial, scenario)
+            e += search.back_bias_weight * _back_bias_energy(trial, scenario, exclude=door_rank1)
         if region_active:
             e += _region_energy(trial, scenario)
+        if door_active:
+            e += search.door_bias_weight * _door_bias_energy(trial, scenario)
         return e
 
     current_energy = _energy(placements)
