@@ -14,6 +14,11 @@ export interface Intent {
   // editor can't produce); the export filters via the catalog. Empty ⇒ no
   // `ground_objects` key is exported (byte path unchanged).
   groundObjectIds: string[];
+  // Per-plane cart-mode overrides (#909 → a `movement_mode` key in the exported
+  // scenario's `constraints` block). Relaxes/changes a LOCKED plane's cart mode
+  // for this one scenario. Empty ⇒ no `movement_mode` is exported (byte path
+  // unchanged). Deselecting a plane drops its override.
+  cartModeOverrides: Record<string, string>;
 }
 export interface CurrentPose { x_m: number; y_m: number; heading_deg: number; on_carts: boolean; }
 export interface EditorContext {
@@ -21,7 +26,6 @@ export interface EditorContext {
   hangar: string;
   maintenance: { plane: string } | null;
   currentPoses: Record<string, CurrentPose>;
-  cartEligible: Record<string, boolean>;
   // The door edge (scene/v2 hangar geometry), rendered as a hint in the ranking
   // panel so the user sees which wall the door is on and where along it. Absent
   // on older editor-context blobs.
@@ -31,6 +35,12 @@ export interface EditorContext {
   // keyed by id. `kind` is "aircraft" for planes and the GroundObject
   // object_class ("fixed_obstacle" | "placed_routed_mover") for objects, which
   // gates what the palette can add offline (aircraft + movers, not fixed
-  // obstacles). Absent on older editor-context blobs.
-  catalog?: Record<string, { name: string; kind: string }>;
+  // obstacles). Aircraft entries also carry `movementMode` (the honest cart mode
+  // — subsumes the old lossy `cartEligible` bool) and `hasTurnRadius` (#909:
+  // gates which override modes are legal — a non-always_cart mode needs a turn
+  // radius). Absent on older editor-context blobs.
+  catalog?: Record<
+    string,
+    { name: string; kind: string; movementMode?: string; hasTurnRadius?: boolean }
+  >;
 }

@@ -132,7 +132,6 @@ def build_editor_context(
     hangar_ref: str,
     maintenance_plane: str | None,
     layout: Layout,
-    cart_eligible: dict[str, bool],
 ) -> dict:
     """Build the ``hangarfit.editor-context/v1`` blob for :func:`render_edit_viewer`
     (#442/ADR-0029).
@@ -142,11 +141,8 @@ def build_editor_context(
     verbatim; ``Layout`` itself does not retain them). ``currentPoses`` is a
     scalar copy of each placement's pose fields, keyed by ``plane_id``, sourced
     from ``layout.placements`` (a ``tuple[Placement, ...]`` — ``Layout`` is not
-    itself iterable). ``cart_eligible`` records, per plane, whether the editor
-    may let the user TOGGLE ``on_carts`` — only ``cart_eligible`` planes have a
-    free choice; ``always_cart``/``always_own_gear`` are locked to their single
-    legal value. The caller computes this from the fleet since it depends on
-    ``Aircraft`` data the context blob otherwise doesn't carry."""
+    itself iterable). Per-aircraft cart data (``movementMode``/``hasTurnRadius``)
+    is carried inside the ``catalog`` (below), derived from ``layout.fleet``."""
     return {
         "schema": _EDITOR_CONTEXT_SCHEMA,
         "fleet": fleet_ref,
@@ -161,7 +157,6 @@ def build_editor_context(
             }
             for p in layout.placements
         },
-        "cartEligible": dict(cart_eligible),
         # The door edge (already in scene/v2), so the door-proximity ranking UI
         # (#907) can show the user which wall — and where along it — the door is
         # (rendered as a hint in the ranking panel by editor.ts).
@@ -177,14 +172,23 @@ def build_editor_context(
         # nothing and pick what goes in. ``kind`` is "aircraft" for planes
         # and the GroundObject.object_class ("fixed_obstacle" |
         # "placed_routed_mover") for objects — the editor gates what the palette
-        # can add offline (aircraft + movers) on it. The maintenance occupant is
-        # excluded: it sits in the bay, not the hangar (mirroring its exclusion
-        # from currentPoses), so it must not be an "add to hangar" candidate.
-        # Fleet and ground-object ids are disjoint, so the merged map has no
-        # collisions.
+        # can add offline (aircraft + movers) on it. Aircraft entries also carry
+        # ``movementMode`` (the honest cart mode — the editor derives cart
+        # eligibility from it, subsuming the old lossy ``cartEligible`` bool) and
+        # ``hasTurnRadius`` (#909: a non-``always_cart`` cart-mode override needs
+        # a positive turn radius, so the editor gates those options on it). The
+        # maintenance occupant is excluded: it sits in the bay, not the hangar
+        # (mirroring its exclusion from currentPoses), so it must not be an "add
+        # to hangar" candidate. Fleet and ground-object ids are disjoint, so the
+        # merged map has no collisions.
         "catalog": {
             **{
-                aid: {"name": ac.name, "kind": "aircraft"}
+                aid: {
+                    "name": ac.name,
+                    "kind": "aircraft",
+                    "movementMode": ac.movement_mode,
+                    "hasTurnRadius": ac.turn_radius_m is not None and ac.turn_radius_m > 0,
+                }
                 for aid, ac in layout.fleet.items()
                 if aid != maintenance_plane
             },
@@ -320,6 +324,15 @@ _HUD_EDIT = _HUD + (
     '<label>priority <input id="prio" type="number" min="0" step="0.5"></label>'
     '<label><input id="pin-toggle" type="checkbox"> pin here</label>'
     '<label><input id="carts-toggle" type="checkbox"> on carts</label>'
+    # #909 cart-mode override: relax/change a locked plane's cart mode for this
+    # scenario. editor.ts sets the value from the focused plane's effective mode
+    # and disables the radius-needing options (own gear / cart-eligible) for a
+    # plane with no turn radius. Empty override ⇒ no `movement_mode` is exported.
+    '<label>cart mode <select id="cart-mode">'
+    '<option value="always_own_gear">own gear</option>'
+    '<option value="cart_eligible">cart-eligible</option>'
+    '<option value="always_cart">always cart</option>'
+    "</select></label>"
     # #907 door-proximity ranking: an ordered list (#1 nearest the door), items
     # draggable to reorder; "＋ rank selected" appends the focused plane. The
     # list + the door-edge hint are filled/wired by editor.ts (the hint reads

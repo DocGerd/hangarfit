@@ -45,12 +45,14 @@ from shapely.geometry import Polygon, box
 
 from .models import (
     _RING_MIN_ABS_SIGNED_AREA,
+    _VALID_MOVEMENT_MODES,
     Aircraft,
     Door,
     GroundObject,
     Hangar,
     Layout,
     MaintenanceBay,
+    MovementMode,
     MoverMotionMode,
     Part,
     PartKind,
@@ -805,6 +807,9 @@ def load_scenario(
     if not isinstance(constraints_raw, dict):
         raise LoaderError(f"{path}: 'constraints' must be a mapping")
     constraints: dict[str, PlaneConstraint] = {}
+    # #909: per-plane cart-mode overrides collected here, APPLIED to `fleet` below
+    # (before the Scenario is built) so its mode-consistency checks see the new mode.
+    mode_overrides: dict[str, MovementMode] = {}
     for plane_id, cdata in constraints_raw.items():
         _resolve_known_plane_id(
             plane_id,
@@ -817,6 +822,27 @@ def load_scenario(
             constraints[plane_id] = _build_plane_constraint(plane_id, cdata)
         except (ValueError, KeyError, TypeError, LoaderError) as e:
             raise LoaderError(f"{path}: constraint {plane_id!r}: {e}") from e
+        # #909: extract the movement_mode override (cdata is a validated mapping —
+        # _build_plane_constraint above would have raised otherwise). Reject it on
+        # the maintenance plane (set aside, so an override is incoherent — mirroring
+        # the pin/force_on_carts maintenance rejection) and validate the value
+        # (a bad value here gives a clearer, constraint-scoped error than the
+        # Aircraft.__post_init__ check would on apply).
+        mode_override = cdata.get("movement_mode")
+        if mode_override is not None:
+            if plane_id == maintenance_plane:
+                raise LoaderError(
+                    f"{path}: constraint {plane_id!r}: a movement_mode override on the "
+                    f"maintenance plane is incoherent — it is set aside (absent from "
+                    f"placements)."
+                )
+            if not isinstance(mode_override, str) or mode_override not in _VALID_MOVEMENT_MODES:
+                raise LoaderError(
+                    f"{path}: constraint {plane_id!r}: movement_mode override "
+                    f"{mode_override!r} is not a valid mode; allowed: "
+                    f"{sorted(_VALID_MOVEMENT_MODES)}"
+                )
+            mode_overrides[plane_id] = cast(MovementMode, mode_override)
 
     # Parse the scenario's optional ground_objects: block (#601 id-list, #604
     # mapping form). Each entry is either a bare catalog-id string (a mover,
@@ -926,6 +952,18 @@ def load_scenario(
         raise LoaderError(f"{path}: 'door_order' must be a list")
     door_order = None if door_order_raw is None else tuple(str(x) for x in door_order_raw)
 
+    # #909: apply the collected cart-mode overrides to the fleet. This is a
+    # per-scenario exception layered on top of any manifest movement_mode override
+    # (scenario wins — the most-local exception, applied last). Rebuilding the
+    # Aircraft re-fires Aircraft.__post_init__ (the turn-radius gate); wrap its
+    # ValueError into a LoaderError to keep the exit-2 contract. Absent overrides ⇒
+    # `fleet` is untouched and the built Scenario is identical to pre-#909.
+    for pid, mode in mode_overrides.items():
+        try:
+            fleet[pid] = _apply_movement_override(fleet[pid], mode)
+        except ValueError as e:
+            raise LoaderError(f"{path}: constraint {pid!r}: movement_mode override — {e}") from e
+
     try:
         return Scenario(
             fleet=fleet,
@@ -943,7 +981,24 @@ def load_scenario(
         raise LoaderError(f"{path}: {e}") from e
 
 
-_ALLOWED_CONSTRAINT_KEYS = frozenset({"pin", "force_on_carts", "priority", "nose_out"})
+# ``movement_mode`` (#909) is a per-plane, per-scenario cart-mode OVERRIDE. Unlike
+# the other keys it is NOT stored on :class:`PlaneConstraint` (which stays purely a
+# placement directive — pin/force_on_carts/priority/nose_out); it is applied as a
+# fleet transform at load time (``_apply_movement_override``), so the Scenario's
+# existing pin/force_on_carts ↔ movement_mode consistency checks see the new mode.
+_ALLOWED_CONSTRAINT_KEYS = frozenset(
+    {"pin", "force_on_carts", "priority", "nose_out", "movement_mode"}
+)
+
+
+def _apply_movement_override(aircraft: Aircraft, mode: MovementMode) -> Aircraft:
+    """Return ``aircraft`` with its ``movement_mode`` replaced (#909 scenario
+    cart-mode override). Rebuilding via ``dataclasses.replace`` re-runs
+    ``Aircraft.__post_init__``, so the turn-radius gate (a non-``always_cart``
+    mode requires a positive ``turn_radius_m``) fires here — its ``ValueError`` is
+    the caller's to wrap into a :class:`LoaderError`."""
+    return dataclasses.replace(aircraft, movement_mode=mode)
+
 
 # Keys accepted in a scenario ``ground_objects:`` mapping entry (#604). ``object``
 # is the catalog id; the pose triplet is required for a fixed_obstacle and

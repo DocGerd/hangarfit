@@ -544,7 +544,6 @@ def test_editor_context_ts_keys_match_build_editor_context():
         hangar_ref="data/hangar.yaml",
         maintenance_plane=lay.maintenance_plane,
         layout=lay,
-        cart_eligible={p.plane_id: False for p in lay.placements},
     )
     ts_fields = _ts_interface_fields("interaction/intent-contract.ts", "EditorContext")
     assert ts_fields == set(ctx) - {"schema"}

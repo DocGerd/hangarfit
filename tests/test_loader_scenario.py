@@ -78,6 +78,90 @@ def test_load_scenario_missing_fleet_in(tmp_path):
         load_scenario(missing)
 
 
+# ── #909: per-plane movement_mode override in the constraints block ─────────
+
+
+def _write_909_scenario(tmp_path, body: str):
+    """Write a scenario pointing at the real data/ fleet+hangar by ABSOLUTE path
+    (so the fleet actually loads and the override can be observed), returning the
+    path. ``body`` is the fleet_in/constraints YAML."""
+    from pathlib import Path
+
+    repo = Path(__file__).resolve().parents[1]
+    fleet, hangar = repo / "data" / "fleet.yaml", repo / "data" / "hangar.yaml"
+    p = tmp_path / "sc909.yaml"
+    p.write_text(f"fleet: {fleet}\nhangar: {hangar}\n{body}")
+    return p
+
+
+def test_constraint_movement_mode_override_relaxes_lock(tmp_path):
+    # #909: a per-plane `movement_mode` override in the constraints block relaxes a
+    # LOCKED plane's cart mode. aviat_husky is always_own_gear (on_carts forbidden);
+    # overriding it to cart_eligible makes an on_carts=True pin legal (the Scenario
+    # pin↔movement_mode check now sees the overridden mode).
+    from hangarfit.loader import load_scenario
+
+    p = _write_909_scenario(
+        tmp_path,
+        "fleet_in: [aviat_husky, fuji]\n"
+        "constraints:\n"
+        "  aviat_husky:\n"
+        "    movement_mode: cart_eligible\n"
+        "    pin: { x_m: 2.0, y_m: 5.0, heading_deg: 0.0, on_carts: true }\n",
+    )
+    sc = load_scenario(p)
+    assert sc.fleet["aviat_husky"].movement_mode == "cart_eligible"
+    assert sc.constraints["aviat_husky"].pin.on_carts is True  # now legal
+
+
+def test_constraint_movement_mode_override_null_radius_always_cart_rejected(tmp_path):
+    # Overriding a null-turn-radius always_cart plane (zlin_savage) to a mode that
+    # REQUIRES a turn radius must fail LOUDLY (LoaderError, not an uncaught crash) —
+    # the Aircraft.__post_init__ turn_radius gate, wrapped.
+    from hangarfit.loader import load_scenario
+
+    p = _write_909_scenario(
+        tmp_path,
+        "fleet_in: [zlin_savage, fuji]\n"
+        "constraints:\n"
+        "  zlin_savage:\n"
+        "    movement_mode: cart_eligible\n",
+    )
+    with pytest.raises(LoaderError, match="turn_radius"):
+        load_scenario(p)
+
+
+def test_constraint_movement_mode_override_invalid_value_rejected(tmp_path):
+    from hangarfit.loader import load_scenario
+
+    p = _write_909_scenario(
+        tmp_path,
+        "fleet_in: [aviat_husky, fuji]\n"
+        "constraints:\n"
+        "  aviat_husky:\n"
+        "    movement_mode: hovercraft\n",
+    )
+    with pytest.raises(LoaderError, match="not a valid mode"):
+        load_scenario(p)
+
+
+def test_constraint_movement_mode_override_on_maintenance_rejected(tmp_path):
+    # The maintenance occupant is set aside; a cart-mode override on it is incoherent
+    # — reject it (mirroring the pin/force_on_carts maintenance rejection).
+    from hangarfit.loader import load_scenario
+
+    p = _write_909_scenario(
+        tmp_path,
+        "fleet_in: [aviat_husky, fuji]\n"
+        "maintenance:\n  plane: fuji\n"
+        "constraints:\n"
+        "  fuji:\n"
+        "    movement_mode: cart_eligible\n",
+    )
+    with pytest.raises(LoaderError, match="maintenance"):
+        load_scenario(p)
+
+
 def test_load_scenario_rejects_maintenance_plane_not_in_fleet_in(tmp_path):
     """Loader-path: maintenance.plane not in fleet_in raises LoaderError with
     an actionable message that includes the path, the bad plane id, the

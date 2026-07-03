@@ -19,6 +19,7 @@ import {
   removeFromDoorOrder,
   moveInDoorOrder,
   toggleGroundObject,
+  setCartModeOverride,
 } from './selection.ts';
 import { intentToScenarioYaml } from './export.ts';
 import { byId } from '../dom.ts';
@@ -113,6 +114,13 @@ export function mountEditor(opts: {
   const rankAdd = byId<HTMLButtonElement>('rank-add');
   const doorList = byId<HTMLOListElement>('door-order-list');
   const paletteList = byId<HTMLUListElement>('palette-list');
+  const cartMode = byId<HTMLSelectElement>('cart-mode');
+  // #909 cart-mode override: the plane's base mode (from the catalog) and the
+  // effective mode (override, else base). Aircraft catalog entries carry
+  // movementMode; a palette-added plane is overridable too (the override is a
+  // fleet-level exception, independent of placement).
+  const baseMode = (id: string): string | undefined => opts.ctx.catalog?.[id]?.movementMode;
+  const effMode = (id: string): string | undefined => intent.cartModeOverrides[id] ?? baseMode(id);
   // Show which wall — and where along it — the door is, from the editor-context
   // door edge (#907). The door is the front wall (y=0, the coordinate
   // convention); center_x_m ± width_m/2 is a 1-D span along it (pure display
@@ -156,6 +164,20 @@ export function mountEditor(opts: {
     const hasPose = id !== null && id in opts.ctx.currentPoses;
     prio.disabled = !active;
     pinToggle.disabled = !active || !hasPose;
+    // #909 cart-mode override select: available for any focused selected aircraft
+    // (the override is fleet-level, independent of a pin). Show the effective
+    // mode; gate the radius-needing options (a non-always_cart mode requires a
+    // turn radius) so the editor can't author a load-invalid override.
+    if (!active || id === null || baseMode(id) === undefined) {
+      cartMode.disabled = true;
+    } else {
+      cartMode.disabled = false;
+      cartMode.value = effMode(id) ?? '';
+      const canRadius = opts.ctx.catalog?.[id]?.hasTurnRadius ?? false;
+      for (const opt of Array.from(cartMode.options)) {
+        opt.disabled = opt.value !== 'always_cart' && !canRadius;
+      }
+    }
     if (!active || id === null) {
       prio.value = '';
       pinToggle.checked = false;
@@ -172,8 +194,16 @@ export function mountEditor(opts: {
         xIn.value = String(mp.x);
         yIn.value = String(mp.y);
         hIn.value = String(mp.heading);
-        cartsToggle.disabled = !opts.ctx.cartEligible[id];
-        cartsToggle.checked = mp.onCarts;
+        // The on-carts toggle reflects the EFFECTIVE mode: free only when
+        // cart_eligible; a locked/overridden-locked mode forces on_carts.
+        const mode = effMode(id);
+        if (mode === 'cart_eligible') {
+          cartsToggle.disabled = false;
+          cartsToggle.checked = mp.onCarts;
+        } else {
+          cartsToggle.disabled = true;
+          cartsToggle.checked = mode === 'always_cart';
+        }
       } else {
         cartsToggle.disabled = true;
         cartsToggle.checked = false;
@@ -194,6 +224,21 @@ export function mountEditor(opts: {
   cartsToggle.addEventListener('change', () => {
     if (!focusedId) return;
     intent = setOnCarts(intent, focusedId, cartsToggle.checked);
+  });
+  cartMode.addEventListener('change', () => {
+    const id = focusedId;
+    if (id === null) return;
+    // Picking the plane's base mode clears the override (byte path unchanged);
+    // any other mode sets it.
+    const m = cartMode.value;
+    intent = setCartModeOverride(intent, id, m === baseMode(id) ? null : m);
+    // Keep a pin's on_carts consistent with the (possibly new) forced mode, so
+    // the exported scenario is never a contradiction the loader would reject.
+    if (intent.mustPositions[id]) {
+      if (m === 'always_cart') intent = setOnCarts(intent, id, true);
+      else if (m === 'always_own_gear') intent = setOnCarts(intent, id, false);
+    }
+    syncControls();
   });
   exportBtn.addEventListener('click', () => {
     const yaml = intentToScenarioYaml(intent, opts.ctx);

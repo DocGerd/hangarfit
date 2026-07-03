@@ -34,12 +34,23 @@ export function intentToScenarioYaml(intent: Intent, ctx: EditorContext): string
     .sort();
   if (movers.length) lines.push(`ground_objects: [${movers.join(', ')}]`);
 
-  // Only selected planes may carry constraints (never the maintenance plane).
-  const constrained = selected.filter((id) => intent.mustPositions[id] || intent.priorities[id] !== undefined);
+  // Only selected planes may carry constraints (never the maintenance plane). A
+  // plane is "constrained" if it has a pin, a priority, OR a cart-mode override
+  // (#909) — the last can stand alone (relax a locked plane's mode with no pin).
+  const constrained = selected.filter(
+    (id) =>
+      intent.mustPositions[id] ||
+      intent.priorities[id] !== undefined ||
+      intent.cartModeOverrides[id] !== undefined,
+  );
   if (constrained.length) {
     lines.push('constraints:');
     for (const id of constrained) {
       lines.push(`  ${id}:`);
+      // #909 cart-mode override → a `movement_mode:` key the loader applies as a
+      // per-scenario fleet override (relaxing the plane's cart lock).
+      const mode = intent.cartModeOverrides[id];
+      if (mode !== undefined) lines.push(`    movement_mode: ${mode}`);
       const mp = intent.mustPositions[id];
       if (mp) {
         lines.push(

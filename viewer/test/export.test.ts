@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { intentToScenarioYaml } from '../src/interaction/export.ts';
 import {
   initialIntent, setPriority, pinAtCurrent, toggleSelection, addToDoorOrder,
-  toggleGroundObject,
+  toggleGroundObject, setCartModeOverride,
 } from '../src/interaction/selection.ts';
 import type { EditorContext } from '../src/interaction/intent-contract.ts';
 
@@ -14,10 +14,9 @@ const CTX: EditorContext = {
     husky: { x_m: 2.1, y_m: 14.3, heading_deg: 0, on_carts: false },
     ctsl: { x_m: 5.0, y_m: 3.0, heading_deg: 90, on_carts: false },
   },
-  cartEligible: { husky: false, ctsl: false },
   catalog: {
-    husky: { name: 'Husky', kind: 'aircraft' },
-    ctsl: { name: 'CTLS', kind: 'aircraft' },
+    husky: { name: 'Husky', kind: 'aircraft', movementMode: 'always_own_gear', hasTurnRadius: true },
+    ctsl: { name: 'CTLS', kind: 'aircraft', movementMode: 'cart_eligible', hasTurnRadius: true },
     glider_trailer_1: { name: 'Glider trailer 1', kind: 'placed_routed_mover' },
     maul_fuel_trailer: { name: 'Fuel trailer', kind: 'fixed_obstacle' },
   },
@@ -125,4 +124,39 @@ test('export drops a ground-object id absent from the catalog', () => {
   const i = { ...initialIntent(CTX), groundObjectIds: ['ghost_mover'] };
   const y = intentToScenarioYaml(i, CTX);
   assert.doesNotMatch(y, /ground_objects/);
+});
+
+// --- #909 cart-mode override export -------------------------------------------
+
+test('a cart-mode override emits movement_mode under the plane constraint', () => {
+  let i = initialIntent(CTX);
+  i = setCartModeOverride(i, 'husky', 'cart_eligible');
+  const y = intentToScenarioYaml(i, CTX);
+  assert.match(y, /^ {2}husky:\n {4}movement_mode: cart_eligible$/m);
+});
+
+test('no movement_mode is emitted when no override is set (byte path unchanged)', () => {
+  const y = intentToScenarioYaml(initialIntent(CTX), CTX);
+  assert.doesNotMatch(y, /movement_mode/);
+});
+
+test('a cart-mode override alone makes the plane a constraint entry', () => {
+  // No pin, no priority — the override stands on its own and still produces a
+  // constraints block for the plane.
+  let i = initialIntent(CTX);
+  i = setCartModeOverride(i, 'husky', 'always_cart');
+  const y = intentToScenarioYaml(i, CTX);
+  assert.match(y, /^constraints:$/m);
+  assert.match(y, /^ {2}husky:\n {4}movement_mode: always_cart$/m);
+});
+
+test('movement_mode is emitted before pin/priority in the same constraint', () => {
+  let i = initialIntent(CTX);
+  i = pinAtCurrent(i, 'husky', CTX);
+  i = setCartModeOverride(i, 'husky', 'cart_eligible');
+  const y = intentToScenarioYaml(i, CTX);
+  assert.match(
+    y,
+    /^ {2}husky:\n {4}movement_mode: cart_eligible\n {4}pin: \{/m,
+  );
 });

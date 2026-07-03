@@ -364,7 +364,6 @@ def test_render_edit_viewer_keeps_scene_bytes_and_adds_editor_context(tmp_path):
         hangar_ref="data/hangar.yaml",
         maintenance_plane=lay.maintenance_plane,
         layout=lay,
-        cart_eligible={p.plane_id: False for p in lay.placements},
     )
     edit = tmp_path / "edit.html"
     plain = tmp_path / "plain.html"
@@ -388,7 +387,6 @@ def test_render_edit_viewer_hud_has_editor_controls(tmp_path):
         hangar_ref="data/hangar.yaml",
         maintenance_plane=lay.maintenance_plane,
         layout=lay,
-        cart_eligible={p.plane_id: False for p in lay.placements},
     )
     out = tmp_path / "edit.html"
     viewer.render_edit_viewer(sc, ctx, out)
@@ -404,10 +402,6 @@ def test_build_editor_context_shape():
         hangar_ref="data/hangar.yaml",
         maintenance_plane=lay.maintenance_plane,
         layout=lay,
-        cart_eligible={
-            p.plane_id: (lay.fleet[p.plane_id].movement_mode != "always_own_gear")
-            for p in lay.placements
-        },
     )
     assert ctx["schema"] == "hangarfit.editor-context/v1"
     assert ctx["fleet"] == "data/fleet.yaml"
@@ -493,7 +487,6 @@ def test_build_editor_context_excludes_maintenance_from_current_poses():
         hangar_ref="data/hangar.yaml",
         maintenance_plane=lay.maintenance_plane,
         layout=lay,
-        cart_eligible={p.plane_id: False for p in lay.placements},
     )
     assert lay.maintenance_plane not in ctx["currentPoses"]
     assert ctx["maintenance"] == {"plane": lay.maintenance_plane}
@@ -512,7 +505,6 @@ def test_build_editor_context_includes_door_geometry():
         hangar_ref="data/hangar.yaml",
         maintenance_plane=lay.maintenance_plane,
         layout=lay,
-        cart_eligible={p.plane_id: False for p in lay.placements},
     )
     assert ctx["door"] == {
         "center_x_m": lay.hangar.door.center_x_m,
@@ -530,7 +522,6 @@ def test_render_edit_viewer_hud_has_door_order_controls(tmp_path):
         hangar_ref="data/hangar.yaml",
         maintenance_plane=lay.maintenance_plane,
         layout=lay,
-        cart_eligible={p.plane_id: False for p in lay.placements},
     )
     out = tmp_path / "edit.html"
     viewer.render_edit_viewer(sc, ctx, out)
@@ -576,14 +567,18 @@ def test_build_editor_context_includes_catalog():
         hangar_ref="hangar.yaml",
         maintenance_plane=lay.maintenance_plane,
         layout=lay,
-        cart_eligible={p.plane_id: False for p in lay.placements},
     )
     cat = ctx["catalog"]
     # Exactly the fleet ∪ ground objects (disjoint id namespaces), independent of
     # what got placed — this is what makes "start from an empty hangar" work.
     assert set(cat) == set(lay.fleet) | set(lay.ground_objects)
     for aid, ac in lay.fleet.items():
-        assert cat[aid] == {"name": ac.name, "kind": "aircraft"}
+        assert cat[aid] == {
+            "name": ac.name,
+            "kind": "aircraft",
+            "movementMode": ac.movement_mode,
+            "hasTurnRadius": ac.turn_radius_m is not None and ac.turn_radius_m > 0,
+        }
     for gid, go in lay.ground_objects.items():
         assert cat[gid] == {"name": go.name, "kind": go.object_class}
     # A known mover carries an addable kind; a known fixed obstacle does not.
@@ -603,7 +598,6 @@ def test_build_editor_context_catalog_excludes_maintenance_plane():
         hangar_ref="data/hangar.yaml",
         maintenance_plane=lay.maintenance_plane,
         layout=lay,
-        cart_eligible={p.plane_id: False for p in lay.placements},
     )
     assert lay.maintenance_plane not in ctx["catalog"]
     # the rest of the fleet is still enumerated
@@ -620,7 +614,6 @@ def test_render_edit_viewer_hud_has_palette_controls(tmp_path):
         hangar_ref="data/hangar.yaml",
         maintenance_plane=lay.maintenance_plane,
         layout=lay,
-        cart_eligible={p.plane_id: False for p in lay.placements},
     )
     out = tmp_path / "edit.html"
     viewer.render_edit_viewer(sc, ctx, out)
@@ -652,3 +645,40 @@ def test_editor_export_with_ground_objects_loads_via_load_scenario(tmp_path):
     p.write_text(yaml)
     sc = load_scenario(p)
     assert "glider_trailer_1" in sc.ground_objects
+
+
+# ── #909: cart-mode override (movementMode / hasTurnRadius in the catalog) ───
+
+
+def test_build_editor_context_catalog_carries_movement_mode_and_turn_radius():
+    # #909: each aircraft catalog entry carries its honest movement_mode (the
+    # editor derives cart-eligibility from it) and whether it has a turn radius
+    # (a non-always_cart override needs one). aviat_husky is always_own_gear with
+    # a radius; zlin_savage is always_cart with a NULL radius.
+    lay = load_layout("examples/herrenteich/layout_full.yaml")
+    ctx = viewer.build_editor_context(
+        fleet_ref="fleet.yaml",
+        hangar_ref="hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+    )
+    cat = ctx["catalog"]
+    assert cat["aviat_husky"]["movementMode"] == "always_own_gear"
+    assert cat["aviat_husky"]["hasTurnRadius"] is True
+    assert cat["zlin_savage"]["movementMode"] == "always_cart"
+    assert cat["zlin_savage"]["hasTurnRadius"] is False
+
+
+def test_render_edit_viewer_hud_has_cart_mode_control(tmp_path):
+    # #909 wires the cart-mode override <select>; guard its control id.
+    lay = load_layout(LAYOUT)
+    sc = scene.build_scene(lay, moves_plan=plan_fill(lay))
+    ctx = viewer.build_editor_context(
+        fleet_ref="data/fleet.yaml",
+        hangar_ref="data/hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+    )
+    out = tmp_path / "edit.html"
+    viewer.render_edit_viewer(sc, ctx, out)
+    assert 'id="cart-mode"' in out.read_text(encoding="utf-8")
