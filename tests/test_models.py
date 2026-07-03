@@ -1261,6 +1261,18 @@ class TestSearchConfig:
         assert SearchConfig(back_bias_weight=0.0).back_bias_weight == 0.0
         assert SearchConfig(back_bias_weight=2.5).back_bias_weight == 2.5
 
+    def test_search_config_door_bias_weight_defaults_zero(self) -> None:
+        # Neutral library default (#908): no door steering, byte-identical solver.
+        # The CLI auto-arms it when door_order is set; --no-door-bias opts out.
+        assert SearchConfig().door_bias_weight == 0.0
+
+    def test_search_config_door_bias_weight_rejects_negative(self) -> None:
+        with pytest.raises(ValueError, match="door_bias_weight"):
+            SearchConfig(door_bias_weight=-1.0)
+        # zero (disabled) and positive are accepted
+        assert SearchConfig(door_bias_weight=0.0).door_bias_weight == 0.0
+        assert SearchConfig(door_bias_weight=1.0).door_bias_weight == 1.0
+
     # ── F7 (#404): opt-in spread-stagnation early-exit ──────────────────────
     def test_spread_stall_restarts_default_is_none(self) -> None:
         # Opt-in: None preserves the run-to-budget spread-ON behavior, so the
