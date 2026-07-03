@@ -1324,7 +1324,9 @@ def _inter_plane_energy(
     return energy
 
 
-def _back_bias_energy(placements: dict[str, Placement], scenario: Scenario) -> float:
+def _back_bias_energy(
+    placements: dict[str, Placement], scenario: Scenario, *, exclude: str | None = None
+) -> float:
     """Back-of-hangar fill bias ``B = Σ (length_m − y_p) / length_m`` (#320).
 
     Minimized when planes park deep (large ``y``, toward the back wall at
@@ -1333,13 +1335,20 @@ def _back_bias_energy(placements: dict[str, Placement], scenario: Scenario) -> f
     single ``back_bias_weight`` reads consistently across hangar sizes. Summed
     over ALL placements — pinned planes add a constant offset that cannot change
     the per-target argmin. RNG-free. See ADR-0008 (amended) and #320.
+
+    ``exclude`` (default ``None``) drops one plane id from the sum — used by the
+    #908 door-bias to exempt the rank-1 door-seeker from the deep-pull while it is
+    steered toward the door; ``None`` sums every placement (byte-identical to the
+    pre-#908 signature, ADR-0003).
     """
     length = scenario.hangar.length_m
     # Iterate in sorted plane-id order (mirrors _inter_plane_energy /
     # _spread_quality) so this float sum is order-stable even if a future
     # refactor ever builds the placements dict from an unordered source — an
     # ADR-0003 hardening; the dict is currently fleet_in-ordered already.
-    return sum((length - placements[pid].y_m) / length for pid in sorted(placements))
+    return sum(
+        (length - placements[pid].y_m) / length for pid in sorted(placements) if pid != exclude
+    )
 
 
 def _door_bias_energy(placements: Mapping[str, Placement], scenario: Scenario) -> float:

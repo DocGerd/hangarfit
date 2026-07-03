@@ -213,3 +213,16 @@ def test_door_bias_energy_minimized_at_the_door():
     near = _door_bias_energy({"a": _pl("a", 1.0)}, s)
     far = _door_bias_energy({"a": _pl("a", 30.0)}, s)
     assert near < far  # smaller y (nearer the door at y=0) ⇒ lower energy
+
+
+def test_back_bias_energy_exclude_skips_one_id():
+    from hangarfit.solver import _back_bias_energy
+
+    s = _scenario()  # length_m = 40.0
+    pls = {"a": _pl("a", 10.0), "b": _pl("b", 30.0)}
+    # default: Σ (40−y)/40 = (30/40) + (10/40) = 1.0
+    assert _back_bias_energy(pls, s) == 1.0
+    # exclude 'a' ⇒ only 'b': (40−30)/40 = 0.25
+    assert _back_bias_energy(pls, s, exclude="a") == 0.25
+    # excluding an absent id is a no-op
+    assert _back_bias_energy(pls, s, exclude="zzz") == 1.0
