@@ -247,6 +247,27 @@ def test_door_bias_makes_the_ranked_plane_the_door_nearest():
     assert ranked_is_door_nearest(("b",), "b")
 
 
+def test_solve_door_bias_active_deterministic():
+    # The steering path (door_bias_weight>0 + door_order) is double-solve identical —
+    # today's determinism canaries never exercise door_order at all.
+    s = _scenario(door_order=("a",))
+    cfg = SearchConfig(max_restarts=4, spread=True, door_bias_weight=1.0)
+    a = solve(s, search=cfg, seed=0, budget_s=120.0, plan_paths=False)
+    b = solve(s, search=cfg, seed=0, budget_s=120.0, plan_paths=False)
+    assert _key(a.layouts) == _key(b.layouts)
+
+
+def test_solve_door_bias_default_is_byte_identical_to_weight_zero():
+    # door_order set but weight 0 (the SearchConfig default) ⇒ NO steering ⇒
+    # identical to a run that never mentioned door-bias.
+    s = _scenario(door_order=("a",))
+    default_cfg = SearchConfig(max_restarts=4, spread=True)
+    explicit_zero = SearchConfig(max_restarts=4, spread=True, door_bias_weight=0.0)
+    a = solve(s, search=default_cfg, seed=0, budget_s=120.0, plan_paths=False)
+    b = solve(s, search=explicit_zero, seed=0, budget_s=120.0, plan_paths=False)
+    assert _key(a.layouts) == _key(b.layouts)
+
+
 def test_door_bias_overcomes_back_fill_for_rank1():
     # With back-fill ON (pulls everyone deep), the rank-1 exemption + door-bias
     # still land 'a' nearer the door than with door-bias off.
