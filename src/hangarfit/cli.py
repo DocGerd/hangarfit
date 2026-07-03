@@ -50,6 +50,12 @@ _SOLVE_JSON_SCHEMA = "hangarfit.solve/v1"
 # objective — it does not collapse the inter-plane gap. See ADR-0008 (amended).
 _BACK_FILL_DEFAULT_WEIGHT = 1.0
 
+# #908 absolute door-attraction bias: the SearchConfig.door_bias_weight the CLI
+# bakes when the scenario sets door_order (--no-door-bias forces 0.0). Same tuned
+# operating point as the back-fill weight; the rank-1 exemption from _back_bias_energy
+# keeps the two from cancelling. See ADR-0008 (amended).
+_DOOR_BIAS_DEFAULT_WEIGHT = 1.0
+
 # #398 view-mode fast-degrade cap: the *global* tow-expansion budget the `view`
 # subcommand passes to ``plan_fill`` in layout mode. The default whole-fill
 # budget (towplanner._MAX_FILL_EXPANSIONS, 16000) is tuned to *disprove* a hard
@@ -261,6 +267,18 @@ def build_parser() -> argparse.ArgumentParser:
             "post-pass also biases planes toward the back wall, leaving free space "
             "at the door; pass this to keep the symmetric spread only. (No effect "
             "with --no-spread, since the bias rides on the spread post-pass.)"
+        ),
+    )
+    solve.add_argument(
+        "--no-door-bias",
+        action="store_false",
+        dest="door_bias",
+        default=True,
+        help=(
+            "Disable the absolute door-attraction bias (#908). By default, when the "
+            "scenario sets door_order, the spread post-pass pulls the top-ranked (#1) "
+            "plane toward the door; pass this to keep only the relative door-order "
+            "selection tiebreak. (No effect without door_order, or with --no-spread.)"
         ),
     )
     solve.add_argument(
@@ -824,6 +842,11 @@ def cmd_solve(args: argparse.Namespace) -> int:
                 spread=args.spread,
                 nose_out=args.nose_out,
                 back_bias_weight=_BACK_FILL_DEFAULT_WEIGHT if args.back_fill else 0.0,
+                # #908: auto-arm the door-attraction bias only when the scenario
+                # ranks planes by door proximity; --no-door-bias forces it off.
+                door_bias_weight=(
+                    _DOOR_BIAS_DEFAULT_WEIGHT if (args.door_bias and scenario.door_order) else 0.0
+                ),
                 max_restarts=args.max_restarts,
                 spread_stall_restarts=args.spread_stall_restarts,
                 sat_collisions=args.sat_collisions,

@@ -784,6 +784,51 @@ def test_solve_back_fill_defaults_on_and_no_back_fill_opts_out():
     assert build_parser().parse_args(["solve", "s.yaml", "--no-back-fill"]).back_fill is False
 
 
+def test_solve_door_bias_defaults_on_and_no_door_bias_opts_out():
+    """`--no-door-bias` flips the ``door_bias`` namespace default (#908); absent,
+    it defaults ON (the CLI auto-arms door-bias only when door_order is set)."""
+    from hangarfit.cli import build_parser
+
+    assert build_parser().parse_args(["solve", "s.yaml"]).door_bias is True
+    assert build_parser().parse_args(["solve", "s.yaml", "--no-door-bias"]).door_bias is False
+
+
+class _CapturedSolve(Exception):
+    """Sentinel: short-circuit main() once the SearchConfig has been built."""
+
+
+def _door_bias_weight_for(monkeypatch, argv):
+    # Run `solve` far enough to build the SearchConfig, capturing its
+    # door_bias_weight without paying for the actual search.
+    import hangarfit.solver as solver_mod
+    from hangarfit.cli import main
+
+    captured: dict[str, float] = {}
+
+    def _fake_solve(scenario, **kwargs):
+        captured["weight"] = kwargs["search"].door_bias_weight
+        raise _CapturedSolve
+
+    monkeypatch.setattr(solver_mod, "solve", _fake_solve)
+    with pytest.raises(_CapturedSolve):
+        main(argv)
+    return captured["weight"]
+
+
+def test_solve_auto_arms_door_bias_only_when_door_order_set(monkeypatch):
+    from hangarfit.cli import _DOOR_BIAS_DEFAULT_WEIGHT
+
+    door = "tests/fixtures/scenario_door_order.yaml"
+    no_door = "tests/fixtures/scenario_minimal.yaml"
+    base = ["--seed", "42", "--budget", "5"]
+    # door_order set + default flag ⇒ armed at the baked default weight
+    assert _door_bias_weight_for(monkeypatch, ["solve", door, *base]) == _DOOR_BIAS_DEFAULT_WEIGHT
+    # --no-door-bias ⇒ forced off even with door_order
+    assert _door_bias_weight_for(monkeypatch, ["solve", door, "--no-door-bias", *base]) == 0.0
+    # no door_order ⇒ off (nothing to steer)
+    assert _door_bias_weight_for(monkeypatch, ["solve", no_door, *base]) == 0.0
+
+
 def test_solve_nose_out_defaults_on_and_no_nose_out_opts_out():
     """`--no-nose-out` flips the ``nose_out`` namespace default (#263); absent,
     it defaults ON (the solver prefers nose-out parked headings)."""
