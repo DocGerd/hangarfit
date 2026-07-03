@@ -327,10 +327,16 @@ google-chrome --headless=new --use-gl=angle --use-angle=swiftshader \
 # `#compare` and reading `#banner`.hidden (the viewer exposes state via the DOM).
 hangarfit view tests/fixtures/scenario_minimal.yaml --solve --alternatives 3 -o compare.html
 
-# v0.18.0 interactive placement editor (#442): view --edit turns the viewer into an
-# intent-capture surface — select planes (fleet_in), set priorities, pin at current pose,
-# then "Export scenario YAML" downloads a loader-valid Scenario that `solve` re-runs.
-# Requires --solve; rejects --alternatives. Editor code ships dormant unless --edit is set.
+# Interactive placement editor (#442 v0.18.0 MVP; v0.19.0 redesign #436): view --edit
+# turns the viewer into an intent-capture surface — select planes (fleet_in), set
+# priorities, pin at current pose, rank planes by door proximity (drag-to-order →
+# `door_order`, #907), add planes & movers from a catalog palette (start from an "empty
+# hangar", #910), and override a plane's cart mode for one scenario (`movement_mode` in
+# its constraints block, #909) — then "Export scenario YAML" downloads a loader-valid
+# Scenario that `solve` re-runs. Requires --solve; rejects --alternatives. Editor code
+# ships dormant unless --edit is set. (The #908 absolute door-bias soft term steers
+# `solve` toward a set door_order; it auto-arms when door_order is present, --no-door-bias
+# opts out.)
 hangarfit view tests/fixtures/scenario_minimal.yaml --solve --edit -o edit.html
 
 # #412 staging apron (ADR-0021): with apron_depth_m > 0 each tow path starts
