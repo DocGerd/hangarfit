@@ -1172,14 +1172,6 @@ def _resolve_fleet_hangar_refs(args: argparse.Namespace) -> tuple[str, str]:
     return str(fleet_abs), str(hangar_abs)
 
 
-def _cart_eligible_map(layout: Layout) -> dict[str, bool]:
-    """Which placed planes the editor may let the user TOGGLE ``on_carts`` for.
-    Only ``cart_eligible`` planes have a free choice; ``always_cart`` (locked True)
-    and ``always_own_gear`` (locked False) are fixed to the single value the loader
-    enforces, so their toggle stays disabled. Mirrors ``Aircraft.is_cart_eligible``."""
-    return {p.plane_id: layout.fleet[p.plane_id].is_cart_eligible for p in layout.placements}
-
-
 def _raw_scenario_refs(args: argparse.Namespace) -> tuple[str, str]:
     """Read the raw ``fleet:``/``hangar:`` ref strings from a ``view`` scenario file
     (verbatim, override-aware) for the editor-context blob echoed into the export.
@@ -1540,13 +1532,11 @@ def cmd_view(args: argparse.Namespace) -> int:
     try:
         if args.edit:
             fleet_ref, hangar_ref = _raw_scenario_refs(args)
-            cart_eligible = _cart_eligible_map(layout)
             ctx = viewer.build_editor_context(
                 fleet_ref=fleet_ref,
                 hangar_ref=hangar_ref,
                 maintenance_plane=layout.maintenance_plane,
                 layout=layout,
-                cart_eligible=cart_eligible,
             )
             viewer.render_edit_viewer(scene, ctx, args.output)
         else:

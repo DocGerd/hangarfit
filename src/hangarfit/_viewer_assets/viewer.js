@@ -732,7 +732,10 @@ function initialIntent(ctx) {
     // carries placed movers seeds this empty: the editor's intent surface owns
     // only what the user explicitly adds (consistent with the shipped behavior
     // where trailers render but are not captured by the export).
-    groundObjectIds: []
+    groundObjectIds: [],
+    // Cart-mode overrides start empty (#909) — no `movement_mode` is exported
+    // until the user changes a plane's mode, so the byte path is unchanged.
+    cartModeOverrides: {}
   };
 }
 function isSelected(intent, id) {
@@ -744,11 +747,26 @@ function toggleSelection(intent, id) {
   const priorities = { ...intent.priorities };
   const mustPositions = { ...intent.mustPositions };
   const doorOrder = selected ? intent.doorOrder.filter((x) => x !== id) : intent.doorOrder;
+  const cartModeOverrides = { ...intent.cartModeOverrides };
   if (selected) {
     delete priorities[id];
     delete mustPositions[id];
+    delete cartModeOverrides[id];
   }
-  return { selectedPlaneIds, priorities, mustPositions, doorOrder, groundObjectIds: intent.groundObjectIds };
+  return {
+    selectedPlaneIds,
+    priorities,
+    mustPositions,
+    doorOrder,
+    groundObjectIds: intent.groundObjectIds,
+    cartModeOverrides
+  };
+}
+function setCartModeOverride(intent, id, mode) {
+  const cartModeOverrides = { ...intent.cartModeOverrides };
+  if (mode === null) delete cartModeOverrides[id];
+  else cartModeOverrides[id] = mode;
+  return { ...intent, cartModeOverrides };
 }
 function setPriority(intent, id, priority) {
   const priorities = { ...intent.priorities };
@@ -819,11 +837,15 @@ function intentToScenarioYaml(intent, ctx) {
   if (ranked.length) lines.push(`door_order: [${ranked.join(", ")}]`);
   const movers = [...intent.groundObjectIds].filter((id) => ctx.catalog?.[id]?.kind === "placed_routed_mover").sort();
   if (movers.length) lines.push(`ground_objects: [${movers.join(", ")}]`);
-  const constrained = selected.filter((id) => intent.mustPositions[id] || intent.priorities[id] !== void 0);
+  const constrained = selected.filter(
+    (id) => intent.mustPositions[id] || intent.priorities[id] !== void 0 || intent.cartModeOverrides[id] !== void 0
+  );
   if (constrained.length) {
     lines.push("constraints:");
     for (const id of constrained) {
       lines.push(`  ${id}:`);
+      const mode = intent.cartModeOverrides[id];
+      if (mode !== void 0) lines.push(`    movement_mode: ${mode}`);
       const mp = intent.mustPositions[id];
       if (mp) {
         lines.push(
@@ -903,6 +925,9 @@ function mountEditor(opts) {
   const rankAdd = byId("rank-add");
   const doorList = byId("door-order-list");
   const paletteList = byId("palette-list");
+  const cartMode = byId("cart-mode");
+  const baseMode = (id) => opts.ctx.catalog?.[id]?.movementMode;
+  const effMode = (id) => intent.cartModeOverrides[id] ?? baseMode(id);
   const doorHint = byId("door-hint");
   const door = opts.ctx.door;
   if (door) {
@@ -935,6 +960,16 @@ function mountEditor(opts) {
     const hasPose = id !== null && id in opts.ctx.currentPoses;
     prio.disabled = !active;
     pinToggle.disabled = !active || !hasPose;
+    if (!active || id === null || baseMode(id) === void 0) {
+      cartMode.disabled = true;
+    } else {
+      cartMode.disabled = false;
+      cartMode.value = effMode(id) ?? "";
+      const canRadius = opts.ctx.catalog?.[id]?.hasTurnRadius ?? false;
+      for (const opt of Array.from(cartMode.options)) {
+        opt.disabled = opt.value !== "always_cart" && !canRadius;
+      }
+    }
     if (!active || id === null) {
       prio.value = "";
       pinToggle.checked = false;
@@ -951,8 +986,14 @@ function mountEditor(opts) {
         xIn.value = String(mp.x);
         yIn.value = String(mp.y);
         hIn.value = String(mp.heading);
-        cartsToggle.disabled = !opts.ctx.cartEligible[id];
-        cartsToggle.checked = mp.onCarts;
+        const mode = effMode(id);
+        if (mode === "cart_eligible") {
+          cartsToggle.disabled = false;
+          cartsToggle.checked = mp.onCarts;
+        } else {
+          cartsToggle.disabled = true;
+          cartsToggle.checked = mode === "always_cart";
+        }
       } else {
         cartsToggle.disabled = true;
         cartsToggle.checked = false;
@@ -972,6 +1013,17 @@ function mountEditor(opts) {
   cartsToggle.addEventListener("change", () => {
     if (!focusedId) return;
     intent = setOnCarts(intent, focusedId, cartsToggle.checked);
+  });
+  cartMode.addEventListener("change", () => {
+    const id = focusedId;
+    if (id === null) return;
+    const m = cartMode.value;
+    intent = setCartModeOverride(intent, id, m === baseMode(id) ? null : m);
+    if (intent.mustPositions[id]) {
+      if (m === "always_cart") intent = setOnCarts(intent, id, true);
+      else if (m === "always_own_gear") intent = setOnCarts(intent, id, false);
+    }
+    syncControls();
   });
   exportBtn.addEventListener("click", () => {
     const yaml = intentToScenarioYaml(intent, opts.ctx);

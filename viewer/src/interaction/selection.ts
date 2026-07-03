@@ -13,6 +13,9 @@ export function initialIntent(ctx: EditorContext): Intent {
     // only what the user explicitly adds (consistent with the shipped behavior
     // where trailers render but are not captured by the export).
     groundObjectIds: [],
+    // Cart-mode overrides start empty (#909) — no `movement_mode` is exported
+    // until the user changes a plane's mode, so the byte path is unchanged.
+    cartModeOverrides: {},
   };
 }
 
@@ -30,10 +33,25 @@ export function toggleSelection(intent: Intent, id: string): Intent {
   // Deselecting drops the plane's constraints AND its door-proximity rank —
   // you can't rank a plane that isn't in the layout.
   const doorOrder = selected ? intent.doorOrder.filter((x) => x !== id) : intent.doorOrder;
-  if (selected) { delete priorities[id]; delete mustPositions[id]; }
+  const cartModeOverrides = { ...intent.cartModeOverrides };
+  if (selected) { delete priorities[id]; delete mustPositions[id]; delete cartModeOverrides[id]; }
   // This is a fresh literal (not a `{ ...intent }` spread), so groundObjectIds
-  // must be carried explicitly — a plane toggle never touches the palette.
-  return { selectedPlaneIds, priorities, mustPositions, doorOrder, groundObjectIds: intent.groundObjectIds };
+  // and cartModeOverrides must be carried explicitly — a plane toggle never
+  // touches the palette, and deselecting drops the plane's cart-mode override.
+  return {
+    selectedPlaneIds, priorities, mustPositions, doorOrder,
+    groundObjectIds: intent.groundObjectIds, cartModeOverrides,
+  };
+}
+
+/** Set (or clear, with ``null``) a plane's cart-mode override (#909). The value
+ * is a movement mode ("always_own_gear" | "cart_eligible" | "always_cart"); the
+ * caller passes ``null`` when the user picks the plane's base mode, so an
+ * unchanged mode exports no `movement_mode` key (byte path unchanged). */
+export function setCartModeOverride(intent: Intent, id: string, mode: string | null): Intent {
+  const cartModeOverrides = { ...intent.cartModeOverrides };
+  if (mode === null) delete cartModeOverrides[id]; else cartModeOverrides[id] = mode;
+  return { ...intent, cartModeOverrides };
 }
 
 export function setPriority(intent: Intent, id: string, priority: number | null): Intent {

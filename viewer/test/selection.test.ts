@@ -4,7 +4,7 @@ import {
   initialIntent, isSelected, toggleSelection, setPriority,
   pinAtCurrent, unpin, setPinField, setOnCarts,
   addToDoorOrder, removeFromDoorOrder, moveInDoorOrder,
-  toggleGroundObject,
+  toggleGroundObject, setCartModeOverride,
 } from '../src/interaction/selection.ts';
 import type { EditorContext } from '../src/interaction/intent-contract.ts';
 
@@ -15,7 +15,10 @@ const CTX: EditorContext = {
     husky: { x_m: 2.1, y_m: 14.3, heading_deg: 0, on_carts: false },
     ctsl: { x_m: 5.0, y_m: 3.0, heading_deg: 90, on_carts: false },
   },
-  cartEligible: { husky: false, ctsl: false },
+  catalog: {
+    husky: { name: 'Husky', kind: 'aircraft', movementMode: 'always_own_gear', hasTurnRadius: true },
+    ctsl: { name: 'CTLS', kind: 'aircraft', movementMode: 'cart_eligible', hasTurnRadius: true },
+  },
 };
 
 test('initialIntent selects all rendered planes, no constraints', () => {
@@ -142,7 +145,6 @@ test('moveInDoorOrder: forward moves on a 3-element order splice correctly', () 
       b: { x_m: 1, y_m: 1, heading_deg: 0, on_carts: false },
       c: { x_m: 2, y_m: 2, heading_deg: 0, on_carts: false },
     },
-    cartEligible: { a: false, b: false, c: false },
   };
   let i = initialIntent(CTX3);
   i = addToDoorOrder(i, 'a');
@@ -215,4 +217,30 @@ test('toggleSelection preserves added ground objects', () => {
   let i = toggleGroundObject(initialIntent(CTX), 'glider_trailer_1');
   i = toggleSelection(i, 'husky');
   assert.deepEqual(i.groundObjectIds, ['glider_trailer_1']);
+});
+
+// --- #909 cart-mode override --------------------------------------------------
+
+test('initialIntent starts with no cart-mode overrides', () => {
+  assert.deepEqual(initialIntent(CTX).cartModeOverrides, {});
+});
+
+test('setCartModeOverride sets and clears a plane cart mode', () => {
+  let i = setCartModeOverride(initialIntent(CTX), 'husky', 'cart_eligible');
+  assert.equal(i.cartModeOverrides.husky, 'cart_eligible');
+  i = setCartModeOverride(i, 'husky', null); // picking the base mode clears it
+  assert.equal(i.cartModeOverrides.husky, undefined);
+});
+
+test('setCartModeOverride does not mutate its input', () => {
+  const base = setCartModeOverride(initialIntent(CTX), 'husky', 'always_cart');
+  const snapshot = JSON.stringify(base);
+  setCartModeOverride(base, 'ctsl', 'always_own_gear');
+  assert.equal(JSON.stringify(base), snapshot);
+});
+
+test('deselecting a plane drops its cart-mode override', () => {
+  let i = setCartModeOverride(initialIntent(CTX), 'husky', 'cart_eligible');
+  i = toggleSelection(i, 'husky');
+  assert.equal(i.cartModeOverrides.husky, undefined);
 });

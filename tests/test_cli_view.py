@@ -453,20 +453,3 @@ def test_view_edit_emits_editor_html(tmp_path):
     html = out.read_text(encoding="utf-8")
     assert 'id="editor-context"' in html
     assert 'id="scene"' in html
-
-
-def test_cart_eligible_map_only_true_for_cart_eligible():
-    from hangarfit.cli import _cart_eligible_map
-    from hangarfit.loader import load_layout
-
-    lay = load_layout("examples/layouts/example.yaml")
-    m = _cart_eligible_map(lay)
-    # matches the strict property for every placed plane
-    for p in lay.placements:
-        assert m[p.plane_id] == (lay.fleet[p.plane_id].movement_mode == "cart_eligible")
-    # an always_cart plane (locked on-carts) must NOT be toggle-eligible
-    always_cart = [
-        p.plane_id for p in lay.placements if lay.fleet[p.plane_id].movement_mode == "always_cart"
-    ]
-    for pid in always_cart:
-        assert m[pid] is False
