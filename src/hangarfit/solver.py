@@ -1602,7 +1602,15 @@ def _spread(
     movable = sorted(pid for pid in placements if pid not in pinned_planes)
     back_fill = search.back_bias_weight > 0.0
     region_active = bool(scenario.region_preferences)
-    if not movable or (len(placements) < 2 and not back_fill and not region_active):
+    # #908 absolute door-attraction: pull only the rank-1 door_order body toward
+    # the door, and exempt it from the back-fill deep-pull so the two don't cancel
+    # (rank1_only). door_rank1 is None (⇒ door_active False) unless armed.
+    door_order = scenario.door_order
+    door_rank1 = door_order[0] if door_order and search.door_bias_weight > 0.0 else None
+    door_active = door_rank1 is not None
+    if not movable or (
+        len(placements) < 2 and not back_fill and not region_active and not door_active
+    ):
         # Nothing to optimize: no movable target, or <2 planes with neither the
         # back-fill nor the region bias active (inter-plane energy is identically
         # 0.0). With back-fill OR a region preference active a lone body is still
@@ -1622,9 +1630,11 @@ def _spread(
         # the back-bias is a per-plane sum (no pairs) so it is always re-summed.
         e = _inter_plane_energy(trial, scenario, scale, gap_cache=gap_cache, moved=moved)
         if back_fill:
-            e += search.back_bias_weight * _back_bias_energy(trial, scenario)
+            e += search.back_bias_weight * _back_bias_energy(trial, scenario, exclude=door_rank1)
         if region_active:
             e += _region_energy(trial, scenario)
+        if door_active:
+            e += search.door_bias_weight * _door_bias_energy(trial, scenario)
         return e
 
     current_energy = _energy(placements)

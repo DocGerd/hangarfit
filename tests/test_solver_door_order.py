@@ -226,3 +226,33 @@ def test_back_bias_energy_exclude_skips_one_id():
     assert _back_bias_energy(pls, s, exclude="a") == 0.25
     # excluding an absent id is a no-op
     assert _back_bias_energy(pls, s, exclude="zzz") == 1.0
+
+
+def _rank1_y(res, pid="a"):
+    lay = res.layouts[0]
+    return next(p.y_m for p in lay.placements if p.plane_id == pid)
+
+
+def test_door_bias_makes_the_ranked_plane_the_door_nearest():
+    # Under door-bias, whichever plane is #1 parks (tied-)nearest the door — it
+    # steers the RELATIVE outcome, not a fixed corner. (Roomy 40x40 hangar.)
+    def ranked_is_door_nearest(order: tuple[str, ...], who: str) -> bool:
+        s = _scenario(door_order=order)
+        cfg = SearchConfig(max_restarts=4, spread=True, door_bias_weight=2.0)
+        lay = solve(s, search=cfg, seed=0, budget_s=120.0, plan_paths=False).layouts[0]
+        ys = {p.plane_id: p.y_m for p in lay.placements}
+        return all(ys[who] <= y for y in ys.values())
+
+    assert ranked_is_door_nearest(("a",), "a")
+    assert ranked_is_door_nearest(("b",), "b")
+
+
+def test_door_bias_overcomes_back_fill_for_rank1():
+    # With back-fill ON (pulls everyone deep), the rank-1 exemption + door-bias
+    # still land 'a' nearer the door than with door-bias off.
+    s = _scenario(door_order=("a",))
+    off = SearchConfig(max_restarts=4, spread=True, back_bias_weight=1.0)
+    on = SearchConfig(max_restarts=4, spread=True, back_bias_weight=1.0, door_bias_weight=1.0)
+    y_off = _rank1_y(solve(s, search=off, seed=0, budget_s=120.0, plan_paths=False))
+    y_on = _rank1_y(solve(s, search=on, seed=0, budget_s=120.0, plan_paths=False))
+    assert y_on < y_off
