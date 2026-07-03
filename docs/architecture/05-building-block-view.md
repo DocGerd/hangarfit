@@ -18,6 +18,7 @@ flowchart TD
     visualize["visualize.py<br/>top-down PNG renderer<br/>headless matplotlib"]
     scene["scene.py<br/>scene/v2 builder<br/>precomputed affines + timeline"]
     viewer["viewer.py<br/>self-contained 3D HTML<br/>inlined scene + vendored Three.js"]
+    server["server.py<br/>loopback HTTP backend (#445)<br/>GET / + POST /solve over the solve pipeline"]
     metrics["metrics.py<br/>read-only render annotations<br/>placeholder / gap / clearance / validity"]
     brand["brand.py<br/>single source of brand tokens<br/>CVD-safe palette / opacity / fonts"]
     sat["_sat.py<br/>opt-in numpy SAT box oracle<br/>collision narrow-phase accelerator"]
@@ -31,6 +32,12 @@ flowchart TD
     cli --> viewer
     cli --> models
     cli --> learned
+    cli --> server
+
+    server --> loader
+    server --> solver
+    server --> scene
+    server --> viewer
 
     loader --> models
 
@@ -554,6 +561,26 @@ YAML" `Blob`+`<a download>`. Per [ADR-0002](../adr/0002-determinant-minus-one-tr
 no file under `interaction/` imports `affine.ts` or `anchors.ts`: a pin is a scalar
 copy of Python-computed geometry, never a browser-composed transform, so the
 determinant −1 sign-flip trap cannot recur here by construction.
+
+### `server.py` — loopback HTTP backend for the live editor
+
+`hangarfit serve <scenario>` ([#445](https://github.com/DocGerd/hangarfit/issues/445),
+[ADR-0030](../adr/0030-hangarfit-serve-local-backend.md)) closes the editor loop in
+the browser: instead of exporting a `Scenario` YAML to re-run on the CLI, the
+`--edit` viewer's **Calculate** button POSTs its exported scenario and re-renders the
+result live. The module is **pure transport** over the existing pipeline — it adds no
+solver, geometry, or transform logic. A stdlib `http.server` bound to `127.0.0.1`
+exposes `GET /` (the inlined editor via `viewer.build_edit_html` with a `serve-config`
+blob) and `POST /solve` (an exported scenario → `load_scenario → solve → build_scene`
+→ a `scene/v2` JSON doc). The POST body is resolved through a temp file written in the
+seed scenario's directory, so a served solve is byte-identically
+`hangarfit solve <exported.yaml>`. Because solving never leaves the one Python
+runtime, the determinant −1 transform ([ADR-0002](../adr/0002-determinant-minus-one-transform.md))
+and determinism ([ADR-0003](../adr/0003-rr-mc-solver-algorithm.md)) are untouched, and
+the offline single-file export ([ADR-0017](../adr/0017-3d-viewer-architecture.md)) is
+unchanged. Loopback-only bind (no `--host`) plus a `Host`-header allowlist guard
+against DNS-rebinding; YAML input safety is inherited from the loader's `yaml.safe_load`
++ scenario-key allowlist.
 
 ### `metrics.py` — read-only render annotations
 

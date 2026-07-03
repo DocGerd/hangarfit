@@ -18,7 +18,7 @@ This file is the durable **operational** context for the project: how we work, w
 |---|---|
 | What `hangarfit` is and the quality goals it optimizes for | [§1 Introduction & Goals](docs/architecture/01-introduction-and-goals.md) |
 | What is in / out of scope, the external actors, exit-code semantics pointer | [§3 Context & Scope](docs/architecture/03-context-and-scope.md) |
-| Module map (`cli`, `loader`, `models`, `geometry`, `collisions`, `_sat`, `solver`, `learned`, `towplanner`, `visualize`, `scene`, `viewer`, `metrics`, `brand`) and per-module responsibilities | [§5 Building Block View](docs/architecture/05-building-block-view.md) |
+| Module map (`cli`, `loader`, `models`, `geometry`, `collisions`, `_sat`, `solver`, `learned`, `towplanner`, `visualize`, `scene`, `viewer`, `server`, `metrics`, `brand`) and per-module responsibilities | [§5 Building Block View](docs/architecture/05-building-block-view.md) |
 | Runtime flow of `check` and `solve` invocations | [§6 Runtime View](docs/architecture/06-runtime-view.md) |
 | **The parts model** (collision rule, why parts not bbox, `struts:` block, the fuselage front/aft split, the optional `vertices:` fuselage outline polygon clipped into front/aft sub-polygons (#550), the **empennage** `tail`+`vertical_stabilizer` surfaces — a wingtip may overhang a low-winger's *low tailplane* but not its *cockpit*, and not its *fin* which rises into the wing layer) | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#the-parts-model) + [ADR-0001](docs/adr/0001-aircraft-parts-model.md) + [ADR-0012](docs/adr/0012-fuselage-front-aft-split.md) + [ADR-0023](docs/adr/0023-empennage-tail-surfaces.md) |
 | **The coordinate convention + the determinant-−1 transform trap** | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#the-coordinate-convention) + [ADR-0002](docs/adr/0002-determinant-minus-one-transform.md) |
@@ -338,6 +338,14 @@ hangarfit view tests/fixtures/scenario_minimal.yaml --solve --alternatives 3 -o 
 # #1-ranked plane of a set door_order toward the door; it auto-arms when door_order is
 # present, --no-door-bias opts out.)
 hangarfit view tests/fixtures/scenario_minimal.yaml --solve --edit -o edit.html
+
+# #445 serve (ADR-0030): a local loopback backend so the --edit viewer's Calculate
+# button re-solves live instead of exporting a YAML to re-run by hand. Pure
+# transport over the unchanged solve pipeline — GET / serves the editor; POST
+# /solve takes an exported Scenario YAML and returns a scene/v2 doc. Binds
+# 127.0.0.1 ONLY (no --host), Host-header guarded; the offline single-file export
+# is unchanged. Auto-opens a browser (--no-open suppresses); Ctrl-C to stop.
+hangarfit serve tests/fixtures/scenario_minimal.yaml --port 8765
 
 # #412 staging apron (ADR-0021): with apron_depth_m > 0 each tow path starts
 # OUTSIDE the door (y<0) and slides in. Set it on the hangar.yaml or override
