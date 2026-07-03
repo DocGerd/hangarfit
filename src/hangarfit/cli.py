@@ -539,6 +539,66 @@ def build_parser() -> argparse.ArgumentParser:
         help="Emit the interactive placement editor (requires --solve; rejects --alternatives).",
     )
 
+    serve = sub.add_parser(
+        "serve",
+        help="Run a local loopback backend so the --edit viewer can Calculate live (#445).",
+    )
+    serve.add_argument("input", help="Scenario YAML to seed the editor (solved on start).")
+    serve.add_argument(
+        "--fleet", metavar="PATH", default=None, help="Override the fleet data file."
+    )
+    serve.add_argument(
+        "--hangar", metavar="PATH", default=None, help="Override the hangar data file."
+    )
+    serve.add_argument(
+        "--max-carts",
+        type=int,
+        metavar="N",
+        default=None,
+        dest="max_carts",
+        help="Override the hangar's spare-cart count for the cart_eligible pool.",
+    )
+    serve.add_argument(
+        "--apron-depth",
+        type=_apron_depth_arg,
+        metavar="N|auto",
+        default=None,
+        dest="apron_depth",
+        help="Staging-apron depth (m); 'auto' derives from the fleet (ADR-0021).",
+    )
+    serve.add_argument(
+        "--seed", type=int, default=None, metavar="S", help="RNG seed (default: entropy)."
+    )
+    serve.add_argument(
+        "--budget",
+        type=float,
+        default=30.0,
+        metavar="SEC",
+        help="Per-solve wall-clock budget in seconds (default: 30.0).",
+    )
+    serve.add_argument(
+        "--spread",
+        action="store_true",
+        help="Keep the inter-plane spread post-pass ON (default OFF, as for view --solve).",
+    )
+    serve.add_argument(
+        "--no-nose-out",
+        action="store_false",
+        dest="nose_out",
+        default=True,
+        help="Disable the nose-out parked-heading preference (#263).",
+    )
+    serve.add_argument(
+        "--port", type=int, default=8765, metavar="N", help="Loopback port (default: 8765)."
+    )
+    serve.add_argument(
+        "--no-open",
+        action="store_false",
+        dest="open_browser",
+        default=True,
+        help="Do not auto-open a browser; just print the URL.",
+    )
+
     return parser
 
 
@@ -1548,6 +1608,37 @@ def cmd_view(args: argparse.Namespace) -> int:
     return 0
 
 
+def cmd_serve(args: argparse.Namespace) -> int:
+    """Run the ``serve`` subcommand: a local loopback backend for the live editor (#445).
+
+    Blocks (``serve_forever``) until interrupted; returns 0 on a clean shutdown.
+    Reuses the unchanged ``load_scenario -> solve -> build_scene`` pipeline over
+    HTTP (ADR-0030) — Python stays the solver/transform authority (ADR-0002)."""
+    from hangarfit import server
+
+    try:
+        server.serve(
+            args.input,
+            port=args.port,
+            open_browser=args.open_browser,
+            fleet=args.fleet,
+            hangar=args.hangar,
+            max_carts=args.max_carts,
+            apron_depth=args.apron_depth,
+            seed=args.seed,
+            budget_s=args.budget,
+            spread=args.spread,
+            nose_out=args.nose_out,
+        )
+    except LoaderError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    except OSError as e:  # e.g. the port is already in use
+        print(f"error: could not start server: {e}", file=sys.stderr)
+        return 2
+    return 0
+
+
 def main(argv: list[str] | None = None) -> int:
     """Entry point. Returns an exit code; does not call ``sys.exit``."""
     parser = build_parser()
@@ -1558,5 +1649,7 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_solve(args)
     if args.cmd == "view":
         return cmd_view(args)
+    if args.cmd == "serve":
+        return cmd_serve(args)
     # argparse with required=True should make this unreachable.
     parser.error(f"unknown command: {args.cmd!r}")

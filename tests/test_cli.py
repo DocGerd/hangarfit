@@ -422,3 +422,32 @@ def test_solve_json_single_plane_min_gap_is_null(capsys):
     payload = json.loads(raw)  # must parse
     gaps = payload["diagnostics"]["min_pairwise_gap_m"]
     assert gaps == [None]
+
+
+def test_serve_cli_invokes_server_with_parsed_args(monkeypatch):
+    # #445: the serve subcommand wires the parsed args through to server.serve.
+    from hangarfit import server
+
+    captured = {}
+
+    def fake_serve(scenario_path, **kw):
+        captured["path"] = str(scenario_path)
+        captured.update(kw)
+
+    monkeypatch.setattr(server, "serve", fake_serve)
+    rc = main(
+        [
+            "serve",
+            "tests/fixtures/scenario_minimal.yaml",
+            "--port",
+            "9001",
+            "--no-open",
+            "--seed",
+            "7",
+        ]
+    )
+    assert rc == 0
+    assert captured["path"].endswith("scenario_minimal.yaml")
+    assert captured["port"] == 9001
+    assert captured["open_browser"] is False
+    assert captured["seed"] == 7
