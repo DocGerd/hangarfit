@@ -15,9 +15,9 @@ export interface Intent {
   // `ground_objects` key is exported (byte path unchanged).
   groundObjectIds: string[];
   // Per-plane cart-mode overrides (#909 → a `movement_mode` key in the exported
-  // scenario's `constraints` block). Relaxes/changes a LOCKED plane's cart mode
-  // for this one scenario. Empty ⇒ no `movement_mode` is exported (byte path
-  // unchanged). Deselecting a plane drops its override.
+  // scenario's `constraints` block). Changes a plane's cart mode for this one
+  // scenario (typically to relax a LOCKED plane). Empty ⇒ no `movement_mode` is
+  // exported (byte path unchanged). Deselecting a plane drops its override.
   cartModeOverrides: Record<string, string>;
 }
 export interface CurrentPose { x_m: number; y_m: number; heading_deg: number; on_carts: boolean; }

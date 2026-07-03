@@ -162,6 +162,51 @@ def test_constraint_movement_mode_override_on_maintenance_rejected(tmp_path):
         load_scenario(p)
 
 
+def test_constraint_movement_mode_override_standalone_no_pin(tmp_path):
+    # #909 review: a movement_mode override stands alone (no pin/priority) and
+    # still loads and applies to the fleet — the plane just gets a "free"
+    # constraint whose only effect is the fleet-level mode change.
+    from hangarfit.loader import load_scenario
+
+    p = _write_909_scenario(
+        tmp_path,
+        "fleet_in: [aviat_husky, fuji]\n"
+        "constraints:\n"
+        "  aviat_husky:\n"
+        "    movement_mode: always_cart\n",
+    )
+    sc = load_scenario(p)
+    assert sc.fleet["aviat_husky"].movement_mode == "always_cart"
+    assert sc.constraints["aviat_husky"].pin is None  # free constraint, no pin
+
+
+def test_constraint_movement_mode_override_does_not_mutate_caller_fleet(tmp_path):
+    # #909 review (silent-failure-hunter): the override is applied to a COPY, so a
+    # caller-supplied `fleet=` dict is never contaminated — else a reused fleet
+    # would silently leak the first scenario's override into the next load. (The
+    # scenario omits a `fleet:` ref because passing both it and `fleet=` is a
+    # deliberate load-time disambiguation error.)
+    from pathlib import Path
+
+    from hangarfit.loader import load_fleet, load_scenario
+
+    repo = Path(__file__).resolve().parents[1]
+    fleet = load_fleet(repo / "data" / "fleet.yaml")
+    assert fleet["aviat_husky"].movement_mode == "always_own_gear"  # baseline
+
+    p = tmp_path / "sc_no_fleet_ref.yaml"
+    p.write_text(
+        f"hangar: {repo / 'data' / 'hangar.yaml'}\n"
+        "fleet_in: [aviat_husky, fuji]\n"
+        "constraints:\n"
+        "  aviat_husky:\n"
+        "    movement_mode: cart_eligible\n"
+    )
+    sc = load_scenario(p, fleet=fleet)
+    assert sc.fleet["aviat_husky"].movement_mode == "cart_eligible"  # applied to the result
+    assert fleet["aviat_husky"].movement_mode == "always_own_gear"  # caller's dict UNTOUCHED
+
+
 def test_load_scenario_rejects_maintenance_plane_not_in_fleet_in(tmp_path):
     """Loader-path: maintenance.plane not in fleet_in raises LoaderError with
     an actionable message that includes the path, the bad plane id, the

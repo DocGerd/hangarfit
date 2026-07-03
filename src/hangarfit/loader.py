@@ -956,13 +956,20 @@ def load_scenario(
     # per-scenario exception layered on top of any manifest movement_mode override
     # (scenario wins — the most-local exception, applied last). Rebuilding the
     # Aircraft re-fires Aircraft.__post_init__ (the turn-radius gate); wrap its
-    # ValueError into a LoaderError to keep the exit-2 contract. Absent overrides ⇒
-    # `fleet` is untouched and the built Scenario is identical to pre-#909.
-    for pid, mode in mode_overrides.items():
-        try:
-            fleet[pid] = _apply_movement_override(fleet[pid], mode)
-        except ValueError as e:
-            raise LoaderError(f"{path}: constraint {pid!r}: movement_mode override — {e}") from e
+    # ValueError into a LoaderError to keep the exit-2 contract. Copy the fleet
+    # first so the override stays local to THIS Scenario — a caller-supplied
+    # `fleet=` dict (the documented kwarg) must never be mutated in place. Absent
+    # overrides ⇒ `fleet` is untouched and the built Scenario is identical to
+    # pre-#909 (the byte-identity promise is gated on the `if`).
+    if mode_overrides:
+        fleet = dict(fleet)
+        for pid, mode in mode_overrides.items():
+            try:
+                fleet[pid] = _apply_movement_override(fleet[pid], mode)
+            except ValueError as e:
+                raise LoaderError(
+                    f"{path}: constraint {pid!r}: movement_mode override — {e}"
+                ) from e
 
     try:
         return Scenario(
@@ -1021,12 +1028,18 @@ def _build_plane_constraint(plane_id: str, data: Any) -> PlaneConstraint:
             force_on_carts: <bool>
             priority: <float>   # soft, >= 0 (#441)
             nose_out: <bool>    # soft tri-state; omit ⇒ follow global (#263)
+            movement_mode: <mode>  # cart-mode override (#909); see below
 
     ``pin``, ``force_on_carts`` and ``priority`` are all optional. Omitting all
     yields a "free" constraint (the solver may place the plane anywhere
     within physical / cart-rule limits). ``priority`` is a soft spread weight
     (see :class:`~hangarfit.models.PlaneConstraint`); its range is validated by
     ``Scenario.__post_init__``.
+
+    ``movement_mode`` (#909) is accepted by ``_ALLOWED_CONSTRAINT_KEYS`` but is
+    **not** built into the ``PlaneConstraint`` here — the caller applies it as a
+    per-scenario fleet transform (``_apply_movement_override``), so it is a
+    property of the airframe, not this placement directive.
 
     **Implicit ``pin.plane_id``** — the loader fills :attr:`Placement.plane_id`
     from the constraint key, so authors don't repeat the plane id under
