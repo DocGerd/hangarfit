@@ -21,6 +21,7 @@ from hangarfit.models import (
     SearchConfig,
 )
 from hangarfit.solver import (
+    _door_bias_energy,
     _door_order_deviation,
     _empty_layout,
     _select_spread_diverse,
@@ -181,3 +182,34 @@ def test_solve_door_order_active_deterministic():
     a = solve(s, search=cfg, seed=0, budget_s=120.0, plan_paths=False)
     b = solve(s, search=cfg, seed=0, budget_s=120.0, plan_paths=False)
     assert _key(a.layouts) == _key(b.layouts)
+
+
+# --- _door_bias_energy absolute-attraction term (#908) ---------------------
+
+
+def test_door_bias_energy_unset_is_zero():
+    s = _scenario()  # door_order is None
+    assert _door_bias_energy({"a": _pl("a", 5.0)}, s) == 0.0  # inert ⇒ byte-identical
+
+
+def test_door_bias_energy_empty_order_is_zero():
+    s = _scenario(door_order=())
+    assert _door_bias_energy({"a": _pl("a", 5.0)}, s) == 0.0
+
+
+def test_door_bias_energy_rank1_absent_is_zero():
+    s = _scenario(door_order=("a", "b"))
+    assert _door_bias_energy({"b": _pl("b", 5.0)}, s) == 0.0  # rank-1 'a' not placed
+
+
+def test_door_bias_energy_is_rank1_y_over_length():
+    s = _scenario(door_order=("a", "b"))  # only rank-1 'a' matters
+    # length_m = 40.0 (see _hangar); a at y=10 ⇒ 10/40 = 0.25, independent of 'b'.
+    assert _door_bias_energy({"a": _pl("a", 10.0), "b": _pl("b", 2.0)}, s) == 0.25
+
+
+def test_door_bias_energy_minimized_at_the_door():
+    s = _scenario(door_order=("a",))
+    near = _door_bias_energy({"a": _pl("a", 1.0)}, s)
+    far = _door_bias_energy({"a": _pl("a", 30.0)}, s)
+    assert near < far  # smaller y (nearer the door at y=0) ⇒ lower energy

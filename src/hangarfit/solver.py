@@ -1342,6 +1342,33 @@ def _back_bias_energy(placements: dict[str, Placement], scenario: Scenario) -> f
     return sum((length - placements[pid].y_m) / length for pid in sorted(placements))
 
 
+def _door_bias_energy(placements: Mapping[str, Placement], scenario: Scenario) -> float:
+    """Absolute door-attraction bias ``D = y_{rank1} / length_m`` (#908).
+
+    The sign-flipped mirror of :func:`_back_bias_energy`: minimized when the
+    rank-1 ``door_order`` body sits AT the door (``y = 0``), so the spread
+    hill-climb actively pulls the top-priority plane doorward (the absolute
+    steering the relative :func:`_door_order_deviation` tiebreak never supplies —
+    it is provably inert for a lone ``#1``).
+
+    Only ``door_order[0]`` is steered (rank1_only); ranks 2..N are left to the
+    relative selection tiebreak. Returns ``0.0`` when ``door_order`` is falsy
+    (``None`` or the loader-permitted empty ``()``) or the rank-1 body is not
+    placed (e.g. a maintenance-away plane) — skipped exactly like
+    :func:`_back_bias_energy` / :func:`_region_energy` / :func:`_door_order_deviation`.
+    Division-only (no ``exp``) ⇒ cross-machine byte-safe. RNG-free. The
+    ``door_bias_weight`` multiplier is applied at the ``_spread._energy`` call
+    site (mirrors ``back_bias_weight * _back_bias_energy``).
+    """
+    order = scenario.door_order
+    if not order:
+        return 0.0
+    rank1 = order[0]
+    if rank1 not in placements:
+        return 0.0
+    return placements[rank1].y_m / scenario.hangar.length_m
+
+
 def _region_energy(placements: Mapping[str, Placement], scenario: Scenario) -> float:
     """Soft right/left wall-alignment bias ``R = Σ wₒ·dₒ / W`` (#604).
 
