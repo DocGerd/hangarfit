@@ -7,6 +7,12 @@ export function initialIntent(ctx: EditorContext): Intent {
     priorities: {},
     mustPositions: {},
     doorOrder: [],
+    // Palette additions start empty — an untouched editor exports the same bytes
+    // as before #910 (no `ground_objects` key). Even a layout that already
+    // carries placed movers seeds this empty: the editor's intent surface owns
+    // only what the user explicitly adds (consistent with the shipped behavior
+    // where trailers render but are not captured by the export).
+    groundObjectIds: [],
   };
 }
 
@@ -25,7 +31,9 @@ export function toggleSelection(intent: Intent, id: string): Intent {
   // you can't rank a plane that isn't in the layout.
   const doorOrder = selected ? intent.doorOrder.filter((x) => x !== id) : intent.doorOrder;
   if (selected) { delete priorities[id]; delete mustPositions[id]; }
-  return { selectedPlaneIds, priorities, mustPositions, doorOrder };
+  // This is a fresh literal (not a `{ ...intent }` spread), so groundObjectIds
+  // must be carried explicitly — a plane toggle never touches the palette.
+  return { selectedPlaneIds, priorities, mustPositions, doorOrder, groundObjectIds: intent.groundObjectIds };
 }
 
 export function setPriority(intent: Intent, id: string, priority: number | null): Intent {
@@ -84,4 +92,18 @@ export function moveInDoorOrder(intent: Intent, from: number, to: number): Inten
   const [item] = doorOrder.splice(from, 1);
   doorOrder.splice(to, 0, item);
   return { ...intent, doorOrder };
+}
+
+// --- Catalog palette: ground objects (#910 → Scenario.ground_objects) ---------
+
+/** Toggle a ground object in/out of the palette additions. Adding keeps the list
+ * sorted (order is irrelevant — the solver places movers — so a canonical order
+ * keeps the export deterministic). The op is kind-agnostic; the editor gates
+ * which kinds are offered and the export filters to movers via the catalog. */
+export function toggleGroundObject(intent: Intent, id: string): Intent {
+  const present = intent.groundObjectIds.includes(id);
+  const groundObjectIds = present
+    ? intent.groundObjectIds.filter((x) => x !== id)
+    : [...intent.groundObjectIds, id].sort();
+  return { ...intent, groundObjectIds };
 }

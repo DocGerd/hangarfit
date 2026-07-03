@@ -726,7 +726,13 @@ function initialIntent(ctx) {
     selectedPlaneIds: Object.keys(ctx.currentPoses).sort(),
     priorities: {},
     mustPositions: {},
-    doorOrder: []
+    doorOrder: [],
+    // Palette additions start empty — an untouched editor exports the same bytes
+    // as before #910 (no `ground_objects` key). Even a layout that already
+    // carries placed movers seeds this empty: the editor's intent surface owns
+    // only what the user explicitly adds (consistent with the shipped behavior
+    // where trailers render but are not captured by the export).
+    groundObjectIds: []
   };
 }
 function isSelected(intent, id) {
@@ -742,7 +748,7 @@ function toggleSelection(intent, id) {
     delete priorities[id];
     delete mustPositions[id];
   }
-  return { selectedPlaneIds, priorities, mustPositions, doorOrder };
+  return { selectedPlaneIds, priorities, mustPositions, doorOrder, groundObjectIds: intent.groundObjectIds };
 }
 function setPriority(intent, id, priority) {
   const priorities = { ...intent.priorities };
@@ -787,6 +793,11 @@ function moveInDoorOrder(intent, from, to) {
   doorOrder.splice(to, 0, item);
   return { ...intent, doorOrder };
 }
+function toggleGroundObject(intent, id) {
+  const present = intent.groundObjectIds.includes(id);
+  const groundObjectIds = present ? intent.groundObjectIds.filter((x) => x !== id) : [...intent.groundObjectIds, id].sort();
+  return { ...intent, groundObjectIds };
+}
 
 // src/interaction/export.ts
 function num(n) {
@@ -806,6 +817,8 @@ function intentToScenarioYaml(intent, ctx) {
   }
   const ranked = intent.doorOrder.filter((id) => selected.includes(id));
   if (ranked.length) lines.push(`door_order: [${ranked.join(", ")}]`);
+  const movers = [...intent.groundObjectIds].filter((id) => ctx.catalog?.[id]?.kind === "placed_routed_mover").sort();
+  if (movers.length) lines.push(`ground_objects: [${movers.join(", ")}]`);
   const constrained = selected.filter((id) => intent.mustPositions[id] || intent.priorities[id] !== void 0);
   if (constrained.length) {
     lines.push("constraints:");
@@ -872,6 +885,7 @@ function mountEditor(opts) {
     renderReadout();
     syncControls();
     renderDoorOrder();
+    renderPalette();
   });
   function applyHighlight() {
     for (const t of targets) {
@@ -888,6 +902,7 @@ function mountEditor(opts) {
   const exportBtn = byId("export");
   const rankAdd = byId("rank-add");
   const doorList = byId("door-order-list");
+  const paletteList = byId("palette-list");
   const doorHint = byId("door-hint");
   const door = opts.ctx.door;
   if (door) {
@@ -1001,10 +1016,50 @@ function mountEditor(opts) {
     intent = addToDoorOrder(intent, focusedId);
     renderDoorOrder();
   });
+  const KIND_LABEL = {
+    aircraft: "aircraft",
+    placed_routed_mover: "mover",
+    fixed_obstacle: "fixed"
+  };
+  function renderPalette() {
+    const catalog = opts.ctx.catalog ?? {};
+    paletteList.textContent = "";
+    for (const id of Object.keys(catalog).sort()) {
+      const { name, kind } = catalog[id];
+      const isAircraft = kind === "aircraft";
+      const isMover = kind === "placed_routed_mover";
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = isAircraft ? isSelected(intent, id) : intent.groundObjectIds.includes(id);
+      box.disabled = !(isAircraft || isMover);
+      box.addEventListener("change", () => {
+        if (isAircraft) {
+          intent = toggleSelection(intent, id);
+          focusedId = isSelected(intent, id) ? id : focusedId === id ? null : focusedId;
+          applyHighlight();
+          renderReadout();
+          syncControls();
+          renderDoorOrder();
+        } else if (isMover) {
+          intent = toggleGroundObject(intent, id);
+        }
+        renderPalette();
+      });
+      const badge = document.createElement("span");
+      badge.className = "kind";
+      badge.textContent = KIND_LABEL[kind] ?? kind;
+      const label = document.createElement("label");
+      label.append(box, document.createTextNode(` ${name} `), badge);
+      const li = document.createElement("li");
+      li.appendChild(label);
+      paletteList.appendChild(li);
+    }
+  }
   applyHighlight();
   renderReadout();
   syncControls();
   renderDoorOrder();
+  renderPalette();
   return { getIntent: () => intent };
 }
 

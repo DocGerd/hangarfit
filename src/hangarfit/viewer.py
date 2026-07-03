@@ -169,6 +169,21 @@ def build_editor_context(
             "center_x_m": layout.hangar.door.center_x_m,
             "width_m": layout.hangar.door.width_m,
         },
+        # The full catalog for the "add from an empty hangar" palette (#910):
+        # EVERY fleet aircraft (not just the placed ones, which is all
+        # currentPoses carries) plus every ground object, so the user can start
+        # from nothing and pick what goes in. ``kind`` is "aircraft" for planes
+        # and the GroundObject.object_class ("fixed_obstacle" |
+        # "placed_routed_mover") for objects — the editor gates what the palette
+        # can add offline (aircraft + movers) on it. Fleet and ground-object ids
+        # are disjoint, so the merged map has no collisions.
+        "catalog": {
+            **{aid: {"name": ac.name, "kind": "aircraft"} for aid, ac in layout.fleet.items()},
+            **{
+                gid: {"name": go.name, "kind": go.object_class}
+                for gid, go in layout.ground_objects.items()
+            },
+        },
     }
 
 
@@ -256,6 +271,13 @@ _CSS = (
     # rule is inert in single/compare mode.
     f"#door-hint{{margin:0 8px;font-family:{brand.FONT_MONO};"
     f"color:{brand.READOUTS_TEXT};font-variant-numeric:tabular-nums}}"
+    # #910 catalog palette: a compact scrollable checklist (it can list the whole
+    # fleet + every ground object) with a muted mono kind badge. Editor-only
+    # markup, so these rules are inert in single/compare mode.
+    "#palette-list{list-style:none;margin:4px 0 0;padding:0;max-height:120px;"
+    "overflow:auto;display:flex;flex-direction:column;gap:2px}"
+    f"#palette-list .kind{{margin-left:6px;font-family:{brand.FONT_MONO};"
+    f"color:{brand.READOUTS_TEXT};font-size:11px;font-variant-numeric:tabular-nums}}"
     "#legend{display:flex;gap:8px;flex-wrap:wrap}"
     ".sw{display:inline-flex;align-items:center;gap:4px}"
     ".sw i{width:11px;height:11px;border-radius:2px;display:inline-block}"
@@ -298,6 +320,13 @@ _HUD_EDIT = _HUD + (
     '<span id="door-hint"></span>'
     '<button id="rank-add" type="button">＋ rank selected</button>'
     '<ol id="door-order-list"></ol></div>'
+    # #910 catalog palette: "add from an empty hangar". editor.ts fills the list
+    # from the editor-context `catalog` — every fleet aircraft + ground object,
+    # each a toggle (aircraft → selection, mover → ground_objects). Fixed
+    # obstacles are shown disabled (they need an authored pose). Empty markup
+    # here keeps it inert until editor.ts renders it.
+    '<div id="palette"><span id="palette-title">catalog (add to hangar)</span>'
+    '<ul id="palette-list"></ul></div>'
     '<button id="export">Export scenario YAML</button></div>'
 )
 # #666 compare HUD: a solution switcher (dropdown, also ←/→ keys) prepended to the

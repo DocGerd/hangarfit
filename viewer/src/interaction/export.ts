@@ -24,6 +24,16 @@ export function intentToScenarioYaml(intent: Intent, ctx: EditorContext): string
   const ranked = intent.doorOrder.filter((id) => selected.includes(id));
   if (ranked.length) lines.push(`door_order: [${ranked.join(', ')}]`);
 
+  // Palette-added ground objects → Scenario.ground_objects (#910). A bare id is
+  // a placed_routed_mover the solver places (loader #601/#604); a fixed_obstacle
+  // needs an authored pose the offline editor can't produce, so filter to movers
+  // via the catalog (defensive — the palette never offers fixed obstacles).
+  // Emitted only when non-empty, so an editor with no additions is byte-identical.
+  const movers = [...intent.groundObjectIds]
+    .filter((id) => ctx.catalog?.[id]?.kind === 'placed_routed_mover')
+    .sort();
+  if (movers.length) lines.push(`ground_objects: [${movers.join(', ')}]`);
+
   // Only selected planes may carry constraints (never the maintenance plane).
   const constrained = selected.filter((id) => intent.mustPositions[id] || intent.priorities[id] !== undefined);
   if (constrained.length) {

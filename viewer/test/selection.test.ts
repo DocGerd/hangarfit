@@ -4,6 +4,7 @@ import {
   initialIntent, isSelected, toggleSelection, setPriority,
   pinAtCurrent, unpin, setPinField, setOnCarts,
   addToDoorOrder, removeFromDoorOrder, moveInDoorOrder,
+  toggleGroundObject,
 } from '../src/interaction/selection.ts';
 import type { EditorContext } from '../src/interaction/intent-contract.ts';
 
@@ -180,4 +181,38 @@ test('door-order ops do not mutate their input', () => {
   removeFromDoorOrder(base, 'husky');
   moveInDoorOrder(base, 0, 0);
   assert.equal(JSON.stringify(base), snapshot);
+});
+
+// --- #910 catalog palette: ground-object selection ----------------------------
+
+test('initialIntent starts with an empty groundObjectIds', () => {
+  assert.deepEqual(initialIntent(CTX).groundObjectIds, []);
+});
+
+test('toggleGroundObject adds a mover id, kept sorted', () => {
+  let i = toggleGroundObject(initialIntent(CTX), 'glider_trailer_2');
+  assert.deepEqual(i.groundObjectIds, ['glider_trailer_2']);
+  i = toggleGroundObject(i, 'glider_trailer_1');
+  assert.deepEqual(i.groundObjectIds, ['glider_trailer_1', 'glider_trailer_2']); // sorted
+});
+
+test('toggleGroundObject removes an already-added id', () => {
+  let i = toggleGroundObject(initialIntent(CTX), 'glider_trailer_1');
+  i = toggleGroundObject(i, 'glider_trailer_1');
+  assert.deepEqual(i.groundObjectIds, []);
+});
+
+test('toggleGroundObject does not mutate its input', () => {
+  const base = toggleGroundObject(initialIntent(CTX), 'glider_trailer_1');
+  const snapshot = JSON.stringify(base);
+  toggleGroundObject(base, 'glider_trailer_2');
+  assert.equal(JSON.stringify(base), snapshot);
+});
+
+test('toggleSelection preserves added ground objects', () => {
+  // toggleSelection builds a fresh Intent literal (not a spread), so it must
+  // explicitly carry groundObjectIds — a plane toggle can't wipe the palette.
+  let i = toggleGroundObject(initialIntent(CTX), 'glider_trailer_1');
+  i = toggleSelection(i, 'husky');
+  assert.deepEqual(i.groundObjectIds, ['glider_trailer_1']);
 });
