@@ -334,9 +334,9 @@ hangarfit view tests/fixtures/scenario_minimal.yaml --solve --alternatives 3 -o 
 # hangar", #910), and override a plane's cart mode for one scenario (`movement_mode` in
 # its constraints block, #909) — then "Export scenario YAML" downloads a loader-valid
 # Scenario that `solve` re-runs. Requires --solve; rejects --alternatives. Editor code
-# ships dormant unless --edit is set. (The #908 absolute door-bias soft term steers
-# `solve` toward a set door_order; it auto-arms when door_order is present, --no-door-bias
-# opts out.)
+# ships dormant unless --edit is set. (The #908 absolute door-bias soft term pulls the
+# #1-ranked plane of a set door_order toward the door; it auto-arms when door_order is
+# present, --no-door-bias opts out.)
 hangarfit view tests/fixtures/scenario_minimal.yaml --solve --edit -o edit.html
 
 # #412 staging apron (ADR-0021): with apron_depth_m > 0 each tow path starts
