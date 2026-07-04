@@ -161,6 +161,9 @@ def test_assets_are_packaged():
     assert resources.files("hangarfit._viewer_assets").joinpath("viewer.js").is_file()
     assert resources.files("hangarfit._viewer_assets.three").joinpath("three.module.js").is_file()
     assert resources.files("hangarfit._viewer_assets.three").joinpath("OrbitControls.js").is_file()
+    assert (
+        resources.files("hangarfit._viewer_assets.three").joinpath("TransformControls.js").is_file()
+    )
 
 
 def test_inlined_viewer_js_has_no_script_close():
@@ -452,6 +455,22 @@ def test_build_editor_context_shape():
         if lay.maintenance_plane
         else (ctx["maintenance"] is None)
     )
+
+
+def test_edit_html_registers_transformcontrols_importmap():
+    # #911 PR B: the vendored TransformControls addon must be in the offline
+    # import-map so the (dormant-offline) drag bundle resolves its import.
+    lay = load_layout(LAYOUT)
+    sc = scene.build_scene(lay, moves_plan=plan_fill(lay))
+    ctx = viewer.build_editor_context(
+        fleet_ref="data/fleet.yaml",
+        hangar_ref="data/hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+    )
+    html = viewer.build_edit_html(sc, ctx)
+    assert "three/addons/controls/TransformControls.js" in html
+    assert "three/addons/controls/OrbitControls.js" in html  # regression: still there
 
 
 def test_brand_module_exports():

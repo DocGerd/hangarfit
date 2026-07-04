@@ -12,13 +12,26 @@ export function mountCalculate(opts: {
   getIntent: () => Intent;
   ctx: EditorContext;
   reRender: (resp: SolveResponse) => void;
-}): void {
+}): { markUnsolved(): void } {
   const btn = document.createElement('button');
   btn.id = 'calculate';
   btn.type = 'button';
   btn.textContent = 'Calculate';
   const exportBtn = byId<HTMLButtonElement>('export');
   exportBtn.parentElement?.insertBefore(btn, exportBtn);
+
+  // #911 PR B: a dragged-and-converted pin (see editor.ts's manipulator) changes
+  // the intent without re-solving, so the last-rendered scene may no longer match
+  // it. Surface that as a visible "unsolved" marker on the Calculate button itself
+  // rather than a separate element — cleared once a solve actually reflects it.
+  const markUnsolved = (): void => {
+    btn.classList.add('unsolved');
+    btn.textContent = 'Calculate ●';
+  };
+  const clearUnsolved = (): void => {
+    btn.classList.remove('unsolved');
+    btn.textContent = 'Calculate';
+  };
 
   async function run(): Promise<void> {
     btn.disabled = true;
@@ -37,6 +50,7 @@ export function mountCalculate(opts: {
         return;
       }
       opts.reRender((await resp.json()) as SolveResponse);
+      clearUnsolved(); // a successful solve reflects the current intent
     } catch (e) {
       banner('Calculate failed: ' + (e as Error).message);
     } finally {
@@ -45,4 +59,5 @@ export function mountCalculate(opts: {
   }
 
   btn.addEventListener('click', () => void run());
+  return { markUnsolved };
 }

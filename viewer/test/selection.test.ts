@@ -2,11 +2,11 @@ import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import {
   initialIntent, isSelected, toggleSelection, setPriority,
-  pinAtCurrent, unpin, setPinField, setOnCarts,
+  pinAtCurrent, pinAtPose, unpin, setPinField, setOnCarts,
   addToDoorOrder, removeFromDoorOrder, moveInDoorOrder,
   toggleGroundObject, setCartModeOverride,
 } from '../src/interaction/selection.ts';
-import type { EditorContext } from '../src/interaction/intent-contract.ts';
+import type { EditorContext, Intent } from '../src/interaction/intent-contract.ts';
 
 const CTX: EditorContext = {
   fleet: 'data/fleet.yaml', hangar: 'data/hangar.yaml',
@@ -94,6 +94,15 @@ test('pin-editing functions do not mutate their input', () => {
   setPinField(pinned, 'husky', 'x', 99);
   setOnCarts(pinned, 'husky', true);
   assert.equal(JSON.stringify(pinned), snapshot);
+});
+
+// --- #911 PR B: pinAtPose (drag-to-fix, sources from a converted pose) -------
+
+test('pinAtPose sets mustPositions from a converted pose, carrying onCarts', () => {
+  const base: Intent = { selectedPlaneIds: ['a'], priorities: {}, mustPositions: {}, doorOrder: [], groundObjectIds: [], cartModeOverrides: {} };
+  const out = pinAtPose(base, 'a', { x_m: 3.5, y_m: -2.0, heading_deg: 275 }, true);
+  assert.deepStrictEqual(out.mustPositions.a, { x: 3.5, y: -2.0, heading: 275, onCarts: true });
+  assert.deepStrictEqual(base.mustPositions, {}); // immutability: input untouched
 });
 
 // --- #907 door-proximity ranking (door_order) ---------------------------------

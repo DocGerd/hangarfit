@@ -91,12 +91,14 @@ def _assemble_html(*, extra_head: str, hud_html: str, data_scripts: str) -> str:
     mode, so single output is template-identical)."""
     three_src = _asset_text(_THREE, "three.module.js")
     orbit_src = _asset_text(_THREE, "OrbitControls.js")
+    transform_src = _asset_text(_THREE, "TransformControls.js")  # #911 PR B
     viewer_js = _asset_text(_ASSETS, "viewer.js")
 
     import_map = {
         "imports": {
             "three": _data_url(three_src),
             "three/addons/controls/OrbitControls.js": _data_url(orbit_src),
+            "three/addons/controls/TransformControls.js": _data_url(transform_src),  # #911 PR B
         }
     }
     return (
