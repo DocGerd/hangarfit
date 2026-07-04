@@ -549,6 +549,42 @@ def test_editor_context_ts_keys_match_build_editor_context():
     assert ts_fields == set(ctx) - {"schema"}
 
 
+def test_editor_context_current_pose_ts_keys_match():
+    # #911: currentPoses entries mirror intent-contract.ts's CurrentPose. That is a
+    # NESTED interface, so the top-level EditorContext parity test above does not
+    # cover it — guard the pose key set so world_yaw_rad (the drag gizmo seed) can't
+    # drift between Python and TS.
+    from hangarfit import viewer
+
+    lay = load_layout(LAYOUT)
+    ctx = viewer.build_editor_context(
+        fleet_ref="data/fleet.yaml",
+        hangar_ref="data/hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+    )
+    pose = next(iter(ctx["currentPoses"].values()))
+    assert _ts_interface_fields("interaction/intent-contract.ts", "CurrentPose") == set(pose)
+
+
+def test_editor_context_current_pose_world_yaw_seed_value():
+    # #911: world_yaw_rad = compass_to_math_rad(heading_deg) (= radians(90 - heading)),
+    # the Python-owned forward transform the drag gizmo's clean proxy is seeded with
+    # (the browser does no heading↔yaw trig, ADR-0002).
+    from hangarfit import viewer
+    from hangarfit.towplanner import compass_to_math_rad
+
+    lay = load_layout(LAYOUT)
+    ctx = viewer.build_editor_context(
+        fleet_ref="data/fleet.yaml",
+        hangar_ref="data/hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+    )
+    for pose in ctx["currentPoses"].values():
+        assert pose["world_yaw_rad"] == pytest.approx(compass_to_math_rad(pose["heading_deg"]))
+
+
 def test_scene_contract_ts_nested_keys_match_scene_py():
     sc = _animated_scene()
     cases = {

@@ -440,7 +440,13 @@ def test_build_editor_context_shape():
     assert ctx["schema"] == "hangarfit.editor-context/v1"
     assert ctx["fleet"] == "data/fleet.yaml"
     pid = lay.placements[0].plane_id
-    assert set(ctx["currentPoses"][pid]) == {"x_m", "y_m", "heading_deg", "on_carts"}
+    assert set(ctx["currentPoses"][pid]) == {
+        "x_m",
+        "y_m",
+        "heading_deg",
+        "on_carts",
+        "world_yaw_rad",  # #911: drag-gizmo yaw seed, compass_to_math_rad(heading_deg)
+    }
     assert (
         (ctx["maintenance"] == {"plane": lay.maintenance_plane})
         if lay.maintenance_plane

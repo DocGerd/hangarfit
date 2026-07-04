@@ -6,6 +6,9 @@
   * ``POST /solve`` -> body = an exported Scenario YAML; returns a JSON
     ``{scene, editorContext}`` doc (the refreshed editor-context re-bases the
     editor's "pin at current pose" on the new solved poses)
+  * ``POST /convert`` -> body = JSON ``{x, y, world_yaw_rad}`` (a dragged world
+    floor pose); returns ``{x_m, y_m, heading_deg}`` — a solve-free pose→pin
+    conversion (Python owns the determinant-−1 inverse, ADR-0002). (#911)
 
 Pure transport: solving stays in the one Python runtime, so the determinant-−1
 transform (ADR-0002) and byte-identical determinism (ADR-0003) are untouched, and
@@ -17,6 +20,7 @@ the loader's ``yaml.safe_load`` + scenario-key allowlist.
 from __future__ import annotations
 
 import json
+import math
 import os
 import sys
 import tempfile
@@ -32,6 +36,7 @@ from hangarfit import viewer
 from hangarfit.loader import LoaderError, load_fleet, load_hangar, load_scenario
 from hangarfit.models import SearchConfig
 from hangarfit.solver import solve
+from hangarfit.towplanner import math_rad_to_compass
 
 _SERVE_CONFIG = {"schema": viewer._SERVE_CONFIG_SCHEMA}
 _LOOPBACK_HOSTS = frozenset({"127.0.0.1", "localhost", "::1"})
@@ -139,6 +144,30 @@ def _solve_scene(seed: SeedContext, scenario_yaml: str) -> tuple[dict, dict]:
         Path(tmp_path).unlink(missing_ok=True)
 
 
+class _BadConvertRequest(ValueError):
+    """A malformed ``POST /convert`` payload (client error → 400)."""
+
+
+def _convert_pose(body: str) -> dict:
+    """Convert a dragged WORLD floor pose to a scenario pin — SOLVE-FREE and
+    RNG-free (#911). Position is identity (world XY == scenario x_m/y_m, the
+    ``_pose_affine`` translation columns in ``scene.py``); heading is the tested
+    compass↔math involution (``towplanner``). The browser never authors this
+    inverse (ADR-0002). Raises :class:`_BadConvertRequest` on a malformed body."""
+    try:
+        data = json.loads(body)
+        x = float(data["x"])
+        y = float(data["y"])
+        yaw = float(data["world_yaw_rad"])
+    except KeyError as e:
+        raise _BadConvertRequest(f"missing field: {e}") from e
+    except (ValueError, TypeError) as e:
+        raise _BadConvertRequest(str(e)) from e
+    if not (math.isfinite(x) and math.isfinite(y) and math.isfinite(yaw)):
+        raise _BadConvertRequest("x, y, world_yaw_rad must be finite")
+    return {"x_m": x, "y_m": y, "heading_deg": math_rad_to_compass(yaw)}
+
+
 class _Handler(BaseHTTPRequestHandler):
     server_version = "hangarfit-serve/1"
 
@@ -183,22 +212,33 @@ class _Handler(BaseHTTPRequestHandler):
         )
         self._send_html(html)
 
-    def do_POST(self) -> None:  # noqa: N802
-        if not self._host_ok():
-            self._send_json(403, {"error": "non-loopback Host rejected"})
-            return
-        if self.path != "/solve":
-            self._send_json(404, {"error": "not found"})
-            return
+    def _read_body(self) -> str | None:
+        """Read+decode the request body, or send a 400 and return None on bad framing."""
         try:
             length = int(self.headers.get("Content-Length", "0"))
             if length < 0:
                 raise ValueError("negative Content-Length")
-            body = self.rfile.read(length).decode("utf-8")
+            return self.rfile.read(length).decode("utf-8")
         except (ValueError, UnicodeDecodeError) as e:
             # Malformed request framing (bad Content-Length / non-UTF-8 body): an
             # actionable 400, never a dropped connection + stderr traceback.
             self._send_json(400, {"error": f"bad request body: {e}"})
+            return None
+
+    def do_POST(self) -> None:  # noqa: N802
+        if not self._host_ok():
+            self._send_json(403, {"error": "non-loopback Host rejected"})
+            return
+        if self.path == "/solve":
+            self._handle_solve()
+        elif self.path == "/convert":
+            self._handle_convert()
+        else:
+            self._send_json(404, {"error": "not found"})
+
+    def _handle_solve(self) -> None:
+        body = self._read_body()
+        if body is None:
             return
         try:
             scene, ctx = _solve_scene(self._seed, body)
@@ -210,6 +250,24 @@ class _Handler(BaseHTTPRequestHandler):
             self._send_json(500, {"error": "internal error"})
             return
         self._send_json(200, {"scene": scene, "editorContext": ctx})
+
+    def _handle_convert(self) -> None:
+        body = self._read_body()
+        if body is None:
+            return
+        try:
+            pin = _convert_pose(body)
+        except _BadConvertRequest as e:
+            # Malformed convert payload (bad JSON / missing / non-numeric / non-finite):
+            # an actionable 400. A genuine internal bug falls through to the 500 below,
+            # which logs a traceback — it is never silently mislabeled a 400.
+            self._send_json(400, {"error": f"bad convert request: {e}"})
+            return
+        except Exception:  # unexpected internal error: log the stack, generic 500 out
+            traceback.print_exc(file=sys.stderr)
+            self._send_json(500, {"error": "internal error"})
+            return
+        self._send_json(200, pin)
 
 
 def make_server(
