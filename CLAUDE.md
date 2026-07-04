@@ -65,7 +65,7 @@ If you find yourself about to write a domain assertion in this file, **don't** �
 1. Branch `feature/<slug>` off `develop`. Work, commit.
 2. Open the PR **as a draft** (`gh pr create --draft`) — base `develop`, body includes `Closes #N`. A PR stays in draft until its review arc is done; draft signals "not yet for the human's attention."
 3. Invoke `/pr-review` (or the `pr-review-toolkit:review-pr` skill).
-4. Convert each finding into a **review thread on the diff** (via `gh pr review` line comments / `gh api .../pulls/<n>/comments`). Findings never live only in chat. **Anchor gotcha:** review-comment `line`s resolve against the **current** diff (HEAD). Post threads **before** pushing the fix — anchored to the reviewed commit, they auto-mark "outdated" once the fix lands (the batch-thread recipe). Push the fix first and that original line no longer resolves (`422 Line could not be resolved`); the only recourse is anchoring to HEAD + the fix's **new** line, a live thread on already-corrected code.
+4. Convert each finding into a **review thread on the diff** (via `gh pr review` line comments / `gh api .../pulls/<n>/comments`). Findings never live only in chat. **Anchor gotcha:** review-comment `line`s resolve against the **current** diff (HEAD). Post threads **before** pushing the fix — anchored to the reviewed commit, they auto-mark "outdated" once the fix lands (the batch-thread recipe). Push the fix first and that original line no longer resolves (`422 Line could not be resolved`); the only recourse is anchoring to HEAD + the fix's **new** line, a live thread on already-corrected code. **`-f` guard collision:** the force-push guard hook matches a bare `-f` **anywhere** in a Bash command string — including a `gh api -f` field or quoted text (a `gh issue`/`pr` body that merely *mentions* `-f`) — and wrongly blocks it as a force-push. Keep `git push` in its own Bash call; pass `gh` bodies via `--body-file`, and prefer `-F`/`--field` over `-f` when the payload text contains a bare `-f`.
 5. Resolve every thread: fix the code (preferred) or reply with rationale, then mark resolved.
 6. If the changes were non-trivial, re-run the review.
 7. When the review arc is clean, flip the PR out of draft (`gh pr ready <n>`) and tell the user it is **clean and ready for final review**. You may mark it ready **even before CI finishes** — readiness tracks the review arc, not the CI run (the user still cannot merge until the required checks pass, so an early ready flip never risks a premature merge). The user approves and merges. **Never `gh pr merge` from Claude — this includes `--auto`/enabling auto-merge, which counts as merging. Never arm it without the user's explicit go-ahead on that specific PR, every time (`gh pr merge <n> --disable-auto` undoes a stray arm).**
@@ -342,7 +342,9 @@ hangarfit view tests/fixtures/scenario_minimal.yaml --solve --edit -o edit.html
 # #445 serve (ADR-0030): a local loopback backend so the --edit viewer's Calculate
 # button re-solves live instead of exporting a YAML to re-run by hand. Pure
 # transport over the unchanged solve pipeline — GET / serves the editor; POST
-# /solve takes an exported Scenario YAML and returns a scene/v2 doc. Binds
+# /solve takes an exported Scenario YAML and returns a `{scene, editorContext}` doc
+# (the refreshed editor-context re-bases the editor's pin-at-current on the new
+# solved poses — the browser must not derive them, ADR-0002). Binds
 # 127.0.0.1 ONLY (no --host), Host-header guarded; the offline single-file export
 # is unchanged. Auto-opens a browser (--no-open suppresses); Ctrl-C to stop.
 hangarfit serve tests/fixtures/scenario_minimal.yaml --port 8765
