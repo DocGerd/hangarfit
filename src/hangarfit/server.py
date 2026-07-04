@@ -3,7 +3,9 @@
 ``hangarfit serve <scenario>`` binds a stdlib http.server to 127.0.0.1 and exposes:
 
   * ``GET  /``      -> the inlined interactive-editor viewer (initial solved scene)
-  * ``POST /solve`` -> body = an exported Scenario YAML; returns a scene/v2 JSON doc
+  * ``POST /solve`` -> body = an exported Scenario YAML; returns a JSON
+    ``{scene, editorContext}`` doc (the refreshed editor-context re-bases the
+    editor's "pin at current pose" on the new solved poses)
 
 Pure transport: solving stays in the one Python runtime, so the determinant-−1
 transform (ADR-0002) and byte-identical determinism (ADR-0003) are untouched, and

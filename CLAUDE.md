@@ -70,6 +70,8 @@ If you find yourself about to write a domain assertion in this file, **don't** �
 6. If the changes were non-trivial, re-run the review.
 7. When the review arc is clean, flip the PR out of draft (`gh pr ready <n>`) and tell the user it is **clean and ready for final review**. You may mark it ready **even before CI finishes** — readiness tracks the review arc, not the CI run (the user still cannot merge until the required checks pass, so an early ready flip never risks a premature merge). The user approves and merges. **Never `gh pr merge` from Claude — this includes `--auto`/enabling auto-merge, which counts as merging. Never arm it without the user's explicit go-ahead on that specific PR, every time (`gh pr merge <n> --disable-auto` undoes a stray arm).**
 
+**`gh` in the review loop vs the git-guard hook.** The `~/.claude/hooks/guard-destructive-git.sh` PreToolUse hook **denies** any Bash command whose string holds **both** a ` push ` token and a bare `-f`/`--force` — matched *anywhere*, so the tokens can live in quoted text (a `gh` review-comment body), and it fires **even when no `git` is actually invoked** (an inline `gh api -f body="…git push… -f…"` trips it purely on its own `-f` flag + the body text). Fix: **never inline a `gh` body** — pass it via `--body-file` (or `-F body=@file`), which keeps any `-f`/`push`/`git` text out of the command string entirely; and keep `git push` in its own Bash call. (`-F`/`--field` is **not** a safe swap for `-f` on a field value — it type-coerces all-digit/`true`/`false`/`@…` payloads; the string-preserving long form of `-f` is `--raw-field`.)
+
 **Stacking PRs (shared-file features).** When a feature splits into PRs that touch
 the same files (parallel branches would conflict), build a linear stack but **base
 every PR on `develop`, never on the parent feature branch**: CI (`on:
@@ -342,7 +344,9 @@ hangarfit view tests/fixtures/scenario_minimal.yaml --solve --edit -o edit.html
 # #445 serve (ADR-0030): a local loopback backend so the --edit viewer's Calculate
 # button re-solves live instead of exporting a YAML to re-run by hand. Pure
 # transport over the unchanged solve pipeline — GET / serves the editor; POST
-# /solve takes an exported Scenario YAML and returns a scene/v2 doc. Binds
+# /solve takes an exported Scenario YAML and returns a `{scene, editorContext}` doc
+# (the refreshed editor-context re-bases the editor's pin-at-current on the new
+# solved poses — the browser must not derive them, ADR-0002). Binds
 # 127.0.0.1 ONLY (no --host), Host-header guarded; the offline single-file export
 # is unchanged. Auto-opens a browser (--no-open suppresses); Ctrl-C to stop.
 hangarfit serve tests/fixtures/scenario_minimal.yaml --port 8765
