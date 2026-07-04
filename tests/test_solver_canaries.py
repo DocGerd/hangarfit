@@ -296,6 +296,41 @@ def test_solve_deterministic_polygon_taper_fleet() -> None:
         assert bp1.placements == bp2.placements
 
 
+@pytest.mark.serial
+def test_solve_deterministic_unpinned_mover_scenario() -> None:
+    """#912 ADR-0003 guard: an UNPINNED placed_routed_mover scenario stays
+    byte-identical across two solves at a fixed seed.
+
+    ``scenario_region_demo.yaml`` carries two movers (the glider trailers)
+    placed + routed by the solver via a soft region preference — NO
+    ``mover_pins`` entry. This proves the #912 plumbing (the
+    ``pinned_planes`` union with ``scenario.mover_pins``, and the
+    ``_initial_placement_for_plane`` mover-pin short-circuit) is a true no-op
+    when ``mover_pins`` is empty: both the aircraft AND the mover placements
+    must match bit-for-bit across the two runs, exactly as before this
+    commit (mirrors ``test_solve_deterministic_given_seed`` above, scoped to
+    a mover-bearing fixture instead of the aircraft-only canary set).
+    """
+    fixture = "tests/fixtures/scenario_region_demo.yaml"
+
+    s1 = load_scenario(fixture)
+    r1 = solve(
+        s1, budget_s=5.0, alternatives=1, seed=42, search=SearchConfig(spread=False, nose_out=False)
+    )
+
+    s2 = load_scenario(fixture)
+    r2 = solve(
+        s2, budget_s=5.0, alternatives=1, seed=42, search=SearchConfig(spread=False, nose_out=False)
+    )
+
+    assert r1.status == r2.status
+    assert len(r1.layouts) == len(r2.layouts)
+    for la, lb in zip(r1.layouts, r2.layouts, strict=True):
+        assert la.placements == lb.placements
+        assert la.ground_object_placements == lb.ground_object_placements
+        assert la.maintenance_plane == lb.maintenance_plane
+
+
 def test_solve_budget_trips_before_max_restarts() -> None:
     """When ``budget_s`` would cut the loop short of ``max_restarts``,
     the budget gate wins — exercises the compound termination

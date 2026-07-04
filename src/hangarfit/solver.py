@@ -503,7 +503,7 @@ def _run_solve(
         pid
         for pid in scenario.fleet_in
         if pid in scenario.constraints and scenario.constraints[pid].pin is not None
-    )
+    ) | frozenset(scenario.mover_pins)
     cart_buckets = _enumerate_cart_buckets(scenario)
 
     # Type matches `_score`'s return (`tuple[int, float]`). `sys.maxsize`
@@ -1180,7 +1180,10 @@ def _initial_placement_for_plane(
 ) -> Placement:
     """Sample an initial :class:`Placement` for one plane (spec §4.2).
 
-    - If pinned → return the pin verbatim.
+    - If a pinned mover (:attr:`Scenario.mover_pins`, #912) → return the pin
+      verbatim (the two id-spaces — aircraft ``constraints`` vs.
+      ``mover_pins`` — are disjoint, so this can never shadow an aircraft pin).
+    - If pinned (aircraft ``constraint.pin``) → return the pin verbatim.
     - Otherwise → ``(x, y)`` uniform inside hangar (with bbox-derived margin),
       ``heading_deg`` uniform on ``[0, 360°)``.
 
@@ -1191,6 +1194,10 @@ def _initial_placement_for_plane(
     ``heading_deg < 360.0`` test assertion and matching the spec's
     ``[0°, 360°)`` interval.
     """
+    mover_pin = scenario.mover_pins.get(plane_id)
+    if mover_pin is not None:
+        return mover_pin
+
     constraint = scenario.constraints.get(plane_id)
     if constraint is not None and constraint.pin is not None:
         return constraint.pin
