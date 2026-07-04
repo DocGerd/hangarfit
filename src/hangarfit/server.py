@@ -6,6 +6,9 @@
   * ``POST /solve`` -> body = an exported Scenario YAML; returns a JSON
     ``{scene, editorContext}`` doc (the refreshed editor-context re-bases the
     editor's "pin at current pose" on the new solved poses)
+  * ``POST /convert`` -> body = JSON ``{x, y, world_yaw_rad}`` (a dragged world
+    floor pose); returns ``{x_m, y_m, heading_deg}`` — a solve-free pose→pin
+    conversion (Python owns the determinant-−1 inverse, ADR-0002). (#911)
 
 Pure transport: solving stays in the one Python runtime, so the determinant-−1
 transform (ADR-0002) and byte-identical determinism (ADR-0003) are untouched, and
@@ -141,19 +144,25 @@ def _solve_scene(seed: SeedContext, scenario_yaml: str) -> tuple[dict, dict]:
         Path(tmp_path).unlink(missing_ok=True)
 
 
+class _BadConvertRequest(ValueError):
+    """A malformed ``POST /convert`` payload (client error → 400)."""
+
+
 def _convert_pose(body: str) -> dict:
     """Convert a dragged WORLD floor pose to a scenario pin — SOLVE-FREE and
     RNG-free (#911). Position is identity (world XY == scenario x_m/y_m, the
     ``_pose_affine`` translation columns in ``scene.py``); heading is the tested
     compass↔math involution (``towplanner``). The browser never authors this
-    inverse (ADR-0002). Raises ``ValueError``/``KeyError``/``TypeError`` on a
-    malformed body (mapped to a 400 by the handler)."""
-    data = json.loads(body)
-    x = float(data["x"])
-    y = float(data["y"])
-    yaw = float(data["world_yaw_rad"])
+    inverse (ADR-0002). Raises :class:`_BadConvertRequest` on a malformed body."""
+    try:
+        data = json.loads(body)
+        x = float(data["x"])
+        y = float(data["y"])
+        yaw = float(data["world_yaw_rad"])
+    except (ValueError, KeyError, TypeError) as e:
+        raise _BadConvertRequest(str(e)) from e
     if not (math.isfinite(x) and math.isfinite(y) and math.isfinite(yaw)):
-        raise ValueError("x, y, world_yaw_rad must be finite")
+        raise _BadConvertRequest("x, y, world_yaw_rad must be finite")
     return {"x_m": x, "y_m": y, "heading_deg": math_rad_to_compass(yaw)}
 
 
@@ -246,12 +255,13 @@ class _Handler(BaseHTTPRequestHandler):
             return
         try:
             pin = _convert_pose(body)
-        except (ValueError, KeyError, TypeError) as e:
+        except _BadConvertRequest as e:
             # Malformed convert payload (bad JSON / missing / non-numeric / non-finite):
-            # an actionable 400, never a dropped connection + stderr traceback.
+            # an actionable 400. A genuine internal bug falls through to the 500 below,
+            # which logs a traceback — it is never silently mislabeled a 400.
             self._send_json(400, {"error": f"bad convert request: {e}"})
             return
-        except Exception:  # defensive: unexpected -> log + generic 500
+        except Exception:  # unexpected internal error: log the stack, generic 500 out
             traceback.print_exc(file=sys.stderr)
             self._send_json(500, {"error": "internal error"})
             return
