@@ -6,12 +6,14 @@
 // `anchors.ts` — it never re-derives geometry, only reads the already-built
 // plane Groups the Python-owned transform placed.
 import * as THREE from 'three';
+import type { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import {
   initialIntent,
   toggleSelection,
   isSelected,
   setPriority,
   pinAtCurrent,
+  pinAtPose,
   unpin,
   setPinField,
   setOnCarts,
@@ -24,6 +26,8 @@ import {
 import { intentToScenarioYaml } from './export.ts';
 import { byId } from '../dom.ts';
 import { focusAwareHex } from './highlight.ts';
+import { createManipulator } from './manipulate.ts';
+import type { ManipulatorHandle } from './manipulate.ts';
 import type { Intent, EditorContext } from './intent-contract.ts';
 
 export interface EditorHandle {
@@ -42,6 +46,12 @@ export function mountEditor(opts: {
   // #445: seed a re-mount with the user's current intent (default: derived fresh
   // from ctx) so a Calculate swap preserves their selection/priorities/pins.
   initialIntent?: Intent;
+  // #911 PR B: present only when served (drag needs the /convert round-trip). When
+  // both scene & orbit are supplied the gizmo + "fix position" button mount; absent
+  // (offline export) the drag flow stays fully dormant (no TransformControls built).
+  scene?: THREE.Scene;
+  orbit?: OrbitControls;
+  onEdit?: () => void; // notify the host a convert changed the intent (marks Calculate unsolved)
 }): EditorHandle {
   let intent = opts.initialIntent ?? initialIntent(opts.ctx);
   // #445: listeners on persistent elements (the canvas + HUD controls) are added
@@ -53,6 +63,12 @@ export function mountEditor(opts: {
   // The last-selected plane. The HUD controls (priority/pin/on_carts) always
   // act on this plane; deselecting it (or nothing being selected) disables them.
   let focusedId: string | null = null;
+  // #911 PR B: drag-to-fix. Declared here (rather than at the point of use) so
+  // `syncControls` below can close over `fixBtn` without a use-before-define
+  // ordering hazard; both are populated later, only when served (opts.scene &&
+  // opts.orbit), by the manipulator-mount block just before this function returns.
+  let manip: ManipulatorHandle | null = null;
+  let fixBtn: HTMLButtonElement | null = null;
   const ray = new THREE.Raycaster();
   const ndc = new THREE.Vector2();
   const idByObject = new Map<THREE.Object3D, string>();
@@ -189,6 +205,7 @@ export function mountEditor(opts: {
     const hasPose = id !== null && id in opts.ctx.currentPoses;
     prio.disabled = !active;
     pinToggle.disabled = !active || !hasPose;
+    if (fixBtn) fixBtn.disabled = !active || !hasPose; // #911 PR B: gate like pinToggle
     // #909 cart-mode override select: available for any focused selected aircraft
     // (the override is fleet-level, independent of a pin). Show the effective
     // mode; gate the radius-needing options (a non-always_cart mode requires a
@@ -400,6 +417,43 @@ export function mountEditor(opts: {
   syncControls();
   renderDoorOrder();
   renderPalette();
+
+  // #911 PR B: drag-to-fix. Mounts iff served (scene & orbit provided) — the
+  // offline export path passes neither, so the gizmo + button never build there.
+  if (opts.scene && opts.orbit) {
+    manip = createManipulator({
+      scene: opts.scene,
+      groups: opts.groups,
+      cam: opts.cam,
+      renderer: opts.renderer,
+      orbit: opts.orbit,
+      ctx: opts.ctx,
+      onConverted: (id, pose) => {
+        // Carry onCarts from the plane's existing pin, else its current pose.
+        const onCarts = intent.mustPositions[id]?.onCarts ?? opts.ctx.currentPoses[id]?.on_carts ?? false;
+        intent = pinAtPose(intent, id, pose, onCarts);
+        focusedId = id;
+        syncControls(); // populate the x/y/heading pin fields (editable) + re-gate fixBtn
+        opts.onEdit?.(); // flag Calculate "unsolved"
+      },
+    });
+    fixBtn = document.createElement('button');
+    fixBtn.id = 'fix-position';
+    fixBtn.type = 'button';
+    fixBtn.textContent = 'Fix position';
+    fixBtn.disabled = true; // matches syncControls' gate until a posed plane is focused
+    exportBtn.parentElement?.insertBefore(fixBtn, exportBtn);
+    fixBtn.addEventListener(
+      'click',
+      () => {
+        if (!manip || focusedId === null) return;
+        if (manip.armedId() === focusedId) manip.disarm();
+        else manip.arm(focusedId);
+      },
+      sig,
+    );
+  }
+
   return {
     getIntent: () => intent,
     // #445: abort the persistent-element listeners and remove the injected
@@ -407,6 +461,8 @@ export function mountEditor(opts: {
     dispose: () => {
       ac.abort();
       pinFields.remove();
+      manip?.dispose(); // #911 PR B
+      fixBtn?.remove(); // #911 PR B
     },
   };
 }
