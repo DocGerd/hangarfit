@@ -161,6 +161,35 @@ def test_post_convert_missing_field_is_400(live_server: int) -> None:
     assert resp.status == 400
 
 
+def test_post_convert_internal_bug_is_500(
+    live_server: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Guard the 400/500 separation (commit 7a91139): a genuine bug in the COMPUTE path
+    # (here math_rad_to_compass) must surface as a logged 500, NOT be silently
+    # mislabeled a 400 "bad convert request". This is the exact property that
+    # regressed once; a refactor moving the compute back inside the parse `try` would
+    # reintroduce the silent-failure bug, and this test would catch it.
+    # (The 500 path intentionally logs a traceback to stderr — expected, not noise.)
+    import math
+
+    def _boom(*a: object, **k: object) -> float:
+        raise ValueError("simulated internal bug in the compute path")
+
+    monkeypatch.setattr(server, "math_rad_to_compass", _boom)
+    yaw = math.radians(90.0 - 30.0)
+    c = _conn(live_server)
+    c.request(
+        "POST",
+        "/convert",
+        body=json.dumps({"x": 1.0, "y": 2.0, "world_yaw_rad": yaw}).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    resp = c.getresponse()
+    doc = json.loads(resp.read().decode("utf-8"))
+    assert resp.status == 500
+    assert doc == {"error": "internal error"}
+
+
 def test_post_convert_non_finite_is_400(live_server: int) -> None:
     c = _conn(live_server)
     c.request(

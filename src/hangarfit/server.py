@@ -159,7 +159,9 @@ def _convert_pose(body: str) -> dict:
         x = float(data["x"])
         y = float(data["y"])
         yaw = float(data["world_yaw_rad"])
-    except (ValueError, KeyError, TypeError) as e:
+    except KeyError as e:
+        raise _BadConvertRequest(f"missing field: {e}") from e
+    except (ValueError, TypeError) as e:
         raise _BadConvertRequest(str(e)) from e
     if not (math.isfinite(x) and math.isfinite(y) and math.isfinite(yaw)):
         raise _BadConvertRequest("x, y, world_yaw_rad must be finite")
