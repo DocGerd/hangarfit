@@ -27,6 +27,7 @@ All notable changes to this project are documented here. Format follows [Keep a 
   stays serial (concurrent per-regime timing would inflate the `_SPEED_CEILING_S`
   ceilings). Default `--jobs 1` reproduces the historic serial run byte-for-byte
   (ADR-0003 determinism contract untouched).
+- Editor (`view --solve --edit`): a canvas click now **focuses** a plane for editing instead of toggling its fleet membership, so revising an already-selected plane no longer drops its priority/pin/cart-mode/door-rank. Fleet add/remove stays on the catalog palette checkboxes; the focused plane shows a distinct highlight. (#904)
 
 ### Fixed
 
