@@ -1,6 +1,10 @@
 # ADR-0025: Ground-object taxonomy — concrete catalog types, Layout-uniform placement, and pairwise-set keep-out seam
 
-- **Status:** Accepted
+- **Status:** Accepted — amended by [ADR-0031](0031-mover-pin.md) (#912): a
+  `placed_routed_mover` may now carry an optional hand-authored pin (a
+  path-less keep-out via the generalized `hand_placed` marker), in addition
+  to being a full RR-MC search citizen (#604). The taxonomy, placement
+  approach, and keep-out seam below are otherwise unchanged.
 
 - **Date:** 2026-06-11
 - **Deciders:** [@DocGerd](https://github.com/DocGerd)
@@ -293,7 +297,8 @@ deferred to #605.
   contract, empty-set byte-identity), [ADR-0010](0010-reeds-shepp-motion-model.md)
   (motion model — amendment for movers deferred to #602),
   [ADR-0018](0018-non-rectangular-hangar-footprint.md) (structural notches,
-  the other non-aircraft keep-out mechanism).
+  the other non-aircraft keep-out mechanism), [ADR-0031](0031-mover-pin.md)
+  (amendment — the optional mover pin, #912).
 - Related spec:
   [`docs/superpowers/specs/2026-06-11-601-ground-object-data-model-design.md`](../superpowers/specs/2026-06-11-601-ground-object-data-model-design.md).
 - Related issues: #601 (this ADR), #602 (mover motion + ADR-0010 amendment),
