@@ -852,8 +852,12 @@ def load_scenario(
     # ``object_class`` (#604):
     #   - fixed_obstacle     -> REQUIRES a pose (x_m/y_m/heading_deg), FORBIDS
     #                           region_preference; expands to a Placement.
-    #   - placed_routed_mover -> FORBIDS a pose (the solver places it), allows
-    #                           an optional region_preference (a soft re-rank).
+    #   - placed_routed_mover -> a pose (x_m/y_m/heading_deg, all three) is
+    #                           OPTIONAL: absent -> the solver places it
+    #                           (default); present -> a hand-placed pin
+    #                           (#912, drag-to-fix), mutually exclusive with
+    #                           region_preference (a re-rank has no effect on
+    #                           an already-fixed pose).
     go_entries = raw.get("ground_objects", [])
     if not isinstance(go_entries, list):
         raise LoaderError(f"{path}: 'ground_objects' must be a list")
@@ -861,6 +865,7 @@ def load_scenario(
     scenario_ground_objects: list[str] = []
     fixed_obstacle_placements: list[Placement] = []
     region_preferences: dict[str, RegionPreference] = {}
+    mover_pins: dict[str, Placement] = {}
 
     for i, entry in enumerate(go_entries):
         fields: Mapping[str, Any]
@@ -913,36 +918,55 @@ def load_scenario(
             )
         else:  # placed_routed_mover
             if has_pose:
-                raise LoaderError(
-                    f"{path}: ground_objects[{i}] ({gid}): a placed_routed_mover must not "
-                    f"carry a pose (the solver places it)"
-                )
-            rp = fields.get("region_preference")
-            if rp is not None:
-                if (
-                    not isinstance(rp, dict)
-                    or set(rp) - _ALLOWED_REGION_PREF_KEYS
-                    or "side" not in rp
-                    or "weight" not in rp
-                    or not isinstance(rp["side"], str)
-                ):
+                # #912: a full pose hand-places (pins) the mover instead of
+                # leaving it to the solver — the drag-to-fix editor use case.
+                missing = [k for k in ("x_m", "y_m", "heading_deg") if k not in fields]
+                if missing:
                     raise LoaderError(
-                        f"{path}: ground_objects[{i}] ({gid}): region_preference must be "
-                        f"{{side, weight}}"
+                        f"{path}: ground_objects[{i}] ({gid}): a mover pin requires {missing}"
                     )
-                try:
-                    # ``side`` is known to be a str here (checked above); the
-                    # left/right membership is enforced by
-                    # RegionPreference.__post_init__ (its ValueError is caught
-                    # + rewrapped below), so the cast is sound.
-                    region_preferences[gid] = RegionPreference(
-                        side=cast(RegionSide, rp["side"]),
-                        weight=_to_float(
-                            rp["weight"], f"ground_objects[{i}].region_preference.weight"
-                        ),
+                if "region_preference" in fields:
+                    raise LoaderError(
+                        f"{path}: ground_objects[{i}] ({gid}): a mover pin and "
+                        f"region_preference are mutually exclusive (#912)"
                     )
-                except (ValueError, LoaderError) as e:
-                    raise LoaderError(f"{path}: ground_objects[{i}] ({gid}): {e}") from e
+                mover_pins[gid] = Placement(
+                    plane_id=gid,
+                    x_m=_to_float(fields["x_m"], f"ground_objects[{i}].x_m"),
+                    y_m=_to_float(fields["y_m"], f"ground_objects[{i}].y_m"),
+                    heading_deg=_to_float(
+                        fields["heading_deg"], f"ground_objects[{i}].heading_deg"
+                    ),
+                    on_carts=False,
+                    hand_placed=True,
+                )
+            else:
+                rp = fields.get("region_preference")
+                if rp is not None:
+                    if (
+                        not isinstance(rp, dict)
+                        or set(rp) - _ALLOWED_REGION_PREF_KEYS
+                        or "side" not in rp
+                        or "weight" not in rp
+                        or not isinstance(rp["side"], str)
+                    ):
+                        raise LoaderError(
+                            f"{path}: ground_objects[{i}] ({gid}): region_preference must be "
+                            f"{{side, weight}}"
+                        )
+                    try:
+                        # ``side`` is known to be a str here (checked above); the
+                        # left/right membership is enforced by
+                        # RegionPreference.__post_init__ (its ValueError is caught
+                        # + rewrapped below), so the cast is sound.
+                        region_preferences[gid] = RegionPreference(
+                            side=cast(RegionSide, rp["side"]),
+                            weight=_to_float(
+                                rp["weight"], f"ground_objects[{i}].region_preference.weight"
+                            ),
+                        )
+                    except (ValueError, LoaderError) as e:
+                        raise LoaderError(f"{path}: ground_objects[{i}] ({gid}): {e}") from e
 
     # Door order (#614): an optional top-level list of body ids. Absent ⇒ None
     # (inert, byte-identical). Cross-reference validation (placeable ids, no
@@ -982,6 +1006,7 @@ def load_scenario(
             ground_object_defs=ground_objects,
             fixed_obstacle_placements=tuple(fixed_obstacle_placements),
             region_preferences=region_preferences,
+            mover_pins=mover_pins,
             door_order=door_order,
         )
     except ValueError as e:

@@ -2560,3 +2560,119 @@ maintenance_bay: {center_x_m: 13.5, width_m: 9, depth_m: 9}
         assert "fixture_caddy" in scn.ground_object_defs
         assert scn.maintenance_plane == "foo"
         assert scn.door_order == ("foo",)
+
+    # -- #912: a placed_routed_mover ground_objects entry carrying a pose now
+    # builds a Scenario.mover_pins entry (drag-to-fix hand placement) instead
+    # of raising. A fixed_obstacle's pose-required path is unchanged.
+
+    def test_scenario_mover_with_pose_builds_a_pin(self, tmp_path: Path) -> None:
+        from tests.conftest import make_test_aircraft
+
+        ac = make_test_aircraft(id="p1")
+        obj = self._mover("caddy")
+        scn_path = _write(
+            tmp_path / "scn.yaml",
+            "fleet_in:\n  - p1\nground_objects:\n"
+            "  - {object: caddy, x_m: 3.0, y_m: 4.0, heading_deg: 90.0}\n",
+        )
+        scn = load_scenario(
+            scn_path,
+            fleet={ac.id: ac},
+            hangar=self._hangar(),
+            ground_objects={obj.id: obj},
+        )
+        pin = scn.mover_pins["caddy"]
+        assert (pin.x_m, pin.y_m, pin.heading_deg) == (3.0, 4.0, 90.0)
+        assert pin.on_carts is False
+        assert pin.hand_placed is True
+        assert "caddy" in scn.mover_ids
+
+    def test_scenario_mover_without_pose_stays_unpinned(self, tmp_path: Path) -> None:
+        from tests.conftest import make_test_aircraft
+
+        ac = make_test_aircraft(id="p1")
+        obj = self._mover("caddy")
+        scn_path = _write(
+            tmp_path / "scn.yaml",
+            "fleet_in:\n  - p1\nground_objects:\n  - caddy\n",
+        )
+        scn = load_scenario(
+            scn_path,
+            fleet={ac.id: ac},
+            hangar=self._hangar(),
+            ground_objects={obj.id: obj},
+        )
+        assert scn.mover_pins == {}
+        assert "caddy" in scn.mover_ids
+
+    def test_scenario_mover_pin_requires_all_three_pose_fields(self, tmp_path: Path) -> None:
+        from tests.conftest import make_test_aircraft
+
+        ac = make_test_aircraft(id="p1")
+        obj = self._mover("caddy")
+        scn_path = _write(
+            tmp_path / "scn.yaml",
+            "fleet_in:\n  - p1\nground_objects:\n  - {object: caddy, x_m: 3.0}\n",
+        )
+        with pytest.raises(LoaderError, match="y_m.*heading_deg|requires"):
+            load_scenario(
+                scn_path,
+                fleet={ac.id: ac},
+                hangar=self._hangar(),
+                ground_objects={obj.id: obj},
+            )
+
+    def test_scenario_mover_pin_and_region_preference_rejected(self, tmp_path: Path) -> None:
+        from tests.conftest import make_test_aircraft
+
+        ac = make_test_aircraft(id="p1")
+        obj = self._mover("caddy")
+        scn_path = _write(
+            tmp_path / "scn.yaml",
+            "fleet_in:\n  - p1\nground_objects:\n"
+            "  - {object: caddy, x_m: 3.0, y_m: 4.0, heading_deg: 0.0,"
+            " region_preference: {side: right, weight: 1.0}}\n",
+        )
+        with pytest.raises(LoaderError, match="region_preference|mutually exclusive"):
+            load_scenario(
+                scn_path,
+                fleet={ac.id: ac},
+                hangar=self._hangar(),
+                ground_objects={obj.id: obj},
+            )
+
+    def test_scenario_pose_on_a_fixed_obstacle_still_works(self, tmp_path: Path) -> None:
+        """Regression: the fixed_obstacle pose-required path is unchanged by #912."""
+        from hangarfit.models import GroundObject, Part
+        from tests.conftest import make_test_aircraft
+
+        ac = make_test_aircraft(id="p1")
+        part = Part(
+            kind="ground",
+            length_m=2.0,
+            width_m=1.0,
+            offset_x_m=0.0,
+            offset_y_m=0.0,
+            angle_deg=0.0,
+            z_bottom_m=0.0,
+            z_top_m=1.0,
+        )
+        pillar = GroundObject(
+            id="pillar",
+            name="Pillar",
+            parts=(part,),
+            object_class="fixed_obstacle",
+        )
+        scn_path = _write(
+            tmp_path / "scn.yaml",
+            "fleet_in:\n  - p1\nground_objects:\n"
+            "  - {object: pillar, x_m: 1.0, y_m: 1.0, heading_deg: 0.0}\n",
+        )
+        scn = load_scenario(
+            scn_path,
+            fleet={ac.id: ac},
+            hangar=self._hangar(),
+            ground_objects={pillar.id: pillar},
+        )
+        assert any(p.plane_id == "pillar" for p in scn.fixed_obstacle_placements)
+        assert scn.mover_pins == {}
