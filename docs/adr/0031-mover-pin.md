@@ -83,11 +83,14 @@ Wiring, end to end:
   loop, on a `hand_placed` ground-object placement, appends a `Move` with
   `path=None` instead of calling `plan_path` — `scene._timeline` already
   renders any `Move` with `path is None` path-less, so no scene/viewer change
-  is needed. The same hand-placed mover is added to the static
-  `fixed_obstacle_placements` obstacle tuple the **aircraft** router consults
-  (aircraft are routed before the mover loop), so aircraft also route around
-  a pinned car — faithful #667-Rung-A keep-out parity between aircraft and
-  movers.
+  is needed. The same hand-placed mover is included in the obstacle set the
+  **aircraft** router consults — a distinct `aircraft_obstacle_placements`
+  tuple (`fixed_obstacle`s plus hand-placed movers), kept separate from
+  `fixed_obstacle_placements` so the mover is not double-listed once the mover
+  loop also appends it to `routed_mover_placements` (which would trip
+  `Layout`'s duplicate-placement guard). Aircraft (routed before the mover
+  loop) therefore also route around a pinned car — faithful #667-Rung-A
+  keep-out parity between aircraft and movers.
 - **Collision + egress (unchanged).** The pinned mover is still a normal
   `placed_routed_mover` placement in `layout.ground_object_placements`, so it
   still joins the pairwise overlap loop like any mover, and — if
