@@ -67,6 +67,19 @@ export function pinAtCurrent(intent: Intent, id: string, ctx: EditorContext): In
   return { ...intent, mustPositions: { ...intent.mustPositions, [id]: mp } };
 }
 
+// #911 PR B: a sibling of pinAtCurrent that sources the pin from a Python-converted
+// dragged pose (POST /convert) instead of currentPoses. onCarts is not part of the
+// pose conversion — the caller carries it from the plane's existing pin or currentPose.
+export function pinAtPose(
+  intent: Intent,
+  id: string,
+  pose: { x_m: number; y_m: number; heading_deg: number },
+  onCarts: boolean,
+): Intent {
+  const mp: MustPosition = { x: pose.x_m, y: pose.y_m, heading: pose.heading_deg, onCarts };
+  return { ...intent, mustPositions: { ...intent.mustPositions, [id]: mp } };
+}
+
 export function unpin(intent: Intent, id: string): Intent {
   const mustPositions = { ...intent.mustPositions };
   delete mustPositions[id];
