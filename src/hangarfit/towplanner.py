@@ -2308,15 +2308,28 @@ def _plan_fill(
     # against all parked aircraft + fixed obstacles + movers already routed this
     # pass; the one being routed is excluded from `placed` (path_first_conflict
     # re-injects it per sample, matching the aircraft routing contract).
-    routed_mover_placements: list[Placement] = []
+    # #912: a hand-placed (pinned) mover must be an obstacle for EVERY routed
+    # mover, not just those sorted after it in the id-ordered loop below — a
+    # solver-routed mover whose id sorts BEFORE the pin would otherwise route
+    # right through it (the pin hadn't been appended to routed_mover_placements
+    # yet when that mover's own plan_path ran). Pre-seed routed_mover_placements
+    # with every hand-placed placed_routed_mover BEFORE the loop starts (mirrors
+    # the aircraft hand_placed_slots pre-seed above). With no hand-placed mover
+    # this list comprehension is empty, so the loop below is unchanged and the
+    # plan stays byte-identical (ADR-0003).
+    routed_mover_placements: list[Placement] = [
+        gp
+        for gp in sorted(target.ground_object_placements, key=lambda p: p.plane_id)
+        if target.ground_objects[gp.plane_id].object_class == "placed_routed_mover"
+        and gp.hand_placed
+    ]
     for gp in sorted(target.ground_object_placements, key=lambda p: p.plane_id):
         obj = target.ground_objects[gp.plane_id]
         if obj.object_class != "placed_routed_mover":
             continue
-        if gp.hand_placed:  # #912: pinned (hand-placed) mover -> path-less keep-out, never routed
+        if gp.hand_placed:  # #912: pinned mover -> path-less; already pre-seeded above
             moves.append(Move(gp.plane_id, Pose.from_placement(gp), path=None))
-            routed_mover_placements.append(gp)  # still an obstacle for later-routed movers
-            continue
+            continue  # do NOT re-append — already in routed_mover_placements
         mover_placed = Layout(
             fleet=fleet,
             hangar=hangar,

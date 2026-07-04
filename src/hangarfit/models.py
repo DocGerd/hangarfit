@@ -816,7 +816,9 @@ class Placement:
     # #667 Stage 0: a HAND-POSITIONED body (e.g. a dolly-borne glider) is parked
     # by hand, not tow-routed. The fill planner treats it as a pre-placed
     # obstacle and emits a path-less (at-rest) move for it. Default False keeps
-    # every existing placement byte-identical.
+    # every existing placement byte-identical. #912 generalized this to a
+    # pinned `placed_routed_mover` (a mover pin, see Scenario.mover_pins) —
+    # same path-less-keep-out treatment, now for a hand-placed mover too.
     hand_placed: bool = False
 
     def __post_init__(self) -> None:
@@ -1395,6 +1397,19 @@ class Scenario:
                     f"defs have: {sorted(self.ground_object_defs)}"
                 )
 
+        # Fleet/ground-object id disjointness (review finding B): mirrors
+        # Layout.__post_init__'s ~991-998 check. Without this, a colliding id
+        # makes _initial_placement_for_plane hand an AIRCRAFT the mover's pin
+        # (or vice versa) — the mover then silently vanishes from the solved
+        # layout with no collision/egress check ever seeing it. Must run
+        # before the mover_pins loop below, which assumes disjointness.
+        overlap = set(self.fleet) & set(self.ground_objects)
+        if overlap:
+            raise ValueError(
+                f"Scenario fleet ids and ground_object ids must be disjoint so a "
+                f"placement resolves to exactly one object; shared: {sorted(overlap)}"
+            )
+
         # Region preferences (#604): every key must reference a placeable body —
         # an aircraft in fleet_in or a placed_routed_mover ground object.
         placeable = set(self.fleet_in) | {
@@ -1427,6 +1442,22 @@ class Scenario:
                 raise ValueError(
                     f"Scenario.mover_pins[{mid!r}] has plane_id {pin.plane_id!r} "
                     f"(must equal the key)"
+                )
+            # A pin's load-bearing shape (review finding C): hand_placed=True is
+            # what makes the tow planner treat it as a path-less keep-out
+            # (towplanner._plan_fill's mover loop branches on gp.hand_placed) —
+            # a pin with hand_placed=False would be silently treated as an
+            # ordinary solver-routed mover instead. on_carts must be False:
+            # movers never ride carts (§2.3 of the #912 design spec).
+            if not pin.hand_placed:
+                raise ValueError(
+                    f"Scenario.mover_pins[{mid!r}] must have hand_placed=True "
+                    f"(a pin is a path-less keep-out, #912)"
+                )
+            if pin.on_carts:
+                raise ValueError(
+                    f"Scenario.mover_pins[{mid!r}] must have on_carts=False "
+                    f"(movers never ride carts, #912)"
                 )
             if mid in self.region_preferences:
                 raise ValueError(

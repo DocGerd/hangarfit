@@ -679,3 +679,81 @@ def test_hand_placed_mover_is_keep_out_for_later_routed_movers() -> None:
     trailer_move = next(m for m in plan.moves if m.plane_id == "trailer1")
     assert caddy_move.path is None
     assert trailer_move.path is not None, "the non-pinned mover must still route normally"
+
+
+def test_unpinned_mover_sorting_before_a_pin_still_treats_it_as_an_obstacle() -> None:
+    """#912 regression: routed_mover_placements previously only grew as the
+    id-sorted plan_fill mover loop reached each mover, so a SOLVER-ROUTED mover
+    whose id sorts BEFORE a pinned (hand-placed) mover never saw the pin as an
+    obstacle during ITS OWN routing — even when the pin sits squarely on its
+    straight-in lane from the door. "aa_trailer" (routed, sorts first) vs
+    "zz_caddy" (pinned, sorts second) reproduces the ordering; the pin is
+    parked at (20, 15), directly on aa_trailer's straight lane from the door
+    to its (20, 30) target (mirrors the geometry in
+    test_aircraft_routes_around_a_hand_placed_mover, which proves that lane is
+    the unobstructed greedy path)."""
+    hangar = _hangar()
+    routed = GroundObject(
+        id="aa_trailer",
+        name="Routed mover",
+        parts=(_ground_part(length_m=4.5, width_m=1.8),),
+        object_class="placed_routed_mover",
+        motion_mode="steerable",
+        turn_radius_m=5.5,
+    )
+    pinned = GroundObject(
+        id="zz_caddy",
+        name="Pinned mover",
+        parts=(_ground_part(length_m=4.5, width_m=1.8),),
+        object_class="placed_routed_mover",
+        motion_mode="steerable",
+        turn_radius_m=5.5,
+    )
+    pin_placement = Placement(
+        plane_id="zz_caddy",
+        x_m=20.0,
+        y_m=15.0,
+        heading_deg=90.0,
+        on_carts=False,
+        hand_placed=True,
+    )
+    layout = Layout(
+        fleet={},
+        hangar=hangar,
+        placements=(),
+        ground_objects={routed.id: routed, pinned.id: pinned},
+        ground_object_placements=(
+            Placement(plane_id="aa_trailer", x_m=20.0, y_m=30.0, heading_deg=0.0, on_carts=False),
+            pin_placement,
+        ),
+    )
+
+    plan = plan_fill(layout)
+
+    routed_move = next(m for m in plan.moves if m.plane_id == "aa_trailer")
+    pin_move = next(m for m in plan.moves if m.plane_id == "zz_caddy")
+    assert pin_move.path is None
+    assert routed_move.path is not None, "the unpinned mover must still route"
+
+    # The pin must be a real obstacle for the routed mover's OWN path, not just
+    # for movers sorted after it in id order.
+    check_layout = Layout(
+        fleet={},
+        hangar=hangar,
+        placements=(),
+        ground_objects={routed.id: routed, pinned.id: pinned},
+        ground_object_placements=(pin_placement,),
+    )
+    assert (
+        path_first_conflict(
+            routed_move.path,
+            routed,
+            mover_on_carts=False,
+            placed=check_layout,
+        )
+        is None
+    ), (
+        "the routed mover's path collides with the pin, proving the pin was NOT "
+        "an obstacle during the routed mover's own routing (it sorts after the "
+        "routed mover, so it hadn't been pre-seeded as an obstacle yet)"
+    )

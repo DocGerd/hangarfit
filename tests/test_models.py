@@ -1171,7 +1171,16 @@ def test_scenario_mover_pin_and_region_preference_are_mutually_exclusive() -> No
     with pytest.raises(ValueError, match="both a pin and a region_preference"):
         _scenario(
             mover_ids=("caddy",),
-            mover_pins={"caddy": _placement("caddy")},
+            mover_pins={
+                "caddy": Placement(
+                    plane_id="caddy",
+                    x_m=2.0,
+                    y_m=2.0,
+                    heading_deg=0.0,
+                    on_carts=False,
+                    hand_placed=True,
+                )
+            },
             region_preferences={"caddy": RegionPreference(side="right", weight=1.0)},
         )
 
@@ -1181,9 +1190,41 @@ def test_scenario_mover_pin_plane_id_must_equal_its_key() -> None:
         _scenario(mover_ids=("caddy",), mover_pins={"caddy": _placement("other_id")})
 
 
+def test_scenario_mover_pin_must_be_hand_placed() -> None:
+    # #912: a mover_pins entry is a path-less keep-out; hand_placed=False (the
+    # _placement() helper default) would leave it silently un-keep-out'd.
+    with pytest.raises(ValueError, match="hand_placed"):
+        _scenario(mover_ids=("caddy",), mover_pins={"caddy": _placement("caddy")})
+
+
+def test_scenario_mover_pin_must_not_be_on_carts() -> None:
+    with pytest.raises(ValueError, match="on_carts"):
+        _scenario(
+            mover_ids=("caddy",),
+            mover_pins={
+                "caddy": Placement(
+                    plane_id="caddy",
+                    x_m=2.0,
+                    y_m=2.0,
+                    heading_deg=0.0,
+                    on_carts=True,
+                    hand_placed=True,
+                )
+            },
+        )
+
+
 def test_scenario_without_mover_pins_is_unchanged() -> None:
     sc = _scenario(mover_ids=("caddy",))
     assert sc.mover_pins == {}
+
+
+def test_scenario_rejects_fleet_ground_object_id_collision() -> None:
+    # #912 review finding B: fleet and ground_object ids must be disjoint (the
+    # Layout-side check already enforces this, ~984-997); a colliding id would
+    # make _initial_placement_for_plane hand an aircraft the mover's pin.
+    with pytest.raises(ValueError, match="disjoint"):
+        _scenario(mover_ids=("foo",))  # "foo" is also the aircraft id in _scenario
 
 
 class TestApronShallowDrop:

@@ -290,6 +290,19 @@ deferred to #605.
   `towplanner.py`; the empty-set byte-identity guarantee is its primary
   protection here.
 
+## Amendments
+
+### 2026-07-04 — mover pin (issue #912)
+
+[#912](https://github.com/DocGerd/hangarfit/issues/912) lets a
+`placed_routed_mover` optionally carry a hand-authored **pin** — a fixed
+resting pose the solver honors instead of running its own RR-MC search for
+that mover — via `Scenario.mover_pins`. A pinned mover is seated **path-less**
+(a static keep-out, not a routed body) by generalizing the `hand_placed`
+marker (originally an aircraft-only #667 Rung A idiom) to movers. An unpinned
+mover is unaffected and stays byte-identical (ADR-0003). See
+[ADR-0031](0031-mover-pin.md) for the full design.
+
 ## More Information
 
 - Related ADRs: [ADR-0001](0001-aircraft-parts-model.md) (the parts model
