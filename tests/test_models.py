@@ -14,11 +14,14 @@ from hangarfit.models import (
     CheckResult,
     Conflict,
     Door,
+    GroundObject,
     Hangar,
     Layout,
     MaintenanceBay,
     Part,
     Placement,
+    RegionPreference,
+    Scenario,
     SearchConfig,
     SolverDiagnostics,
     SolveResult,
@@ -1069,6 +1072,118 @@ class TestLayout:
         layout = Layout(fleet={}, hangar=_ok_hangar(), placements=())
         assert layout.placements == ()
         assert len(layout.fleet) == 0
+
+
+# ---------------------------------------------------------------------------
+# #912: hand_placed generalizes to a placed_routed_mover ground-object
+# placement, and Scenario grows a mover_pins map (a mover-scoped parallel to
+# constraints.pin). Local helpers mirror the pattern already established in
+# the sibling test_models_ground_object.py / test_models_region.py /
+# test_models_door_order.py files (each keeps its own small builders rather
+# than importing across test modules).
+# ---------------------------------------------------------------------------
+
+
+def _ok_mover(obj_id: str = "caddy", *, turn_radius_m: float = 4.5) -> GroundObject:
+    return GroundObject(
+        id=obj_id,
+        name="Test mover",
+        parts=(_ok_part(kind="ground", length_m=3.0, width_m=2.0, z_top_m=1.5),),
+        object_class="placed_routed_mover",
+        motion_mode="steerable",
+        turn_radius_m=turn_radius_m,
+    )
+
+
+def _ok_fixed_obstacle(obj_id: str = "obstacle") -> GroundObject:
+    return GroundObject(
+        id=obj_id,
+        name="Test fixed obstacle",
+        parts=(_ok_part(kind="ground", length_m=3.0, width_m=2.0, z_top_m=1.5),),
+        object_class="fixed_obstacle",
+    )
+
+
+def _layout_with_ground_object(*, object_class: str, placement_hand_placed: bool) -> Layout:
+    """Minimal valid Layout with a single ground object of ``object_class``,
+    placed with the given ``hand_placed`` flag."""
+    obj = _ok_mover("obj1") if object_class == "placed_routed_mover" else _ok_fixed_obstacle("obj1")
+    return Layout(
+        fleet={},
+        hangar=_ok_hangar(),
+        placements=(),
+        ground_objects={obj.id: obj},
+        ground_object_placements=(
+            Placement(
+                plane_id=obj.id,
+                x_m=2.0,
+                y_m=2.0,
+                heading_deg=0.0,
+                on_carts=False,
+                hand_placed=placement_hand_placed,
+            ),
+        ),
+    )
+
+
+def _placement(plane_id: str) -> Placement:
+    return Placement(plane_id=plane_id, x_m=2.0, y_m=2.0, heading_deg=0.0, on_carts=False)
+
+
+def _scenario(*, mover_ids: tuple[str, ...] = (), **kwargs: object) -> Scenario:
+    """Minimal valid Scenario with one aircraft ('foo'). ``mover_ids`` is a
+    convenience: each named id is pre-registered as a valid placed_routed_mover
+    ground object (so callers can pass mover-scoped kwargs like ``mover_pins``/
+    ``region_preferences`` without separately wiring ``ground_objects``/
+    ``ground_object_defs``)."""
+    a = _ok_aircraft("foo")
+    movers = {mid: _ok_mover(mid) for mid in mover_ids}
+    return Scenario(
+        fleet={a.id: a},
+        hangar=_ok_hangar(),
+        fleet_in=(a.id,),
+        ground_objects=tuple(movers),
+        ground_object_defs=movers,
+        **kwargs,  # type: ignore[arg-type]
+    )
+
+
+def test_layout_allows_hand_placed_on_a_mover_placement() -> None:
+    # #912: hand_placed generalizes to placed_routed_mover (path-less keep-out).
+    layout = _layout_with_ground_object(
+        object_class="placed_routed_mover",
+        placement_hand_placed=True,
+    )
+    assert any(gp.hand_placed for gp in layout.ground_object_placements)
+
+
+def test_layout_rejects_hand_placed_on_a_fixed_obstacle_placement() -> None:
+    with pytest.raises(ValueError, match="placed_routed_mover"):
+        _layout_with_ground_object(object_class="fixed_obstacle", placement_hand_placed=True)
+
+
+def test_scenario_mover_pins_must_be_a_subset_of_mover_ids() -> None:
+    with pytest.raises(ValueError, match="mover_pins"):
+        _scenario(mover_pins={"not_a_mover": _placement("not_a_mover")})
+
+
+def test_scenario_mover_pin_and_region_preference_are_mutually_exclusive() -> None:
+    with pytest.raises(ValueError, match="both a pin and a region_preference"):
+        _scenario(
+            mover_ids=("caddy",),
+            mover_pins={"caddy": _placement("caddy")},
+            region_preferences={"caddy": RegionPreference(side="right", weight=1.0)},
+        )
+
+
+def test_scenario_mover_pin_plane_id_must_equal_its_key() -> None:
+    with pytest.raises(ValueError, match="plane_id"):
+        _scenario(mover_ids=("caddy",), mover_pins={"caddy": _placement("other_id")})
+
+
+def test_scenario_without_mover_pins_is_unchanged() -> None:
+    sc = _scenario(mover_ids=("caddy",))
+    assert sc.mover_pins == {}
 
 
 class TestApronShallowDrop:

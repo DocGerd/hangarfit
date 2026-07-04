@@ -1003,15 +1003,20 @@ class Layout:
                     f"ground_object_placement references unknown id {gp.plane_id!r} "
                     f"(ground_objects has: {sorted(self.ground_objects)})"
                 )
-            # #667: hand_placed is an aircraft-only marker (a dolly-borne body the
-            # tow planner pre-seeds as an obstacle). A ground object is routed/fixed
-            # by its object_class, and the planner only filters AIRCRAFT placements,
-            # so hand_placed here would be silently ignored — reject it instead.
-            if gp.hand_placed:
+            # #667/#912: hand_placed originated as an aircraft-only marker (a
+            # dolly-borne body the tow planner pre-seeds as an obstacle), then
+            # generalized (#912) to a placed_routed_mover — a hand-positioned
+            # mover is a path-less keep-out the planner pre-seeds the same way.
+            # A fixed_obstacle is positioned by its pose alone (no motion, so
+            # hand_placed would be silently ignored there) — still reject it.
+            if (
+                gp.hand_placed
+                and self.ground_objects[gp.plane_id].object_class != "placed_routed_mover"
+            ):
                 raise ValueError(
                     f"ground_object_placement {gp.plane_id!r} sets hand_placed=True, "
-                    f"which is an aircraft-only marker (ground objects are positioned "
-                    f"by their object_class, not hand-placed)"
+                    f"which is only valid on a placed_routed_mover (a fixed_obstacle "
+                    f"is positioned by its pose, #912)"
                 )
             if gp.plane_id in seen_ground:
                 raise ValueError(f"Duplicate ground_object_placement for id {gp.plane_id!r}")
@@ -1201,6 +1206,9 @@ class Scenario:
       constraints (the occupant is treated as away — those constraints would be
       incoherent and would be silently ignored by the solver)
     - region_preferences.keys() ⊆ placeable bodies (fleet_in ∪ placed_routed_mover ids)
+    - mover_pins.keys() ⊆ mover_ids (placed_routed_mover ids only, not aircraft);
+      each pin.plane_id == its key; a mover cannot carry both a pin and a
+      region_preference (mutually exclusive, #912)
     - door_order (if set) ⊆ placeable bodies and has no duplicate ids (#614)
     - fixed_obstacle_placements entries reference distinct fixed_obstacle ground
       objects (in ground_object_defs)
@@ -1232,6 +1240,12 @@ class Scenario:
     region_preferences: Mapping[str, RegionPreference] = field(
         default_factory=lambda: MappingProxyType({})
     )
+    # #912: a mover-scoped pin — a fixed pose for a placed_routed_mover, the
+    # mover-side parallel to constraints[plane_id].pin for aircraft. Keys must
+    # be placed_routed_mover ids (mover_ids), each pin's plane_id must equal
+    # its key, and a mover cannot carry both a pin and a region_preference
+    # (mutually exclusive — see __post_init__).
+    mover_pins: Mapping[str, Placement] = field(default_factory=lambda: MappingProxyType({}))
     # #614 SOFT door-priority: a desired door-proximity order (the first id should
     # park nearest the door). A lexicographically-subordinate selection term,
     # consumed only after every hard rule passes (see ``solver._door_order_deviation``;
@@ -1249,6 +1263,7 @@ class Scenario:
         "constraints",
         "ground_object_defs",
         "region_preferences",
+        "mover_pins",
     )
 
     def __post_init__(self) -> None:
@@ -1393,6 +1408,30 @@ class Scenario:
                     f"Scenario.region_preferences references {rid!r} which is not a "
                     f"placeable body (aircraft or placed_routed_mover); "
                     f"placeable ids: {sorted(placeable)}"
+                )
+
+        # Mover pins (#912): keys must be placed_routed_mover ids (mover_ids,
+        # NOT the wider `placeable` set above — a pin is mover-only, aircraft
+        # use constraints[plane_id].pin instead), each pin's plane_id must
+        # equal its key (mirrors the constraints.pin check above), and a mover
+        # cannot carry both a pin and a region_preference (mutually exclusive
+        # placement intents for the same body).
+        mover_id_set = set(self.mover_ids)
+        for mid, pin in self.mover_pins.items():
+            if mid not in mover_id_set:
+                raise ValueError(
+                    f"Scenario.mover_pins key {mid!r} is not a placed_routed_mover in "
+                    f"this scenario; mover_ids: {sorted(mover_id_set)}"
+                )
+            if pin.plane_id != mid:
+                raise ValueError(
+                    f"Scenario.mover_pins[{mid!r}] has plane_id {pin.plane_id!r} "
+                    f"(must equal the key)"
+                )
+            if mid in self.region_preferences:
+                raise ValueError(
+                    f"Scenario mover {mid!r} has both a pin and a region_preference "
+                    f"(mutually exclusive, #912)"
                 )
 
         # Door order (#614): every id must reference a placeable body (mirrors
