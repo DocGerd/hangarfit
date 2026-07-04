@@ -27,3 +27,12 @@ export function parseServeConfig(text: string | null | undefined): ServeConfig |
 export function solveRequestInit(yaml: string): RequestInit {
   return { method: 'POST', headers: { 'Content-Type': 'application/x-yaml' }, body: yaml };
 }
+
+// #911 drag-to-fix: POST /convert turns a dragged WORLD floor pose into a scenario
+// pin. Python owns the determinant-−1 inverse (ADR-0002); the client never computes
+// heading↔yaw. world_yaw_rad is read off the gizmo proxy's rotation.z.
+export interface ConvertRequest { x: number; y: number; world_yaw_rad: number; }
+export interface ConvertResponse { x_m: number; y_m: number; heading_deg: number; }
+export function convertRequestInit(req: ConvertRequest): RequestInit {
+  return { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(req) };
+}

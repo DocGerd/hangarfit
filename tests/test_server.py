@@ -98,3 +98,76 @@ def test_malformed_yaml_body_is_4xx_not_500(live_server: int) -> None:
     doc = json.loads(resp.read().decode("utf-8"))
     assert 400 <= resp.status < 500
     assert "error" in doc  # actionable JSON, no stack trace
+
+
+def test_post_convert_returns_pin_for_a_dragged_pose(live_server: int) -> None:
+    import math
+
+    # heading 30° → world_yaw_rad = radians(90 - 30); /convert must invert it back.
+    yaw = math.radians(90.0 - 30.0)
+    c = _conn(live_server)
+    c.request(
+        "POST",
+        "/convert",
+        body=json.dumps({"x": 4.2, "y": 7.1, "world_yaw_rad": yaw}).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    resp = c.getresponse()
+    doc = json.loads(resp.read().decode("utf-8"))
+    assert resp.status == 200
+    assert doc == pytest.approx({"x_m": 4.2, "y_m": 7.1, "heading_deg": 30.0})
+
+
+def test_post_convert_is_solve_free(live_server: int, monkeypatch: pytest.MonkeyPatch) -> None:
+    import math
+
+    # /convert must never reach the solver: replace solve with a bomb; /convert still
+    # 200s with the pure-geometry pin (proving it does no solving — ADR-0003).
+    def _boom(*a: object, **k: object) -> object:
+        raise RuntimeError("solve must not be called by /convert")
+
+    monkeypatch.setattr(server, "solve", _boom)
+    yaw = math.radians(90.0 - 45.0)
+    c = _conn(live_server)
+    c.request(
+        "POST",
+        "/convert",
+        body=json.dumps({"x": 1.0, "y": 2.0, "world_yaw_rad": yaw}).encode("utf-8"),
+        headers={"Content-Type": "application/json"},
+    )
+    resp = c.getresponse()
+    doc = json.loads(resp.read().decode("utf-8"))
+    assert resp.status == 200
+    assert doc["heading_deg"] == pytest.approx(45.0)
+
+
+def test_post_convert_malformed_json_is_400(live_server: int) -> None:
+    c = _conn(live_server)
+    c.request("POST", "/convert", body=b"{not json", headers={"Content-Type": "application/json"})
+    resp = c.getresponse()
+    assert resp.status == 400
+    assert "error" in json.loads(resp.read().decode("utf-8"))
+
+
+def test_post_convert_missing_field_is_400(live_server: int) -> None:
+    c = _conn(live_server)
+    c.request(
+        "POST",
+        "/convert",
+        body=json.dumps({"x": 1.0, "y": 2.0}).encode("utf-8"),  # no world_yaw_rad
+        headers={"Content-Type": "application/json"},
+    )
+    resp = c.getresponse()
+    assert resp.status == 400
+
+
+def test_post_convert_non_finite_is_400(live_server: int) -> None:
+    c = _conn(live_server)
+    c.request(
+        "POST",
+        "/convert",
+        body=b'{"x": 1.0, "y": 2.0, "world_yaw_rad": Infinity}',  # Python json accepts Infinity
+        headers={"Content-Type": "application/json"},
+    )
+    resp = c.getresponse()
+    assert resp.status == 400
