@@ -20,7 +20,15 @@ export interface Intent {
   // exported (byte path unchanged). Deselecting a plane drops its override.
   cartModeOverrides: Record<string, string>;
 }
-export interface CurrentPose { x_m: number; y_m: number; heading_deg: number; on_carts: boolean; }
+export interface CurrentPose {
+  x_m: number;
+  y_m: number;
+  heading_deg: number;
+  on_carts: boolean;
+  // #911: world-space yaw (radians, math convention) = compass_to_math_rad(heading_deg),
+  // seeding PR B's drag gizmo proxy without any browser-side heading↔yaw trig (ADR-0002).
+  world_yaw_rad: number;
+}
 export interface EditorContext {
   fleet: string;
   hangar: string;

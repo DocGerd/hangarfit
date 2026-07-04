@@ -12,8 +12,8 @@ const CTX: EditorContext = {
   fleet: 'data/fleet.yaml', hangar: 'data/hangar.yaml',
   maintenance: { plane: 'fuji' },
   currentPoses: {
-    husky: { x_m: 2.1, y_m: 14.3, heading_deg: 0, on_carts: false },
-    ctsl: { x_m: 5.0, y_m: 3.0, heading_deg: 90, on_carts: false },
+    husky: { x_m: 2.1, y_m: 14.3, heading_deg: 0, on_carts: false, world_yaw_rad: 0 },
+    ctsl: { x_m: 5.0, y_m: 3.0, heading_deg: 90, on_carts: false, world_yaw_rad: 0 },
   },
   catalog: {
     husky: { name: 'Husky', kind: 'aircraft', movementMode: 'always_own_gear', hasTurnRadius: true },
@@ -141,9 +141,9 @@ test('moveInDoorOrder: forward moves on a 3-element order splice correctly', () 
   const CTX3: EditorContext = {
     fleet: 'f', hangar: 'h', maintenance: null,
     currentPoses: {
-      a: { x_m: 0, y_m: 0, heading_deg: 0, on_carts: false },
-      b: { x_m: 1, y_m: 1, heading_deg: 0, on_carts: false },
-      c: { x_m: 2, y_m: 2, heading_deg: 0, on_carts: false },
+      a: { x_m: 0, y_m: 0, heading_deg: 0, on_carts: false, world_yaw_rad: 0 },
+      b: { x_m: 1, y_m: 1, heading_deg: 0, on_carts: false, world_yaw_rad: 0 },
+      c: { x_m: 2, y_m: 2, heading_deg: 0, on_carts: false, world_yaw_rad: 0 },
     },
   };
   let i = initialIntent(CTX3);

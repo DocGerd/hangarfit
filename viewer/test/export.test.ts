@@ -11,8 +11,8 @@ const CTX: EditorContext = {
   fleet: 'data/fleet.yaml', hangar: 'data/hangar.yaml',
   maintenance: { plane: 'fuji' },
   currentPoses: {
-    husky: { x_m: 2.1, y_m: 14.3, heading_deg: 0, on_carts: false },
-    ctsl: { x_m: 5.0, y_m: 3.0, heading_deg: 90, on_carts: false },
+    husky: { x_m: 2.1, y_m: 14.3, heading_deg: 0, on_carts: false, world_yaw_rad: 0 },
+    ctsl: { x_m: 5.0, y_m: 3.0, heading_deg: 90, on_carts: false, world_yaw_rad: 0 },
   },
   catalog: {
     husky: { name: 'Husky', kind: 'aircraft', movementMode: 'always_own_gear', hasTurnRadius: true },

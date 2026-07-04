@@ -17,6 +17,7 @@ from pathlib import Path
 
 from hangarfit import brand, metrics
 from hangarfit.models import Layout
+from hangarfit.towplanner import compass_to_math_rad
 
 _ASSETS = "hangarfit._viewer_assets"
 _THREE = "hangarfit._viewer_assets.three"
@@ -160,6 +161,11 @@ def build_editor_context(
                 "y_m": p.y_m,
                 "heading_deg": p.heading_deg,
                 "on_carts": p.on_carts,
+                # #911: the world-space yaw (radians, math convention) the drag
+                # gizmo's clean PROXY is seeded with. Python-owned so the browser
+                # does no heading↔yaw trig (ADR-0002); its inverse is server.py's
+                # /convert. compass_to_math_rad(h) = radians(90 - h).
+                "world_yaw_rad": compass_to_math_rad(p.heading_deg),
             }
             for p in layout.placements
         },
