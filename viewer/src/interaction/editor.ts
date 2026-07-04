@@ -23,6 +23,7 @@ import {
 } from './selection.ts';
 import { intentToScenarioYaml } from './export.ts';
 import { byId } from '../dom.ts';
+import { focusAwareHex } from './highlight.ts';
 import type { Intent, EditorContext } from './intent-contract.ts';
 
 export interface EditorHandle {
@@ -104,21 +105,24 @@ export function mountEditor(opts: {
       if (Math.hypot(ev.clientX - downX, ev.clientY - downY) > 6) return; // a drag, not a click
       const id = pick(ev);
       if (!id) return;
-      intent = toggleSelection(intent, id);
-      focusedId = isSelected(intent, id) ? id : null;
-      applyHighlight();
-      renderReadout();
-      syncControls();
-      renderDoorOrder(); // deselect un-ranks; focus change updates the add-button state
-      renderPalette(); // reflect the selection change in the palette checkboxes
+      // #904: click = FOCUS only. No membership toggle, so a plane's priority/pin/
+      // cart-mode/door-rank are never dropped by focusing it. Fleet add/remove lives
+      // on the #910 palette checkboxes. focusedId is the stable, membership-independent
+      // handle #911's TransformControls gizmo will attach to.
+      focusedId = id;
+      applyHighlight(); // repaint the focus highlight onto the newly focused plane
+      syncControls(); // control enablement reflects the focused plane (gated on isSelected)
+      renderDoorOrder(); // the ＋rank button enablement reads focus + membership
     },
     sig,
   );
 
   function applyHighlight(): void {
-    // Selected planes keep their original emissive; deselected planes glow amber ("excluded").
+    // Three states over the emissive channel (#904): the FOCUSED plane glows blue
+    // (which plane the panel edits — independent of membership); an unfocused plane
+    // shows its membership hue (original emissive if in the fleet, amber if excluded).
     for (const t of targets) {
-      t.mat.emissive.setHex(isSelected(intent, t.id) ? t.orig : 0x552200);
+      t.mat.emissive.setHex(focusAwareHex(isSelected(intent, t.id), t.id === focusedId, t.orig));
     }
   }
 
@@ -366,8 +370,11 @@ export function mountEditor(opts: {
       box.disabled = !(isAircraft || isMover); // a fixed obstacle needs a pose
       box.addEventListener('change', () => {
         if (isAircraft) {
+          // #904: the palette toggles fleet membership ONLY; it must not move focus
+          // (focus is the canvas click's job — moving it here would yank a future
+          // gizmo target). The focused plane's controls still refresh below in case
+          // its own membership was the thing toggled.
           intent = toggleSelection(intent, id);
-          focusedId = isSelected(intent, id) ? id : focusedId === id ? null : focusedId;
           applyHighlight();
           renderReadout();
           syncControls();
