@@ -17,18 +17,21 @@ as package data inside the wheel, reachable via
 |---|---|
 | `three.module.js` | https://cdn.jsdelivr.net/npm/three@0.160.0/build/three.module.js |
 | `OrbitControls.js` | https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/OrbitControls.js |
+| `TransformControls.js` | https://cdn.jsdelivr.net/npm/three@0.160.0/examples/jsm/controls/TransformControls.js |
 | `THREE_LICENSE.txt` | https://cdn.jsdelivr.net/npm/three@0.160.0/LICENSE |
 
 `OrbitControls.js` imports the bare specifier `from 'three'`; the viewer's
 import-map resolves both `three` and
 `three/addons/controls/OrbitControls.js` to `data:` URLs, so the bare import
-works from a `file://` page.
+works from a `file://` page. `TransformControls.js` likewise imports the bare
+`'three'` specifier, resolved by the same import-map.
 
 ## SHA-256 (verify after any refresh)
 
 ```
 76dea8151bc9352aef3528b4262e249b2604f62543828328db978d060d61a495  three.module.js
 5a44a9e86a2a0fb11933eed69bc2cd33c76a496854c1aed6ed776efa87d7b064  OrbitControls.js
+487861c18e017a6c69cc302827c6f506993f05dafce220da0bad095d6fe5808d  TransformControls.js
 852e0e8699169bf9f6fdc6bda3e682d078dcbc738b5d33e74df594721bff271d  THREE_LICENSE.txt
 ```
 
@@ -39,8 +42,9 @@ V=<new-version>           # e.g. 0.161.0
 DST=src/hangarfit/_viewer_assets/three
 curl -fsSL "https://cdn.jsdelivr.net/npm/three@${V}/build/three.module.js" -o "$DST/three.module.js"
 curl -fsSL "https://cdn.jsdelivr.net/npm/three@${V}/examples/jsm/controls/OrbitControls.js" -o "$DST/OrbitControls.js"
+curl -fsSL "https://cdn.jsdelivr.net/npm/three@${V}/examples/jsm/controls/TransformControls.js" -o "$DST/TransformControls.js"
 curl -fsSL "https://cdn.jsdelivr.net/npm/three@${V}/LICENSE" -o "$DST/THREE_LICENSE.txt"
-sha256sum "$DST"/three.module.js "$DST"/OrbitControls.js "$DST"/THREE_LICENSE.txt
+sha256sum "$DST"/three.module.js "$DST"/OrbitControls.js "$DST"/TransformControls.js "$DST"/THREE_LICENSE.txt
 # Update the pinned version + the hash block above, then run the viewer tests.
 ```
 

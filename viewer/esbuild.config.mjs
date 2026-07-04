@@ -32,6 +32,10 @@ await build({
   minify: false,
   charset: "utf8",
   legalComments: "none",
-  external: ["three", "three/addons/controls/OrbitControls.js"],
+  external: [
+    "three",
+    "three/addons/controls/OrbitControls.js",
+    "three/addons/controls/TransformControls.js",
+  ],
   logLevel: "info",
 });
