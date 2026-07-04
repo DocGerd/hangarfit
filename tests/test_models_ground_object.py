@@ -61,9 +61,12 @@ def test_ground_partkind_is_valid() -> None:
 
 
 def test_layout_rejects_hand_placed_ground_object() -> None:
-    """`hand_placed` (#667) is an aircraft-only marker — meaningless on a ground
-    object (those are routed/fixed by their object_class). Layout must reject it
-    rather than silently ignore it (the planner only filters aircraft placements)."""
+    """`hand_placed` (#667) started as an aircraft-only marker, then was
+    generalized (#912, ADR-0031) to a `placed_routed_mover` — a hand-pinned
+    mover is a path-less keep-out the tow planner pre-seeds the same way a
+    hand-placed aircraft is. A `fixed_obstacle`, however, is positioned by its
+    pose alone (no motion, so `hand_placed` there would be silently ignored);
+    Layout must still reject it on that object_class."""
     obj = GroundObject(id="fuel", name="Fuel", parts=(_rect_part(),), object_class="fixed_obstacle")
     with pytest.raises(ValueError, match="hand_placed"):
         Layout(
