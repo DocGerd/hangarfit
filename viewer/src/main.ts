@@ -168,16 +168,25 @@ function bootSingle(data: SceneV2, brand: BrandTokens): void {
   const ctxEl = document.getElementById('editor-context');
   if (ctxEl?.textContent) {
     const ctx = JSON.parse(ctxEl.textContent) as EditorContext;
-    let editor = mountEditor({ groups: world.groups, renderer: stage.renderer, cam: stage.cam, ctx });
+    const serveCfg = parseServeConfig(document.getElementById('serve-config')?.textContent);
+
+    // #911 PR B: the drag gizmo + "fix position" button mount only when served
+    // (drag needs the /convert round-trip). markUnsolved() flags Calculate after a
+    // drag-convert; it's assigned once Calculate mounts (below), so the closure is
+    // safe to pass into the editor first.
+    let markUnsolved: () => void = () => {};
+    const editHostOpts = serveCfg
+      ? { scene: stage.scene, orbit: stage.controls, onEdit: () => markUnsolved() }
+      : {};
+    let editor = mountEditor({ groups: world.groups, renderer: stage.renderer, cam: stage.cam, ctx, ...editHostOpts });
 
     // #445 serve: a `#serve-config` blob (present ONLY when `hangarfit serve`
     // renders the shell, never in the offline export) lights up the Calculate
     // button. A successful solve swaps the world in place (mirroring the #666
     // compare `mount`) and re-mounts the editor on the fresh groups with the
     // user's intent preserved so they can iterate.
-    const serveCfg = parseServeConfig(document.getElementById('serve-config')?.textContent);
     if (serveCfg) {
-      mountCalculate({
+      const calc = mountCalculate({
         getIntent: () => editor.getIntent(),
         ctx,
         reRender: (resp) => {
@@ -195,6 +204,9 @@ function bootSingle(data: SceneV2, brand: BrandTokens): void {
             // the new solved poses (the browser must not derive them — ADR-0002).
             ctx: resp.editorContext,
             initialIntent: preserved,
+            scene: stage.scene,
+            orbit: stage.controls,
+            onEdit: () => markUnsolved(),
           });
           editor.dispose();
           stage.scene.remove(world.group);
@@ -206,6 +218,7 @@ function bootSingle(data: SceneV2, brand: BrandTokens): void {
           hud.setActiveTimeline(world.timeline);
         },
       });
+      markUnsolved = calc.markUnsolved;
     }
   }
 }

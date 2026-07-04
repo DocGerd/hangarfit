@@ -1,5 +1,5 @@
 // src/main.ts
-import * as THREE12 from "three";
+import * as THREE13 from "three";
 
 // src/dom.ts
 function byId(id) {
@@ -588,6 +588,7 @@ function createTimeline(scene, groups, goGroups = {}) {
     const poses = framePoses(scene, segByPlane, t);
     const drive = (id, g) => {
       if (!g) return;
+      if (g.userData.heldByEditor) return;
       const { vis, aff } = poses[id];
       g.visible = vis;
       if (vis && aff) {
@@ -718,7 +719,7 @@ function foundLabel(m) {
 }
 
 // src/interaction/editor.ts
-import * as THREE11 from "three";
+import * as THREE12 from "three";
 
 // src/interaction/selection.ts
 function initialIntent(ctx) {
@@ -778,6 +779,10 @@ function pinAtCurrent(intent, id, ctx) {
   const c = ctx.currentPoses[id];
   if (!c) return intent;
   const mp = { x: c.x_m, y: c.y_m, heading: c.heading_deg, onCarts: c.on_carts };
+  return { ...intent, mustPositions: { ...intent.mustPositions, [id]: mp } };
+}
+function pinAtPose(intent, id, pose, onCarts) {
+  const mp = { x: pose.x_m, y: pose.y_m, heading: pose.heading_deg, onCarts };
   return { ...intent, mustPositions: { ...intent.mustPositions, [id]: mp } };
 }
 function unpin(intent, id) {
@@ -867,14 +872,117 @@ function focusAwareHex(selected, focused, orig) {
   return selected ? orig : EXCLUDED_EMISSIVE;
 }
 
+// src/interaction/manipulate.ts
+import * as THREE11 from "three";
+import { TransformControls } from "three/addons/controls/TransformControls.js";
+
+// src/serve-contract.ts
+function parseServeConfig(text) {
+  if (!text) return null;
+  return JSON.parse(text);
+}
+function solveRequestInit(yaml) {
+  return { method: "POST", headers: { "Content-Type": "application/x-yaml" }, body: yaml };
+}
+function convertRequestInit(req) {
+  return { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(req) };
+}
+
+// src/interaction/manipulate.ts
+function createManipulator(opts) {
+  const proxy = new THREE11.Object3D();
+  opts.scene.add(proxy);
+  const control = new TransformControls(opts.cam, opts.renderer.domElement);
+  control.setSpace("local");
+  opts.scene.add(control);
+  let armed = null;
+  function setMode(mode) {
+    control.setMode(mode);
+    control.showX = mode === "translate";
+    control.showY = mode === "translate";
+    control.showZ = mode === "rotate";
+  }
+  setMode("translate");
+  const onDraggingChanged = (event) => {
+    const dragging = event.value === true;
+    opts.orbit.enabled = !dragging;
+    if (!dragging && armed) void convertOnDrop(armed);
+  };
+  control.addEventListener("dragging-changed", onDraggingChanged);
+  const onObjectChange = () => {
+    if (armed === null || control.getMode() !== "translate") return;
+    const g = opts.groups[armed];
+    if (!g) return;
+    const z0 = g.matrix.elements[14];
+    g.matrix.setPosition(proxy.position.x, proxy.position.y, z0);
+    g.matrixWorldNeedsUpdate = true;
+  };
+  control.addEventListener("objectChange", onObjectChange);
+  const onKey = (ev) => {
+    if (armed === null) return;
+    if (ev.key === "t") setMode("translate");
+    else if (ev.key === "r") setMode("rotate");
+  };
+  window.addEventListener("keydown", onKey);
+  async function convertOnDrop(id) {
+    try {
+      const req = { x: proxy.position.x, y: proxy.position.y, world_yaw_rad: proxy.rotation.z };
+      const resp = await fetch("/convert", convertRequestInit(req));
+      if (!resp.ok) {
+        let msg = String(resp.status);
+        try {
+          msg = JSON.parse(await resp.text()).error ?? msg;
+        } catch {
+        }
+        banner("Fix position failed: " + msg);
+        return;
+      }
+      opts.onConverted(id, await resp.json());
+    } catch (e) {
+      banner("Fix position failed: " + e.message);
+    }
+  }
+  return {
+    arm(id) {
+      const c = opts.ctx.currentPoses[id];
+      if (!c) return;
+      const z0 = opts.groups[id]?.matrix.elements[14] ?? 0;
+      proxy.position.set(c.x_m, c.y_m, z0);
+      proxy.rotation.set(0, 0, c.world_yaw_rad);
+      setMode("translate");
+      control.attach(proxy);
+      const g = opts.groups[id];
+      if (g) g.userData.heldByEditor = true;
+      armed = id;
+    },
+    disarm() {
+      control.detach();
+      armed = null;
+    },
+    armedId: () => armed,
+    dispose() {
+      control.removeEventListener("dragging-changed", onDraggingChanged);
+      control.removeEventListener("objectChange", onObjectChange);
+      window.removeEventListener("keydown", onKey);
+      control.detach();
+      control.dispose();
+      opts.scene.remove(control);
+      opts.scene.remove(proxy);
+      armed = null;
+    }
+  };
+}
+
 // src/interaction/editor.ts
 function mountEditor(opts) {
   let intent = opts.initialIntent ?? initialIntent(opts.ctx);
   const ac = new AbortController();
   const sig = { signal: ac.signal };
   let focusedId = null;
-  const ray = new THREE11.Raycaster();
-  const ndc = new THREE11.Vector2();
+  let manip = null;
+  let fixBtn = null;
+  const ray = new THREE12.Raycaster();
+  const ndc = new THREE12.Vector2();
   const idByObject = /* @__PURE__ */ new Map();
   const targets = [];
   for (const [id, g] of Object.entries(opts.groups)) {
@@ -975,6 +1083,7 @@ function mountEditor(opts) {
     const hasPose = id !== null && id in opts.ctx.currentPoses;
     prio.disabled = !active;
     pinToggle.disabled = !active || !hasPose;
+    if (fixBtn) fixBtn.disabled = !active || !hasPose;
     if (!active || id === null || baseMode(id) === void 0) {
       cartMode.disabled = true;
     } else {
@@ -1151,6 +1260,38 @@ function mountEditor(opts) {
   syncControls();
   renderDoorOrder();
   renderPalette();
+  if (opts.scene && opts.orbit) {
+    manip = createManipulator({
+      scene: opts.scene,
+      groups: opts.groups,
+      cam: opts.cam,
+      renderer: opts.renderer,
+      orbit: opts.orbit,
+      ctx: opts.ctx,
+      onConverted: (id, pose) => {
+        const onCarts = intent.mustPositions[id]?.onCarts ?? opts.ctx.currentPoses[id]?.on_carts ?? false;
+        intent = pinAtPose(intent, id, pose, onCarts);
+        focusedId = id;
+        syncControls();
+        opts.onEdit?.();
+      }
+    });
+    fixBtn = document.createElement("button");
+    fixBtn.id = "fix-position";
+    fixBtn.type = "button";
+    fixBtn.textContent = "Fix position";
+    fixBtn.disabled = true;
+    exportBtn.parentElement?.insertBefore(fixBtn, exportBtn);
+    fixBtn.addEventListener(
+      "click",
+      () => {
+        if (!manip || focusedId === null) return;
+        if (manip.armedId() === focusedId) manip.disarm();
+        else manip.arm(focusedId);
+      },
+      sig
+    );
+  }
   return {
     getIntent: () => intent,
     // #445: abort the persistent-element listeners and remove the injected
@@ -1158,17 +1299,10 @@ function mountEditor(opts) {
     dispose: () => {
       ac.abort();
       pinFields.remove();
+      manip?.dispose();
+      fixBtn?.remove();
     }
   };
-}
-
-// src/serve-contract.ts
-function parseServeConfig(text) {
-  if (!text) return null;
-  return JSON.parse(text);
-}
-function solveRequestInit(yaml) {
-  return { method: "POST", headers: { "Content-Type": "application/x-yaml" }, body: yaml };
 }
 
 // src/interaction/calculate.ts
@@ -1179,6 +1313,14 @@ function mountCalculate(opts) {
   btn.textContent = "Calculate";
   const exportBtn = byId("export");
   exportBtn.parentElement?.insertBefore(btn, exportBtn);
+  const markUnsolved = () => {
+    btn.classList.add("unsolved");
+    btn.textContent = "Calculate ●";
+  };
+  const clearUnsolved = () => {
+    btn.classList.remove("unsolved");
+    btn.textContent = "Calculate";
+  };
   async function run() {
     btn.disabled = true;
     clearBanner();
@@ -1195,6 +1337,7 @@ function mountCalculate(opts) {
         return;
       }
       opts.reRender(await resp.json());
+      clearUnsolved();
     } catch (e) {
       banner("Calculate failed: " + e.message);
     } finally {
@@ -1202,6 +1345,7 @@ function mountCalculate(opts) {
     }
   }
   btn.addEventListener("click", () => void run());
+  return { markUnsolved };
 }
 
 // src/main.ts
@@ -1213,7 +1357,7 @@ function setReadouts(scene) {
 }
 function buildWorld(scene, data, brand) {
   byId("legend").textContent = "";
-  const group = new THREE12.Group();
+  const group = new THREE13.Group();
   scene.add(group);
   const { groups, labelMeshes, noseMeshes } = addPlanes(group, data, brand);
   const { groups: goGroups } = addGroundObjects(group, data);
@@ -1290,10 +1434,13 @@ function bootSingle(data, brand) {
   const ctxEl = document.getElementById("editor-context");
   if (ctxEl?.textContent) {
     const ctx = JSON.parse(ctxEl.textContent);
-    let editor = mountEditor({ groups: world.groups, renderer: stage.renderer, cam: stage.cam, ctx });
     const serveCfg = parseServeConfig(document.getElementById("serve-config")?.textContent);
+    let markUnsolved = () => {
+    };
+    const editHostOpts = serveCfg ? { scene: stage.scene, orbit: stage.controls, onEdit: () => markUnsolved() } : {};
+    let editor = mountEditor({ groups: world.groups, renderer: stage.renderer, cam: stage.cam, ctx, ...editHostOpts });
     if (serveCfg) {
-      mountCalculate({
+      const calc = mountCalculate({
         getIntent: () => editor.getIntent(),
         ctx,
         reRender: (resp) => {
@@ -1307,7 +1454,10 @@ function bootSingle(data, brand) {
             // The server-refreshed editor-context re-bases "pin at current pose" on
             // the new solved poses (the browser must not derive them — ADR-0002).
             ctx: resp.editorContext,
-            initialIntent: preserved
+            initialIntent: preserved,
+            scene: stage.scene,
+            orbit: stage.controls,
+            onEdit: () => markUnsolved()
           });
           editor.dispose();
           stage.scene.remove(world.group);
@@ -1319,6 +1469,7 @@ function bootSingle(data, brand) {
           hud.setActiveTimeline(world.timeline);
         }
       });
+      markUnsolved = calc.markUnsolved;
     }
   }
 }
