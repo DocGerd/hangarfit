@@ -544,3 +544,138 @@ def test_unroutable_mover_is_surfaced_not_silently_dropped() -> None:
     assert [(m.plane_id, m.path) for m in plan_no_out.moves] == [
         (m.plane_id, m.path) for m in plan.moves
     ]
+
+
+# ── #912 hand-placed mover: path-less + aircraft/mover keep-out ─────────────
+
+
+def _caddy_mover() -> GroundObject:
+    """A steerable mover matching the fixture's `caddy` used elsewhere in this
+    module (#602 tests) — reused so the hand_placed cases stay geometrically
+    comparable to the existing routed-mover cases."""
+    return GroundObject(
+        id="caddy",
+        name="VW Caddy",
+        parts=(_ground_part(length_m=4.5, width_m=1.8),),
+        object_class="placed_routed_mover",
+        motion_mode="steerable",
+        turn_radius_m=5.5,
+    )
+
+
+def test_plan_fill_emits_pathless_move_for_a_hand_placed_mover() -> None:
+    """#912: a `hand_placed=True` placed_routed_mover is a pinned keep-out, not a
+    routing target — plan_fill must never call plan_path for it and must emit a
+    path-less Move (mirrors the #667 Stage-0 hand-placed AIRCRAFT idiom, now
+    generalized to a mover)."""
+    hangar = _hangar()
+    caddy = _caddy_mover()
+    layout = Layout(
+        fleet={},
+        hangar=hangar,
+        placements=(),
+        ground_objects={caddy.id: caddy},
+        ground_object_placements=(
+            Placement(
+                plane_id="caddy",
+                x_m=20.0,
+                y_m=10.0,
+                heading_deg=90.0,
+                on_carts=False,
+                hand_placed=True,
+            ),
+        ),
+    )
+
+    plan = plan_fill(layout)
+
+    mover_moves = [m for m in plan.moves if m.plane_id == "caddy"]
+    assert len(mover_moves) == 1, "hand-placed mover must get exactly one Move"
+    assert mover_moves[0].path is None, "a hand-placed mover must be path-less (never routed)"
+
+
+def test_aircraft_routes_around_a_hand_placed_mover() -> None:
+    """#912: a hand-placed mover is a static keep-out for AIRCRAFT routing too, not
+    just for later movers. `p1`'s only straight-in lane from the door (x = door
+    centre = target x = 20.0) runs directly through (20, 15); a hand-placed caddy
+    parked squarely on that lane must force a different route than the
+    mover-absent case (otherwise aircraft routing is silently ignoring it)."""
+    hangar = _hangar()
+    ac = make_test_aircraft(id="p1")
+    caddy = _caddy_mover()
+    parked = Placement(plane_id="p1", x_m=20.0, y_m=30.0, heading_deg=0.0, on_carts=False)
+
+    def _layout(*, with_mover: bool) -> Layout:
+        return Layout(
+            fleet={ac.id: ac},
+            hangar=hangar,
+            placements=(parked,),
+            ground_objects={caddy.id: caddy} if with_mover else {},
+            ground_object_placements=(
+                (
+                    Placement(
+                        plane_id="caddy",
+                        x_m=20.0,
+                        y_m=15.0,
+                        heading_deg=90.0,
+                        on_carts=False,
+                        hand_placed=True,
+                    ),
+                )
+                if with_mover
+                else ()
+            ),
+        )
+
+    plan_with_mover = plan_fill(_layout(with_mover=True))
+    plan_without_mover = plan_fill(_layout(with_mover=False))
+
+    ac_move_with = next(m for m in plan_with_mover.moves if m.plane_id == "p1")
+    ac_move_without = next(m for m in plan_without_mover.moves if m.plane_id == "p1")
+
+    assert ac_move_with.path is not None, "aircraft must still route (a detour, not a failure)"
+    assert ac_move_without.path is not None
+    assert ac_move_with.path != ac_move_without.path, (
+        "a hand-placed mover parked on the aircraft's direct lane must force a "
+        "different route, proving it is a static keep-out for aircraft routing"
+    )
+
+
+def test_hand_placed_mover_is_keep_out_for_later_routed_movers() -> None:
+    """#912: a hand-placed mover must still register as an obstacle for a
+    later-routed mover (sorted after it by plane_id) — and must not raise a
+    'Duplicate ground_object_placement' error from double-registering itself in
+    both the fixed/pinned aircraft-obstacle tuple and `routed_mover_placements`."""
+    hangar = _hangar()
+    caddy = _caddy_mover()  # id="caddy", hand-placed, sorts BEFORE "trailer1"
+    trailer = GroundObject(
+        id="trailer1",
+        name="Glider trailer",
+        parts=(_ground_part(length_m=6.0, width_m=1.2),),
+        object_class="placed_routed_mover",
+        motion_mode="towed",
+    )
+    layout = Layout(
+        fleet={},
+        hangar=hangar,
+        placements=(),
+        ground_objects={caddy.id: caddy, trailer.id: trailer},
+        ground_object_placements=(
+            Placement(
+                plane_id="caddy",
+                x_m=10.0,
+                y_m=10.0,
+                heading_deg=90.0,
+                on_carts=False,
+                hand_placed=True,
+            ),
+            Placement(plane_id="trailer1", x_m=28.0, y_m=10.0, heading_deg=90.0, on_carts=False),
+        ),
+    )
+
+    plan = plan_fill(layout)  # must not raise
+
+    caddy_move = next(m for m in plan.moves if m.plane_id == "caddy")
+    trailer_move = next(m for m in plan.moves if m.plane_id == "trailer1")
+    assert caddy_move.path is None
+    assert trailer_move.path is not None, "the non-pinned mover must still route normally"

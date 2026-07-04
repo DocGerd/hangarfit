@@ -1971,6 +1971,20 @@ def _plan_fill(
         for gp in target.ground_object_placements
         if target.ground_objects[gp.plane_id].object_class == "fixed_obstacle"
     )
+    # #912: a `hand_placed` placed_routed_mover (a pinned mover) is ALSO a static
+    # keep-out for AIRCRAFT routing — it never moves, so aircraft must route
+    # around it same as a fixed_obstacle. Kept as a SEPARATE tuple from
+    # `fixed_obstacle_placements` (not widened in place): the mover loop below
+    # builds each mover's obstacle set as `(*fixed_obstacle_placements,
+    # *routed_mover_placements)`, and a hand-placed mover is appended to
+    # `routed_mover_placements` once its (path-less) Move is emitted — widening
+    # `fixed_obstacle_placements` itself would double-list it there and trip the
+    # Layout "Duplicate ground_object_placement" guard for any later-sorted mover.
+    aircraft_obstacle_placements = tuple(
+        gp
+        for gp in target.ground_object_placements
+        if target.ground_objects[gp.plane_id].object_class == "fixed_obstacle" or gp.hand_placed
+    )
 
     placed: list[Placement] = list(hand_placed_slots)
     moves: list[Move] = [Move(p.plane_id, Pose.from_placement(p), None) for p in hand_placed_slots]
@@ -2005,7 +2019,7 @@ def _plan_fill(
             placements=tuple(placed_list),
             maintenance_plane=target.maintenance_plane,
             ground_objects=target.ground_objects,
-            ground_object_placements=fixed_obstacle_placements,
+            ground_object_placements=aircraft_obstacle_placements,
         )
         for idx, slot in enumerate(rest):
             remaining = total_budget - total_used
@@ -2109,7 +2123,7 @@ def _plan_fill(
                 placements=tuple(placements),
                 maintenance_plane=target.maintenance_plane,
                 ground_objects=target.ground_objects,
-                ground_object_placements=fixed_obstacle_placements,
+                ground_object_placements=aircraft_obstacle_placements,
             )
 
         def _route(
@@ -2298,6 +2312,10 @@ def _plan_fill(
     for gp in sorted(target.ground_object_placements, key=lambda p: p.plane_id):
         obj = target.ground_objects[gp.plane_id]
         if obj.object_class != "placed_routed_mover":
+            continue
+        if gp.hand_placed:  # #912: pinned (hand-placed) mover -> path-less keep-out, never routed
+            moves.append(Move(gp.plane_id, Pose.from_placement(gp), path=None))
+            routed_mover_placements.append(gp)  # still an obstacle for later-routed movers
             continue
         mover_placed = Layout(
             fleet=fleet,
