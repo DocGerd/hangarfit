@@ -859,6 +859,14 @@ function intentToScenarioYaml(intent, ctx) {
   return lines.join("\n") + "\n";
 }
 
+// src/interaction/highlight.ts
+var EXCLUDED_EMISSIVE = 5579264;
+var FOCUS_EMISSIVE = 2254591;
+function focusAwareHex(selected, focused, orig) {
+  if (focused) return FOCUS_EMISSIVE;
+  return selected ? orig : EXCLUDED_EMISSIVE;
+}
+
 // src/interaction/editor.ts
 function mountEditor(opts) {
   let intent = opts.initialIntent ?? initialIntent(opts.ctx);
@@ -909,19 +917,16 @@ function mountEditor(opts) {
       if (Math.hypot(ev.clientX - downX, ev.clientY - downY) > 6) return;
       const id = pick(ev);
       if (!id) return;
-      intent = toggleSelection(intent, id);
-      focusedId = isSelected(intent, id) ? id : null;
+      focusedId = id;
       applyHighlight();
-      renderReadout();
       syncControls();
       renderDoorOrder();
-      renderPalette();
     },
     sig
   );
   function applyHighlight() {
     for (const t of targets) {
-      t.mat.emissive.setHex(isSelected(intent, t.id) ? t.orig : 5579264);
+      t.mat.emissive.setHex(focusAwareHex(isSelected(intent, t.id), t.id === focusedId, t.orig));
     }
   }
   function renderReadout() {
@@ -1122,7 +1127,6 @@ function mountEditor(opts) {
       box.addEventListener("change", () => {
         if (isAircraft) {
           intent = toggleSelection(intent, id);
-          focusedId = isSelected(intent, id) ? id : focusedId === id ? null : focusedId;
           applyHighlight();
           renderReadout();
           syncControls();
