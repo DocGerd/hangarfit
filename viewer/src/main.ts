@@ -36,6 +36,7 @@ import type { EditorContext } from './interaction/intent-contract.ts';
 interface World {
   group: THREE.Group;
   groups: Record<string, THREE.Group>;
+  goGroups: Record<string, THREE.Group>; // #912: placed-mover Groups for editor drag
   labelMeshes: THREE.Sprite[];
   noseMeshes: THREE.Mesh[];
   setPathsVisible: (on: boolean) => void;
@@ -91,7 +92,7 @@ function buildWorld(scene: THREE.Scene, data: SceneV2, brand: BrandTokens): Worl
   // Movers (#651) animate from the same timeline as planes, so their Groups are passed
   // alongside the plane Groups (both returned per-id by the add* builders above).
   const timeline = createTimeline(data, groups, goGroups);
-  return { group, groups, labelMeshes, noseMeshes, setPathsVisible, timeline };
+  return { group, groups, goGroups, labelMeshes, noseMeshes, setPathsVisible, timeline };
 }
 
 // Wire the HUD visibility toggles. `walls` drives the shared hangar; `labels`/`paths`
@@ -178,7 +179,14 @@ function bootSingle(data: SceneV2, brand: BrandTokens): void {
     const editHostOpts = serveCfg
       ? { scene: stage.scene, orbit: stage.controls, onEdit: () => markUnsolved() }
       : {};
-    let editor = mountEditor({ groups: world.groups, renderer: stage.renderer, cam: stage.cam, ctx, ...editHostOpts });
+    let editor = mountEditor({
+      groups: world.groups,
+      moverGroups: world.goGroups, // #912
+      renderer: stage.renderer,
+      cam: stage.cam,
+      ctx,
+      ...editHostOpts,
+    });
 
     // #445 serve: a `#serve-config` blob (present ONLY when `hangarfit serve`
     // renders the shell, never in the offline export) lights up the Calculate
@@ -198,6 +206,7 @@ function bootSingle(data: SceneV2, brand: BrandTokens): void {
           const nextWorld = buildWorld(stage.scene, resp.scene, brand);
           const nextEditor = mountEditor({
             groups: nextWorld.groups,
+            moverGroups: nextWorld.goGroups, // #912
             renderer: stage.renderer,
             cam: stage.cam,
             // The server-refreshed editor-context re-bases "pin at current pose" on
