@@ -133,7 +133,7 @@ Use the best-fitted model for the task. The model class to pick is "as much reas
 
 Most coding goes direct in-session. Subagent dispatch is for review work and isolated heavy lifts.
 
-**For a multi-file feature, add a whole-branch adversarial review after the per-task reviews.** Run the relevant guards + `pr-review-toolkit:code-reviewer` + `pr-review-toolkit:comment-analyzer` in parallel over the *whole-branch diff*, then independently verify each finding (default-refute) before acting on it. A per-task review sees only one task, so it misses **cross-task seam bugs by construction** — the whole-branch pass is where they surface (e.g. #912 PR B's fixed-obstacle focus-steal: one commit assumed mover-only Groups, a sibling wired *every* ground object into the editor; and PR A's pin-ordering + fleet∩ground-object id-collision seams). Cheap insurance whenever a change spans several files behind a shared contract.
+**For a feature built across several separately-reviewed tasks/commits, add a whole-branch adversarial review after the per-task reviews.** Run the relevant guards + `pr-review-toolkit:code-reviewer` + `pr-review-toolkit:comment-analyzer` in parallel over the *whole-branch diff*, then independently verify each finding (default-refute) before acting on it. A per-task review sees only one task, so it misses **cross-task seam bugs by construction** — the whole-branch pass is where they surface (e.g. PR A's pin-ordering + fleet∩ground-object id-collision seams; and #912 PR B's fixed-obstacle focus-steal, where one commit assumed mover-only Groups and a sibling wired *every* ground object into the editor). Cheap insurance whenever a feature is split across tasks/commits behind a shared contract.
 
 `ml/` is reviewable source, not scratch — run the formal `/pr-review` arc on `ml/` PRs like any `src/` change. Note CI's `mypy` only covers `src/hangarfit/`, so a Pyright complaint under `tests/ml/` is usually stale-LSP noise — `mypy`/CI is the source of truth. Run `mypy ml/` over the **whole package**, not a single file — under `ml.*`'s `follow_imports = "skip"` a subset run resolves cross-module imports as `Any`, manufacturing a false `unused type: ignore`.
 
@@ -352,10 +352,12 @@ hangarfit view tests/fixtures/scenario_minimal.yaml --solve --edit -o edit.html
 # 127.0.0.1 ONLY (no --host), Host-header guarded; the offline single-file export
 # is unchanged. Auto-opens a browser (--no-open suppresses); Ctrl-C to stop. The
 # served --edit viewer also does drag-to-fix (#911 planes, #912 movers): drag a
-# plane/mover on the floor + set heading → on drop the pose round-trips through
-# `POST /convert` (Python owns the det-−1 inverse, ADR-0002) into a pin, then
-# Calculate re-solves. Smoke: curl GET / and parse the `#editor-context` blob to
-# confirm the Python side reaches the browser, then screenshot headlessly.
+# plane/mover on the floor (and rotate for heading) → on drop the pose round-trips
+# through `POST /convert` (Python owns the det-−1 inverse, ADR-0002) into a pin,
+# then Calculate re-solves. Serve-page smoke: curl GET / + parse the
+# `#editor-context` blob (confirms the Python side — e.g. a mover's world_yaw_rad —
+# reaches the browser), then screenshot headlessly (render + no transform banner);
+# hit `POST /convert` directly to exercise the drag round-trip itself.
 hangarfit serve tests/fixtures/scenario_minimal.yaml --port 8765
 
 # #412 staging apron (ADR-0021): with apron_depth_m > 0 each tow path starts
