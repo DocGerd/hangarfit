@@ -138,11 +138,16 @@ Two `object_class` values exist:
   that must eventually drive out; its world parts join the pairwise
   overlap loop exactly like aircraft parts, emitting the standard
   `<sorted_kinds>_overlap` conflicts. In `solve` (#604), movers are **full
-  RR-MC search citizens**: their poses are sampled, perturbed in the
-  min-conflicts descent, included in the `_spread` hill-climb, routed by
+  RR-MC search citizens** by default: their poses are sampled, perturbed in
+  the min-conflicts descent, included in the `_spread` hill-climb, routed by
   `plan_fill`, and — if flagged `hard_door_mover` — subject to the #603
-  Caddy egress gate. In `check` and `view` their poses are authored in the
-  layout YAML, exactly as before.
+  Caddy egress gate. A mover may instead carry an optional hand-authored
+  **pin** (`Scenario.mover_pins`, #912, [ADR-0031](../adr/0031-mover-pin.md)):
+  it is then seated at the pin as a path-less keep-out — excluded from the
+  search, routed around by the rest of the fill, but still collision-checked
+  and still egress-gated if `hard_door_mover` — rather than solver-placed.
+  In `check` and `view` their poses are authored in the layout YAML, exactly
+  as before.
 
 Three concrete catalog `type:` values author ground objects: `fixed_obstacle`,
 `car` (motion default `"steerable"`), and `trailer` (motion default `"towed"`).

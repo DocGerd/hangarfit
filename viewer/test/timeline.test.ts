@@ -3,7 +3,8 @@
 // transitions of scene-v2-schema.md, untestable from pytest.
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { affineAt, framePoses } from '../src/timeline.ts';
+import * as THREE from 'three';
+import { affineAt, framePoses, createTimeline } from '../src/timeline.ts';
 import type { Affine, SceneV2, SegmentData } from '../src/scene-contract.ts';
 
 const FINAL: Affine = [1, 0, 9, 0, 1, 0];
@@ -95,4 +96,32 @@ test('framePoses keeps a segment-less ground object (obstacle / deferred mover) 
   const sc = sceneWithMover();
   assert.deepEqual(framePoses(sc, {}, 5).fuel, { vis: true, aff: FUEL_FINAL });
   assert.deepEqual(framePoses(sc, {}, 5).caddy, { vis: true, aff: CADDY_FINAL });
+});
+
+// ── render-loop hold-gate (#911 PR B): a plane the editor's gizmo is dragging
+// keeps its own matrix — applyTime must not fight the drag every frame. ─────────
+// createTimeline() reads `#active`/`#clock` via byId (dom.ts), so this is the
+// first unit in this file to need a `document`; stub the minimal shape byId
+// touches rather than pulling in jsdom for two element reads.
+function stubHudDocument(): void {
+  const fakeEl = () => ({ textContent: '' }) as unknown as HTMLElement;
+  globalThis.document = { getElementById: () => fakeEl() } as unknown as Document;
+}
+
+test('applyTime skips a Group flagged heldByEditor, still drives an unheld one', () => {
+  stubHudDocument();
+  const scene = sceneWithMover(); // reuse the existing static-plane fixture (no animation)
+
+  const held = new THREE.Group();
+  held.userData.heldByEditor = true;
+  held.matrixAutoUpdate = false;
+  const beforeHeld = held.matrix.clone();
+  createTimeline(scene, { p: held }).applyTime(0);
+  assert.ok(held.matrix.equals(beforeHeld), 'held group matrix must be untouched');
+
+  const free = new THREE.Group();
+  free.matrixAutoUpdate = false;
+  const beforeFree = free.matrix.clone();
+  createTimeline(scene, { p: free }).applyTime(0);
+  assert.ok(!free.matrix.equals(beforeFree), 'unheld group matrix must be driven');
 });

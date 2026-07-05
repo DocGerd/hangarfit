@@ -45,12 +45,14 @@ from shapely.geometry import Polygon, box
 
 from .models import (
     _RING_MIN_ABS_SIGNED_AREA,
+    _VALID_MOVEMENT_MODES,
     Aircraft,
     Door,
     GroundObject,
     Hangar,
     Layout,
     MaintenanceBay,
+    MovementMode,
     MoverMotionMode,
     Part,
     PartKind,
@@ -805,6 +807,9 @@ def load_scenario(
     if not isinstance(constraints_raw, dict):
         raise LoaderError(f"{path}: 'constraints' must be a mapping")
     constraints: dict[str, PlaneConstraint] = {}
+    # #909: per-plane cart-mode overrides collected here, APPLIED to `fleet` below
+    # (before the Scenario is built) so its mode-consistency checks see the new mode.
+    mode_overrides: dict[str, MovementMode] = {}
     for plane_id, cdata in constraints_raw.items():
         _resolve_known_plane_id(
             plane_id,
@@ -817,6 +822,27 @@ def load_scenario(
             constraints[plane_id] = _build_plane_constraint(plane_id, cdata)
         except (ValueError, KeyError, TypeError, LoaderError) as e:
             raise LoaderError(f"{path}: constraint {plane_id!r}: {e}") from e
+        # #909: extract the movement_mode override (cdata is a validated mapping —
+        # _build_plane_constraint above would have raised otherwise). Reject it on
+        # the maintenance plane (set aside, so an override is incoherent — mirroring
+        # the pin/force_on_carts maintenance rejection) and validate the value
+        # (a bad value here gives a clearer, constraint-scoped error than the
+        # Aircraft.__post_init__ check would on apply).
+        mode_override = cdata.get("movement_mode")
+        if mode_override is not None:
+            if plane_id == maintenance_plane:
+                raise LoaderError(
+                    f"{path}: constraint {plane_id!r}: a movement_mode override on the "
+                    f"maintenance plane is incoherent — it is set aside (absent from "
+                    f"placements)."
+                )
+            if not isinstance(mode_override, str) or mode_override not in _VALID_MOVEMENT_MODES:
+                raise LoaderError(
+                    f"{path}: constraint {plane_id!r}: movement_mode override "
+                    f"{mode_override!r} is not a valid mode; allowed: "
+                    f"{sorted(_VALID_MOVEMENT_MODES)}"
+                )
+            mode_overrides[plane_id] = cast(MovementMode, mode_override)
 
     # Parse the scenario's optional ground_objects: block (#601 id-list, #604
     # mapping form). Each entry is either a bare catalog-id string (a mover,
@@ -826,8 +852,12 @@ def load_scenario(
     # ``object_class`` (#604):
     #   - fixed_obstacle     -> REQUIRES a pose (x_m/y_m/heading_deg), FORBIDS
     #                           region_preference; expands to a Placement.
-    #   - placed_routed_mover -> FORBIDS a pose (the solver places it), allows
-    #                           an optional region_preference (a soft re-rank).
+    #   - placed_routed_mover -> a pose (x_m/y_m/heading_deg, all three) is
+    #                           OPTIONAL: absent -> the solver places it
+    #                           (default); present -> a hand-placed pin
+    #                           (#912, drag-to-fix), mutually exclusive with
+    #                           region_preference (a re-rank has no effect on
+    #                           an already-fixed pose).
     go_entries = raw.get("ground_objects", [])
     if not isinstance(go_entries, list):
         raise LoaderError(f"{path}: 'ground_objects' must be a list")
@@ -835,6 +865,7 @@ def load_scenario(
     scenario_ground_objects: list[str] = []
     fixed_obstacle_placements: list[Placement] = []
     region_preferences: dict[str, RegionPreference] = {}
+    mover_pins: dict[str, Placement] = {}
 
     for i, entry in enumerate(go_entries):
         fields: Mapping[str, Any]
@@ -887,36 +918,55 @@ def load_scenario(
             )
         else:  # placed_routed_mover
             if has_pose:
-                raise LoaderError(
-                    f"{path}: ground_objects[{i}] ({gid}): a placed_routed_mover must not "
-                    f"carry a pose (the solver places it)"
-                )
-            rp = fields.get("region_preference")
-            if rp is not None:
-                if (
-                    not isinstance(rp, dict)
-                    or set(rp) - _ALLOWED_REGION_PREF_KEYS
-                    or "side" not in rp
-                    or "weight" not in rp
-                    or not isinstance(rp["side"], str)
-                ):
+                # #912: a full pose hand-places (pins) the mover instead of
+                # leaving it to the solver — the drag-to-fix editor use case.
+                missing = [k for k in ("x_m", "y_m", "heading_deg") if k not in fields]
+                if missing:
                     raise LoaderError(
-                        f"{path}: ground_objects[{i}] ({gid}): region_preference must be "
-                        f"{{side, weight}}"
+                        f"{path}: ground_objects[{i}] ({gid}): a mover pin requires {missing}"
                     )
-                try:
-                    # ``side`` is known to be a str here (checked above); the
-                    # left/right membership is enforced by
-                    # RegionPreference.__post_init__ (its ValueError is caught
-                    # + rewrapped below), so the cast is sound.
-                    region_preferences[gid] = RegionPreference(
-                        side=cast(RegionSide, rp["side"]),
-                        weight=_to_float(
-                            rp["weight"], f"ground_objects[{i}].region_preference.weight"
-                        ),
+                if "region_preference" in fields:
+                    raise LoaderError(
+                        f"{path}: ground_objects[{i}] ({gid}): a mover pin and "
+                        f"region_preference are mutually exclusive (#912)"
                     )
-                except (ValueError, LoaderError) as e:
-                    raise LoaderError(f"{path}: ground_objects[{i}] ({gid}): {e}") from e
+                mover_pins[gid] = Placement(
+                    plane_id=gid,
+                    x_m=_to_float(fields["x_m"], f"ground_objects[{i}].x_m"),
+                    y_m=_to_float(fields["y_m"], f"ground_objects[{i}].y_m"),
+                    heading_deg=_to_float(
+                        fields["heading_deg"], f"ground_objects[{i}].heading_deg"
+                    ),
+                    on_carts=False,
+                    hand_placed=True,
+                )
+            else:
+                rp = fields.get("region_preference")
+                if rp is not None:
+                    if (
+                        not isinstance(rp, dict)
+                        or set(rp) - _ALLOWED_REGION_PREF_KEYS
+                        or "side" not in rp
+                        or "weight" not in rp
+                        or not isinstance(rp["side"], str)
+                    ):
+                        raise LoaderError(
+                            f"{path}: ground_objects[{i}] ({gid}): region_preference must be "
+                            f"{{side, weight}}"
+                        )
+                    try:
+                        # ``side`` is known to be a str here (checked above); the
+                        # left/right membership is enforced by
+                        # RegionPreference.__post_init__ (its ValueError is caught
+                        # + rewrapped below), so the cast is sound.
+                        region_preferences[gid] = RegionPreference(
+                            side=cast(RegionSide, rp["side"]),
+                            weight=_to_float(
+                                rp["weight"], f"ground_objects[{i}].region_preference.weight"
+                            ),
+                        )
+                    except (ValueError, LoaderError) as e:
+                        raise LoaderError(f"{path}: ground_objects[{i}] ({gid}): {e}") from e
 
     # Door order (#614): an optional top-level list of body ids. Absent ⇒ None
     # (inert, byte-identical). Cross-reference validation (placeable ids, no
@@ -925,6 +975,25 @@ def load_scenario(
     if door_order_raw is not None and not isinstance(door_order_raw, list):
         raise LoaderError(f"{path}: 'door_order' must be a list")
     door_order = None if door_order_raw is None else tuple(str(x) for x in door_order_raw)
+
+    # #909: apply the collected cart-mode overrides to the fleet. This is a
+    # per-scenario exception layered on top of any manifest movement_mode override
+    # (scenario wins — the most-local exception, applied last). Rebuilding the
+    # Aircraft re-fires Aircraft.__post_init__ (the turn-radius gate); wrap its
+    # ValueError into a LoaderError to keep the exit-2 contract. Copy the fleet
+    # first so the override stays local to THIS Scenario — a caller-supplied
+    # `fleet=` dict (the documented kwarg) must never be mutated in place. Absent
+    # overrides ⇒ `fleet` is untouched and the built Scenario is identical to
+    # pre-#909 (the byte-identity promise is gated on the `if`).
+    if mode_overrides:
+        fleet = dict(fleet)
+        for pid, mode in mode_overrides.items():
+            try:
+                fleet[pid] = _apply_movement_override(fleet[pid], mode)
+            except ValueError as e:
+                raise LoaderError(
+                    f"{path}: constraint {pid!r}: movement_mode override — {e}"
+                ) from e
 
     try:
         return Scenario(
@@ -937,13 +1006,31 @@ def load_scenario(
             ground_object_defs=ground_objects,
             fixed_obstacle_placements=tuple(fixed_obstacle_placements),
             region_preferences=region_preferences,
+            mover_pins=mover_pins,
             door_order=door_order,
         )
     except ValueError as e:
         raise LoaderError(f"{path}: {e}") from e
 
 
-_ALLOWED_CONSTRAINT_KEYS = frozenset({"pin", "force_on_carts", "priority", "nose_out"})
+# ``movement_mode`` (#909) is a per-plane, per-scenario cart-mode OVERRIDE. Unlike
+# the other keys it is NOT stored on :class:`PlaneConstraint` (which stays purely a
+# placement directive — pin/force_on_carts/priority/nose_out); it is applied as a
+# fleet transform at load time (``_apply_movement_override``), so the Scenario's
+# existing pin/force_on_carts ↔ movement_mode consistency checks see the new mode.
+_ALLOWED_CONSTRAINT_KEYS = frozenset(
+    {"pin", "force_on_carts", "priority", "nose_out", "movement_mode"}
+)
+
+
+def _apply_movement_override(aircraft: Aircraft, mode: MovementMode) -> Aircraft:
+    """Return ``aircraft`` with its ``movement_mode`` replaced (#909 scenario
+    cart-mode override). Rebuilding via ``dataclasses.replace`` re-runs
+    ``Aircraft.__post_init__``, so the turn-radius gate (a non-``always_cart``
+    mode requires a positive ``turn_radius_m``) fires here — its ``ValueError`` is
+    the caller's to wrap into a :class:`LoaderError`."""
+    return dataclasses.replace(aircraft, movement_mode=mode)
+
 
 # Keys accepted in a scenario ``ground_objects:`` mapping entry (#604). ``object``
 # is the catalog id; the pose triplet is required for a fixed_obstacle and
@@ -966,12 +1053,18 @@ def _build_plane_constraint(plane_id: str, data: Any) -> PlaneConstraint:
             force_on_carts: <bool>
             priority: <float>   # soft, >= 0 (#441)
             nose_out: <bool>    # soft tri-state; omit ⇒ follow global (#263)
+            movement_mode: <mode>  # cart-mode override (#909); see below
 
     ``pin``, ``force_on_carts`` and ``priority`` are all optional. Omitting all
     yields a "free" constraint (the solver may place the plane anywhere
     within physical / cart-rule limits). ``priority`` is a soft spread weight
     (see :class:`~hangarfit.models.PlaneConstraint`); its range is validated by
     ``Scenario.__post_init__``.
+
+    ``movement_mode`` (#909) is accepted by ``_ALLOWED_CONSTRAINT_KEYS`` but is
+    **not** built into the ``PlaneConstraint`` here — the caller applies it as a
+    per-scenario fleet transform (``_apply_movement_override``), so it is a
+    property of the airframe, not this placement directive.
 
     **Implicit ``pin.plane_id``** — the loader fills :attr:`Placement.plane_id`
     from the constraint key, so authors don't repeat the plane id under

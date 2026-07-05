@@ -59,7 +59,10 @@ The tool runs entirely on the user's local machine:
 - **No external systems.** The CLI does not call any network service,
   read any database, write to any shared state, or read environment
   variables beyond what Python and `matplotlib` need to find their own
-  config.
+  config. (The optional `hangarfit serve` opens a **loopback-only**
+  `127.0.0.1` HTTP listener for the live editor; it still makes no
+  *outbound* call, reads no DB, and writes no shared state — see
+  [ADR-0030](../adr/0030-hangarfit-serve-local-backend.md).)
 
 ## Scope — what is in
 
@@ -77,7 +80,7 @@ The tool runs entirely on the user's local machine:
 |--------------|-----|
 | **Movement-sequence planning** — "in what order do I roll planes out and back in to *re-sequence an already-parked* hangar?" | The "Tower of Hanoi" reshuffling of an already-occupied hangar is harder than the static layout problem and was not the original need; re-sequencing parked planes remains a human's job. This is **distinct from the empty-hangar tow-path fill** that *did* ship in Phase 3a/3b — `solve --render-paths` plans how each plane is towed into its slot from the door, one entry per plane ([ADR-0007](../adr/0007-tow-path-planner-v1-scope.md) / [ADR-0010](../adr/0010-reeds-shepp-motion-model.md)). |
 | **Tracking hangar state across runs.** | Each invocation is stateless. The scenario YAML carries everything. This is a deliberate constraint from §2; tracking state would invite an entire class of "what was true yesterday?" bugs. |
-| **GUI or web frontend.** | A CLI plus a PNG is the right shape for the actual usage (one operator, one decision, no audit trail needed yet). Anything browser-shaped is a separate project. |
+| **Hosted / multi-user web frontend.** | A CLI plus a PNG is the right shape for the core decision (one operator, one decision, no audit trail needed yet). The `hangarfit view --edit` placement editor is a self-contained **offline** HTML export (binds nothing); its optional `hangarfit serve` live backend binds **loopback only** (`127.0.0.1`) ([ADR-0030](../adr/0030-hangarfit-serve-local-backend.md)). Both are **local, single-operator** conveniences over the same solve pipeline — not a deployed, multi-user web service, which remains out of scope. |
 | **Live event stream** (late-arrival notifications, departure tracking). | The tool is invoked on demand against a hand-authored scenario. The club uses other tooling (radio, paper, eyeballs) to know who is back; `hangarfit` only checks whether a *proposed* layout is valid. |
 | **Soft preferences *inside* the hard conflict-resolution loop** (a weighted "prefer this region" objective competing with collision penalties). | The conflict-resolution loop stays HARD-only (pin, `force_on_carts`, maintenance plane). Soft preferences are not banned outright — they ship as **isolated post-passes** that run only after a layout is already valid (the inter-plane spread post-pass, [ADR-0008](../adr/0008-inter-plane-spread-soft-preference.md)), each with its own ADR, never as a new key in the hard score tuple. |
 

@@ -168,7 +168,7 @@ also [`SECURITY.md`](../SECURITY.md) and [`security-posture.md`](security-postur
 | `interfaces_current` (SHOULD) | **Met** | Targets current Python (3.12); deps kept current via Dependabot. |
 | `automated_integration_testing` (MUST) | **Met** | [`ci.yml`](../.github/workflows/ci.yml) runs the full `pytest` suite on every PR into develop/main. |
 | `regression_tests_added50` (MUST) | **Met** (self-attest) | Per-PR test policy ([`CONTRIBUTING.md`](../CONTRIBUTING.md): tests for any behaviour change); bug fixes ship with regression fixtures in `tests/fixtures/`. |
-| `test_statement_coverage80` (MUST) | **Met** | ~97% statement coverage (full suite; `ci.yml` uploads to [Codecov](https://codecov.io/gh/DocGerd/hangarfit)) — well above ≥ 80%. |
+| `test_statement_coverage80` (MUST) | **Met** | ~97% statement coverage (full suite; the [`coverage.yml`](../.github/workflows/coverage.yml) workflow uploads to [Codecov](https://codecov.io/gh/DocGerd/hangarfit)) — well above ≥ 80%. |
 | `test_policy_mandated` (MUST) | **Met** | [`CONTRIBUTING.md`](../CONTRIBUTING.md) §Pull request requirements mandates tests for behaviour changes. |
 | `tests_documented_added` (MUST) | **Met** | The add-a-fixture policy is documented in [`CONTRIBUTING.md`](../CONTRIBUTING.md). |
 | `warnings_strict` (MUST) | **Met** | `mypy` strict (`disallow_untyped_defs` on `hangarfit.*`) + `ruff` lint and format `--check` enforced in CI (merge-blocking). |

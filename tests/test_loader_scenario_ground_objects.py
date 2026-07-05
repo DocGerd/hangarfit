@@ -49,12 +49,33 @@ def test_fixed_obstacle_requires_pose(tmp_path):
         load_scenario(_write(tmp_path, "  - object: maul_fuel_trailer\n"))  # no pose
 
 
-def test_mover_forbids_pose(tmp_path):
+def test_mover_pose_builds_pin(tmp_path):
+    # #912: a full pose on a placed_routed_mover hand-places (pins) it instead
+    # of raising — the drag-to-fix editor use case.
+    s = load_scenario(
+        _write(
+            tmp_path,
+            "  - object: glider_trailer_1\n    x_m: 5.0\n    y_m: 5.0\n    heading_deg: 0.0\n",
+        )
+    )
+    pin = s.mover_pins["glider_trailer_1"]
+    assert (pin.x_m, pin.y_m, pin.heading_deg) == (5.0, 5.0, 0.0)
+    assert pin.on_carts is False and pin.hand_placed is True
+    assert "glider_trailer_1" in s.mover_ids
+
+
+def test_mover_incomplete_pose_rejected(tmp_path):
+    with pytest.raises(LoaderError):
+        load_scenario(_write(tmp_path, "  - object: glider_trailer_1\n    x_m: 5.0\n"))
+
+
+def test_mover_pose_and_region_preference_rejected(tmp_path):
     with pytest.raises(LoaderError):
         load_scenario(
             _write(
                 tmp_path,
-                "  - object: glider_trailer_1\n    x_m: 5.0\n    y_m: 5.0\n    heading_deg: 0.0\n",
+                "  - object: glider_trailer_1\n    x_m: 5.0\n    y_m: 5.0\n"
+                "    heading_deg: 0.0\n    region_preference: {side: right, weight: 1.0}\n",
             )
         )
 

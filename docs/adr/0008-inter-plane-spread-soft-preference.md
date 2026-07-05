@@ -403,3 +403,50 @@ so it can never make an invalid layout selectable. With `door_order` unset (the
 default) every candidate's `door_deviation` is a constant `0.0`, so the key
 reduces to this ADR's original `(−min_gap, energy, restart_index)` ordering
 **byte-for-byte** (ADR-0003) — verified by the 6-plane determinism canaries.
+
+### 2026-07-03 — absolute door-attraction steering term (#908)
+
+The #614 `door_order` tie-break is purely *relative* (a Kendall-tau inversion
+count) and *post-hoc* (a selection key over already-found basins) — it never
+*steers* placement and is provably inert for a lone `#1` (an order needs ≥2
+placed bodies to express an inversion). #908 adds the missing *absolute* steering:
+a fourth soft term folded into the `_spread` hill-climb's energy, alongside the
+spread repulsion, the #320 back-bias, and the #604 region term:
+
+```
+E_total = Σ_{i<j} w_i·w_j·exp(−gap_ij/scale) + back_bias_weight·Σ_{p≠r} (L−y_p)/L
+          + Σ_{o∈prefs} w_o·d_o/W + door_bias_weight·(y_r / L)
+          └── spread ──┘ └──── back bias (r exempt) ────┘ └─ region ─┘ └ door bias (#908) ┘
+```
+
+where `r = door_order[0]` is the rank-1 (door-nearest) plane. The door term
+`solver._door_bias_energy = y_r / length_m` is the sign-flipped mirror of the
+back-bias: minimized when `r` sits AT the door (`y = 0`), so the hill-climb
+actively pulls the top-priority plane doorward. **Only rank-1 is steered**
+(rank1_only) — ranks 2..N keep the relative `_door_order_deviation` selection
+tie-break, giving a clean split: absolute steer for the top pick, relative select
+for the tail. To stop the two door mechanisms fighting, `r` is **exempted from the
+back-bias sum** while door-bias is active (`_back_bias_energy(..., exclude=r)`) —
+otherwise `r`'s own deep-pull would cancel its doorward pull; unranked planes
+still back-fill, vacating the door end and *helping* `r` reach it. Like the
+back-bias, this re-ranks candidates *within* a basin's hill-climb; `−min_gap`
+stays the primary basin-selection key.
+
+**Default & toggle.** `SearchConfig.door_bias_weight` defaults to **0.0** — the
+term is not even summed, so every library caller and determinism canary is
+byte-identical to the pre-#908 solver. The CLI auto-arms `_DOOR_BIAS_DEFAULT_WEIGHT`
+only when the scenario sets `door_order` (`--no-door-bias` forces 0.0; no effect
+under `--no-spread`). The `<2 planes` no-op guard is relaxed so a lone `#1` is
+still pulled.
+
+**Determinism.** The term is RNG-free re-ranking and **division-only** (no
+`math.exp` — cross-machine byte-safe, unlike the spread repulsion). Integration is
+byte-identical to pre-#908 whenever `door_bias_weight = 0`, so no
+determinism-guard / ADR-0003 amendment is required (same reasoning as the #320
+back-bias and #604 region terms); a new door_order-steering determinism canary
+covers the armed path the pre-#908 canaries never exercised.
+
+**Known limitation.** Best-effort "if possible": in dense fills, validity and
+inter-plane repulsion dominate, so the doorward pull is cosmetic-within-slack —
+the weight is deliberately *not* cranked high enough to force it (that would
+collapse spread and congest the door).

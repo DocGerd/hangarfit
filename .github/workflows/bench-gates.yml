@@ -58,12 +58,12 @@ jobs:
     # are not timing-sensitive, so they stay on `ubuntu-latest`.
     runs-on: ubuntu-24.04
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
 
       - name: Set up Python 3.12
         # The single supported Python (ADR-0009) — the interpreter every other CI
         # job runs and the one the bench numbers were calibrated against.
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: "3.12"
           cache: pip
@@ -102,11 +102,11 @@ jobs:
     # protection's required set so a determinism regression blocks merge.
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
 
       - name: Set up Python 3.12
         # The single supported Python (ADR-0009).
-        uses: actions/setup-python@a309ff8b426b58ec0e2a45f0f869d46889d02405  # v6.2.0
+        uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1  # v6.3.0
         with:
           python-version: "3.12"
           cache: pip
@@ -130,4 +130,13 @@ jobs:
         # DETERMINISM failure; speed is reported in the table but never enforced
         # (profile_pipeline.py main()'s default-path return). This is the
         # merge-blocking signal once added to the required set.
-        run: python -m bench.profile_pipeline
+        #
+        # `--jobs auto` (#885): fan the fast regimes across the runner's cores.
+        # Each regime's verdicts are computed inside its own `run_regime` (the
+        # determinism double-run is within-process), so they are schedule-
+        # independent — parallelism cuts this required check's wall from ~8 min
+        # toward ~max-regime (~3.5 min) with NO loss of depth and NO speed-ceiling
+        # rebaseline. The speed-enforcing `bench-gates` job above deliberately does
+        # NOT pass `--jobs` (concurrent per-regime timing would inflate the
+        # ceilings), so it stays serial.
+        run: python -m bench.profile_pipeline --jobs auto

@@ -10,6 +10,49 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Fixed
 
+## [0.19.0] — 2026-07-05
+
+### Added
+
+- **Interactive placement editor** — `hangarfit view --solve --edit` turns the 3D viewer into an intent-capture front end: select which planes are in the fleet, set soft priorities and hard pin-at-current-pose must-positions, and export a loader-valid `Scenario` YAML that `hangarfit solve` re-runs. (#442)
+- **Editor door-proximity ranking** — the `--edit` editor gained a drag-to-order "door proximity" list (#1 nearest the door → …): rank an exclusive, partial subset of the selected planes and the exported scenario carries a top-level `door_order: [id, …]` (#614) that `hangarfit solve` honours. The ranking panel also shows a door-edge hint (which wall, and where along it) from the editor-context. No ranking set ⇒ the export is byte-identical (ADR-0003). (#907)
+- **Absolute door-proximity steering** — when a scenario sets `door_order`, `hangarfit solve` now actively pulls the #1 (door-nearest) plane toward the door during the spread post-pass, not just as a post-hoc tiebreak (which is inert for a lone #1). Opt out with `--no-door-bias`. Off unless `door_order` is set; the library default (`SearchConfig.door_bias_weight=0.0`) and every plan without `door_order` are byte-identical (ADR-0003). (#908)
+- **Editor cart-mode override** — the `--edit` editor gained a per-plane "cart mode" selector that can change a plane's cart mode for one scenario — typically to relax a **locked** plane (`always_own_gear` / `always_cart`), e.g. exceptionally put a normally-own-gear plane on a cart. It exports a `movement_mode:` key inside that plane's `constraints:` entry, which `hangarfit solve` applies as a per-scenario fleet override (relaxing the plane's lock so an otherwise-illegal `on_carts` becomes legal). Overriding to a mode that needs a turn radius (anything but `always_cart`) on a radius-less airframe is rejected at load, and the editor greys out those options. No override set ⇒ the export is byte-identical (ADR-0003). (#909)
+- **Editor catalog palette** — the `--edit` editor gained a "catalog (add to hangar)" panel listing the **whole fleet** (every aircraft, not just the ones already placed) plus every ground object, so you can start from an empty hangar and pick what goes in. Checking an aircraft adds it to the exported `fleet_in`; checking a movable ground object (a trailer) adds it as a bare-id `ground_objects:` entry the solver places. Fixed obstacles are listed but disabled — they need an authored pose the offline editor can't produce (that arrives with the drag/serve epic). The editor-context blob carries the new `catalog` field (`hangarfit.editor-context/v1`, additive — the scene/v2 seam is untouched); an editor that adds nothing exports a byte-identical scenario (ADR-0003). (#910)
+- **`hangarfit serve` — live editor backend** — a new `hangarfit serve <scenario>` subcommand starts a local, loopback-only (`127.0.0.1`) HTTP backend so the `--edit` viewer's new **Calculate** button re-solves and re-renders in the browser, instead of exporting a YAML to re-run by hand. Pure transport over the existing solver (`GET /` serves the editor; `POST /solve` takes an exported `Scenario` YAML and returns a `scene/v2` doc) — Python stays the solver/transform authority (ADR-0002) and determinism is unaffected (ADR-0003, one runtime). The offline single-file export is unchanged. Loopback bind + a `Host`-header guard; no web-framework dependency. (#445, ADR-0030)
+- **`hangarfit serve` — drag-to-fix backend** — the serve backend gained a solve-free `POST /convert` endpoint that turns a dragged world floor pose into a scenario pin `{x_m, y_m, heading_deg}`, and the editor-context now carries a per-plane `world_yaw_rad` gizmo seed. Python owns the determinant-−1 coordinate inverse both ways (the seed forward, `/convert` back), so the browser never authors the transform (ADR-0002); `/convert` never runs the solver (ADR-0003). This is the backend half of interactive drag-to-fix placement — the client gizmo follows. (#911)
+- **Editor drag-to-fix placement** — with `hangarfit serve`, the `--edit` viewer gained a **Fix position** button: focus a plane, drag it on the hangar floor and set its heading with a gizmo, and on drop the world pose round-trips through the solve-free `POST /convert` (Python owns the determinant-−1 inverse, ADR-0002) into a normal, editable pin — then **Calculate** re-solves with it pinned. The plane mesh slides live during the drag (translation only; the heading shows on the gizmo, never rotating the reflected mesh in JS). Offline exports are unchanged in behaviour — the drag flow is dormant without a serve backend. Completes #911 (client half; the `/convert` backend shipped separately). (#911)
+- **Mover pin (hand-place a car/trailer)** — a scenario `placed_routed_mover` may now carry an optional pose (`ground_objects: [{object: <id>, x_m, y_m, heading_deg}]`), pinning it at a chosen spot instead of letting the solver place it. A pinned mover is a path-less keep-out the rest of the fill routes around, keeping its mover class, rendering, and (for the Caddy) the hard-door egress gate; an un-pinned mover is unchanged and byte-identical (ADR-0003). Backend for the drag-to-fix mover UX; the editor half follows. (#912, ADR-0031)
+- **Editor drag-to-fix for movers** — with `hangarfit serve`, the `--edit` viewer can now drag a placed car/trailer the same way it drags a plane: focus a mover, hit **Fix position**, drag it on the hangar floor and set its heading, and on drop the pose round-trips through `POST /convert` (Python owns the determinant-−1 inverse, ADR-0002) into a `ground_objects: [{object, x_m, y_m, heading_deg}]` pin, then **Calculate** re-solves with it seated path-less. The mover mesh slides live during the drag (translation only). A focused mover shows no fleet highlight (the armed gizmo is its cue) and its pin has no editable text fields; an unpinned pre-existing mover is not re-emitted on a served re-solve (candidate follow-ups). Offline exports are unchanged. Completes #912 (editor half; the backend shipped separately). (#912)
+
+### Changed
+
+- The dev/CI `bench` profiling harness gained a `--jobs N|auto` flag that runs the
+  benchmark regimes across worker processes (#885). The **required** `bench
+  correctness` CI check now runs the fast regimes in parallel (`--jobs auto`),
+  cutting its wall-clock from ~8 min toward ~max-regime (~3.5 min). This is a
+  pure scheduling change: each regime's validity / path-validity / determinism
+  verdicts are computed **inside** its own `run_regime` (the determinism
+  double-run stays within a single worker process), so they are
+  schedule-independent — no search depth is lost and no speed-ceiling
+  re-baseline is needed. The speed-enforcing `bench gates` job deliberately
+  stays serial (concurrent per-regime timing would inflate the `_SPEED_CEILING_S`
+  ceilings). Default `--jobs 1` reproduces the historic serial run byte-for-byte
+  (ADR-0003 determinism contract untouched).
+- Editor (`view --solve --edit`): a canvas click now **focuses** a plane for editing instead of toggling its fleet membership, so revising an already-selected plane no longer drops its priority/pin/cart-mode/door-rank. Fleet add/remove stays on the catalog palette checkboxes; the focused plane shows a distinct highlight. (#904)
+
+### Fixed
+
+- CI: the non-required Codecov coverage run moved out of `ci.yml` into its own
+  `coverage.yml` workflow, and the wall-clock `@serial` determinism canaries were
+  dropped from the coverage pass. Together these stop an intermittent coverage-run
+  flake — the wall-clock-budgeted `@serial` canaries exhausting their budgets under
+  the ~2–3× slower branch-coverage C-tracer — from failing `ci.yml`'s run conclusion
+  and reddening the README CI
+  badge. Branch-protection required checks are unchanged, the `@serial` canaries
+  still run for determinism in the required `serial-canaries` job, and the
+  `codecov` badge (fed by the relocated upload) is unaffected. (#933)
+
 ## [0.17.0] — 2026-06-29
 
 ### Added
@@ -1684,7 +1727,8 @@ First Phase 1 cut — substrate for arranging the flying club fleet in a stack-s
 - Apache-2.0 license, public-audience README, CI matrix (Python 3.11 + 3.12), branch protection on develop + main (#13, #14, #15, #16).
 - Strut-aware golden tests + all-9-planes fixture using larger test-only hangar to accommodate strut-bracing geometry on placeholder dimensions (#5).
 
-[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/DocGerd/hangarfit/compare/v0.17.0...v0.19.0
 [0.17.0]: https://github.com/DocGerd/hangarfit/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/DocGerd/hangarfit/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/DocGerd/hangarfit/compare/v0.14.0...v0.15.0

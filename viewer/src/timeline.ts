@@ -96,6 +96,7 @@ export function createTimeline(
     const poses = framePoses(scene, segByPlane, t);
     const drive = (id: string, g: THREE.Group | undefined): void => {
       if (!g) return;
+      if (g.userData.heldByEditor) return; // #911 PR B: the editor's gizmo owns this plane's matrix
       const { vis, aff } = poses[id];
       g.visible = vis;
       if (vis && aff) {

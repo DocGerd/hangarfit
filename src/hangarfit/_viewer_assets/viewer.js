@@ -1,5 +1,5 @@
 // src/main.ts
-import * as THREE11 from "three";
+import * as THREE13 from "three";
 
 // src/dom.ts
 function byId(id) {
@@ -588,6 +588,7 @@ function createTimeline(scene, groups, goGroups = {}) {
     const poses = framePoses(scene, segByPlane, t);
     const drive = (id, g) => {
       if (!g) return;
+      if (g.userData.heldByEditor) return;
       const { vis, aff } = poses[id];
       g.visible = vis;
       if (vis && aff) {
@@ -717,6 +718,675 @@ function foundLabel(m) {
   return `${m.count_found} solution${m.count_found === 1 ? "" : "s"}`;
 }
 
+// src/interaction/editor.ts
+import * as THREE12 from "three";
+
+// src/interaction/selection.ts
+function initialIntent(ctx) {
+  return {
+    // Only aircraft are fleet_in members. currentPoses now also carries placed
+    // movers (#912) so the drag gizmo can arm them — exclude those here, else a
+    // mover would export into fleet_in (the loader rejects a non-aircraft there).
+    selectedPlaneIds: Object.keys(ctx.currentPoses).filter((id) => ctx.catalog?.[id]?.kind !== "placed_routed_mover").sort(),
+    priorities: {},
+    mustPositions: {},
+    doorOrder: [],
+    // Palette additions start empty — an untouched editor exports the same bytes
+    // as before #910 (no `ground_objects` key). Even a layout that already
+    // carries placed movers seeds this empty: the editor's intent surface owns
+    // only what the user explicitly adds (consistent with the shipped behavior
+    // where trailers render but are not captured by the export).
+    groundObjectIds: [],
+    // Cart-mode overrides start empty (#909) — no `movement_mode` is exported
+    // until the user changes a plane's mode, so the byte path is unchanged.
+    cartModeOverrides: {},
+    // Mover pins start empty — an untouched editor exports byte-identically (#912).
+    moverPins: {}
+  };
+}
+function isSelected(intent, id) {
+  return intent.selectedPlaneIds.includes(id);
+}
+function toggleSelection(intent, id) {
+  const selected = isSelected(intent, id);
+  const selectedPlaneIds = selected ? intent.selectedPlaneIds.filter((x) => x !== id) : [...intent.selectedPlaneIds, id].sort();
+  const priorities = { ...intent.priorities };
+  const mustPositions = { ...intent.mustPositions };
+  const doorOrder = selected ? intent.doorOrder.filter((x) => x !== id) : intent.doorOrder;
+  const cartModeOverrides = { ...intent.cartModeOverrides };
+  if (selected) {
+    delete priorities[id];
+    delete mustPositions[id];
+    delete cartModeOverrides[id];
+  }
+  return {
+    selectedPlaneIds,
+    priorities,
+    mustPositions,
+    doorOrder,
+    groundObjectIds: intent.groundObjectIds,
+    cartModeOverrides,
+    moverPins: intent.moverPins
+  };
+}
+function setCartModeOverride(intent, id, mode) {
+  const cartModeOverrides = { ...intent.cartModeOverrides };
+  if (mode === null) delete cartModeOverrides[id];
+  else cartModeOverrides[id] = mode;
+  return { ...intent, cartModeOverrides };
+}
+function setPriority(intent, id, priority) {
+  const priorities = { ...intent.priorities };
+  if (priority === null) delete priorities[id];
+  else priorities[id] = priority;
+  return { ...intent, priorities };
+}
+function pinAtCurrent(intent, id, ctx) {
+  const c = ctx.currentPoses[id];
+  if (!c) return intent;
+  const mp = { x: c.x_m, y: c.y_m, heading: c.heading_deg, onCarts: c.on_carts };
+  return { ...intent, mustPositions: { ...intent.mustPositions, [id]: mp } };
+}
+function pinAtPose(intent, id, pose, onCarts) {
+  const mp = { x: pose.x_m, y: pose.y_m, heading: pose.heading_deg, onCarts };
+  return { ...intent, mustPositions: { ...intent.mustPositions, [id]: mp } };
+}
+function setMoverPin(intent, id, pose) {
+  return { ...intent, moverPins: { ...intent.moverPins, [id]: pose } };
+}
+function unpin(intent, id) {
+  const mustPositions = { ...intent.mustPositions };
+  delete mustPositions[id];
+  return { ...intent, mustPositions };
+}
+function setPinField(intent, id, field, value) {
+  const cur = intent.mustPositions[id];
+  if (!cur) return intent;
+  return { ...intent, mustPositions: { ...intent.mustPositions, [id]: { ...cur, [field]: value } } };
+}
+function setOnCarts(intent, id, onCarts) {
+  const cur = intent.mustPositions[id];
+  if (!cur) return intent;
+  return { ...intent, mustPositions: { ...intent.mustPositions, [id]: { ...cur, onCarts } } };
+}
+function addToDoorOrder(intent, id) {
+  if (!isSelected(intent, id) || intent.doorOrder.includes(id)) return intent;
+  return { ...intent, doorOrder: [...intent.doorOrder, id] };
+}
+function removeFromDoorOrder(intent, id) {
+  if (!intent.doorOrder.includes(id)) return intent;
+  return { ...intent, doorOrder: intent.doorOrder.filter((x) => x !== id) };
+}
+function moveInDoorOrder(intent, from, to) {
+  const n = intent.doorOrder.length;
+  if (from < 0 || from >= n || to < 0 || to >= n || from === to) return intent;
+  const doorOrder = [...intent.doorOrder];
+  const [item] = doorOrder.splice(from, 1);
+  doorOrder.splice(to, 0, item);
+  return { ...intent, doorOrder };
+}
+function toggleGroundObject(intent, id) {
+  const present = intent.groundObjectIds.includes(id);
+  const groundObjectIds = present ? intent.groundObjectIds.filter((x) => x !== id) : [...intent.groundObjectIds, id].sort();
+  return { ...intent, groundObjectIds };
+}
+
+// src/interaction/export.ts
+function num(n) {
+  const r = Math.round(n * 1e4) / 1e4;
+  return Number.isInteger(r) ? `${r}.0` : `${r}`;
+}
+function intentToScenarioYaml(intent, ctx) {
+  const selected = [...intent.selectedPlaneIds].sort();
+  const fleetIn = [...new Set(ctx.maintenance ? [...selected, ctx.maintenance.plane] : selected)].sort();
+  const lines = [];
+  lines.push(`fleet: ${ctx.fleet}`);
+  lines.push(`hangar: ${ctx.hangar}`);
+  lines.push(`fleet_in: [${fleetIn.join(", ")}]`);
+  if (ctx.maintenance) {
+    lines.push("maintenance:");
+    lines.push(`  plane: ${ctx.maintenance.plane}`);
+  }
+  const ranked = intent.doorOrder.filter((id) => selected.includes(id));
+  if (ranked.length) lines.push(`door_order: [${ranked.join(", ")}]`);
+  const addedMovers = [...intent.groundObjectIds].filter(
+    (id) => ctx.catalog?.[id]?.kind === "placed_routed_mover"
+  );
+  const moverIds = [.../* @__PURE__ */ new Set([...addedMovers, ...Object.keys(intent.moverPins)])].sort();
+  if (moverIds.length) {
+    const entries = moverIds.map((id) => {
+      const p = intent.moverPins[id];
+      return p ? `{ object: ${id}, x_m: ${num(p.x)}, y_m: ${num(p.y)}, heading_deg: ${num(p.heading)} }` : id;
+    });
+    lines.push(`ground_objects: [${entries.join(", ")}]`);
+  }
+  const constrained = selected.filter(
+    (id) => intent.mustPositions[id] || intent.priorities[id] !== void 0 || intent.cartModeOverrides[id] !== void 0
+  );
+  if (constrained.length) {
+    lines.push("constraints:");
+    for (const id of constrained) {
+      lines.push(`  ${id}:`);
+      const mode = intent.cartModeOverrides[id];
+      if (mode !== void 0) lines.push(`    movement_mode: ${mode}`);
+      const mp = intent.mustPositions[id];
+      if (mp) {
+        lines.push(
+          `    pin: { x_m: ${num(mp.x)}, y_m: ${num(mp.y)}, heading_deg: ${num(mp.heading)}, on_carts: ${mp.onCarts} }`
+        );
+      }
+      const p = intent.priorities[id];
+      if (p !== void 0) lines.push(`    priority: ${num(p)}`);
+    }
+  }
+  return lines.join("\n") + "\n";
+}
+
+// src/interaction/highlight.ts
+var EXCLUDED_EMISSIVE = 5579264;
+var FOCUS_EMISSIVE = 2254591;
+function focusAwareHex(selected, focused, orig) {
+  if (focused) return FOCUS_EMISSIVE;
+  return selected ? orig : EXCLUDED_EMISSIVE;
+}
+
+// src/interaction/manipulate.ts
+import * as THREE11 from "three";
+import { TransformControls } from "three/addons/controls/TransformControls.js";
+
+// src/serve-contract.ts
+function parseServeConfig(text) {
+  if (!text) return null;
+  return JSON.parse(text);
+}
+function solveRequestInit(yaml) {
+  return { method: "POST", headers: { "Content-Type": "application/x-yaml" }, body: yaml };
+}
+function convertRequestInit(req) {
+  return { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(req) };
+}
+
+// src/interaction/manipulate.ts
+function createManipulator(opts) {
+  const proxy = new THREE11.Object3D();
+  opts.scene.add(proxy);
+  const control = new TransformControls(opts.cam, opts.renderer.domElement);
+  control.setSpace("local");
+  opts.scene.add(control);
+  let armed = null;
+  function setMode(mode) {
+    control.setMode(mode);
+    control.showX = mode === "translate";
+    control.showY = mode === "translate";
+    control.showZ = mode === "rotate";
+  }
+  setMode("translate");
+  const onDraggingChanged = (event) => {
+    const dragging = event.value === true;
+    opts.orbit.enabled = !dragging;
+    if (!dragging && armed) void convertOnDrop(armed);
+  };
+  control.addEventListener("dragging-changed", onDraggingChanged);
+  const onObjectChange = () => {
+    if (armed === null || control.getMode() !== "translate") return;
+    const g = opts.groups[armed];
+    if (!g) return;
+    const z0 = g.matrix.elements[14];
+    g.matrix.setPosition(proxy.position.x, proxy.position.y, z0);
+    g.matrixWorldNeedsUpdate = true;
+  };
+  control.addEventListener("objectChange", onObjectChange);
+  const onKey = (ev) => {
+    if (armed === null) return;
+    if (ev.key === "t") setMode("translate");
+    else if (ev.key === "r") setMode("rotate");
+  };
+  window.addEventListener("keydown", onKey);
+  async function convertOnDrop(id) {
+    try {
+      const req = { x: proxy.position.x, y: proxy.position.y, world_yaw_rad: proxy.rotation.z };
+      const resp = await fetch("/convert", convertRequestInit(req));
+      if (!resp.ok) {
+        let msg = String(resp.status);
+        try {
+          msg = JSON.parse(await resp.text()).error ?? msg;
+        } catch {
+        }
+        banner("Fix position failed: " + msg);
+        return;
+      }
+      opts.onConverted(id, await resp.json());
+    } catch (e) {
+      banner("Fix position failed: " + e.message);
+    }
+  }
+  return {
+    arm(id) {
+      const c = opts.ctx.currentPoses[id];
+      if (!c) return;
+      const z0 = opts.groups[id]?.matrix.elements[14] ?? 0;
+      proxy.position.set(c.x_m, c.y_m, z0);
+      proxy.rotation.set(0, 0, c.world_yaw_rad);
+      setMode("translate");
+      control.attach(proxy);
+      const g = opts.groups[id];
+      if (g) g.userData.heldByEditor = true;
+      armed = id;
+    },
+    disarm() {
+      control.detach();
+      armed = null;
+    },
+    armedId: () => armed,
+    dispose() {
+      control.removeEventListener("dragging-changed", onDraggingChanged);
+      control.removeEventListener("objectChange", onObjectChange);
+      window.removeEventListener("keydown", onKey);
+      control.detach();
+      control.dispose();
+      opts.scene.remove(control);
+      opts.scene.remove(proxy);
+      armed = null;
+    }
+  };
+}
+
+// src/interaction/editor.ts
+function mountEditor(opts) {
+  let intent = opts.initialIntent ?? initialIntent(opts.ctx);
+  const ac = new AbortController();
+  const sig = { signal: ac.signal };
+  let focusedId = null;
+  let manip = null;
+  let fixBtn = null;
+  const ray = new THREE12.Raycaster();
+  const ndc = new THREE12.Vector2();
+  const idByObject = /* @__PURE__ */ new Map();
+  const targets = [];
+  for (const [id, g] of Object.entries(opts.groups)) {
+    g.traverse((o) => {
+      idByObject.set(o, id);
+      const mesh = o;
+      const m = mesh.material;
+      if (m && !Array.isArray(m) && m.emissive) {
+        const cloned = m.clone();
+        mesh.material = cloned;
+        targets.push({ id, mat: cloned, orig: cloned.emissive.getHex() });
+      }
+    });
+  }
+  const moverGroups = Object.fromEntries(
+    Object.entries(opts.groundObjectGroups ?? {}).filter(
+      ([id]) => opts.ctx.catalog?.[id]?.kind === "placed_routed_mover"
+    )
+  );
+  for (const [id, g] of Object.entries(moverGroups)) {
+    g.traverse((o) => idByObject.set(o, id));
+  }
+  const el = opts.renderer.domElement;
+  function pick(ev) {
+    const r = el.getBoundingClientRect();
+    ndc.set((ev.clientX - r.left) / r.width * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
+    ray.setFromCamera(ndc, opts.cam);
+    const hits = ray.intersectObjects(
+      [...Object.values(opts.groups), ...Object.values(moverGroups)],
+      true
+    );
+    for (const h of hits) {
+      const id = idByObject.get(h.object);
+      if (id) return id;
+    }
+    return null;
+  }
+  let downX = 0;
+  let downY = 0;
+  el.addEventListener(
+    "pointerdown",
+    (ev) => {
+      downX = ev.clientX;
+      downY = ev.clientY;
+    },
+    sig
+  );
+  el.addEventListener(
+    "pointerup",
+    (ev) => {
+      if (Math.hypot(ev.clientX - downX, ev.clientY - downY) > 6) return;
+      const id = pick(ev);
+      if (!id) return;
+      focusedId = id;
+      applyHighlight();
+      syncControls();
+      renderDoorOrder();
+    },
+    sig
+  );
+  function applyHighlight() {
+    for (const t of targets) {
+      t.mat.emissive.setHex(focusAwareHex(isSelected(intent, t.id), t.id === focusedId, t.orig));
+    }
+  }
+  function renderReadout() {
+    const readout = document.getElementById("sel-readout");
+    if (readout) readout.textContent = `selected: ${[...intent.selectedPlaneIds].sort().join(", ")}`;
+  }
+  const prio = byId("prio");
+  const pinToggle = byId("pin-toggle");
+  const cartsToggle = byId("carts-toggle");
+  const exportBtn = byId("export");
+  const rankAdd = byId("rank-add");
+  const doorList = byId("door-order-list");
+  const paletteList = byId("palette-list");
+  const cartMode = byId("cart-mode");
+  const baseMode = (id) => opts.ctx.catalog?.[id]?.movementMode;
+  const effMode = (id) => intent.cartModeOverrides[id] ?? baseMode(id);
+  const doorHint = byId("door-hint");
+  const door = opts.ctx.door;
+  if (door) {
+    const half = door.width_m / 2;
+    doorHint.textContent = `door: front wall, x ${(door.center_x_m - half).toFixed(1)}–${(door.center_x_m + half).toFixed(1)} m`;
+  }
+  const pinFields = document.createElement("div");
+  pinFields.id = "pin-fields";
+  pinFields.hidden = true;
+  function mkPinInput(label, field) {
+    const wrap = document.createElement("label");
+    wrap.textContent = `${label} `;
+    const inp = document.createElement("input");
+    inp.type = "number";
+    inp.step = "0.1";
+    inp.addEventListener("input", () => {
+      if (focusedId && inp.value !== "") intent = setPinField(intent, focusedId, field, Number(inp.value));
+    });
+    wrap.appendChild(inp);
+    pinFields.appendChild(wrap);
+    return inp;
+  }
+  const xIn = mkPinInput("x_m", "x");
+  const yIn = mkPinInput("y_m", "y");
+  const hIn = mkPinInput("heading_deg", "heading");
+  exportBtn.parentElement?.insertBefore(pinFields, exportBtn);
+  function syncControls() {
+    const id = focusedId;
+    const active = id !== null && isSelected(intent, id);
+    const hasPose = id !== null && id in opts.ctx.currentPoses;
+    prio.disabled = !active;
+    pinToggle.disabled = !active || !hasPose;
+    const isMover = id !== null && opts.ctx.catalog?.[id]?.kind === "placed_routed_mover";
+    if (fixBtn) fixBtn.disabled = !hasPose || !(active || isMover);
+    if (!active || id === null || baseMode(id) === void 0) {
+      cartMode.disabled = true;
+    } else {
+      cartMode.disabled = false;
+      cartMode.value = effMode(id) ?? "";
+      const canRadius = opts.ctx.catalog?.[id]?.hasTurnRadius ?? false;
+      for (const opt of Array.from(cartMode.options)) {
+        opt.disabled = opt.value !== "always_cart" && !canRadius;
+      }
+    }
+    if (!active || id === null) {
+      prio.value = "";
+      pinToggle.checked = false;
+      pinFields.hidden = true;
+      cartsToggle.disabled = true;
+      cartsToggle.checked = false;
+    } else {
+      const p = intent.priorities[id];
+      prio.value = p !== void 0 ? String(p) : "";
+      const mp = intent.mustPositions[id];
+      pinToggle.checked = mp !== void 0;
+      pinFields.hidden = mp === void 0;
+      if (mp) {
+        xIn.value = String(mp.x);
+        yIn.value = String(mp.y);
+        hIn.value = String(mp.heading);
+        const mode = effMode(id);
+        if (mode === "cart_eligible") {
+          cartsToggle.disabled = false;
+          cartsToggle.checked = mp.onCarts;
+        } else {
+          cartsToggle.disabled = true;
+          cartsToggle.checked = mode === "always_cart";
+        }
+      } else {
+        cartsToggle.disabled = true;
+        cartsToggle.checked = false;
+      }
+    }
+    exportBtn.disabled = intent.selectedPlaneIds.length === 0;
+  }
+  prio.addEventListener(
+    "input",
+    () => {
+      if (!focusedId) return;
+      intent = setPriority(intent, focusedId, prio.value === "" ? null : Math.max(0, Number(prio.value)));
+    },
+    sig
+  );
+  pinToggle.addEventListener(
+    "change",
+    () => {
+      if (!focusedId) return;
+      intent = pinToggle.checked ? pinAtCurrent(intent, focusedId, opts.ctx) : unpin(intent, focusedId);
+      syncControls();
+    },
+    sig
+  );
+  cartsToggle.addEventListener(
+    "change",
+    () => {
+      if (!focusedId) return;
+      intent = setOnCarts(intent, focusedId, cartsToggle.checked);
+    },
+    sig
+  );
+  cartMode.addEventListener(
+    "change",
+    () => {
+      const id = focusedId;
+      if (id === null) return;
+      const m = cartMode.value;
+      intent = setCartModeOverride(intent, id, m === baseMode(id) ? null : m);
+      if (intent.mustPositions[id]) {
+        if (m === "always_cart") intent = setOnCarts(intent, id, true);
+        else if (m === "always_own_gear") intent = setOnCarts(intent, id, false);
+      }
+      syncControls();
+    },
+    sig
+  );
+  exportBtn.addEventListener(
+    "click",
+    () => {
+      const yaml = intentToScenarioYaml(intent, opts.ctx);
+      const blob = new Blob([yaml], { type: "text/yaml" });
+      const a = document.createElement("a");
+      a.href = URL.createObjectURL(blob);
+      a.download = "scenario.edited.yaml";
+      a.click();
+      URL.revokeObjectURL(a.href);
+    },
+    sig
+  );
+  function renderDoorOrder() {
+    doorList.textContent = "";
+    intent.doorOrder.forEach((id, index) => {
+      const li = document.createElement("li");
+      li.draggable = true;
+      const label = document.createElement("span");
+      label.textContent = id;
+      const rm = document.createElement("button");
+      rm.type = "button";
+      rm.textContent = "×";
+      rm.title = `unrank ${id}`;
+      rm.addEventListener("click", () => {
+        intent = removeFromDoorOrder(intent, id);
+        renderDoorOrder();
+      });
+      li.append(label, rm);
+      li.addEventListener("dragstart", (ev) => ev.dataTransfer?.setData("text/plain", String(index)));
+      li.addEventListener("dragover", (ev) => ev.preventDefault());
+      li.addEventListener("drop", (ev) => {
+        ev.preventDefault();
+        const from = Number(ev.dataTransfer?.getData("text/plain"));
+        if (Number.isInteger(from)) {
+          intent = moveInDoorOrder(intent, from, index);
+          renderDoorOrder();
+        }
+      });
+      doorList.appendChild(li);
+    });
+    rankAdd.disabled = !(focusedId !== null && isSelected(intent, focusedId) && !intent.doorOrder.includes(focusedId));
+  }
+  rankAdd.addEventListener(
+    "click",
+    () => {
+      if (!focusedId) return;
+      intent = addToDoorOrder(intent, focusedId);
+      renderDoorOrder();
+    },
+    sig
+  );
+  const KIND_LABEL = {
+    aircraft: "aircraft",
+    placed_routed_mover: "mover",
+    fixed_obstacle: "fixed"
+  };
+  function renderPalette() {
+    const catalog = opts.ctx.catalog ?? {};
+    paletteList.textContent = "";
+    for (const id of Object.keys(catalog).sort()) {
+      const { name, kind } = catalog[id];
+      const isAircraft = kind === "aircraft";
+      const isMover = kind === "placed_routed_mover";
+      const box = document.createElement("input");
+      box.type = "checkbox";
+      box.checked = isAircraft ? isSelected(intent, id) : intent.groundObjectIds.includes(id);
+      box.disabled = !(isAircraft || isMover);
+      box.addEventListener("change", () => {
+        if (isAircraft) {
+          intent = toggleSelection(intent, id);
+          applyHighlight();
+          renderReadout();
+          syncControls();
+          renderDoorOrder();
+        } else if (isMover) {
+          intent = toggleGroundObject(intent, id);
+        }
+        renderPalette();
+      });
+      const badge = document.createElement("span");
+      badge.className = "kind";
+      badge.textContent = KIND_LABEL[kind] ?? kind;
+      const label = document.createElement("label");
+      label.append(box, document.createTextNode(` ${name} `), badge);
+      const li = document.createElement("li");
+      li.appendChild(label);
+      paletteList.appendChild(li);
+    }
+  }
+  applyHighlight();
+  renderReadout();
+  syncControls();
+  renderDoorOrder();
+  renderPalette();
+  if (opts.scene && opts.orbit) {
+    manip = createManipulator({
+      scene: opts.scene,
+      groups: { ...opts.groups, ...moverGroups },
+      // #912: planes ∪ movers (gizmo targets)
+      cam: opts.cam,
+      renderer: opts.renderer,
+      orbit: opts.orbit,
+      ctx: opts.ctx,
+      onConverted: (id, pose) => {
+        if (opts.ctx.catalog?.[id]?.kind === "placed_routed_mover") {
+          intent = setMoverPin(intent, id, {
+            x: pose.x_m,
+            y: pose.y_m,
+            heading: pose.heading_deg
+          });
+        } else {
+          const onCarts = intent.mustPositions[id]?.onCarts ?? opts.ctx.currentPoses[id]?.on_carts ?? false;
+          intent = pinAtPose(intent, id, pose, onCarts);
+        }
+        focusedId = id;
+        syncControls();
+        opts.onEdit?.();
+      }
+    });
+    fixBtn = document.createElement("button");
+    fixBtn.id = "fix-position";
+    fixBtn.type = "button";
+    fixBtn.textContent = "Fix position";
+    fixBtn.disabled = true;
+    exportBtn.parentElement?.insertBefore(fixBtn, exportBtn);
+    fixBtn.addEventListener(
+      "click",
+      () => {
+        if (!manip || focusedId === null) return;
+        if (manip.armedId() === focusedId) manip.disarm();
+        else manip.arm(focusedId);
+      },
+      sig
+    );
+  }
+  return {
+    getIntent: () => intent,
+    // #445: abort the persistent-element listeners and remove the injected
+    // pin-fields div so a re-mount after a Calculate swap starts clean.
+    dispose: () => {
+      ac.abort();
+      pinFields.remove();
+      manip?.dispose();
+      fixBtn?.remove();
+    }
+  };
+}
+
+// src/interaction/calculate.ts
+function mountCalculate(opts) {
+  const btn = document.createElement("button");
+  btn.id = "calculate";
+  btn.type = "button";
+  btn.textContent = "Calculate";
+  const exportBtn = byId("export");
+  exportBtn.parentElement?.insertBefore(btn, exportBtn);
+  const markUnsolved = () => {
+    btn.classList.add("unsolved");
+    btn.textContent = "Calculate ●";
+  };
+  const clearUnsolved = () => {
+    btn.classList.remove("unsolved");
+    btn.textContent = "Calculate";
+  };
+  async function run() {
+    btn.disabled = true;
+    clearBanner();
+    try {
+      const yaml = intentToScenarioYaml(opts.getIntent(), opts.ctx);
+      const resp = await fetch("/solve", solveRequestInit(yaml));
+      if (!resp.ok) {
+        let msg = `${resp.status}`;
+        try {
+          msg = JSON.parse(await resp.text()).error ?? msg;
+        } catch {
+        }
+        banner("Calculate failed: " + msg);
+        return;
+      }
+      opts.reRender(await resp.json());
+      clearUnsolved();
+    } catch (e) {
+      banner("Calculate failed: " + e.message);
+    } finally {
+      btn.disabled = false;
+    }
+  }
+  btn.addEventListener("click", () => void run());
+  return { markUnsolved };
+}
+
 // src/main.ts
 function setReadouts(scene) {
   byId("placeholder").hidden = !scene.placeholder;
@@ -726,7 +1396,7 @@ function setReadouts(scene) {
 }
 function buildWorld(scene, data, brand) {
   byId("legend").textContent = "";
-  const group = new THREE11.Group();
+  const group = new THREE13.Group();
   scene.add(group);
   const { groups, labelMeshes, noseMeshes } = addPlanes(group, data, brand);
   const { groups: goGroups } = addGroundObjects(group, data);
@@ -745,7 +1415,7 @@ function buildWorld(scene, data, brand) {
     banner("TRANSFORM CHECK ERRORED: " + e.message + " — do not trust this render.");
   }
   const timeline = createTimeline(data, groups, goGroups);
-  return { group, labelMeshes, noseMeshes, setPathsVisible, timeline };
+  return { group, groups, goGroups, labelMeshes, noseMeshes, setPathsVisible, timeline };
 }
 function wireToggles(wallMeshes, getWorld) {
   const wallsToggle = byId("walls");
@@ -790,9 +1460,9 @@ function setupStage(hangar, brand) {
 function bootSingle(data, brand) {
   setReadouts(data);
   const stage = setupStage(data.hangar, brand);
-  const world = buildWorld(stage.scene, data, brand);
+  let world = buildWorld(stage.scene, data, brand);
   wireToggles(stage.wallMeshes, () => world);
-  startHud({
+  const hud = startHud({
     timeline: world.timeline,
     home: stage.home,
     controls: stage.controls,
@@ -800,6 +1470,57 @@ function bootSingle(data, brand) {
     scene: stage.scene,
     cam: stage.cam
   });
+  const ctxEl = document.getElementById("editor-context");
+  if (ctxEl?.textContent) {
+    const ctx = JSON.parse(ctxEl.textContent);
+    const serveCfg = parseServeConfig(document.getElementById("serve-config")?.textContent);
+    let markUnsolved = () => {
+    };
+    const editHostOpts = serveCfg ? { scene: stage.scene, orbit: stage.controls, onEdit: () => markUnsolved() } : {};
+    let editor = mountEditor({
+      groups: world.groups,
+      groundObjectGroups: world.goGroups,
+      // #912 (editor filters to movers)
+      renderer: stage.renderer,
+      cam: stage.cam,
+      ctx,
+      ...editHostOpts
+    });
+    if (serveCfg) {
+      const calc = mountCalculate({
+        getIntent: () => editor.getIntent(),
+        ctx,
+        reRender: (resp) => {
+          const preserved = editor.getIntent();
+          clearBanner();
+          const nextWorld = buildWorld(stage.scene, resp.scene, brand);
+          const nextEditor = mountEditor({
+            groups: nextWorld.groups,
+            groundObjectGroups: nextWorld.goGroups,
+            // #912 (editor filters to movers)
+            renderer: stage.renderer,
+            cam: stage.cam,
+            // The server-refreshed editor-context re-bases "pin at current pose" on
+            // the new solved poses (the browser must not derive them — ADR-0002).
+            ctx: resp.editorContext,
+            initialIntent: preserved,
+            scene: stage.scene,
+            orbit: stage.controls,
+            onEdit: () => markUnsolved()
+          });
+          editor.dispose();
+          stage.scene.remove(world.group);
+          disposeWorld(world.group);
+          world = nextWorld;
+          editor = nextEditor;
+          applyToggleState(world);
+          setReadouts(resp.scene);
+          hud.setActiveTimeline(world.timeline);
+        }
+      });
+      markUnsolved = calc.markUnsolved;
+    }
+  }
 }
 function startCompare(manifest, brand) {
   const solutions = manifest.solutions;

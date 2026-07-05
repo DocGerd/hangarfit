@@ -16,6 +16,8 @@ from importlib import resources
 from pathlib import Path
 
 from hangarfit import brand, metrics
+from hangarfit.models import Layout
+from hangarfit.towplanner import compass_to_math_rad
 
 _ASSETS = "hangarfit._viewer_assets"
 _THREE = "hangarfit._viewer_assets.three"
@@ -64,6 +66,20 @@ def _embed_brand() -> str:
 # separate ``<script id="solutions">`` blob instead of the single-mode ``#scene``.
 _COMPARE_SCHEMA = "hangarfit.viewer-compare/v1"
 
+# The editor-context blob (#442/ADR-0029). Additive alongside the existing
+# ``#scene`` blob (unlike the compare container above, which replaces it): the
+# edit-mode viewer keeps the byte-identical ``#scene`` doc and reads a SECOND
+# ``<script id="editor-context">`` blob for the intent-artifact state the
+# interactive editor needs (current poses, cart eligibility, fleet/hangar refs
+# for the eventual export). Deliberately NOT part of the scene/v2 schema.
+_EDITOR_CONTEXT_SCHEMA = "hangarfit.editor-context/v1"
+
+# The serve-config blob (#445). Present ONLY when `hangarfit serve` renders the
+# shell — never in the offline file export — so the client can tell it is running
+# under the local backend and light up the (otherwise dormant) Calculate button.
+# A viewer-HTML-level marker like #solutions / #editor-context, NOT a scene/v2 change.
+_SERVE_CONFIG_SCHEMA = "hangarfit.serve-config/v1"
+
 
 def _assemble_html(*, extra_head: str, hud_html: str, data_scripts: str) -> str:
     """Assemble the shared self-contained viewer HTML skeleton.
@@ -75,12 +91,14 @@ def _assemble_html(*, extra_head: str, hud_html: str, data_scripts: str) -> str:
     mode, so single output is template-identical)."""
     three_src = _asset_text(_THREE, "three.module.js")
     orbit_src = _asset_text(_THREE, "OrbitControls.js")
+    transform_src = _asset_text(_THREE, "TransformControls.js")  # #911 PR B
     viewer_js = _asset_text(_ASSETS, "viewer.js")
 
     import_map = {
         "imports": {
             "three": _data_url(three_src),
             "three/addons/controls/OrbitControls.js": _data_url(orbit_src),
+            "three/addons/controls/TransformControls.js": _data_url(transform_src),  # #911 PR B
         }
     }
     return (
@@ -115,6 +133,135 @@ def render_viewer(scene: dict, output_path: Path | str) -> None:
     data = f'<script type="application/json" id="scene">{_embed_json(scene)}</script>\n'
     html = _assemble_html(extra_head="", hud_html=_HUD, data_scripts=data)
     Path(output_path).write_text(html, encoding="utf-8")
+
+
+def build_editor_context(
+    *,
+    fleet_ref: str,
+    hangar_ref: str,
+    maintenance_plane: str | None,
+    layout: Layout,
+) -> dict:
+    """Build the ``hangarfit.editor-context/v1`` blob for :func:`render_edit_viewer`
+    (#442/ADR-0029).
+
+    ``fleet_ref``/``hangar_ref`` are the raw authored ``fleet:``/``hangar:`` YAML
+    reference strings (the editor's eventual scenario-YAML export re-emits them
+    verbatim; ``Layout`` itself does not retain them). ``currentPoses`` is a
+    scalar copy of each placement's pose fields, keyed by ``plane_id``, sourced
+    from ``layout.placements`` (a ``tuple[Placement, ...]`` — ``Layout`` is not
+    itself iterable), merged with every ``placed_routed_mover`` in
+    ``layout.ground_object_placements`` keyed by its ground-object id (#912 PR
+    B — aircraft and ground-object ids are disjoint, so the merge is
+    collision-free; ``fixed_obstacle`` placements are excluded, not
+    drag-pinnable here). Per-aircraft cart data (``movementMode``/``hasTurnRadius``)
+    is carried inside the ``catalog`` (below), derived from ``layout.fleet``."""
+    return {
+        "schema": _EDITOR_CONTEXT_SCHEMA,
+        "fleet": fleet_ref,
+        "hangar": hangar_ref,
+        "maintenance": {"plane": maintenance_plane} if maintenance_plane else None,
+        "currentPoses": {
+            **{
+                p.plane_id: {
+                    "x_m": p.x_m,
+                    "y_m": p.y_m,
+                    "heading_deg": p.heading_deg,
+                    "on_carts": p.on_carts,
+                    # #911: the world-space yaw (radians, math convention) the drag
+                    # gizmo's clean PROXY is seeded with. Python-owned so the browser
+                    # does no heading↔yaw trig (ADR-0002); its inverse is server.py's
+                    # /convert. compass_to_math_rad(h) = radians(90 - h).
+                    "world_yaw_rad": compass_to_math_rad(p.heading_deg),
+                }
+                for p in layout.placements
+            },
+            # #912 PR B: placed movers (cars/trailers) so the drag gizmo can arm
+            # one and pin its pose. Keyed by ground-object id (disjoint from
+            # aircraft ids, so the merge is collision-free). on_carts is forced
+            # False (movers never ride carts) and kept only so the CurrentPose
+            # shape is uniform; the mover-pin export drops it. Fixed obstacles are
+            # excluded — they are not drag-pinnable in this scope.
+            **{
+                gp.plane_id: {
+                    "x_m": gp.x_m,
+                    "y_m": gp.y_m,
+                    "heading_deg": gp.heading_deg,
+                    "on_carts": False,
+                    "world_yaw_rad": compass_to_math_rad(gp.heading_deg),
+                }
+                for gp in layout.ground_object_placements
+                if layout.ground_objects[gp.plane_id].object_class == "placed_routed_mover"
+            },
+        },
+        # The door edge (already in scene/v2), so the door-proximity ranking UI
+        # (#907) can show the user which wall — and where along it — the door is
+        # (rendered as a hint in the ranking panel by editor.ts).
+        "door": {
+            "center_x_m": layout.hangar.door.center_x_m,
+            "width_m": layout.hangar.door.width_m,
+        },
+        # The full catalog for the "add from an empty hangar" palette (#910):
+        # EVERY fleet aircraft (not just the placed ones, which is all
+        # currentPoses carries) plus every ground object the layout carries
+        # (``layout.ground_objects`` — for a scenario, the subset its
+        # ``ground_objects:`` block references), so the user can start from
+        # nothing and pick what goes in. ``kind`` is "aircraft" for planes
+        # and the GroundObject.object_class ("fixed_obstacle" |
+        # "placed_routed_mover") for objects — the editor gates what the palette
+        # can add offline (aircraft + movers) on it. Aircraft entries also carry
+        # ``movementMode`` (the honest cart mode — the editor derives cart
+        # eligibility from it, subsuming the old lossy ``cartEligible`` bool) and
+        # ``hasTurnRadius`` (#909: a non-``always_cart`` cart-mode override needs
+        # a positive turn radius, so the editor gates those options on it). The
+        # maintenance occupant is excluded: it sits in the bay, not the hangar
+        # (mirroring its exclusion from currentPoses), so it must not be an "add
+        # to hangar" candidate. Fleet and ground-object ids are disjoint, so the
+        # merged map has no collisions.
+        "catalog": {
+            **{
+                aid: {
+                    "name": ac.name,
+                    "kind": "aircraft",
+                    "movementMode": ac.movement_mode,
+                    "hasTurnRadius": ac.turn_radius_m is not None and ac.turn_radius_m > 0,
+                }
+                for aid, ac in layout.fleet.items()
+                if aid != maintenance_plane
+            },
+            **{
+                gid: {"name": go.name, "kind": go.object_class}
+                for gid, go in layout.ground_objects.items()
+            },
+        },
+    }
+
+
+def build_edit_html(scene: dict, context: dict, *, serve_config: dict | None = None) -> str:
+    """Return the interactive-editor viewer HTML as a string.
+
+    The ``#scene`` bytes are byte-identical to :func:`render_viewer` (ADR-0003);
+    the editor context is a second, separate ``<script>`` blob. ``serve_config`` —
+    when given — appends a third ``#serve-config`` blob so the client knows it runs
+    under ``hangarfit serve`` (#445) and lights up the live Calculate button. With
+    ``serve_config=None`` the output is byte-identical to the offline file
+    :func:`render_edit_viewer` writes."""
+    data = (
+        f'<script type="application/json" id="scene">{_embed_json(scene)}</script>\n'
+        f'<script type="application/json" id="editor-context">{_embed_json(context)}</script>\n'
+    )
+    if serve_config is not None:
+        data += (
+            f'<script type="application/json" id="serve-config">'
+            f"{_embed_json(serve_config)}</script>\n"
+        )
+    return _assemble_html(extra_head="", hud_html=_HUD_EDIT, data_scripts=data)
+
+
+def render_edit_viewer(scene: dict, context: dict, output_path: Path | str) -> None:
+    """Like :func:`render_viewer`, plus an additive ``#editor-context`` blob and
+    the edit HUD. Writes the byte-identical offline artifact (no ``serve-config``)."""
+    Path(output_path).write_text(build_edit_html(scene, context), encoding="utf-8")
 
 
 def render_compare_viewer(
@@ -182,6 +329,18 @@ _CSS = (
     f"#clock,#active,#readouts,.sw{{font-family:{brand.FONT_MONO};"
     f'font-feature-settings:"tnum" 1,"zero" 1}}'
     f"#readouts{{color:{brand.READOUTS_TEXT};font-variant-numeric:tabular-nums}}"
+    # #907 door-edge hint in the ranking panel: muted mono (it shows a
+    # coordinate span), spaced off the panel title. Editor-only markup, so this
+    # rule is inert in single/compare mode.
+    f"#door-hint{{margin:0 8px;font-family:{brand.FONT_MONO};"
+    f"color:{brand.READOUTS_TEXT};font-variant-numeric:tabular-nums}}"
+    # #910 catalog palette: a compact scrollable checklist (it can list the whole
+    # fleet + every ground object) with a muted mono kind badge. Editor-only
+    # markup, so these rules are inert in single/compare mode.
+    "#palette-list{list-style:none;margin:4px 0 0;padding:0;max-height:120px;"
+    "overflow:auto;display:flex;flex-direction:column;gap:2px}"
+    f"#palette-list .kind{{margin-left:6px;font-family:{brand.FONT_MONO};"
+    f"color:{brand.READOUTS_TEXT};font-size:11px;font-variant-numeric:tabular-nums}}"
     "#legend{display:flex;gap:8px;flex-wrap:wrap}"
     ".sw{display:inline-flex;align-items:center;gap:4px}"
     ".sw i{width:11px;height:11px;border-radius:2px;display:inline-block}"
@@ -205,6 +364,42 @@ _HUD = (
     '<label><input id="paths" type="checkbox" checked> paths</label>'
     '<span id="readouts"></span>'
     '<span id="legend"></span>'
+)
+# #442 edit HUD: the standard HUD plus an editor panel (selection readout, priority
+# field, pin/on-carts toggles, export button). Additive — authored as _HUD plus an
+# appended <div>, not a string-hack of _HUD, so single-mode HUD bytes are untouched.
+# Only Task 6 (Chunk 3) wires these controls up; Task 4 just ships the DOM shape.
+_HUD_EDIT = _HUD + (
+    '<div id="editor"><div id="sel-readout"></div>'
+    '<label>priority <input id="prio" type="number" min="0" step="0.5"></label>'
+    '<label><input id="pin-toggle" type="checkbox"> pin here</label>'
+    '<label><input id="carts-toggle" type="checkbox"> on carts</label>'
+    # #909 cart-mode override: relax/change a locked plane's cart mode for this
+    # scenario. editor.ts sets the value from the focused plane's effective mode
+    # and disables the radius-needing options (own gear / cart-eligible) for a
+    # plane with no turn radius. Empty override ⇒ no `movement_mode` is exported.
+    '<label>cart mode <select id="cart-mode">'
+    '<option value="always_own_gear">own gear</option>'
+    '<option value="cart_eligible">cart-eligible</option>'
+    '<option value="always_cart">always cart</option>'
+    "</select></label>"
+    # #907 door-proximity ranking: an ordered list (#1 nearest the door), items
+    # draggable to reorder; "＋ rank selected" appends the focused plane. The
+    # list + the door-edge hint are filled/wired by editor.ts (the hint reads
+    # the editor-context `door` field); empty markup here keeps it inert until a
+    # plane is ranked.
+    '<div id="door-order"><span id="door-order-title">door proximity (#1 nearest)</span>'
+    '<span id="door-hint"></span>'
+    '<button id="rank-add" type="button">＋ rank selected</button>'
+    '<ol id="door-order-list"></ol></div>'
+    # #910 catalog palette: "add from an empty hangar". editor.ts fills the list
+    # from the editor-context `catalog` — every fleet aircraft + ground object,
+    # each a toggle (aircraft → selection, mover → ground_objects). Fixed
+    # obstacles are shown disabled (they need an authored pose). Empty markup
+    # here keeps it inert until editor.ts renders it.
+    '<div id="palette"><span id="palette-title">catalog (add to hangar)</span>'
+    '<ul id="palette-list"></ul></div>'
+    '<button id="export">Export scenario YAML</button></div>'
 )
 # #666 compare HUD: a solution switcher (dropdown, also ←/→ keys) prepended to the
 # standard HUD, plus a per-solution metrics readout. The <select> ships empty —

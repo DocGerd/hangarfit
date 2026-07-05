@@ -1,0 +1,78 @@
+name: Coverage
+
+on:
+  # Same triggers as ci.yml (PRs into, and pushes to, the integration/release
+  # branches) so the Codecov signal is produced on exactly the same events it
+  # always was. The job lives HERE, in its own workflow, rather than in ci.yml
+  # (#933): it is non-required for merge (#879), but while it ran inside ci.yml a
+  # wall-clock flake in its C-tracer test run failed ci.yml's *run conclusion* and
+  # reddened the README CI badge (which tracks that conclusion, not just the
+  # required jobs). #879 took coverage off the required path; #933 finishes the job
+  # by taking it off the badge. The `codecov` badge tracks codecov.io — not this
+  # workflow's conclusion — so it is unaffected by the move.
+  pull_request:
+    branches: [develop, main]
+  push:
+    branches: [develop, main]
+
+permissions:
+  contents: read
+
+concurrency:
+  # Distinct from ci.yml's group (keyed on github.workflow = "Coverage"), so a
+  # coverage run and a CI run for the same ref never cancel each other.
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  coverage:
+    # NON-required — and NOT in branch protection. Produces the Codecov signal off
+    # BOTH the merge-critical path (#879) and — since #933 — the ci.yml run
+    # conclusion / README CI badge. `codecov/patch` is already non-required, so the
+    # merge gate never waits on this.
+    #
+    # Do NOT add this job to branch protection: staying non-required is what lets
+    # it live in its own workflow and fail open. And do NOT add a "Coverage" status
+    # badge to the README — that would re-introduce exactly the red-badge symptom
+    # #933 removes (this run can still go red on a transient coverage-tooling
+    # hiccup; the codecov.io badge is the coverage signal, not this workflow's
+    # conclusion).
+    #
+    # There is deliberately NO `paths:` filter (unlike the sibling viewer.yml):
+    # coverage measures the whole suite, so it must run on every change.
+    #
+    # Runs the bulk (non-slow, non-@serial) suite once under the branch-coverage
+    # C-tracer (`branch = true` in pyproject.toml). The `@serial` wall-clock
+    # determinism canaries are EXCLUDED here on purpose (#933): under the ~2–3×
+    # slower C-tracer the budget-based ones flaked (the CPU-starvation class in
+    # docs/dev/test-flakes-and-ci-gotchas.md §1–§2), and they add ~no unique
+    # coverage — each re-solves a fixed seed to assert byte-identity, so its code
+    # paths are already covered by non-serial siblings, and two of them spawn fresh
+    # subprocesses coverage.py cannot even measure (§4). Their determinism is
+    # still asserted by the REQUIRED `serial-canaries` job in ci.yml, which runs
+    # them WITHOUT `--cov` (no tracer, no flake). Excluding them shifts the coverage
+    # number negligibly and the codecov statuses are informational anyway (§5).
+    #
+    # NB: COVERAGE_CORE=sysmon is deliberately NOT used. We keep branch coverage
+    # on (`branch = true` in pyproject.toml), and sys.monitoring branch coverage
+    # requires Python 3.14+ (coverage added it in 7.7.0). On our Python 3.12
+    # (the single supported interpreter, ADR-0009) coverage warns and falls back
+    # to the default C tracer, so sysmon would buy nothing here. Revisit when the
+    # project moves to Python 3.14+ — NOT on a coverage upgrade (branch+sysmon
+    # support already exists upstream). See #878.
+    name: coverage (Codecov, non-required)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+      - uses: ./.github/actions/setup-python-env
+
+      - name: Run tests with coverage (bulk suite; @serial canaries excluded, #933)
+        run: pytest -n auto -m "not slow and not serial" --cov=hangarfit --cov-report=xml --cov-report=term-missing
+
+      - name: Upload coverage to Codecov
+        if: always()
+        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f  # v7.0.0
+        with:
+          files: ./coverage.xml
+          fail_ci_if_error: false
+          token: ${{ secrets.CODECOV_TOKEN }}

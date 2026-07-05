@@ -19,7 +19,10 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
+from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures.process import BrokenProcessPool
 
 from .harness import (
     RegimeResult,
@@ -27,7 +30,7 @@ from .harness import (
     profile_routing,
     run_regime,
 )
-from .regimes import FAST_REGIMES, REGIMES, regime_by_key
+from .regimes import FAST_REGIMES, REGIMES, Regime, regime_by_key
 
 # ── speed-regression tripwire ceilings (the F6/#403 CI gate) ─────────────────
 #
@@ -216,6 +219,82 @@ def _print_profile(key: str) -> None:
         print(f"    {line}")
 
 
+def _available_cpus() -> int:
+    """Best available CPU count, respecting cgroup/affinity limits on Linux.
+
+    ``os.sched_getaffinity(0)`` reflects the process's *allowed* CPUs (a
+    container/cgroup-limited or ``taskset``-pinned runner), which ``os.cpu_count()``
+    over-reports to the host's logical core count. Falls back to ``os.cpu_count()``
+    on platforms without ``sched_getaffinity`` (macOS/Windows dev boxes).
+    """
+    try:
+        return len(os.sched_getaffinity(0))
+    except AttributeError:
+        return os.cpu_count() or 1
+
+
+def _resolve_jobs(spec: str, n_regimes: int) -> int:
+    """Resolve a ``--jobs`` spec into a concrete worker count in ``[1, n_regimes]``.
+
+    ``"auto"`` (or any value ``<= 0``) means the available CPU count
+    (:func:`_available_cpus`); the result is always clamped to ``[1, n_regimes]``
+    because more workers than regimes buys nothing (each regime is one indivisible
+    task — its own two-solve run). A non-integer, non-``"auto"`` spec is a hard,
+    loud error (silent-failure guard).
+    """
+    if spec == "auto":
+        n = _available_cpus()
+    else:
+        try:
+            n = int(spec)
+        except ValueError:
+            raise SystemExit(f"--jobs: expected an integer or 'auto', got {spec!r}") from None
+        if n <= 0:
+            n = _available_cpus()
+    return max(1, min(n, max(1, n_regimes)))
+
+
+def _run_regimes(regimes: list[Regime], jobs: int) -> list[RegimeResult]:
+    """Run every regime and return results **in regime order**.
+
+    ``jobs == 1`` (the default) is the byte-identical serial path — the exact
+    ``[run_regime(r) for r in regimes]`` the harness has always used. ``jobs > 1``
+    fans the regimes across a process pool; ``ProcessPoolExecutor.map`` preserves
+    input order, so the printed table, the ``--json`` payload, and the return-code
+    reduction are identical to serial regardless of which worker finishes first.
+
+    Parallelism is safe for the correctness gate because every regime's verdicts
+    (validity / path-validity / determinism) are computed **inside** its own
+    ``run_regime`` — the determinism double-run happens within a single worker
+    process — so nothing about a regime's outcome depends on how it is scheduled.
+    Only the reported per-regime wall-clock inflates under CPU contention, which
+    is why the speed-enforcing ``--gate`` path never runs parallel (see ``main``).
+
+    A worker dying abnormally (a runner OOM / fork hiccup) raises
+    ``BrokenProcessPool`` — an *infrastructure* break, distinct from a regime
+    verdict failure (which propagates as its own exception from
+    ``executor.map``, in input order, and must still fail). Because
+    ``bench correctness`` is a **required** merge gate, a transient pool break
+    falls back to the trusted **serial** path rather than blocking every merge:
+    serial cannot pool-break, yields byte-identical verdicts (the whole
+    invariant this change rests on), and still fails on a genuine verdict
+    failure. A real memory regression that only surfaces under N-way concurrency
+    is a scheduling artifact, not a solver-correctness defect, so ignoring it
+    here is correct.
+    """
+    if jobs <= 1 or len(regimes) <= 1:
+        return [run_regime(r) for r in regimes]
+    try:
+        with ProcessPoolExecutor(max_workers=jobs) as executor:
+            return list(executor.map(run_regime, regimes))
+    except BrokenProcessPool:
+        print(
+            "note: worker pool broke (infra hiccup) — falling back to serial",
+            file=sys.stderr,
+        )
+        return [run_regime(r) for r in regimes]
+
+
 def main(argv: list[str] | None = None) -> int:
     ap = argparse.ArgumentParser(description="solve→tow profiling harness (#381)")
     ap.add_argument(
@@ -236,6 +315,15 @@ def main(argv: list[str] | None = None) -> int:
     )
     ap.add_argument("--json", action="store_true", help="emit machine-readable JSON")
     ap.add_argument(
+        "--jobs",
+        metavar="N|auto",
+        default="1",
+        help="run the regimes across N worker processes ('auto' = os.cpu_count, "
+        "capped at the regime count); default 1 (serial, byte-identical to the "
+        "historic run). Ignored under --gate, whose per-regime speed ceilings "
+        "require isolated serial timing.",
+    )
+    ap.add_argument(
         "--gate",
         action="store_true",
         help="enforce the F6 CI gate: the three correctness invariants PLUS the "
@@ -254,7 +342,20 @@ def main(argv: list[str] | None = None) -> int:
     else:
         regimes = list(REGIMES if args.heavy else FAST_REGIMES)
 
-    results = [run_regime(r) for r in regimes]
+    jobs = _resolve_jobs(args.jobs, len(regimes))
+    if args.gate and jobs > 1:
+        # The --gate path enforces per-regime SPEED ceilings on each regime's
+        # wall-clock; running regimes concurrently would inflate those times
+        # under CPU contention and trip the ceilings. Force serial and say so
+        # (mirrors the solver CLI's `--workers ignored (runs serial)` note).
+        print(
+            "note: --jobs ignored under --gate (per-regime speed ceilings require serial timing)",
+            file=sys.stderr,
+        )
+        jobs = 1
+    if jobs > 1:
+        print(f"running {len(regimes)} regimes across {jobs} worker processes", file=sys.stderr)
+    results = _run_regimes(regimes, jobs)
 
     if args.json:
         print(

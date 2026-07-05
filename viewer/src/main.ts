@@ -23,13 +23,20 @@ import { checkAnchors } from './anchors.ts';
 import { createTimeline, type Timeline } from './timeline.ts';
 import { startHud } from './hud.ts';
 import { wrapIndex, clampIndex, optionLabels, formatSummary, foundLabel } from './compare.ts';
+import { mountEditor } from './interaction/editor.ts';
+import { mountCalculate } from './interaction/calculate.ts';
+import { parseServeConfig } from './serve-contract.ts';
 import type { BrandTokens } from './brand-contract.ts';
 import type { CompareManifest, SceneV2 } from './scene-contract.ts';
+import type { EditorContext } from './interaction/intent-contract.ts';
 
 // One solution's dynamic content: the meshes (under one toggleable Group) + its
-// timeline + the label/nose/paths handles the HUD toggles drive.
+// timeline + the label/nose/paths handles the HUD toggles drive, plus the raw
+// per-plane groups (#442) so an `--edit` boot can hand them to the raycaster.
 interface World {
   group: THREE.Group;
+  groups: Record<string, THREE.Group>;
+  goGroups: Record<string, THREE.Group>; // #912: ground-object Groups (movers + fixed obstacles) for the editor
   labelMeshes: THREE.Sprite[];
   noseMeshes: THREE.Mesh[];
   setPathsVisible: (on: boolean) => void;
@@ -85,7 +92,7 @@ function buildWorld(scene: THREE.Scene, data: SceneV2, brand: BrandTokens): Worl
   // Movers (#651) animate from the same timeline as planes, so their Groups are passed
   // alongside the plane Groups (both returned per-id by the add* builders above).
   const timeline = createTimeline(data, groups, goGroups);
-  return { group, labelMeshes, noseMeshes, setPathsVisible, timeline };
+  return { group, groups, goGroups, labelMeshes, noseMeshes, setPathsVisible, timeline };
 }
 
 // Wire the HUD visibility toggles. `walls` drives the shared hangar; `labels`/`paths`
@@ -144,9 +151,10 @@ function setupStage(
 function bootSingle(data: SceneV2, brand: BrandTokens): void {
   setReadouts(data);
   const stage = setupStage(data.hangar, brand);
-  const world = buildWorld(stage.scene, data, brand);
+  // `world`/`hud` are mutable so a #445 serve Calculate can swap the world in place.
+  let world = buildWorld(stage.scene, data, brand);
   wireToggles(stage.wallMeshes, () => world);
-  startHud({
+  const hud = startHud({
     timeline: world.timeline,
     home: stage.home,
     controls: stage.controls,
@@ -154,6 +162,74 @@ function bootSingle(data: SceneV2, brand: BrandTokens): void {
     scene: stage.scene,
     cam: stage.cam,
   });
+
+  // #442: dormant unless `view --edit` injected the `#editor-context` blob (never
+  // emitted by the plain `render_viewer` path) — mirrors the `#solutions` gate
+  // above via the nullable `document.getElementById` (byId THROWS on absence).
+  const ctxEl = document.getElementById('editor-context');
+  if (ctxEl?.textContent) {
+    const ctx = JSON.parse(ctxEl.textContent) as EditorContext;
+    const serveCfg = parseServeConfig(document.getElementById('serve-config')?.textContent);
+
+    // #911 PR B: the drag gizmo + "fix position" button mount only when served
+    // (drag needs the /convert round-trip). markUnsolved() flags Calculate after a
+    // drag-convert; it's assigned once Calculate mounts (below), so the closure is
+    // safe to pass into the editor first.
+    let markUnsolved: () => void = () => {};
+    const editHostOpts = serveCfg
+      ? { scene: stage.scene, orbit: stage.controls, onEdit: () => markUnsolved() }
+      : {};
+    let editor = mountEditor({
+      groups: world.groups,
+      groundObjectGroups: world.goGroups, // #912 (editor filters to movers)
+      renderer: stage.renderer,
+      cam: stage.cam,
+      ctx,
+      ...editHostOpts,
+    });
+
+    // #445 serve: a `#serve-config` blob (present ONLY when `hangarfit serve`
+    // renders the shell, never in the offline export) lights up the Calculate
+    // button. A successful solve swaps the world in place (mirroring the #666
+    // compare `mount`) and re-mounts the editor on the fresh groups with the
+    // user's intent preserved so they can iterate.
+    if (serveCfg) {
+      const calc = mountCalculate({
+        getIntent: () => editor.getIntent(),
+        ctx,
+        reRender: (resp) => {
+          const preserved = editor.getIntent();
+          clearBanner(); // drop any prior Calculate's banner before the fresh anchor check
+          // Build the new world + editor FIRST; tear the old ones down only once
+          // BOTH succeed, so a throw on a 200 scene leaves the current render intact
+          // (rather than a disposed world with the button re-enabled).
+          const nextWorld = buildWorld(stage.scene, resp.scene, brand);
+          const nextEditor = mountEditor({
+            groups: nextWorld.groups,
+            groundObjectGroups: nextWorld.goGroups, // #912 (editor filters to movers)
+            renderer: stage.renderer,
+            cam: stage.cam,
+            // The server-refreshed editor-context re-bases "pin at current pose" on
+            // the new solved poses (the browser must not derive them — ADR-0002).
+            ctx: resp.editorContext,
+            initialIntent: preserved,
+            scene: stage.scene,
+            orbit: stage.controls,
+            onEdit: () => markUnsolved(),
+          });
+          editor.dispose();
+          stage.scene.remove(world.group);
+          disposeWorld(world.group);
+          world = nextWorld;
+          editor = nextEditor;
+          applyToggleState(world);
+          setReadouts(resp.scene);
+          hud.setActiveTimeline(world.timeline);
+        },
+      });
+      markUnsolved = calc.markUnsolved;
+    }
+  }
 }
 
 function startCompare(manifest: CompareManifest, brand: BrandTokens): void {

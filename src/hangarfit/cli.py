@@ -50,6 +50,12 @@ _SOLVE_JSON_SCHEMA = "hangarfit.solve/v1"
 # objective — it does not collapse the inter-plane gap. See ADR-0008 (amended).
 _BACK_FILL_DEFAULT_WEIGHT = 1.0
 
+# #908 absolute door-attraction bias: the SearchConfig.door_bias_weight the CLI
+# bakes when the scenario sets door_order (--no-door-bias forces 0.0). Same tuned
+# operating point as the back-fill weight; the rank-1 exemption from _back_bias_energy
+# keeps the two from cancelling. See ADR-0008 (amended).
+_DOOR_BIAS_DEFAULT_WEIGHT = 1.0
+
 # #398 view-mode fast-degrade cap: the *global* tow-expansion budget the `view`
 # subcommand passes to ``plan_fill`` in layout mode. The default whole-fill
 # budget (towplanner._MAX_FILL_EXPANSIONS, 16000) is tuned to *disprove* a hard
@@ -261,6 +267,18 @@ def build_parser() -> argparse.ArgumentParser:
             "post-pass also biases planes toward the back wall, leaving free space "
             "at the door; pass this to keep the symmetric spread only. (No effect "
             "with --no-spread, since the bias rides on the spread post-pass.)"
+        ),
+    )
+    solve.add_argument(
+        "--no-door-bias",
+        action="store_false",
+        dest="door_bias",
+        default=True,
+        help=(
+            "Disable the absolute door-attraction bias (#908). By default, when the "
+            "scenario sets door_order, the spread post-pass pulls the top-ranked (#1) "
+            "plane toward the door; pass this to keep only the relative door-order "
+            "selection tiebreak. (No effect without door_order, or with --no-spread.)"
         ),
     )
     solve.add_argument(
@@ -514,6 +532,71 @@ def build_parser() -> argparse.ArgumentParser:
             "un-routable layout falls back to a static 3D scene within a few "
             "seconds instead of grinding through the full disprove budget."
         ),
+    )
+    view.add_argument(
+        "--edit",
+        action="store_true",
+        help="Emit the interactive placement editor (requires --solve; rejects --alternatives).",
+    )
+
+    serve = sub.add_parser(
+        "serve",
+        help="Run a local loopback backend so the --edit viewer can Calculate live (#445).",
+    )
+    serve.add_argument("input", help="Scenario YAML to seed the editor (solved on start).")
+    serve.add_argument(
+        "--fleet", metavar="PATH", default=None, help="Override the fleet data file."
+    )
+    serve.add_argument(
+        "--hangar", metavar="PATH", default=None, help="Override the hangar data file."
+    )
+    serve.add_argument(
+        "--max-carts",
+        type=int,
+        metavar="N",
+        default=None,
+        dest="max_carts",
+        help="Override the hangar's spare-cart count for the cart_eligible pool.",
+    )
+    serve.add_argument(
+        "--apron-depth",
+        type=_apron_depth_arg,
+        metavar="N|auto",
+        default=None,
+        dest="apron_depth",
+        help="Staging-apron depth (m); 'auto' derives from the fleet (ADR-0021).",
+    )
+    serve.add_argument(
+        "--seed", type=int, default=None, metavar="S", help="RNG seed (default: entropy)."
+    )
+    serve.add_argument(
+        "--budget",
+        type=float,
+        default=30.0,
+        metavar="SEC",
+        help="Per-solve wall-clock budget in seconds (default: 30.0).",
+    )
+    serve.add_argument(
+        "--spread",
+        action="store_true",
+        help="Keep the inter-plane spread post-pass ON (default OFF, as for view --solve).",
+    )
+    serve.add_argument(
+        "--no-nose-out",
+        action="store_false",
+        dest="nose_out",
+        default=True,
+        help="Disable the nose-out parked-heading preference (#263).",
+    )
+    serve.add_argument(
+        "--port", type=int, default=8765, metavar="N", help="Loopback port (default: 8765)."
+    )
+    serve.add_argument(
+        "--no-open",
+        action="store_false",
+        dest="open_browser",
+        default=True,
+        help="Do not auto-open a browser; just print the URL.",
     )
 
     return parser
@@ -819,6 +902,11 @@ def cmd_solve(args: argparse.Namespace) -> int:
                 spread=args.spread,
                 nose_out=args.nose_out,
                 back_bias_weight=_BACK_FILL_DEFAULT_WEIGHT if args.back_fill else 0.0,
+                # #908: auto-arm the door-attraction bias only when the scenario
+                # ranks planes by door proximity; --no-door-bias forces it off.
+                door_bias_weight=(
+                    _DOOR_BIAS_DEFAULT_WEIGHT if (args.door_bias and scenario.door_order) else 0.0
+                ),
                 max_restarts=args.max_restarts,
                 spread_stall_restarts=args.spread_stall_restarts,
                 sat_collisions=args.sat_collisions,
@@ -1144,6 +1232,27 @@ def _resolve_fleet_hangar_refs(args: argparse.Namespace) -> tuple[str, str]:
     return str(fleet_abs), str(hangar_abs)
 
 
+def _raw_scenario_refs(args: argparse.Namespace) -> tuple[str, str]:
+    """Read the raw ``fleet:``/``hangar:`` ref strings from a ``view`` scenario file
+    (verbatim, override-aware) for the editor-context blob echoed into the export.
+
+    Unlike :func:`_resolve_fleet_hangar_refs` (used by ``solve --render-paths`` to
+    write a location-independent layout YAML), this keeps the strings exactly as
+    authored — no path resolution — since the editor's eventual scenario-YAML
+    export re-emits them verbatim next to the original scenario file. It also
+    reads ``args.input`` (the ``view`` subparser's positional), not
+    ``args.scenario`` (``solve``'s), so the two helpers can't be merged without a
+    rename.
+    """
+    import yaml
+
+    with open(args.input, encoding="utf-8") as f:
+        raw = yaml.safe_load(f)
+    fleet = str(args.fleet) if args.fleet is not None else str(raw.get("fleet", ""))
+    hangar = str(args.hangar) if args.hangar is not None else str(raw.get("hangar", ""))
+    return fleet, hangar
+
+
 def _write_yamls(
     layouts: tuple[Layout, ...],
     pattern: str,
@@ -1329,6 +1438,18 @@ def cmd_view(args: argparse.Namespace) -> int:
     if args.alternatives < 1:
         print("error: view --alternatives must be >= 1.", file=sys.stderr)
         return 2
+    # #442 the editor exports a Scenario (fleet_in/constraints/maintenance), which
+    # only a solved layout carries meaningfully; a hand-authored layout YAML has no
+    # scenario shape to round-trip. It also can't be reconciled with the #666
+    # multi-solution compare container (a different render path entirely, and one
+    # solution to edit doesn't compose with N to switch between) — reject both
+    # up front, before the solve/compare dispatch below.
+    if args.edit and not args.solve:
+        print("error: --edit requires --solve (the editor exports a Scenario).", file=sys.stderr)
+        return 2
+    if args.edit and args.alternatives > 1:
+        print("error: --edit cannot be combined with --alternatives.", file=sys.stderr)
+        return 2
     try:
         fleet_override = load_fleet(args.fleet) if args.fleet is not None else None
         hangar_override = (
@@ -1469,11 +1590,52 @@ def cmd_view(args: argparse.Namespace) -> int:
         layout, moves_plan=moves_plan, check_result=check_result, egress_paths=egress_paths
     )
     try:
-        viewer.render_viewer(scene, args.output)
+        if args.edit:
+            fleet_ref, hangar_ref = _raw_scenario_refs(args)
+            ctx = viewer.build_editor_context(
+                fleet_ref=fleet_ref,
+                hangar_ref=hangar_ref,
+                maintenance_plane=layout.maintenance_plane,
+                layout=layout,
+            )
+            viewer.render_edit_viewer(scene, ctx, args.output)
+        else:
+            viewer.render_viewer(scene, args.output)
     except OSError as e:
         print(f"error: could not write {args.output}: {e}", file=sys.stderr)
         return 2
     print(f"wrote 3D viewer to {args.output}")
+    return 0
+
+
+def cmd_serve(args: argparse.Namespace) -> int:
+    """Run the ``serve`` subcommand: a local loopback backend for the live editor (#445).
+
+    Blocks (``serve_forever``) until interrupted; returns 0 on a clean shutdown.
+    Reuses the unchanged ``load_scenario -> solve -> build_scene`` pipeline over
+    HTTP (ADR-0030) — Python stays the solver/transform authority (ADR-0002)."""
+    from hangarfit import server
+
+    try:
+        server.serve(
+            args.input,
+            port=args.port,
+            open_browser=args.open_browser,
+            fleet=args.fleet,
+            hangar=args.hangar,
+            max_carts=args.max_carts,
+            apron_depth=args.apron_depth,
+            seed=args.seed,
+            budget_s=args.budget,
+            spread=args.spread,
+            nose_out=args.nose_out,
+        )
+    except LoaderError as e:
+        print(f"error: {e}", file=sys.stderr)
+        return 2
+    except OSError as e:  # e.g. the port is already in use
+        print(f"error: could not start server: {e} (try a different --port)", file=sys.stderr)
+        return 2
     return 0
 
 
@@ -1487,5 +1649,7 @@ def main(argv: list[str] | None = None) -> int:
         return cmd_solve(args)
     if args.cmd == "view":
         return cmd_view(args)
+    if args.cmd == "serve":
+        return cmd_serve(args)
     # argparse with required=True should make this unreachable.
     parser.error(f"unknown command: {args.cmd!r}")

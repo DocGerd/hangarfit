@@ -161,6 +161,9 @@ def test_assets_are_packaged():
     assert resources.files("hangarfit._viewer_assets").joinpath("viewer.js").is_file()
     assert resources.files("hangarfit._viewer_assets.three").joinpath("three.module.js").is_file()
     assert resources.files("hangarfit._viewer_assets.three").joinpath("OrbitControls.js").is_file()
+    assert (
+        resources.files("hangarfit._viewer_assets.three").joinpath("TransformControls.js").is_file()
+    )
 
 
 def test_inlined_viewer_js_has_no_script_close():
@@ -353,6 +356,123 @@ def test_compare_inlines_committed_bundle(tmp_path):
     assert src in _compare_html(tmp_path)
 
 
+# ── #442/#898: the editor-context blob + edit render path ──────────────────
+
+
+def test_render_edit_viewer_keeps_scene_bytes_and_adds_editor_context(tmp_path):
+    lay = load_layout(LAYOUT)
+    sc = scene.build_scene(lay, moves_plan=plan_fill(lay))
+    ctx = viewer.build_editor_context(
+        fleet_ref="data/fleet.yaml",
+        hangar_ref="data/hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+    )
+    edit = tmp_path / "edit.html"
+    plain = tmp_path / "plain.html"
+    viewer.render_edit_viewer(sc, ctx, edit)
+    viewer.render_viewer(sc, plain)
+    e = edit.read_text(encoding="utf-8")
+    p = plain.read_text(encoding="utf-8")
+    assert 'id="editor-context"' in e
+    assert 'id="editor-context"' not in p
+    grab = lambda s: re.search(r'id="scene">(.*?)</script>', s, re.S).group(1)  # noqa: E731
+    assert grab(e) == grab(p)  # #scene bytes identical across modes
+
+
+def test_build_edit_html_matches_render_edit_viewer_bytes(tmp_path):
+    # #445: build_edit_html (string) with no serve_config must be byte-identical to
+    # the file render_edit_viewer writes — the offline path is unchanged (ADR-0003).
+    lay = load_layout(LAYOUT)
+    sc = scene.build_scene(lay, moves_plan=plan_fill(lay))
+    ctx = viewer.build_editor_context(
+        fleet_ref="data/fleet.yaml",
+        hangar_ref="data/hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+    )
+    out = tmp_path / "edit.html"
+    viewer.render_edit_viewer(sc, ctx, out)
+    assert viewer.build_edit_html(sc, ctx) == out.read_text(encoding="utf-8")
+
+
+def test_build_edit_html_serve_config_adds_blob_only_when_given():
+    # #445: the serve-config blob appears ONLY when serve_config is passed (never
+    # in the offline export), and is additive over the unchanged scene/context.
+    lay = load_layout(LAYOUT)
+    sc = scene.build_scene(lay, moves_plan=plan_fill(lay))
+    ctx = viewer.build_editor_context(
+        fleet_ref="data/fleet.yaml",
+        hangar_ref="data/hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+    )
+    without = viewer.build_edit_html(sc, ctx)
+    assert 'id="serve-config"' not in without
+    with_cfg = viewer.build_edit_html(sc, ctx, serve_config={"schema": "hangarfit.serve-config/v1"})
+    assert 'id="serve-config"' in with_cfg
+    assert 'id="editor-context"' in with_cfg and 'id="scene"' in with_cfg
+
+
+def test_render_edit_viewer_hud_has_editor_controls(tmp_path):
+    # #442 Chunk 3 wires these control IDs to _HUD_EDIT; guard against a
+    # silent rename in the HUD markup breaking that future hookup.
+    lay = load_layout(LAYOUT)
+    sc = scene.build_scene(lay, moves_plan=plan_fill(lay))
+    ctx = viewer.build_editor_context(
+        fleet_ref="data/fleet.yaml",
+        hangar_ref="data/hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+    )
+    out = tmp_path / "edit.html"
+    viewer.render_edit_viewer(sc, ctx, out)
+    html = out.read_text(encoding="utf-8")
+    for control_id in ("sel-readout", "prio", "pin-toggle", "carts-toggle", "export"):
+        assert f'id="{control_id}"' in html, f"missing editor control #{control_id}"
+
+
+def test_build_editor_context_shape():
+    lay = load_layout(LAYOUT)
+    ctx = viewer.build_editor_context(
+        fleet_ref="data/fleet.yaml",
+        hangar_ref="data/hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+    )
+    assert ctx["schema"] == "hangarfit.editor-context/v1"
+    assert ctx["fleet"] == "data/fleet.yaml"
+    pid = lay.placements[0].plane_id
+    assert set(ctx["currentPoses"][pid]) == {
+        "x_m",
+        "y_m",
+        "heading_deg",
+        "on_carts",
+        "world_yaw_rad",  # #911: drag-gizmo yaw seed, compass_to_math_rad(heading_deg)
+    }
+    assert (
+        (ctx["maintenance"] == {"plane": lay.maintenance_plane})
+        if lay.maintenance_plane
+        else (ctx["maintenance"] is None)
+    )
+
+
+def test_edit_html_registers_transformcontrols_importmap():
+    # #911 PR B: the vendored TransformControls addon must be in the offline
+    # import-map so the (dormant-offline) drag bundle resolves its import.
+    lay = load_layout(LAYOUT)
+    sc = scene.build_scene(lay, moves_plan=plan_fill(lay))
+    ctx = viewer.build_editor_context(
+        fleet_ref="data/fleet.yaml",
+        hangar_ref="data/hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+    )
+    html = viewer.build_edit_html(sc, ctx)
+    assert "three/addons/controls/TransformControls.js" in html
+    assert "three/addons/controls/OrbitControls.js" in html  # regression: still there
+
+
 def test_brand_module_exports():
     # The single token source (#419) exposes the palettes, status inks, and the
     # 3D viewer token object the BRAND blob is built from.
@@ -382,3 +502,285 @@ def test_brand_module_exports():
         "labelConflictChip",
     ):
         assert key in tokens
+
+
+def test_editor_export_shape_loads_via_load_scenario(tmp_path):
+    # #442 Chunk 3: the authoritative guard that the editor's exported
+    # scenario-YAML shape (intentToScenarioYaml in export.ts) is loader-valid.
+    # Mirrors tests/fixtures/scenario_with_pin.yaml's proven-valid shape (real
+    # catalog ids, maintenance plane included in fleet_in) extended with a
+    # `priority` constraint sub-key.
+    from pathlib import Path
+
+    from hangarfit.loader import load_scenario
+
+    repo = Path(__file__).resolve().parents[1]  # tests/ -> repo root
+    fleet, hangar = repo / "data" / "fleet.yaml", repo / "data" / "hangar.yaml"
+    yaml = (
+        f"fleet: {fleet}\n"
+        f"hangar: {hangar}\n"
+        "fleet_in: [aviat_husky, ctsl, fuji]\n"  # maintenance plane fuji IS in fleet_in
+        "maintenance:\n  plane: fuji\n"
+        "constraints:\n"
+        "  aviat_husky:\n"
+        "    pin: { x_m: 2.1, y_m: 14.3, heading_deg: 0.0, on_carts: false }\n"
+        "  ctsl:\n"
+        "    priority: 3.0\n"
+    )
+    p = tmp_path / "edited.yaml"
+    p.write_text(yaml)
+    sc = load_scenario(p)
+    assert "fuji" in sc.fleet_in  # maintenance ∈ fleet_in invariant
+    assert sc.constraints["aviat_husky"].pin is not None
+    assert sc.constraints["ctsl"].priority == 3.0
+
+
+def test_build_editor_context_excludes_maintenance_from_current_poses():
+    # By Layout invariant the maintenance plane never appears in
+    # layout.placements, so build_editor_context's currentPoses (sourced from
+    # layout.placements) must not carry it either.
+    lay = load_layout("examples/layouts/example.yaml")
+    assert lay.maintenance_plane is not None  # guard: fixture actually has one
+    ctx = viewer.build_editor_context(
+        fleet_ref="data/fleet.yaml",
+        hangar_ref="data/hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+    )
+    assert lay.maintenance_plane not in ctx["currentPoses"]
+    assert ctx["maintenance"] == {"plane": lay.maintenance_plane}
+
+
+# ── #907: door-proximity ranking (door_order) ──────────────────────────────
+
+
+def test_build_editor_context_includes_door_geometry():
+    # #907: the editor-context carries the door edge so the ranking UI can
+    # orient "#1 nearest the door". Sourced from layout.hangar.door (already in
+    # scene/v2), no signature change.
+    lay = load_layout(LAYOUT)
+    ctx = viewer.build_editor_context(
+        fleet_ref="data/fleet.yaml",
+        hangar_ref="data/hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+    )
+    assert ctx["door"] == {
+        "center_x_m": lay.hangar.door.center_x_m,
+        "width_m": lay.hangar.door.width_m,
+    }
+
+
+def test_render_edit_viewer_hud_has_door_order_controls(tmp_path):
+    # #907 wires the door-proximity list DOM; guard the control IDs the editor
+    # hooks up (the ordered list + the "rank selected" affordance).
+    lay = load_layout(LAYOUT)
+    sc = scene.build_scene(lay, moves_plan=plan_fill(lay))
+    ctx = viewer.build_editor_context(
+        fleet_ref="data/fleet.yaml",
+        hangar_ref="data/hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+    )
+    out = tmp_path / "edit.html"
+    viewer.render_edit_viewer(sc, ctx, out)
+    html = out.read_text(encoding="utf-8")
+    for control_id in ("door-order-list", "rank-add", "door-hint"):
+        assert f'id="{control_id}"' in html, f"missing editor control #{control_id}"
+
+
+def test_editor_export_with_door_order_loads_via_load_scenario(tmp_path):
+    # #907: the editor emits a top-level `door_order: [id, …]` (rank order,
+    # #1 nearest the door). Prove that shape is loader-valid and round-trips
+    # onto Scenario.door_order (#614).
+    from pathlib import Path
+
+    from hangarfit.loader import load_scenario
+
+    repo = Path(__file__).resolve().parents[1]
+    fleet, hangar = repo / "data" / "fleet.yaml", repo / "data" / "hangar.yaml"
+    yaml = (
+        f"fleet: {fleet}\n"
+        f"hangar: {hangar}\n"
+        "fleet_in: [aviat_husky, ctsl, fuji]\n"
+        "maintenance:\n  plane: fuji\n"
+        "door_order: [ctsl, aviat_husky]\n"
+    )
+    p = tmp_path / "edited.yaml"
+    p.write_text(yaml)
+    sc = load_scenario(p)
+    assert sc.door_order == ("ctsl", "aviat_husky")
+
+
+# ── #910: catalog palette (add planes & objects from an empty hangar) ───────
+
+
+def test_build_editor_context_includes_catalog():
+    # #910: the editor-context carries a `catalog` enumerating the FULL fleet
+    # (every aircraft, not just the placed ones) plus every ground object, so the
+    # palette can add items to an empty hangar. Each entry is {name, kind}; kind
+    # is "aircraft" for planes and the GroundObject.object_class for objects.
+    lay = load_layout("examples/herrenteich/layout_full.yaml")
+    ctx = viewer.build_editor_context(
+        fleet_ref="fleet.yaml",
+        hangar_ref="hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+    )
+    cat = ctx["catalog"]
+    # Exactly the fleet ∪ ground objects (disjoint id namespaces), independent of
+    # what got placed — this is what makes "start from an empty hangar" work.
+    assert set(cat) == set(lay.fleet) | set(lay.ground_objects)
+    for aid, ac in lay.fleet.items():
+        assert cat[aid] == {
+            "name": ac.name,
+            "kind": "aircraft",
+            "movementMode": ac.movement_mode,
+            "hasTurnRadius": ac.turn_radius_m is not None and ac.turn_radius_m > 0,
+        }
+    for gid, go in lay.ground_objects.items():
+        assert cat[gid] == {"name": go.name, "kind": go.object_class}
+    # A known mover carries an addable kind; a known fixed obstacle does not.
+    assert cat["glider_trailer_1"]["kind"] == "placed_routed_mover"
+    assert cat["maul_fuel_trailer"]["kind"] == "fixed_obstacle"
+
+
+def test_build_editor_context_catalog_excludes_maintenance_plane():
+    # The maintenance occupant sits in the bay, not the hangar, so it must not
+    # appear in the "add to hangar" palette (mirroring its exclusion from
+    # currentPoses). Otherwise the user could focus it and attach a solver-inert
+    # priority / door_order rank to a plane that is always set aside.
+    lay = load_layout("examples/layouts/example.yaml")
+    assert lay.maintenance_plane is not None  # guard: fixture actually has one
+    ctx = viewer.build_editor_context(
+        fleet_ref="data/fleet.yaml",
+        hangar_ref="data/hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+    )
+    assert lay.maintenance_plane not in ctx["catalog"]
+    # the rest of the fleet is still enumerated
+    assert any(v["kind"] == "aircraft" for v in ctx["catalog"].values())
+
+
+def test_render_edit_viewer_hud_has_palette_controls(tmp_path):
+    # #910 wires the catalog palette DOM; guard the control IDs editor.ts fills
+    # against a silent HUD rename.
+    lay = load_layout(LAYOUT)
+    sc = scene.build_scene(lay, moves_plan=plan_fill(lay))
+    ctx = viewer.build_editor_context(
+        fleet_ref="data/fleet.yaml",
+        hangar_ref="data/hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+    )
+    out = tmp_path / "edit.html"
+    viewer.render_edit_viewer(sc, ctx, out)
+    html = out.read_text(encoding="utf-8")
+    for control_id in ("palette", "palette-list"):
+        assert f'id="{control_id}"' in html, f"missing editor control #{control_id}"
+
+
+def test_editor_export_with_ground_objects_loads_via_load_scenario(tmp_path):
+    # #910: the editor emits palette-added MOVERS as bare-id `ground_objects:`
+    # entries (the loader treats a bare id as a placed_routed_mover the solver
+    # places). Prove that shape is loader-valid and round-trips onto
+    # Scenario.ground_objects. Uses the region-demo manifest (which defines the
+    # glider-trailer movers); data/fleet.yaml has no ground objects.
+    from pathlib import Path
+
+    from hangarfit.loader import load_scenario
+
+    repo = Path(__file__).resolve().parents[1]
+    fleet = repo / "tests" / "fixtures" / "fleet_region_demo.yaml"
+    hangar = repo / "tests" / "fixtures" / "hangar_region_demo.yaml"
+    yaml = (
+        f"fleet: {fleet}\n"
+        f"hangar: {hangar}\n"
+        "fleet_in: [fuji, cessna_150]\n"
+        "ground_objects: [glider_trailer_1]\n"
+    )
+    p = tmp_path / "edited.yaml"
+    p.write_text(yaml)
+    sc = load_scenario(p)
+    assert "glider_trailer_1" in sc.ground_objects
+
+
+# ── #909: cart-mode override (movementMode / hasTurnRadius in the catalog) ───
+
+
+def test_build_editor_context_catalog_carries_movement_mode_and_turn_radius():
+    # #909: each aircraft catalog entry carries its honest movement_mode (the
+    # editor derives cart-eligibility from it) and whether it has a turn radius
+    # (a non-always_cart override needs one). aviat_husky is always_own_gear with
+    # a radius; zlin_savage is always_cart with a NULL radius.
+    lay = load_layout("examples/herrenteich/layout_full.yaml")
+    ctx = viewer.build_editor_context(
+        fleet_ref="fleet.yaml",
+        hangar_ref="hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+    )
+    cat = ctx["catalog"]
+    assert cat["aviat_husky"]["movementMode"] == "always_own_gear"
+    assert cat["aviat_husky"]["hasTurnRadius"] is True
+    assert cat["zlin_savage"]["movementMode"] == "always_cart"
+    assert cat["zlin_savage"]["hasTurnRadius"] is False
+
+
+def test_render_edit_viewer_hud_has_cart_mode_control(tmp_path):
+    # #909 wires the cart-mode override <select>; guard its control id.
+    lay = load_layout(LAYOUT)
+    sc = scene.build_scene(lay, moves_plan=plan_fill(lay))
+    ctx = viewer.build_editor_context(
+        fleet_ref="data/fleet.yaml",
+        hangar_ref="data/hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+    )
+    out = tmp_path / "edit.html"
+    viewer.render_edit_viewer(sc, ctx, out)
+    assert 'id="cart-mode"' in out.read_text(encoding="utf-8")
+
+
+# ── #912 PR B: placed movers exposed in currentPoses ────────────────────────
+
+
+def test_editor_context_currentposes_includes_placed_mover():
+    # A Layout carrying a placed_routed_mover exposes that mover in currentPoses
+    # (keyed by its ground-object id) so PR B's drag gizmo can arm it (#912).
+    # examples/herrenteich/layout_full.yaml places vw_caddy (a placed_routed_mover)
+    # AND maul_fuel_trailer (a fixed_obstacle) at known poses — the fixed obstacle
+    # must NOT appear (not drag-pinnable in this scope).
+    import pytest
+
+    lay = load_layout("examples/herrenteich/layout_full.yaml")
+    ctx = viewer.build_editor_context(
+        fleet_ref="fleet.yaml",
+        hangar_ref="hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+    )
+    poses = ctx["currentPoses"]
+    assert "vw_caddy" in poses
+    mp = poses["vw_caddy"]
+    assert mp["x_m"] == pytest.approx(11.56)
+    assert mp["y_m"] == pytest.approx(1.95)
+    assert mp["heading_deg"] == pytest.approx(251.1)
+    assert mp["on_carts"] is False  # movers never ride carts
+    assert mp["world_yaw_rad"] == pytest.approx(viewer.compass_to_math_rad(251.1))
+    # A fixed_obstacle placement is NOT added — not drag-pinnable here.
+    assert "maul_fuel_trailer" not in poses
+
+
+def test_editor_context_currentposes_unchanged_without_movers():
+    # A ground-object-free layout's currentPoses is exactly the aircraft entries
+    # (the pre-#912 byte path, unaffected by the merge).
+    lay = load_layout(LAYOUT)
+    ctx = viewer.build_editor_context(
+        fleet_ref="data/fleet.yaml",
+        hangar_ref="data/hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+    )
+    assert set(ctx["currentPoses"]) == {p.plane_id for p in lay.placements}

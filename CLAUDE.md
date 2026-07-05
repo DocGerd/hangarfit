@@ -8,7 +8,7 @@ This file is the durable **operational** context for the project: how we work, w
 
 `hangarfit` is an **on-demand exception tool** for a flying club: when the standard hangar parking layout breaks (delayed return, surprise maintenance, etc.), it helps find *a* valid alternative arrangement. The tool checks whether a hand-authored candidate layout is physically valid and renders a top-down PNG so a human can eyeball it; the solver searches for one when no candidate is in hand.
 
-**Status:** Phase 1 (substrate), Phase 2a (static layout solver, `hangarfit solve`), Phase 2b–2c (solver realism + spread/diversity polish), Phase 3a (tow-path planning, `hangarfit solve --render-paths`), Phase 3b (Reeds–Shepp reverse-capable tow motion), and Phase 4 (interactive 3D viewer, `hangarfit view`) have all shipped. An opt-in **learned backend** (epic #607) has its inference **seam** shipped — the `--backend learned` / `--weights` CLI flags route through the wheel-shipped `hangarfit.learned` module (verifier-gated, same `SolveResult` shape, #706). The ONNX inference *implementation* (`ml.infer`) and the RL *training* both live in the dev/CI-only `ml/` package (a top-level package outside `src/`, so `packages.find` never ships it in the wheel), so a bare install reports the backend unavailable until `ml/` + the `[learned-infer]` extra + trained weights are present. **Train-to-mastery on the dense `trio-notch` rung is resolved-negative (the lever program is stopped); the backend is scoped to the shipped seam** — see [ADR-0028](docs/adr/0028-learned-backend-train-to-mastery-resolved-negative.md) for the measured root cause (cold-start drive-and-pack wall) and the falsifiable re-open gate. Live milestone status lives in auto-memory and GitHub milestones, not here.
+**Status:** Phase 1 (substrate), Phase 2a (static layout solver, `hangarfit solve`), Phase 2b–2c (solver realism + spread/diversity polish), Phase 3a (tow-path planning, `hangarfit solve --render-paths`), Phase 3b (Reeds–Shepp reverse-capable tow motion), Phase 4 (interactive 3D viewer, `hangarfit view`), plus the interactive placement editor (`view --edit`, #442), its live loopback backend (`hangarfit serve`, [ADR-0030](docs/adr/0030-hangarfit-serve-local-backend.md)), and hand-placed mover pins ([ADR-0031](docs/adr/0031-mover-pin.md)), have all shipped. An opt-in **learned backend** (epic #607) has its inference **seam** shipped — the `--backend learned` / `--weights` CLI flags route through the wheel-shipped `hangarfit.learned` module (verifier-gated, same `SolveResult` shape, #706). The ONNX inference *implementation* (`ml.infer`) and the RL *training* both live in the dev/CI-only `ml/` package (a top-level package outside `src/`, so `packages.find` never ships it in the wheel), so a bare install reports the backend unavailable until `ml/` + the `[learned-infer]` extra + trained weights are present. **Train-to-mastery on the dense `trio-notch` rung is resolved-negative (the lever program is stopped); the backend is scoped to the shipped seam** — see [ADR-0028](docs/adr/0028-learned-backend-train-to-mastery-resolved-negative.md) for the measured root cause (cold-start drive-and-pack wall) and the falsifiable re-open gate. Live milestone status lives in auto-memory and GitHub milestones, not here.
 
 ---
 
@@ -18,7 +18,7 @@ This file is the durable **operational** context for the project: how we work, w
 |---|---|
 | What `hangarfit` is and the quality goals it optimizes for | [§1 Introduction & Goals](docs/architecture/01-introduction-and-goals.md) |
 | What is in / out of scope, the external actors, exit-code semantics pointer | [§3 Context & Scope](docs/architecture/03-context-and-scope.md) |
-| Module map (`cli`, `loader`, `models`, `geometry`, `collisions`, `_sat`, `solver`, `learned`, `towplanner`, `visualize`, `scene`, `viewer`, `metrics`, `brand`) and per-module responsibilities | [§5 Building Block View](docs/architecture/05-building-block-view.md) |
+| Module map (`cli`, `loader`, `models`, `geometry`, `collisions`, `_sat`, `solver`, `learned`, `towplanner`, `visualize`, `scene`, `viewer`, `server`, `metrics`, `brand`) and per-module responsibilities | [§5 Building Block View](docs/architecture/05-building-block-view.md) |
 | Runtime flow of `check` and `solve` invocations | [§6 Runtime View](docs/architecture/06-runtime-view.md) |
 | **The parts model** (collision rule, why parts not bbox, `struts:` block, the fuselage front/aft split, the optional `vertices:` fuselage outline polygon clipped into front/aft sub-polygons (#550), the **empennage** `tail`+`vertical_stabilizer` surfaces — a wingtip may overhang a low-winger's *low tailplane* but not its *cockpit*, and not its *fin* which rises into the wing layer) | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#the-parts-model) + [ADR-0001](docs/adr/0001-aircraft-parts-model.md) + [ADR-0012](docs/adr/0012-fuselage-front-aft-split.md) + [ADR-0023](docs/adr/0023-empennage-tail-surfaces.md) |
 | **The coordinate convention + the determinant-−1 transform trap** | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#the-coordinate-convention) + [ADR-0002](docs/adr/0002-determinant-minus-one-transform.md) |
@@ -33,7 +33,7 @@ This file is the durable **operational** context for the project: how we work, w
 | **The tow-path planner** (empty-hangar fill, Reeds–Shepp arcs, `solve --render-paths`, exit-3 tow-routability) | [§5 Building Block View](docs/architecture/05-building-block-view.md) (`towplanner`) + [ADR-0007](docs/adr/0007-tow-path-planner-v1-scope.md) (v1 scope) + [ADR-0010](docs/adr/0010-reeds-shepp-motion-model.md) (v2 Reeds–Shepp motion) |
 | **The staging apron** (`hangar.apron_depth_m` / `--apron-depth N\|auto`, slide-in from outside the door, reverse nose-out seeds, depth-0 byte-identical) | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md#the-door-is-a-visual-marker-only) + [ADR-0021](docs/adr/0021-tow-planner-staging-apron.md). `collisions.check` is apron-inert (forbids `y<0`); the apron is a planner-level motion concept |
 | **The 3D viewer** (`hangarfit view`, interactive offline HTML, whole-fill tow timeline, multi-solution compare (`view --solve --alternatives N`, #666), the `scene/v2` JSON seam, Python-owned transform) | [§5 Building Block View](docs/architecture/05-building-block-view.md) (`scene`, `viewer`) + [ADR-0017](docs/adr/0017-3d-viewer-architecture.md) + the schema reference [docs/architecture/scene-v2-schema.md](docs/architecture/scene-v2-schema.md) |
-| **Ground objects** (fixed obstacles + placed/routed movers — cars & trailers; the Caddy hard-door egress gate; the soft right/left-region preference; movers are solver-placed since #604) | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md) + [ADR-0025](docs/adr/0025-ground-object-taxonomy.md) (taxonomy) + [ADR-0026](docs/adr/0026-caddy-hard-door-egress.md) (Caddy egress) + [ADR-0008](docs/adr/0008-inter-plane-spread-soft-preference.md) (region soft-term amendment) + [ADR-0010](docs/adr/0010-reeds-shepp-motion-model.md) (mover motion) |
+| **Ground objects** (fixed obstacles + placed/routed movers — cars & trailers; the Caddy hard-door egress gate; the soft right/left-region preference; movers are solver-placed since #604, or optionally **hand-pinned** at an authored pose (`ground_objects: [{object, x_m, y_m, heading_deg}]` → `Scenario.mover_pins`) as a path-less keep-out that keeps its mover class + egress gate — #912 PR A) | [§8 Crosscutting Concepts](docs/architecture/08-crosscutting-concepts.md) + [ADR-0025](docs/adr/0025-ground-object-taxonomy.md) (taxonomy) + [ADR-0026](docs/adr/0026-caddy-hard-door-egress.md) (Caddy egress) + [ADR-0008](docs/adr/0008-inter-plane-spread-soft-preference.md) (region soft-term amendment) + [ADR-0010](docs/adr/0010-reeds-shepp-motion-model.md) (mover motion) + [ADR-0031](docs/adr/0031-mover-pin.md) (mover pin) |
 | **The learned-backend RL workspace** (`ml/`, a top-level package *outside* `src/hangarfit/`; #607 — cold-joint env/reward, observation tensorizer, policy net, PPO, curriculum, eval/benchmark) | [`ml/README.md`](ml/README.md) + [ADR-0027](docs/adr/0027-learned-backend-determinism-scope.md) (Proposed) + the design spec `docs/superpowers/specs/2026-06-12-learned-backend-cold-joint-rl-env-design.md` |
 | Why the project targets a single Python (3.12), not a range | [ADR-0009](docs/adr/0009-single-supported-python-version.md) |
 | All architecture decisions, including superseded ones | [`docs/adr/`](docs/adr/) |
@@ -65,10 +65,12 @@ If you find yourself about to write a domain assertion in this file, **don't** �
 1. Branch `feature/<slug>` off `develop`. Work, commit.
 2. Open the PR **as a draft** (`gh pr create --draft`) — base `develop`, body includes `Closes #N`. A PR stays in draft until its review arc is done; draft signals "not yet for the human's attention."
 3. Invoke `/pr-review` (or the `pr-review-toolkit:review-pr` skill).
-4. Convert each finding into a **review thread on the diff** (via `gh pr review` line comments / `gh api .../pulls/<n>/comments`). Findings never live only in chat.
+4. Convert each finding into a **review thread on the diff** (via `gh pr review` line comments / `gh api .../pulls/<n>/comments`). Findings never live only in chat. **Anchor gotcha:** review-comment `line`s resolve against the **current** diff (HEAD). Post threads **before** pushing the fix — anchored to the reviewed commit, they auto-mark "outdated" once the fix lands (the batch-thread recipe). Push the fix first and that original line no longer resolves (`422 Line could not be resolved`); the only recourse is anchoring to HEAD + the fix's **new** line, a live thread on already-corrected code.
 5. Resolve every thread: fix the code (preferred) or reply with rationale, then mark resolved.
 6. If the changes were non-trivial, re-run the review.
 7. When the review arc is clean, flip the PR out of draft (`gh pr ready <n>`) and tell the user it is **clean and ready for final review**. You may mark it ready **even before CI finishes** — readiness tracks the review arc, not the CI run (the user still cannot merge until the required checks pass, so an early ready flip never risks a premature merge). The user approves and merges. **Never `gh pr merge` from Claude — this includes `--auto`/enabling auto-merge, which counts as merging. Never arm it without the user's explicit go-ahead on that specific PR, every time (`gh pr merge <n> --disable-auto` undoes a stray arm).**
+
+**`gh` in the review loop vs the git-guard hook.** The `~/.claude/hooks/guard-destructive-git.sh` PreToolUse hook **denies** any Bash command whose string holds **both** a ` push ` token and a bare `-f`/`--force` — matched *anywhere*, so the tokens can live in quoted text (a `gh` review-comment body), and it fires **even when no `git` is actually invoked** (an inline `gh api -f body="…git push… -f…"` trips it purely on its own `-f` flag + the body text). Fix: **never inline a `gh` body** — pass it via `--body-file` (or `-F body=@file`), which keeps any `-f`/`push`/`git` text out of the command string entirely; and keep `git push` in its own Bash call. (`-F`/`--field` is **not** a safe swap for `-f` on a field value — it type-coerces all-digit/`true`/`false`/`@…` payloads; the string-preserving long form of `-f` is `--raw-field`.)
 
 **Stacking PRs (shared-file features).** When a feature splits into PRs that touch
 the same files (parallel branches would conflict), build a linear stack but **base
@@ -87,6 +89,13 @@ default "entry per PR" rule still holds for one-at-a-time delivery. GitHub merge
 banner right after a merge/push clears on recompute — `mergeable=MERGEABLE` (and
 `git merge-base --is-ancestor origin/develop <branch>`) is authoritative;
 `mergeStateStatus=BLOCKED` just means required CI is still pending, not a conflict.
+Reading CI state: `gh pr checks <n>` output is **tab-separated** and many check names
+carry spaces/parens — the #877 fan-out (`test-shard (1 of 3)`, `serial canaries
+(determinism)`) plus the separate `bench correctness (…)` check (#564) — so
+whitespace-split `awk`/`grep` mangles them; use `awk -F'\t'` or
+`gh api repos/DocGerd/hangarfit/commits/<sha>/check-runs`. The required
+`test (Python 3.12)` **gate** appears only once its `static`/`test-shard`/`serial-canaries`
+deps finish, so a just-pushed PR shows the shards `pending` with no gate line yet (normal).
 (Mis-based already? `gh api -X PATCH repos/DocGerd/hangarfit/pulls/<n> -f base=develop`,
 then close+reopen the PR to trigger CI.) Wire the stack's order as native issue
 deps: `gh api -X POST repos/DocGerd/hangarfit/issues/<n>/dependencies/blocked_by -F issue_id=<numeric id>`.
@@ -123,6 +132,8 @@ Use the best-fitted model for the task. The model class to pick is "as much reas
 - **`feature-dev:code-architect`** — only for genuinely novel design decisions, not routine implementation.
 
 Most coding goes direct in-session. Subagent dispatch is for review work and isolated heavy lifts.
+
+**For a feature built across several separately-reviewed tasks/commits, add a whole-branch adversarial review after the per-task reviews.** Run the relevant guards + `pr-review-toolkit:code-reviewer` + `pr-review-toolkit:comment-analyzer` in parallel over the *whole-branch diff*, then independently verify each finding (default-refute) before acting on it. A per-task review sees only one task, so it misses **cross-task seam bugs by construction** — the whole-branch pass is where they surface (e.g. PR A's pin-ordering + fleet∩ground-object id-collision seams; and #912 PR B's fixed-obstacle focus-steal, where one commit assumed mover-only Groups and a sibling wired *every* ground object into the editor). Cheap insurance whenever a feature is split across tasks/commits behind a shared contract.
 
 `ml/` is reviewable source, not scratch — run the formal `/pr-review` arc on `ml/` PRs like any `src/` change. Note CI's `mypy` only covers `src/hangarfit/`, so a Pyright complaint under `tests/ml/` is usually stale-LSP noise — `mypy`/CI is the source of truth. Run `mypy ml/` over the **whole package**, not a single file — under `ml.*`'s `follow_imports = "skip"` a subset run resolves cross-module imports as `Any`, manufacturing a false `unused type: ignore`.
 
@@ -215,9 +226,9 @@ make test-fast   # parallel bulk only (skips the serial canaries — faster iter
 # Read it before treating a determinism/coverage CI failure as a regression: the
 # `serial` wall-clock double-solve canaries (run OUTSIDE `-n auto`, #492); the same
 # fragility in non-serial smokes + the wall-clock bench `--gate` speed ceilings
-# (re-baseline on a deliberate determinism re-base, don't chase a phantom); two-pass
-# coverage (@slow drops from the combined run — keep >=1 non-slow test per new
-# path); and the ProcessPool/spawn worker coverage blind spot (#561).
+# (re-baseline on a deliberate determinism re-base, don't chase a phantom); coverage
+# (a single non-slow pass in coverage.yml since #933 — @slow still drops, keep >=1
+# non-slow test per new path); and the ProcessPool/spawn worker coverage blind spot (#561).
 
 # Lint + format check (CI also runs these)
 ruff check src/ tests/
@@ -253,8 +264,13 @@ pip-compile --generate-hashes --no-strip-extras --extra dev -o requirements-dev.
 #                          explicit result check, so it is never silently skipped);
 #                          it keeps the exact required-check NAME, so branch
 #                          protection is unchanged
-#   * coverage           — a SEPARATE, NON-required job (today's two-pass C-tracer
-#                          branch coverage + Codecov), off the merge-critical path
+#   * coverage           — a SEPARATE, NON-required job that now lives in its OWN
+#                          workflow (.github/workflows/coverage.yml, #933): the bulk
+#                          (non-@serial) suite under the C-tracer for branch coverage
+#                          + Codecov, off BOTH the merge-critical path (#879) AND the
+#                          ci.yml run conclusion / README CI badge — so a wall-clock
+#                          coverage flake can no longer redden the badge (the @serial
+#                          canaries run WITHOUT --cov in serial-canaries; #933)
 # The shared hash-pinned PEP-517 install (dev deps from `requirements-dev.txt` +
 # build toolchain from `requirements-build.txt`, both `--require-hashes`, then
 # editable `--no-deps --no-build-isolation` reusing the hash-verified host
@@ -319,6 +335,35 @@ google-chrome --headless=new --use-gl=angle --use-angle=swiftshader \
 # transform self-check per solution; headlessly drive it by dispatching a `change` on
 # `#compare` and reading `#banner`.hidden (the viewer exposes state via the DOM).
 hangarfit view tests/fixtures/scenario_minimal.yaml --solve --alternatives 3 -o compare.html
+
+# Interactive placement editor (#442 v0.18.0 MVP; v0.19.0 redesign #436): view --edit
+# turns the viewer into an intent-capture surface — select planes (fleet_in), set
+# priorities, pin at current pose, rank planes by door proximity (drag-to-order →
+# `door_order`, #907), add planes & movers from a catalog palette (start from an "empty
+# hangar", #910), and override a plane's cart mode for one scenario (`movement_mode` in
+# its constraints block, #909) — then "Export scenario YAML" downloads a loader-valid
+# Scenario that `solve` re-runs. Requires --solve; rejects --alternatives. Editor code
+# ships dormant unless --edit is set. (The #908 absolute door-bias soft term pulls the
+# #1-ranked plane of a set door_order toward the door; it auto-arms when door_order is
+# present, --no-door-bias opts out.)
+hangarfit view tests/fixtures/scenario_minimal.yaml --solve --edit -o edit.html
+
+# #445 serve (ADR-0030): a local loopback backend so the --edit viewer's Calculate
+# button re-solves live instead of exporting a YAML to re-run by hand. Pure
+# transport over the unchanged solve pipeline — GET / serves the editor; POST
+# /solve takes an exported Scenario YAML and returns a `{scene, editorContext}` doc
+# (the refreshed editor-context re-bases the editor's pin-at-current on the new
+# solved poses — the browser must not derive them, ADR-0002). Binds
+# 127.0.0.1 ONLY (no --host), Host-header guarded; the offline single-file export
+# is unchanged. Auto-opens a browser (--no-open suppresses); Ctrl-C to stop. The
+# served --edit viewer also does drag-to-fix (#911 planes, #912 movers): drag a
+# plane/mover on the floor (and rotate for heading) → on drop the pose round-trips
+# through `POST /convert` (Python owns the det-−1 inverse, ADR-0002) into a pin,
+# then Calculate re-solves. Serve-page smoke: curl GET / + parse the
+# `#editor-context` blob (confirms the Python side — e.g. a mover's world_yaw_rad —
+# reaches the browser), then screenshot headlessly (render + no transform banner);
+# hit `POST /convert` directly to exercise the drag round-trip itself.
+hangarfit serve tests/fixtures/scenario_minimal.yaml --port 8765
 
 # #412 staging apron (ADR-0021): with apron_depth_m > 0 each tow path starts
 # OUTSIDE the door (y<0) and slides in. Set it on the hangar.yaml or override

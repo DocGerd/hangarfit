@@ -14,7 +14,13 @@ import pytest
 
 from hangarfit.geometry import aircraft_parts_world
 from hangarfit.models import Aircraft, Part, Placement, Wheels
-from hangarfit.towplanner import Pose, _dubins_shortest, compass_to_math_rad, plan_dubins
+from hangarfit.towplanner import (
+    Pose,
+    _dubins_shortest,
+    compass_to_math_rad,
+    math_rad_to_compass,
+    plan_dubins,
+)
 
 
 def _heading_close(a: float, b: float, tol: float = 0.5) -> bool:
@@ -62,6 +68,15 @@ def test_compass_to_math_rad_cardinals() -> None:
     # 45 and 135 break the sign-flip symmetry the cardinals hide.
     assert math.degrees(compass_to_math_rad(45.0)) == pytest.approx(45.0)
     assert math.degrees(compass_to_math_rad(135.0)) == pytest.approx(-45.0)
+
+
+def test_compass_math_round_trips_are_mutual_inverses() -> None:
+    # #911: the drag-to-fix round-trip is Python-owned (ADR-0002) — the editor-context
+    # gizmo seed uses compass_to_math_rad and server.py's /convert uses
+    # math_rad_to_compass. They MUST be mutual inverses across the heading range, or a
+    # dragged plane pins to the wrong heading.
+    for heading in (0.0, 30.0, 45.0, 90.0, 179.9, 270.0, 359.0):
+        assert math_rad_to_compass(compass_to_math_rad(heading)) == pytest.approx(heading)
 
 
 # --- straight-line + sampler ------------------------------------------------
