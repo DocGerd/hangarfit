@@ -28,8 +28,12 @@ jobs:
   #                         single-process, OUTSIDE the xdist pool
   #   * `test`            — the aggregator gate; keeps the exact required-check
   #                         name so branch protection needs no change (#880)
-  #   * `coverage`        — NON-required; the Codecov signal, off the critical
-  #                         path (#879)
+  #
+  # The NON-required Codecov signal used to run here as a `coverage` job. It now
+  # lives in its OWN workflow (.github/workflows/coverage.yml, #933) so a
+  # wall-clock flake in its C-tracer test run can no longer fail THIS workflow's
+  # run conclusion and redden the README CI badge: #879 took coverage off the
+  # required (merge) path; #933 takes it off the badge too. See that file.
   # ─────────────────────────────────────────────────────────────────────────
 
   static:
@@ -63,8 +67,9 @@ jobs:
 
       - name: Run test shard ${{ matrix.group }}/3 (no coverage)
         # Required path runs WITHOUT --cov (#879): coverage is produced by the
-        # separate, non-required `coverage` job below, off the merge-critical
-        # path. pytest-split balances the three shards by recorded per-test
+        # separate, non-required Coverage workflow (.github/workflows/coverage.yml,
+        # #933), off the merge-critical path. pytest-split balances the three shards
+        # by recorded per-test
         # duration (the committed `.test_durations`) so each runner does ~equal
         # wall-clock; `-n auto` then parallelizes within the runner. `@serial` is
         # excluded here and run single-process in `serial-canaries` (the
@@ -121,40 +126,6 @@ jobs:
             echo "::error::a required test job did not succeed — see the per-job results above"
             exit 1
           fi
-
-  coverage:
-    # NON-required (NOT in branch protection): produces the Codecov signal off
-    # the merge-critical path (#879). `codecov/patch` is already non-required, so
-    # the merge gate never waits on this. Runs the SAME two-pass split as the old
-    # combined job (bulk + serial via --cov-append) so combined coverage
-    # semantics — including branch coverage (`branch = true` in pyproject.toml) —
-    # are exactly the signal we had before, just no longer on the critical path.
-    #
-    # NB: COVERAGE_CORE=sysmon is deliberately NOT used. We keep branch coverage
-    # on (`branch = true` in pyproject.toml), and sys.monitoring branch coverage
-    # requires Python 3.14+ (coverage added it in 7.7.0). On our Python 3.12
-    # (the single supported interpreter, ADR-0009) coverage warns and falls back
-    # to the default C tracer, so sysmon would buy nothing here. Revisit when the
-    # project moves to Python 3.14+ — NOT on a coverage upgrade (branch+sysmon
-    # support already exists upstream). See #878.
-    name: coverage (Codecov, non-required)
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
-      - uses: ./.github/actions/setup-python-env
-
-      - name: Run tests with coverage (two-pass; bulk + serial via --cov-append)
-        run: |
-          pytest -n auto -m "not slow and not serial" --cov=hangarfit --cov-report=xml
-          pytest -m "serial and not slow" --cov=hangarfit --cov-append --cov-report=xml --cov-report=term-missing
-
-      - name: Upload coverage to Codecov
-        if: always()
-        uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f  # v7.0.0
-        with:
-          files: ./coverage.xml
-          fail_ci_if_error: false
-          token: ${{ secrets.CODECOV_TOKEN }}
 
   dependency-review:
     # PR-time supply-chain gate (#463): fails a PR that introduces a dependency

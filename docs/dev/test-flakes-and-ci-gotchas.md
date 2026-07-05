@@ -60,20 +60,32 @@ ceiling #524; #544's per-restart-index reseed→spread-off ceiling 20→45 s) ra
 than chase a phantom regression; the bench's validity/path/determinism verdicts
 bind on `max_restarts` and stay reproducible.
 
-## 3. Two-pass coverage
+## 3. Coverage runs in its own workflow (single non-slow pass)
 
-CI runs the suite in two passes (#492) —
+Coverage is produced by the separate **`coverage.yml`** workflow (#933), NOT by
+`ci.yml` — so a wall-clock flake in the coverage run can no longer fail `ci.yml`'s
+run conclusion and redden the README CI badge (#879 took coverage off the required
+*merge* path; #933 took it off the *badge*). It runs the bulk suite once under the
+branch-coverage C-tracer:
 
 ```bash
-pytest -n auto -m "not slow and not serial"
-pytest -m "serial and not slow" --cov-append
+pytest -n auto -m "not slow and not serial" --cov=hangarfit
 ```
 
-— and derives coverage from the **combined** run, so marking a test `@slow` drops
-it from coverage too. If a `@slow` test is the only one covering a new code path,
-the `codecov/patch` number dips for that path (the check is *informational* since
-#589 — it reports, never fails; see §5) — still keep **≥ 1 non-slow test per new
-path** so the signal stays honest.
+The `@serial` wall-clock determinism canaries are deliberately **excluded** from the
+coverage run (#933): under the ~2–3× slower C-tracer their budgets flaked (the §1–§2
+CPU-starvation class), and they add ~no unique coverage — each re-solves a fixed seed
+to assert byte-identity, so its paths are already covered by non-serial siblings, and
+two of them spawn fresh subprocesses coverage.py cannot measure (§4). Their
+determinism is still asserted by the **required** `serial-canaries` job, which runs
+them WITHOUT `--cov` (no tracer, no flake). Excluding them shifts the coverage number
+negligibly and the codecov statuses are informational anyway (§5).
+
+Coverage still excludes `@slow`, so marking a test `@slow` drops it from coverage
+too. If a `@slow` test is the only one covering a new code path, the `codecov/patch`
+number dips for that path (the check is *informational* since #589 — it reports,
+never fails; see §5) — still keep **≥ 1 non-slow test per new path** so the signal
+stays honest.
 
 ## 4. ProcessPool/spawn workers are a coverage blind spot
 

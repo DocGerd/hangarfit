@@ -264,8 +264,13 @@ pip-compile --generate-hashes --no-strip-extras --extra dev -o requirements-dev.
 #                          explicit result check, so it is never silently skipped);
 #                          it keeps the exact required-check NAME, so branch
 #                          protection is unchanged
-#   * coverage           — a SEPARATE, NON-required job (today's two-pass C-tracer
-#                          branch coverage + Codecov), off the merge-critical path
+#   * coverage           — a SEPARATE, NON-required job that now lives in its OWN
+#                          workflow (.github/workflows/coverage.yml, #933): the bulk
+#                          (non-@serial) suite under the C-tracer for branch coverage
+#                          + Codecov, off BOTH the merge-critical path (#879) AND the
+#                          ci.yml run conclusion / README CI badge — so a wall-clock
+#                          coverage flake can no longer redden the badge (the @serial
+#                          canaries run WITHOUT --cov in serial-canaries; #933)
 # The shared hash-pinned PEP-517 install (dev deps from `requirements-dev.txt` +
 # build toolchain from `requirements-build.txt`, both `--require-hashes`, then
 # editable `--no-deps --no-build-isolation` reusing the hash-verified host
