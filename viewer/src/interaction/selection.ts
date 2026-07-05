@@ -3,7 +3,12 @@ import type { Intent, MustPosition, EditorContext } from './intent-contract.ts';
 
 export function initialIntent(ctx: EditorContext): Intent {
   return {
-    selectedPlaneIds: Object.keys(ctx.currentPoses).sort(),
+    // Only aircraft are fleet_in members. currentPoses now also carries placed
+    // movers (#912) so the drag gizmo can arm them — exclude those here, else a
+    // mover would export into fleet_in (the loader rejects a non-aircraft there).
+    selectedPlaneIds: Object.keys(ctx.currentPoses)
+      .filter((id) => ctx.catalog?.[id]?.kind !== 'placed_routed_mover')
+      .sort(),
     priorities: {},
     mustPositions: {},
     doorOrder: [],
@@ -16,6 +21,8 @@ export function initialIntent(ctx: EditorContext): Intent {
     // Cart-mode overrides start empty (#909) — no `movement_mode` is exported
     // until the user changes a plane's mode, so the byte path is unchanged.
     cartModeOverrides: {},
+    // Mover pins start empty — an untouched editor exports byte-identically (#912).
+    moverPins: {},
   };
 }
 
@@ -35,12 +42,14 @@ export function toggleSelection(intent: Intent, id: string): Intent {
   const doorOrder = selected ? intent.doorOrder.filter((x) => x !== id) : intent.doorOrder;
   const cartModeOverrides = { ...intent.cartModeOverrides };
   if (selected) { delete priorities[id]; delete mustPositions[id]; delete cartModeOverrides[id]; }
-  // This is a fresh literal (not a `{ ...intent }` spread), so groundObjectIds
-  // and cartModeOverrides must be carried explicitly — a plane toggle never
-  // touches the palette, and deselecting drops the plane's cart-mode override.
+  // This is a fresh literal (not a `{ ...intent }` spread), so groundObjectIds,
+  // cartModeOverrides, and moverPins must be carried explicitly — a plane toggle
+  // never touches the palette or mover pins, and deselecting drops the plane's
+  // cart-mode override.
   return {
     selectedPlaneIds, priorities, mustPositions, doorOrder,
     groundObjectIds: intent.groundObjectIds, cartModeOverrides,
+    moverPins: intent.moverPins,
   };
 }
 
@@ -78,6 +87,18 @@ export function pinAtPose(
 ): Intent {
   const mp: MustPosition = { x: pose.x_m, y: pose.y_m, heading: pose.heading_deg, onCarts };
   return { ...intent, mustPositions: { ...intent.mustPositions, [id]: mp } };
+}
+
+// #912 PR B: a mover-pose sibling of pinAtPose. A placed_routed_mover dragged in
+// the editor converts (POST /convert, Python-owned inverse) to a 3-field pose set
+// here (no onCarts — movers never ride carts). Exported as a ground_objects
+// mapping entry, distinct from the aircraft `mustPositions` pin map.
+export function setMoverPin(
+  intent: Intent,
+  id: string,
+  pose: { x: number; y: number; heading: number },
+): Intent {
+  return { ...intent, moverPins: { ...intent.moverPins, [id]: pose } };
 }
 
 export function unpin(intent: Intent, id: string): Intent {

@@ -4,7 +4,7 @@ import {
   initialIntent, isSelected, toggleSelection, setPriority,
   pinAtCurrent, pinAtPose, unpin, setPinField, setOnCarts,
   addToDoorOrder, removeFromDoorOrder, moveInDoorOrder,
-  toggleGroundObject, setCartModeOverride,
+  toggleGroundObject, setCartModeOverride, setMoverPin,
 } from '../src/interaction/selection.ts';
 import type { EditorContext, Intent } from '../src/interaction/intent-contract.ts';
 
@@ -99,7 +99,7 @@ test('pin-editing functions do not mutate their input', () => {
 // --- #911 PR B: pinAtPose (drag-to-fix, sources from a converted pose) -------
 
 test('pinAtPose sets mustPositions from a converted pose, carrying onCarts', () => {
-  const base: Intent = { selectedPlaneIds: ['a'], priorities: {}, mustPositions: {}, doorOrder: [], groundObjectIds: [], cartModeOverrides: {} };
+  const base: Intent = { selectedPlaneIds: ['a'], priorities: {}, mustPositions: {}, doorOrder: [], groundObjectIds: [], cartModeOverrides: {}, moverPins: {} };
   const out = pinAtPose(base, 'a', { x_m: 3.5, y_m: -2.0, heading_deg: 275 }, true);
   assert.deepStrictEqual(out.mustPositions.a, { x: 3.5, y: -2.0, heading: 275, onCarts: true });
   assert.deepStrictEqual(base.mustPositions, {}); // immutability: input untouched
@@ -252,4 +252,41 @@ test('deselecting a plane drops its cart-mode override', () => {
   let i = setCartModeOverride(initialIntent(CTX), 'husky', 'cart_eligible');
   i = toggleSelection(i, 'husky');
   assert.equal(i.cartModeOverrides.husky, undefined);
+});
+
+// --- #912 PR B: mover pins (moverPins, setMoverPin) ---------------------------
+
+test('initialIntent excludes movers from selectedPlaneIds and seeds moverPins', () => {
+  const ctx = {
+    fleet: 'f', hangar: 'h', maintenance: null,
+    currentPoses: {
+      plane_a: { x_m: 1, y_m: 2, heading_deg: 0, on_carts: false, world_yaw_rad: 1.5708 },
+      caddy:   { x_m: 3, y_m: 4, heading_deg: 90, on_carts: false, world_yaw_rad: 0 },
+    },
+    catalog: {
+      plane_a: { name: 'A', kind: 'aircraft' },
+      caddy:   { name: 'Caddy', kind: 'placed_routed_mover' },
+    },
+  };
+  const intent = initialIntent(ctx);
+  assert.deepStrictEqual(intent.selectedPlaneIds, ['plane_a']); // mover NOT selected
+  assert.deepStrictEqual(intent.moverPins, {});
+});
+
+test('setMoverPin sets a 3-field pose immutably', () => {
+  const base = initialIntent({ fleet: 'f', hangar: 'h', maintenance: null, currentPoses: {} });
+  const next = setMoverPin(base, 'caddy', { x: 5, y: 6, heading: 45 });
+  assert.deepStrictEqual(next.moverPins, { caddy: { x: 5, y: 6, heading: 45 } });
+  assert.deepStrictEqual(base.moverPins, {}); // original untouched
+});
+
+test('toggleSelection carries moverPins forward', () => {
+  const ctx = {
+    fleet: 'f', hangar: 'h', maintenance: null,
+    currentPoses: { plane_a: { x_m: 0, y_m: 0, heading_deg: 0, on_carts: false, world_yaw_rad: 0 } },
+    catalog: { plane_a: { name: 'A', kind: 'aircraft' } },
+  };
+  let intent = setMoverPin(initialIntent(ctx), 'caddy', { x: 1, y: 2, heading: 3 });
+  intent = toggleSelection(intent, 'plane_a'); // deselect
+  assert.deepStrictEqual(intent.moverPins, { caddy: { x: 1, y: 2, heading: 3 } });
 });

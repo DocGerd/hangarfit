@@ -19,6 +19,12 @@ export interface Intent {
   // scenario (typically to relax a LOCKED plane). Empty ⇒ no `movement_mode` is
   // exported (byte path unchanged). Deselecting a plane drops its override.
   cartModeOverrides: Record<string, string>;
+  // #912 PR B: hand-placed mover poses (drag-to-fix). A placed_routed_mover the
+  // user drags → a 3-field pose (no onCarts — movers never ride carts), exported
+  // as a `ground_objects: [{object, x_m, y_m, heading_deg}]` mapping entry the
+  // loader turns into a mover_pins keep-out. Empty ⇒ no such entry is emitted
+  // (byte path unchanged). Parallel to `mustPositions` (the aircraft pin map).
+  moverPins: Record<string, { x: number; y: number; heading: number }>;
 }
 export interface CurrentPose {
   x_m: number;
