@@ -6,6 +6,14 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Added
 
+### Changed
+
+### Fixed
+
+## [0.19.0] — 2026-07-05
+
+### Added
+
 - **Interactive placement editor** — `hangarfit view --solve --edit` turns the 3D viewer into an intent-capture front end: select which planes are in the fleet, set soft priorities and hard pin-at-current-pose must-positions, and export a loader-valid `Scenario` YAML that `hangarfit solve` re-runs. (#442)
 - **Editor door-proximity ranking** — the `--edit` editor gained a drag-to-order "door proximity" list (#1 nearest the door → …): rank an exclusive, partial subset of the selected planes and the exported scenario carries a top-level `door_order: [id, …]` (#614) that `hangarfit solve` honours. The ranking panel also shows a door-edge hint (which wall, and where along it) from the editor-context. No ranking set ⇒ the export is byte-identical (ADR-0003). (#907)
 - **Absolute door-proximity steering** — when a scenario sets `door_order`, `hangarfit solve` now actively pulls the #1 (door-nearest) plane toward the door during the spread post-pass, not just as a post-hoc tiebreak (which is inert for a lone #1). Opt out with `--no-door-bias`. Off unless `door_order` is set; the library default (`SearchConfig.door_bias_weight=0.0`) and every plan without `door_order` are byte-identical (ADR-0003). (#908)
@@ -1719,7 +1727,8 @@ First Phase 1 cut — substrate for arranging the flying club fleet in a stack-s
 - Apache-2.0 license, public-audience README, CI matrix (Python 3.11 + 3.12), branch protection on develop + main (#13, #14, #15, #16).
 - Strut-aware golden tests + all-9-planes fixture using larger test-only hangar to accommodate strut-bracing geometry on placeholder dimensions (#5).
 
-[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.17.0...HEAD
+[Unreleased]: https://github.com/DocGerd/hangarfit/compare/v0.19.0...HEAD
+[0.19.0]: https://github.com/DocGerd/hangarfit/compare/v0.17.0...v0.19.0
 [0.17.0]: https://github.com/DocGerd/hangarfit/compare/v0.16.0...v0.17.0
 [0.16.0]: https://github.com/DocGerd/hangarfit/compare/v0.15.0...v0.16.0
 [0.15.0]: https://github.com/DocGerd/hangarfit/compare/v0.14.0...v0.15.0
