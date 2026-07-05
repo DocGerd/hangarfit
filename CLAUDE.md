@@ -226,9 +226,9 @@ make test-fast   # parallel bulk only (skips the serial canaries — faster iter
 # Read it before treating a determinism/coverage CI failure as a regression: the
 # `serial` wall-clock double-solve canaries (run OUTSIDE `-n auto`, #492); the same
 # fragility in non-serial smokes + the wall-clock bench `--gate` speed ceilings
-# (re-baseline on a deliberate determinism re-base, don't chase a phantom); two-pass
-# coverage (@slow drops from the combined run — keep >=1 non-slow test per new
-# path); and the ProcessPool/spawn worker coverage blind spot (#561).
+# (re-baseline on a deliberate determinism re-base, don't chase a phantom); coverage
+# (a single non-slow pass in coverage.yml since #933 — @slow still drops, keep >=1
+# non-slow test per new path); and the ProcessPool/spawn worker coverage blind spot (#561).
 
 # Lint + format check (CI also runs these)
 ruff check src/ tests/

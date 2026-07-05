@@ -73,10 +73,10 @@ pytest -n auto -m "not slow and not serial" --cov=hangarfit
 ```
 
 The `@serial` wall-clock determinism canaries are deliberately **excluded** from the
-coverage run (#933): under the ~2–3× slower C-tracer their budgets flaked (the §1–§2
-CPU-starvation class), and they add ~no unique coverage — each re-solves a fixed seed
-to assert byte-identity, so its paths are already covered by non-serial siblings, and
-two of them spawn fresh subprocesses coverage.py cannot measure (§4). Their
+coverage run (#933): under the ~2–3× slower C-tracer the budget-based ones flaked (the
+§1–§2 CPU-starvation class), and they add ~no unique coverage — each re-solves a fixed
+seed to assert byte-identity, so its paths are already covered by non-serial siblings,
+and two of them spawn fresh subprocesses coverage.py cannot measure (§4). Their
 determinism is still asserted by the **required** `serial-canaries` job, which runs
 them WITHOUT `--cov` (no tracer, no flake). Excluding them shifts the coverage number
 negligibly and the codecov statuses are informational anyway (§5).
