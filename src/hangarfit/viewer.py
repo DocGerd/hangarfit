@@ -150,7 +150,11 @@ def build_editor_context(
     verbatim; ``Layout`` itself does not retain them). ``currentPoses`` is a
     scalar copy of each placement's pose fields, keyed by ``plane_id``, sourced
     from ``layout.placements`` (a ``tuple[Placement, ...]`` — ``Layout`` is not
-    itself iterable). Per-aircraft cart data (``movementMode``/``hasTurnRadius``)
+    itself iterable), merged with every ``placed_routed_mover`` in
+    ``layout.ground_object_placements`` keyed by its ground-object id (#912 PR
+    B — aircraft and ground-object ids are disjoint, so the merge is
+    collision-free; ``fixed_obstacle`` placements are excluded, not
+    drag-pinnable here). Per-aircraft cart data (``movementMode``/``hasTurnRadius``)
     is carried inside the ``catalog`` (below), derived from ``layout.fleet``."""
     return {
         "schema": _EDITOR_CONTEXT_SCHEMA,
@@ -158,18 +162,37 @@ def build_editor_context(
         "hangar": hangar_ref,
         "maintenance": {"plane": maintenance_plane} if maintenance_plane else None,
         "currentPoses": {
-            p.plane_id: {
-                "x_m": p.x_m,
-                "y_m": p.y_m,
-                "heading_deg": p.heading_deg,
-                "on_carts": p.on_carts,
-                # #911: the world-space yaw (radians, math convention) the drag
-                # gizmo's clean PROXY is seeded with. Python-owned so the browser
-                # does no heading↔yaw trig (ADR-0002); its inverse is server.py's
-                # /convert. compass_to_math_rad(h) = radians(90 - h).
-                "world_yaw_rad": compass_to_math_rad(p.heading_deg),
-            }
-            for p in layout.placements
+            **{
+                p.plane_id: {
+                    "x_m": p.x_m,
+                    "y_m": p.y_m,
+                    "heading_deg": p.heading_deg,
+                    "on_carts": p.on_carts,
+                    # #911: the world-space yaw (radians, math convention) the drag
+                    # gizmo's clean PROXY is seeded with. Python-owned so the browser
+                    # does no heading↔yaw trig (ADR-0002); its inverse is server.py's
+                    # /convert. compass_to_math_rad(h) = radians(90 - h).
+                    "world_yaw_rad": compass_to_math_rad(p.heading_deg),
+                }
+                for p in layout.placements
+            },
+            # #912 PR B: placed movers (cars/trailers) so the drag gizmo can arm
+            # one and pin its pose. Keyed by ground-object id (disjoint from
+            # aircraft ids, so the merge is collision-free). on_carts is forced
+            # False (movers never ride carts) and kept only so the CurrentPose
+            # shape is uniform; the mover-pin export drops it. Fixed obstacles are
+            # excluded — they are not drag-pinnable in this scope.
+            **{
+                gp.plane_id: {
+                    "x_m": gp.x_m,
+                    "y_m": gp.y_m,
+                    "heading_deg": gp.heading_deg,
+                    "on_carts": False,
+                    "world_yaw_rad": compass_to_math_rad(gp.heading_deg),
+                }
+                for gp in layout.ground_object_placements
+                if layout.ground_objects[gp.plane_id].object_class == "placed_routed_mover"
+            },
         },
         # The door edge (already in scene/v2), so the door-proximity ranking UI
         # (#907) can show the user which wall — and where along it — the door is
