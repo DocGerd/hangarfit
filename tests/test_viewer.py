@@ -741,3 +741,46 @@ def test_render_edit_viewer_hud_has_cart_mode_control(tmp_path):
     out = tmp_path / "edit.html"
     viewer.render_edit_viewer(sc, ctx, out)
     assert 'id="cart-mode"' in out.read_text(encoding="utf-8")
+
+
+# ── #912 PR B: placed movers exposed in currentPoses ────────────────────────
+
+
+def test_editor_context_currentposes_includes_placed_mover():
+    # A Layout carrying a placed_routed_mover exposes that mover in currentPoses
+    # (keyed by its ground-object id) so PR B's drag gizmo can arm it (#912).
+    # examples/herrenteich/layout_full.yaml places vw_caddy (a placed_routed_mover)
+    # AND maul_fuel_trailer (a fixed_obstacle) at known poses — the fixed obstacle
+    # must NOT appear (not drag-pinnable in this scope).
+    import pytest
+
+    lay = load_layout("examples/herrenteich/layout_full.yaml")
+    ctx = viewer.build_editor_context(
+        fleet_ref="fleet.yaml",
+        hangar_ref="hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+    )
+    poses = ctx["currentPoses"]
+    assert "vw_caddy" in poses
+    mp = poses["vw_caddy"]
+    assert mp["x_m"] == pytest.approx(11.56)
+    assert mp["y_m"] == pytest.approx(1.95)
+    assert mp["heading_deg"] == pytest.approx(251.1)
+    assert mp["on_carts"] is False  # movers never ride carts
+    assert mp["world_yaw_rad"] == pytest.approx(viewer.compass_to_math_rad(251.1))
+    # A fixed_obstacle placement is NOT added — not drag-pinnable here.
+    assert "maul_fuel_trailer" not in poses
+
+
+def test_editor_context_currentposes_unchanged_without_movers():
+    # A ground-object-free layout's currentPoses is exactly the aircraft entries
+    # (the pre-#912 byte path, unaffected by the merge).
+    lay = load_layout(LAYOUT)
+    ctx = viewer.build_editor_context(
+        fleet_ref="data/fleet.yaml",
+        hangar_ref="data/hangar.yaml",
+        maintenance_plane=lay.maintenance_plane,
+        layout=lay,
+    )
+    assert set(ctx["currentPoses"]) == {p.plane_id for p in lay.placements}
