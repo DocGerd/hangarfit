@@ -41,11 +41,14 @@ export interface EditorHandle {
 
 export function mountEditor(opts: {
   groups: Record<string, THREE.Group>;
-  // #912 PR B: the placed-mover Groups (from addGroundObjects), kept SEPARATE
-  // from the plane `groups` so the highlight loop (aircraft-only) never repaints
-  // a mover, while the raycaster + gizmo still reach it. Default {}: an offline
-  // export or a mover-free scene passes none, so the mover-drag path is inert.
-  moverGroups?: Record<string, THREE.Group>;
+  // #912 PR B: the ground-object Groups (from addGroundObjects — placed movers
+  // AND fixed obstacles), kept SEPARATE from the plane `groups` so the highlight
+  // loop (aircraft-only) never repaints one. Only movers are drag-pinnable, so
+  // they alone are filtered into the raycaster + gizmo below; a fixed obstacle
+  // stays inert (a click can't focus it). The mover-drag path is inert on an
+  // offline export not because this is empty but because the gizmo mounts only
+  // when served (`opts.scene && opts.orbit`, below). Default {}: a GO-free scene.
+  groundObjectGroups?: Record<string, THREE.Group>;
   renderer: THREE.WebGLRenderer;
   cam: THREE.Camera;
   ctx: EditorContext;
@@ -95,10 +98,18 @@ export function mountEditor(opts: {
       }
     });
   }
-  const moverGroups = opts.moverGroups ?? {};
-  // #912: movers are pickable (click-to-focus) + arm-able, but NOT highlight
-  // targets — painting them via the emissive channel would force excluded-amber
-  // over their real colour. So register their objects in idByObject only.
+  // #912: only movers are drag-pinnable, so filter the ground-object Groups to
+  // movers — a fixed obstacle must NOT enter the raycaster (a click on it would
+  // steal focus and blank the edit panel; it has no currentPose so it could never
+  // be armed/pinned anyway). Movers are pickable (click-to-focus) + arm-able, but
+  // NOT highlight targets: painting them via the emissive channel would force
+  // excluded-amber over their real colour, so register their objects in idByObject
+  // only. This single filter also keeps fixed obstacles out of the gizmo set below.
+  const moverGroups = Object.fromEntries(
+    Object.entries(opts.groundObjectGroups ?? {}).filter(
+      ([id]) => opts.ctx.catalog?.[id]?.kind === 'placed_routed_mover',
+    ),
+  );
   for (const [id, g] of Object.entries(moverGroups)) {
     g.traverse((o) => idByObject.set(o, id));
   }
@@ -222,7 +233,8 @@ export function mountEditor(opts: {
     prio.disabled = !active;
     pinToggle.disabled = !active || !hasPose;
     // #912: a focused placed mover is drag-pinnable even though it is not a
-    // fleet_in member (isSelected is false for it). It has a currentPose (Task 1),
+    // fleet_in member (isSelected is false for it). It has a currentPose
+    // (viewer.py's build_editor_context emits one for placed movers, #912),
     // so gate the Fix-position button on hasPose + (selected aircraft OR mover).
     // Every other control stays gated on `active`, so a focused mover leaves the
     // aircraft-only priority/pin/cart controls disabled (they don't apply to it).

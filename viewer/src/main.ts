@@ -36,7 +36,7 @@ import type { EditorContext } from './interaction/intent-contract.ts';
 interface World {
   group: THREE.Group;
   groups: Record<string, THREE.Group>;
-  goGroups: Record<string, THREE.Group>; // #912: placed-mover Groups for editor drag
+  goGroups: Record<string, THREE.Group>; // #912: ground-object Groups (movers + fixed obstacles) for the editor
   labelMeshes: THREE.Sprite[];
   noseMeshes: THREE.Mesh[];
   setPathsVisible: (on: boolean) => void;
@@ -181,7 +181,7 @@ function bootSingle(data: SceneV2, brand: BrandTokens): void {
       : {};
     let editor = mountEditor({
       groups: world.groups,
-      moverGroups: world.goGroups, // #912
+      groundObjectGroups: world.goGroups, // #912 (editor filters to movers)
       renderer: stage.renderer,
       cam: stage.cam,
       ctx,
@@ -206,7 +206,7 @@ function bootSingle(data: SceneV2, brand: BrandTokens): void {
           const nextWorld = buildWorld(stage.scene, resp.scene, brand);
           const nextEditor = mountEditor({
             groups: nextWorld.groups,
-            moverGroups: nextWorld.goGroups, // #912
+            groundObjectGroups: nextWorld.goGroups, // #912 (editor filters to movers)
             renderer: stage.renderer,
             cam: stage.cam,
             // The server-refreshed editor-context re-bases "pin at current pose" on

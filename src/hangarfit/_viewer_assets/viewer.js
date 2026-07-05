@@ -1015,7 +1015,11 @@ function mountEditor(opts) {
       }
     });
   }
-  const moverGroups = opts.moverGroups ?? {};
+  const moverGroups = Object.fromEntries(
+    Object.entries(opts.groundObjectGroups ?? {}).filter(
+      ([id]) => opts.ctx.catalog?.[id]?.kind === "placed_routed_mover"
+    )
+  );
   for (const [id, g] of Object.entries(moverGroups)) {
     g.traverse((o) => idByObject.set(o, id));
   }
@@ -1475,8 +1479,8 @@ function bootSingle(data, brand) {
     const editHostOpts = serveCfg ? { scene: stage.scene, orbit: stage.controls, onEdit: () => markUnsolved() } : {};
     let editor = mountEditor({
       groups: world.groups,
-      moverGroups: world.goGroups,
-      // #912
+      groundObjectGroups: world.goGroups,
+      // #912 (editor filters to movers)
       renderer: stage.renderer,
       cam: stage.cam,
       ctx,
@@ -1492,8 +1496,8 @@ function bootSingle(data, brand) {
           const nextWorld = buildWorld(stage.scene, resp.scene, brand);
           const nextEditor = mountEditor({
             groups: nextWorld.groups,
-            moverGroups: nextWorld.goGroups,
-            // #912
+            groundObjectGroups: nextWorld.goGroups,
+            // #912 (editor filters to movers)
             renderer: stage.renderer,
             cam: stage.cam,
             // The server-refreshed editor-context re-bases "pin at current pose" on
