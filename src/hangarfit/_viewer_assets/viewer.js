@@ -724,7 +724,10 @@ import * as THREE12 from "three";
 // src/interaction/selection.ts
 function initialIntent(ctx) {
   return {
-    selectedPlaneIds: Object.keys(ctx.currentPoses).sort(),
+    // Only aircraft are fleet_in members. currentPoses now also carries placed
+    // movers (#912) so the drag gizmo can arm them — exclude those here, else a
+    // mover would export into fleet_in (the loader rejects a non-aircraft there).
+    selectedPlaneIds: Object.keys(ctx.currentPoses).filter((id) => ctx.catalog?.[id]?.kind !== "placed_routed_mover").sort(),
     priorities: {},
     mustPositions: {},
     doorOrder: [],
@@ -736,7 +739,9 @@ function initialIntent(ctx) {
     groundObjectIds: [],
     // Cart-mode overrides start empty (#909) — no `movement_mode` is exported
     // until the user changes a plane's mode, so the byte path is unchanged.
-    cartModeOverrides: {}
+    cartModeOverrides: {},
+    // Mover pins start empty — an untouched editor exports byte-identically (#912).
+    moverPins: {}
   };
 }
 function isSelected(intent, id) {
@@ -760,7 +765,8 @@ function toggleSelection(intent, id) {
     mustPositions,
     doorOrder,
     groundObjectIds: intent.groundObjectIds,
-    cartModeOverrides
+    cartModeOverrides,
+    moverPins: intent.moverPins
   };
 }
 function setCartModeOverride(intent, id, mode) {
@@ -784,6 +790,9 @@ function pinAtCurrent(intent, id, ctx) {
 function pinAtPose(intent, id, pose, onCarts) {
   const mp = { x: pose.x_m, y: pose.y_m, heading: pose.heading_deg, onCarts };
   return { ...intent, mustPositions: { ...intent.mustPositions, [id]: mp } };
+}
+function setMoverPin(intent, id, pose) {
+  return { ...intent, moverPins: { ...intent.moverPins, [id]: pose } };
 }
 function unpin(intent, id) {
   const mustPositions = { ...intent.mustPositions };
@@ -840,8 +849,17 @@ function intentToScenarioYaml(intent, ctx) {
   }
   const ranked = intent.doorOrder.filter((id) => selected.includes(id));
   if (ranked.length) lines.push(`door_order: [${ranked.join(", ")}]`);
-  const movers = [...intent.groundObjectIds].filter((id) => ctx.catalog?.[id]?.kind === "placed_routed_mover").sort();
-  if (movers.length) lines.push(`ground_objects: [${movers.join(", ")}]`);
+  const addedMovers = [...intent.groundObjectIds].filter(
+    (id) => ctx.catalog?.[id]?.kind === "placed_routed_mover"
+  );
+  const moverIds = [.../* @__PURE__ */ new Set([...addedMovers, ...Object.keys(intent.moverPins)])].sort();
+  if (moverIds.length) {
+    const entries = moverIds.map((id) => {
+      const p = intent.moverPins[id];
+      return p ? `{ object: ${id}, x_m: ${num(p.x)}, y_m: ${num(p.y)}, heading_deg: ${num(p.heading)} }` : id;
+    });
+    lines.push(`ground_objects: [${entries.join(", ")}]`);
+  }
   const constrained = selected.filter(
     (id) => intent.mustPositions[id] || intent.priorities[id] !== void 0 || intent.cartModeOverrides[id] !== void 0
   );
@@ -997,12 +1015,19 @@ function mountEditor(opts) {
       }
     });
   }
+  const moverGroups = opts.moverGroups ?? {};
+  for (const [id, g] of Object.entries(moverGroups)) {
+    g.traverse((o) => idByObject.set(o, id));
+  }
   const el = opts.renderer.domElement;
   function pick(ev) {
     const r = el.getBoundingClientRect();
     ndc.set((ev.clientX - r.left) / r.width * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
     ray.setFromCamera(ndc, opts.cam);
-    const hits = ray.intersectObjects(Object.values(opts.groups), true);
+    const hits = ray.intersectObjects(
+      [...Object.values(opts.groups), ...Object.values(moverGroups)],
+      true
+    );
     for (const h of hits) {
       const id = idByObject.get(h.object);
       if (id) return id;
@@ -1083,7 +1108,8 @@ function mountEditor(opts) {
     const hasPose = id !== null && id in opts.ctx.currentPoses;
     prio.disabled = !active;
     pinToggle.disabled = !active || !hasPose;
-    if (fixBtn) fixBtn.disabled = !active || !hasPose;
+    const isMover = id !== null && opts.ctx.catalog?.[id]?.kind === "placed_routed_mover";
+    if (fixBtn) fixBtn.disabled = !hasPose || !(active || isMover);
     if (!active || id === null || baseMode(id) === void 0) {
       cartMode.disabled = true;
     } else {
@@ -1263,14 +1289,23 @@ function mountEditor(opts) {
   if (opts.scene && opts.orbit) {
     manip = createManipulator({
       scene: opts.scene,
-      groups: opts.groups,
+      groups: { ...opts.groups, ...moverGroups },
+      // #912: planes ∪ movers (gizmo targets)
       cam: opts.cam,
       renderer: opts.renderer,
       orbit: opts.orbit,
       ctx: opts.ctx,
       onConverted: (id, pose) => {
-        const onCarts = intent.mustPositions[id]?.onCarts ?? opts.ctx.currentPoses[id]?.on_carts ?? false;
-        intent = pinAtPose(intent, id, pose, onCarts);
+        if (opts.ctx.catalog?.[id]?.kind === "placed_routed_mover") {
+          intent = setMoverPin(intent, id, {
+            x: pose.x_m,
+            y: pose.y_m,
+            heading: pose.heading_deg
+          });
+        } else {
+          const onCarts = intent.mustPositions[id]?.onCarts ?? opts.ctx.currentPoses[id]?.on_carts ?? false;
+          intent = pinAtPose(intent, id, pose, onCarts);
+        }
         focusedId = id;
         syncControls();
         opts.onEdit?.();
@@ -1376,7 +1411,7 @@ function buildWorld(scene, data, brand) {
     banner("TRANSFORM CHECK ERRORED: " + e.message + " — do not trust this render.");
   }
   const timeline = createTimeline(data, groups, goGroups);
-  return { group, groups, labelMeshes, noseMeshes, setPathsVisible, timeline };
+  return { group, groups, goGroups, labelMeshes, noseMeshes, setPathsVisible, timeline };
 }
 function wireToggles(wallMeshes, getWorld) {
   const wallsToggle = byId("walls");
@@ -1438,7 +1473,15 @@ function bootSingle(data, brand) {
     let markUnsolved = () => {
     };
     const editHostOpts = serveCfg ? { scene: stage.scene, orbit: stage.controls, onEdit: () => markUnsolved() } : {};
-    let editor = mountEditor({ groups: world.groups, renderer: stage.renderer, cam: stage.cam, ctx, ...editHostOpts });
+    let editor = mountEditor({
+      groups: world.groups,
+      moverGroups: world.goGroups,
+      // #912
+      renderer: stage.renderer,
+      cam: stage.cam,
+      ctx,
+      ...editHostOpts
+    });
     if (serveCfg) {
       const calc = mountCalculate({
         getIntent: () => editor.getIntent(),
@@ -1449,6 +1492,8 @@ function bootSingle(data, brand) {
           const nextWorld = buildWorld(stage.scene, resp.scene, brand);
           const nextEditor = mountEditor({
             groups: nextWorld.groups,
+            moverGroups: nextWorld.goGroups,
+            // #912
             renderer: stage.renderer,
             cam: stage.cam,
             // The server-refreshed editor-context re-bases "pin at current pose" on
