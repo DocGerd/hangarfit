@@ -35,6 +35,16 @@ All notable changes to this project are documented here. Format follows [Keep a 
 
 ### Fixed
 
+- CI: the non-required Codecov coverage run moved out of `ci.yml` into its own
+  `coverage.yml` workflow, and the wall-clock `@serial` determinism canaries were
+  dropped from the coverage pass. Together these stop an intermittent coverage-run
+  flake — the wall-clock-budgeted `@serial` canaries exhausting their budgets under
+  the ~2–3× slower branch-coverage C-tracer — from failing `ci.yml`'s run conclusion
+  and reddening the README CI
+  badge. Branch-protection required checks are unchanged, the `@serial` canaries
+  still run for determinism in the required `serial-canaries` job, and the
+  `codecov` badge (fed by the relocated upload) is unaffected. (#933)
+
 ## [0.17.0] — 2026-06-29
 
 ### Added

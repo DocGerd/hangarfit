@@ -226,9 +226,9 @@ make test-fast   # parallel bulk only (skips the serial canaries — faster iter
 # Read it before treating a determinism/coverage CI failure as a regression: the
 # `serial` wall-clock double-solve canaries (run OUTSIDE `-n auto`, #492); the same
 # fragility in non-serial smokes + the wall-clock bench `--gate` speed ceilings
-# (re-baseline on a deliberate determinism re-base, don't chase a phantom); two-pass
-# coverage (@slow drops from the combined run — keep >=1 non-slow test per new
-# path); and the ProcessPool/spawn worker coverage blind spot (#561).
+# (re-baseline on a deliberate determinism re-base, don't chase a phantom); coverage
+# (a single non-slow pass in coverage.yml since #933 — @slow still drops, keep >=1
+# non-slow test per new path); and the ProcessPool/spawn worker coverage blind spot (#561).
 
 # Lint + format check (CI also runs these)
 ruff check src/ tests/
@@ -264,8 +264,13 @@ pip-compile --generate-hashes --no-strip-extras --extra dev -o requirements-dev.
 #                          explicit result check, so it is never silently skipped);
 #                          it keeps the exact required-check NAME, so branch
 #                          protection is unchanged
-#   * coverage           — a SEPARATE, NON-required job (today's two-pass C-tracer
-#                          branch coverage + Codecov), off the merge-critical path
+#   * coverage           — a SEPARATE, NON-required job that now lives in its OWN
+#                          workflow (.github/workflows/coverage.yml, #933): the bulk
+#                          (non-@serial) suite under the C-tracer for branch coverage
+#                          + Codecov, off BOTH the merge-critical path (#879) AND the
+#                          ci.yml run conclusion / README CI badge — so a wall-clock
+#                          coverage flake can no longer redden the badge (the @serial
+#                          canaries run WITHOUT --cov in serial-canaries; #933)
 # The shared hash-pinned PEP-517 install (dev deps from `requirements-dev.txt` +
 # build toolchain from `requirements-build.txt`, both `--require-hashes`, then
 # editable `--no-deps --no-build-isolation` reusing the hash-verified host
