@@ -37,7 +37,7 @@ It also renders a top-down PNG so a human can sanity-check the result by eye.
 
 - No tracking of hangar state across runs — each invocation is stateless.
 - No general weighted / multi-objective optimization — the only *user-supplied* soft input is a per-plane `priority` weight ([#441](https://github.com/DocGerd/hangarfit/issues/441)) that biases the built-in inter-plane spread; pins, `force_on_carts`, and the maintenance-plane assignment remain the only inputs that can make a layout invalid. On top of `priority` the solver applies several built-in soft spatial preferences — inter-plane spread ([ADR-0008](docs/adr/0008-inter-plane-spread-soft-preference.md), default-on, toggleable with `--no-spread`), a back-of-hangar fill bias that keeps the door-side approach corridors clear ([ADR-0008 §Amendments, #320](docs/adr/0008-inter-plane-spread-soft-preference.md), default-on, toggleable with `--no-back-fill`), and a soft right/left region preference that biases placed movers (e.g. glider trailers) toward a chosen hangar wall ([#604](https://github.com/DocGerd/hangarfit/issues/604), surfaced as `region_alignment` in `solve` output) — but none of these ever overrides a hard constraint.
-- No interactive editing GUI, server, or web app — the Phase 4 `hangarfit view` 3D viewer is a **read-only**, self-contained HTML *artifact* (like the PNG), not a live frontend you author layouts in.
+- No hosted / multi-user web app. The `hangarfit view --edit` placement editor is a self-contained **offline** HTML export (opens via `file://`, binds nothing); its optional `hangarfit serve` live backend ([ADR-0030](docs/adr/0030-hangarfit-serve-local-backend.md)) binds **loopback only** (`127.0.0.1`). Both are **local, single-operator** conveniences over the same solve pipeline — not a deployed web service — and the plain `hangarfit view` output remains a **read-only**, self-contained HTML *artifact* (like the PNG).
 - No handling of late arrivals as a live event stream.
 - General multi-plane *rearrangement* (freely moving planes around an already-occupied hangar). The tow planner does **empty-hangar fill**; its one bounded exception is the depth-1 *move-aside* repair (#667 Rung E), which may temporarily relocate a single already-parked plane to a staging pose and return it so a later plane can route. It does **not** route the dense full-Herrenteich fill (still out of reach), and open-ended rearrangement / TAMP remains planner v2+ territory.
 
@@ -45,7 +45,7 @@ These boundaries are deliberate.
 
 ## Status
 
-All shipped phases are feature-complete: `hangarfit check` (Phase 1), `hangarfit solve` (Phase 2a/b/c), `hangarfit solve --render-paths` (Phase 3a/b), and `hangarfit view` (Phase 4 — interactive 3D). All dimensions in `data/` are placeholders pending real measurement and are flagged as such in the YAML; checker output on the current data is illustrative, not authoritative — and so are any layouts the solver finds and any tow paths the planner draws against it.
+All shipped phases are feature-complete: `hangarfit check` (Phase 1), `hangarfit solve` (Phase 2a/b/c), `hangarfit solve --render-paths` (Phase 3a/b), and `hangarfit view` (Phase 4 — interactive 3D) — plus the `hangarfit view --edit` placement editor, its live loopback backend `hangarfit serve` ([ADR-0030](docs/adr/0030-hangarfit-serve-local-backend.md)), and hand-placed mover pins ([ADR-0031](docs/adr/0031-mover-pin.md)). All dimensions in `data/` are placeholders pending real measurement and are flagged as such in the YAML; checker output on the current data is illustrative, not authoritative — and so are any layouts the solver finds and any tow paths the planner draws against it.
 
 Follow progress in [GitHub Issues](https://github.com/DocGerd/hangarfit/issues) and milestones.
 
@@ -160,6 +160,22 @@ hangarfit view some_invalid_layout.yaml -o conflicts3d.html --check --no-animate
 ```
 
 Layout mode best-effort tow-plans for the animation; a layout the planner can't route degrades to a static 3D scene with a stderr note. By default the viewer applies a small deterministic global tow-expansion cap, so an un-routable layout (e.g. the default `examples/layouts/example.yaml`) falls back to the static render in a few seconds rather than grinding through the full disprove budget — a fixed expansion count, **not** a wall-clock deadline ([ADR-0003](docs/adr/0003-rr-mc-solver-algorithm.md)); `--tow-max-expansions` overrides it. The viewer is built from a documented `hangarfit.scene/v2` JSON contract (the seam between the Python core and any renderer) and a pinned, vendored copy of Three.js; the transform stays in Python (per-frame affine matrices), so the viewer never re-derives the determinant-−1 map. `--solve --alternatives N` carries up to N diverse solutions in one HTML and lets you flip between them with a shared camera (a *switcher*, not split panes — the camera holds still so the planes that moved between solutions pop out), each annotated with its min inter-plane gap, planes-moved-vs-#1, and tow-routability; the multi-solution container is a viewer-HTML wrapper layered over N independent, byte-identical scene/v2 docs, so the schema itself is unchanged. See [ADR-0017](docs/adr/0017-3d-viewer-architecture.md) and the schema reference [`docs/architecture/scene-v2-schema.md`](docs/architecture/scene-v2-schema.md).
+
+### Interactive placement editor & live backend
+
+`hangarfit view --solve --edit` turns the 3D viewer into an intent-capture front end: focus a plane to edit it — set soft `priority` weights and hard pin-at-current-pose must-positions, rank planes by door proximity, override its cart mode for one scenario — and add planes or movers to the fleet from a catalog palette (start from an empty hangar); then export a loader-valid `Scenario` YAML that `hangarfit solve` re-runs. `--edit` requires `--solve` and rejects `--alternatives`.
+
+```bash
+# Capture a placement intent and export a re-runnable scenario YAML.
+hangarfit view tests/fixtures/scenario_minimal.yaml --solve --edit -o edit.html
+```
+
+For a live round-trip — the editor's **Calculate** button re-solves in place, and **Fix position** lets you drag a plane or mover on the floor and re-solve with it pinned — run the local backend instead of exporting by hand. `hangarfit serve` binds **loopback only** (`127.0.0.1`, no `--host`), is `Host`-header guarded, auto-opens a browser (`--no-open` suppresses), and stops on Ctrl-C ([ADR-0030](docs/adr/0030-hangarfit-serve-local-backend.md)).
+
+```bash
+# Serve the interactive editor with a live solve/convert backend.
+hangarfit serve tests/fixtures/scenario_minimal.yaml --port 8765
+```
 
 ### JSON schemas
 

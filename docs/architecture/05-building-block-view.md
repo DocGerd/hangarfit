@@ -612,11 +612,15 @@ collision model, so it carries no determinism or correctness risk.
 
 ### `cli.py` — argparse dispatch + IO + exit codes
 
-Three subcommands: `hangarfit check` (Phase 1), `hangarfit solve`
-(Phase 2a), and `hangarfit view` (Phase 4 — write the 3D HTML viewer,
-`cmd_view` → `scene.build_scene` + `viewer.render_viewer`). All are thin
-wrappers around the library (`check()` / `solve()` / the scene+viewer
-builders); this module owns only argparse, IO routing, and exit-code mapping.
+Four subcommands: `hangarfit check` (Phase 1), `hangarfit solve`
+(Phase 2a), `hangarfit view` (Phase 4 — `cmd_view` → `scene.build_scene`, then
+`viewer.render_viewer` for the read-only 3D HTML viewer, or
+`viewer.build_editor_context` + `viewer.render_edit_viewer` for the `--edit`
+placement editor), and `hangarfit serve` (a local loopback editor
+backend, `cmd_serve` → `server.serve`; see [ADR-0030](../adr/0030-hangarfit-serve-local-backend.md)).
+All are thin wrappers around the library (`check()` / `solve()` / the
+scene+viewer builders / the serve transport); this module owns only argparse,
+IO routing, and exit-code mapping.
 
 JSON schemas are versioned: `hangarfit.check/v1` and
 `hangarfit.solve/v1`. Bumping a version is reserved for breaking
