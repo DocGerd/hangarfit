@@ -22,6 +22,7 @@ import {
   moveInDoorOrder,
   toggleGroundObject,
   setCartModeOverride,
+  setMoverPin,
 } from './selection.ts';
 import { intentToScenarioYaml } from './export.ts';
 import { byId } from '../dom.ts';
@@ -40,6 +41,11 @@ export interface EditorHandle {
 
 export function mountEditor(opts: {
   groups: Record<string, THREE.Group>;
+  // #912 PR B: the placed-mover Groups (from addGroundObjects), kept SEPARATE
+  // from the plane `groups` so the highlight loop (aircraft-only) never repaints
+  // a mover, while the raycaster + gizmo still reach it. Default {}: an offline
+  // export or a mover-free scene passes none, so the mover-drag path is inert.
+  moverGroups?: Record<string, THREE.Group>;
   renderer: THREE.WebGLRenderer;
   cam: THREE.Camera;
   ctx: EditorContext;
@@ -89,13 +95,23 @@ export function mountEditor(opts: {
       }
     });
   }
+  const moverGroups = opts.moverGroups ?? {};
+  // #912: movers are pickable (click-to-focus) + arm-able, but NOT highlight
+  // targets — painting them via the emissive channel would force excluded-amber
+  // over their real colour. So register their objects in idByObject only.
+  for (const [id, g] of Object.entries(moverGroups)) {
+    g.traverse((o) => idByObject.set(o, id));
+  }
   const el = opts.renderer.domElement;
 
   function pick(ev: PointerEvent): string | null {
     const r = el.getBoundingClientRect();
     ndc.set(((ev.clientX - r.left) / r.width) * 2 - 1, -((ev.clientY - r.top) / r.height) * 2 + 1);
     ray.setFromCamera(ndc, opts.cam);
-    const hits = ray.intersectObjects(Object.values(opts.groups), true);
+    const hits = ray.intersectObjects(
+      [...Object.values(opts.groups), ...Object.values(moverGroups)],
+      true,
+    );
     for (const h of hits) {
       const id = idByObject.get(h.object);
       if (id) return id;
@@ -205,7 +221,13 @@ export function mountEditor(opts: {
     const hasPose = id !== null && id in opts.ctx.currentPoses;
     prio.disabled = !active;
     pinToggle.disabled = !active || !hasPose;
-    if (fixBtn) fixBtn.disabled = !active || !hasPose; // #911 PR B: gate like pinToggle
+    // #912: a focused placed mover is drag-pinnable even though it is not a
+    // fleet_in member (isSelected is false for it). It has a currentPose (Task 1),
+    // so gate the Fix-position button on hasPose + (selected aircraft OR mover).
+    // Every other control stays gated on `active`, so a focused mover leaves the
+    // aircraft-only priority/pin/cart controls disabled (they don't apply to it).
+    const isMover = id !== null && opts.ctx.catalog?.[id]?.kind === 'placed_routed_mover';
+    if (fixBtn) fixBtn.disabled = !hasPose || !(active || isMover);
     // #909 cart-mode override select: available for any focused selected aircraft
     // (the override is fleet-level, independent of a pin). Show the effective
     // mode; gate the radius-needing options (a non-always_cart mode requires a
@@ -423,17 +445,26 @@ export function mountEditor(opts: {
   if (opts.scene && opts.orbit) {
     manip = createManipulator({
       scene: opts.scene,
-      groups: opts.groups,
+      groups: { ...opts.groups, ...moverGroups }, // #912: planes ∪ movers (gizmo targets)
       cam: opts.cam,
       renderer: opts.renderer,
       orbit: opts.orbit,
       ctx: opts.ctx,
       onConverted: (id, pose) => {
-        // Carry onCarts from the plane's existing pin, else its current pose.
-        const onCarts = intent.mustPositions[id]?.onCarts ?? opts.ctx.currentPoses[id]?.on_carts ?? false;
-        intent = pinAtPose(intent, id, pose, onCarts);
+        if (opts.ctx.catalog?.[id]?.kind === 'placed_routed_mover') {
+          // #912: a dragged mover pins a 3-field pose (no onCarts) → exported as a
+          // ground_objects mapping entry, seated path-less by the PR-A loader.
+          intent = setMoverPin(intent, id, {
+            x: pose.x_m, y: pose.y_m, heading: pose.heading_deg,
+          });
+        } else {
+          // Aircraft: carry onCarts from the plane's existing pin, else its pose.
+          const onCarts =
+            intent.mustPositions[id]?.onCarts ?? opts.ctx.currentPoses[id]?.on_carts ?? false;
+          intent = pinAtPose(intent, id, pose, onCarts);
+        }
         focusedId = id;
-        syncControls(); // populate the x/y/heading pin fields (editable) + re-gate fixBtn
+        syncControls(); // re-gate fixBtn (+ the aircraft pin fields, when aircraft)
         opts.onEdit?.(); // flag Calculate "unsolved"
       },
     });
