@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { intentToScenarioYaml } from '../src/interaction/export.ts';
 import {
   initialIntent, setPriority, pinAtCurrent, toggleSelection, addToDoorOrder,
-  toggleGroundObject, setCartModeOverride,
+  toggleGroundObject, setCartModeOverride, setMoverPin,
 } from '../src/interaction/selection.ts';
 import type { EditorContext } from '../src/interaction/intent-contract.ts';
 
@@ -19,6 +19,7 @@ const CTX: EditorContext = {
     ctsl: { name: 'CTLS', kind: 'aircraft', movementMode: 'cart_eligible', hasTurnRadius: true },
     glider_trailer_1: { name: 'Glider trailer 1', kind: 'placed_routed_mover' },
     maul_fuel_trailer: { name: 'Fuel trailer', kind: 'fixed_obstacle' },
+    caddy: { name: 'Caddy', kind: 'placed_routed_mover' },
   },
 };
 
@@ -123,6 +124,28 @@ test('export drops a fixed_obstacle from ground_objects (needs a pose; not offli
 test('export drops a ground-object id absent from the catalog', () => {
   const i = { ...initialIntent(CTX), groundObjectIds: ['ghost_mover'] };
   const y = intentToScenarioYaml(i, CTX);
+  assert.doesNotMatch(y, /ground_objects/);
+});
+
+// --- #912 hand-pinned mover export ---------------------------------------------
+
+test('a pinned mover exports a ground_objects mapping entry', () => {
+  const i = setMoverPin(initialIntent(CTX), 'caddy', { x: 3.5, y: 4, heading: 90 });
+  const y = intentToScenarioYaml(i, CTX);
+  assert.match(y, /^ground_objects: \[\{ object: caddy, x_m: 3\.5, y_m: 4\.0, heading_deg: 90\.0 \}\]$/m);
+});
+
+test('an added-and-pinned mover emits once, as a mapping entry (pin wins)', () => {
+  let i = toggleGroundObject(initialIntent(CTX), 'caddy');
+  i = setMoverPin(i, 'caddy', { x: 1, y: 2, heading: 0 });
+  const y = intentToScenarioYaml(i, CTX);
+  const matches = y.match(/caddy/g) ?? [];
+  assert.strictEqual(matches.length, 1); // not both a bare id and a mapping entry
+  assert.match(y, /\{ object: caddy, x_m: 1\.0, y_m: 2\.0, heading_deg: 0\.0 \}/);
+});
+
+test('no mover pinned + none added → no ground_objects line (byte path)', () => {
+  const y = intentToScenarioYaml(initialIntent(CTX), CTX);
   assert.doesNotMatch(y, /ground_objects/);
 });
 

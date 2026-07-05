@@ -24,15 +24,25 @@ export function intentToScenarioYaml(intent: Intent, ctx: EditorContext): string
   const ranked = intent.doorOrder.filter((id) => selected.includes(id));
   if (ranked.length) lines.push(`door_order: [${ranked.join(', ')}]`);
 
-  // Palette-added ground objects → Scenario.ground_objects (#910). A bare id is
-  // a placed_routed_mover the solver places (loader #601/#604); a fixed_obstacle
-  // needs an authored pose the offline editor can't produce, so filter to movers
-  // via the catalog (defensive — the palette never lets a fixed obstacle be added).
-  // Emitted only when non-empty, so an editor with no additions is byte-identical.
-  const movers = [...intent.groundObjectIds]
-    .filter((id) => ctx.catalog?.[id]?.kind === 'placed_routed_mover')
-    .sort();
-  if (movers.length) lines.push(`ground_objects: [${movers.join(', ')}]`);
+  // Palette-added movers (#910, bare ids) ∪ hand-pinned movers (#912, mapping
+  // entries). A fixed_obstacle needs an authored pose the offline editor can't
+  // produce, so added ids are filtered to movers via the catalog. A mover that is
+  // BOTH added and pinned emits once, as a mapping entry (the pin supersedes the
+  // bare id). Emitted only when non-empty ⇒ an editor that adds/pins no mover is
+  // byte-identical (ADR-0003).
+  const addedMovers = [...intent.groundObjectIds].filter(
+    (id) => ctx.catalog?.[id]?.kind === 'placed_routed_mover',
+  );
+  const moverIds = [...new Set([...addedMovers, ...Object.keys(intent.moverPins)])].sort();
+  if (moverIds.length) {
+    const entries = moverIds.map((id) => {
+      const p = intent.moverPins[id];
+      return p
+        ? `{ object: ${id}, x_m: ${num(p.x)}, y_m: ${num(p.y)}, heading_deg: ${num(p.heading)} }`
+        : id;
+    });
+    lines.push(`ground_objects: [${entries.join(', ')}]`);
+  }
 
   // Only selected planes may carry constraints (never the maintenance plane). A
   // plane is "constrained" if it has a pin, a priority, OR a cart-mode override
