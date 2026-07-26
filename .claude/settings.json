@@ -17,7 +17,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "path=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get(\"tool_input\",{}).get(\"file_path\",\"\"))'); case \"$(basename \"$path\")\" in requirements-*.txt) echo \"[hangarfit guard] $path is a hash-pinned lockfile — do not hand-edit. Regenerate it with the matching pip-compile command in CLAUDE.md (Useful commands); the *-lockfile-drift CI jobs enforce this.\" >&2; exit 2 ;; *) exit 0 ;; esac",
+            "command": "path=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get(\"tool_input\",{}).get(\"file_path\",\"\"))'); case \"$(basename \"$path\")\" in requirements-*.txt) echo \"[hangarfit guard] $path is a hash-pinned lockfile \u2014 do not hand-edit. Regenerate it with the matching pip-compile command in CLAUDE.md (Useful commands); the *-lockfile-drift CI jobs enforce this.\" >&2; exit 2 ;; *) exit 0 ;; esac",
             "timeout": 10
           }
         ]
@@ -29,6 +29,24 @@
             "type": "command",
             "command": "cmd=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get(\"tool_input\",{}).get(\"command\",\"\"))'); case \"$cmd\" in *\"gh pr create\"*) if ! git diff origin/develop...HEAD --name-only 2>/dev/null | grep -Fxq CHANGELOG.md; then echo \"[hangarfit hook] no CHANGELOG.md diff vs origin/develop on this branch. If this PR has a user-facing change, add a CHANGELOG.md [Unreleased] entry before opening it. EXCEPTIONS (no entry needed): dev-tooling/.claude changes; and for >=2 parallel PRs the CHANGELOG entries go in ONE separate CHANGELOG-only PR (see CLAUDE.md), so a missing entry here may be intentional. Advisory only; not blocking.\" >&2; fi ;; *) : ;; esac; exit 0",
             "timeout": 10
+          }
+        ]
+      },
+      {
+        "matcher": "Bash|Grep",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/pkuhn/.local/bin/graphify hook-guard search"
+          }
+        ]
+      },
+      {
+        "matcher": "Read|Glob",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/home/pkuhn/.local/bin/graphify hook-guard read"
           }
         ]
       }
@@ -49,7 +67,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -n \"$HANGARFIT_SKIP_VIEWER_HOOK\" ]; then cat > /dev/null; exit 0; fi; path=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get(\"tool_input\",{}).get(\"file_path\",\"\"))'); case \"$path\" in */viewer/src/*.ts) echo \"[hangarfit hook] edited $path — rebuild the committed bundle (npm --prefix viewer/ run build) and commit src/hangarfit/_viewer_assets/viewer.js in the SAME change; the viewer-build-drift CI guard (ADR-0020) rebuilds and diffs it.\" ;; *) : ;; esac; exit 0",
+            "command": "if [ -n \"$HANGARFIT_SKIP_VIEWER_HOOK\" ]; then cat > /dev/null; exit 0; fi; path=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get(\"tool_input\",{}).get(\"file_path\",\"\"))'); case \"$path\" in */viewer/src/*.ts) echo \"[hangarfit hook] edited $path \u2014 rebuild the committed bundle (npm --prefix viewer/ run build) and commit src/hangarfit/_viewer_assets/viewer.js in the SAME change; the viewer-build-drift CI guard (ADR-0020) rebuilds and diffs it.\" ;; *) : ;; esac; exit 0",
             "timeout": 15
           }
         ]
@@ -59,7 +77,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "if [ -n \"$HANGARFIT_SKIP_LOCKFILE_HOOK\" ]; then cat > /dev/null; exit 0; fi; path=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get(\"tool_input\",{}).get(\"file_path\",\"\"))'); case \"$(basename \"$path\")\" in pyproject.toml) echo \"[hangarfit hook] edited $path — if you changed [project] dependencies or an optional extra, regenerate the four hash-pinned lockfiles (pip-compile recipes in CLAUDE.md / docs/dev/lockfiles.md); the dev/build/fuzz *-lockfile-drift CI jobs enforce drift (pip-tools has none).\" ;; *) : ;; esac; exit 0",
+            "command": "if [ -n \"$HANGARFIT_SKIP_LOCKFILE_HOOK\" ]; then cat > /dev/null; exit 0; fi; path=$(python3 -c 'import json,sys; print(json.load(sys.stdin).get(\"tool_input\",{}).get(\"file_path\",\"\"))'); case \"$(basename \"$path\")\" in pyproject.toml) echo \"[hangarfit hook] edited $path \u2014 if you changed [project] dependencies or an optional extra, regenerate the four hash-pinned lockfiles (pip-compile recipes in CLAUDE.md / docs/dev/lockfiles.md); the dev/build/fuzz *-lockfile-drift CI jobs enforce drift (pip-tools has none).\" ;; *) : ;; esac; exit 0",
             "timeout": 10
           }
         ]
