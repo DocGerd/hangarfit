@@ -3,7 +3,7 @@
 # two lockfile-drift guard jobs in ci.yml. Hash-pinned via
 # `requirements-pip-tools.txt` so the guards that enforce supply-chain
 # integrity are themselves installed with verified integrity, instead of
-# the bare `pip install pip-tools==7.5.3` that Scorecard flags as
+# the bare `pip install pip-tools==7.6.0` that Scorecard flags as
 # `pipCommand not pinned by hash` (Pinned-Dependencies; alerts #10/#11,
 # closes #224).
 #
@@ -20,4 +20,4 @@
 # Pinned to the exact version mandated by CLAUDE.md for lockfile
 # regeneration; bump deliberately, in lockstep with the version used by
 # the two guard jobs and the regeneration commands in CLAUDE.md.
-pip-tools==7.5.3
+pip-tools==7.6.0
