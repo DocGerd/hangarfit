@@ -2,10 +2,16 @@ name: Set up Python + hangarfit (hash-pinned)
 description: >-
   Set up the single supported Python (3.12, ADR-0009) with a pip cache, then
   install the hash-pinned dev deps, the hash-pinned build toolchain, and the
-  project itself editable. The single source of truth for the subtle PEP-517
-  install ordering (#162) shared by every CI job that imports hangarfit — keeping
-  it here means the ordering rationale lives in ONE place instead of being copied
-  across the static, test-shard, serial-canaries and coverage jobs.
+  project itself editable. Holds the subtle PEP-517 install ordering (#162) for
+  ci.yml's static / test-shard / serial-canaries jobs and coverage.yml, so those
+  four do not each copy it. NOTE it is not the only copy in the repo:
+  bench-gates.yml (both jobs, one behind the required bench-correctness check)
+  and fuzz.yml deliberately inline the same ordering, and release.yml sets up
+  Python independently. Keep the actions/setup-python pin below in LOCKSTEP with
+  those call sites — this file silently sat on v6.2.0 while all seven workflow
+  call sites had moved to v7.0.0, because Dependabot's github-actions ecosystem
+  never scanned .github/actions/** until a dedicated dependabot.yml entry was
+  added.
 
 inputs:
   python-version:

@@ -14,9 +14,10 @@ updates:
   # a transitive dep — including transitives such as `packaging` and `click`
   # that live inside lockfiles it provably rewrites — and ZERO against
   # requirements-dev.txt, which is compiled from pyproject.toml whose `>=`
-  # floors are all already satisfied. So pip is the quiet ecosystem here
-  # (7 of 51 lifetime Dependabot PRs); grouping it is about attribution and
-  # lockfile-conflict avoidance, not volume. No catch-all group is warranted.
+  # floors are all already satisfied. So pip is the quiet ecosystem here —
+  # roughly one Dependabot PR in seven — and grouping it is about attribution
+  # and lockfile-conflict avoidance, not volume. No catch-all group is
+  # warranted.
   - package-ecosystem: pip
     directory: "/"
     schedule:
@@ -28,10 +29,18 @@ updates:
       prefix: "deps"
       include: "scope"
     groups:
-      # Packaging tooling — never shipped, near-zero CVE surface, and already
-      # observed co-editing the SAME lockfiles (#962 wheel and #963 setuptools
-      # both rewrote requirements-build.txt AND requirements-pip-tools.txt in
-      # one run).
+      # Packaging tooling — never shipped, near-zero CVE surface, and prone to
+      # co-editing the SAME lockfiles: #962 (wheel) and #963 (setuptools) both
+      # rewrote requirements-build.txt AND requirements-pip-tools.txt in one
+      # run. `wheel` and `build` are the members this group will actually
+      # collapse.
+      #
+      # Note `setuptools` is here as future-proofing, not as an active case:
+      # both setuptools bumps in repo history were MAJORS (e99c1d4 82->83,
+      # 4b26540 83->84), which `update-types` below excludes by design, so that
+      # #962/#963 pair would still arrive as two PRs. Upstream setuptools does
+      # ship minors and patches (the whole 80.x line), so the pattern is not
+      # permanently inert — it simply has not fired here yet.
       #
       # `pip-tools` is deliberately NOT in this group. It is the GENERATOR of
       # the other three lockfiles: all three REQUIRED drift checks (`lockfile
@@ -55,12 +64,15 @@ updates:
       # `dependency-type: development`, because it lives only in
       # requirements-fuzz.in, outside pyproject.toml's extras.
       #
-      # Be aware this group is mostly DORMANT by design, not broken: today
-      # `atheris` is the only member Dependabot can actually see, because every
-      # other name here reaches the tree solely through requirements-dev.txt,
-      # which Dependabot never proposes against (see the entry header). The
+      # Be aware this group is mostly DORMANT by design, not broken — and the
+      # reason is a satisfied constraint, not a blind spot. Dependabot DOES see
+      # pytest*/ruff/mypy/types-*/hypothesis: they are declared in
+      # pyproject.toml's `dev` extra, which its pip parser reads. But those
+      # declarations use unbounded `>=` floors that the latest releases already
+      # satisfy, so it proposes nothing against them (see the entry header).
+      # `atheris` is the only member with a live source of bumps today. The
       # patterns are kept so the group activates on its own if a dev tool ever
-      # gains a `.in` source or an exact pin — no second config PR needed.
+      # gains an exact `==` pin or a `.in` source — no second config PR needed.
       pip-dev-and-fuzz-tooling:
         patterns: ["pytest*", "ruff", "mypy", "types-*", "hypothesis", "atheris"]
         update-types: ["minor", "patch"]
@@ -120,10 +132,18 @@ updates:
   # it (`config.version !== getActionVersion()` -> ConfigurationError), so a
   # split pair fails the REQUIRED `Analyze (Python)` check — that is how #954
   # and #956 both died, and merging both would have failed too (4.37.6 vs
-  # 4.37.3). Grouping does not make Dependabot resolve the pair to one version;
-  # it makes a skew arrive as ONE red PR that CI evaluates as a combined state,
-  # instead of two individually-green PRs that only break `develop` once both
-  # land. Carving majors out here would re-open that split at the next major.
+  # 4.37.3).
+  #
+  # The mechanism is TEMPORAL DRIFT between two branches, not one-run
+  # divergence. Both PRs were opened on 2026-08-01 targeting the SAME 4.37.3 —
+  # their branch names still say so (`.../codeql-action/init-4.37.3` and
+  # `.../analyze-4.37.3`) — and #954 then rebased itself forward to 4.37.6 nine
+  # days later while #956 stood still. A group PR has ONE head branch, so it
+  # cannot rebase its members apart: the pair stays matched. And if a skew ever
+  # does arrive, it arrives as one red PR whose combined state CI evaluates
+  # before merge, rather than two individually-green PRs that only break
+  # `develop` once both land. Carving majors out here would re-open the split
+  # at the next major.
   - package-ecosystem: github-actions
     directory: "/"
     schedule:
@@ -146,14 +166,22 @@ updates:
   # the required `test (Python 3.12)` gate.
   #
   # A second entry aimed at the composite's own directory closes the gap. The
-  # plural `directories:` key with a glob was rejected: it additionally needs
-  # `group-by: dependency-name` (without it a multi-directory entry still opens
-  # one PR per directory), and dependabot-core#10884 double-scans
-  # .github/workflows under a globstar path. Note this entry has its own PR
-  # budget, so github-actions can produce up to two group PRs a month, one per
-  # entry. Per dependabot-core#5970 a custom-directory scan matches `action.yml`
-  # only, so a rename to action.yaml or a second composite elsewhere silently
-  # re-opens the gap.
+  # plural `directories:` key with a glob was rejected for ONE decisive reason:
+  # a multi-directory entry opens one PR per directory unless it also sets
+  # `group-by: dependency-name` — and that key groups by dependency, which would
+  # split `codeql-action/init` from `.../analyze` into separate PRs, recreating
+  # the exact failure this config exists to prevent. (`/.github/actions/*`
+  # itself is fine and is used in production by other projects;
+  # dependabot-core#10884's double-scan is specific to a `**/*` globstar that
+  # also matches .github/workflows.)
+  #
+  # Note this entry has its own PR budget, so github-actions can produce up to
+  # two group PRs a month, one per entry. A non-root `directory:` scans that
+  # directory for any *.yml/*.yaml (dependabot-core github_actions
+  # file_fetcher.rb, MANIFEST_FILE_PATTERN `/\.ya?ml$/`), so renaming this file
+  # to action.yaml would stay covered — but the scan does NOT recurse, so a
+  # second composite under another .github/actions/** path needs its own entry
+  # here.
   - package-ecosystem: github-actions
     directory: "/.github/actions/setup-python-env"
     schedule:
