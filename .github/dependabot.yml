@@ -116,7 +116,8 @@ updates:
         update-types: ["minor", "patch"]
     # `three` and `@types/three` are pinned to 0.160.x in lockstep with the
     # vendored three.js r160 (src/hangarfit/_viewer_assets/three/VENDOR.md).
-    # The ci.yml skew guard fails if either drifts from the vendored
+    # The `three <-> @types/three <-> three(devDep) version-skew guard` in
+    # .github/workflows/viewer.yml fails if either drifts from the vendored
     # major.minor, so a Dependabot bump would always be un-mergeable. These
     # are bumped by hand via the VENDOR.md vendor-bump process, not here.
     # (The test-only `three` devDep is the same package as `three` above, so
