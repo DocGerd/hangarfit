@@ -154,24 +154,29 @@ The `.claude/` directory holds team-shared Claude Code settings (currently: a Se
 | Server | Transport | Purpose |
 |---|---|---|
 | `github` | HTTP (`https://api.githubcopilot.com/mcp/`) | Issue / PR / release inspection from Claude; complements the existing `gh` CLI. |
-| `context7` | HTTP (`https://mcp.context7.com/mcp`) | Live, version-correct library docs (shapely, matplotlib & other deps) pulled into context on demand, so doc lookups reflect the installed version rather than stale training data. |
 
-**Canonical upstream references (verify before editing `.mcp.json`):**
+**Canonical upstream reference (verify before editing `.mcp.json`):**
 - GitHub MCP: https://github.com/github/github-mcp-server
-- Context7 MCP: https://github.com/upstash/context7
 
-If a URL or env-var name in `.mcp.json` ever stops working, check these first.
+If a URL or env-var name in `.mcp.json` ever stops working, check this first.
+
+### Library docs (Context7) — deliberately *not* repo-declared
+
+`context7` (live, version-correct library docs for shapely, matplotlib & other deps) used to be declared here, and was **removed on purpose**: it is better configured per-developer — as a claude.ai account-level connector or in your own client config — than pinned into shared repo config, so the repo does not dictate which docs provider a contributor uses.
+
+**This means a fresh clone does not get Context7.** If you want it, add it yourself (account-level connector, or a gitignored `.mcp.json` override) using upstream's instructions: https://github.com/upstash/context7. It works keyless under anonymous rate limits; a free key from context7.com/dashboard raises them, read from the `CONTEXT7_API_KEY` request header.
 
 ### Auth requirements
 
 - **GitHub MCP** — Requires `GITHUB_PERSONAL_ACCESS_TOKEN` in your shell environment. Minimum permissions depend on which PAT type you create:
   - **Classic PAT:** `repo` + `read:org` scopes are sufficient for read operations; add `write:discussion` if you want Claude to create issues or PRs via the MCP server rather than `gh`.
   - **Fine-grained PAT:** Repository permissions `Contents: Read`, `Issues: Read`, `Pull requests: Read`; plus Organization permissions `Members: Read` for org-level lookups. Add the corresponding `Write` levels for create operations. Fine-grained PATs use different UI checkboxes from classic — the scope names above are classic-only.
-- **Context7 MCP** — **Works keyless out of the box; no env var required.** The checked-in `.mcp.json` entry carries no auth header on purpose, so a fresh clone connects under Context7's anonymous rate limits with zero setup. A `${CONTEXT7_API_KEY}` header is deliberately *not* committed: Claude Code does not expand `${VAR}` in HTTP `headers` for an unset variable, so an unresolved placeholder would be sent literally and break the keyless default. To raise rate limits, get a free key at context7.com/dashboard and add it locally (not committed) via your own client config or a gitignored override — Context7 reads it from the `CONTEXT7_API_KEY` request header.
+
+**Gotcha when adding any HTTP MCP server here:** Claude Code does **not** expand `${VAR}` in HTTP `headers` when the variable is unset — the unresolved placeholder is sent literally. So only commit a `${VAR}` header for a variable contributors are actually expected to set (as with `GITHUB_PERSONAL_ACCESS_TOKEN` above); for an optional-auth server, commit no auth header at all and let contributors add a key locally.
 
 ### Verifying the servers loaded
 
-After cloning and running `claude`, use the `/mcp` command. The `github` and `context7` servers should appear with status **connected**. If `github` shows **failed**, check that `GITHUB_PERSONAL_ACCESS_TOKEN` is set in your shell environment; `context7` needs no env var and should connect keyless.
+After cloning and running `claude`, use the `/mcp` command. The `github` server should appear with status **connected**. If it shows **failed**, check that `GITHUB_PERSONAL_ACCESS_TOKEN` is set in your shell environment. `context7` will *not* appear unless you added it yourself — see above; that is expected, not a misconfiguration.
 
 ---
 
