@@ -10,8 +10,9 @@ description: >-
   Python independently. Keep the actions/setup-python pin below in LOCKSTEP with
   those call sites — this file silently sat on v6.2.0 while all seven workflow
   call sites had moved to v7.0.0, because Dependabot's github-actions ecosystem
-  never scanned .github/actions/** until a dedicated dependabot.yml entry was
-  added.
+  never scanned this directory until it got its own dependabot.yml entry — one
+  that covers THIS directory only and does not recurse, so another composite
+  elsewhere would need its own entry too.
 
 inputs:
   python-version:
