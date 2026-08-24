@@ -192,6 +192,19 @@ Vulnerability reporting lives in [SECURITY.md](SECURITY.md). The rationale for t
 
 ---
 
+## Dependency updates (Dependabot)
+
+`.github/dependabot.yml` is **grouped** since #973/#975: 4 entries, 5 groups — pip `/`, npm `/viewer`, github-actions `/`, plus a **second github-actions entry for `/.github/actions/setup-python-env`**. Full rationale lives in the file's own comments; what matters here:
+
+- **pip/npm groups carve majors out** (`update-types: ["minor","patch"]`); the **github-actions groups deliberately do not** — `codeql-action/init` and `.../analyze` must move in lockstep, and filtering majors would re-open that split at the next major. So a **major action bump arrives batched** (setup-node v6→v7 in #979) and needs real review, not a rubber stamp.
+- **The second entry exists because github-actions `directory: "/"` scans `.github/workflows` plus a *root* `action.yml` and never recurses into `.github/actions/**`** — the gap that left the composite on setup-python v6.2.0 while all 7 workflow call sites were on v7.0.0.
+- **⚠ pip updates are NOT happening (#980).** Every pip run has failed since 2026-06-02 with `RuntimeError: No files have changed!`: a dep declared in `pyproject.toml` with an already-satisfied `>=` floor and pinned only in `requirements-dev.txt` (compiled *from* pyproject) leaves the updater no manifest to edit. The three `.in`-sourced lockfiles are fine. **Never read "no pip PRs" as "nothing to update".**
+- **A valid config is not a working one.** A `Dependabot config file validation` check runs on any PR touching `dependabot.yml` — worth having, since an invalid config silently disables *all* updates including security — yet it passed on #975 while the pip entry was crashing. Run failures surface only as `event=dynamic` Actions runs named e.g. `pip in /. - Update #NNN`.
+- **A green PR does not prove an action bump works.** `scorecard.yml` has **no `pull_request` trigger** (dispatch / `branch_protection_rule` / weekly cron / `push:[develop]`), so bumps touching it first execute **post-merge**. `viewer.yml` is the opposite — its PR `paths:` filter includes `.github/workflows/viewer.yml` itself so edits re-trigger it (its `viewer toolchain` check is non-required and path-filtered).
+- **Action pins: the `# vX.Y.Z` comment is advisory, the SHA is what runs**, and CI cannot detect a mismatch — resolve the tag via the API. **Tag object type varies by repo**: `github/codeql-action` and `ossf/scorecard-action` are **annotated** (deref twice); `actions/setup-node` and `actions/setup-python` are **lightweight**. Check `.object.type` per repo; never generalize.
+
+---
+
 ## Open questions / TBD before trusting output
 
 - **`data/` is now a per-object catalog of best-available specs (#595).** Aircraft are defined in [`data/catalog/`](data/catalog/) (one file per aircraft, with a `type:` discriminator) and referenced by path from the thin `data/fleet.yaml` manifest; a manifest entry may override per-fleet operational flags (`movement_mode`/`tow_pivotable`) on the shared static definition. The eight usual Airfield Herrenteich occupants — plus the permanent low-wing `fuji` added in #657 — carry real published-spec / TCDS-sourced numbers, a **single central catalog shared with `examples/herrenteich/`** (#595, no per-world duplication); only `cessna_150` (not based at Herrenteich) is still an eyeballed placeholder. Fuji's envelope is published-spec/cross-checked, with undercarriage/tailplane left estimated. Every entry keeps `measured: false` (none are on-site tape/laser measurements). `data/hangar.yaml` is still a placeholder.
