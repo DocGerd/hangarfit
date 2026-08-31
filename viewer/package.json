@@ -12,13 +12,13 @@
   },
   "devDependencies": {
     "@eslint/js": "10.0.1",
-    "@types/node": "26.2.0",
+    "@types/node": "26.4.0",
     "@types/three": "0.160.0",
     "esbuild": "0.28.2",
-    "eslint": "10.9.0",
+    "eslint": "10.9.1",
     "globals": "17.11.0",
     "three": "0.160.0",
     "typescript": "6.0.3",
-    "typescript-eslint": "8.67.0"
+    "typescript-eslint": "8.68.0"
   }
 }
