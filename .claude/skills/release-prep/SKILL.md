@@ -270,16 +270,16 @@ stay on the feature branch and will be included in the Step 7 commit.
 
 ## Step 7 — Commit
 
-Stage the CHANGELOG and any doc files the user edited:
+Stage the CHANGELOG and any doc files the user edited, by explicit path (never `git add -A`: ignored scratch can sit in the repo root):
 ```bash
-git add -A
+git add CHANGELOG.md <each edited doc file>
 ```
 Commit with a single conventional-commit message:
 ```bash
 git commit -m "$(cat <<'EOF'
 docs(release): prep v<version> — promote CHANGELOG, refresh docs
 
-Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>
+<the session's attribution trailer (Co-Authored-By: ...)>
 EOF
 )"
 ```
@@ -289,15 +289,16 @@ print the commit SHA (`git rev-parse --short HEAD`).
 If `git commit` fails (e.g. a pre-commit hook), stop, print the raw error, and
 inform the user the prep branch and edits exist locally but are uncommitted.
 
-## Step 8 — Determine milestone number
+## Step 8 — Determine milestone title and number
 
-Look up the milestone so it can be set on the PR:
+Look up the milestone so it can be set on the PR (`gh pr create --milestone` takes the **title**; a number is rejected as `not found`; the REST PATCH fallback takes the **number**):
 ```bash
-gh api repos/DocGerd/hangarfit/milestones?state=all
+gh api 'repos/DocGerd/hangarfit/milestones?state=all&per_page=100'
 ```
+(`per_page=100`: the list paginates at 30, so a fresh milestone can hide past page 1.)
 Parse the JSON for a milestone whose `title` contains `v<version>` (e.g.
-`v0.7.3`). If found, store the numeric `number` as `MILESTONE_NUMBER`. If none
-matches, set `MILESTONE_NUMBER` to `<unresolved>` and note in the PR body that
+`v0.7.3`). If found, store its `title` as `MILESTONE_TITLE` and its numeric
+`number` as `MILESTONE_NUMBER`. If none matches, set both to `<unresolved>` and note in the PR body that
 the milestone must be set by hand — do not abort.
 
 ## Step 9 — Push and open the PR into develop
@@ -332,11 +333,11 @@ PREOF
   --assignee DocGerd \
   --label release \
   --label documentation \
-  --milestone <MILESTONE_NUMBER>
+  --milestone "<MILESTONE_TITLE>"
 ```
 The prep PR is release-process work that happens to touch docs, so it carries
 both `release` (process) and `documentation` (content).
-If `MILESTONE_NUMBER` is `<unresolved>`, omit the `--milestone` flag and note in
+If `MILESTONE_TITLE` is `<unresolved>`, omit the `--milestone` flag and note in
 the PR body that the milestone must be set by hand.
 
 Capture and print the URL returned by `gh pr create`.
@@ -347,7 +348,7 @@ time. If metadata needs to change afterward, use the GitHub Issues API endpoint
 ```bash
 gh api -X PATCH repos/DocGerd/hangarfit/issues/<PR_NUMBER> \
   -F milestone=<MILESTONE_NUMBER> \
-  -f 'assignees[]=DocGerd'
+  --raw-field 'assignees[]=DocGerd'
 ```
 Do NOT use `gh pr edit --milestone` / `gh pr edit --assignee` — those flags are
 broken in this repo.
@@ -389,6 +390,6 @@ has succeeded.
 11. **CHANGELOG edit verification fails (Step 5.4)**: print what was found; do not commit.
 12. **User does not confirm with `DONE` (Step 6)**: discard edits, remove the prep branch, print `Aborted. No commit was made; the prep branch was removed.`
 13. **`git commit` fails**: print the raw git error; the branch and edits exist locally but uncommitted.
-14. **Milestone not found**: set `MILESTONE_NUMBER` to `<unresolved>`, omit `--milestone`, note in the PR body; do not abort.
+14. **Milestone not found**: set `MILESTONE_TITLE`/`MILESTONE_NUMBER` to `<unresolved>`, omit `--milestone`, note in the PR body; do not abort.
 15. **`git push` fails**: print the raw git error plus the retry command.
 16. **`gh pr create` fails**: print the raw error; the branch has been pushed but no PR was opened.

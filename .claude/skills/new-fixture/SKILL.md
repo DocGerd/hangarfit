@@ -159,7 +159,7 @@ Do not add anything else — no praise, no summary, no emoji.
 
 ## Rationale-in-header convention
 
-Every layout fixture in `tests/fixtures/` follows the convention established by `valid_two_separated.yaml` (valid exemplar) and `invalid_strut_blocks_nesting.yaml` (invalid exemplar). Note: `test_hangar_large.yaml` is a *hangar config* file, not a layout fixture — do not use it as a header convention exemplar.
+New layout fixtures follow the convention established by `valid_two_separated.yaml` (valid exemplar) and `invalid_strut_blocks_nesting.yaml` (invalid exemplar). Note: `test_hangar_large.yaml` is a *hangar config* file, not a layout fixture — do not use it as a header convention exemplar.
 
 The header is a YAML comment block at the top of the file. It must:
 1. Begin with `# Case N — <one-sentence summary>.` where N is the sequential case number computed in Step 3.

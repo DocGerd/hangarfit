@@ -91,7 +91,7 @@ gh pr create --draft --base develop \
 - `Closes #<issue>` / `Fixes #<issue>` goes in the **body**, not the title (only body syntax auto-closes).
 - A PR stays a **draft** until its review arc is clean — draft signals "not yet for the human's attention."
 - Set `--assignee`/`--label`/`--milestone` at create time (these flags work). **Labels:** derive from the tracking issue (extend the Step 2 lookup with `.labels[].name`) or pick from the repo's `type`×`area`×`status` taxonomy, one per repeated `--label` — `gh` **errors on a non-existent label**, so omit the flag rather than guess. **Milestone — note the title/number asymmetry:** the create-time `--milestone` flag wants the milestone **title string** (look it up with `gh api 'repos/DocGerd/hangarfit/milestones?state=all&per_page=100'` — paginates at 30, a fresh milestone hides past page 1), whereas the REST PATCH fallback (next bullet) wants its **number**. If milestone assignment is the user's call, omit it.
-- Post-creation metadata fixes go via REST PATCH (`gh pr edit --milestone`/`--assignee` are broken here): `gh api -X PATCH repos/DocGerd/hangarfit/issues/<PR_NUMBER> -F milestone=<NUMBER> -f 'assignees[]=DocGerd'` (the REST API wants the milestone **number**, not the title).
+- Post-creation metadata fixes go via REST PATCH (`gh pr edit --milestone`/`--assignee` are broken here): `gh api -X PATCH repos/DocGerd/hangarfit/issues/<PR_NUMBER> -F milestone=<NUMBER> --raw-field 'assignees[]=DocGerd'` (the REST API wants the milestone **number**, not the title).
 
 ## Step 7 — Run the review arc (DELEGATED)
 
@@ -105,7 +105,7 @@ Convert **each** finding into its own review thread anchored on the diff line �
 
 ## Step 9 — Resolve every thread
 
-For each thread: **fix the code** (preferred — commit + push) or reply with rationale, then explicitly mark it resolved via the GraphQL `resolveReviewThread` mutation (a reply alone does NOT resolve; read threads via the `pullRequest.reviewThreads` GraphQL path). Fix commits carry the standard `Co-Authored-By: Claude Opus 4.8 (1M context) <noreply@anthropic.com>` trailer (matching the other skills). Leave an auditable trace ON the PR — a submitted review summary naming the subagents run and the outcome, even for a clean pass.
+For each thread: **fix the code** (preferred — commit + push) or reply with rationale, then explicitly mark it resolved via the GraphQL `resolveReviewThread` mutation (a reply alone does NOT resolve; read threads via the `pullRequest.reviewThreads` GraphQL path). Fix commits end with the session's attribution trailer (the `Co-Authored-By:` line given in the session context). Leave an auditable trace ON the PR — a submitted review summary naming the subagents run and the outcome, even for a clean pass.
 
 ## Step 10 — Re-review if non-trivial, then flip to ready and hand off
 
