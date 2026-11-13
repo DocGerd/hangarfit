@@ -24,7 +24,7 @@ If `version` is missing or does not match `^[0-9]+\.[0-9]+\.[0-9]+$`, stop immed
 Error: version is required and must match X.Y.Z (digits only, e.g. 0.1.0).
 ```
 
-**Prerelease and build-metadata suffixes** (e.g. `0.1.0-rc1`, `0.1.0-alpha.2`, `0.1.0+build.5`, `0.1.0.dev1`) do **not** match this regex and are intentionally rejected. Phase 1 does not support prerelease or build-metadata suffixes. If you need one, edit `pyproject.toml` and create the branch/tag by hand.
+**Prerelease and build-metadata suffixes** (e.g. `0.1.0-rc1`, `0.1.0-alpha.2`, `0.1.0+build.5`, `0.1.0.dev1`) do **not** match this regex and are intentionally rejected. If you need one, edit `pyproject.toml` and create the branch/tag by hand.
 
 Do NOT proceed to any further step.
 
@@ -106,21 +106,23 @@ first to promote the [Unreleased] entries and audit the docs.
 
 (Substitute the actual `<version>` into the error before printing.)
 
-## Step 3 — Determine milestone number
+## Step 3 — Determine milestone title and number
 
-Before printing the plan, look up the correct milestone number via the GitHub API so it can be substituted into the plan shown to the user:
+Before printing the plan, look up the milestone via the GitHub API so it can be substituted into the plan shown to the user (`gh pr create --milestone` takes the **title**; a number is rejected as `not found`; the REST PATCH fallback takes the **number**):
 
 ```bash
-gh api repos/DocGerd/hangarfit/milestones?state=all
+gh api 'repos/DocGerd/hangarfit/milestones?state=all&per_page=100'
 ```
 
-Parse the JSON to find the milestone whose `title` contains `"v<version>"` (e.g. `v0.1.0`). If no title matches exactly, look for a milestone whose title most likely corresponds to the release (e.g. a title containing `<version>` as a substring). Store the numeric `number` field as `MILESTONE_NUMBER`.
+(Paginated at 30 by default: `per_page=100` keeps a freshly created milestone from hiding past page 1.)
 
-**If no milestone matches:** do not abort — set `MILESTONE_NUMBER` to the string `<unresolved>` and note in the plan (and later in the PR body) that the milestone could not be resolved automatically and must be set by hand after PR creation.
+Parse the JSON to find the milestone whose `title` contains `"v<version>"` (e.g. `v0.1.0`). If no title matches exactly, look for a milestone whose title most likely corresponds to the release (e.g. a title containing `<version>` as a substring). Store the `title` as `MILESTONE_TITLE` and the numeric `number` as `MILESTONE_NUMBER`.
+
+**If no milestone matches:** do not abort — set `MILESTONE_TITLE` and `MILESTONE_NUMBER` to the string `<unresolved>` and note in the plan (and later in the PR body) that the milestone could not be resolved automatically and must be set by hand after PR creation.
 
 ## Step 4 — Produce the dry-run plan and wait for confirmation
 
-Print the following checklist verbatim (substituting `<version>` and the actual resolved `MILESTONE_NUMBER` throughout — never print a literal `<milestone_number>` placeholder here):
+Print the following checklist verbatim (substituting `<version>` and the actual resolved `MILESTONE_TITLE` throughout — never print a literal `<milestone_title>` placeholder here):
 
 ```
 Release plan for v<version>
@@ -140,7 +142,7 @@ The following steps will be executed in order. No changes have been made yet.
            --body "..." \
            --assignee DocGerd \
            --label release \
-           --milestone <MILESTONE_NUMBER>
+           --milestone "<MILESTONE_TITLE>"
 [ ] 6. Open back-merge PR into develop:
          gh pr create \
            --base develop \
@@ -149,7 +151,7 @@ The following steps will be executed in order. No changes have been made yet.
            --body "..." \
            --assignee DocGerd \
            --label release \
-           --milestone <MILESTONE_NUMBER>
+           --milestone "<MILESTONE_TITLE>"
 [ ] 7. Print both PR URLs.
 [ ] 8. Remind you to tag v<version> AFTER the main PR merges.
 
@@ -157,7 +159,7 @@ NOTE: 'main' is protected — the skill never pushes to main directly.
 NOTE: Both the release PR and the back-merge PR use the dedicated 'release' label.
 ```
 
-Where `<current_version>` is the version currently in `pyproject.toml` (read it now if not already known), and `<MILESTONE_NUMBER>` is the resolved integer from Step 3 (or the warning text if unresolved).
+Where `<current_version>` is the version currently in `pyproject.toml` (read it now if not already known), and `<MILESTONE_TITLE>` is the resolved milestone title from Step 3 (or the warning text if unresolved).
 
 Then stop and print:
 ```
@@ -207,7 +209,7 @@ Commit with a conventional-commit message:
 git commit -m "$(cat <<'EOF'
 chore(release): bump version to <version>
 
-Co-Authored-By: Claude Sonnet 4.6 <noreply@anthropic.com>
+<the session's attribution trailer (Co-Authored-By: ...)>
 EOF
 )"
 ```
@@ -250,7 +252,7 @@ PREOF
 )" \
   --assignee DocGerd \
   --label release \
-  --milestone <MILESTONE_NUMBER>
+  --milestone "<MILESTONE_TITLE>"
 ```
 
 Capture and print the URL returned by `gh pr create`.
@@ -263,7 +265,7 @@ If `gh pr create` fails, stop and print the raw error. Do not proceed to Step 5.
 ```bash
 gh api -X PATCH repos/DocGerd/hangarfit/issues/<PR_NUMBER> \
   -F milestone=<MILESTONE_NUMBER> \
-  -f 'assignees[]=DocGerd'
+  --raw-field 'assignees[]=DocGerd'
 ```
 Do NOT use `gh pr edit --milestone` or `gh pr edit --assignee` — those flags are broken in this repo.
 
@@ -286,7 +288,7 @@ PREOF
 )" \
   --assignee DocGerd \
   --label release \
-  --milestone <MILESTONE_NUMBER>
+  --milestone "<MILESTONE_TITLE>"
 ```
 
 Capture and print the URL returned by `gh pr create`.
@@ -313,8 +315,7 @@ Next steps (in order):
 4. Then merge the back-merge PR into develop.
 
 IMPORTANT: Do NOT tag an unmerged commit. The tag must point to the actual
-merge commit on main, not the tip of the release branch (which may be
-rewritten by a squash-merge).
+merge commit on main, not the tip of the release branch.
 ```
 
 ## Failure modes
@@ -330,7 +331,7 @@ Every abort condition in one place. In all cases, stop immediately and print the
 7. **Release branch already exists locally**: print `Error: branch 'release/<version>' already exists locally.`
 8. **Release branch already exists on remote**: print `Error: branch 'release/<version>' already exists on origin.`
 8a. **CHANGELOG not promoted (Check E)**: a `## [<version>] —` section or the `[<version>]: …/compare/v…...v<version>` link is missing. Print `Error: CHANGELOG.md has no [<version>] section. Run /release-prep version=<version> first to promote the [Unreleased] entries and audit the docs.`
-9. **Milestone not found**: set `MILESTONE_NUMBER` to `<unresolved>` and continue; note in the plan and PR body that milestone must be set by hand.
+9. **Milestone not found**: set `MILESTONE_TITLE`/`MILESTONE_NUMBER` to `<unresolved>` and continue; note in the plan and PR body that milestone must be set by hand.
 10. **User does not confirm (any response other than `YES`)**: print `Aborted. No changes were made.`
 11. **`git switch -c` fails**: print the raw git error.
 12. **`pyproject.toml` version line not found or not unique**: print a clear error describing what was found and halt before any write.

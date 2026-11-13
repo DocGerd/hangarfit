@@ -5,13 +5,13 @@ disable-model-invocation: true
 argument-hint: "[schedule=curriculum|trivial] [iters=N] [seed=N] [rollout-len=N] [out=DIR]"
 ---
 
-Run the #607 sub-project 4c-ii **basin-escape A/B**: a *control* run (no knobs — the default-neutral baseline) against a *treatment* run (all four basin-escape knobs at their README-recommended values), then summarise the train-time signals side by side. This wraps the A/B documented in `ml/README.md` so the #698 run-to-mastery work has a one-command starting point.
+Run the #607 sub-project 4c-ii **basin-escape A/B**: a *control* run (no knobs — the default-neutral baseline) against a *treatment* run (all four basin-escape knobs at their README-recommended values), then summarise the train-time signals side by side. This wraps the A/B documented in `ml/README.md` as a one-command smoke check of the knobs. Train-to-mastery on the dense rung is resolved-negative (ADR-0028), so this skill makes no mastery claim.
 
 **Arguments from the invocation**: $ARGUMENTS
 
 **This is a long-running command.** It trains two policies sequentially (minutes each at the smoke defaults; longer if you raise `iters`/`rollout-len`). Tell the user the expected shape before starting, and stream both runs' output to log files.
 
-**This is a SMOKE A/B, not the run-to-mastery study.** `python -m ml.train` prints `mean_ep_reward`, `n_eps`, and promotions (plus `loss`/`entropy` in the *trivial* schedule only) — it does **not** print `valid_placed` / `terminal_fraction` / reach-rate. Those are eval-time metrics. So this skill demonstrates the knobs move the *train-time* signal in the expected direction; the **definitive** valid-rate / reach comparison is `python -m ml.eval` on saved checkpoints (deferred to #698). Say so in the summary; never claim this A/B proves mastery.
+**This is a SMOKE A/B, not the run-to-mastery study.** `python -m ml.train` prints `mean_ep_reward`, `n_eps`, and promotions (plus `loss`/`entropy` in the *trivial* schedule only) — it does **not** print `valid_placed` / `terminal_fraction` / reach-rate. Those are eval-time metrics. So this skill demonstrates the knobs move the *train-time* signal in the expected direction; the **definitive** valid-rate / reach comparison is `python -m ml.eval` on saved checkpoints (not part of this skill). Say so in the summary; never claim this A/B proves mastery.
 
 ## Step 1 — Parse and validate arguments
 
@@ -105,7 +105,7 @@ Logs: <out>/control.log, <out>/treatment.log
 State the read of the train-time signal, with the README's expectations:
 - **Expected treatment fingerprint:** the place-nothing basin loosens — `mean_ep_reward` no worse than control and ideally climbing; (curriculum) promotions happening `by competency` rather than `by cap`; (trivial) entropy starting higher and decaying.
 - **Smoke-budget caveat:** the treatment's `--entropy-anneal-iters 40` can exceed the per-rung `iters` (default `30`), so at the smoke budget the entropy anneal need not fully complete within a rung — that is expected, not a defect.
-- **What this does NOT show:** `valid_placed` / reach-rate. Those require `python -m ml.eval --checkpoint <ckpt>` on a saved policy against the frozen benchmark — the definitive measure, deferred to #698. To produce checkpoints for that, re-run each side with `--save <out>/control.pt` / `--save <out>/treatment.pt` and then eval both.
+- **What this does NOT show:** `valid_placed` / reach-rate. Those require `python -m ml.eval --checkpoint <ckpt>` on a saved policy against the frozen benchmark — the definitive measure, outside this skill. To produce checkpoints for that, re-run each side with `--save <out>/control.pt` / `--save <out>/treatment.pt` and then eval both.
 
 End with one line stating whether the treatment moved the train-time signal in the expected direction at this smoke budget — and that mastery is explicitly out of scope for this skill.
 

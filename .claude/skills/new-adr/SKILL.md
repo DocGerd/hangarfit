@@ -74,12 +74,12 @@ ls docs/adr/[0-9][0-9][0-9][0-9]-*.md \
   | sort -n | tail -1
 ```
 
-This prints the current highest number (e.g. `0011`). Strip leading zeros, add 1,
+This prints the current highest number (e.g. `0031`). Strip leading zeros, add 1,
 and zero-pad the result to four digits. Call this `NEXT_NUMBER` (a 4-char string,
 e.g. `0012`). If the command prints nothing (no ADRs at all — should never happen
 in this repo, where ADR-0000 exists), use `0000`.
 
-Do the increment carefully: `0011` → `0012`, `0099` → `0100`, `0009` → `0010`.
+Do the increment carefully: `0031` → `0032`, `0099` → `0100`, `0009` → `0010`.
 Treat the listed value as a decimal integer; never do string concatenation.
 
 ## Step 4 — Derive a kebab-case slug from the title
